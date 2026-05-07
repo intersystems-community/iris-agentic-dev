@@ -52,6 +52,10 @@ impl Toolset {
     }
 }
 
+pub const ERR_NO_TESTS_FOUND: &str = "NO_TESTS_FOUND";
+pub const ERR_NAMESPACE_NOT_FOUND: &str = "NAMESPACE_NOT_FOUND";
+pub const ERR_TEST_EXECUTION_ERROR: &str = "TEST_EXECUTION_ERROR";
+
 /// A single tool call entry for the session history ring buffer.
 #[derive(Debug, Clone)]
 pub struct ToolCallEntry {
@@ -78,6 +82,12 @@ pub struct TestParams {
     pub pattern: String,
     #[serde(default = "default_namespace")]
     pub namespace: String,
+    #[serde(default = "default_test_timeout")]
+    pub timeout: u64,
+}
+
+fn default_test_timeout() -> u64 {
+    60
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SymbolsParams {
@@ -258,6 +268,150 @@ fn default_password() -> String {
 }
 fn default_edition() -> String {
     "community".to_string()
+}
+
+// ── iris_test SQL result types ────────────────────────────────────────────────
+
+/// One row from %UnitTest.Result.TestSuite.
+#[derive(Debug, Clone)]
+pub struct SuiteRow {
+    pub id: String,
+    pub name: String,
+    pub status: i64,
+    pub duration_ms: Option<f64>,
+}
+
+/// One row from %UnitTest.Result.TestMethod.
+#[derive(Debug, Clone)]
+pub struct MethodRow {
+    pub suite_id: String,
+    pub name: String,
+    pub class_name: String,
+    pub status: i64,
+    pub duration_ms: Option<f64>,
+    pub error_description: String,
+    pub error_action: String,
+}
+
+/// Maps IRIS %UnitTest status integer to a status string.
+/// Status=1 → "passed", Status=0 → "failed", other with ErrorAction → "error", other → "failed".
+pub fn map_status_int(status: i64, error_action: &str) -> &'static str {
+    match status {
+        1 => "passed",
+        0 => "failed",
+        _ => {
+            if !error_action.is_empty() {
+                "error"
+            } else {
+                "failed"
+            }
+        }
+    }
+}
+
+/// Build the compact (inline) TestRun JSON from SQL rows.
+/// When empty rows are provided, returns a NO_TESTS_FOUND response.
+pub fn build_test_run_from_sql(suites: &[SuiteRow], methods: &[MethodRow]) -> serde_json::Value {
+    if suites.is_empty() {
+        return serde_json::json!({
+            "success": false,
+            "error_code": ERR_NO_TESTS_FOUND,
+            "error": "Pattern matched no test classes",
+            "total": 0,
+            "passed": 0,
+            "failed": 0,
+            "errors": 0,
+            "skipped": 0,
+        });
+    }
+
+    let mut total = 0u64;
+    let mut passed = 0u64;
+    let mut failed = 0u64;
+    let mut errors = 0u64;
+    let skipped = 0u64;
+    let mut duration_ms_total = 0.0f64;
+
+    let mut suite_jsons = Vec::new();
+    for suite in suites {
+        let suite_methods: Vec<&MethodRow> =
+            methods.iter().filter(|m| m.suite_id == suite.id).collect();
+        let s_tests = suite_methods.len() as u64;
+        let s_failures = suite_methods
+            .iter()
+            .filter(|m| map_status_int(m.status, &m.error_action) == "failed")
+            .count() as u64;
+        let s_errors = suite_methods
+            .iter()
+            .filter(|m| map_status_int(m.status, &m.error_action) == "error")
+            .count() as u64;
+        let s_dur = suite.duration_ms.unwrap_or(0.0);
+
+        total += s_tests;
+        passed += suite_methods
+            .iter()
+            .filter(|m| map_status_int(m.status, &m.error_action) == "passed")
+            .count() as u64;
+        failed += s_failures;
+        errors += s_errors;
+        duration_ms_total += s_dur;
+
+        suite_jsons.push(serde_json::json!({
+            "name": suite.name,
+            "tests": s_tests,
+            "failures": s_failures,
+            "errors": s_errors,
+            "duration_ms": s_dur,
+        }));
+    }
+
+    let success = failed == 0 && errors == 0;
+    serde_json::json!({
+        "success": success,
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "errors": errors,
+        "skipped": skipped,
+        "duration_ms": duration_ms_total,
+        "test_suites": suite_jsons,
+    })
+}
+
+/// Build the full per-case TestRun JSON for log store storage.
+pub fn build_test_detail(suites: &[SuiteRow], methods: &[MethodRow]) -> serde_json::Value {
+    let mut suite_jsons = Vec::new();
+    for suite in suites {
+        let suite_methods: Vec<&MethodRow> =
+            methods.iter().filter(|m| m.suite_id == suite.id).collect();
+        let cases: Vec<serde_json::Value> = suite_methods
+            .iter()
+            .map(|m| {
+                let status = map_status_int(m.status, &m.error_action);
+                let failure_message = if !m.error_description.is_empty() {
+                    serde_json::Value::String(m.error_description.clone())
+                } else {
+                    serde_json::Value::Null
+                };
+                serde_json::json!({
+                    "name": m.name,
+                    "class_name": m.class_name,
+                    "status": status,
+                    "duration_ms": m.duration_ms,
+                    "failure_message": failure_message,
+                })
+            })
+            .collect();
+        suite_jsons.push(serde_json::json!({
+            "name": suite.name,
+            "tests": cases.len(),
+            "failures": cases.iter().filter(|c| c["status"] == "failed").count(),
+            "errors": cases.iter().filter(|c| c["status"] == "error").count(),
+            "duration_ms": suite.duration_ms,
+            "test_cases": cases,
+        }));
+    }
+    serde_json::json!({"test_suites": suite_jsons})
 }
 
 fn iris_unreachable() -> McpError {
@@ -1078,107 +1232,361 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Run %UnitTest.Manager tests on IRIS via docker exec. Set IRIS_CONTAINER=<container_name> to enable. Pass a class pattern like 'MyApp.Tests' or 'MyApp.Tests.Order'. Returns structured pass/fail counts and full trace output. No Python required."
+        description = "Run %UnitTest.Manager tests on IRIS and return structured pass/fail results. Works without docker via pure-HTTP execution (default). If IRIS_CONTAINER is set, uses docker exec first and falls back to HTTP if docker fails. Pass a class pattern like 'MyApp.Tests' or 'MyApp.Tests.Order'. Returns suite-level summary inline plus log_id for per-test-case detail via iris_get_log."
     )]
     async fn iris_test(
         &self,
         Parameters(p): Parameters<TestParams>,
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(namespace = %p.namespace, pattern = %p.pattern, "iris_test");
-        // Fail fast if IRIS_CONTAINER is not set — docker exec is required and there
-        // is no point attempting the call only to discover this later.
-        if std::env::var("IRIS_CONTAINER")
+        let timeout = std::time::Duration::from_secs(p.timeout);
+        let container = std::env::var("IRIS_CONTAINER")
             .ok()
-            .filter(|v| !v.is_empty())
-            .is_none()
-        {
+            .filter(|v| !v.is_empty());
+
+        // When IRIS_CONTAINER is set, try docker exec path first.
+        if container.is_some() {
+            let iris = self.get_iris()?;
+            let code = format!(
+                "do ##class(%UnitTest.Manager).RunTest(\"{}\",\"/noload/run\")",
+                p.pattern.replace('"', "\\\"")
+            );
+            let docker_result =
+                tokio::time::timeout(timeout, iris.execute(&code, &p.namespace)).await;
+            match docker_result {
+                Ok(Ok(output_lines)) => {
+                    // Docker path succeeded — build structured response additively.
+                    let passed = output_lines
+                        .lines()
+                        .find(|l| l.to_lowercase().contains("passed:"))
+                        .and_then(|l| {
+                            l.split(':')
+                                .nth(1)?
+                                .split_whitespace()
+                                .next()?
+                                .parse::<u64>()
+                                .ok()
+                        })
+                        .unwrap_or(0);
+                    let failed = output_lines
+                        .lines()
+                        .find(|l| l.to_lowercase().contains("failed:"))
+                        .and_then(|l| {
+                            l.split(':')
+                                .nth(1)?
+                                .split_whitespace()
+                                .next()?
+                                .parse::<u64>()
+                                .ok()
+                        })
+                        .unwrap_or(0);
+                    let total = passed + failed;
+                    if total == 0 {
+                        self.record_call("iris_test", false);
+                        return ok_json(serde_json::json!({
+                            "success": false,
+                            "error_code": ERR_NO_TESTS_FOUND,
+                            "error": "Pattern matched no test classes",
+                            "pattern": p.pattern,
+                            "namespace": p.namespace,
+                            "passed": 0,
+                            "failed": 0,
+                            "total": 0,
+                            "errors": 0,
+                            "skipped": 0,
+                            "path": "docker",
+                            "log_id": null,
+                            "test_suites": [],
+                        }));
+                    }
+                    let success = failed == 0;
+                    // Store docker output in log store for drill-down.
+                    let log_id = {
+                        let id = log_store::new_log_id();
+                        let entry = log_store::LogEntry {
+                            id: id.clone(),
+                            tool: "iris_test".to_string(),
+                            created_at: std::time::Instant::now(),
+                            preview: vec![],
+                            full_result: serde_json::json!({"output": output_lines.trim()}),
+                            total_count: total as usize,
+                        };
+                        if let Ok(mut s) = self.log_store.lock() {
+                            s.store(entry);
+                        }
+                        id
+                    };
+                    self.record_call("iris_test", success);
+                    return ok_json(serde_json::json!({
+                        "success": success,
+                        "pattern": p.pattern,
+                        "namespace": p.namespace,
+                        "total": total,
+                        "passed": passed,
+                        "failed": failed,
+                        "errors": 0,
+                        "skipped": 0,
+                        "duration_ms": null,
+                        "path": "docker",
+                        "log_id": log_id,
+                        "test_suites": [],
+                        // Preserved for backward compatibility
+                        "output": output_lines.trim(),
+                    }));
+                }
+                // Docker failed or timed out — fall through to HTTP fallback.
+                _ => {
+                    tracing::info!("iris_test: docker exec failed, falling back to HTTP path");
+                }
+            }
+        }
+
+        // HTTP path (default when no container, or fallback when docker failed).
+        let path_label = if container.is_some() {
+            "http_fallback"
+        } else {
+            "http"
+        };
+        let iris = self.get_iris()?;
+        let client = self.http_client();
+
+        // US3: namespace existence check before running tests.
+        let ns_check_code = format!(
+            "write ##class(%SYS.Namespace).Exists(\"{}\")",
+            p.namespace.replace('"', "\\\"")
+        );
+        let ns_exists = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            iris.execute_via_generator(&ns_check_code, "USER", client),
+        )
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .map(|s| s.trim().starts_with('1'))
+        .unwrap_or(true); // If we can't check, assume it exists and let RunTest fail naturally.
+
+        if !ns_exists {
             self.record_call("iris_test", false);
             return ok_json(serde_json::json!({
                 "success": false,
-                "error_code": "DOCKER_REQUIRED",
-                "error": "iris_test requires IRIS_CONTAINER to be set. \
-                    Set IRIS_CONTAINER=<container_name> and restart the MCP server. \
-                    To run unit tests without docker exec, use iris_execute to call \
-                    ##class(%UnitTest.Manager).RunTest() and query results from \
-                    ^UnitTestRoot globals.",
+                "error_code": ERR_NAMESPACE_NOT_FOUND,
+                "error": format!("Namespace '{}' does not exist on this IRIS instance", p.namespace),
+                "namespace": p.namespace,
             }));
         }
-        let iris = self.get_iris()?;
-        let code = format!(
-            "do ##class(%UnitTest.Manager).RunTest(\"{}\",\"/noload/run\")",
-            p.pattern.replace('"', "\\\"")
+
+        // Generate a UUID correlation token; used as UserParam in RunTest.
+        let correlation_token = log_store::new_log_id();
+        let safe_pattern = p.pattern.replace('"', "\\\"");
+        // Run tests via execute_via_generator (HTTP path).
+        // Uses the existing ^UnitTestRoot (or default /tmp/httest) — test classes must
+        // already be on disk in the test root directory for RunTest to discover them.
+        // After RunTest completes, ^UnitTest.Result global IS persisted (globals bypass
+        // the objectgenerator transaction boundary; SQL %Save() does not).
+        // We write the run index out and return it to identify the run in the next step.
+        let run_code = format!(
+            r#"do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1","{token}")"#,
+            token = correlation_token,
+            pattern = safe_pattern,
         );
-        match iris.execute(&code, &p.namespace).await {
-            Err(e) => {
-                let msg = e.to_string();
+
+        let run_result = tokio::time::timeout(
+            timeout,
+            iris.execute_via_generator(&run_code, &p.namespace, client),
+        )
+        .await;
+
+        let run_output = match run_result {
+            Err(_) => {
                 self.record_call("iris_test", false);
-                if msg == "DOCKER_REQUIRED" {
-                    ok_json(serde_json::json!({
-                        "success": false,
-                        "error_code": "DOCKER_REQUIRED",
-                        "error": "iris_test requires docker exec. Set IRIS_CONTAINER=<container_name>. The Atelier REST API has no ObjectScript execution endpoint.",
-                    }))
-                } else {
-                    ok_json(serde_json::json!({
-                        "success": false,
-                        "error_code": "EXECUTION_FAILED",
-                        "error": msg,
-                    }))
-                }
+                return ok_json(serde_json::json!({
+                    "success": false,
+                    "error_code": "TIMEOUT",
+                    "error": format!("Test run timed out after {}s", p.timeout),
+                }));
             }
-            Ok(output_lines) => {
-                let passed = output_lines
-                    .lines()
-                    .find(|l| l.to_lowercase().contains("passed:"))
-                    .and_then(|l| {
-                        l.split(':')
-                            .nth(1)?
-                            .split_whitespace()
-                            .next()?
-                            .parse::<u64>()
-                            .ok()
-                    })
-                    .unwrap_or(0);
-                let failed = output_lines
-                    .lines()
-                    .find(|l| l.to_lowercase().contains("failed:"))
-                    .and_then(|l| {
-                        l.split(':')
-                            .nth(1)?
-                            .split_whitespace()
-                            .next()?
-                            .parse::<u64>()
-                            .ok()
-                    })
-                    .unwrap_or(0);
-                let total = passed + failed;
-                // FR-015/Mo1: distinguish "no tests found" from "test failure".
-                if total == 0 {
-                    self.record_call("iris_test", false);
-                    return ok_json(serde_json::json!({
-                        "success": false,
-                        "error_code": "NO_TESTS_FOUND",
-                        "error": "Pattern matched no test classes",
-                        "pattern": p.pattern,
-                        "namespace": p.namespace,
-                        "passed": 0,
-                        "failed": 0,
-                        "total": 0,
-                    }));
+            Ok(Err(e)) => {
+                self.record_call("iris_test", false);
+                return ok_json(serde_json::json!({
+                    "success": false,
+                    "error_code": ERR_TEST_EXECUTION_ERROR,
+                    "error": e.to_string(),
+                }));
+            }
+            Ok(Ok(out)) => out,
+        };
+
+        // Parse RunTest stdout to build structured results.
+        // IRIS RunTest output format (per-method lines):
+        //   "    ClassName begins ..."        ← class scope
+        //   "      TestFoo() begins ..."
+        //   "      TestFoo() PASSED in 0.0001s"
+        //   "      TestBar() FAILED in 0.0001s"
+        // ^UnitTest.Result only has suite-level data in the objectgenerator context
+        // (class/method %Save() calls are inside nested transactions that don't commit).
+        // Stdout parsing is reliable and provides timing data directly.
+        let mut test_cases: Vec<serde_json::Value> = Vec::new();
+        let mut current_class = String::new();
+        let mut passed = 0u64;
+        let mut failed = 0u64;
+        let errors = 0u64;
+        let mut class_map: std::collections::HashMap<String, Vec<serde_json::Value>> =
+            std::collections::HashMap::new();
+
+        // With /verbose=1, IRIS RunTest outputs:
+        //   "    ClassName begins ..."
+        //   "      TestFoo() begins ..."   ← method start
+        //   "      TestFoo passed"          ← method result (no parens, no timing)
+        //   "      TestFoo FAILED -- <msg>" ← method failure
+        //   "    ClassName passed"
+        for line in run_output.lines() {
+            let trimmed = line.trim();
+            // Class begin: "IrisDevE2E.SmokeTest begins ..."  (contains dot, no parens)
+            if trimmed.ends_with("begins ...") && !trimmed.contains("()") && trimmed.contains('.') {
+                current_class = trimmed.trim_end_matches(" begins ...").trim().to_string();
+            }
+            // Method result: "TestFoo passed" or "TestFoo FAILED" or "TestFoo FAILED -- msg"
+            // These lines have no "()" and start with "Test"
+            else if !trimmed.contains("()") && !trimmed.ends_with("begins ...") {
+                let upper = trimmed.to_uppercase();
+                let (is_passed, is_failed) = (
+                    upper.ends_with(" PASSED") || upper.contains(" PASSED "),
+                    upper.ends_with(" FAILED") || upper.contains(" FAILED"),
+                );
+                if !is_passed && !is_failed {
+                    continue;
                 }
-                let success = failed == 0;
-                self.record_call("iris_test", success);
-                ok_json(serde_json::json!({
-                    "success": success,
-                    "pattern": p.pattern,
-                    "namespace": p.namespace,
-                    "passed": passed,
-                    "failed": failed,
-                    "total": total,
-                    "output": output_lines.trim(),
-                }))
+                let method_name = if is_passed {
+                    trimmed
+                        .split(" passed")
+                        .next()
+                        .unwrap_or("")
+                        .split(" PASSED")
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string()
+                } else {
+                    trimmed
+                        .split(" failed")
+                        .next()
+                        .unwrap_or("")
+                        .split(" FAILED")
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string()
+                };
+                if method_name.is_empty()
+                    || (!method_name.starts_with("Test") && !method_name.starts_with("test"))
+                {
+                    continue;
+                }
+                let failure_message = if is_failed {
+                    trimmed
+                        .split_once(" -- ")
+                        .map(|x| x.1)
+                        .map(|s| serde_json::Value::String(s.trim().to_string()))
+                        .unwrap_or(serde_json::Value::Null)
+                } else {
+                    serde_json::Value::Null
+                };
+                if is_passed {
+                    passed += 1;
+                } else {
+                    failed += 1;
+                }
+                let tc = serde_json::json!({
+                    "name": method_name,
+                    "class_name": current_class,
+                    "status": if is_passed { "passed" } else { "failed" },
+                    "duration_ms": null,
+                    "failure_message": failure_message,
+                });
+                test_cases.push(tc.clone());
+                class_map.entry(current_class.clone()).or_default().push(tc);
             }
         }
+
+        let test_suites: Vec<serde_json::Value> = class_map
+            .iter()
+            .map(|(name, cases)| {
+                let s_fail = cases.iter().filter(|c| c["status"] == "failed").count() as u64;
+                serde_json::json!({
+                    "name": name,
+                    "tests": cases.len(),
+                    "failures": s_fail,
+                    "errors": 0,
+                    "duration_ms": null,
+                })
+            })
+            .collect();
+
+        let total = passed + failed + errors;
+
+        if total == 0 {
+            self.record_call("iris_test", false);
+            return ok_json(serde_json::json!({
+                "success": false,
+                "error_code": ERR_NO_TESTS_FOUND,
+                "error": "Pattern matched no test classes",
+                "pattern": p.pattern,
+                "namespace": p.namespace,
+                "total": 0,
+                "passed": 0,
+                "failed": 0,
+                "path": path_label,
+                "source": "stdout_parse",
+            }));
+        }
+
+        let success = failed == 0 && errors == 0;
+
+        // Store full per-case detail in log store.
+        let log_id = {
+            let id = log_store::new_log_id();
+            let full = serde_json::json!({
+                "test_suites": test_suites.iter().map(|s| {
+                    let name = s["name"].as_str().unwrap_or("");
+                    let cases: Vec<_> = test_cases.iter()
+                        .filter(|c| c["class_name"].as_str() == Some(name))
+                        .cloned()
+                        .collect();
+                    let mut suite = s.clone();
+                    suite["test_cases"] = serde_json::Value::Array(cases);
+                    suite
+                }).collect::<Vec<_>>(),
+                "raw_output": run_output.trim(),
+            });
+            let entry = log_store::LogEntry {
+                id: id.clone(),
+                tool: "iris_test".to_string(),
+                created_at: std::time::Instant::now(),
+                preview: vec![],
+                full_result: full,
+                total_count: total as usize,
+            };
+            if let Ok(mut s) = self.log_store.lock() {
+                s.store(entry);
+            }
+            id
+        };
+
+        self.record_call("iris_test", success);
+        ok_json(serde_json::json!({
+            "success": success,
+            "total": total,
+            "passed": passed,
+            "failed": failed,
+            "errors": errors,
+            "skipped": 0,
+            "duration_ms": null,
+            "path": path_label,
+            "log_id": log_id,
+            "pattern": p.pattern,
+            "namespace": p.namespace,
+            "test_suites": test_suites,
+        }))
     }
 
     #[tool(

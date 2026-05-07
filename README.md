@@ -134,7 +134,7 @@ iris-dev exposes 23 tools to your AI assistant:
 | `iris_generate_class` | — | Generate and compile a class from a description (requires LLM API key). |
 | `iris_generate_test` | — | Generate `%UnitTest` scaffolding for an existing class. |
 | `iris_source_control` | ✓ | Check lock status, checkout, execute SCM actions. |
-| `iris_test` | ✓ | Run `%UnitTest` tests and return structured pass/fail results. |
+| `iris_test` | — | Run `%UnitTest` tests and return structured pass/fail results. Works over HTTP (no docker required); uses docker exec if `IRIS_CONTAINER` is set. |
 | `iris_production` | ✓ | Start, stop, update, check, or recover an Interoperability production. |
 | `iris_interop_query` | ✓ | Query production logs, queue depths, or message archive. |
 | `iris_containers` | ✓ | List, select, or start IRIS Docker containers. |

@@ -932,7 +932,7 @@ dependencies = [
 
 [[package]]
 name = "iris-dev"
-version = "0.4.12"
+version = "0.4.13"
 dependencies = [
  "anyhow",
  "clap",
@@ -948,7 +948,7 @@ dependencies = [
 
 [[package]]
 name = "iris-dev-core"
-version = "0.4.12"
+version = "0.4.13"
 dependencies = [
  "anyhow",
  "bollard",

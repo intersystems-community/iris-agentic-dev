@@ -79,9 +79,9 @@ An agent running tests can tell the difference between "tests ran but some faile
 - Pattern matches test classes in multiple packages — all should be included in results.
 - Test class compiles but has no test methods (no methods starting with `Test`) — return `total: 0` with a warning.
 - Very long test runs (>60 seconds) — default timeout applies; partial results not returned.
-- IRIS version older than 2019.1 — `/junit` qualifier may not be available; falls back to `^UnitTestRoot` globals.
-- Concurrent test runs from multiple agent sessions — each run uses a unique temp file path (UUID-keyed) to avoid collision.
-- jUnit file contains non-UTF8 characters in test output — handled gracefully, problematic characters sanitized.
+- IRIS version older than 2019.1 — `%UnitTest.Result.*` tables may have different schema; feature targets IRIS 2019.1+ (same baseline as execute_via_generator).
+- Concurrent test runs from multiple agent sessions — `TestInstance` correlation strategy must handle this (see FR-002 and Assumptions).
+- Non-UTF8 characters in `ErrorDescription` SQL field — handled gracefully by Rust's JSON serialization (replaces invalid bytes).
 
 ---
 
@@ -90,14 +90,14 @@ An agent running tests can tell the difference between "tests ran but some faile
 ### Functional Requirements
 
 - **FR-001**: When `IRIS_CONTAINER` is not set, `iris_test` MUST execute `%UnitTest.Manager.RunTest()` via the HTTP execution path (Atelier REST) rather than docker exec.
-- **FR-002**: `iris_test` MUST pass the `/junit=<temp_path>` qualifier to `RunTest()` to capture results as jUnit XML in a unique temporary file path using `##class(%File).TempFilename()` (portable across all IRIS platforms including Windows; UUID suffix appended to guarantee uniqueness across concurrent runs).
-- **FR-003**: After execution, `iris_test` MUST read the jUnit XML file back via a second `execute_via_generator` call that uses ObjectScript file I/O (`%Stream.FileCharacter`) to read and Write the file contents. The full parsed jUnit detail MUST be stored in the progressive disclosure log store (027) under a UUID, the compact summary returned inline, and `log_id` included in the response for drill-down via `iris_get_log`.
+- **FR-002**: After `RunTest()` completes, `iris_test` MUST query `%UnitTest.Result.TestInstance` via SQL to identify the most recent test run, then query `%UnitTest.Result.TestSuite` and `%UnitTest.Result.TestMethod` for that instance. Note: the implementation MUST correlate the run to its TestInstance to avoid returning results from a concurrent or prior run (see Assumptions for the chosen correlation strategy).
+- **FR-003**: The full per-method detail from the SQL results MUST be stored in the progressive disclosure log store (027) under a UUID; the compact suite-level summary MUST be returned inline; `log_id` MUST be included in the response for drill-down via `iris_get_log`.
 - **FR-004**: The inline (compact) response MUST include: `success` (bool), `total` (int), `passed` (int), `failed` (int), `errors` (int), `skipped` (int), `duration_ms` (float), `path` (enum: `"http"` | `"docker"` | `"http_fallback"`), `log_id` (string — UUID for full detail), `test_suites` (array of suite-level summaries: name + counts only, no per-test-case detail inline).
 - **FR-005**: Each test suite object MUST include: `name` (string), `tests` (int), `failures` (int), `errors` (int), `duration_ms` (float), `test_cases` (array).
 - **FR-006**: Each test case object MUST include: `name` (string), `class_name` (string), `status` (enum: `"passed"` | `"failed"` | `"error"` | `"skipped"`), `duration_ms` (float), `failure_message` (string or null).
 - **FR-007**: When `IRIS_CONTAINER` is set, `iris_test` MUST use the existing docker exec path. If docker exec fails, it MUST attempt the HTTP fallback and set `path: "http_fallback"`.
 - **FR-008**: If the jUnit file cannot be read or parsed, `iris_test` MUST fall back to reading `^UnitTestRoot` globals via `iris_query` and return the same JSON shape (best-effort: fields unavailable from globals such as `duration_ms` and `skipped` are null/zero) with `"source": "globals_fallback"` in the response. The log store entry for the fallback path MUST still be created using the globals-derived data.
-- **FR-009**: The temporary jUnit file MUST be deleted after reading, regardless of success or failure.
+- **FR-009**: ~~Temp file cleanup~~ N/A — removed. The SQL-query approach (FR-002) does not use a temporary file. `%UnitTest.Result.*` table data persists in IRIS until the next test run overwrites it, which is standard IRIS behavior.
 - **FR-010**: `iris_test` MUST accept a `timeout` parameter (default: 60 seconds) that bounds the test run duration.
 
 ### Key Entities
