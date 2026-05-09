@@ -106,3 +106,107 @@ jobs:
             ```
 
             See the [README](https://github.com/intersystems-community/iris-dev#readme) for full setup instructions.
+
+            ### Homebrew (macOS / Linux)
+            ```bash
+            brew tap intersystems-community/tap
+            brew install iris-dev
+            ```
+
+  update-homebrew-tap:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Compute SHA256s
+        id: sha
+        run: |
+          echo "arm64=$(shasum -a 256 iris-dev-macos-arm64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "x86_64=$(shasum -a 256 iris-dev-macos-x86_64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "linux=$(shasum -a 256 iris-dev-linux-x86_64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Update homebrew-tap formula
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          VERSION="${{ steps.sha.outputs.version }}"
+          ARM64="${{ steps.sha.outputs.arm64 }}"
+          X86_64="${{ steps.sha.outputs.x86_64 }}"
+          LINUX="${{ steps.sha.outputs.linux }}"
+
+          gh api repos/intersystems-community/homebrew-tap/contents/Formula/iris-dev.rb \
+            --jq '.sha' > tap_sha.txt
+
+          python3 - <<PYEOF
+          import base64, json, subprocess, sys
+
+          with open("tap_sha.txt") as f:
+              tap_sha = f.read().strip()
+
+          formula = f'''class IrisDev < Formula
+            desc "MCP server connecting AI assistants to InterSystems IRIS — compile, test, debug ObjectScript without leaving the chat"
+            homepage "https://github.com/intersystems-community/iris-dev"
+            version "{VERSION}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/intersystems-community/iris-dev/releases/download/v#{{{VERSION}}}/iris-dev-macos-arm64"
+                sha256 "{ARM64}"
+              end
+              on_intel do
+                url "https://github.com/intersystems-community/iris-dev/releases/download/v#{{{VERSION}}}/iris-dev-macos-x86_64"
+                sha256 "{X86_64}"
+              end
+            end
+
+            on_linux do
+              on_intel do
+                url "https://github.com/intersystems-community/iris-dev/releases/download/v#{{{VERSION}}}/iris-dev-linux-x86_64"
+                sha256 "{LINUX}"
+              end
+            end
+
+            def install
+              bin_name = "iris-dev-macos-arm64"
+              bin_name = "iris-dev-macos-x86_64" if Hardware::CPU.intel? && OS.mac?
+              bin_name = "iris-dev-linux-x86_64" if OS.linux?
+              bin.install bin_name => "iris-dev"
+            end
+
+            def caveats
+              <<~EOS
+                Quick start (no docker required):
+                  export IRIS_HOST=localhost
+                  export IRIS_WEB_PORT=52773
+                  iris-dev mcp
+
+                Full setup: https://github.com/intersystems-community/iris-dev#readme
+              EOS
+            end
+
+            test do
+              assert_match "iris-dev {VERSION}", shell_output("#{{bin}}/iris-dev --version")
+            end
+          end
+          '''
+
+          payload = json.dumps({{
+              "message": f"chore: bump iris-dev to v{VERSION}",
+              "content": base64.b64encode(formula.encode()).decode(),
+              "sha": tap_sha,
+          }})
+
+          result = subprocess.run(
+              ["gh", "api", "--method", "PUT",
+               "repos/intersystems-community/homebrew-tap/contents/Formula/iris-dev.rb",
+               "--input", "-"],
+              input=payload, capture_output=True, text=True
+          )
+          if result.returncode != 0:
+              print(result.stderr, file=sys.stderr)
+              sys.exit(1)
+          print(f"Updated homebrew-tap formula to v{VERSION}")
+          PYEOF

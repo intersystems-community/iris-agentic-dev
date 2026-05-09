@@ -170,3 +170,11 @@ path = "tests/progressive_disclosure_integration.rs"
 [[test]]
 name = "docker_discovery_e2e"
 path = "tests/docker_discovery_e2e.rs"
+
+[[test]]
+name = "test_iris_test_http"
+path = "tests/unit/test_iris_test_http.rs"
+
+[[test]]
+name = "test_iris_test_e2e"
+path = "tests/integration/test_iris_test_e2e.rs"
