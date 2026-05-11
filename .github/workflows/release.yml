@@ -137,10 +137,6 @@ jobs:
         run: |
           TAP_SHA=$(gh api repos/intersystems-community/homebrew-tap/contents/Formula/iris-dev.rb --jq '.sha')
           export TAP_SHA
-          cat update_formula.py | python3
-        shell: bash
-      - name: Write formula updater script
-        run: |
           cat > update_formula.py << 'SCRIPT'
           import base64, json, os, subprocess, sys
           v=os.environ['VERSION']; a64=os.environ['ARM64']; x86=os.environ['X86_64']; lnx=os.environ['LINUX']; sha=os.environ['TAP_SHA']
@@ -186,3 +182,4 @@ jobs:
           r = subprocess.run(['gh','api','--method','PUT','repos/intersystems-community/homebrew-tap/contents/Formula/iris-dev.rb','--input','-'], input=payload, capture_output=True, text=True)
           sys.exit(0 if r.returncode==0 else (print(r.stderr,file=sys.stderr) or 1))
           SCRIPT
+          python3 update_formula.py
