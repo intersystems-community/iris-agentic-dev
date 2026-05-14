@@ -2015,7 +2015,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Run %UnitTest.Manager tests on IRIS and return structured pass/fail results. Works without docker via pure-HTTP execution (default). If IRIS_CONTAINER is set, uses docker exec first and falls back to HTTP if docker fails. Pass a class pattern like 'MyApp.Tests' or 'MyApp.Tests.Order'. Returns suite-level summary inline plus log_id for per-test-case detail via iris_get_log."
+        description = "Run %UnitTest.Manager tests on IRIS and return structured pass/fail results. Uses pure-HTTP execution via Atelier REST — works with or without IRIS_CONTAINER. Pass a class pattern like 'MyApp.Tests' or 'MyApp.Tests.Order'. Returns suite-level summary inline plus log_id for per-test-case detail via iris_get_log."
     )]
     async fn iris_test(
         &self,
@@ -2023,113 +2023,11 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(namespace = %p.namespace, pattern = %p.pattern, "iris_test");
         let timeout = std::time::Duration::from_secs(p.timeout);
-        let container = std::env::var("IRIS_CONTAINER")
-            .ok()
-            .filter(|v| !v.is_empty());
 
-        // When IRIS_CONTAINER is set, try docker exec path first.
-        if container.is_some() {
-            let iris = self.get_iris()?;
-            let code = format!(
-                "do ##class(%UnitTest.Manager).RunTest(\"{}\",\"/noload/run\")",
-                p.pattern.replace('"', "\\\"")
-            );
-            let docker_result =
-                tokio::time::timeout(timeout, iris.execute(&code, &p.namespace)).await;
-            match docker_result {
-                Ok(Ok(output_lines)) => {
-                    // Docker path succeeded — build structured response additively.
-                    let passed = output_lines
-                        .lines()
-                        .find(|l| l.to_lowercase().contains("passed:"))
-                        .and_then(|l| {
-                            l.split(':')
-                                .nth(1)?
-                                .split_whitespace()
-                                .next()?
-                                .parse::<u64>()
-                                .ok()
-                        })
-                        .unwrap_or(0);
-                    let failed = output_lines
-                        .lines()
-                        .find(|l| l.to_lowercase().contains("failed:"))
-                        .and_then(|l| {
-                            l.split(':')
-                                .nth(1)?
-                                .split_whitespace()
-                                .next()?
-                                .parse::<u64>()
-                                .ok()
-                        })
-                        .unwrap_or(0);
-                    let total = passed + failed;
-                    if total == 0 {
-                        self.record_call("iris_test", false);
-                        return ok_json(serde_json::json!({
-                            "success": false,
-                            "error_code": ERR_NO_TESTS_FOUND,
-                            "error": "Pattern matched no test classes",
-                            "pattern": p.pattern,
-                            "namespace": p.namespace,
-                            "passed": 0,
-                            "failed": 0,
-                            "total": 0,
-                            "errors": 0,
-                            "skipped": 0,
-                            "path": "docker",
-                            "log_id": null,
-                            "test_suites": [],
-                        }));
-                    }
-                    let success = failed == 0;
-                    // Store docker output in log store for drill-down.
-                    let log_id = {
-                        let id = log_store::new_log_id();
-                        let entry = log_store::LogEntry {
-                            id: id.clone(),
-                            tool: "iris_test".to_string(),
-                            created_at: std::time::Instant::now(),
-                            preview: vec![],
-                            full_result: serde_json::json!({"output": output_lines.trim()}),
-                            total_count: total as usize,
-                        };
-                        if let Ok(mut s) = self.log_store.lock() {
-                            s.store(entry);
-                        }
-                        id
-                    };
-                    self.record_call("iris_test", success);
-                    return ok_json(serde_json::json!({
-                        "success": success,
-                        "pattern": p.pattern,
-                        "namespace": p.namespace,
-                        "total": total,
-                        "passed": passed,
-                        "failed": failed,
-                        "errors": 0,
-                        "skipped": 0,
-                        "duration_ms": null,
-                        "path": "docker",
-                        "log_id": log_id,
-                        "test_suites": [],
-                        // Preserved for backward compatibility
-                        "output": output_lines.trim(),
-                    }));
-                }
-                // Docker failed or timed out — fall through to HTTP fallback.
-                _ => {
-                    tracing::info!("iris_test: docker exec failed, falling back to HTTP path");
-                }
-            }
-        }
-
-        // HTTP path (default when no container, or fallback when docker failed).
-        let path_label = if container.is_some() {
-            "http_fallback"
-        } else {
-            "http"
-        };
+        // HTTP path only — docker exec path removed (#46: /noload/run assumed pre-loaded
+        // classes which never existed in a fresh iris session, causing false "no test classes"
+        // errors; HTTP path with /verbose=1 is reliable and works with or without docker).
+        let path_label = "http";
         let iris = self.get_iris()?;
         let client = self.http_client();
 
