@@ -2,8 +2,6 @@
 
 Connect GitHub Copilot, Claude Code, or any MCP-compatible AI assistant directly to a live InterSystems IRIS instance. Your AI can compile, test, search, read, write, and debug ObjectScript without leaving the chat.
 
-**No Python. No pip. No npm. No API keys.**
-
 ---
 
 ## How it works
@@ -134,7 +132,7 @@ iris-dev exposes 23 tools to your AI assistant:
 | `iris_generate_class` | — | Generate and compile a class from a description (requires LLM API key). |
 | `iris_generate_test` | — | Generate `%UnitTest` scaffolding for an existing class. |
 | `iris_source_control` | ✓ | Check lock status, checkout, execute SCM actions. |
-| `iris_test` | — | Run `%UnitTest` tests and return structured pass/fail results. Works over HTTP (no docker required); uses docker exec if `IRIS_CONTAINER` is set. |
+| `iris_test` | — | Run `%UnitTest` tests and return structured pass/fail results. Works over HTTP with or without `IRIS_CONTAINER`. |
 | `iris_production` | ✓ | Start, stop, update, check, or recover an Interoperability production. |
 | `iris_interop_query` | ✓ | Query production logs, queue depths, or message archive. |
 | `iris_containers` | ✓ | List, select, or start IRIS Docker containers. `iris_select_container` now hot-swaps the active connection — no session restart required. |
