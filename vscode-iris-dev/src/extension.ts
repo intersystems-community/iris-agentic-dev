@@ -108,6 +108,10 @@ export class IrisDevMcpProvider
       .get<string>('containerName');
     this.log.info(`iris-dev: containerName = ${containerName}`);
 
+    const tlsVerify = vscode.workspace
+      .getConfiguration('http')
+      .get<boolean>('proxyStrictSSL');
+
     // Resolve named server if using intersystems.servers.
     // Server Manager writes server definitions to user settings, so we must
     // check both workspace-scoped config (for .vscode/settings.json) and
@@ -167,6 +171,7 @@ export class IrisDevMcpProvider
       IRIS_ISFS: isIsfs ? 'true' : undefined,
       IRIS_SERVER_NAME: conn.server ?? undefined,
       IRIS_CONTAINER: containerName ?? undefined,
+      IRIS_TLS_VERIFY: tlsVerify ? 'true' : 'false',
       OBJECTSCRIPT_LEARNING: 'true',
     };
     const env: Record<string, string | number> = Object.fromEntries(
