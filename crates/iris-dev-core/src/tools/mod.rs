@@ -2167,6 +2167,7 @@ impl IrisTools {
                 if method_name.is_empty()
                     || (!method_name.starts_with("Test") && !method_name.starts_with("test"))
                     || method_name.contains('\\')
+                    || method_name.contains('/')
                     || method_name.contains('.')
                 {
                     continue;
@@ -2230,8 +2231,6 @@ impl IrisTools {
                 "failed": 0,
                 "path": path_label,
                 "source": "stdout_parse",
-                "_diag_raw": run_output.trim(),
-                "_diag_cases": format!("{:?}", test_cases.iter().map(|c| c["name"].as_str().unwrap_or("?")).collect::<Vec<_>>()),
             }));
         }
 
@@ -2281,8 +2280,6 @@ impl IrisTools {
             "pattern": p.pattern,
             "namespace": p.namespace,
             "test_suites": test_suites,
-            "_diag_raw": run_output.trim(),
-            "_diag_cases": format!("{:?}", test_cases.iter().map(|c| c["name"].as_str().unwrap_or("?")).collect::<Vec<_>>()),
         }))
     }
 
