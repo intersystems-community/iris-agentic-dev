@@ -2743,7 +2743,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to diagnose connection issues, verify hot-reload completed, confirm which container is active, or check if write tools are enabled. Fields: connected, host, port, namespace, container, config_file, config_loaded_at, iris_version, write_tools_enabled, connection_source."
+        description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active. To switch connection mid-session without restart: call check_config first to get config_watch_path, then write a .iris-agentic-dev.toml to that exact path, then call any tool — the reload fires automatically. Fields: connected, host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled, connection_source."
     )]
     async fn check_config(
         &self,
