@@ -3072,7 +3072,15 @@ impl IrisTools {
         let client = self.http_client();
         match iris.query("SELECT TOP 20 ErrorCode,ErrorText,TimeStamp FROM %SYSTEM.Error ORDER BY TimeStamp DESC", vec![], &_p.namespace, client).await {
             Ok(resp) => ok_json(serde_json::json!({"success": true, "errors": resp["result"]["content"]})),
-            Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
+            Err(e) => {
+                let msg = e.to_string();
+                // %SYSTEM.Error is not available on community edition — return empty gracefully
+                if msg.contains("SQLCODE: -30") || msg.contains("Table") && msg.contains("not found") {
+                    ok_json(serde_json::json!({"success": true, "errors": [], "note": "%SYSTEM.Error not available on this IRIS edition"}))
+                } else {
+                    err_json("IRIS_UNREACHABLE", &msg)
+                }
+            }
         }
     }
 
@@ -3102,7 +3110,19 @@ impl IrisTools {
                 );
                 ok_json(result)
             }
-            Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
+            Err(e) => {
+                let msg = e.to_string();
+                // %SYSTEM.Error not available on community edition — return empty gracefully
+                if msg.contains("SQLCODE: -30")
+                    || (msg.contains("Table") && msg.contains("not found"))
+                {
+                    ok_json(
+                        serde_json::json!({"success": true, "logs": [], "note": "%SYSTEM.Error not available on this IRIS edition"}),
+                    )
+                } else {
+                    err_json("IRIS_UNREACHABLE", &msg)
+                }
+            }
         }
     }
 

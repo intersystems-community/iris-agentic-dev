@@ -177,7 +177,9 @@ fn build_message_map_code(cls: &str) -> String {
     lines.push("For {".into());
     lines.push(r#"  Set msgStart=$FIND(xml,"MessageType=",pos+1)  Quit:'msgStart"#.into());
     lines.push(r#"  Set qStart=$FIND(xml,q,msgStart)  Quit:'qStart"#.into());
-    lines.push(r#"  Set qEnd=$FIND(xml,q,qStart)-1  Set msgType=$EXTRACT(xml,qStart,qEnd-1)"#.into());
+    lines.push(
+        r#"  Set qEnd=$FIND(xml,q,qStart)-1  Set msgType=$EXTRACT(xml,qStart,qEnd-1)"#.into(),
+    );
     lines.push(r#"  Set mTagEnd=$FIND(xml,"<Method>",qEnd)  Quit:'mTagEnd"#.into());
     lines.push(r#"  Set mEnd=$FIND(xml,"</Method>",mTagEnd)-1"#.into());
     lines.push(r#"  Set meth=$EXTRACT(xml,mTagEnd,mEnd-$LENGTH("</Method>"))"#.into());
@@ -458,7 +460,10 @@ mod tests {
             code.contains("HS.Flash.Router||MessageMap"),
             "must use || key"
         );
-        assert!(code.contains("MessageType="), "must search for MessageType attr");
+        assert!(
+            code.contains("MessageType="),
+            "must search for MessageType attr"
+        );
         assert!(code.contains("<Method>"), "must search for Method tag");
         assert!(
             code.contains("MessageType"),
