@@ -141,6 +141,18 @@ jobs:
           echo "WARNING: Could not authenticate with any known credentials"
           echo "IRIS_USERNAME=_SYSTEM" >> $GITHUB_ENV
           echo "IRIS_PASSWORD=SYS" >> $GITHUB_ENV
+      - name: Create UnitTest directories in IRIS container
+        run: |
+          # iris_test uses RunTest which needs pre-existing directories with .cls files
+          # RunTest /load looks for .cls files in ^UnitTestRoot/PackageName/
+          docker exec iris-e2e bash -c "mkdir -p /tmp/httest/IrisDevRunTest"
+          docker exec iris-e2e bash -c "cat > /tmp/httest/IrisDevRunTest/UnitTestSuite.cls << 'CLS'
+Class IrisDevRunTest.UnitTestSuite Extends %%UnitTest.TestCase {
+Method TestAlwaysPasses() { Do \$\$\$AssertEquals(1,1) }
+Method TestAlwaysFails() { Do \$\$\$AssertEquals(1,2) }
+}
+CLS"
+          echo "Created /tmp/httest/IrisDevRunTest/UnitTestSuite.cls in iris-e2e container"
       - name: Run E2E tests against live IRIS (Rust)
         run: cargo test --test test_e2e -- --nocapture
         env:

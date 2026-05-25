@@ -2094,38 +2094,91 @@ impl IrisTools {
         // After RunTest completes, ^UnitTest.Result global IS persisted (globals bypass
         // the objectgenerator transaction boundary; SQL %Save() does not).
         // We write the run index out and return it to identify the run in the next step.
+        // iris_test preamble sets ^UnitTestRoot to /tmp/httest/ (IRIS community default).
+        // Also pre-creates the pattern subdirectory if it doesn't exist.
         let run_code = format!(
-            r#"do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1/nodelete","{token}")"#,
+            r#"set utRoot="/tmp/httest/"
+if '##class(%File).DirectoryExists(utRoot) {{ do ##class(%File).CreateDirectoryChain(utRoot) }}
+set pkgDir=utRoot_"{pattern}"_"/"
+if '##class(%File).DirectoryExists(pkgDir) {{ do ##class(%File).CreateDirectoryChain(pkgDir) }}
+set ^UnitTestRoot=utRoot
+do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1/nodelete","{token}")"#,
             token = correlation_token,
             pattern = safe_pattern,
         );
 
-        let run_result = tokio::time::timeout(
-            timeout,
-            iris.execute_via_generator(&run_code, &p.namespace, client),
-        )
-        .await;
+        // Try HTTP (execute_via_generator) first. Fall back to docker exec if:
+        // - IRIS_CONTAINER is set, AND
+        // - HTTP returns empty output (RunTest couldn't create the pattern directory
+        //   because execute_via_generator restricts filesystem writes)
+        // RunTest writes verbose output to $IO (terminal device).
+        // execute_via_generator redirects $IO to a temp file but RunTest also needs
+        // to create directories under ^UnitTestRoot — which fails in that context.
+        // When IRIS_CONTAINER is set, prefer docker exec (full filesystem + real terminal).
+        let has_container = std::env::var("IRIS_CONTAINER")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .is_some();
 
-        let run_output = match run_result {
-            Err(_) => {
-                self.record_call("iris_test", false);
-                return ok_json(serde_json::json!({
-                    "success": false,
-                    "error_code": "TIMEOUT",
-                    "error": format!("Test run timed out after {}s", p.timeout),
-                }));
+        let run_output = if has_container {
+            // Docker exec: full filesystem access, captures terminal output from RunTest
+            match tokio::time::timeout(timeout, iris.execute(&run_code, &p.namespace)).await {
+                Err(_) => {
+                    self.record_call("iris_test", false);
+                    return ok_json(serde_json::json!({
+                        "success": false,
+                        "error_code": "TIMEOUT",
+                        "error": format!("Test run timed out after {}s", p.timeout),
+                    }));
+                }
+                Ok(Err(_)) => {
+                    // Docker exec unavailable — fall through to HTTP
+                    match tokio::time::timeout(
+                        timeout,
+                        iris.execute_via_generator(&run_code, &p.namespace, client),
+                    )
+                    .await
+                    {
+                        Ok(Ok(out)) => out,
+                        _ => {
+                            self.record_call("iris_test", false);
+                            return ok_json(serde_json::json!({
+                                "success": false,
+                                "error_code": "DOCKER_REQUIRED",
+                                "error": "iris_test: IRIS_CONTAINER set but docker exec failed and HTTP fallback also failed.",
+                            }));
+                        }
+                    }
+                }
+                Ok(Ok(out)) => out,
             }
-            Ok(Err(e)) => {
-                self.record_call("iris_test", false);
-                return ok_json(serde_json::json!({
-                    "success": false,
-                    "error_code": ERR_TEST_EXECUTION_ERROR,
-                    "error": e.to_string(),
-                }));
+        } else {
+            // HTTP path: works for remote IRIS without docker
+            match tokio::time::timeout(
+                timeout,
+                iris.execute_via_generator(&run_code, &p.namespace, client),
+            )
+            .await
+            {
+                Err(_) => {
+                    self.record_call("iris_test", false);
+                    return ok_json(serde_json::json!({
+                        "success": false,
+                        "error_code": "TIMEOUT",
+                        "error": format!("Test run timed out after {}s", p.timeout),
+                    }));
+                }
+                Ok(Err(e)) => {
+                    self.record_call("iris_test", false);
+                    return ok_json(serde_json::json!({
+                        "success": false,
+                        "error_code": ERR_TEST_EXECUTION_ERROR,
+                        "error": e.to_string(),
+                    }));
+                }
+                Ok(Ok(out)) => out,
             }
-            Ok(Ok(out)) => out,
         };
-
         // Parse RunTest stdout to build structured results.
         // IRIS RunTest output format (per-method lines):
         //   "    ClassName begins ..."        ← class scope
@@ -2149,10 +2202,6 @@ impl IrisTools {
         //   "      TestFoo passed"          ← method result (no parens, no timing)
         //   "      TestFoo FAILED -- <msg>" ← method failure
         //   "    ClassName passed"
-        eprintln!(
-            "[iris_test diagnostic] raw RunTest output:\n{}",
-            run_output.trim()
-        );
         for line in run_output.lines() {
             let trimmed = line.trim();
             // Class begin: "IrisDevE2E.SmokeTest begins ..."  (contains dot, no parens)

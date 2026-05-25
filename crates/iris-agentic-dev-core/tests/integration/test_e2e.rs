@@ -808,37 +808,16 @@ fn e2e_compile_wildcard_package() {
 #[test]
 fn e2e_test_runs_unit_test_and_returns_counts() {
     require_iris!();
-    // Only runnable if IRIS_CONTAINER is set (iris_test uses docker exec)
-    if std::env::var("IRIS_CONTAINER")
-        .unwrap_or_default()
-        .is_empty()
-    {
-        eprintln!("Skipping: IRIS_CONTAINER not set — iris_test needs docker exec");
-        return;
-    }
 
-    // Pre-clean: delete any leftover Test022 classes from prior runs (/nodelete means they persist).
-    // Without this, parallel test execution causes false failures when stale classes are found.
-    for stale in &["Test022E2E.UnitTestSuite.cls", "Test022.PersistCheck.cls"] {
-        call_tool(
-            "iris_doc",
-            serde_json::json!({"mode":"delete","name":stale,"namespace":"USER"}),
-        );
-    }
-
-    // Seed a %UnitTest.TestCase with one passing and one failing method
-    let cls_doc = "Test022E2E.UnitTestSuite.cls";
-    let cls_content = r#"Class Test022E2E.UnitTestSuite Extends %UnitTest.TestCase {
-
-Method TestAlwaysPasses() {
-  Do $$$AssertEquals(1, 1, "one equals one")
-}
-
-Method TestAlwaysFails() {
-  Do $$$AssertEquals(1, 2, "one does not equal two")
-}
-
-}"#;
+    // Use a fixed class name so the /tmp/httest/IrisDevRunTest/ directory
+    // gets created on first run and persists. execute_via_generator cannot
+    // create new directories, so we need a pre-existing one.
+    // The directory is created by the iris_compile docker exec path on first run.
+    let cls_doc = "IrisDevRunTest.UnitTestSuite.cls";
+    let cls_content = "Class IrisDevRunTest.UnitTestSuite Extends %UnitTest.TestCase {
+        Method TestAlwaysPasses() { Do $$$AssertEquals(1,1) }
+        Method TestAlwaysFails() { Do $$$AssertEquals(1,2) }
+        }";
 
     let put = call_tool(
         "iris_doc",
@@ -856,15 +835,11 @@ Method TestAlwaysFails() {
         compile
     );
 
-    // %UnitTest.Manager.RunTest with /noload/run uses package prefix matching.
-    // Pass "Test022" to match all test classes in the Test022 package.
     let result = call_tool(
         "iris_test",
-        serde_json::json!({"pattern": "Test022E2E", "namespace": "USER"}),
+        serde_json::json!({"pattern": "IrisDevRunTest", "namespace": "USER"}),
     );
 
-    // iris_test returns success:false when any tests fail — that's expected here
-    // Accept NO_TESTS_FOUND if RunTest can't locate the class (env limitation)
     if result["error_code"].as_str() == Some("NO_TESTS_FOUND")
         || result["error_code"].as_str() == Some("DOCKER_REQUIRED")
     {
