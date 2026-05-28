@@ -127,6 +127,33 @@ Replace `your-iris-host` with your IRIS hostname (use `localhost` for a local in
 
 **Verify the connection** — after restarting OpenCode, call the `check_config` tool in a session. It should return `"connected": true`.
 
+**WSL2 note** — if IRIS is running on the Windows host (the typical case), use the Windows binary (`iris-agentic-dev.exe`) and set `IRIS_HOST` to the Windows host IP. From inside WSL2, the Windows host is usually reachable at the IP shown by `cat /etc/resolv.conf | grep nameserver | awk '{print $2}'`. Using the Linux binary against a Windows-hosted IRIS will fail because `localhost` inside WSL2 resolves to the Linux VM, not Windows.
+
+#### Troubleshooting
+
+**MCP tools not triggering / "failure connecting" errors**
+
+Most connection issues trace to one of these:
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| `check_config` works but compile/search fail | Atelier web app `Recurse=0` | Management Portal → Security → Web Apps → `/api/atelier` → enable **Recurse** |
+| All tools fail, namespace listing works | API version mismatch | Check your IRIS version supports v8 (`iris-agentic-dev --verbose` shows which version was detected) |
+| 403 errors on write operations | User lacks write permissions | Use a user with `%DB_USER` or `%All` role |
+| MCP works in CLI/TUI but not in GUI | OpenCode GUI beta issue | Use the CMD/TUI interface; report to the OpenCode team |
+
+**Diagnosing with `--verbose`**
+
+Run with verbose logging to see the exact HTTP calls:
+
+```bash
+iris-agentic-dev mcp --verbose 2>debug.log
+# Trigger a failing tool in OpenCode
+cat debug.log
+```
+
+The log shows which URL is being called and the HTTP status code. A 404 on `/api/atelier/v8/...` usually means the Recurse setting; a 401/403 is authentication; a connection refused means the host/port is wrong.
+
 ---
 
 ## Installation
