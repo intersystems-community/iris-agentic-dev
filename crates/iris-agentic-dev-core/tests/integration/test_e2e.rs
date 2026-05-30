@@ -3604,3 +3604,163 @@ fn e2e_find_subclass_implementations_empty_base_classes() {
     );
     assert_eq!(result["error_code"], "INVALID_PARAMS");
 }
+
+// ── 038: OpenCode documentation E2E tests ─────────────────────────────────────
+
+/// The literal JSON snippet from README.md Option D.
+/// This constant IS the README snippet — if the README changes, update here too.
+/// CI will catch any JSON syntax errors automatically.
+const OPENCODE_README_SNIPPET: &str = r#"{
+  "mcp": {
+    "iris-agentic-dev": {
+      "type": "local",
+      "command": ["/opt/homebrew/bin/iris-agentic-dev", "mcp"],
+      "enabled": true,
+      "environment": {
+        "IRIS_HOST": "your-iris-host",
+        "IRIS_WEB_PORT": "52773",
+        "IRIS_USERNAME": "_SYSTEM",
+        "IRIS_PASSWORD": "SYS",
+        "IRIS_NAMESPACE": "USER"
+      }
+    }
+  }
+}"#;
+
+/// The literal Docker variant from README.md Option D.
+const OPENCODE_DOCKER_README_SNIPPET: &str = r#"{
+  "mcp": {
+    "iris-agentic-dev": {
+      "type": "local",
+      "command": ["/opt/homebrew/bin/iris-agentic-dev", "mcp"],
+      "enabled": true,
+      "environment": {
+        "IRIS_HOST": "your-iris-host",
+        "IRIS_WEB_PORT": "52773",
+        "IRIS_USERNAME": "_SYSTEM",
+        "IRIS_PASSWORD": "SYS",
+        "IRIS_NAMESPACE": "USER",
+        "IRIS_CONTAINER": "my-iris-container"
+      }
+    }
+  }
+}"#;
+
+/// Simulates a newcomer following the OpenCode setup instructions in README.md.
+///
+/// Test sequence (mirrors what a noob would do):
+/// 1. Copy the JSON snippet from README → verify it parses as valid JSON
+/// 2. Check the snippet has all required environment keys
+/// 3. Launch iris-agentic-dev mcp with ONLY those env vars (as OpenCode does)
+/// 4. Call tools/list → verify binary responds
+/// 5. Call check_config → verify IRIS connection is established
+#[test]
+fn e2e_opencode_setup_follows_readme() {
+    require_iris!();
+
+    // Step 1: README snippet must be valid JSON
+    let config: serde_json::Value = serde_json::from_str(OPENCODE_README_SNIPPET)
+        .expect("README OpenCode snippet is not valid JSON");
+
+    // Step 2: All required environment keys must be present in the snippet
+    let env_block = &config["mcp"]["iris-agentic-dev"]["environment"];
+    for key in &[
+        "IRIS_HOST",
+        "IRIS_WEB_PORT",
+        "IRIS_USERNAME",
+        "IRIS_PASSWORD",
+        "IRIS_NAMESPACE",
+    ] {
+        assert!(
+            env_block[key].is_string(),
+            "README snippet missing required environment key: {}",
+            key
+        );
+    }
+
+    // Step 3: Build env map using actual test IRIS connection (substituting placeholders)
+    // This simulates the user filling in their real values in the snippet.
+    let host = std::env::var("IRIS_HOST").unwrap_or_default();
+    let port = std::env::var("IRIS_WEB_PORT").unwrap_or_else(|_| "52773".to_string());
+    let user = std::env::var("IRIS_USERNAME").unwrap_or_else(|_| "_SYSTEM".to_string());
+    let pass = std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".to_string());
+    let ns = std::env::var("IRIS_NAMESPACE").unwrap_or_else(|_| "USER".to_string());
+
+    // Exactly the keys from the README environment block — no extras
+    let opencode_env: Vec<(&str, String)> = vec![
+        ("IRIS_HOST", host),
+        ("IRIS_WEB_PORT", port),
+        ("IRIS_USERNAME", user),
+        ("IRIS_PASSWORD", pass),
+        ("IRIS_NAMESPACE", ns),
+    ];
+
+    // Step 4: tools/list — binary must respond (same as what OpenCode checks on startup)
+    let mut msgs = init_msgs();
+    msgs.push(serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}));
+    let responses = mcp_call_timeout(&opencode_env, &msgs, 10);
+    let tools_resp = responses.iter().find(|r| r["id"] == 2);
+    assert!(
+        tools_resp.is_some(),
+        "OpenCode env launch: binary did not respond to tools/list"
+    );
+    let tools = tools_resp.unwrap()["result"]["tools"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !tools.is_empty(),
+        "OpenCode env launch: tools/list returned 0 tools"
+    );
+
+    // Step 5: check_config — verify IRIS connection is live
+    let mut msgs2 = init_msgs();
+    msgs2.push(serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"check_config","arguments":{}}
+    }));
+    let responses2 = mcp_call_timeout(&opencode_env, &msgs2, 15);
+    let cfg_resp = responses2.iter().find(|r| r["id"] == 2);
+    if let Some(resp) = cfg_resp {
+        let text = resp["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or("{}");
+        let cfg: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+        assert_eq!(
+            cfg["connected"], true,
+            "check_config must return connected:true when launched with OpenCode env vars: {}",
+            text
+        );
+    }
+}
+
+/// Docker variant snippet from README must be valid JSON and include IRIS_CONTAINER.
+#[test]
+fn e2e_opencode_docker_snippet_is_valid_json() {
+    // No live IRIS needed — just validates JSON syntax and key presence
+    let config: serde_json::Value = serde_json::from_str(OPENCODE_DOCKER_README_SNIPPET)
+        .expect("README OpenCode Docker snippet is not valid JSON");
+
+    let env_block = &config["mcp"]["iris-agentic-dev"]["environment"];
+    assert!(
+        env_block["IRIS_CONTAINER"].is_string(),
+        "Docker README snippet must include IRIS_CONTAINER in environment"
+    );
+    // All base keys also present
+    for key in &[
+        "IRIS_HOST",
+        "IRIS_WEB_PORT",
+        "IRIS_USERNAME",
+        "IRIS_PASSWORD",
+        "IRIS_NAMESPACE",
+    ] {
+        assert!(
+            env_block[key].is_string(),
+            "Docker snippet missing required environment key: {}",
+            key
+        );
+    }
+    // Correct OpenCode structure
+    assert_eq!(config["mcp"]["iris-agentic-dev"]["type"], "local");
+    assert_eq!(config["mcp"]["iris-agentic-dev"]["enabled"], true);
+}

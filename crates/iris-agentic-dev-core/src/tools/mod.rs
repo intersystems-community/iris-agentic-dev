@@ -772,8 +772,11 @@ pub struct GetLogParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SourceMapParams {
-    pub cls_text: String,
+    /// Class name to build source map for (e.g. "Graph.KG.NKGAccel" or "Graph.KG.NKGAccel.cls").
     pub cls_name: String,
+    /// Not used — kept for backwards compatibility only. May be removed in a future version.
+    #[serde(default)]
+    pub cls_text: Option<String>,
     pub workspace_path: Option<String>,
     #[serde(default = "default_namespace")]
     pub namespace: String,
