@@ -141,6 +141,19 @@ def run_task_and_score(
         reasoning = "tool assertions passed" if passed else f"missing required tools: {tool_assertions}"
         return {"score": score, "reasoning": reasoning, "task_id": task_id, "condition": skill_name_or_none or "baseline"}
 
+    # For no-MCP (light-skills) mode: extract written file content and present as response
+    # The model writes .cls files locally; judge should assess the code quality, not tool use
+    if no_mcp:
+        written_content = _extract_written_content(events)
+        if written_content:
+            # Score the written code content directly, without tool-call overhead confusion
+            result = {"transcript": [{"role": "assistant", "text": written_content}], "tool_call_count": 0, "path": "B"}
+            scored = score_result(task_dict, result)
+            # Score 1 = correct code but judge wants compilation proof; treat as pass in light-skills
+            if scored["score"] == 1:
+                scored = {**scored, "score": 2, "reasoning": scored["reasoning"] + " [light-skills pass]"}
+            return {**scored, "task_id": task_id, "condition": skill_name_or_none or "baseline"}
+
     turns = format_transcript(events)
     tool_count = sum(
         1 for e in events
@@ -150,11 +163,31 @@ def run_task_and_score(
     )
     result = {"transcript": turns, "tool_call_count": tool_count, "path": "B"}
     scored = score_result(task_dict, result)
-    # For no-MCP (light-skills) tasks, score 1 = correct code but unverified = pass
-    # The standard rubric penalizes no-tool-calls, which is expected in light-skills mode
-    if no_mcp and scored["score"] == 1:
-        scored = {**scored, "score": 2, "reasoning": scored["reasoning"] + " [light-skills: score 1 promoted to pass]"}
     return {**scored, "task_id": task_id, "condition": skill_name_or_none or "baseline"}
+
+
+def _extract_written_content(events: list[dict]) -> str:
+    """Extract content from write tool calls — used in no-MCP mode to get the actual code."""
+    for event in events:
+        if event.get("type") != "tool_use":
+            continue
+        part = event.get("part", {})
+        state = part.get("state", {})
+        if state.get("status") != "completed":
+            continue
+        tool = part.get("tool", "")
+        if tool == "write":
+            inp = state.get("input", {})
+            content = inp.get("content", "")
+            if content and len(content) > 50:
+                return content
+    # Fall back to text output
+    texts = [
+        e["part"].get("text", "")
+        for e in events
+        if e.get("type") == "text" and e.get("part", {}).get("time", {}).get("end")
+    ]
+    return "\n".join(texts)
 
 
 def _parse_assertion_tool(assertion: str):
