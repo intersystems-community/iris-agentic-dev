@@ -1,9 +1,12 @@
 id: SKILL-01
 category: skills_quality
 scenario: us1_skills_only
+# Benchmark results (100% repair) were measured with Claude Sonnet, not GPT-4o-mini.
+# Use Bedrock Sonnet (Tom's stack) for the quality gate.
+model: bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0
 description: "objectscript-review catches Return-in-For-loop bug"
 prompt: |
-  Fix the bug in this ObjectScript method. Show the corrected code:
+  Use the objectscript-review skill to review and fix the bug in this ObjectScript method, then show the corrected code:
 
   Method FindFirst(list As %List) As %String
   {

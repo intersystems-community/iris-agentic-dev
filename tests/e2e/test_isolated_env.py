@@ -47,6 +47,7 @@ def test_config_content_has_skills_path():
 
 
 def test_config_content_no_mcp_by_default():
+    """No mcp key by default — global isolation handled via XDG_CONFIG_HOME."""
     with IsolatedEnv(openai_api_key="sk-test") as env:
         cfg = json.loads(env.config_content)
         assert "mcp" not in cfg
@@ -75,4 +76,6 @@ def test_env_vars_dict():
         ev = env.env_vars()
         assert ev["OPENCODE_CONFIG_CONTENT"] == env.config_content
         assert ev["OPENCODE_DB"] == env.db_path
-        assert "HOME" not in ev or True  # HOME passthrough is fine
+        assert ev["XDG_CONFIG_HOME"] == env.xdg_config
+        assert "XDG_DATA_HOME" not in ev  # intentionally NOT overridden — see isolated_env.py
+        assert os.path.isdir(env.xdg_config)

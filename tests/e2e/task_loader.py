@@ -30,6 +30,7 @@ class HarnessTask:
     skills_to_install: list[str] = field(default_factory=list)
     assertions: list[HarnessAssertion] = field(default_factory=list)
     expected_tool_calls: list[str] = field(default_factory=list)
+    model: str | None = None  # per-task model override
 
 
 def load_task(path: str) -> HarnessTask:
@@ -45,6 +46,7 @@ def load_task(path: str) -> HarnessTask:
         skills_to_install=data.get("skills_to_install", []),
         assertions=[HarnessAssertion(**a) for a in data.get("assertions", [])],
         expected_tool_calls=data.get("expected_tool_calls", []),
+        model=data.get("model"),
     )
 
 

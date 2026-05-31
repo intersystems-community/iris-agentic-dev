@@ -8,6 +8,8 @@ _CURL_URL_RE = re.compile(
     r"curl\s+-sL\s+(https://raw\.githubusercontent\.com/\S+)",
     re.MULTILINE,
 )
+# Shell variable patterns like $skill, ${SKILL} — not real URLs
+_SHELL_VAR_RE = re.compile(r"\$\{?\w+")
 
 _README_PATH = os.path.join(
     os.path.dirname(__file__), "..", "..", "light-skills", "README.md"
@@ -32,7 +34,9 @@ class ReadmeValidator:
             self._readme_text = f.read()
 
     def _extract_skill_urls(self) -> list[str]:
-        return _CURL_URL_RE.findall(self._readme_text)
+        urls = _CURL_URL_RE.findall(self._readme_text)
+        # Skip shell variable templates like $skill, ${SKILLS_DIR}
+        return [u for u in urls if not _SHELL_VAR_RE.search(u)]
 
     def _url_line_number(self, url: str) -> int:
         for i, line in enumerate(self._readme_text.splitlines(), 1):

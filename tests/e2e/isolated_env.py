@@ -21,7 +21,13 @@ class IsolatedEnv:
         self.run_id = str(int(time.time() * 1000))
         self._tmpdir = tempfile.mkdtemp(prefix=f"opencode-harness-{self.run_id}-")
         self.skills_dir = os.path.join(self._tmpdir, "skills")
+        # XDG_CONFIG_HOME override blocks ~/.config/opencode/config.json from loading,
+        # preventing global MCP servers (objectscript-plaza etc.) from bleeding in.
+        # XDG_DATA_HOME is intentionally NOT overridden — opencode hangs on DB migration
+        # when the data dir is empty. The existing auth DB must be accessible.
+        self.xdg_config = os.path.join(self._tmpdir, "xdg_config")
         os.makedirs(self.skills_dir, exist_ok=True)
+        os.makedirs(self.xdg_config, exist_ok=True)
         self.db_path = os.path.join(self._tmpdir, "opencode.db")
         return self
 
@@ -64,13 +70,17 @@ class IsolatedEnv:
                 }
             },
             "skills": {"paths": [self.skills_dir]},
+            # MCP: only present when with_mcp() was called.
+            # Global MCP isolation is handled via XDG_CONFIG_HOME override in env_vars().
+            **({} if not self._mcp_config else {"mcp": self._mcp_config}),
         }
-        if self._mcp_config:
-            cfg["mcp"] = self._mcp_config
         return json.dumps(cfg)
 
     def env_vars(self) -> dict:
         return {
             "OPENCODE_CONFIG_CONTENT": self.config_content,
             "OPENCODE_DB": self.db_path,
+            # XDG_CONFIG_HOME blocks ~/.config/opencode/config.json (global MCP servers).
+            # XDG_DATA_HOME intentionally not overridden — opencode hangs with empty data dir.
+            "XDG_CONFIG_HOME": self.xdg_config,
         }

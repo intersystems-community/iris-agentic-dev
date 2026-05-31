@@ -42,11 +42,12 @@ def run_task(
             for skill_name in task.skills_to_install:
                 validator.install_skill(skill_name)
 
-        # Run OpenCode
+        # Run OpenCode — task.model overrides the caller's default
+        effective_model = task.model or model
         events = collect_events(
             prompt=task.prompt,
             env_vars=env.env_vars(),
-            model=model,
+            model=effective_model,
         )
 
         # Collect text for code block extraction

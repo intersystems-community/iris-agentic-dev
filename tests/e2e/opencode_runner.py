@@ -1,8 +1,10 @@
 """OpenCode subprocess runner and event stream parser."""
 import json
 import os
+import signal
 import sqlite3
 import subprocess
+import threading
 from typing import Generator
 
 
@@ -31,10 +33,15 @@ def run_opencode(
     prompt: str,
     env_vars: dict,
     model: str = "openai/gpt-4o-mini",
-    timeout: int = 180,
+    timeout: int = 300,
     working_dir: str | None = None,
 ) -> Generator[dict, None, None]:
-    """Spawn opencode run and yield parsed JSON events from stdout."""
+    """Spawn opencode run and yield parsed JSON events from stdout.
+
+    Uses Popen + readline so we can kill the process as soon as the
+    session goes idle rather than waiting for opencode to exit on its own
+    (opencode run can hang on teardown after the LLM response completes).
+    """
     env = {**os.environ, **env_vars}
     cmd = [
         "opencode", "run", prompt,
@@ -42,22 +49,51 @@ def run_opencode(
         "--model", model,
         "--dangerously-skip-permissions",
     ]
-    proc = subprocess.run(
+    proc = subprocess.Popen(
         cmd,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
         text=True,
-        timeout=timeout,
         env=env,
         cwd=working_dir or os.getcwd(),
     )
-    yield from parse_events_from_lines(proc.stdout.splitlines())
+
+    # Kill the process after timeout regardless
+    timer = threading.Timer(timeout, lambda: proc.kill())
+    timer.start()
+
+    collected: list[dict] = []
+    try:
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+                collected.append(event)
+                # Stop reading once the session reports idle — opencode has finished
+                if (event.get("type") == "session.status"
+                        and event.get("properties", {}).get("status", {}).get("type") == "idle"):
+                    break
+                # Also stop on step_finish with no more steps pending (heuristic)
+            except json.JSONDecodeError:
+                continue
+    finally:
+        timer.cancel()
+        try:
+            proc.kill()
+            proc.wait(timeout=5)
+        except Exception:
+            pass
+
+    yield from collected
 
 
 def collect_events(
     prompt: str,
     env_vars: dict,
     model: str = "openai/gpt-4o-mini",
-    timeout: int = 180,
+    timeout: int = 300,
     working_dir: str | None = None,
 ) -> list[dict]:
     """Run opencode and return all events as a list."""
