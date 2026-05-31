@@ -40,3 +40,15 @@ iris-dev-linux*
 *.vsix
 run_benchmark.py
 *.pptx
+*.cls
+*.md
+Bench/
+EvalDemo/
+EvalDemo.*
+ListFilter.cls
+MyApp/
+example_patient*
+fixed_query*
+src/
+tests/Test/
+.iris-dev/
