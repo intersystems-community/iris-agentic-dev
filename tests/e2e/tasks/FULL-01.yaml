@@ -1,0 +1,35 @@
+id: FULL-01
+category: full_stack
+scenario: us3_full_stack
+description: "docs_introspect then iris_compile — full skill+MCP chain"
+prompt: |
+  Use docs_introspect to read the class User.HarnessTestClass, then write a
+  %UnitTest.TestCase subclass called User.HarnessTestClass.Test that tests the
+  Hello() class method, then compile it using iris_compile.
+fixtures:
+  - type: cls
+    name: User.HarnessTestClass
+    content: |
+      Class User.HarnessTestClass Extends %RegisteredObject
+      {
+
+      ClassMethod Hello() As %String [ CodeMode = expression ]
+      {
+      "Hello from HarnessTestClass"
+      }
+
+      }
+skills_to_install:
+  - objectscript-unit-test
+assertions:
+  - type: tool_called
+    pattern: "iris_agentic_dev:docs_introspect"
+    description: "docs_introspect must be called before writing the test"
+    required: true
+  - type: tool_called
+    pattern: "iris_agentic_dev:iris_compile"
+    description: "iris_compile must be called on the generated test class"
+    required: true
+expected_tool_calls:
+  - "iris_agentic_dev:docs_introspect"
+  - "iris_agentic_dev:iris_compile"

@@ -1,0 +1,26 @@
+id: MCP-01
+category: mcp_tools
+scenario: us2_mcp
+description: "iris_compile is called and returns a real IRIS result"
+prompt: "Compile the class User.HarnessTestClass using the iris_compile tool."
+fixtures:
+  - type: cls
+    name: User.HarnessTestClass
+    content: |
+      Class User.HarnessTestClass Extends %RegisteredObject
+      {
+
+      ClassMethod Hello() As %String [ CodeMode = expression ]
+      {
+      "Hello from HarnessTestClass"
+      }
+
+      }
+skills_to_install: []
+assertions:
+  - type: tool_called
+    pattern: "iris_agentic_dev:iris_compile"
+    description: "iris_compile MCP tool must be called"
+    required: true
+expected_tool_calls:
+  - "iris_agentic_dev:iris_compile"

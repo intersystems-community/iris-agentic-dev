@@ -159,6 +159,86 @@ jobs:
           IRIS_NAMESPACE: USER
           IRIS_CONTAINER: iris-e2e
 
+  skills-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install opencode
+        run: npm install -g opencode-ai
+      - name: Install Python test deps
+        run: pip install requests pyyaml pytest
+      - name: Run US1 skills quality gate (no IRIS needed)
+        run: python -m pytest tests/e2e/test_us1.py -m "us1 and not network_curl" -v --timeout=200
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      - name: Validate README curl URLs (network)
+        run: python -m pytest tests/e2e/test_us1.py -m "network_curl" -v --timeout=60
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      - name: Upload results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skills-e2e-results
+          path: tests/e2e/results/
+
+  skills-e2e-full:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install opencode
+        run: npm install -g opencode-ai
+      - name: Install iris-agentic-dev binary
+        run: |
+          curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-linux-x86_64 \
+            -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
+      - name: Install Python test deps
+        run: pip install requests pyyaml pytest pytest-timeout
+      - name: Start IRIS container
+        run: |
+          docker run -d --name iris-skills-e2e \
+            -p 52773:52773 \
+            -e IRIS_PASSWORD=SYS \
+            -e IRIS_USERNAME=_SYSTEM \
+            intersystemsdc/iris-community:2025.1
+      - name: Wait for IRIS Atelier API to be ready (up to 7 minutes)
+        run: |
+          echo "Waiting 90s for IRIS to initialize..."
+          sleep 90
+          for i in $(seq 1 60); do
+            status=$(curl -s -o /dev/null -w "%{http_code}" -u "_SYSTEM:SYS" "http://localhost:52773/api/atelier/" 2>/dev/null || echo "000")
+            if [ "$status" = "200" ]; then
+              echo "IRIS ready (HTTP 200)"
+              echo "IRIS_HOST=localhost" >> $GITHUB_ENV
+              exit 0
+            fi
+            echo "Attempt $i/60: HTTP $status — waiting..."
+            sleep 5
+          done
+          echo "IRIS did not start in time"; exit 1
+      - name: Run full skills E2E suite
+        run: python -m pytest tests/e2e/ -m "us1 or us2 or us3" -v --timeout=300
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          IRIS_CONTAINER: iris-skills-e2e
+          IRIS_WEB_PORT: "52773"
+      - name: Stop IRIS container
+        if: always()
+        run: docker stop iris-skills-e2e || true
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skills-e2e-full-results
+          path: tests/e2e/results/
+
   cross-compile-check:
     runs-on: ubuntu-latest
     steps:

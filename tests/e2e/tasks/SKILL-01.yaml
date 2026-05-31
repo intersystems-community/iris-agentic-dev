@@ -1,0 +1,23 @@
+id: SKILL-01
+category: skills_quality
+scenario: us1_skills_only
+description: "objectscript-review catches Return-in-For-loop bug"
+prompt: |
+  Fix the bug in this ObjectScript method. Show the corrected code:
+
+  Method FindFirst(list As %List) As %String
+  {
+    For i=1:1:$ListLength(list) {
+      If $List(list, i) '= "" { Return $List(list, i) }
+    }
+    Return ""
+  }
+fixtures: []
+skills_to_install:
+  - objectscript-review
+assertions:
+  - type: code_absent_pattern
+    pattern: 'For\b[^\n{]*\{[^}]*\bReturn\b'
+    description: "Fixed code must not use Return inside a For loop body — use Quit instead"
+    required: true
+expected_tool_calls: []
