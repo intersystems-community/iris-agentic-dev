@@ -1,0 +1,15 @@
+skill: ensemble-production
+description: "IRIS Interoperability production lifecycle, logs, queues, message tracing. Load-on-demand only."
+fire_rate_prompt: |
+  Use the ensemble-production skill to help me write ObjectScript code that starts an Interoperability production named MyApp.Production, waits for it to be running, and checks its status.
+benchmark_tasks: []
+domain_skill: true
+isolation_prompt: |
+  Fix this ObjectScript SQL query — the table name is wrong (should use underscore, not dot for the SQL table name):
+
+  ClassMethod GetPatients() As %DynamicArray
+  {
+    Set tSQL = "SELECT ID, Name FROM Bench.Patient WHERE Name %STARTSWITH 'A'"
+    Set tRS = ##class(%SQL.Statement).%ExecDirect(,tSQL)
+    // return results
+  }

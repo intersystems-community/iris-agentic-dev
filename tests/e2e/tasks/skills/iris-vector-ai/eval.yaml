@@ -1,0 +1,16 @@
+skill: iris-vector-ai
+description: "IRIS vector search syntax — HNSW index, VECTOR_COSINE, TO_VECTOR, similarity search. Load-on-demand only."
+fire_rate_prompt: |
+  Use the iris-vector-ai skill to write an ObjectScript SQL query that performs cosine similarity search on a VECTOR(DOUBLE, 384) column named 'embedding' in a table called RAG.Documents, using TO_VECTOR() to convert a query string, returning the top 10 results sorted by similarity.
+benchmark_tasks: []
+domain_skill: true
+isolation_prompt: |
+  Fix the bug in this ObjectScript method — it uses Return inside a For loop when it should use Quit:
+
+  Method FindFirst(list As %List) As %String
+  {
+    For i=1:1:$ListLength(list) {
+      If $List(list, i) '= "" { Return $List(list, i) }
+    }
+    Return ""
+  }

@@ -1,0 +1,19 @@
+skill: objectscript-review
+description: "Reviews ObjectScript code for common LLM mistakes before presenting to the user. HARD GATE — checks Return-vs-Quit in loops, string operations, and other common pitfalls."
+fire_rate_prompt: |
+  Use the objectscript-review skill to review and fix the bug in this ObjectScript method, then show the corrected code:
+
+  Method FindFirst(list As %List) As %String
+  {
+    For i=1:1:$ListLength(list) {
+      If $List(list, i) '= "" { Return $List(list, i) }
+    }
+    Return ""
+  }
+benchmark_tasks:
+  - DBG-01
+  - DBG-02
+  - DBG-03
+  - MOD-01
+  - MOD-02
+domain_skill: false

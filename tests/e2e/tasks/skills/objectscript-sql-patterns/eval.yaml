@@ -1,0 +1,8 @@
+skill: objectscript-sql-patterns
+description: "IRIS SQL quirks — reserved words, SQLCODE, table naming, NULL handling, %INLIST, IN clause limits, streams, DDL."
+fire_rate_prompt: |
+  Use the objectscript-sql-patterns skill to help write an ObjectScript embedded SQL query that searches for patients by name using LIKE, handles NULL values correctly, and uses proper IRIS table naming conventions.
+benchmark_tasks:
+  - GEN-03
+  - GEN-04
+domain_skill: false

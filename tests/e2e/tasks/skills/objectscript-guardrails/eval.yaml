@@ -1,0 +1,20 @@
+skill: objectscript-guardrails
+description: "Hard-gate checklist of 10 most common ObjectScript LLM mistakes. Use when writing or reviewing any ObjectScript code."
+fire_rate_prompt: |
+  Use the objectscript-guardrails skill to review this ObjectScript method before showing it to me:
+
+  Method ProcessItems(pList As %List) As %Status
+  {
+    Set tSC = $$$OK
+    For i=1:1:$ListLength(pList) {
+      Set tItem = $List(pList, i)
+      If tItem = "" { Return $$$OK }
+      Do ..HandleItem(tItem)
+    }
+    Return tSC
+  }
+benchmark_tasks:
+  - DBG-01
+  - DBG-02
+  - MOD-01
+domain_skill: false

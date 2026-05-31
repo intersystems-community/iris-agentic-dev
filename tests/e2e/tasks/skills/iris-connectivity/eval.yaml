@@ -1,0 +1,8 @@
+skill: iris-connectivity
+description: "IRIS connection APIs from Python, Java, JDBC, ODBC. Load-on-demand only."
+fire_rate_prompt: |
+  Use the iris-connectivity skill to write Python code that connects to IRIS using the intersystems-irispython package, calls a ClassMethod on User.HarnessTestClass, and handles connection errors.
+benchmark_tasks: []
+domain_skill: true
+isolation_prompt: |
+  Write an ObjectScript method that takes a %List of strings and returns a new %List containing only items longer than 3 characters. Use proper $LISTNEXT iteration.

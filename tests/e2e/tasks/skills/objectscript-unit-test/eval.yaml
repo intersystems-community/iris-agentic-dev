@@ -1,0 +1,8 @@
+skill: objectscript-unit-test
+description: "Generates %UnitTest.TestCase subclasses for ObjectScript classes using live IRIS introspection."
+fire_rate_prompt: |
+  Use the objectscript-unit-test skill to write a %UnitTest.TestCase subclass for User.HarnessTestClass. Use docs_introspect first to read the class definition, then generate the test class with at least one test method.
+benchmark_tasks:
+  - GEN-01
+  - GEN-02
+domain_skill: false
