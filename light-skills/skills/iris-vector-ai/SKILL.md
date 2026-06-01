@@ -48,6 +48,8 @@ tags:
 - [ ] Distance parameter: `'Cosine'` or `'DotProduct'` only — NOT `'l2'`, `'euclidean'`, `'inner_product'`
 - [ ] Similarity function: `VECTOR_COSINE(a, b)` — NOT `<=>` or `<->` operators
 - [ ] Parameter binding: `TO_VECTOR(?, DOUBLE, 384)` — 3 args: value, type, dimension. NOT casting with `::vector`. The type and dimension MUST match the column definition.
+- [ ] **NEVER SELECT a VECTOR column directly** — the DB-API driver returns it as a plain `str` (comma-separated floats). Use `VECTOR_COSINE()` or `VECTOR_DOT_PRODUCT()` in the SQL; never try to deserialize the raw column value as a list or array.
+- [ ] **TO_VECTOR type mismatch causes SQLCODE -259** — `TO_VECTOR(?)` with no type arg creates a different internal datatype than `TO_VECTOR(?, DOUBLE, 384)`. Always pass all 3 args. Mismatched type (e.g., DOUBLE vs FLOAT) or dimension causes "different datatypes" or "different lengths" errors even when the content looks the same.
 - [ ] Embedding function: `EMBEDDING('config-name', ?)` — references `%Embedding.Config` table
 - [ ] Embedded Python: `%SYS.Python.Import("module")` — NOT `IRIS.Python.New()`
 
@@ -91,6 +93,60 @@ ORDER BY VECTOR_COSINE(Biography, EMBEDDING('myconfig', ?)) DESC
 -- WRONG (pgvector operators — don't exist in IRIS):
 SELECT * FROM items ORDER BY embedding <=> '[1,2,3]'::vector LIMIT 5;
 ```
+
+## Driver Behavior — What the DB-API Returns
+
+**VECTOR columns come back as plain `str` through the iris.dbapi driver. Always. No exceptions.**
+
+```python
+cur.execute("SELECT embedding FROM MyTable WHERE id = 1")
+row = cur.fetchone()
+# row[0] is a str: "0.1,0.2,0.3,..." — NOT a list, NOT a numpy array, NOT bytes
+# type(row[0]) == str   ← this is permanent, not a bug, not fixable
+```
+
+**Never do this:**
+```python
+# WRONG — will fail or silently corrupt
+vec = list(row[0])          # gives list of chars, not floats
+vec = np.array(row[0])      # gives array of one string
+vec = json.loads(row[0])    # JSON parse error (no brackets)
+```
+
+**Correct pattern — never SELECT the raw vector; compute similarity in SQL:**
+```python
+# RIGHT — always use VECTOR_COSINE / VECTOR_DOT_PRODUCT in SQL
+cur.execute("""
+    SELECT TOP 5 id, VECTOR_COSINE(embedding, TO_VECTOR(?, DOUBLE, 384)) AS score
+    FROM MyTable
+    ORDER BY score DESC
+""", ["0.1,0.2,..."])  # pass query vector as comma-separated string
+```
+
+**If you must retrieve a stored vector as Python floats:**
+```python
+# Convert in SQL, not in Python
+cur.execute("SELECT VECTOR_TOARRAY(embedding) FROM MyTable WHERE id=1")
+# Returns a comma-separated string you can then parse:
+floats = [float(x) for x in row[0].split(",")]
+```
+
+## TO_VECTOR Type Contract
+
+`TO_VECTOR` creates a typed vector. The type and dimension **must exactly match** the column definition or SQLCODE -259 fires.
+
+```python
+# Column defined as VECTOR(DOUBLE, 384)
+# CORRECT:
+TO_VECTOR(?, DOUBLE, 384)   # type=DOUBLE, dim=384 — matches column
+
+# WRONG — causes SQLCODE -259 "different datatypes":
+TO_VECTOR(?)                # no type/dim — different internal type
+TO_VECTOR(?, FLOAT, 384)    # FLOAT ≠ DOUBLE — different datatype
+TO_VECTOR(?, DOUBLE, 128)   # 128 ≠ 384 — different lengths
+```
+
+**In tests/fixtures**: if a test table was created with dimension 128 and the query uses 768, the test is broken by design — no amount of driver magic fixes a dimension mismatch. Fix the test fixture to match the query dimension, or make dimension a configurable constant.
 
 ## Inserting Vectors
 
