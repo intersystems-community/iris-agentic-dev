@@ -2047,7 +2047,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Run %UnitTest.Manager tests on IRIS and return structured pass/fail results. Uses pure-HTTP execution via Atelier REST — works with or without IRIS_CONTAINER. Pass a class pattern like 'MyApp.Tests' or 'MyApp.Tests.Order'. Returns suite-level summary inline plus log_id for per-test-case detail via iris_get_log."
+        description = "Run %UnitTest.Manager tests on IRIS and return structured pass/fail results. Uses pure-HTTP execution via Atelier REST — works with or without IRIS_CONTAINER. Pass a class name pattern like 'MyApp.Tests' or 'ISC.sql.TestFoo' to run already-compiled test classes (uses /noload automatically). Pass a directory path like 'MyApp/Tests' to load from disk. Returns suite-level summary inline plus log_id for per-test-case detail via iris_get_log."
     )]
     async fn iris_test(
         &self,
@@ -2091,24 +2091,45 @@ impl IrisTools {
         // Generate a UUID correlation token; used as UserParam in RunTest.
         let correlation_token = log_store::new_log_id();
         let safe_pattern = p.pattern.replace('"', "\\\"");
+
+        // Detect whether the pattern is a compiled class name or a filesystem directory path.
+        // Class names contain dots and no path separators: "ISC.sql.Tests", "MyApp.Tests.*"
+        // Directory paths contain / or \ : "MyApp/Tests", "/tmp/tests/MyApp"
+        // When the pattern is a class name, pass /noload so RunTest looks in the compiled
+        // database rather than scanning the filesystem under ^UnitTestRoot.
+        let is_class_pattern = !safe_pattern.contains('/') && !safe_pattern.contains('\\');
+        let flags = if is_class_pattern {
+            "/verbose=1/nodelete/noload"
+        } else {
+            "/verbose=1/nodelete"
+        };
+
         // Run tests via execute_via_generator (HTTP path).
-        // Uses the existing ^UnitTestRoot (or default /tmp/httest) — test classes must
-        // already be on disk in the test root directory for RunTest to discover them.
         // After RunTest completes, ^UnitTest.Result global IS persisted (globals bypass
         // the objectgenerator transaction boundary; SQL %Save() does not).
-        // We write the run index out and return it to identify the run in the next step.
-        // iris_test preamble sets ^UnitTestRoot to /tmp/httest/ (IRIS community default).
-        // Also pre-creates the pattern subdirectory if it doesn't exist.
-        let run_code = format!(
-            r#"set utRoot="/tmp/httest/"
+        let run_code = if is_class_pattern {
+            // Class pattern: no filesystem directory needed; /noload finds compiled class directly.
+            format!(
+                r#"do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
+                token = correlation_token,
+                pattern = safe_pattern,
+                flags = flags,
+            )
+        } else {
+            // Directory path: set ^UnitTestRoot and pre-create the pattern subdirectory.
+            // iris_test preamble sets ^UnitTestRoot to /tmp/httest/ (IRIS community default).
+            format!(
+                r#"set utRoot="/tmp/httest/"
 if '##class(%File).DirectoryExists(utRoot) {{ do ##class(%File).CreateDirectoryChain(utRoot) }}
 set pkgDir=utRoot_"{pattern}"_"/"
 if '##class(%File).DirectoryExists(pkgDir) {{ do ##class(%File).CreateDirectoryChain(pkgDir) }}
 set ^UnitTestRoot=utRoot
-do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1/nodelete","{token}")"#,
-            token = correlation_token,
-            pattern = safe_pattern,
-        );
+do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
+                token = correlation_token,
+                pattern = safe_pattern,
+                flags = flags,
+            )
+        };
 
         // Try HTTP (execute_via_generator) first. Fall back to docker exec if:
         // - IRIS_CONTAINER is set, AND
