@@ -1,0 +1,46 @@
+[package]
+name = "iris-agentic-dev-skills"
+version = "1.5.0"
+description = "Benchmark-validated ObjectScript and IRIS skills for AI coding assistants"
+authors = ["Thomas Dyar <thomas.dyar@intersystems.com>", "Timothy Leavitt <timothy.leavitt@intersystems.com>"]
+license = "MIT"
+repository = "https://github.com/intersystems-community/iris-agentic-dev"
+
+[provides]
+skills = [
+    # Tier 1: Benchmark-validated repair skills (start here)
+    "light-skills/skills/objectscript-review",
+    "light-skills/skills/objectscript-guardrails",
+    "light-skills/skills/objectscript-unit-test",
+    "light-skills/skills/objectscript-navigation",
+    "light-skills/skills/objectscript-list-patterns",
+    "light-skills/skills/objectscript-sql-patterns",
+    "light-skills/skills/objectscript-loop-patterns",
+    # Tier 2: Workflow and tooling skills
+    "light-skills/skills/objectscript-tdd",
+    "light-skills/skills/objectscript-debugging",
+    "light-skills/skills/objectscript-repair",
+    "light-skills/skills/iris-objectscript-eval",
+    "light-skills/skills/ensemble-production",
+    "light-skills/skills/opencode-introspect",
+    # Tier 3: Infrastructure and environment skills
+    "light-skills/skills/iris-devtester",
+    "light-skills/skills/iris-connectivity",
+    "light-skills/skills/iris-webgateway-setup",
+    "light-skills/skills/iris-async-job",
+    "light-skills/skills/iris-container-graceful-shutdown",
+    "light-skills/skills/iris-linux-docker",
+    "light-skills/skills/iris-cpf-merge",
+    "light-skills/skills/iris-docs",
+    "light-skills/skills/iris-vscode-objectscript",
+    "light-skills/skills/iris-vector-ai",
+    "light-skills/skills/iris-product-features",
+    "light-skills/skills/irishealth-container",
+    "light-skills/skills/aihub-eap",
+]
+kb_items = [
+    "kb/iris-error-codes.md",
+    "kb/objectscript-idioms.md",
+    "kb/ipm-module-authoring.md",
+    "AGENTS.md",
+]
