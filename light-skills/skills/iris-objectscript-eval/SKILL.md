@@ -140,3 +140,6 @@ docker run -d --name my-iris -p 0:1972 \
 | Password change required on new container | Use `iris-devtester` — auto-remediates in 1.15.0+ |
 | Block-structured code via stdin fails | `iris session` REPL processes one line at a time — `If x { }` and `While x { }` cause `<SYNTAX>`. Put logic in class methods and call `do ##class(X).Method()` |
 | **Partial execution trap**: block fails but inner calls run | When a block errors in the REPL, statements INSIDE the block may still have executed. Never assume a `<SYNTAX>` means nothing ran — check side effects before retrying. |
+| `$vop` with spaces after commas | `$vop` syntax allows **no spaces** after commas: `$vop(v,"tostring","double")` is correct; `$vop(v, "tostring", "double")` → `#1011: Invalid name`. |
+| `$vop` / vector intrinsics via `iris_execute` | `iris_execute` wraps code in a temp class method body — `$vop` and other vector intrinsics **fail in that context**. Use `docker exec <container> iris session IRIS` instead. |
+| Editing disk XML after `iris_doc put` | `iris_doc put` writes directly to IRIS; it never touches the on-disk XML/CLS file. If you need to edit on disk after an `iris_doc put`, first export back with `iris_doc get` — otherwise you're editing a stale file. |
