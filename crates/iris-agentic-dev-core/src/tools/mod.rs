@@ -48,7 +48,7 @@ pub use scm::ScmParams;
 /// Read from `IRIS_TOOLSET` env var or `--toolset` CLI flag.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Toolset {
-    /// All 34 tools — current behavior (default when IRIS_TOOLSET unset).
+    /// All tools — use for debugging or when you need stubs. Set IRIS_TOOLSET=baseline.
     Baseline,
     /// 29 tools — stub tools/actions removed; no merged tools.
     Nostub,
@@ -1741,7 +1741,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Compile an ObjectScript class, routine, or wildcard package on IRIS via Atelier REST. Supports 'MyApp.*.cls' for package-level compilation. Returns structured errors with line numbers, columns, and severity. No Python required."
+        description = "Compile an ObjectScript class, routine, or wildcard package on IRIS via Atelier REST. Supports 'MyApp.*.cls' for package-level compilation. Returns structured errors with line numbers, columns, and severity."
     )]
     async fn iris_compile(
         &self,
@@ -2047,7 +2047,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Run %UnitTest.Manager tests on IRIS and return structured pass/fail results. Uses pure-HTTP execution via Atelier REST — works with or without IRIS_CONTAINER. Pass a class pattern like 'MyApp.Tests' or 'MyApp.Tests.Order'. Returns suite-level summary inline plus log_id for per-test-case detail via iris_get_log."
+        description = "Run %UnitTest tests on IRIS. Pass a class pattern like 'MyApp.Tests' or 'MyApp.Tests.Order'. Returns pass/fail summary; use iris_get_log with the returned log_id for full detail."
     )]
     async fn iris_test(
         &self,
@@ -2368,7 +2368,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1/nodelete","{token}
     }
 
     #[tool(
-        description = "Execute arbitrary ObjectScript code on IRIS and return stdout. Uses pure-HTTP execution via CodeMode=objectgenerator (write temp class, compile, query result, delete). Falls back to docker exec if IRIS_CONTAINER env var is set and HTTP fails. &sql(...) embedded SQL macros are automatically translated to %SQL.Statement calls (set translate_sql: false to disable). When translation fires, response includes sql_translated: true and translated_code. Example: code='write $ZVERSION,!' returns the IRIS version string."
+        description = "Execute arbitrary ObjectScript code on IRIS and return stdout. &sql(...) macros are auto-translated to %SQL.Statement calls. Falls back to docker exec when HTTP fails. Example: code='write $ZVERSION,!'"
     )]
     async fn iris_execute(
         &self,
@@ -2509,7 +2509,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1/nodelete","{token}
     }
 
     #[tool(
-        description = "Read, write, delete, or check an IRIS document. mode='get' fetches source, mode='put' writes (with automatic SCM checkout if needed), mode='delete' removes, mode='head' checks existence. Supports batch ops via 'names' array and elicitation_id/elicitation_answer for SCM dialog resumption. No Python required."
+        description = "Read, write, delete, or check an IRIS document. mode: get=fetch source, put=write (auto SCM checkout), delete=remove, head=check existence. Supports batch ops via 'names' array."
     )]
     async fn iris_doc(
         &self,
@@ -2524,7 +2524,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1/nodelete","{token}
     }
 
     #[tool(
-        description = "Execute a SQL SELECT query on IRIS via Atelier REST. Returns rows as a JSON array with column names as keys. By default, destructive SQL (DROP, DELETE, INSERT, UPDATE, ALTER, CREATE, MERGE, TRUNCATE, EXEC, EXECUTE, BULK, LOAD, KILL, LOCK, SELECT INTO) is blocked before reaching IRIS. Set force: true to bypass validation for intentional administrative queries — has no effect on production instances where write tools are disabled. No Python required."
+        description = "Execute a SQL SELECT query on IRIS. Returns rows as JSON. Destructive SQL is blocked by default; set force: true for intentional admin queries (no effect on production instances)."
     )]
     async fn iris_query(
         &self,
@@ -2602,7 +2602,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1/nodelete","{token}
     }
 
     #[tool(
-        description = "List running IRIS Docker containers with name-match scoring. Tries iris-devtester first, falls back to docker ps. Containers sorted by score (name similarity to workspace) descending."
+        description = "List running IRIS Docker containers, scored by name similarity to the current workspace."
     )]
     async fn iris_list_containers(
         &self,
@@ -2720,7 +2720,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1/nodelete","{token}
     }
 
     #[tool(
-        description = "Switch the active IRIS connection to the specified running Docker container for this session. After a successful switch, all subsequent tool calls target the new container — no session restart required. Fixes issue #11."
+        description = "Switch the active IRIS connection to a running Docker container for this session. No restart required."
     )]
     async fn iris_select_container(
         &self,
@@ -2803,7 +2803,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1/nodelete","{token}
     }
 
     #[tool(
-        description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active. To switch connection mid-session without restart: call check_config first to get config_watch_path, then write a .iris-agentic-dev.toml to that exact path, then call any tool — the reload fires automatically. Fields: connected, host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled, connection_source."
+        description = "Return the active IRIS connection state (no network calls). Use to diagnose connection issues, verify hot-reload, or confirm which container/host is active. Write a .iris-agentic-dev.toml to config_watch_path to switch connections without restart."
     )]
     async fn check_config(
         &self,
@@ -2901,7 +2901,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1/nodelete","{token}
     }
 
     #[tool(
-        description = "Start a dedicated IRIS container for the current project via iris-devtester CLI. Idempotent — returns existing container if already running."
+        description = "Start a dedicated IRIS container for the current project via iris-devtester. Idempotent."
     )]
     async fn iris_start_sandbox(
         &self,
@@ -2979,7 +2979,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1/nodelete","{token}
     }
 
     #[tool(
-        description = "Search for ObjectScript classes matching a query in the IRIS namespace. Query supports: plain substring ('Patient'), package prefix ('HT.*' or 'HT.'), mid-glob ('HT.*.Service'), or bare '*' for all."
+        description = "Search for ObjectScript classes in the IRIS namespace. Supports substring, package prefix ('HT.*'), mid-glob ('HT.*.Service'), or '*' for all."
     )]
     async fn iris_symbols(
         &self,
@@ -3000,7 +3000,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1/nodelete","{token}
     }
 
     #[tool(
-        description = "Search for ObjectScript symbols in local .cls/.mac/.inc files on disk — no IRIS connection required. query: glob pattern (MyApp.*, *Service, MyApp.Foo). workspace_path: optional path (defaults to OBJECTSCRIPT_WORKSPACE or cwd). limit: max symbols to return (default 50)."
+        description = "Search for ObjectScript symbols in local .cls/.mac/.inc files without an IRIS connection. query: glob pattern (MyApp.*, *Service)."
     )]
     async fn iris_symbols_local(
         &self,
@@ -3081,7 +3081,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1/nodelete","{token}
     }
 
     #[tool(
-        description = "Map a .INT routine offset to the original .CLS source line. Pass routine+offset OR a raw IRIS error string like '<UNDEFINED>x+3^MyApp.Foo.1'."
+        description = "Map a .INT routine offset to the .CLS source line. Pass routine+offset or a raw IRIS error string like '<UNDEFINED>x+3^MyApp.Foo.1'."
     )]
     async fn debug_map_int_to_cls(
         &self,
@@ -3179,7 +3179,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1/nodelete","{token}
     }
 
     #[tool(
-        description = "Build a .INT source map for a compiled ObjectScript class via Atelier xecute. Maps .INT routine line offsets back to .CLS source lines for stack trace resolution. No Python required."
+        description = "Build a .INT→.CLS source map for stack trace resolution."
     )]
     async fn debug_source_map(
         &self,
@@ -3211,7 +3211,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","/verbose=1/nodelete","{token}
     }
 
     #[tool(
-        description = "Generate an ObjectScript class from a natural language description. Requires IRIS_GENERATE_CLASS_MODEL + OPENAI_API_KEY env vars."
+        description = "Generate an ObjectScript class from a natural language description. Requires IRIS_GENERATE_CLASS_MODEL env var."
     )]
     async fn iris_generate_class(
         &self,
@@ -3296,7 +3296,7 @@ Original: {}",
     }
 
     #[tool(
-        description = "Generate a %UnitTest.TestCase for an existing ObjectScript class. Introspects the class first. Requires IRIS_GENERATE_CLASS_MODEL + OPENAI_API_KEY."
+        description = "Generate a %UnitTest.TestCase for an existing ObjectScript class. Requires IRIS_GENERATE_CLASS_MODEL env var."
     )]
     async fn iris_generate_test(
         &self,
@@ -3665,7 +3665,7 @@ Methods:
     }
 
     #[tool(
-        description = "Full-text search across IRIS documents via Atelier REST v2. Auto-upgrades to async polling for large namespaces. Supports regex, case sensitivity, category filter (CLS/MAC/INT/INC/ALL), and wildcard document scopes."
+        description = "Full-text search across IRIS documents. Supports regex, category filter (CLS/MAC/INT/INC/ALL), and wildcard document scopes."
     )]
     async fn iris_search(
         &self,
@@ -3680,7 +3680,7 @@ Methods:
     }
 
     #[tool(
-        description = "Discover IRIS namespace contents. what=documents lists all docs, what=modified lists recently changed, what=namespace returns config, what=metadata returns IRIS version, what=jobs lists active jobs, what=csp_apps lists CSP apps, what=csp_debug returns debug ID, what=sa_schema returns SQL Analytics schema."
+        description = "Discover IRIS namespace contents. what: documents, modified, namespace, metadata, jobs, csp_apps, csp_debug, sa_schema."
     )]
     async fn iris_info(
         &self,
@@ -3694,7 +3694,7 @@ Methods:
     }
 
     #[tool(
-        description = "Inspect a SQL table: returns whether it is a class-projected table or DDL-created, the backing data/index globals, and (optionally) an approximate row count. Works for both class-projected tables (with real storage globals from %Dictionary.CompiledStorage) and DDL tables (globals inferred by IRIS naming convention). Use include_row_count=true to add a COUNT(*) estimate."
+        description = "Inspect a SQL table: class-projected vs DDL, backing globals, optional row count. Use include_row_count=true for a COUNT(*) estimate."
     )]
     async fn iris_table_info(
         &self,
@@ -3707,7 +3707,7 @@ Methods:
     }
 
     #[tool(
-        description = "Resolve ObjectScript dynamic dispatch: find all compiled classes that implement a given method. Use when you see $classmethod(var, method) or ##class({variable}).Method() and need to know the possible targets. Returns candidates with confidence scores (fewer matches = higher confidence). Confidence: 1 match=0.90, 2-5=0.75, 6-20=0.55, >20=0.30. Results cached 60s per session."
+        description = "Find all classes implementing a given method — resolves $classmethod(var, method) dynamic dispatch. Returns candidates with confidence scores. Results cached 60s."
     )]
     async fn resolve_dynamic_dispatch(
         &self,
@@ -3726,7 +3726,7 @@ Methods:
     }
 
     #[tool(
-        description = "Extract Ensemble MessageMap routing table from a compiled BusinessProcess or Router class. Returns the MessageType → Method dispatch table with confidence 0.9 (compiled routing = near ground truth). Use to find CALLS edges that static analysis cannot see. Returns has_message_map:false for classes without a MessageMap. Results cached 60s per session."
+        description = "Extract Ensemble MessageMap routing from a compiled BusinessProcess or Router class. Returns MessageType → Method dispatch table. Results cached 60s."
     )]
     async fn extract_message_map_routing(
         &self,
@@ -3745,7 +3745,7 @@ Methods:
     }
 
     #[tool(
-        description = "Find all concrete subclass implementations of a method in the full inheritance hierarchy. Given base class names and a method name, expands to all descendants at any depth and returns classes where the method is defined (Origin = parent, not inherited). Use to resolve polymorphic dispatch: adapter.Execute() → find all EnsLib.*.Adapter subclasses that implement Execute. Results cached 60s per session."
+        description = "Find all concrete subclass implementations of a method across the full inheritance hierarchy. Use to resolve polymorphic dispatch (e.g. EnsLib.*.Adapter subclasses that implement Execute). Results cached 60s."
     )]
     async fn find_subclass_implementations(
         &self,
@@ -3790,7 +3790,7 @@ Methods:
     }
 
     #[tool(
-        description = "Prepare context for generating an ObjectScript class or %UnitTest. Returns a ready-to-use prompt plus IRIS namespace context (existing class names, method signatures). No API key needed — the calling AI agent does the generation using the returned prompt, then saves with iris_doc(mode=put) and compiles with iris_compile. gen_type=class for new classes, gen_type=test for %UnitTest scaffolding."
+        description = "Prepare generation context for an ObjectScript class or %UnitTest. Returns a prompt + namespace context; no API key needed. gen_type: class or test."
     )]
     async fn iris_generate(
         &self,
@@ -4300,7 +4300,7 @@ Methods:
     // ── 026-admin-tools: iris_admin dispatcher ───────────────────────────────
 
     #[tool(
-        description = "IRIS administration dispatcher. action: list_namespaces, list_databases, list_users, list_roles, list_user_roles, check_permission, list_webapps, get_webapp (read — always available); create_user, update_user, delete_user, create_namespace, delete_namespace, create_webapp, delete_webapp (write — requires IRIS_ADMIN_TOOLS=1). All operations run in %SYS namespace. check_permission checks the currently connected user (IRIS_USERNAME), not an arbitrary user."
+        description = "IRIS administration. Read actions (list_namespaces, list_users, list_webapps, check_permission, etc.) always available. Write actions (create/delete user/namespace/webapp) require IRIS_ADMIN_TOOLS=1."
     )]
     async fn iris_admin(
         &self,
@@ -4418,7 +4418,7 @@ Methods:
     // ── iris_get_log (027 — progressive disclosure, Merged tier only) ──────────
 
     #[tool(
-        description = "Retrieve a stored result by log_id from the progressive disclosure store. With id: returns the full result (optionally paginated with limit/offset). Without id: lists all stored log entries with their IDs, tools, timestamps, and total counts. Use after any tool returns truncated:true."
+        description = "Retrieve a stored result by log_id. Use after any tool returns truncated:true. Without id: lists all stored log entries."
     )]
     async fn iris_get_log(
         &self,

@@ -70,7 +70,7 @@ pub struct McpCommand {
     pub workspace: String,
     /// Tool set to register: baseline (all 34 tools), nostub (stubs removed),
     /// or merged (stubs removed + consolidated tools). Also read from IRIS_TOOLSET env var.
-    #[arg(long, env = "IRIS_TOOLSET", default_value = "baseline")]
+    #[arg(long, env = "IRIS_TOOLSET", default_value = "merged")]
     pub toolset: String,
 }
 
