@@ -93,7 +93,7 @@ jobs:
             -p 52773:52773 \
             -e IRIS_PASSWORD=SYS \
             -e IRIS_USERNAME=_SYSTEM \
-            intersystemsdc/iris-community:2025.1
+            intersystemsdc/iris-community:2026.1
           # Wait for container to be running
           sleep 10
           docker ps | grep iris-e2e
