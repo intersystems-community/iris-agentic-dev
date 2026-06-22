@@ -1,0 +1,158 @@
+name: Skill Regression
+
+on:
+  schedule:
+    # Nightly at 02:00 UTC — avoids overlap with daytime CI runs
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      skill:
+        description: 'Single skill to evaluate (leave blank for all covered skills)'
+        required: false
+        default: ''
+      runs:
+        description: 'Runs per skill'
+        required: false
+        default: '3'
+      update_baseline:
+        description: 'Update baseline after run'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  skill-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          pip install \
+            pyyaml \
+            openai \
+            litellm \
+            boto3 \
+            iris-devtester
+
+      - name: Start IRIS community container
+        run: |
+          docker run -d --name iris-skill-eval \
+            -p 52773:52773 \
+            -e ISC_DATA_DIRECTORY=/dur/irisdata \
+            intersystemsdc/iris-community:2026.1
+          echo "Waiting 90s for IRIS to initialise..."
+          sleep 90
+
+      - name: Wait for Atelier API
+        run: |
+          for i in $(seq 1 60); do
+            status=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 \
+              -u _SYSTEM:SYS "http://localhost:52773/api/atelier/" 2>/dev/null || echo "000")
+            if [ "$status" = "200" ] || [ "$status" = "401" ]; then
+              echo "Atelier ready (HTTP $status)"
+              exit 0
+            fi
+            echo "  attempt $i/60: HTTP $status"
+            sleep 5
+          done
+          echo "IRIS did not become ready in 7 minutes"
+          docker logs iris-skill-eval 2>&1 | tail -30
+          exit 1
+
+      - name: Detect IRIS credentials
+        run: |
+          for creds in "_SYSTEM:SYS" "SuperUser:SYS" "_SYSTEM:sys" "SuperUser:sys"; do
+            user="${creds%%:*}"; pass="${creds##*:}"
+            status=$(curl -s -o /dev/null -w "%{http_code}" \
+              -u "$user:$pass" "http://localhost:52773/api/atelier/" 2>/dev/null)
+            if [ "$status" = "200" ]; then
+              echo "IRIS_USERNAME=$user" >> $GITHUB_ENV
+              echo "IRIS_PASSWORD=$pass" >> $GITHUB_ENV
+              echo "Credentials: $user"
+              exit 0
+            fi
+          done
+          echo "IRIS_USERNAME=_SYSTEM" >> $GITHUB_ENV
+          echo "IRIS_PASSWORD=SYS" >> $GITHUB_ENV
+
+      - name: Run unit tests for skill_eval harness
+        run: |
+          python -m pytest tests/e2e/skill_eval/ \
+            --ignore=tests/e2e/skill_eval/test_integration.py \
+            --ignore=tests/e2e/skill_eval/test_debug_events.py \
+            --ignore=tests/e2e/skill_eval/test_debug_single.py \
+            --ignore=tests/e2e/skill_eval/test_debug_vector.py \
+            --ignore=tests/e2e/skill_eval/test_tovector_probe.py \
+            --ignore=tests/e2e/skill_eval/test_tovector_score.py \
+            -q
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+      - name: Run skill regression suite
+        id: eval
+        run: |
+          SKILL_ARG=""
+          if [ -n "${{ github.event.inputs.skill }}" ]; then
+            SKILL_ARG="--skill ${{ github.event.inputs.skill }}"
+          fi
+          RUNS="${{ github.event.inputs.runs || '3' }}"
+
+          python -m tests.e2e.skill_eval \
+            $SKILL_ARG \
+            --runs "$RUNS" \
+            --yes \
+            --output tests/e2e/results/ \
+            --model "amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+          IRIS_HOST: localhost
+          IRIS_WEB_PORT: "52773"
+          IRIS_USERNAME: ${{ env.IRIS_USERNAME }}
+          IRIS_PASSWORD: ${{ env.IRIS_PASSWORD }}
+          IRIS_NAMESPACE: USER
+          IRIS_CONTAINER: iris-skill-eval
+
+      - name: Upload eval results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: skill-eval-results-${{ github.run_id }}
+          path: tests/e2e/results/skill-eval-*.json
+          retention-days: 90
+
+      - name: Update baseline
+        if: ${{ github.event.inputs.update_baseline == 'true' }}
+        run: |
+          python -m tests.e2e.skill_eval \
+            --yes \
+            --update-baseline \
+            --output tests/e2e/results/ \
+            --model "amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add tests/e2e/results/skill-baseline.json
+          git diff --staged --quiet || git commit -m "chore: update skill regression baseline [skip ci]"
+          git push
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: us-east-1
+          IRIS_HOST: localhost
+          IRIS_WEB_PORT: "52773"
+          IRIS_USERNAME: ${{ env.IRIS_USERNAME }}
+          IRIS_PASSWORD: ${{ env.IRIS_PASSWORD }}
+          IRIS_NAMESPACE: USER
+          IRIS_CONTAINER: iris-skill-eval

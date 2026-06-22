@@ -2,7 +2,7 @@
 
 **Feature Branch**: `040-skill-regression`
 **Created**: 2026-05-31
-**Status**: Draft
+**Status**: Implemented
 **Input**: Structured evaluation of all 24 skills in `light-skills/skills/` — fire-rate, lift vs baseline, regression detection, and negative-lift guard. Runs locally via the OpenCode harness (039). Results stored as comparable JSON for trend tracking.
 
 ## Clarifications

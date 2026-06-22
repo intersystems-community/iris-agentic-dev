@@ -15,7 +15,7 @@ TASKS_SKILLS_DIR = os.path.abspath(
 
 def test_discover_skills_finds_all():
     skills = discover_skills(LIGHT_SKILLS_DIR)
-    assert len(skills) == 24
+    assert len(skills) == 25
     assert "objectscript-review" in skills
     assert "iris-vector-ai" in skills
 
