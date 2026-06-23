@@ -9085,3 +9085,142 @@ async fn test_dispatch_skill_community_invalid_action() {
         "skill_community bogus action: {v}"
     );
 }
+
+// ── kb_recall with KB items in registry ───────────────────────────────────────
+
+fn make_tools_with_registry() -> iris_agentic_dev_core::tools::IrisTools {
+    let iris_host = std::env::var("IRIS_HOST").unwrap_or_default();
+    let conn = if !iris_host.is_empty() {
+        let web_port = std::env::var("IRIS_WEB_PORT").unwrap_or_else(|_| "52773".to_string());
+        let base_url = format!("http://{}:{}", iris_host, web_port);
+        let username = std::env::var("IRIS_USERNAME").unwrap_or_else(|_| "_SYSTEM".to_string());
+        let password = std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".to_string());
+        Some(IrisConnection::new(
+            base_url,
+            "USER",
+            username,
+            password,
+            DiscoverySource::EnvVar,
+        ))
+    } else {
+        None
+    };
+    let mut registry = iris_agentic_dev_core::skills::SkillRegistry::new();
+    registry.add_kb_item_for_test(
+        "ObjectScript Variables Guide",
+        "In ObjectScript, local variables are declared with Set. \
+         Global variables start with ^. \
+         The Write command prints to stdout. \
+         Process private globals start with ^||.",
+        "test/iris-kb",
+    );
+    registry.add_kb_item_for_test(
+        "IRIS Connection Patterns",
+        "Connect to IRIS using the Atelier REST API on port 52773. \
+         Authentication uses HTTP Basic Auth with username and password. \
+         The /api/atelier endpoint provides document CRUD operations.",
+        "test/iris-kb",
+    );
+    registry.add_skill_for_test(
+        "iris-compile-and-test",
+        "Compile an ObjectScript class and run its unit tests",
+        "1. Use iris_compile to compile the class\n2. Use iris_test to run tests",
+    );
+    iris_agentic_dev_core::tools::IrisTools::with_registry(conn, registry)
+        .expect("IrisTools::with_registry")
+}
+
+#[tokio::test]
+async fn test_dispatch_kb_recall_with_matching_items() {
+    let tools = make_tools_with_registry();
+    // Query that matches content of first KB item
+    let result = tools
+        .call_for_test(
+            "kb_recall",
+            serde_json::json!({"query": "objectscript variables", "top_k": 5}),
+        )
+        .await;
+    let v = parse_result(result);
+    let count = v["count"].as_u64().unwrap_or(0);
+    assert!(count > 0, "kb_recall with match should return results: {v}");
+    let results = v["results"].as_array().expect("results should be array");
+    assert!(
+        !results.is_empty(),
+        "results array should not be empty: {v}"
+    );
+    // Should have snippet field
+    assert!(
+        results[0].get("snippet").is_some(),
+        "result should have snippet: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_kb_recall_title_match_scores_higher() {
+    let tools = make_tools_with_registry();
+    // Query matches title of first item
+    let result = tools
+        .call_for_test(
+            "kb_recall",
+            serde_json::json!({"query": "ObjectScript Variables Guide", "top_k": 5}),
+        )
+        .await;
+    let v = parse_result(result);
+    let results = v["results"].as_array().expect("results should be array");
+    assert!(!results.is_empty(), "should match by title: {v}");
+    // Title match scores 0.9
+    let score = results[0]["score"].as_f64().unwrap_or(0.0);
+    assert!(score >= 0.9, "title match should score 0.9: {v}");
+}
+
+#[tokio::test]
+async fn test_dispatch_kb_recall_no_match() {
+    let tools = make_tools_with_registry();
+    let result = tools
+        .call_for_test(
+            "kb_recall",
+            serde_json::json!({"query": "xyzzy_no_match_9999", "top_k": 5}),
+        )
+        .await;
+    let v = parse_result(result);
+    let count = v["count"].as_u64().unwrap_or(999);
+    assert_eq!(count, 0, "no-match query should return 0 results: {v}");
+}
+
+#[tokio::test]
+async fn test_dispatch_skill_community_list_with_items() {
+    let tools = make_tools_with_registry();
+    let result = tools
+        .call_for_test("skill_community_list", serde_json::json!({}))
+        .await;
+    let v = parse_result(result);
+    let skills = v["skills"].as_array().expect("skills should be array");
+    assert!(!skills.is_empty(), "registry has skills: {v}");
+    let kb_items = v["kb_items"].as_array().expect("kb_items should be array");
+    assert!(!kb_items.is_empty(), "registry has kb items: {v}");
+}
+
+#[tokio::test]
+async fn test_dispatch_kb_recall_multibyte_safe() {
+    let mut registry = iris_agentic_dev_core::skills::SkillRegistry::new();
+    // Content with multibyte UTF-8 characters near the match position
+    registry.add_kb_item_for_test(
+        "Unicode Test",
+        "This contains Unicode: \u{00e9}\u{00e0}\u{00fc} and the keyword iris here \
+         followed by more text to extend the snippet window beyond the match.",
+        "test/unicode",
+    );
+    let tools = iris_agentic_dev_core::tools::IrisTools::with_registry(None, registry)
+        .expect("with_registry");
+    let result = tools
+        .call_for_test(
+            "kb_recall",
+            serde_json::json!({"query": "iris", "top_k": 3}),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v["count"].as_u64().unwrap_or(0) > 0,
+        "multibyte content search: {v}"
+    );
+}

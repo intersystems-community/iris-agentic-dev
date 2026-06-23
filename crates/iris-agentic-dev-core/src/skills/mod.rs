@@ -40,6 +40,25 @@ impl SkillRegistry {
         &self.kb_items
     }
 
+    #[cfg(any(test, feature = "testing"))]
+    pub fn add_kb_item_for_test(&mut self, title: &str, content: &str, source_repo: &str) {
+        self.kb_items.push(KbItem {
+            title: title.to_string(),
+            content: content.to_string(),
+            source_repo: source_repo.to_string(),
+        });
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub fn add_skill_for_test(&mut self, name: &str, description: &str, content: &str) {
+        self.skills.push(Skill {
+            name: name.to_string(),
+            description: description.to_string(),
+            content: content.to_string(),
+            source_repo: "test".to_string(),
+        });
+    }
+
     pub async fn load_from_github(&mut self, owner_repo: &str) -> Result<()> {
         let client = Client::builder()
             .user_agent("iris-agentic-dev/0.3.1")
