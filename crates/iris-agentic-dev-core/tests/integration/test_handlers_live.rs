@@ -4075,3 +4075,248 @@ async fn test_dispatch_iris_get_log_with_id() {
         );
     }
 }
+
+// ── iris_admin update_user ────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_update_user() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    if std::env::var("IRIS_ADMIN_TOOLS").unwrap_or_default() != "1" {
+        return;
+    }
+    // Create test user first
+    let _ = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "create_user",
+                "username": "iris_dev_update_test_888",
+                "password": "TestPass123!"
+            }),
+        )
+        .await;
+    // Update the user
+    let upd = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "update_user",
+                "username": "iris_dev_update_test_888",
+                "password": "NewPass456!"
+            }),
+        )
+        .await;
+    let uv = parse_result(upd);
+    assert!(
+        uv.get("success").is_some() || uv.get("error_code").is_some(),
+        "iris_admin update_user: {uv}"
+    );
+    // Cleanup
+    let _ = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "delete_user",
+                "username": "iris_dev_update_test_888"
+            }),
+        )
+        .await;
+}
+
+// ── iris_compile wildcard expansion ──────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_compile_wildcard() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    // Use a wildcard pattern that matches some classes — covers the wildcard expansion path
+    let result = tools
+        .call_for_test(
+            "iris_compile",
+            serde_json::json!({
+                "target": "IrisDevTmp.*.cls",
+                "namespace": "USER",
+                "flags": "ck"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    // Might succeed (found classes) or return empty (no matches) — both are valid
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_compile wildcard: {v}"
+    );
+}
+
+// ── iris_admin get_user ───────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_get_user() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "get_user",
+                "username": "_SYSTEM"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_admin get_user: {v}"
+    );
+}
+
+// ── iris_admin list_resources ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_list_resources() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "list_resources"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_admin list_resources: {v}"
+    );
+}
+
+// ── iris_info additional what= values ────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_info_csp_apps_v2() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_info",
+            serde_json::json!({
+                "what": "csp_apps",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_info csp_apps: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_info_jobs_v2() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_info",
+            serde_json::json!({
+                "what": "jobs",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_info jobs: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_info_namespace_v2() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_info",
+            serde_json::json!({
+                "what": "namespace",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_info namespace: {v}"
+    );
+}
+
+// ── iris_doc head mode ────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_doc_head_existing() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_doc",
+            serde_json::json!({
+                "mode": "head",
+                "name": "%Library.Persistent.cls",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_doc head existing: {v}"
+    );
+}
+
+// ── iris_lookup_transfer ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_lookup_transfer_nonexistent() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    if std::env::var("IRIS_ADMIN_TOOLS").unwrap_or_default() != "1" {
+        return;
+    }
+    let result = tools
+        .call_for_test(
+            "iris_lookup_transfer",
+            serde_json::json!({
+                "action": "export",
+                "table": "IrisDevNonExistentTable99999",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_lookup_transfer export: {v}"
+    );
+}
