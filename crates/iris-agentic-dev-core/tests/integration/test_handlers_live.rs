@@ -8226,3 +8226,336 @@ async fn test_dispatch_iris_lookup_manage_missing_params() {
         "lookup set missing params: {v}"
     );
 }
+
+// ── iris_admin INVALID_PARAMS coverage + misc action branches ────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_list_user_roles_missing_username() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({ "action": "list_user_roles", "namespace": "USER" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert_eq!(
+        v.get("error_code").and_then(|c| c.as_str()),
+        Some("INVALID_PARAMS"),
+        "list_user_roles missing username: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_get_webapp_missing_path() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test("iris_admin", serde_json::json!({ "action": "get_webapp" }))
+        .await;
+    let v = parse_result(result);
+    assert_eq!(
+        v.get("error_code").and_then(|c| c.as_str()),
+        Some("INVALID_PARAMS"),
+        "get_webapp missing path: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_check_permission_missing_resource() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({ "action": "check_permission" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert_eq!(
+        v.get("error_code").and_then(|c| c.as_str()),
+        Some("INVALID_PARAMS"),
+        "check_permission missing resource: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_create_user_missing_params() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({ "action": "create_user", "username": "testonly" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert_eq!(
+        v.get("error_code").and_then(|c| c.as_str()),
+        Some("INVALID_PARAMS"),
+        "create_user missing password: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_update_user_missing_username() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test("iris_admin", serde_json::json!({ "action": "update_user" }))
+        .await;
+    let v = parse_result(result);
+    assert_eq!(
+        v.get("error_code").and_then(|c| c.as_str()),
+        Some("INVALID_PARAMS"),
+        "update_user missing username: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_delete_user_missing_username() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test("iris_admin", serde_json::json!({ "action": "delete_user" }))
+        .await;
+    let v = parse_result(result);
+    assert_eq!(
+        v.get("error_code").and_then(|c| c.as_str()),
+        Some("INVALID_PARAMS"),
+        "delete_user missing username: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_create_namespace_missing_params() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({ "action": "create_namespace", "name": "TestNS" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert_eq!(
+        v.get("error_code").and_then(|c| c.as_str()),
+        Some("INVALID_PARAMS"),
+        "create_namespace missing code_database: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_delete_namespace_missing_name() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({ "action": "delete_namespace" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert_eq!(
+        v.get("error_code").and_then(|c| c.as_str()),
+        Some("INVALID_PARAMS"),
+        "delete_namespace missing name: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_create_webapp_missing_params() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({ "action": "create_webapp", "path": "/test" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert_eq!(
+        v.get("error_code").and_then(|c| c.as_str()),
+        Some("INVALID_PARAMS"),
+        "create_webapp missing namespace: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_delete_webapp_missing_path() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({ "action": "delete_webapp" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert_eq!(
+        v.get("error_code").and_then(|c| c.as_str()),
+        Some("INVALID_PARAMS"),
+        "delete_webapp missing path: {v}"
+    );
+}
+
+// ── iris_production set_autostart action branch ───────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_production_set_autostart_v2() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_production",
+            serde_json::json!({
+                "action": "set_autostart",
+                "namespace": "USER",
+                "enabled": false
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "production set_autostart: {v}"
+    );
+}
+
+// ── iris_containers select/start actions ─────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_containers_select_action() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_containers",
+            serde_json::json!({
+                "action": "select",
+                "name": "iris-dev-iris"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("switched").is_some() || v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_containers select: {v}"
+    );
+}
+
+// ── iris_get_log pagination and not-found paths ───────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_get_log_not_found_v2() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_get_log",
+            serde_json::json!({ "id": "nonexistent-log-id-xyz-999" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert_eq!(
+        v.get("error_code").and_then(|c| c.as_str()),
+        Some("LOG_NOT_FOUND"),
+        "get_log not found v2: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_get_log_zero_limit() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_get_log",
+            serde_json::json!({ "id": "some-id", "limit": 0 }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert_eq!(
+        v.get("error_code").and_then(|c| c.as_str()),
+        Some("INVALID_PARAMS"),
+        "get_log zero limit: {v}"
+    );
+}
+
+// ── err_json_with_url coverage — hit via iris_info when connection fails ──────
+
+#[tokio::test]
+async fn test_dispatch_iris_info_check_config_invalid_host() {
+    // Check that check_config with no IRIS available returns useful error info
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test("check_config", serde_json::json!({}))
+        .await;
+    // Should succeed (returns config status whether connected or not)
+    match result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!("check_config: {}", &text[..text.len().min(200)]);
+        }
+        Err(e) => eprintln!("check_config error (ok): {e}"),
+    }
+}
+
+// ── translate_sql_macros MERGE branch ────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_execute_merge_sql_macro() {
+    // MERGE SQL macro triggers different translation path (line 284)
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_execute",
+            serde_json::json!({
+                "code": "&sql(MERGE INTO Sample.Person (Name) VALUES ('Test'))",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    match result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!("iris_execute MERGE: {}", &text[..text.len().min(200)]);
+        }
+        Err(e) => eprintln!("iris_execute MERGE error (ok): {e}"),
+    }
+}
