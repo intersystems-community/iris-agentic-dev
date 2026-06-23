@@ -6116,6 +6116,12 @@ impl IrisTools {
         dispatch!("skill_forget", SkillNameParams, skill_forget);
         dispatch!("kb_recall", KbRecallParams, kb_recall);
         dispatch!("kb_index", KbIndexParams, kb_index);
+        dispatch!("skill_community_list", NoParams, skill_community_list);
+        dispatch!(
+            "skill_community_install",
+            CommunityPkgParams,
+            skill_community_install
+        );
         dispatch_any!("iris_containers", iris_containers);
         Err(format!("unknown tool: {tool}"))
     }
