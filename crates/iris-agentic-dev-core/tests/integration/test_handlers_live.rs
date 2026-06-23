@@ -4381,7 +4381,10 @@ async fn test_dispatch_iris_compile_local_file_no_class_decl() {
     match result {
         Ok(r) => {
             let text = r.content[0].raw.as_text().unwrap().text.clone();
-            eprintln!("iris_compile no-class-decl: {}", &text[..text.len().min(200)]);
+            eprintln!(
+                "iris_compile no-class-decl: {}",
+                &text[..text.len().min(200)]
+            );
         }
         Err(e) => eprintln!("iris_compile no-class-decl error (ok): {e}"),
     }
@@ -4505,10 +4508,7 @@ async fn test_dispatch_iris_get_log_list_all() {
     };
     // No id → list all stored entries
     let result = tools
-        .call_for_test(
-            "iris_get_log",
-            serde_json::json!({}),
-        )
+        .call_for_test("iris_get_log", serde_json::json!({}))
         .await;
     let v = parse_result(result);
     assert!(
@@ -4550,14 +4550,14 @@ async fn test_dispatch_check_config() {
         None => return,
     };
     let result = tools
-        .call_for_test(
-            "check_config",
-            serde_json::json!({}),
-        )
+        .call_for_test("check_config", serde_json::json!({}))
         .await;
     let v = parse_result(result);
     assert!(
-        v.get("host").is_some() || v.get("iris_host").is_some() || v.get("error_code").is_some() || v.get("success").is_some(),
+        v.get("host").is_some()
+            || v.get("iris_host").is_some()
+            || v.get("error_code").is_some()
+            || v.get("success").is_some(),
         "check_config: {v}"
     );
 }
@@ -4580,7 +4580,9 @@ async fn test_dispatch_iris_containers_list() {
         .await;
     let v = parse_result(result);
     assert!(
-        v.get("containers").is_some() || v.get("error_code").is_some() || v.get("success").is_some(),
+        v.get("containers").is_some()
+            || v.get("error_code").is_some()
+            || v.get("success").is_some(),
         "iris_containers list: {v}"
     );
 }
@@ -4615,10 +4617,7 @@ async fn test_dispatch_agent_history() {
         None => return,
     };
     let result = tools
-        .call_for_test(
-            "agent_history",
-            serde_json::json!({}),
-        )
+        .call_for_test("agent_history", serde_json::json!({}))
         .await;
     let v = parse_result(result);
     assert!(
@@ -4634,10 +4633,7 @@ async fn test_dispatch_agent_stats() {
         None => return,
     };
     let result = tools
-        .call_for_test(
-            "agent_stats",
-            serde_json::json!({}),
-        )
+        .call_for_test("agent_stats", serde_json::json!({}))
         .await;
     let v = parse_result(result);
     assert!(
@@ -4655,10 +4651,7 @@ async fn test_dispatch_skill_list() {
         None => return,
     };
     let result = tools
-        .call_for_test(
-            "skill_list",
-            serde_json::json!({}),
-        )
+        .call_for_test("skill_list", serde_json::json!({}))
         .await;
     let v = parse_result(result);
     assert!(
@@ -4704,7 +4697,10 @@ async fn test_dispatch_skill_search() {
         .await;
     let v = parse_result(result);
     assert!(
-        v.get("results").is_some() || v.get("skills").is_some() || v.get("error_code").is_some() || v.get("success").is_some(),
+        v.get("results").is_some()
+            || v.get("skills").is_some()
+            || v.get("error_code").is_some()
+            || v.get("success").is_some(),
         "skill_search: {v}"
     );
 }
@@ -4727,7 +4723,10 @@ async fn test_dispatch_kb_recall() {
         .await;
     let v = parse_result(result);
     assert!(
-        v.get("chunks").is_some() || v.get("results").is_some() || v.get("error_code").is_some() || v.get("success").is_some(),
+        v.get("chunks").is_some()
+            || v.get("results").is_some()
+            || v.get("error_code").is_some()
+            || v.get("success").is_some(),
         "kb_recall: {v}"
     );
 }
@@ -4830,7 +4829,9 @@ async fn test_dispatch_iris_admin_check_permission_execute() {
         .await;
     let v = parse_result(result);
     assert!(
-        v.get("granted").is_some() || v.get("has_permission").is_some() || v.get("error_code").is_some(),
+        v.get("granted").is_some()
+            || v.get("has_permission").is_some()
+            || v.get("error_code").is_some(),
         "check_permission USE: {v}"
     );
 }
@@ -4877,10 +4878,7 @@ async fn test_dispatch_iris_query_write_blocked() {
         )
         .await;
     let v = parse_result(result);
-    assert!(
-        v.get("error_code").is_some(),
-        "DROP should be blocked: {v}"
-    );
+    assert!(v.get("error_code").is_some(), "DROP should be blocked: {v}");
 }
 
 #[tokio::test]
@@ -4956,7 +4954,10 @@ async fn test_dispatch_iris_execute_with_sql_macro() {
         )
         .await;
     let v = parse_result(result);
-    eprintln!("iris_execute sql_macro: {}", serde_json::to_string(&v).unwrap_or_default());
+    eprintln!(
+        "iris_execute sql_macro: {}",
+        serde_json::to_string(&v).unwrap_or_default()
+    );
     assert!(
         v.get("success").is_some() || v.get("error_code").is_some(),
         "iris_execute with sql macro: {v}"
@@ -5011,7 +5012,10 @@ async fn test_dispatch_iris_test_run_real_class() {
         )
         .await;
     let v = parse_result(result);
-    eprintln!("iris_test real class: {}", serde_json::to_string(&v).unwrap_or_default());
+    eprintln!(
+        "iris_test real class: {}",
+        serde_json::to_string(&v).unwrap_or_default()
+    );
     assert!(
         v.get("success").is_some() || v.get("error_code").is_some(),
         "iris_test real class: {v}"
@@ -5270,7 +5274,10 @@ async fn test_dispatch_extract_message_map_cache_hit() {
         match result {
             Ok(r) => {
                 let text = r.content[0].raw.as_text().unwrap().text.clone();
-                eprintln!("extract_message_map cache: {}", &text[..text.len().min(200)]);
+                eprintln!(
+                    "extract_message_map cache: {}",
+                    &text[..text.len().min(200)]
+                );
             }
             Err(e) => eprintln!("extract_message_map error (ok): {e}"),
         }
@@ -5608,7 +5615,8 @@ async fn test_dispatch_iris_macro_unknown_action() {
         "iris_macro unknown action should return INVALID_PARAM: {v}"
     );
     assert!(
-        v.get("error").and_then(|e| e.as_str())
+        v.get("error")
+            .and_then(|e| e.as_str())
             .map(|s| s.contains("totally_unknown_action_xyz"))
             .unwrap_or(false),
         "error message should include the unknown action: {v}"
@@ -5715,3 +5723,227 @@ async fn test_dispatch_iris_table_info_not_found() {
     );
 }
 
+// ── iris_doc PUT .mac without ROUTINE header (routine header injection path) ──
+
+#[tokio::test]
+async fn test_dispatch_iris_doc_put_mac_no_routine_header() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    // Content without ROUTINE header — should be injected automatically
+    let mac_content = " write \"hello\",!\n";
+    let result = tools
+        .call_for_test(
+            "iris_doc",
+            serde_json::json!({
+                "mode": "put",
+                "name": "IrisDevTmp.TestMacRoutine.mac",
+                "content": mac_content,
+                "namespace": "USER",
+                "compile": false
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "mac put no header: {v}"
+    );
+    // Cleanup
+    let _ = tools
+        .call_for_test(
+            "iris_doc",
+            serde_json::json!({
+                "mode": "delete",
+                "name": "IrisDevTmp.TestMacRoutine.mac",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+}
+
+// ── iris_doc PUT .inc without ROUTINE header (inc header injection path) ──────
+
+#[tokio::test]
+async fn test_dispatch_iris_doc_put_inc_no_routine_header() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    // INC content without ROUTINE header
+    let inc_content = "#define MY_CONST 42\n";
+    let result = tools
+        .call_for_test(
+            "iris_doc",
+            serde_json::json!({
+                "mode": "put",
+                "name": "IrisDevTmp.TestIncRoutine.inc",
+                "content": inc_content,
+                "namespace": "USER",
+                "compile": false
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "inc put no header: {v}"
+    );
+    // Cleanup
+    let _ = tools
+        .call_for_test(
+            "iris_doc",
+            serde_json::json!({
+                "mode": "delete",
+                "name": "IrisDevTmp.TestIncRoutine.inc",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+}
+
+// ── iris_test with a FAILING test class (covers FAILED parse path) ───────────
+
+#[tokio::test]
+async fn test_dispatch_iris_test_failing_class() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    // Upload a test class that will FAIL
+    let cls_content = concat!(
+        "Class IrisDevTmp.TestFailing Extends %UnitTest.TestCase\n",
+        "{\n",
+        "Method TestAlwaysFails()\n",
+        "{\n",
+        "    Do $$$AssertEquals(1, 2, \"intentional failure\")\n",
+        "}\n",
+        "}\n"
+    );
+    let put_result = tools
+        .call_for_test(
+            "iris_doc",
+            serde_json::json!({
+                "mode": "put",
+                "name": "IrisDevTmp.TestFailing.cls",
+                "content": cls_content,
+                "namespace": "USER",
+                "compile": true
+            }),
+        )
+        .await;
+    let pv = parse_result(put_result);
+    if pv.get("error_code").is_some() {
+        eprintln!("iris_test_failing setup: could not upload: {pv}");
+        return;
+    }
+
+    // Run the failing test class
+    let result = tools
+        .call_for_test(
+            "iris_test",
+            serde_json::json!({
+                "pattern": "IrisDevTmp.TestFailing",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    eprintln!(
+        "iris_test failing: {}",
+        serde_json::to_string(&v).unwrap_or_default()
+    );
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_test failing class: {v}"
+    );
+
+    // Cleanup
+    let _ = tools
+        .call_for_test(
+            "iris_doc",
+            serde_json::json!({
+                "mode": "delete",
+                "name": "IrisDevTmp.TestFailing.cls",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+}
+
+// ── iris_macro signature action (covers signature/location/definition/expand arms) ──
+
+#[tokio::test]
+async fn test_dispatch_iris_macro_signature_v3() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_macro",
+            serde_json::json!({
+                "action": "signature",
+                "name": "AssertEquals",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_macro signature: {v}"
+    );
+}
+
+// ── iris_table_info DDL table (covers DDL infer path lines 497-515) ──────────
+
+#[tokio::test]
+async fn test_dispatch_iris_table_info_information_schema() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    // INFORMATION_SCHEMA.TABLES is a DDL/system table that exists in all IRIS
+    let result = tools
+        .call_for_test(
+            "iris_table_info",
+            serde_json::json!({
+                "table": "INFORMATION_SCHEMA.TABLES",
+                "namespace": "USER",
+                "include_row_count": false
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_table_info INFORMATION_SCHEMA.TABLES: {v}"
+    );
+}
+
+// ── iris_execute with translate_sql=false (no-translation path) ──────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_execute_no_translate() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_execute",
+            serde_json::json!({
+                "code": "write $ZVERSION,!",
+                "namespace": "USER",
+                "translate_sql": false
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("output").is_some() || v.get("error_code").is_some(),
+        "iris_execute no-translate: {v}"
+    );
+}

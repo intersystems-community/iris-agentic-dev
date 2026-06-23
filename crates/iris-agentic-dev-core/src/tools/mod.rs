@@ -5660,7 +5660,10 @@ mod validate_sql_tests {
 
     #[test]
     fn test_whitespace_only_returns_empty_error() {
-        assert_eq!(validate_read_only_sql("   \n\t  "), Err("EMPTY".to_string()));
+        assert_eq!(
+            validate_read_only_sql("   \n\t  "),
+            Err("EMPTY".to_string())
+        );
     }
 
     #[test]
@@ -5745,10 +5748,7 @@ mod validate_sql_tests {
 
     #[test]
     fn test_kill_blocked() {
-        assert_eq!(
-            validate_read_only_sql("KILL 42"),
-            Err("KILL".to_string())
-        );
+        assert_eq!(validate_read_only_sql("KILL 42"), Err("KILL".to_string()));
     }
 
     #[test]
@@ -5892,10 +5892,7 @@ mod build_test_run_tests {
 
     #[test]
     fn test_mixed_results_across_suites() {
-        let suites = vec![
-            make_suite("1", "SuiteA"),
-            make_suite("2", "SuiteB"),
-        ];
+        let suites = vec![make_suite("1", "SuiteA"), make_suite("2", "SuiteB")];
         let methods = vec![
             make_method("1", "TestPass", 1, "", ""),
             make_method("2", "TestFail", 0, "bad", ""),
@@ -5911,10 +5908,7 @@ mod build_test_run_tests {
 
     #[test]
     fn test_duration_totalled() {
-        let suites = vec![
-            make_suite("1", "SuiteA"),
-            make_suite("2", "SuiteB"),
-        ];
+        let suites = vec![make_suite("1", "SuiteA"), make_suite("2", "SuiteB")];
         let methods = vec![
             make_method("1", "T1", 1, "", ""),
             make_method("2", "T2", 1, "", ""),
@@ -5958,33 +5952,69 @@ mod toolset_tests {
     fn test_registered_tool_names_baseline_contains_core_tools() {
         let tools = IrisTools::new(None).unwrap();
         let names = tools.registered_tool_names();
-        assert!(names.contains("iris_compile"), "baseline should have iris_compile");
-        assert!(names.contains("iris_execute"), "baseline should have iris_execute");
-        assert!(names.contains("iris_query"), "baseline should have iris_query");
+        assert!(
+            names.contains("iris_compile"),
+            "baseline should have iris_compile"
+        );
+        assert!(
+            names.contains("iris_execute"),
+            "baseline should have iris_execute"
+        );
+        assert!(
+            names.contains("iris_query"),
+            "baseline should have iris_query"
+        );
         // Baseline includes stub tools
-        assert!(names.contains("skill_propose"), "baseline should have skill_propose");
+        assert!(
+            names.contains("skill_propose"),
+            "baseline should have skill_propose"
+        );
     }
 
     #[test]
     fn test_registered_tool_names_nostub_removes_stubs() {
         let tools = IrisTools::new_with_toolset(None, Toolset::Nostub).unwrap();
         let names = tools.registered_tool_names();
-        assert!(!names.contains("skill_propose"), "nostub should remove skill_propose");
-        assert!(!names.contains("skill_optimize"), "nostub should remove skill_optimize");
-        assert!(!names.contains("skill_share"), "nostub should remove skill_share");
-        assert!(!names.contains("skill_community_install"), "nostub should remove skill_community_install");
+        assert!(
+            !names.contains("skill_propose"),
+            "nostub should remove skill_propose"
+        );
+        assert!(
+            !names.contains("skill_optimize"),
+            "nostub should remove skill_optimize"
+        );
+        assert!(
+            !names.contains("skill_share"),
+            "nostub should remove skill_share"
+        );
+        assert!(
+            !names.contains("skill_community_install"),
+            "nostub should remove skill_community_install"
+        );
         // Core tools still present
-        assert!(names.contains("iris_compile"), "nostub should keep iris_compile");
+        assert!(
+            names.contains("iris_compile"),
+            "nostub should keep iris_compile"
+        );
     }
 
     #[test]
     fn test_registered_tool_names_merged_adds_iris_debug() {
         let tools = IrisTools::new_with_toolset(None, Toolset::Merged).unwrap();
         let names = tools.registered_tool_names();
-        assert!(names.contains("iris_debug"), "merged should have iris_debug");
-        assert!(names.contains("iris_containers"), "merged should have iris_containers");
+        assert!(
+            names.contains("iris_debug"),
+            "merged should have iris_debug"
+        );
+        assert!(
+            names.contains("iris_containers"),
+            "merged should have iris_containers"
+        );
         // merged removes the individual debug tools
-        assert!(!names.contains("debug_capture_packet"), "merged should remove debug_capture_packet");
+        assert!(
+            !names.contains("debug_capture_packet"),
+            "merged should remove debug_capture_packet"
+        );
     }
 }
 

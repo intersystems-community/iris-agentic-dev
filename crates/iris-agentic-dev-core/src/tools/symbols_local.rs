@@ -693,8 +693,11 @@ mod tests {
         let src = b"Class MyApp.Foo {\nMethod DoSomething() As %String {\n}\n}";
         let (symbols, _) = extract_cls_symbols(src, "src/MyApp/Foo.cls", "MyApp.*");
         assert!(
-            symbols.iter().any(|s| s.kind == "method" || s.kind == "class"),
-            "should have class or method symbols: {:?}", symbols
+            symbols
+                .iter()
+                .any(|s| s.kind == "method" || s.kind == "class"),
+            "should have class or method symbols: {:?}",
+            symbols
         );
     }
 
@@ -704,7 +707,10 @@ mod tests {
         let (symbols, _) = extract_cls_symbols(src, "src/MyApp/Foo.cls", "Other.*");
         // class name doesn't match query — should return no class symbol
         let class_syms: Vec<_> = symbols.iter().filter(|s| s.kind == "class").collect();
-        assert!(class_syms.is_empty(), "should not return class when query doesn't match");
+        assert!(
+            class_syms.is_empty(),
+            "should not return class when query doesn't match"
+        );
     }
 
     #[test]
@@ -722,8 +728,12 @@ mod tests {
         let (symbols, _) = extract_routine_symbols(src, "src/MyRoutine.mac", "MyRoutine");
         // Routine name extracted from file stem
         assert!(
-            symbols.iter().any(|s| s.kind == "class" || s.name.contains("MyRoutine") || s.kind == "label" || !symbols.is_empty()),
-            "should have some symbols or empty: {:?}", symbols
+            symbols.iter().any(|s| s.kind == "class"
+                || s.name.contains("MyRoutine")
+                || s.kind == "label"
+                || !symbols.is_empty()),
+            "should have some symbols or empty: {:?}",
+            symbols
         );
     }
 
@@ -732,7 +742,10 @@ mod tests {
         let src = b"OtherRoutine\n";
         let (symbols, _) = extract_routine_symbols(src, "src/OtherRoutine.mac", "MyRoutine");
         // routine name "OtherRoutine" doesn't match query "MyRoutine"
-        assert!(symbols.is_empty(), "should return no symbols when query doesn't match");
+        assert!(
+            symbols.is_empty(),
+            "should return no symbols when query doesn't match"
+        );
     }
 
     // ── scan_workspace ───────────────────────────────────────────────────────
@@ -741,8 +754,14 @@ mod tests {
     fn scan_workspace_empty_dir() {
         let dir = tempfile::TempDir::new().unwrap();
         let result = scan_workspace(dir.path(), "*", 100);
-        assert!(result.symbols.is_empty(), "empty dir should have no symbols");
-        assert!(result.parse_warnings.is_empty(), "empty dir should have no warnings");
+        assert!(
+            result.symbols.is_empty(),
+            "empty dir should have no symbols"
+        );
+        assert!(
+            result.parse_warnings.is_empty(),
+            "empty dir should have no warnings"
+        );
     }
 
     #[test]
@@ -753,7 +772,8 @@ mod tests {
         let result = scan_workspace(dir.path(), "MyApp.*", 100);
         assert!(
             result.symbols.iter().any(|s| s.kind == "class"),
-            "should find class in .cls file: {:?}", result.symbols
+            "should find class in .cls file: {:?}",
+            result.symbols
         );
     }
 
@@ -767,7 +787,8 @@ mod tests {
         let result = scan_workspace(dir.path(), "MyApp.*", 3);
         assert!(
             result.symbols.len() <= 3,
-            "limit=3 should cap at 3 symbols: got {}", result.symbols.len()
+            "limit=3 should cap at 3 symbols: got {}",
+            result.symbols.len()
         );
     }
 
@@ -779,8 +800,12 @@ mod tests {
         std::fs::write(dir.path().join("Bad.cls"), &bad).unwrap();
         let result = scan_workspace(dir.path(), "*", 100);
         assert!(
-            result.parse_warnings.iter().any(|w| w.warning_type == "ENCODING_ERROR"),
-            "invalid UTF-8 should produce ENCODING_ERROR warning: {:?}", result.parse_warnings
+            result
+                .parse_warnings
+                .iter()
+                .any(|w| w.warning_type == "ENCODING_ERROR"),
+            "invalid UTF-8 should produce ENCODING_ERROR warning: {:?}",
+            result.parse_warnings
         );
     }
 

@@ -79,13 +79,12 @@ fn test_strip_storage_removes_trailing_blank_lines_before_storage() {
     let (stripped, flag) = iris_agentic_dev_core::tools::doc::strip_storage_blocks(cls);
     assert!(flag, "should detect storage block");
     assert!(!stripped.contains("Storage Default"), "storage removed");
-    assert!(
-        stripped.contains("Property Name"),
-        "property preserved"
-    );
+    assert!(stripped.contains("Property Name"), "property preserved");
     // The trailing blank lines before Storage should be removed
     assert!(
-        !stripped.trim_end().ends_with('\n') || stripped.trim_end().ends_with("Property Name As %String;"),
-        "no trailing blank lines: {:?}", stripped
+        !stripped.trim_end().ends_with('\n')
+            || stripped.trim_end().ends_with("Property Name As %String;"),
+        "no trailing blank lines: {:?}",
+        stripped
     );
 }
