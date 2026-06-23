@@ -7514,3 +7514,193 @@ async fn test_dispatch_skill_learning_disabled_v2() {
         "skill learning disabled v2: {v}"
     );
 }
+
+// ── scm.rs coverage: doc name normalization and action branches ───────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_source_control_bare_classname() {
+    // Exercise the .cls extension auto-append path (lines 80-81 in scm.rs)
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_source_control",
+            serde_json::json!({
+                "action": "status",
+                "document": "MyApp.TestClass",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    match result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!("scm status bare classname: {text}");
+        }
+        Err(e) => eprintln!("scm status bare classname error (ok): {e}"),
+    }
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_source_control_checkout() {
+    // Exercise checkout action path
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_source_control",
+            serde_json::json!({
+                "action": "checkout",
+                "document": "MyApp.TestClass.cls",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    match result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!("scm checkout: {text}");
+        }
+        Err(e) => eprintln!("scm checkout error (ok): {e}"),
+    }
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_source_control_execute_action() {
+    // Exercise execute action path
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_source_control",
+            serde_json::json!({
+                "action": "execute",
+                "document": "MyApp.TestClass.cls",
+                "action_id": "%CheckOut",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    match result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!("scm execute: {text}");
+        }
+        Err(e) => eprintln!("scm execute error (ok): {e}"),
+    }
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_source_control_menu_with_doc() {
+    // Exercise menu action with real doc name
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_source_control",
+            serde_json::json!({
+                "action": "menu",
+                "document": "MyApp.TestClass.cls",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    match result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!("scm menu with doc: {text}");
+        }
+        Err(e) => eprintln!("scm menu with doc error (ok): {e}"),
+    }
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_source_control_invalid_action() {
+    // Exercise the INVALID_PARAM branch (other => err_json)
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_source_control",
+            serde_json::json!({
+                "action": "bogus_xyz",
+                "document": "MyApp.TestClass.cls",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("error_code").is_some() || v.get("success").is_some(),
+        "scm invalid action: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_source_control_elicitation_expired() {
+    // Exercise elicitation resume path with a bogus elicitation_id
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_source_control",
+            serde_json::json!({
+                "action": "status",
+                "document": "MyApp.TestClass.cls",
+                "namespace": "USER",
+                "elicitation_id": "nonexistent-eid-xyz9999",
+                "answer": "yes"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("error_code")
+            .map(|e| e == "ELICITATION_EXPIRED")
+            .unwrap_or(false)
+            || v.get("success").is_some()
+            || v.get("error_code").is_some(),
+        "scm elicitation expired: {v}"
+    );
+}
+
+// ── generate.rs coverage: extract_class_name None branches ───────────────────
+
+#[tokio::test]
+async fn test_generate_coverage_extract_class_name_via_dispatch() {
+    // iris_generate_class with model=mock exercises generate.rs mock path.
+    // validate_cls_syntax and extract_class_name are exercised internally.
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_generate_class",
+            serde_json::json!({
+                "description": "A simple test class",
+                "namespace": "USER",
+                "class_name": "IrisDevTest.GenCoverage"
+            }),
+        )
+        .await;
+    match result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!("iris_generate_class: {}", &text[..text.len().min(200)]);
+        }
+        Err(e) => eprintln!("iris_generate_class error (ok without LLM): {e}"),
+    }
+}

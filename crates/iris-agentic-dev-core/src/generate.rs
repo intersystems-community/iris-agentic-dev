@@ -295,4 +295,48 @@ mod tests {
         std::env::remove_var("IRIS_GENERATE_CLASS_MODEL");
         std::env::remove_var("OPENAI_API_KEY");
     }
+
+    #[test]
+    fn extract_class_name_invalid_starts_with_digit_returns_none() {
+        let text = "Class 9Invalid.Name { }";
+        assert_eq!(extract_class_name(text), None);
+    }
+
+    #[test]
+    fn extract_class_name_invalid_contains_special_chars_returns_none() {
+        let text = "Class My-Class.Name { }";
+        assert_eq!(extract_class_name(text), None);
+    }
+
+    #[test]
+    fn extract_class_name_no_class_line_returns_none() {
+        let text = "This has no class definition at all";
+        assert_eq!(extract_class_name(text), None);
+    }
+
+    #[test]
+    fn extract_class_name_empty_input_returns_none() {
+        assert_eq!(extract_class_name(""), None);
+    }
+
+    #[test]
+    fn extract_class_name_valid_dotted_name() {
+        let text = "Class My.Deep.Package.ClassName Extends %Persistent { }";
+        assert_eq!(
+            extract_class_name(text),
+            Some("My.Deep.Package.ClassName".to_string())
+        );
+    }
+
+    #[test]
+    fn validate_cls_syntax_unbalanced_braces_returns_false() {
+        assert!(!validate_cls_syntax("Class Foo { { }"));
+        assert!(!validate_cls_syntax("Class Foo { } }"));
+    }
+
+    #[test]
+    fn validate_cls_syntax_balanced_braces_returns_true() {
+        let text = "Class Foo { Method Bar() { Quit 1 } }";
+        assert!(validate_cls_syntax(text));
+    }
 }
