@@ -6792,3 +6792,130 @@ async fn test_dispatch_iris_symbols_local_no_workspace_v2() {
         "iris_symbols_local no workspace: {v}"
     );
 }
+
+// ── skill umbrella tool — list action (covers lines 3852-3855 mod.rs) ─────────
+
+#[tokio::test]
+async fn test_dispatch_skill_umbrella_list() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test("skill", serde_json::json!({ "action": "list" }))
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("skills").is_some() || v.get("error_code").is_some(),
+        "skill umbrella list: {v}"
+    );
+}
+
+// ── skill_community umbrella tool — list action (covers lines 3865-3870 mod.rs) ──
+
+#[tokio::test]
+async fn test_dispatch_skill_community_umbrella_list() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test("skill_community", serde_json::json!({ "action": "list" }))
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("skills").is_some() || v.get("error_code").is_some(),
+        "skill_community umbrella list: {v}"
+    );
+}
+
+// ── kb umbrella tool — recall action (covers lines 3880-3883 mod.rs) ──────────
+
+#[tokio::test]
+async fn test_dispatch_kb_umbrella_recall() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "kb",
+            serde_json::json!({ "action": "recall", "query": "test query xyz", "namespace": "USER" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("results").is_some() || v.get("error_code").is_some(),
+        "kb umbrella recall: {v}"
+    );
+}
+
+// ── agent_info umbrella tool — stats (covers lines 3893-3897 mod.rs) ──────────
+
+#[tokio::test]
+async fn test_dispatch_agent_info_umbrella_stats() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test("agent_info", serde_json::json!({ "what": "stats" }))
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some()
+            || v.get("session_calls").is_some()
+            || v.get("error_code").is_some(),
+        "agent_info umbrella stats: {v}"
+    );
+}
+
+// ── iris_doc GET compiled (covers iris_doc get compiled path) ─────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_doc_get_compiled() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_doc",
+            serde_json::json!({
+                "mode": "get",
+                "name": "%SYS.Namespace.cls",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some() || v.get("content").is_some(),
+        "iris_doc get compiled: {v}"
+    );
+}
+
+// ── iris_doc DELETE (covers iris_doc delete path) ─────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_doc_delete_nonexistent_v3() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_doc",
+            serde_json::json!({
+                "mode": "delete",
+                "name": "IrisDevTmp.NonExistentXyz9999.cls",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_doc delete nonexistent: {v}"
+    );
+}

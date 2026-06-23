@@ -6134,6 +6134,14 @@ impl IrisTools {
             debug_get_error_logs
         );
         dispatch!("debug_source_map", SourceMapParams, debug_source_map);
+        dispatch!("skill", skills_tools::SkillParams, skill);
+        dispatch!(
+            "skill_community",
+            skills_tools::SkillCommunityParams,
+            skill_community
+        );
+        dispatch!("kb", skills_tools::KbParams, kb);
+        dispatch!("agent_info", skills_tools::AgentInfoParams, agent_info);
         dispatch_any!("iris_containers", iris_containers);
         Err(format!("unknown tool: {tool}"))
     }
