@@ -5644,6 +5644,350 @@ mod pure_fn_tests {
     }
 }
 
+#[cfg(test)]
+mod validate_sql_tests {
+    use super::validate_read_only_sql;
+
+    #[test]
+    fn test_select_allowed() {
+        assert!(validate_read_only_sql("SELECT * FROM MyTable").is_ok());
+    }
+
+    #[test]
+    fn test_empty_string_returns_empty_error() {
+        assert_eq!(validate_read_only_sql(""), Err("EMPTY".to_string()));
+    }
+
+    #[test]
+    fn test_whitespace_only_returns_empty_error() {
+        assert_eq!(validate_read_only_sql("   \n\t  "), Err("EMPTY".to_string()));
+    }
+
+    #[test]
+    fn test_insert_blocked() {
+        assert_eq!(
+            validate_read_only_sql("INSERT INTO t VALUES (1)"),
+            Err("INSERT".to_string())
+        );
+    }
+
+    #[test]
+    fn test_update_blocked() {
+        assert_eq!(
+            validate_read_only_sql("UPDATE t SET x=1"),
+            Err("UPDATE".to_string())
+        );
+    }
+
+    #[test]
+    fn test_delete_blocked() {
+        assert_eq!(
+            validate_read_only_sql("DELETE FROM t WHERE id=1"),
+            Err("DELETE".to_string())
+        );
+    }
+
+    #[test]
+    fn test_drop_blocked() {
+        assert_eq!(
+            validate_read_only_sql("DROP TABLE t"),
+            Err("DROP".to_string())
+        );
+    }
+
+    #[test]
+    fn test_alter_blocked() {
+        assert_eq!(
+            validate_read_only_sql("ALTER TABLE t ADD COLUMN x INT"),
+            Err("ALTER".to_string())
+        );
+    }
+
+    #[test]
+    fn test_create_blocked() {
+        assert_eq!(
+            validate_read_only_sql("CREATE TABLE t (id INT)"),
+            Err("CREATE".to_string())
+        );
+    }
+
+    #[test]
+    fn test_truncate_blocked() {
+        assert_eq!(
+            validate_read_only_sql("TRUNCATE TABLE t"),
+            Err("TRUNCATE".to_string())
+        );
+    }
+
+    #[test]
+    fn test_merge_blocked() {
+        assert_eq!(
+            validate_read_only_sql("MERGE INTO t USING s ON t.id=s.id"),
+            Err("MERGE".to_string())
+        );
+    }
+
+    #[test]
+    fn test_exec_blocked() {
+        assert_eq!(
+            validate_read_only_sql("EXEC sp_something"),
+            Err("EXEC".to_string())
+        );
+    }
+
+    #[test]
+    fn test_execute_blocked() {
+        assert_eq!(
+            validate_read_only_sql("EXECUTE my_proc"),
+            Err("EXECUTE".to_string())
+        );
+    }
+
+    #[test]
+    fn test_kill_blocked() {
+        assert_eq!(
+            validate_read_only_sql("KILL 42"),
+            Err("KILL".to_string())
+        );
+    }
+
+    #[test]
+    fn test_lock_blocked() {
+        assert_eq!(
+            validate_read_only_sql("LOCK TABLE t"),
+            Err("LOCK".to_string())
+        );
+    }
+
+    #[test]
+    fn test_case_insensitive_blocked() {
+        assert_eq!(
+            validate_read_only_sql("insert into t values (1)"),
+            Err("INSERT".to_string())
+        );
+        assert_eq!(
+            validate_read_only_sql("Drop Table t"),
+            Err("DROP".to_string())
+        );
+    }
+
+    #[test]
+    fn test_keyword_in_string_literal_allowed() {
+        // DROP inside a string literal must NOT be blocked
+        assert!(validate_read_only_sql("SELECT 'DROP TABLE t' FROM MyTable").is_ok());
+    }
+
+    #[test]
+    fn test_keyword_in_block_comment_allowed() {
+        // DROP inside a block comment must NOT be blocked
+        assert!(validate_read_only_sql("SELECT /* DROP TABLE t */ x FROM t").is_ok());
+    }
+
+    #[test]
+    fn test_keyword_in_line_comment_allowed() {
+        // DROP after -- must NOT be blocked
+        assert!(validate_read_only_sql("SELECT x FROM t -- DROP TABLE t").is_ok());
+    }
+
+    #[test]
+    fn test_keyword_as_substring_not_blocked() {
+        // "DROPBOX" contains DROP but is not a standalone word
+        assert!(validate_read_only_sql("SELECT DROPBOX FROM t").is_ok());
+    }
+
+    #[test]
+    fn test_select_into_subquery_allowed() {
+        // SELECT ... INTO (subquery) is allowed
+        assert!(validate_read_only_sql("SELECT x INTO (SELECT 1) FROM t").is_ok());
+    }
+
+    #[test]
+    fn test_select_into_identifier_blocked() {
+        assert_eq!(
+            validate_read_only_sql("SELECT x INTO myvar FROM t"),
+            Err("SELECT INTO".to_string())
+        );
+    }
+
+    #[test]
+    fn test_bulk_blocked() {
+        assert_eq!(
+            validate_read_only_sql("BULK INSERT t FROM 'file.csv'"),
+            Err("BULK".to_string())
+        );
+    }
+
+    #[test]
+    fn test_load_blocked() {
+        assert_eq!(
+            validate_read_only_sql("LOAD DATA INFILE 'x.csv' INTO TABLE t"),
+            Err("LOAD".to_string())
+        );
+    }
+}
+
+#[cfg(test)]
+mod build_test_run_tests {
+    use super::*;
+
+    fn make_suite(id: &str, name: &str) -> SuiteRow {
+        SuiteRow {
+            id: id.to_string(),
+            name: name.to_string(),
+            status: 1,
+            duration_ms: Some(100.0),
+        }
+    }
+
+    fn make_method(suite_id: &str, name: &str, status: i64, err: &str, action: &str) -> MethodRow {
+        MethodRow {
+            suite_id: suite_id.to_string(),
+            name: name.to_string(),
+            class_name: suite_id.to_string(),
+            status,
+            duration_ms: Some(10.0),
+            error_description: err.to_string(),
+            error_action: action.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_empty_suites_returns_no_tests_found() {
+        let result = super::build_test_run_from_sql(&[], &[]);
+        assert_eq!(result["success"], false);
+        assert_eq!(result["error_code"], super::ERR_NO_TESTS_FOUND);
+    }
+
+    #[test]
+    fn test_one_passing_method() {
+        let suites = vec![make_suite("1", "MySuite")];
+        let methods = vec![make_method("1", "TestFoo", 1, "", "")];
+        let result = super::build_test_run_from_sql(&suites, &methods);
+        assert_eq!(result["success"], true);
+        assert_eq!(result["outcome"], "passed");
+        assert_eq!(result["total"], 1);
+        assert_eq!(result["passed"], 1);
+        assert_eq!(result["failed"], 0);
+    }
+
+    #[test]
+    fn test_one_failing_method() {
+        let suites = vec![make_suite("1", "MySuite")];
+        let methods = vec![make_method("1", "TestFoo", 0, "assertion failed", "")];
+        let result = super::build_test_run_from_sql(&suites, &methods);
+        assert_eq!(result["success"], true);
+        assert_eq!(result["outcome"], "failed");
+        assert_eq!(result["failed"], 1);
+    }
+
+    #[test]
+    fn test_error_method_outcome() {
+        let suites = vec![make_suite("1", "MySuite")];
+        // status=2 with error_action set → "error"
+        let methods = vec![make_method("1", "TestFoo", 2, "crash", "OnError")];
+        let result = super::build_test_run_from_sql(&suites, &methods);
+        assert_eq!(result["outcome"], "errored");
+        assert_eq!(result["errors"], 1);
+    }
+
+    #[test]
+    fn test_mixed_results_across_suites() {
+        let suites = vec![
+            make_suite("1", "SuiteA"),
+            make_suite("2", "SuiteB"),
+        ];
+        let methods = vec![
+            make_method("1", "TestPass", 1, "", ""),
+            make_method("2", "TestFail", 0, "bad", ""),
+        ];
+        let result = super::build_test_run_from_sql(&suites, &methods);
+        assert_eq!(result["total"], 2);
+        assert_eq!(result["passed"], 1);
+        assert_eq!(result["failed"], 1);
+        assert_eq!(result["outcome"], "failed");
+        let suites_arr = result["test_suites"].as_array().unwrap();
+        assert_eq!(suites_arr.len(), 2);
+    }
+
+    #[test]
+    fn test_duration_totalled() {
+        let suites = vec![
+            make_suite("1", "SuiteA"),
+            make_suite("2", "SuiteB"),
+        ];
+        let methods = vec![
+            make_method("1", "T1", 1, "", ""),
+            make_method("2", "T2", 1, "", ""),
+        ];
+        let result = super::build_test_run_from_sql(&suites, &methods);
+        let dur = result["duration_ms"].as_f64().unwrap();
+        assert!(dur > 0.0, "duration_ms should be >0");
+    }
+}
+
+#[cfg(test)]
+mod toolset_tests {
+    use super::*;
+
+    #[test]
+    fn test_toolset_from_str_nostub() {
+        assert_eq!(Toolset::from_str("nostub"), Toolset::Nostub);
+        assert_eq!(Toolset::from_str("NOSTUB"), Toolset::Nostub);
+    }
+
+    #[test]
+    fn test_toolset_from_str_merged() {
+        assert_eq!(Toolset::from_str("merged"), Toolset::Merged);
+        assert_eq!(Toolset::from_str("MERGED"), Toolset::Merged);
+    }
+
+    #[test]
+    fn test_toolset_from_str_unknown_defaults_baseline() {
+        assert_eq!(Toolset::from_str("unknown"), Toolset::Baseline);
+        assert_eq!(Toolset::from_str(""), Toolset::Baseline);
+    }
+
+    #[test]
+    fn test_toolset_as_str() {
+        assert_eq!(Toolset::Baseline.as_str(), "baseline");
+        assert_eq!(Toolset::Nostub.as_str(), "nostub");
+        assert_eq!(Toolset::Merged.as_str(), "merged");
+    }
+
+    #[test]
+    fn test_registered_tool_names_baseline_contains_core_tools() {
+        let tools = IrisTools::new(None).unwrap();
+        let names = tools.registered_tool_names();
+        assert!(names.contains("iris_compile"), "baseline should have iris_compile");
+        assert!(names.contains("iris_execute"), "baseline should have iris_execute");
+        assert!(names.contains("iris_query"), "baseline should have iris_query");
+        // Baseline includes stub tools
+        assert!(names.contains("skill_propose"), "baseline should have skill_propose");
+    }
+
+    #[test]
+    fn test_registered_tool_names_nostub_removes_stubs() {
+        let tools = IrisTools::new_with_toolset(None, Toolset::Nostub).unwrap();
+        let names = tools.registered_tool_names();
+        assert!(!names.contains("skill_propose"), "nostub should remove skill_propose");
+        assert!(!names.contains("skill_optimize"), "nostub should remove skill_optimize");
+        assert!(!names.contains("skill_share"), "nostub should remove skill_share");
+        assert!(!names.contains("skill_community_install"), "nostub should remove skill_community_install");
+        // Core tools still present
+        assert!(names.contains("iris_compile"), "nostub should keep iris_compile");
+    }
+
+    #[test]
+    fn test_registered_tool_names_merged_adds_iris_debug() {
+        let tools = IrisTools::new_with_toolset(None, Toolset::Merged).unwrap();
+        let names = tools.registered_tool_names();
+        assert!(names.contains("iris_debug"), "merged should have iris_debug");
+        assert!(names.contains("iris_containers"), "merged should have iris_containers");
+        // merged removes the individual debug tools
+        assert!(!names.contains("debug_capture_packet"), "merged should remove debug_capture_packet");
+    }
+}
+
 /// Test-only dispatch helper — call private IrisTools handler methods by tool name.
 #[cfg(any(test, feature = "testing"))]
 impl IrisTools {
