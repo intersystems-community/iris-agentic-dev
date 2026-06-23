@@ -585,3 +585,95 @@ fn test_workspace_root_prefers_new_over_legacy() {
         "new .iris-agentic-dev.toml should win over legacy"
     );
 }
+
+// ── docker_only field ─────────────────────────────────────────────────────────
+
+#[test]
+fn test_load_parses_docker_only_field() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        "container = \"myapp-iris\"\ndocker_only = true\n",
+    );
+    let cfg = load_workspace_config(Some(dir.path().to_str().unwrap())).unwrap();
+    assert!(cfg.docker_only, "docker_only should parse as true");
+}
+
+#[test]
+fn test_docker_only_returns_localhost_connection() {
+    let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
+        container: Some("myapp-iris".to_string()),
+        docker_only: true,
+        ..Default::default()
+    };
+    let conn = workspace_config_to_connection(&cfg, "USER");
+    assert!(
+        conn.is_some(),
+        "docker_only with container should return Some(IrisConnection)"
+    );
+    let conn = conn.unwrap();
+    assert!(
+        conn.base_url.contains("127.0.0.1:1"),
+        "docker_only base_url should be unreachable address, got: {}",
+        conn.base_url
+    );
+}
+
+#[test]
+fn test_workspace_config_username_password_set_env() {
+    std::env::remove_var("IRIS_USERNAME");
+    std::env::remove_var("IRIS_PASSWORD");
+    let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
+        container: Some("mytest-iris".to_string()),
+        username: Some("admin".to_string()),
+        password: Some("secret".to_string()),
+        ..Default::default()
+    };
+    workspace_config_to_connection(&cfg, "USER");
+    assert_eq!(
+        std::env::var("IRIS_USERNAME").ok().as_deref(),
+        Some("admin"),
+        "IRIS_USERNAME should be set from config"
+    );
+    assert_eq!(
+        std::env::var("IRIS_PASSWORD").ok().as_deref(),
+        Some("secret"),
+        "IRIS_PASSWORD should be set from config"
+    );
+    std::env::remove_var("IRIS_USERNAME");
+    std::env::remove_var("IRIS_PASSWORD");
+}
+
+// ── apply_workspace_config ────────────────────────────────────────────────────
+
+#[test]
+fn test_apply_workspace_config_explicit_passes_through() {
+    use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
+    use iris_agentic_dev_core::iris::workspace_config::apply_workspace_config;
+    let explicit = IrisConnection::new(
+        "http://explicit:52773",
+        "MYNS",
+        "_SYSTEM",
+        "SYS",
+        DiscoverySource::EnvVar,
+    );
+    let result = apply_workspace_config(Some(explicit.clone()), None, "USER");
+    assert!(result.is_some(), "explicit connection should pass through");
+    assert_eq!(
+        result.unwrap().base_url,
+        explicit.base_url,
+        "explicit connection should be returned unchanged"
+    );
+}
+
+#[test]
+fn test_apply_workspace_config_none_with_no_file_returns_none() {
+    use iris_agentic_dev_core::iris::workspace_config::apply_workspace_config;
+    let dir = tempfile::TempDir::new().unwrap();
+    // No config file in dir
+    let result = apply_workspace_config(None, Some(dir.path().to_str().unwrap()), "USER");
+    assert!(
+        result.is_none(),
+        "no config file should yield None from apply_workspace_config"
+    );
+}

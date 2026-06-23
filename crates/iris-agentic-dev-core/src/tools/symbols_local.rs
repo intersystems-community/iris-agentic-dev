@@ -708,4 +708,37 @@ mod tests {
         assert!(!glob_match("", "anything"));
         assert!(!glob_match("", ""));
     }
+
+    #[test]
+    fn glob_suffix_shorter_than_pattern_no_match() {
+        // name shorter than suffix part → name_len < part.len() branch (line 73)
+        assert!(!glob_match("*VeryLongSuffix", "Short"));
+    }
+
+    #[test]
+    fn glob_suffix_overlap_with_prefix_no_match() {
+        // prefix consumes "AB", suffix needs "AB" at end — overlap with pos (line 77-78)
+        // pattern "AB*AB" on name "AB" — prefix "AB" consumed all, suffix "AB" can't fit
+        assert!(!glob_match("AB*AB", "AB"));
+    }
+
+    #[test]
+    fn glob_mid_segment_not_found() {
+        // Middle segment not present in name → None branch (line 85)
+        assert!(!glob_match("Foo*.Bar*.Baz", "Foo.Other.Qux"));
+    }
+
+    #[test]
+    fn glob_mid_segment_multiple_wildcards() {
+        // Three parts: "A", "B", "C" — middle segment "B" must exist
+        assert!(glob_match("A*B*C", "AxxxBxxxC"));
+        assert!(!glob_match("A*B*C", "AxxxXxxC"));
+    }
+
+    #[test]
+    fn glob_suffix_exact_boundary() {
+        // Name ends exactly with the suffix and prefix consumed nothing extra
+        assert!(glob_match("*Impl", "SomeImpl"));
+        assert!(glob_match("Pkg.*Impl", "Pkg.FooImpl"));
+    }
 }

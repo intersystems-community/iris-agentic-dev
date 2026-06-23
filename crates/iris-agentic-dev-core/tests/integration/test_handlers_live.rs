@@ -5584,3 +5584,134 @@ async fn test_dispatch_iris_get_log_paginated_retrieve() {
     let _ = ev; // suppress unused warning
 }
 
+// ── iris_macro unknown action → INVALID_PARAM ─────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_macro_unknown_action() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_macro",
+            serde_json::json!({
+                "action": "totally_unknown_action_xyz",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert_eq!(
+        v.get("error_code").and_then(|c| c.as_str()),
+        Some("INVALID_PARAM"),
+        "iris_macro unknown action should return INVALID_PARAM: {v}"
+    );
+    assert!(
+        v.get("error").and_then(|e| e.as_str())
+            .map(|s| s.contains("totally_unknown_action_xyz"))
+            .unwrap_or(false),
+        "error message should include the unknown action: {v}"
+    );
+}
+
+// ── iris_debug unknown action → INVALID_PARAM ────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_debug_unknown_action() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_debug",
+            serde_json::json!({
+                "action": "totally_unknown_debug_xyz",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert_eq!(
+        v.get("error_code").and_then(|c| c.as_str()),
+        Some("INVALID_PARAM"),
+        "iris_debug unknown action should return INVALID_PARAM: {v}"
+    );
+}
+
+// ── resolve_dynamic_dispatch with package_prefix ─────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_resolve_dynamic_dispatch_package_prefix_live() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    // Exercise the has_prefix=true branch by providing a non-empty package_prefix
+    let result = tools
+        .call_for_test(
+            "resolve_dynamic_dispatch",
+            serde_json::json!({
+                "method_name": "OnProcessInput",
+                "package_prefix": "Ens",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "resolve_dynamic_dispatch with prefix: {v}"
+    );
+}
+
+// ── iris_info with "config" action ────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_info_config() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_info",
+            serde_json::json!({
+                "what": "config"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_info config: {v}"
+    );
+}
+
+// ── iris_table_info DDL table (not found) ─────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_table_info_not_found() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_table_info",
+            serde_json::json!({
+                "table": "NonExistentTable_XYZ_9999",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    // NOT_FOUND or error_code
+    let success = v.get("success").and_then(|s| s.as_bool()).unwrap_or(true);
+    assert!(
+        !success || v.get("error_code").is_some(),
+        "nonexistent table should return success=false or error_code: {v}"
+    );
+}
+
