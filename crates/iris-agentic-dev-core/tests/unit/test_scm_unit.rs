@@ -1,43 +1,11 @@
 // Unit tests for scm.rs internal logic (no IRIS needed).
-// Tests KNOWN_MENU_ITEMS and ScmParams deserialization.
+// Tests SCM_MENU constant and ScmParams deserialization.
 
-use iris_agentic_dev_core::tools::scm::{ScmParams, KNOWN_MENU_ITEMS};
-
-#[test]
-fn test_known_menu_items_not_empty() {
-    assert!(
-        !KNOWN_MENU_ITEMS.is_empty(),
-        "KNOWN_MENU_ITEMS must have entries"
-    );
-    assert!(
-        KNOWN_MENU_ITEMS.contains(&"CheckOut"),
-        "must contain CheckOut"
-    );
-    assert!(
-        KNOWN_MENU_ITEMS.contains(&"CheckIn"),
-        "must contain CheckIn"
-    );
-}
+use iris_agentic_dev_core::tools::scm::{ScmParams, SCM_MENU};
 
 #[test]
-fn test_known_menu_items_count() {
-    assert!(
-        KNOWN_MENU_ITEMS.len() >= 5,
-        "expect at least 5 known menu items, got {}",
-        KNOWN_MENU_ITEMS.len()
-    );
-}
-
-#[test]
-fn test_known_menu_items_contains_standard_actions() {
-    let expected = ["CheckOut", "UndoCheckOut", "CheckIn", "GetLatest", "Status"];
-    for item in &expected {
-        assert!(
-            KNOWN_MENU_ITEMS.contains(item),
-            "KNOWN_MENU_ITEMS missing: {}",
-            item
-        );
-    }
+fn test_scm_menu_prefix_is_percent_source_menu() {
+    assert_eq!(SCM_MENU, "%SourceMenu");
 }
 
 #[test]

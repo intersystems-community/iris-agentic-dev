@@ -166,7 +166,10 @@ pub async fn handle_iris_source_control(
                 // format: "name|enabled"
                 let mut parts = line.splitn(2, '|');
                 let name = parts.next().unwrap_or("").trim();
-                let enabled: u8 = parts.next().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+                let enabled: u8 = parts
+                    .next()
+                    .and_then(|s| s.trim().parse().ok())
+                    .unwrap_or(0);
                 if enabled == 1 && !name.is_empty() {
                     actions.push(serde_json::json!({"id": name, "label": name, "enabled": true}));
                 }
@@ -178,11 +181,17 @@ pub async fn handle_iris_source_control(
             let code = user_action_code("%CheckOut", doc, &iris.username, &iris.password);
             let raw = match xecute(iris, client, &code, ns).await {
                 Ok(o) => o,
-                Err(e) => return ok_json(serde_json::json!({"success": false, "error_code": "SCM_UNAVAILABLE", "error": e.to_string()})),
+                Err(e) => {
+                    return ok_json(
+                        serde_json::json!({"success": false, "error_code": "SCM_UNAVAILABLE", "error": e.to_string()}),
+                    )
+                }
             };
             let out = raw.lines().next().unwrap_or("").trim();
             if out == "SCM_UNAVAILABLE" {
-                return ok_json(serde_json::json!({"success": false, "error_code": "SCM_UNAVAILABLE", "error": "Source control session could not be initialized"}));
+                return ok_json(
+                    serde_json::json!({"success": false, "error_code": "SCM_UNAVAILABLE", "error": "Source control session could not be initialized"}),
+                );
             }
             let (action_code, msg) = parse_action_msg(out);
 
@@ -213,11 +222,17 @@ pub async fn handle_iris_source_control(
             let code = user_action_code(action_id, doc, &iris.username, &iris.password);
             let raw = match xecute(iris, client, &code, ns).await {
                 Ok(o) => o,
-                Err(e) => return ok_json(serde_json::json!({"success": false, "error_code": "SCM_UNAVAILABLE", "error": e.to_string()})),
+                Err(e) => {
+                    return ok_json(
+                        serde_json::json!({"success": false, "error_code": "SCM_UNAVAILABLE", "error": e.to_string()}),
+                    )
+                }
             };
             let out = raw.lines().next().unwrap_or("").trim();
             if out == "SCM_UNAVAILABLE" {
-                return ok_json(serde_json::json!({"success": false, "error_code": "SCM_UNAVAILABLE", "error": "Source control session could not be initialized"}));
+                return ok_json(
+                    serde_json::json!({"success": false, "error_code": "SCM_UNAVAILABLE", "error": "Source control session could not be initialized"}),
+                );
             }
             let (action_code, msg) = parse_action_msg(out);
 
@@ -327,7 +342,13 @@ fn user_action_code(action_id: &str, doc: &str, username: &str, password: &str) 
 
 /// Build the ObjectScript snippet that re-runs `UserAction` then immediately calls
 /// `AfterUserAction` in the same job, so %SourceControl state is preserved.
-fn after_user_action_code(action_id: &str, doc: &str, answer: &str, username: &str, password: &str) -> String {
+fn after_user_action_code(
+    action_id: &str,
+    doc: &str,
+    answer: &str,
+    username: &str,
+    password: &str,
+) -> String {
     let prefix = scm_init_prefix(username, password);
     let answer_int = if answer == "yes" { "1" } else { "0" };
     let action_id_q = os_quote(action_id);
@@ -416,7 +437,7 @@ mod tests {
     // ── user_action_code ──────────────────────────────────────────────────────
     #[test]
     fn test_user_action_code_no_backslash_quote() {
-        let code = user_action_code("CheckOut", "MyApp.Patient.cls");
+        let code = user_action_code("CheckOut", "MyApp.Patient.cls", "user", "pass");
         assert!(
             !code.contains("\\\""),
             "must use ObjectScript quoting, not backslash: {}",
@@ -435,7 +456,7 @@ mod tests {
     }
     #[test]
     fn test_user_action_code_escapes_quotes_in_action() {
-        let code = user_action_code("Check\"Out", "Doc.cls");
+        let code = user_action_code("Check\"Out", "Doc.cls", "user", "pass");
         assert!(
             code.contains("\"\""),
             "double-quote must become \"\": {}",
@@ -445,7 +466,7 @@ mod tests {
     }
     #[test]
     fn test_user_action_code_escapes_newline_in_doc() {
-        let code = user_action_code("CheckOut", "Doc\nwith\nnewlines.cls");
+        let code = user_action_code("CheckOut", "Doc\nwith\nnewlines.cls", "user", "pass");
         assert!(
             code.contains("$Char(10)"),
             "newline must become $Char(10): {}",
@@ -457,55 +478,83 @@ mod tests {
     #[test]
     fn test_status_check_code_uses_get_status() {
         let code = status_check_code("MyApp.Patient.cls", "user", "pass");
-        assert!(code.contains("%Studio.SourceControl.Interface"), "must use Interface class: {code}");
+        assert!(
+            code.contains("%Studio.SourceControl.Interface"),
+            "must use Interface class: {code}"
+        );
         assert!(code.contains("GetStatus"), "must call GetStatus: {code}");
-        assert!(code.contains("SourceControlCreate"), "must init session: {code}");
-        assert!(!code.contains("%GetImplementationObject"), "must not use removed method: {code}");
+        assert!(
+            code.contains("SourceControlCreate"),
+            "must init session: {code}"
+        );
+        assert!(
+            !code.contains("%GetImplementationObject"),
+            "must not use removed method: {code}"
+        );
     }
 
     #[test]
     fn test_status_check_code_contains_doc() {
         let code = status_check_code("MyApp.Patient.cls", "user", "pass");
-        assert!(code.contains("MyApp.Patient.cls"), "must embed document name: {code}");
+        assert!(
+            code.contains("MyApp.Patient.cls"),
+            "must embed document name: {code}"
+        );
     }
 
     #[test]
     fn test_status_check_code_escapes_quotes_in_doc() {
         let code = status_check_code("My\"App.cls", "user", "pass");
-        assert!(code.contains("\"\""), "double-quote must become \"\": {code}");
+        assert!(
+            code.contains("\"\""),
+            "double-quote must become \"\": {code}"
+        );
         assert!(!code.contains("\\\""), "no backslash-quote: {code}");
     }
 
     #[test]
     fn test_status_check_code_escapes_quotes_in_credentials() {
         let code = status_check_code("Any.cls", "us\"er", "p\"ass");
-        assert!(code.contains("\"\""), "double-quote in credentials must be escaped: {code}");
+        assert!(
+            code.contains("\"\""),
+            "double-quote in credentials must be escaped: {code}"
+        );
     }
 
     #[test]
     fn test_status_check_code_writes_uncontrolled_branch() {
         let code = status_check_code("Any.cls", "user", "pass");
-        assert!(code.contains("UNCONTROLLED"), "must write UNCONTROLLED when not in SC: {code}");
+        assert!(
+            code.contains("UNCONTROLLED"),
+            "must write UNCONTROLLED when not in SC: {code}"
+        );
     }
 
     #[test]
     fn test_status_check_code_uses_menu_items_for_checkout_state() {
         let code = status_check_code("Any.cls", "user", "pass");
-        assert!(code.contains("MenuItems"), "must use MenuItems to deduce checkout state: {code}");
-        assert!(code.contains("%UndoCheckout"), "must check for UndoCheckout to detect checked-out: {code}");
+        assert!(
+            code.contains("MenuItems"),
+            "must use MenuItems to deduce checkout state: {code}"
+        );
+        assert!(
+            code.contains("%UndoCheckout"),
+            "must check for UndoCheckout to detect checked-out: {code}"
+        );
     }
 
     #[test]
     fn test_status_check_code_writes_owner_when_checked_out() {
         let code = status_check_code("Any.cls", "myuser", "pass");
-        assert!(code.contains("1_\"|\"_\"myuser\""), "must write 1|username when checked out: {code}");
+        assert!(
+            code.contains("1_\"|\"_\"myuser\""),
+            "must write 1|username when checked out: {code}"
+        );
     }
 
-    // ── KNOWN_MENU_ITEMS ──────────────────────────────────────────────────────
+    // ── SCM_MENU ──────────────────────────────────────────────────────────────
     #[test]
-    fn test_known_menu_items_has_checkout() {
-        assert!(KNOWN_MENU_ITEMS.contains(&"CheckOut"));
-        assert!(KNOWN_MENU_ITEMS.contains(&"CheckIn"));
-        assert!(KNOWN_MENU_ITEMS.contains(&"GetLatest"));
+    fn test_scm_menu_prefix() {
+        assert_eq!(SCM_MENU, "%SourceMenu");
     }
 }
