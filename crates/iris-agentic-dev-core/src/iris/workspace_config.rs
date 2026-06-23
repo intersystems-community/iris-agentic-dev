@@ -281,11 +281,16 @@ namespace = "{namespace}"
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::sync::Mutex;
+
+    // Serialize tests that mutate global env vars to avoid parallel interference.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     // ── workspace_root tests ─────────────────────────────────────────────────
 
     #[test]
     fn workspace_root_env_var_overrides_all() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("OBJECTSCRIPT_WORKSPACE", dir.path().to_str().unwrap());
         let root = workspace_root(None);
@@ -295,6 +300,7 @@ mod tests {
 
     #[test]
     fn workspace_root_env_overrides_arg() {
+        let _guard = ENV_LOCK.lock().unwrap();
         // When env is set, it takes priority over the arg
         let env_dir = tempfile::tempdir().unwrap();
         let arg_dir = tempfile::tempdir().unwrap();
@@ -306,6 +312,7 @@ mod tests {
 
     #[test]
     fn workspace_root_empty_arg_falls_through() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
         let root = workspace_root(Some(""));
         // Falls through to cwd-walk — just check it doesn't panic and returns something
@@ -314,6 +321,7 @@ mod tests {
 
     #[test]
     fn workspace_root_dot_arg_falls_through() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
         let root = workspace_root(Some("."));
         assert!(root.is_absolute() || root.to_str() == Some("."));
@@ -323,6 +331,7 @@ mod tests {
 
     #[test]
     fn load_config_missing_file_returns_none() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("OBJECTSCRIPT_WORKSPACE", dir.path().to_str().unwrap());
@@ -333,6 +342,7 @@ mod tests {
 
     #[test]
     fn load_config_valid_toml_returns_some() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
         writeln!(
@@ -350,6 +360,7 @@ mod tests {
 
     #[test]
     fn load_config_invalid_toml_returns_none() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
         writeln!(f, "this is not valid toml ={{{{").unwrap();
@@ -361,6 +372,7 @@ mod tests {
 
     #[test]
     fn load_config_legacy_iris_dev_toml() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let mut f = std::fs::File::create(dir.path().join(".iris-dev.toml")).unwrap();
         writeln!(f, "host = \"myhost\"\nweb_port = 52773").unwrap();
@@ -392,6 +404,7 @@ mod tests {
 
     #[test]
     fn config_with_container_only_returns_none_and_sets_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("IRIS_CONTAINER");
         let cfg = WorkspaceConfig {
             host: None,
@@ -426,6 +439,167 @@ mod tests {
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
         assert!(conn.is_none());
+    }
+
+    #[test]
+    fn workspace_root_arg_used_when_no_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+        let dir = tempfile::tempdir().unwrap();
+        let root = workspace_root(Some(dir.path().to_str().unwrap()));
+        assert_eq!(root, dir.path());
+    }
+
+    #[test]
+    fn workspace_root_legacy_toml_fallback() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::File::create(dir.path().join(".iris-dev.toml")).unwrap();
+        std::env::set_var("OBJECTSCRIPT_WORKSPACE", dir.path().to_str().unwrap());
+        // load_workspace_config will walk and find .iris-dev.toml
+        let result = load_workspace_config(None);
+        std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+        // Legacy file loads fine (may be empty/default, doesn't error)
+        let _ = result;
+    }
+
+    #[test]
+    fn config_with_host_and_path_prefix_builds_prefixed_url() {
+        let cfg = WorkspaceConfig {
+            host: Some("my-host".to_string()),
+            web_port: Some(80),
+            namespace: Some("USER".to_string()),
+            container: None,
+            username: None,
+            password: None,
+            scheme: Some("http".to_string()),
+            web_prefix: Some("iriscore".to_string()),
+            docker_only: false,
+        };
+        let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
+        assert!(
+            conn.base_url.contains("iriscore"),
+            "URL should include path prefix: {}",
+            conn.base_url
+        );
+    }
+
+    #[test]
+    fn config_with_host_and_container_sets_iris_container_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("IRIS_CONTAINER");
+        let cfg = WorkspaceConfig {
+            host: Some("localhost".to_string()),
+            web_port: Some(52773),
+            namespace: None,
+            container: Some("my-iris-container".to_string()),
+            username: None,
+            password: None,
+            scheme: None,
+            web_prefix: None,
+            docker_only: false,
+        };
+        let conn = workspace_config_to_connection(&cfg, "USER");
+        let container_env = std::env::var("IRIS_CONTAINER").ok();
+        std::env::remove_var("IRIS_CONTAINER");
+        assert!(conn.is_some(), "host present → connection returned");
+        assert_eq!(
+            container_env.as_deref(),
+            Some("my-iris-container"),
+            "IRIS_CONTAINER must be set when container+host both specified"
+        );
+    }
+
+    #[test]
+    fn config_container_with_credentials_sets_env_vars() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("IRIS_CONTAINER");
+        std::env::remove_var("IRIS_USERNAME");
+        std::env::remove_var("IRIS_PASSWORD");
+        std::env::remove_var("IRIS_NAMESPACE");
+        let cfg = WorkspaceConfig {
+            host: None,
+            web_port: None,
+            namespace: Some("MYNAMESPACE".to_string()),
+            container: Some("cred-container".to_string()),
+            username: Some("myuser".to_string()),
+            password: Some("mypass".to_string()),
+            scheme: None,
+            web_prefix: None,
+            docker_only: false,
+        };
+        let conn = workspace_config_to_connection(&cfg, "USER");
+        let ns_env = std::env::var("IRIS_NAMESPACE").ok();
+        let user_env = std::env::var("IRIS_USERNAME").ok();
+        let pass_env = std::env::var("IRIS_PASSWORD").ok();
+        std::env::remove_var("IRIS_CONTAINER");
+        std::env::remove_var("IRIS_USERNAME");
+        std::env::remove_var("IRIS_PASSWORD");
+        std::env::remove_var("IRIS_NAMESPACE");
+        assert!(conn.is_none(), "container-only → no connection");
+        assert_eq!(ns_env.as_deref(), Some("MYNAMESPACE"));
+        assert_eq!(user_env.as_deref(), Some("myuser"));
+        assert_eq!(pass_env.as_deref(), Some("mypass"));
+    }
+
+    #[test]
+    fn config_docker_only_returns_unreachable_connection() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let cfg = WorkspaceConfig {
+            host: None,
+            web_port: None,
+            namespace: Some("USER".to_string()),
+            container: Some("docker-only-iris".to_string()),
+            username: None,
+            password: None,
+            scheme: None,
+            web_prefix: None,
+            docker_only: true,
+        };
+        let conn = workspace_config_to_connection(&cfg, "USER");
+        std::env::remove_var("IRIS_CONTAINER");
+        assert!(
+            conn.is_some(),
+            "docker_only=true should return a connection (with unreachable URL)"
+        );
+        let c = conn.unwrap();
+        assert!(
+            c.base_url.contains("127.0.0.1:1"),
+            "docker_only URL must be unreachable: {}",
+            c.base_url
+        );
+    }
+
+    #[test]
+    fn apply_workspace_config_returns_explicit_unchanged() {
+        use crate::iris::connection::DiscoverySource;
+        let explicit = IrisConnection::new(
+            "http://explicit-host:52773",
+            "EXPLICIT",
+            "_SYSTEM",
+            "SYS",
+            DiscoverySource::EnvVar,
+        );
+        let result = apply_workspace_config(Some(explicit.clone()), None, "USER");
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().base_url, explicit.base_url);
+    }
+
+    #[test]
+    fn apply_workspace_config_loads_config_when_no_explicit() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
+        use std::io::Write;
+        writeln!(f, "host = \"config-host\"\nweb_port = 52773").unwrap();
+        std::env::set_var("OBJECTSCRIPT_WORKSPACE", dir.path().to_str().unwrap());
+        let result = apply_workspace_config(None, None, "USER");
+        std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+        assert!(result.is_some(), "should load config and build connection");
+        let c = result.unwrap();
+        assert!(c.base_url.contains("config-host"));
     }
 
     // ── generate_toml_content tests ──────────────────────────────────────────

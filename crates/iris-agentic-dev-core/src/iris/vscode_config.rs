@@ -396,4 +396,153 @@ mod tests {
         let conn = settings.to_iris_connection().await;
         assert!(conn.is_none());
     }
+
+    #[test]
+    fn super_server_port_returns_port_when_configured() {
+        let server = IntersystemsServer {
+            web_server: WebServerSpec {
+                host: Some("localhost".to_string()),
+                port: Some(52773),
+                scheme: None,
+                path_prefix: None,
+            },
+            super_server: Some(SuperServerSpec {
+                host: Some("localhost".to_string()),
+                port: Some(1972),
+            }),
+            username: None,
+            password: None,
+            description: None,
+        };
+        assert_eq!(server.super_server_port(), Some(1972));
+    }
+
+    #[test]
+    fn super_server_port_returns_none_when_absent() {
+        let server = IntersystemsServer {
+            web_server: WebServerSpec {
+                host: Some("localhost".to_string()),
+                port: Some(52773),
+                scheme: None,
+                path_prefix: None,
+            },
+            super_server: None,
+            username: None,
+            password: None,
+            description: None,
+        };
+        assert!(server.super_server_port().is_none());
+    }
+
+    #[tokio::test]
+    async fn to_iris_connection_named_server() {
+        let mut servers = HashMap::new();
+        servers.insert(
+            "my-iris".to_string(),
+            IntersystemsServer {
+                web_server: WebServerSpec {
+                    host: Some("iris-host".to_string()),
+                    port: Some(52773),
+                    scheme: Some("http".to_string()),
+                    path_prefix: None,
+                },
+                super_server: None,
+                username: Some("admin".to_string()),
+                password: Some("pass".to_string()),
+                description: None,
+            },
+        );
+        let settings = VsCodeSettings {
+            objectscript_conn: Some(ObjectScriptConn {
+                active: None,
+                host: None,
+                port: None,
+                username: None,
+                password: None,
+                ns: Some("PROD".to_string()),
+                server: Some("my-iris".to_string()),
+            }),
+            intersystems_servers: Some(servers),
+        };
+        let conn = settings.to_iris_connection().await;
+        assert!(conn.is_some());
+        let c = conn.unwrap();
+        assert!(c.base_url.contains("iris-host"));
+        assert!(c.base_url.contains("52773"));
+        assert_eq!(c.namespace, "PROD");
+    }
+
+    #[tokio::test]
+    async fn to_iris_connection_named_server_with_path_prefix() {
+        let mut servers = HashMap::new();
+        servers.insert(
+            "gw-iris".to_string(),
+            IntersystemsServer {
+                web_server: WebServerSpec {
+                    host: Some("gateway-host".to_string()),
+                    port: Some(80),
+                    scheme: Some("http".to_string()),
+                    path_prefix: Some("iriscore".to_string()),
+                },
+                super_server: None,
+                username: None,
+                password: None,
+                description: None,
+            },
+        );
+        let settings = VsCodeSettings {
+            objectscript_conn: Some(ObjectScriptConn {
+                active: None,
+                host: None,
+                port: None,
+                username: None,
+                password: None,
+                ns: Some("USER".to_string()),
+                server: Some("gw-iris".to_string()),
+            }),
+            intersystems_servers: Some(servers),
+        };
+        let conn = settings.to_iris_connection().await;
+        assert!(conn.is_some());
+        let c = conn.unwrap();
+        assert!(
+            c.base_url.contains("iriscore"),
+            "base_url should include path prefix: {}",
+            c.base_url
+        );
+    }
+
+    #[tokio::test]
+    async fn to_iris_connection_named_server_missing_from_map_returns_none() {
+        let mut servers = HashMap::new();
+        servers.insert(
+            "other-server".to_string(),
+            IntersystemsServer {
+                web_server: WebServerSpec {
+                    host: Some("other".to_string()),
+                    port: Some(52773),
+                    scheme: None,
+                    path_prefix: None,
+                },
+                super_server: None,
+                username: None,
+                password: None,
+                description: None,
+            },
+        );
+        let settings = VsCodeSettings {
+            objectscript_conn: Some(ObjectScriptConn {
+                active: None,
+                host: None,
+                port: None,
+                username: None,
+                password: None,
+                ns: None,
+                server: Some("nonexistent-server".to_string()),
+            }),
+            intersystems_servers: Some(servers),
+        };
+        let conn = settings.to_iris_connection().await;
+        assert!(conn.is_none(), "missing server key must return None");
+    }
 }
