@@ -4516,6 +4516,221 @@ async fn test_dispatch_iris_get_log_list_all() {
     );
 }
 
+// ── docs_introspect ───────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_docs_introspect() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "docs_introspect",
+            serde_json::json!({
+                "class_name": "%Library.Persistent",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("methods").is_some() || v.get("error_code").is_some(),
+        "docs_introspect: {v}"
+    );
+}
+
+// ── check_config ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_check_config() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "check_config",
+            serde_json::json!({}),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("host").is_some() || v.get("iris_host").is_some() || v.get("error_code").is_some() || v.get("success").is_some(),
+        "check_config: {v}"
+    );
+}
+
+// ── iris_containers list ──────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_containers_list() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_containers",
+            serde_json::json!({
+                "action": "list"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("containers").is_some() || v.get("error_code").is_some() || v.get("success").is_some(),
+        "iris_containers list: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_containers_invalid_action() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_containers",
+            serde_json::json!({
+                "action": "invalid_action_xyz"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("error_code").is_some(),
+        "iris_containers invalid action should error: {v}"
+    );
+}
+
+// ── agent_history and agent_stats ─────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_agent_history() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "agent_history",
+            serde_json::json!({}),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("calls").is_some() || v.get("history").is_some() || v.get("error_code").is_some(),
+        "agent_history: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_agent_stats() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "agent_stats",
+            serde_json::json!({}),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("status").is_some() || v.get("stats").is_some() || v.get("error_code").is_some(),
+        "agent_stats: {v}"
+    );
+}
+
+// ── skill_list, skill_describe, skill_search ──────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_skill_list() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "skill_list",
+            serde_json::json!({}),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("skills").is_some() || v.get("success").is_some() || v.get("error_code").is_some(),
+        "skill_list: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_skill_describe() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "skill_describe",
+            serde_json::json!({
+                "name": "nonexistent-skill-xyz"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("skill").is_some() || v.get("error_code").is_some() || v.get("success").is_some(),
+        "skill_describe: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_skill_search() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "skill_search",
+            serde_json::json!({
+                "query": "compile"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("results").is_some() || v.get("skills").is_some() || v.get("error_code").is_some() || v.get("success").is_some(),
+        "skill_search: {v}"
+    );
+}
+
+// ── kb_index and kb_recall ─────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_kb_recall() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "kb_recall",
+            serde_json::json!({
+                "query": "compile ObjectScript class"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("chunks").is_some() || v.get("results").is_some() || v.get("error_code").is_some() || v.get("success").is_some(),
+        "kb_recall: {v}"
+    );
+}
+
 // ── iris_doc batch get (names array) ─────────────────────────────────────────
 
 #[tokio::test]

@@ -5732,6 +5732,17 @@ impl IrisTools {
             crate::tools::dict::FindSubclassImplementationsParams,
             find_subclass_implementations
         );
+        dispatch!("docs_introspect", IntrospectParams, docs_introspect);
+        dispatch!("check_config", NoParams, check_config);
+        dispatch!("agent_history", AgentHistoryParams, agent_history);
+        dispatch!("agent_stats", NoParams, agent_stats);
+        dispatch!("skill_list", NoParams, skill_list);
+        dispatch!("skill_describe", SkillNameParams, skill_describe);
+        dispatch!("skill_search", SkillSearchParams, skill_search);
+        dispatch!("skill_forget", SkillNameParams, skill_forget);
+        dispatch!("kb_recall", KbRecallParams, kb_recall);
+        dispatch!("kb_index", KbIndexParams, kb_index);
+        dispatch_any!("iris_containers", iris_containers);
         Err(format!("unknown tool: {tool}"))
     }
 }
