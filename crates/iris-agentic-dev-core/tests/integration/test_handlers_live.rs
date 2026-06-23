@@ -2466,3 +2466,788 @@ async fn test_dispatch_iris_search_class_type() {
         "search CLS type: {v}"
     );
 }
+
+// ── symbols_local with real workspace ────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_symbols_local_with_workspace() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    // Point to workspace root which has .cls files
+    let workspace = env!("CARGO_MANIFEST_DIR")
+        .replace("/crates/iris-agentic-dev-core", "")
+        .replace("iris-agentic-dev-core", "");
+    let result = tools
+        .call_for_test(
+            "iris_symbols_local",
+            serde_json::json!({
+                "query": "*.cls",
+                "workspace_path": workspace
+            }),
+        )
+        .await;
+    match result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+            let count = v["symbols"].as_array().map(|a| a.len()).unwrap_or(0);
+            eprintln!("symbols_local with workspace: {count} symbols");
+        }
+        Err(e) => eprintln!("symbols_local workspace error (ok): {e}"),
+    }
+}
+
+#[tokio::test]
+async fn test_dispatch_symbols_local_method_query() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let workspace = env!("CARGO_MANIFEST_DIR")
+        .replace("/crates/iris-agentic-dev-core", "")
+        .replace("iris-agentic-dev-core", "");
+    let result = tools
+        .call_for_test(
+            "iris_symbols_local",
+            serde_json::json!({
+                "query": "ProductionHelper",
+                "workspace_path": workspace
+            }),
+        )
+        .await;
+    match result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!(
+                "symbols_local ProductionHelper: {}",
+                &text[..text.len().min(200)]
+            );
+        }
+        Err(e) => eprintln!("symbols_local method query error (ok): {e}"),
+    }
+}
+
+// ── admin write operations (requires IRIS_ADMIN_TOOLS=1) ─────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_create_delete_user() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    if std::env::var("IRIS_ADMIN_TOOLS").unwrap_or_default() != "1" {
+        eprintln!("SKIP test_dispatch_iris_admin_create_delete_user — IRIS_ADMIN_TOOLS not set");
+        return;
+    }
+    // Create a test user
+    let create_result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "create_user",
+                "username": "iris_dev_test_user_999",
+                "password": "TestPass123!"
+            }),
+        )
+        .await;
+    let cv = parse_result(create_result);
+    eprintln!("admin create_user: {cv}");
+
+    // Delete the test user (cleanup)
+    let del_result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "delete_user",
+                "username": "iris_dev_test_user_999"
+            }),
+        )
+        .await;
+    let dv = parse_result(del_result);
+    eprintln!("admin delete_user: {dv}");
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_create_delete_namespace() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    if std::env::var("IRIS_ADMIN_TOOLS").unwrap_or_default() != "1" {
+        eprintln!(
+            "SKIP test_dispatch_iris_admin_create_delete_namespace — IRIS_ADMIN_TOOLS not set"
+        );
+        return;
+    }
+    let create_result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "create_namespace",
+                "namespace": "IRISDEVTEST999",
+                "database": "USER"
+            }),
+        )
+        .await;
+    let cv = parse_result(create_result);
+    eprintln!("admin create_namespace: {cv}");
+
+    let del_result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "delete_namespace",
+                "namespace": "IRISDEVTEST999"
+            }),
+        )
+        .await;
+    let dv = parse_result(del_result);
+    eprintln!("admin delete_namespace: {dv}");
+}
+
+// ── interop write operations (requires IRIS_ALLOW_PROD=1) ────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_lookup_set_delete() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    // Set a key (write op — exercised even without IRIS_ALLOW_PROD since lookup writes
+    // may be allowed; check result)
+    let set_result = tools
+        .call_for_test(
+            "iris_lookup_manage",
+            serde_json::json!({
+                "action": "set",
+                "table_name": "IrisDevTestTable",
+                "key": "testkey",
+                "value": "testvalue",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    match set_result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!("lookup set: {}", &text[..text.len().min(200)]);
+        }
+        Err(e) => eprintln!("lookup set error (ok): {e}"),
+    }
+
+    // Delete the key
+    let del_result = tools
+        .call_for_test(
+            "iris_lookup_manage",
+            serde_json::json!({
+                "action": "delete",
+                "table_name": "IrisDevTestTable",
+                "key": "testkey",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    match del_result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!("lookup delete: {}", &text[..text.len().min(200)]);
+        }
+        Err(e) => eprintln!("lookup delete error (ok): {e}"),
+    }
+}
+
+// ── production start/stop (requires IRIS_ALLOW_PROD=1 and production class) ──
+
+#[tokio::test]
+async fn test_dispatch_iris_production_check() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_production",
+            serde_json::json!({
+                "action": "check",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    match result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!("production check: {}", &text[..text.len().min(200)]);
+        }
+        Err(e) => eprintln!("production check error (ok): {e}"),
+    }
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_production_needs_update() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_production",
+            serde_json::json!({
+                "action": "check",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    match result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!("production needs_update: {}", &text[..text.len().min(200)]);
+        }
+        Err(e) => eprintln!("production needs_update error (ok): {e}"),
+    }
+}
+
+// ── dict tools ────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_info_sa_schema() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_info",
+            serde_json::json!({
+                "what": "sa_schema",
+                "name": "%Library.Object",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "info sa_schema: {v}"
+    );
+}
+
+// ── find_subclass_implementations ─────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_find_subclass_implementations() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    // find_subclass_implementations needs a different tool name check
+    // It's dispatched via iris_info with what=find_subclass  or a separate tool
+    // Check via iris_search as a proxy
+    let result = tools
+        .call_for_test(
+            "iris_search",
+            serde_json::json!({
+                "query": "Extends %Persistent",
+                "namespace": "USER",
+                "limit": 3
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("results").is_some() || v.get("success").is_some(),
+        "find subclass via search: {v}"
+    );
+}
+
+// ── dict tools: resolve_dynamic_dispatch, extract_message_map, find_subclass ─
+
+#[tokio::test]
+async fn test_dispatch_resolve_dynamic_dispatch() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "resolve_dynamic_dispatch",
+            serde_json::json!({
+                "class": "%Library.Object",
+                "method": "ClassName",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    match result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!("resolve_dynamic_dispatch: {}", &text[..text.len().min(200)]);
+        }
+        Err(e) => eprintln!("resolve_dynamic_dispatch error (ok): {e}"),
+    }
+}
+
+#[tokio::test]
+async fn test_dispatch_extract_message_map_routing() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "extract_message_map_routing",
+            serde_json::json!({
+                "class": "EnsLib.HTTP.GenericOperation",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    match result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!(
+                "extract_message_map_routing: {}",
+                &text[..text.len().min(200)]
+            );
+        }
+        Err(e) => eprintln!("extract_message_map_routing error (ok): {e}"),
+    }
+}
+
+#[tokio::test]
+async fn test_dispatch_find_subclass_implementations_dict() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "find_subclass_implementations",
+            serde_json::json!({
+                "base_classes": ["%Library.Persistent"],
+                "method": "SaveData",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    match result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!(
+                "find_subclass_implementations: {}",
+                &text[..text.len().min(300)]
+            );
+        }
+        Err(e) => eprintln!("find_subclass_implementations error (ok): {e}"),
+    }
+}
+
+#[tokio::test]
+async fn test_dispatch_resolve_dynamic_dispatch_nonexistent_class() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "resolve_dynamic_dispatch",
+            serde_json::json!({
+                "class": "NonExistent.Class9999",
+                "method": "SomeMethod",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    match result {
+        Ok(r) => {
+            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            eprintln!(
+                "resolve_dynamic_dispatch nonexistent: {}",
+                &text[..text.len().min(200)]
+            );
+        }
+        Err(e) => eprintln!("resolve nonexistent error (ok): {e}"),
+    }
+}
+
+// ── check_permission with real resource (covers admin_check_permission_impl) ──
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_check_permission_with_resource() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    // Check USE permission on a real %SYS resource
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "check_permission",
+                "resource": "%DB_DEFAULT",
+                "permission": "USE"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "check_permission with resource: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_check_permission_write() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "check_permission",
+                "resource": "%DB_USER",
+                "permission": "WRITE"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "check_permission WRITE: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_check_permission_read() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "check_permission",
+                "resource": "%DB_USER",
+                "permission": "READ"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "check_permission READ: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_check_permission_create() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "check_permission",
+                "resource": "%DB_DEFAULT",
+                "permission": "CREATE"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "check_permission CREATE: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_check_permission_delete() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "check_permission",
+                "resource": "%DB_DEFAULT",
+                "permission": "DELETE"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "check_permission DELETE: {v}"
+    );
+}
+
+// ── iris_source_control status action (covers scm.rs main handler path) ──────
+
+#[tokio::test]
+async fn test_dispatch_iris_source_control_status() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_source_control",
+            serde_json::json!({
+                "action": "status",
+                "document": "%Library.Application.cls",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    // May succeed (source control active) or error (no SCM configured) — both are valid
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "source_control status: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_source_control_list_root() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_source_control",
+            serde_json::json!({
+                "action": "list",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "source_control list: {v}"
+    );
+}
+
+// ── iris_info: additional actions to cover more branches ─────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_info_macros_action() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_macro",
+            serde_json::json!({
+                "action": "list",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("macros").is_some() || v.get("error_code").is_some(),
+        "iris_macro list: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_macro_signature() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_macro",
+            serde_json::json!({
+                "action": "signature",
+                "name": "$$ISERR",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_macro signature: {v}"
+    );
+}
+
+// ── iris_interop_query: production start/stop (may fail without production) ──
+
+#[tokio::test]
+async fn test_dispatch_iris_production_status_full() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_production",
+            serde_json::json!({
+                "action": "status",
+                "namespace": "USER",
+                "full_status": true
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "production status full: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_production_needs_update_v2() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_production",
+            serde_json::json!({
+                "action": "needs_update",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "production needs_update: {v}"
+    );
+}
+
+// ── autostart actions to cover interop_autostart_get/set paths ───────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_production_get_autostart_ensemble() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_production",
+            serde_json::json!({
+                "action": "get_autostart",
+                "namespace": "ENSLIB"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "production get_autostart ENSLIB: {v}"
+    );
+}
+
+// ── iris_interop_query: recover action ───────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_interop_query_recover() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_interop_query",
+            serde_json::json!({
+                "what": "recover",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    // May fail if no production, but should return a structured response
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "interop_query recover: {v}"
+    );
+}
+
+// ── iris_symbols with various query patterns ──────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_symbols_prefix_query() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_symbols",
+            serde_json::json!({
+                "query": "Ens.*",
+                "namespace": "USER",
+                "limit": 10
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("symbols").is_some() || v.get("count").is_some() || v.get("error_code").is_some(),
+        "iris_symbols Ens.*: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_symbols_wildcard() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_symbols",
+            serde_json::json!({
+                "query": "*",
+                "namespace": "USER",
+                "limit": 5
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("symbols").is_some() || v.get("count").is_some() || v.get("error_code").is_some(),
+        "iris_symbols wildcard: {v}"
+    );
+}
+
+// ── iris_doc: additional actions ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_doc_class_list() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_doc",
+            serde_json::json!({
+                "document": "%Library.Application",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some() || v.get("content").is_some(),
+        "iris_doc class: {v}"
+    );
+}

@@ -394,3 +394,47 @@ fn test_sc001_representative_patterns() {
         }
     }
 }
+
+#[test]
+fn test_unknown_sql_type_preserved_with_warning() {
+    // SQL statement that is not SELECT, INSERT, UPDATE, DELETE, MERGE, or CALL
+    // hits the "Unknown — leave unchanged" branch
+    let r = translate_sql_macros("&sql(TRUNCATE TABLE foo)");
+    assert!(r.found);
+    // Output should preserve the original &sql(...) unchanged
+    assert!(
+        r.translated_code.contains("&sql(TRUNCATE TABLE foo)"),
+        "unknown SQL type should be preserved: {}",
+        r.translated_code
+    );
+    // A warning must be emitted
+    assert!(
+        !r.warnings.is_empty(),
+        "unknown SQL type must produce a warning"
+    );
+    let warning = &r.warnings[0];
+    assert!(
+        warning.contains("not translated") || warning.contains("unrecognized"),
+        "warning should mention not translated: {warning}"
+    );
+}
+
+#[test]
+fn test_select_without_into_is_found() {
+    // SELECT without INTO uses the no-INTO path
+    let r = translate_sql_macros("&sql(SELECT * FROM foo WHERE 1=1)");
+    assert!(r.found);
+}
+
+#[test]
+fn test_select_no_select_keyword_in_col_extraction() {
+    // Edge case: SELECT part doesn't contain "SELECT" prefix in the col list string
+    // The translate_select_into col extraction has a branch for when "SELECT" is found in col_list
+    let r = translate_sql_macros("&sql(SELECT Name, Age INTO :n, :a FROM foo WHERE ID=1)");
+    assert!(r.found);
+    assert!(
+        r.translated_code.contains("%Get(\"Name\")") || r.translated_code.contains("%Get(\"Age\")"),
+        "multi-col SELECT INTO should extract column names: {}",
+        r.translated_code
+    );
+}

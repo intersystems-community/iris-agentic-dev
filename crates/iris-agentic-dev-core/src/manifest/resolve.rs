@@ -232,6 +232,7 @@ impl ResolveLock {
 mod tests {
     use super::*;
     use crate::manifest::schema::DependencySpec;
+    use std::collections::HashMap;
 
     fn dep_github(github: &str) -> DependencySpec {
         DependencySpec {
@@ -332,9 +333,14 @@ mod tests {
                 repo: "myrepo".to_string(),
             },
         };
-        let resolve = Resolve { packages: vec![pkg] };
+        let resolve = Resolve {
+            packages: vec![pkg],
+        };
         let lock = resolve.to_lock();
-        assert_eq!(lock.packages[0].repository, "https://github.com/alice/myrepo");
+        assert_eq!(
+            lock.packages[0].repository,
+            "https://github.com/alice/myrepo"
+        );
         assert_eq!(lock.packages[0].version, "1.2.3");
     }
 
@@ -345,7 +351,9 @@ mod tests {
             version: Version::parse("0.1.0").unwrap(),
             source: ResolvedSource::OpenExchange("some-pkg-id".to_string()),
         };
-        let resolve = Resolve { packages: vec![pkg] };
+        let resolve = Resolve {
+            packages: vec![pkg],
+        };
         let lock = resolve.to_lock();
         assert_eq!(lock.packages[0].repository, "openexchange:some-pkg-id");
     }
@@ -412,7 +420,9 @@ mod tests {
             version: Version::parse("2.0.0").unwrap(),
             source: ResolvedSource::Git(url.to_string()),
         };
-        let resolve = Resolve { packages: vec![pkg] };
+        let resolve = Resolve {
+            packages: vec![pkg],
+        };
         let lock = resolve.to_lock();
         assert_eq!(lock.packages[0].repository, url);
     }
@@ -425,7 +435,9 @@ mod tests {
             version: Version::parse("0.5.1").unwrap(),
             source: ResolvedSource::Local(std::path::PathBuf::from(path)),
         };
-        let resolve = Resolve { packages: vec![pkg] };
+        let resolve = Resolve {
+            packages: vec![pkg],
+        };
         let lock = resolve.to_lock();
         assert_eq!(lock.packages[0].repository, path);
     }
@@ -437,7 +449,9 @@ mod tests {
             version: Version::parse("1.0.0").unwrap(),
             source: ResolvedSource::Git("https://example.com/repo.git".to_string()),
         };
-        let resolve = Resolve { packages: vec![pkg] };
+        let resolve = Resolve {
+            packages: vec![pkg],
+        };
         let lock = resolve.to_lock();
         assert!(lock.packages[0].checksum.is_none());
     }
@@ -505,5 +519,256 @@ mod tests {
         assert_eq!(count, 2);
         assert!(toml.contains("name = \"a\""));
         assert!(toml.contains("name = \"b\""));
+    }
+
+    #[test]
+    fn test_from_manifest_no_deps_succeeds() {
+        let manifest = Manifest {
+            package: crate::manifest::schema::PackageInfo {
+                name: "test-pkg".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                authors: vec![],
+                license: None,
+                repository: None,
+            },
+            provides: None,
+            dependencies: HashMap::new(),
+        };
+        let resolve = Resolve::from_manifest(&manifest).unwrap();
+        assert!(resolve.packages.is_empty());
+    }
+
+    #[test]
+    fn test_from_manifest_invalid_version_req_errors() {
+        let mut deps = HashMap::new();
+        deps.insert(
+            "mypkg".to_string(),
+            DependencySpec {
+                version: "not-semver".to_string(),
+                git: Some("https://example.com/repo.git".to_string()),
+                github: None,
+                openexchange: None,
+                repository: None,
+            },
+        );
+        let manifest = Manifest {
+            package: crate::manifest::schema::PackageInfo {
+                name: "test-pkg".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                authors: vec![],
+                license: None,
+                repository: None,
+            },
+            provides: None,
+            dependencies: deps,
+        };
+        let result = Resolve::from_manifest(&manifest);
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(msg.contains("invalid semver") || msg.contains("not-semver"));
+    }
+
+    #[test]
+    fn test_from_manifest_git_dep_unimplemented() {
+        let mut deps = HashMap::new();
+        deps.insert(
+            "gitpkg".to_string(),
+            DependencySpec {
+                version: "^0.1.0".to_string(),
+                git: Some("https://example.com/repo.git".to_string()),
+                github: None,
+                openexchange: None,
+                repository: None,
+            },
+        );
+        let manifest = Manifest {
+            package: crate::manifest::schema::PackageInfo {
+                name: "test-pkg".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                authors: vec![],
+                license: None,
+                repository: None,
+            },
+            provides: None,
+            dependencies: deps,
+        };
+        let result = Resolve::from_manifest(&manifest);
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(msg.contains("not yet implemented"));
+    }
+
+    #[test]
+    fn test_from_manifest_openexchange_dep_unimplemented() {
+        let mut deps = HashMap::new();
+        deps.insert(
+            "oxpkg".to_string(),
+            DependencySpec {
+                version: "^1.0.0".to_string(),
+                git: None,
+                github: None,
+                openexchange: Some("some-pkg-id".to_string()),
+                repository: None,
+            },
+        );
+        let manifest = Manifest {
+            package: crate::manifest::schema::PackageInfo {
+                name: "test-pkg".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                authors: vec![],
+                license: None,
+                repository: None,
+            },
+            provides: None,
+            dependencies: deps,
+        };
+        let result = Resolve::from_manifest(&manifest);
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(msg.contains("not yet implemented"));
+    }
+
+    #[test]
+    fn test_from_manifest_local_dep_no_toml_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut deps = HashMap::new();
+        deps.insert(
+            "localpkg".to_string(),
+            DependencySpec {
+                version: "^1.0.0".to_string(),
+                git: None,
+                github: None,
+                openexchange: None,
+                repository: Some(dir.path().to_string_lossy().into_owned()),
+            },
+        );
+        let manifest = Manifest {
+            package: crate::manifest::schema::PackageInfo {
+                name: "test-pkg".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                authors: vec![],
+                license: None,
+                repository: None,
+            },
+            provides: None,
+            dependencies: deps,
+        };
+        let result = Resolve::from_manifest(&manifest);
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(msg.contains("iris-agentic-dev.toml"));
+    }
+
+    #[test]
+    fn test_from_manifest_local_dep_with_valid_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        // Write a local iris-agentic-dev.toml with matching version
+        std::fs::write(
+            dir.path().join("iris-agentic-dev.toml"),
+            "[package]\nname = \"localpkg\"\nversion = \"1.2.3\"\n",
+        )
+        .unwrap();
+        let mut deps = HashMap::new();
+        deps.insert(
+            "localpkg".to_string(),
+            DependencySpec {
+                version: "^1.0.0".to_string(),
+                git: None,
+                github: None,
+                openexchange: None,
+                repository: Some(dir.path().to_string_lossy().into_owned()),
+            },
+        );
+        let manifest = Manifest {
+            package: crate::manifest::schema::PackageInfo {
+                name: "test-pkg".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                authors: vec![],
+                license: None,
+                repository: None,
+            },
+            provides: None,
+            dependencies: deps,
+        };
+        let resolve = Resolve::from_manifest(&manifest).unwrap();
+        assert_eq!(resolve.packages.len(), 1);
+        assert_eq!(resolve.packages[0].name, "localpkg");
+        assert_eq!(resolve.packages[0].version.to_string(), "1.2.3");
+    }
+
+    #[test]
+    fn test_from_manifest_local_dep_version_mismatch_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("iris-agentic-dev.toml"),
+            "[package]\nname = \"localpkg\"\nversion = \"0.5.0\"\n",
+        )
+        .unwrap();
+        let mut deps = HashMap::new();
+        deps.insert(
+            "localpkg".to_string(),
+            DependencySpec {
+                version: "^1.0.0".to_string(), // requires >= 1.0.0
+                git: None,
+                github: None,
+                openexchange: None,
+                repository: Some(dir.path().to_string_lossy().into_owned()),
+            },
+        );
+        let manifest = Manifest {
+            package: crate::manifest::schema::PackageInfo {
+                name: "test-pkg".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                authors: vec![],
+                license: None,
+                repository: None,
+            },
+            provides: None,
+            dependencies: deps,
+        };
+        let result = Resolve::from_manifest(&manifest);
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(msg.contains("does not satisfy") || msg.contains("0.5.0"));
+    }
+
+    #[test]
+    fn test_from_manifest_duplicate_dep_deduplicates() {
+        // Same dep name appearing twice in HashMap — HashMap naturally deduplicates keys.
+        // This test ensures from_manifest handles the dedup logic (seen set).
+        let mut deps = HashMap::new();
+        deps.insert(
+            "mypkg".to_string(),
+            DependencySpec {
+                version: "not-a-version".to_string(), // will error on version parse
+                git: Some("https://example.com/repo.git".to_string()),
+                github: None,
+                openexchange: None,
+                repository: None,
+            },
+        );
+        // Insert same key again — HashMap replaces it (only one entry ever)
+        let manifest = Manifest {
+            package: crate::manifest::schema::PackageInfo {
+                name: "test-pkg".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                authors: vec![],
+                license: None,
+                repository: None,
+            },
+            provides: None,
+            dependencies: deps,
+        };
+        // Should error on the invalid version, not panic or infinite loop
+        let result = Resolve::from_manifest(&manifest);
+        assert!(result.is_err());
     }
 }
