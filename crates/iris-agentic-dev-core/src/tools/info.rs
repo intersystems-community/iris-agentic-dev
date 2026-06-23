@@ -618,18 +618,15 @@ mod tests {
 
     #[test]
     fn test_table_info_params_defaults() {
-        let p: TableInfoParams =
-            serde_json::from_str(r#"{"table": "SQLUser.MyTable"}"#).unwrap();
+        let p: TableInfoParams = serde_json::from_str(r#"{"table": "SQLUser.MyTable"}"#).unwrap();
         assert_eq!(p.namespace, "USER");
         assert!(!p.include_row_count);
     }
 
     #[test]
     fn test_table_info_params_with_row_count() {
-        let p: TableInfoParams = serde_json::from_str(
-            r#"{"table": "Foo.Orders", "include_row_count": true}"#,
-        )
-        .unwrap();
+        let p: TableInfoParams =
+            serde_json::from_str(r#"{"table": "Foo.Orders", "include_row_count": true}"#).unwrap();
         assert!(p.include_row_count);
     }
 

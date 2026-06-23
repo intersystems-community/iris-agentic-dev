@@ -429,8 +429,7 @@ mod tests {
 
     #[test]
     fn test_skill_community_params_action_required() {
-        let p: SkillCommunityParams =
-            serde_json::from_str(r#"{"action": "list"}"#).unwrap();
+        let p: SkillCommunityParams = serde_json::from_str(r#"{"action": "list"}"#).unwrap();
         assert_eq!(p.action, "list");
         assert!(p.package.is_none());
     }
@@ -444,7 +443,8 @@ mod tests {
 
     #[test]
     fn test_kb_params_defaults() {
-        let p: KbParams = serde_json::from_str(r#"{"action": "recall", "query": "hello"}"#).unwrap();
+        let p: KbParams =
+            serde_json::from_str(r#"{"action": "recall", "query": "hello"}"#).unwrap();
         assert_eq!(p.top_k, 5);
         assert!(p.path.is_none());
     }
@@ -474,10 +474,9 @@ mod tests {
 
     #[test]
     fn test_skill_params_all_fields() {
-        let p: SkillParams = serde_json::from_str(
-            r#"{"action": "search", "name": "my-skill", "query": "compile"}"#,
-        )
-        .unwrap();
+        let p: SkillParams =
+            serde_json::from_str(r#"{"action": "search", "name": "my-skill", "query": "compile"}"#)
+                .unwrap();
         assert_eq!(p.action, "search");
         assert_eq!(p.name.as_deref(), Some("my-skill"));
         assert_eq!(p.query.as_deref(), Some("compile"));
@@ -502,8 +501,7 @@ mod tests {
 
     #[test]
     fn test_skill_params_name_null_explicit() {
-        let p: SkillParams =
-            serde_json::from_str(r#"{"action": "list", "name": null}"#).unwrap();
+        let p: SkillParams = serde_json::from_str(r#"{"action": "list", "name": null}"#).unwrap();
         assert!(p.name.is_none());
     }
 
@@ -546,8 +544,7 @@ mod tests {
 
     #[test]
     fn test_kb_params_query_null_explicit() {
-        let p: KbParams =
-            serde_json::from_str(r#"{"action": "recall", "query": null}"#).unwrap();
+        let p: KbParams = serde_json::from_str(r#"{"action": "recall", "query": null}"#).unwrap();
         assert!(p.query.is_none());
         assert_eq!(p.top_k, 5);
     }

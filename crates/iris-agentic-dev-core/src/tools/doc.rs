@@ -624,9 +624,10 @@ mod tests {
 
     #[test]
     fn test_iris_doc_params_put_mode() {
-        let p: IrisDocParams =
-            serde_json::from_str(r#"{"mode": "put", "name": "Foo.cls", "content": "Class Foo {}"}"#)
-                .unwrap();
+        let p: IrisDocParams = serde_json::from_str(
+            r#"{"mode": "put", "name": "Foo.cls", "content": "Class Foo {}"}"#,
+        )
+        .unwrap();
         assert!(matches!(p.mode, DocMode::Put));
         assert_eq!(p.content.as_deref(), Some("Class Foo {}"));
     }
@@ -641,8 +642,7 @@ mod tests {
     #[test]
     fn test_iris_doc_params_with_compile() {
         let p: IrisDocParams =
-            serde_json::from_str(r#"{"mode": "put", "name": "Foo.cls", "compile": true}"#)
-                .unwrap();
+            serde_json::from_str(r#"{"mode": "put", "name": "Foo.cls", "compile": true}"#).unwrap();
         assert!(p.compile);
     }
 
@@ -759,8 +759,7 @@ mod tests {
     #[test]
     fn test_http_err_json_unknown_status_returns_http_error() {
         // 418 I'm a teapot — not explicitly mapped
-        let result =
-            http_err_json(reqwest::StatusCode::from_u16(418).unwrap(), "teapot").unwrap();
+        let result = http_err_json(reqwest::StatusCode::from_u16(418).unwrap(), "teapot").unwrap();
         let text = result.content[0].raw.as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "HTTP_ERROR");

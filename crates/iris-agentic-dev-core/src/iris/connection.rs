@@ -797,7 +797,10 @@ mod pure_fn_tests {
     fn strip_iris_banner_only_prompts() {
         let raw = "USER>\nUSER>\n";
         let stripped = strip_iris_banner(raw);
-        assert!(stripped.trim().is_empty(), "only prompts → empty: {stripped:?}");
+        assert!(
+            stripped.trim().is_empty(),
+            "only prompts → empty: {stripped:?}"
+        );
     }
 
     #[test]
@@ -816,7 +819,9 @@ mod pure_fn_tests {
             "Write 1",
         );
         assert!(
-            lines.iter().any(|l| l.contains("IrisDevTmp.IrisDevRuntest123")),
+            lines
+                .iter()
+                .any(|l| l.contains("IrisDevTmp.IrisDevRuntest123")),
             "class name must appear in generated source"
         );
     }
@@ -1012,9 +1017,13 @@ mod additional_tests {
 
     #[test]
     fn strip_iris_banner_all_banner_gives_empty() {
-        let raw = "Copyright (c) 2024 InterSystems Corporation\nAll rights reserved.\nIRIS for UNIX\n";
+        let raw =
+            "Copyright (c) 2024 InterSystems Corporation\nAll rights reserved.\nIRIS for UNIX\n";
         let stripped = strip_iris_banner(raw);
-        assert!(stripped.trim().is_empty(), "all banner → empty: {stripped:?}");
+        assert!(
+            stripped.trim().is_empty(),
+            "all banner → empty: {stripped:?}"
+        );
     }
 
     #[test]

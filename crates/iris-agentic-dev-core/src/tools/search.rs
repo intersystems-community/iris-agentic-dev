@@ -236,8 +236,7 @@ mod tests {
 
     #[test]
     fn test_search_params_defaults() {
-        let p: SearchParams =
-            serde_json::from_str(r#"{"query": "Ens.*"}"#).unwrap();
+        let p: SearchParams = serde_json::from_str(r#"{"query": "Ens.*"}"#).unwrap();
         assert_eq!(p.namespace, "USER");
         assert!(!p.regex);
         assert!(!p.case_sensitive);
@@ -248,8 +247,7 @@ mod tests {
 
     #[test]
     fn test_search_params_with_category() {
-        let p: SearchParams =
-            serde_json::from_str(r#"{"query": "x", "category": "CLS"}"#).unwrap();
+        let p: SearchParams = serde_json::from_str(r#"{"query": "x", "category": "CLS"}"#).unwrap();
         assert_eq!(p.category.as_deref(), Some("CLS"));
     }
 
@@ -283,8 +281,7 @@ mod tests {
 
     #[test]
     fn test_search_params_inline_flag() {
-        let p: SearchParams =
-            serde_json::from_str(r#"{"query": "x", "inline": true}"#).unwrap();
+        let p: SearchParams = serde_json::from_str(r#"{"query": "x", "inline": true}"#).unwrap();
         assert!(p.inline);
     }
 
@@ -318,8 +315,7 @@ mod tests {
     #[test]
     fn test_search_params_documents_single_entry() {
         let p: SearchParams =
-            serde_json::from_str(r#"{"query": "x", "documents": ["Ens.Production.cls"]}"#)
-                .unwrap();
+            serde_json::from_str(r#"{"query": "x", "documents": ["Ens.Production.cls"]}"#).unwrap();
         assert_eq!(p.documents, vec!["Ens.Production.cls"]);
     }
 

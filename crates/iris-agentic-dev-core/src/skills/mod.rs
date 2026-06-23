@@ -201,10 +201,7 @@ mod tests {
     #[test]
     fn test_extract_h1_title_found() {
         let md = "---\nname: x\n---\n# My Skill Title\n\nContent here.";
-        assert_eq!(
-            extract_h1_title(md),
-            Some("My Skill Title".to_string())
-        );
+        assert_eq!(extract_h1_title(md), Some("My Skill Title".to_string()));
     }
 
     #[test]

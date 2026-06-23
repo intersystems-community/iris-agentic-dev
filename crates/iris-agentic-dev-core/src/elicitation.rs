@@ -1,11 +1,11 @@
 //! Elicitation state management for MCP source control dialogs.
 //! Stores pending elicitations keyed by UUID, expires after 5 minutes.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
-use serde::{Deserialize, Serialize};
 
 const EXPIRY: Duration = Duration::from_secs(300); // 5 minutes
 
@@ -120,7 +120,13 @@ mod tests {
     #[test]
     fn test_lookup_finds_inserted() {
         let store = ElicitationStore::new();
-        let id = store.insert("Foo.cls", ElicitationAction::Put, Some("content".into()), None, "USER");
+        let id = store.insert(
+            "Foo.cls",
+            ElicitationAction::Put,
+            Some("content".into()),
+            None,
+            "USER",
+        );
         let pending = store.lookup(&id).expect("should find it");
         assert_eq!(pending.document, "Foo.cls");
         assert_eq!(pending.namespace, "USER");
@@ -136,7 +142,13 @@ mod tests {
     #[test]
     fn test_clear_removes_entry() {
         let store = ElicitationStore::new();
-        let id = store.insert("Bar.cls", ElicitationAction::ScmExecute, None, Some("CheckOut".into()), "USER");
+        let id = store.insert(
+            "Bar.cls",
+            ElicitationAction::ScmExecute,
+            None,
+            Some("CheckOut".into()),
+            "USER",
+        );
         store.clear(&id);
         assert!(store.lookup(&id).is_none());
     }
@@ -205,9 +217,11 @@ mod tests {
 
     #[test]
     fn serde_action_unknown_variant_fails() {
-        let result: Result<ElicitationAction, _> =
-            serde_json::from_str("\"UnknownVariant\"");
-        assert!(result.is_err(), "deserializing an unknown variant must fail");
+        let result: Result<ElicitationAction, _> = serde_json::from_str("\"UnknownVariant\"");
+        assert!(
+            result.is_err(),
+            "deserializing an unknown variant must fail"
+        );
     }
 
     #[test]
@@ -263,9 +277,13 @@ mod tests {
     #[test]
     fn serde_record_missing_required_field_fails() {
         // "namespace" field is intentionally omitted — deserialization must fail.
-        let json = r#"{"id":"x","document":"X.cls","action":"Put","content":null,"scm_action_id":null}"#;
+        let json =
+            r#"{"id":"x","document":"X.cls","action":"Put","content":null,"scm_action_id":null}"#;
         let result: Result<PendingElicitationRecord, _> = serde_json::from_str(json);
-        assert!(result.is_err(), "missing required field 'namespace' must fail");
+        assert!(
+            result.is_err(),
+            "missing required field 'namespace' must fail"
+        );
     }
 
     #[test]
@@ -278,8 +296,7 @@ mod tests {
             "scm_action_id": "GetLatest",
             "namespace": "LIVE"
         }"#;
-        let record: PendingElicitationRecord =
-            serde_json::from_str(json).expect("parse raw JSON");
+        let record: PendingElicitationRecord = serde_json::from_str(json).expect("parse raw JSON");
         assert_eq!(record.id, "abc-123");
         assert_eq!(record.document, "My.Doc.cls");
         assert_eq!(record.action, ElicitationAction::ScmExecute);

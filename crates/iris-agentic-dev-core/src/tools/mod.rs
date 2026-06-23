@@ -5605,6 +5605,21 @@ impl IrisTools {
             crate::tools::info::TableInfoParams,
             iris_table_info
         );
+        dispatch!(
+            "resolve_dynamic_dispatch",
+            crate::tools::dict::ResolveDynamicDispatchParams,
+            resolve_dynamic_dispatch
+        );
+        dispatch!(
+            "extract_message_map_routing",
+            crate::tools::dict::ExtractMessageMapParams,
+            extract_message_map_routing
+        );
+        dispatch!(
+            "find_subclass_implementations",
+            crate::tools::dict::FindSubclassImplementationsParams,
+            find_subclass_implementations
+        );
         Err(format!("unknown tool: {tool}"))
     }
 }

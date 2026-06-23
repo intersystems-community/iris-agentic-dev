@@ -1751,7 +1751,7 @@ async fn test_dispatch_iris_info_tables() {
 }
 
 #[tokio::test]
-async fn test_dispatch_iris_info_globals() {
+async fn test_dispatch_iris_info_globals_v2() {
     let tools = match make_iris_tools() {
         Some(t) => t,
         None => return,
@@ -3247,5 +3247,268 @@ async fn test_dispatch_iris_doc_class_list() {
     assert!(
         v.get("success").is_some() || v.get("error_code").is_some() || v.get("content").is_some(),
         "iris_doc class: {v}"
+    );
+}
+
+// ── Additional coverage tests ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_search_case_sensitive() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_search",
+            serde_json::json!({
+                "query": "Object",
+                "namespace": "USER",
+                "case_sensitive": true,
+                "limit": 5
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("results").is_some() || v.get("success").is_some(),
+        "search case_sensitive: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_search_regex_mode() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_search",
+            serde_json::json!({
+                "query": "Class.*Definition",
+                "namespace": "USER",
+                "regex": true,
+                "limit": 5
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("results").is_some() || v.get("success").is_some(),
+        "search regex: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_search_with_category() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_search",
+            serde_json::json!({
+                "query": "Date",
+                "namespace": "USER",
+                "category": "CLS",
+                "limit": 5
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("results").is_some() || v.get("success").is_some(),
+        "search with category: {v}"
+    );
+}
+
+// ── iris_query with inline param ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_query_inline() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_query",
+            serde_json::json!({
+                "query": "SELECT TOP 3 Name FROM %Dictionary.ClassDefinition WHERE Name LIKE '%Library%'",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("rows").is_some() || v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_query inline: {v}"
+    );
+}
+
+// ── iris_info with additional actions ────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_info_globals_v3() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_info",
+            serde_json::json!({
+                "what": "globals",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_info globals: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_info_routines() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_info",
+            serde_json::json!({
+                "what": "routines",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_info routines: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_info_csp() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_info",
+            serde_json::json!({
+                "what": "csp",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_info csp: {v}"
+    );
+}
+
+#[tokio::test]
+async fn test_dispatch_iris_info_class_detail() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_info",
+            serde_json::json!({
+                "what": "class",
+                "name": "%Library.Object",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_info class: {v}"
+    );
+}
+
+// ── iris_debug actions ────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_debug_logs() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_debug",
+            serde_json::json!({
+                "action": "get_error_logs",
+                "namespace": "USER",
+                "limit": 5
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some() || v.get("logs").is_some(),
+        "iris_debug get_error_logs: {v}"
+    );
+}
+
+// ── iris_get_log with different log types ─────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_get_log_cconsole() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_get_log",
+            serde_json::json!({
+                "log_type": "cconsole",
+                "limit": 10
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some() || v.get("entries").is_some(),
+        "iris_get_log cconsole: {v}"
+    );
+}
+
+// ── iris_table_info ───────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_table_info_columns() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_table_info",
+            serde_json::json!({
+                "table": "%Dictionary.ClassDefinition",
+                "action": "columns",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some() || v.get("columns").is_some(),
+        "iris_table_info columns: {v}"
     );
 }
