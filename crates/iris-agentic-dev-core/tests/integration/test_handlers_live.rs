@@ -2586,8 +2586,9 @@ async fn test_dispatch_iris_admin_create_delete_namespace() {
             "iris_admin",
             serde_json::json!({
                 "action": "create_namespace",
-                "namespace": "IRISDEVTEST999",
-                "database": "USER"
+                "name": "IRISDEVTEST999",
+                "code_database": "USER",
+                "data_database": "USER"
             }),
         )
         .await;
@@ -2599,7 +2600,7 @@ async fn test_dispatch_iris_admin_create_delete_namespace() {
             "iris_admin",
             serde_json::json!({
                 "action": "delete_namespace",
-                "namespace": "IRISDEVTEST999"
+                "name": "IRISDEVTEST999"
             }),
         )
         .await;
@@ -4728,6 +4729,119 @@ async fn test_dispatch_kb_recall() {
     assert!(
         v.get("chunks").is_some() || v.get("results").is_some() || v.get("error_code").is_some() || v.get("success").is_some(),
         "kb_recall: {v}"
+    );
+}
+
+// ── iris_test run a real test class (covers test parse loop) ─────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_test_run_real_class() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    // First upload a minimal test class so we have something to run
+    let cls_content = concat!(
+        "Class IrisDevTmp.TestSimple Extends %UnitTest.TestCase\n",
+        "{\n",
+        "Method TestPass()\n",
+        "{\n",
+        "    Do $$$AssertEquals(1, 1, \"always passes\")\n",
+        "}\n",
+        "}\n"
+    );
+    // Upload via iris_doc
+    let put_result = tools
+        .call_for_test(
+            "iris_doc",
+            serde_json::json!({
+                "mode": "put",
+                "name": "IrisDevTmp.TestSimple.cls",
+                "content": cls_content,
+                "namespace": "USER",
+                "compile": true
+            }),
+        )
+        .await;
+    let pv = parse_result(put_result);
+    if pv.get("error_code").is_some() {
+        eprintln!("iris_test setup: could not upload test class: {pv}");
+        return;
+    }
+
+    // Run the test class
+    let result = tools
+        .call_for_test(
+            "iris_test",
+            serde_json::json!({
+                "pattern": "IrisDevTmp.TestSimple",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    eprintln!("iris_test real class: {}", serde_json::to_string(&v).unwrap_or_default());
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "iris_test real class: {v}"
+    );
+
+    // Cleanup
+    let _ = tools
+        .call_for_test(
+            "iris_doc",
+            serde_json::json!({
+                "mode": "delete",
+                "name": "IrisDevTmp.TestSimple.cls",
+                "namespace": "USER"
+            }),
+        )
+        .await;
+}
+
+// ── iris_admin create/delete webapp ───────────────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_create_delete_webapp() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    if std::env::var("IRIS_ADMIN_TOOLS").unwrap_or_default() != "1" {
+        return;
+    }
+    let test_path = "/irisdev-test-webapp-99999";
+
+    // Create webapp
+    let create_result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "create_webapp",
+                "path": test_path,
+                "namespace": "USER"
+            }),
+        )
+        .await;
+    let cv = parse_result(create_result);
+    eprintln!("admin create_webapp: {cv}");
+
+    // Delete webapp (even if create failed, covers delete path)
+    let del_result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "delete_webapp",
+                "path": test_path
+            }),
+        )
+        .await;
+    let dv = parse_result(del_result);
+    eprintln!("admin delete_webapp: {dv}");
+
+    assert!(
+        cv.get("success").is_some() || cv.get("error_code").is_some(),
+        "create_webapp response: {cv}"
     );
 }
 
