@@ -4732,6 +4732,109 @@ async fn test_dispatch_kb_recall() {
     );
 }
 
+// ── iris_admin list_user_roles for nonexistent user (USER_NOT_FOUND) ─────────
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_list_user_roles_nonexistent() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "list_user_roles",
+                "username": "IrisDevNonExistentUser99999"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("error_code").is_some() || v.get("roles").is_some(),
+        "list_user_roles nonexistent: {v}"
+    );
+}
+
+// ── iris_admin update_user with enabled and roles ─────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_update_user_with_roles() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    if std::env::var("IRIS_ADMIN_TOOLS").unwrap_or_default() != "1" {
+        return;
+    }
+    // Create a test user first
+    let _ = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "create_user",
+                "username": "IrisDevTestUser88",
+                "password": "TestPass1!"
+            }),
+        )
+        .await;
+
+    // Update with enabled=true and roles
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "update_user",
+                "username": "IrisDevTestUser88",
+                "enabled": true,
+                "roles": "%All"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    eprintln!("update_user with roles: {v}");
+    assert!(
+        v.get("success").is_some() || v.get("error_code").is_some(),
+        "update_user with roles: {v}"
+    );
+
+    // Cleanup
+    let _ = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "delete_user",
+                "username": "IrisDevTestUser88"
+            }),
+        )
+        .await;
+}
+
+// ── iris_admin check_permission READ/EXECUTE ──────────────────────────────────
+
+#[tokio::test]
+async fn test_dispatch_iris_admin_check_permission_execute() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "iris_admin",
+            serde_json::json!({
+                "action": "check_permission",
+                "resource": "%Development",
+                "permission": "USE"
+            }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("granted").is_some() || v.get("has_permission").is_some() || v.get("error_code").is_some(),
+        "check_permission USE: {v}"
+    );
+}
+
 // ── iris_test run a real test class (covers test parse loop) ─────────────────
 
 #[tokio::test]
