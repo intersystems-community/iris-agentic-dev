@@ -739,6 +739,16 @@ mod tests {
         assert!(msg.contains("does not satisfy") || msg.contains("0.5.0"));
     }
 
+    #[tokio::test]
+    async fn test_resolve_github_version_async_rejects_non_github_source() {
+        let req = VersionReq::parse("^1.0.0").unwrap();
+        let source = ResolvedSource::Git("https://example.com/repo.git".to_string());
+        let result = resolve_github_version_async(&req, &source).await;
+        assert!(result.is_err());
+        let msg = result.err().unwrap().to_string();
+        assert!(msg.contains("non-GitHub"));
+    }
+
     #[test]
     fn test_from_manifest_duplicate_dep_deduplicates() {
         // Same dep name appearing twice in HashMap — HashMap naturally deduplicates keys.
