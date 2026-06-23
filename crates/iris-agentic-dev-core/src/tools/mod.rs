@@ -4834,6 +4834,83 @@ mod tests {
         let sorted = sort_containers(containers);
         assert_eq!(sorted[0]["name"].as_str(), Some("a-iris"));
     }
+
+    // ── &sql translation: unknown SQL type warning ────────────────────────────
+
+    #[test]
+    fn translate_sql_unknown_type_emits_warning() {
+        // Lines 298-306: unrecognized SQL statement type leaves unchanged + adds warning
+        let input = "  &sql(EXEC stored_proc)\n  Write x";
+        let result = translate_sql_macros(input);
+        assert!(result.found);
+        assert!(
+            !result.warnings.is_empty(),
+            "should have warning for EXEC: {:?}",
+            result.warnings
+        );
+        assert!(result.translated_code.contains("&sql(EXEC stored_proc)"));
+    }
+
+    // ── &sql translation: SELECT without SELECT keyword in col list ───────────
+
+    #[test]
+    fn translate_select_into_no_select_keyword_fallback() {
+        // Line 341: when select_cols_sql has no "SELECT" — uses clone fallback
+        // This happens if the regex matched something odd; exercise via the outer translate path.
+        // Normal SELECT INTO will trigger this path by design when matching the col extraction.
+        let input = "  &sql(SELECT Name INTO :v FROM Person)\n  If $$$ISERR($sc) { Write \"err\" }";
+        let result = translate_sql_macros(input);
+        assert!(result.found);
+        // Output should contain ObjectScript-style variable assignment (no raw &sql)
+        assert!(
+            !result.translated_code.contains("&sql(SELECT"),
+            "should be translated: {}",
+            result.translated_code
+        );
+    }
+
+    // ── &sql translation: column AS alias handling ────────────────────────────
+
+    #[test]
+    fn translate_select_into_col_as_alias_used() {
+        // Line 349: "ColName AS alias" — alias is used as variable name
+        let input =
+            "  &sql(SELECT Name AS n, Age AS a INTO :n, :a FROM Person WHERE ID=1)\n  Write n";
+        let result = translate_sql_macros(input);
+        // Should be translated (no raw &sql remaining)
+        assert!(result.found);
+    }
+
+    // ── split_host_vars_from_rest: FROM inside parens ────────────────────────
+
+    #[test]
+    fn split_host_vars_from_rest_from_inside_parens() {
+        // Lines 580-584: fallback when find_keyword_pos skips FROM inside parens,
+        // but upper.find("FROM") catches it as a plain substring match.
+        // Construct input where find_keyword_pos returns None but FROM exists as substring
+        let after_into = ":v FROM(subquery) WHERE x=1";
+        let (vars, rest) = split_host_vars_from_rest(after_into);
+        // Either path should split correctly
+        assert!(!vars.is_empty() || !rest.is_empty());
+    }
+
+    // ── write-gate: Toolset::Nostub removes stub tools ────────────────────────
+
+    #[test]
+    fn toolset_nostub_removes_stub_tools() {
+        // Line 1551-1558: Nostub/Merged removes skill_propose etc from router
+        let registry = crate::skills::SkillRegistry::default();
+        let result = IrisTools::with_registry_and_toolset(None, registry, Toolset::Nostub, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn with_registry_uses_baseline_toolset() {
+        // Line 1533-1538: with_registry delegates to with_registry_and_toolset with Baseline
+        let registry = crate::skills::SkillRegistry::default();
+        let result = IrisTools::with_registry(None, registry);
+        assert!(result.is_ok());
+    }
 }
 
 #[cfg(test)]

@@ -673,7 +673,6 @@ fn node_text(node: tree_sitter::Node, source: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     // ── extract_cls_symbols ──────────────────────────────────────────────────
 
