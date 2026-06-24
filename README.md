@@ -47,7 +47,7 @@ curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/l
 
 **Windows**: Download `iris-agentic-dev-windows-x86_64.exe` from the [releases page](https://github.com/intersystems-community/iris-agentic-dev/releases/latest) and place it on your PATH.
 
-**Configure Claude Code** — add to `~/.claude/settings.json`:
+**Configure Claude Code** — add to `~/.claude.json`:
 
 ```json
 {
