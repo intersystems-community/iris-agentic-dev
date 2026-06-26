@@ -656,6 +656,9 @@ pub struct CompileParams {
     /// If true, bypass the log store and return all errors/warnings inline regardless of count.
     #[serde(default)]
     pub inline: bool,
+    /// Set to true to confirm execution on a subject-role instance (role-gate bypass).
+    #[serde(default)]
+    pub confirm: bool,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TestParams {
@@ -816,6 +819,9 @@ pub struct QueryParams {
     /// Has no effect on production IRIS instances (where write tools are disabled).
     #[serde(default)]
     pub force: bool,
+    /// Set to true to confirm execution on a subject-role instance (role-gate bypass).
+    #[serde(default)]
+    pub confirm: bool,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListContainersParams {
@@ -1666,6 +1672,55 @@ impl IrisTools {
         self.connection.lock().unwrap().write_tools_enabled
     }
 
+    /// Returns the `ConnectionRole` and instance name for the currently-active connection.
+    ///
+    /// In operate mode (`mode = "operate"` in `.iris-agentic-dev.toml`), matches the active
+    /// `IrisConnection` against declared `[instance.*]` blocks by container name or host.
+    /// Returns `(Workspace, "")` when no fleet config is present, mode is not "operate",
+    /// or no instance block matches — i.e., the default / dev-mode case is always permitted.
+    pub fn instance_role(&self) -> (crate::iris::workspace_config::ConnectionRole, String) {
+        use crate::iris::connection::DiscoverySource;
+        use crate::iris::workspace_config::{load_fleet_config, ConnectionRole};
+
+        let (workspace_path, iris_arc) = {
+            let conn = self.connection.lock().unwrap();
+            let ws = conn
+                .config_file
+                .as_ref()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.to_str())
+                .map(|s| s.to_string());
+            (ws, conn.iris.clone())
+        };
+
+        let Some(fleet) = load_fleet_config(workspace_path.as_deref()) else {
+            return (ConnectionRole::Workspace, String::new());
+        };
+        if fleet.mode.as_deref() != Some("operate") {
+            return (ConnectionRole::Workspace, String::new());
+        }
+        let Some(iris) = iris_arc else {
+            return (ConnectionRole::Workspace, String::new());
+        };
+
+        for (name, inst) in &fleet.instance {
+            let matches = match &iris.source {
+                DiscoverySource::Docker { container_name } => {
+                    inst.container.as_deref() == Some(container_name.as_str())
+                }
+                _ => inst
+                    .host
+                    .as_deref()
+                    .map(|h| iris.base_url.contains(h))
+                    .unwrap_or(false),
+            };
+            if matches {
+                return (inst.role.clone(), name.clone());
+            }
+        }
+        (ConnectionRole::Workspace, String::new())
+    }
+
     /// Returns the active connection as Option<Arc>, for interop helpers that take Option<&IrisConnection>.
     fn iris_arc(&self) -> Option<Arc<IrisConnection>> {
         self.connection.lock().unwrap().iris.clone()
@@ -1767,6 +1822,16 @@ impl IrisTools {
         Parameters(p): Parameters<CompileParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.get_iris_reloaded().await?;
+        let (role, instance_name) = self.instance_role();
+        if let Some(gate) = crate::iris::workspace_config::check_role_gate(
+            &role,
+            "iris_compile",
+            p.confirm,
+            &instance_name,
+            false,
+        ) {
+            return ok_json(gate);
+        }
         tracing::info!(namespace = %p.namespace, target = %p.target, "iris_compile");
         let client = self.http_client();
 
@@ -2415,6 +2480,16 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         Parameters(p): Parameters<ExecuteParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.get_iris_reloaded().await?;
+        let (role, instance_name) = self.instance_role();
+        if let Some(gate) = crate::iris::workspace_config::check_role_gate(
+            &role,
+            "iris_execute",
+            p.confirmed,
+            &instance_name,
+            false,
+        ) {
+            return ok_json(gate);
+        }
         tracing::info!(namespace = %p.namespace, translate_sql = p.translate_sql, "iris_execute");
         let client = self.http_client();
         let timeout = std::time::Duration::from_secs(p.timeout);
@@ -2571,6 +2646,31 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         Parameters(p): Parameters<QueryParams>,
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(namespace = %p.namespace, force = p.force, "iris_query");
+
+        // Role gate: SELECT is always permitted on subject; write SQL requires confirm.
+        {
+            let (role, instance_name) = self.instance_role();
+            let first_word = p
+                .query
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_uppercase();
+            let tool_name = if first_word == "SELECT" || first_word == "WITH" {
+                "iris_query:SELECT"
+            } else {
+                "iris_query:INSERT"
+            };
+            if let Some(gate) = crate::iris::workspace_config::check_role_gate(
+                &role,
+                tool_name,
+                p.confirm,
+                &instance_name,
+                false,
+            ) {
+                return ok_json(gate);
+            }
+        }
 
         // SQL safety gate — validate before any network call
         let skip_validation = p.force && self.write_tools_enabled();
@@ -3885,6 +3985,23 @@ Methods:
         Parameters(p): Parameters<ScmParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.get_iris_reloaded().await?;
+        // Role gate: write actions (checkout, execute) are hard-blocked on subject instances.
+        // Read actions (status, menu) are always permitted.
+        {
+            let (role, instance_name) = self.instance_role();
+            let is_write = matches!(p.action.as_str(), "checkout" | "execute");
+            if is_write {
+                if let Some(gate) = crate::iris::workspace_config::check_role_gate(
+                    &role,
+                    "iris_source_control:commit",
+                    p.confirm,
+                    &instance_name,
+                    true,
+                ) {
+                    return ok_json(gate);
+                }
+            }
+        }
         let result =
             scm::handle_iris_source_control(&iris, self.http_client(), p, &self.elicitation_store)
                 .await;

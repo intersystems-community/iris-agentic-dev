@@ -219,6 +219,10 @@ name = "test_role_gate"
 path = "tests/unit/test_role_gate.rs"
 
 [[test]]
+name = "test_role_gate_handlers"
+path = "tests/unit/test_role_gate_handlers.rs"
+
+[[test]]
 name = "test_handlers_live"
 path = "tests/integration/test_handlers_live.rs"
 required-features = ["testing"]
