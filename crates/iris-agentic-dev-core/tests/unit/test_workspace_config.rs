@@ -1054,3 +1054,90 @@ fn test_generate_develop_toml_content_has_no_mode_field() {
         "develop template must not have a mode field"
     );
 }
+
+// ── Coverage gap-fill: uncovered paths ────────────────────────────────────────
+
+// workspace_root walk-up: called with "." triggers cwd walk-up path
+#[test]
+fn test_workspace_root_dot_path_falls_through_to_walkup() {
+    std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+    // "." triggers the walk-up branch — just verify it returns a valid path without panic
+    let root = workspace_root(Some("."));
+    assert!(
+        root.is_absolute() || root.to_str() == Some("."),
+        "workspace_root('.') should return a valid path"
+    );
+}
+
+// workspace_root: None workspace_path also triggers walk-up
+#[test]
+fn test_workspace_root_none_triggers_walkup() {
+    std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+    let root = workspace_root(None);
+    assert!(
+        !root.to_string_lossy().is_empty(),
+        "should return non-empty path"
+    );
+}
+
+// build_workspace_config_json: no config file → returns Null
+#[test]
+fn test_build_workspace_config_json_no_config_returns_null() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let json = build_workspace_config_json(Some(dir.path().to_str().unwrap()), &[]);
+    assert!(
+        json.is_null(),
+        "build_workspace_config_json with no config file must return Null"
+    );
+}
+
+// load_fleet_config: parse error → returns None (not panic)
+#[test]
+fn test_load_fleet_config_returns_none_on_parse_error() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(&dir, "this is not valid toml = = !!!");
+    let result = load_fleet_config(Some(dir.path().to_str().unwrap()));
+    assert!(
+        result.is_none(),
+        "load_fleet_config should return None on parse error, not panic"
+    );
+}
+
+// load_fleet_config: legacy .iris-dev.toml fallback
+#[test]
+fn test_load_fleet_config_falls_back_to_legacy() {
+    let dir = tempfile::tempdir().unwrap();
+    let legacy = dir.path().join(".iris-dev.toml");
+    std::fs::write(&legacy, "container = \"legacy-fleet-iris\"\n").unwrap();
+    let fleet = load_fleet_config(Some(dir.path().to_str().unwrap()));
+    assert!(
+        fleet.is_some(),
+        "load_fleet_config should fall back to legacy .iris-dev.toml"
+    );
+    assert_eq!(
+        fleet.unwrap().workspace.container.as_deref(),
+        Some("legacy-fleet-iris")
+    );
+}
+
+// workspace_config_to_connection: host + container sets IRIS_CONTAINER too
+#[test]
+fn test_host_with_container_sets_iris_container_env() {
+    std::env::remove_var("IRIS_CONTAINER");
+    let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
+        host: Some("remotehost".to_string()),
+        container: Some("remote-iris".to_string()),
+        ..Default::default()
+    };
+    let conn = workspace_config_to_connection(&cfg, "USER");
+    assert!(
+        conn.is_some(),
+        "host config must return Some(IrisConnection)"
+    );
+    assert_eq!(
+        std::env::var("IRIS_CONTAINER").ok().as_deref(),
+        Some("remote-iris"),
+        "IRIS_CONTAINER should be set even when host is specified alongside container"
+    );
+    std::env::remove_var("IRIS_CONTAINER");
+}
