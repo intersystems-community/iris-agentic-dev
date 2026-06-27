@@ -1,0 +1,136 @@
+fleet roles and subject-instance role gate (spec 003, amendment 001)
+
+## What this PR does
+
+Adds multi-instance fleet support to iris-agentic-dev. When a `.iris-agentic-dev.toml`
+declares `mode = "operate"`, agents working in a fleet context can now see each named
+instance's role (`workspace`, `subject`, or `control-plane`) in `iris_list_containers`
+output. A role gate prevents accidental writes to production (subject) instances without
+explicit confirmation.
+
+## Background
+
+Spec 003 originally covered workspace config loading and the hot-reload cycle (already
+shipped). Amendment 001 extends it with a fleet model for agentic workflows that span
+multiple IRIS instances — e.g., a local dev instance (`workspace`) and a customer
+production instance (`subject`).
+
+The core contract: agents can always read from subject instances, but any write
+(compile, execute, non-SELECT SQL, SCM checkout) requires an explicit `confirm: true`
+in the tool call. Source-control writes are hard-blocked on subject instances regardless
+of confirm.
+
+## Changes
+
+### New data model (workspace_config.rs)
+
+- `ConnectionRole` enum — `Workspace` (default) | `Subject` | `ControlPlane`
+- `InstanceConfig` struct — per-instance block in `mode = "operate"` configs
+- `FleetConfig` struct — wraps `WorkspaceConfig` via `#[serde(flatten)]`, so existing
+  flat develop configs parse unchanged (zero migration, zero breakage)
+- `load_fleet_config()` — like `load_workspace_config()` but returns `FleetConfig`
+- `validate_fleet_config()` — replaces unknown `memory_home` keys with `"self"` + warns
+- `check_role_gate()` — pure function, no I/O; returns error JSON or None
+- `generate_operate_toml_content()` — starter template for `iris-dev init --mode operate`
+- `build_workspace_config_json()` — extracted from inline `iris_list_containers` code
+  so the operate-mode instance map is testable without spawning a server
+
+### Tool handler changes (tools/mod.rs, tools/scm.rs)
+
+- `instance_role()` on `IrisTools` — matches active connection against fleet instance
+  blocks by container name (or `IRIS_CONTAINER` env var) or by host in `base_url`
+- `confirm: bool` added to `CompileParams` and `QueryParams`
+- `confirm: bool` added to `ScmParams` (accepted at schema level for soft-gate parity;
+  has no effect on hard-blocked SCM writes — response includes `confirm_ignored: true`)
+- host match in `instance_role()` uses `"://host:"` needle instead of bare substring
+  to prevent false positives (e.g. `"iris"` matching `"my-iris-dev"`)
+- `iris_compile` — soft gate: blocked without `confirm`, bypassed with `confirm: true`
+- `iris_execute` — soft gate on `confirmed` (field was already present, now wired)
+- `iris_query` — SELECT/WITH always permitted; all other SQL requires `confirm`
+- `iris_source_control` — checkout/execute are hard-blocked on subject; status/menu
+  always permitted
+
+### CLI
+
+- `iris-dev init --mode operate` generates a commented fleet template with a local
+  workspace instance and a placeholder subject instance
+
+### Tests
+
+94 new tests across four suites:
+
+- `test_workspace_config` (+22 new) — fleet struct parsing, operate-mode JSON shape,
+  init template, coverage gap-fill; 63 total, 93% line / 91% function coverage
+- `test_role_gate` (12) — pure unit tests for `check_role_gate`: soft gate, hard block,
+  workspace/control-plane bypass, SELECT bypass, source-control read bypass
+- `test_role_gate_handlers` (10) — white-box tests for `instance_role()`: container match,
+  host match (including substring-confusion regression), develop-mode no-gate,
+  operate-mode no-connection no-gate, confirm_ignored field on hard-block
+- `test_role_gate_e2e` (12) — full MCP subprocess tests against a live IRIS instance
+  (iris-dev-iris); all 12 pass
+
+## What agents see
+
+In operate mode, `iris_list_containers` response gains a new shape:
+
+```json
+{
+  "found": true,
+  "mode": "operate",
+  "instances": {
+    "local": { "role": "workspace", "memory_home": "self", "subject": null, "running": true },
+    "prod":  { "role": "subject",   "memory_home": "self", "subject": null, "running": false }
+  }
+}
+```
+
+When a tool is blocked on a subject instance:
+
+```json
+{
+  "role_gate": true,
+  "role": "subject",
+  "instance": "prod",
+  "required_confirmation": "iris_compile",
+  "message": "Instance 'prod' has role 'subject'. Re-issue with confirm: true to proceed."
+}
+```
+
+Hard block (source-control write) — `confirm: true` is ignored, `confirm_ignored: true`
+signals this explicitly so agents don't retry:
+
+```json
+{
+  "role_gate": true,
+  "hard_block": true,
+  "confirm_ignored": true,
+  "role": "subject",
+  "instance": "prod",
+  "message": "Instance 'prod' has role 'subject'. Source-control write operations are not permitted on subject instances. confirm: true has no effect on hard-blocked operations."
+}
+```
+
+## Backward compatibility
+
+Existing flat configs parse identically through `FleetConfig::workspace` — confirmed
+by test `test_fleet_config_develop_mode_flat_file_identical`. No migration needed.
+Agents using develop mode (no `mode` field) are completely unaffected.
+
+## Example operate-mode config
+
+```toml
+mode = "operate"
+
+[instance.local]
+container = "myapp-iris"
+namespace = "USER"
+# role defaults to "workspace"
+
+[instance.prod]
+host = "prod.example.com"
+web_port = 52773
+namespace = "PROD"
+role = "subject"
+```
+
+Generate with: `iris-dev init --mode operate`

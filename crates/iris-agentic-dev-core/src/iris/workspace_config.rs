@@ -236,16 +236,19 @@ pub fn check_role_gate(
         return None;
     }
 
-    // Hard block: no confirm path (source_control writes)
+    // Hard block: no confirm path (source_control writes).
+    // confirm: true is silently accepted at the parameter level (shared field with soft-gate ops)
+    // but has no effect here — confirm_ignored: true makes this explicit to agents.
     if hard_block {
         return Some(serde_json::json!({
             "error": "role_gate",
             "role_gate": true,
             "hard_block": true,
+            "confirm_ignored": true,
             "instance": instance_name,
             "role": "subject",
             "message": format!(
-                "Instance '{}' has role 'subject'. Source-control write operations are not permitted on subject instances.",
+                "Instance '{}' has role 'subject'. Source-control write operations are not permitted on subject instances. confirm: true has no effect on hard-blocked operations.",
                 instance_name
             ),
         }));

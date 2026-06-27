@@ -1727,9 +1727,14 @@ impl IrisTools {
                 active_container.as_deref() == Some(ic.as_str())
             } else {
                 // No container in instance config — match by host in base_url.
+                // Use scheme-stripped prefix match ("://host:") to avoid "iris" matching
+                // "my-iris-dev" or a hostname that is a substring of another.
                 inst.host
                     .as_deref()
-                    .map(|h| iris.base_url.contains(h))
+                    .map(|h| {
+                        let needle = format!("://{h}:");
+                        iris.base_url.contains(&needle)
+                    })
                     .unwrap_or(false)
             };
             if matches {
