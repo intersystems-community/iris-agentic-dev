@@ -656,6 +656,9 @@ pub struct CompileParams {
     /// If true, bypass the log store and return all errors/warnings inline regardless of count.
     #[serde(default)]
     pub inline: bool,
+    /// Set to true to confirm execution on a subject-role instance (role-gate bypass).
+    #[serde(default)]
+    pub confirm: bool,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TestParams {
@@ -816,6 +819,9 @@ pub struct QueryParams {
     /// Has no effect on production IRIS instances (where write tools are disabled).
     #[serde(default)]
     pub force: bool,
+    /// Set to true to confirm execution on a subject-role instance (role-gate bypass).
+    #[serde(default)]
+    pub confirm: bool,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListContainersParams {
@@ -1666,6 +1672,78 @@ impl IrisTools {
         self.connection.lock().unwrap().write_tools_enabled
     }
 
+    /// Returns the `ConnectionRole` and instance name for the currently-active connection.
+    ///
+    /// In operate mode (`mode = "operate"` in `.iris-agentic-dev.toml`), matches the active
+    /// `IrisConnection` against declared `[instance.*]` blocks by container name or host.
+    /// Returns `(Workspace, "")` when no fleet config is present, mode is not "operate",
+    /// or no instance block matches — i.e., the default / dev-mode case is always permitted.
+    pub fn instance_role(&self) -> (crate::iris::workspace_config::ConnectionRole, String) {
+        use crate::iris::connection::DiscoverySource;
+        use crate::iris::workspace_config::{load_fleet_config, ConnectionRole};
+
+        let (workspace_path, iris_arc) = {
+            // Prefer config_watcher path (set at startup from OBJECTSCRIPT_WORKSPACE / --workspace).
+            // Fall back to config_file on ConnectionState (set only after a hot-reload cycle).
+            let watcher_ws = {
+                let w = self.config_watcher.lock().unwrap();
+                w.as_ref()
+                    .and_then(|w| w.config_path.parent())
+                    .and_then(|p| p.to_str())
+                    .map(|s| s.to_string())
+            };
+            let conn = self.connection.lock().unwrap();
+            let ws = watcher_ws.or_else(|| {
+                conn.config_file
+                    .as_ref()
+                    .and_then(|p| p.parent())
+                    .and_then(|p| p.to_str())
+                    .map(|s| s.to_string())
+            });
+            (ws, conn.iris.clone())
+        };
+
+        let Some(fleet) = load_fleet_config(workspace_path.as_deref()) else {
+            return (ConnectionRole::Workspace, String::new());
+        };
+        if fleet.mode.as_deref() != Some("operate") {
+            return (ConnectionRole::Workspace, String::new());
+        }
+        let Some(iris) = iris_arc else {
+            return (ConnectionRole::Workspace, String::new());
+        };
+
+        // Active container name from DiscoverySource or IRIS_CONTAINER env var fallback.
+        let active_container = match &iris.source {
+            DiscoverySource::Docker { container_name } => Some(container_name.clone()),
+            _ => std::env::var("IRIS_CONTAINER")
+                .ok()
+                .filter(|s| !s.is_empty()),
+        };
+
+        for (name, inst) in &fleet.instance {
+            let matches = if let Some(ref ic) = inst.container {
+                // Match by container name if the instance declares one.
+                active_container.as_deref() == Some(ic.as_str())
+            } else {
+                // No container in instance config — match by host in base_url.
+                // Use scheme-stripped prefix match ("://host:") to avoid "iris" matching
+                // "my-iris-dev" or a hostname that is a substring of another.
+                inst.host
+                    .as_deref()
+                    .map(|h| {
+                        let needle = format!("://{h}:");
+                        iris.base_url.contains(&needle)
+                    })
+                    .unwrap_or(false)
+            };
+            if matches {
+                return (inst.role.clone(), name.clone());
+            }
+        }
+        (ConnectionRole::Workspace, String::new())
+    }
+
     /// Returns the active connection as Option<Arc>, for interop helpers that take Option<&IrisConnection>.
     fn iris_arc(&self) -> Option<Arc<IrisConnection>> {
         self.connection.lock().unwrap().iris.clone()
@@ -1767,6 +1845,16 @@ impl IrisTools {
         Parameters(p): Parameters<CompileParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.get_iris_reloaded().await?;
+        let (role, instance_name) = self.instance_role();
+        if let Some(gate) = crate::iris::workspace_config::check_role_gate(
+            &role,
+            "iris_compile",
+            p.confirm,
+            &instance_name,
+            false,
+        ) {
+            return ok_json(gate);
+        }
         tracing::info!(namespace = %p.namespace, target = %p.target, "iris_compile");
         let client = self.http_client();
 
@@ -2415,6 +2503,16 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         Parameters(p): Parameters<ExecuteParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.get_iris_reloaded().await?;
+        let (role, instance_name) = self.instance_role();
+        if let Some(gate) = crate::iris::workspace_config::check_role_gate(
+            &role,
+            "iris_execute",
+            p.confirmed,
+            &instance_name,
+            false,
+        ) {
+            return ok_json(gate);
+        }
         tracing::info!(namespace = %p.namespace, translate_sql = p.translate_sql, "iris_execute");
         let client = self.http_client();
         let timeout = std::time::Duration::from_secs(p.timeout);
@@ -2572,6 +2670,31 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(namespace = %p.namespace, force = p.force, "iris_query");
 
+        // Role gate: SELECT is always permitted on subject; write SQL requires confirm.
+        {
+            let (role, instance_name) = self.instance_role();
+            let first_word = p
+                .query
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_uppercase();
+            let tool_name = if first_word == "SELECT" || first_word == "WITH" {
+                "iris_query:SELECT"
+            } else {
+                "iris_query:INSERT"
+            };
+            if let Some(gate) = crate::iris::workspace_config::check_role_gate(
+                &role,
+                tool_name,
+                p.confirm,
+                &instance_name,
+                false,
+            ) {
+                return ok_json(gate);
+            }
+        }
+
         // SQL safety gate — validate before any network call
         let skip_validation = p.force && self.write_tools_enabled();
         if !skip_validation {
@@ -2668,31 +2791,11 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 c["name"].as_str().unwrap_or("")
             )
         });
-        // FR-012: show which container .iris-agentic-dev.toml would select and if it's running.
-        let workspace_config_json = {
-            let ws_path = p.workspace_root.as_deref();
-            match crate::iris::workspace_config::load_workspace_config(ws_path) {
-                None => serde_json::Value::Null,
-                Some(ref cfg) => {
-                    let container_name = cfg.container.as_deref().unwrap_or("");
-                    let running = !container_name.is_empty()
-                        && containers
-                            .iter()
-                            .any(|c| c["name"].as_str() == Some(container_name));
-                    let config_path = crate::iris::workspace_config::workspace_root(ws_path)
-                        .join(".iris-agentic-dev.toml")
-                        .to_string_lossy()
-                        .to_string();
-                    serde_json::json!({
-                        "found": true,
-                        "path": config_path,
-                        "container": cfg.container,
-                        "namespace": cfg.namespace,
-                        "running": running,
-                    })
-                }
-            }
-        };
+        // FR-012 / FR-023: show workspace config, supporting both develop and operate mode.
+        let workspace_config_json = crate::iris::workspace_config::build_workspace_config_json(
+            p.workspace_root.as_deref(),
+            &containers,
+        );
         // Add active_connection info so agents can detect workspace_config mismatches
         // without a separate iris_info call.
         let iris_arc = self.iris_arc();
@@ -3905,6 +4008,23 @@ Methods:
         Parameters(p): Parameters<ScmParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.get_iris_reloaded().await?;
+        // Role gate: write actions (checkout, execute) are hard-blocked on subject instances.
+        // Read actions (status, menu) are always permitted.
+        {
+            let (role, instance_name) = self.instance_role();
+            let is_write = matches!(p.action.as_str(), "checkout" | "execute");
+            if is_write {
+                if let Some(gate) = crate::iris::workspace_config::check_role_gate(
+                    &role,
+                    "iris_source_control:commit",
+                    p.confirm,
+                    &instance_name,
+                    true,
+                ) {
+                    return ok_json(gate);
+                }
+            }
+        }
         let result =
             scm::handle_iris_source_control(&iris, self.http_client(), p, &self.elicitation_store)
                 .await;

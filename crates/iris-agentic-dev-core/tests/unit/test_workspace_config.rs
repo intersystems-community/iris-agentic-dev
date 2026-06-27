@@ -1,7 +1,8 @@
 // Tests for workspace_config module: TOML loading, priority ordering, path resolution.
 
 use iris_agentic_dev_core::iris::workspace_config::{
-    load_workspace_config, workspace_config_to_connection, workspace_root,
+    build_workspace_config_json, load_fleet_config, load_workspace_config, validate_fleet_config,
+    workspace_config_to_connection, workspace_root, ConnectionRole, FleetConfig,
 };
 use std::io::Write;
 
@@ -669,4 +670,474 @@ fn test_apply_workspace_config_none_with_no_file_returns_none() {
         result.is_none(),
         "no config file should yield None from apply_workspace_config"
     );
+}
+
+// ── Amendment 001: Fleet structs ─────────────────────────────────────────────
+
+// T004-a: flat file parses identically via FleetConfig::workspace
+#[test]
+fn test_fleet_config_develop_mode_flat_file_identical() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"container = "loanapp-iris"
+namespace = "LOANAPP"
+"#,
+    );
+    let path = dir.path().to_str().unwrap();
+    let base = load_workspace_config(Some(path)).expect("base config loads");
+    let fleet = load_fleet_config(Some(path)).expect("fleet config loads");
+    assert_eq!(
+        fleet.workspace.container, base.container,
+        "FleetConfig::workspace.container must match WorkspaceConfig"
+    );
+    assert_eq!(
+        fleet.workspace.namespace, base.namespace,
+        "FleetConfig::workspace.namespace must match WorkspaceConfig"
+    );
+    assert!(
+        fleet.instance.is_empty(),
+        "develop-mode flat file should have no instance blocks"
+    );
+}
+
+// T004-b: mode="operate" parses [instance.*] blocks
+#[test]
+fn test_fleet_config_operate_mode_parses_instances() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.local]
+container = "myapp-iris"
+namespace = "USER"
+
+[instance.prod]
+host = "prod.example.com"
+web_port = 52773
+namespace = "PROD"
+role = "subject"
+"#,
+    );
+    let fleet = load_fleet_config(Some(dir.path().to_str().unwrap())).expect("fleet config loads");
+    assert_eq!(fleet.mode.as_deref(), Some("operate"));
+    assert!(
+        fleet.instance.contains_key("local"),
+        "should have 'local' instance"
+    );
+    assert!(
+        fleet.instance.contains_key("prod"),
+        "should have 'prod' instance"
+    );
+    assert_eq!(
+        fleet.instance["local"].container.as_deref(),
+        Some("myapp-iris")
+    );
+    assert_eq!(fleet.instance["prod"].role, ConnectionRole::Subject);
+}
+
+// T004-c: ConnectionRole defaults to Workspace when absent
+#[test]
+fn test_connection_role_defaults_to_workspace() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.local]
+container = "my-iris"
+"#,
+    );
+    let fleet = load_fleet_config(Some(dir.path().to_str().unwrap())).expect("fleet config loads");
+    assert_eq!(
+        fleet.instance["local"].role,
+        ConnectionRole::Workspace,
+        "absent role must default to Workspace"
+    );
+}
+
+// T004-d: role = "subject" parses correctly
+#[test]
+fn test_connection_role_subject_parses() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.cust]
+host = "cust.example.com"
+role = "subject"
+"#,
+    );
+    let fleet = load_fleet_config(Some(dir.path().to_str().unwrap())).expect("fleet config loads");
+    assert_eq!(fleet.instance["cust"].role, ConnectionRole::Subject);
+}
+
+// T004-e: role = "control-plane" parses correctly
+#[test]
+fn test_connection_role_control_plane_parses() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.ctrl]
+host = "ctrl.example.com"
+role = "control-plane"
+"#,
+    );
+    let fleet = load_fleet_config(Some(dir.path().to_str().unwrap())).expect("fleet config loads");
+    assert_eq!(fleet.instance["ctrl"].role, ConnectionRole::ControlPlane);
+}
+
+// T004-f: [instance.*] blocks ignored when mode="develop"
+#[test]
+fn test_fleet_config_instance_blocks_ignored_in_develop_mode() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"mode = "develop"
+
+[instance.prod]
+host = "prod.example.com"
+role = "subject"
+"#,
+    );
+    let fleet = load_fleet_config(Some(dir.path().to_str().unwrap())).expect("fleet config loads");
+    // mode="develop" — instance map is parsed but callers must ignore it
+    assert_eq!(fleet.mode.as_deref(), Some("develop"));
+    // Callers checking mode should treat this identically to develop mode
+    let is_operate = fleet.mode.as_deref() == Some("operate");
+    assert!(!is_operate, "develop mode must not activate fleet logic");
+}
+
+// T004-g: memory-home defaults to "self" when absent
+#[test]
+fn test_fleet_config_memory_home_defaults_to_self() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.cust]
+host = "cust.example.com"
+role = "subject"
+"#,
+    );
+    let fleet = load_fleet_config(Some(dir.path().to_str().unwrap())).expect("fleet config loads");
+    assert!(
+        fleet.instance["cust"].memory_home.is_none(),
+        "absent memory-home should be None in raw struct (defaults resolved by callers)"
+    );
+}
+
+// T004-h: validate_fleet_config warns and falls back to "self" for unknown memory-home
+#[test]
+fn test_fleet_config_unknown_memory_home_falls_back_to_self() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.cust]
+host = "cust.example.com"
+role = "subject"
+memory-home = "nonexistent-instance"
+"#,
+    );
+    let mut fleet =
+        load_fleet_config(Some(dir.path().to_str().unwrap())).expect("fleet config loads");
+    // Before validation: raw value is set
+    assert_eq!(
+        fleet.instance["cust"].memory_home.as_deref(),
+        Some("nonexistent-instance")
+    );
+    validate_fleet_config(&mut fleet);
+    // After validation: unknown key falls back to "self"
+    assert_eq!(
+        fleet.instance["cust"].memory_home.as_deref(),
+        Some("self"),
+        "validate_fleet_config must replace unknown memory-home with 'self'"
+    );
+}
+
+// T004-i: subject field is None when absent
+#[test]
+fn test_fleet_config_subject_field_absent_is_none() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.cust]
+host = "cust.example.com"
+role = "subject"
+"#,
+    );
+    let fleet = load_fleet_config(Some(dir.path().to_str().unwrap())).expect("fleet config loads");
+    assert!(
+        fleet.instance["cust"].subject.is_none(),
+        "absent subject field should be None"
+    );
+}
+
+// ── Amendment 001: iris_list_containers operate-mode response ─────────────────
+
+// T010-a: operate mode response includes "mode": "operate"
+#[test]
+fn test_list_containers_workspace_config_includes_mode_operate() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.local]
+container = "myapp-iris"
+namespace = "USER"
+role = "workspace"
+"#,
+    );
+    let json = build_workspace_config_json(Some(dir.path().to_str().unwrap()), &[]);
+    assert_eq!(
+        json["mode"].as_str(),
+        Some("operate"),
+        "operate mode response must include mode field"
+    );
+    assert!(
+        json["instances"].is_object(),
+        "operate mode response must include instances object"
+    );
+}
+
+// T010-b: operate mode instances have role/memory_home/subject/running fields
+#[test]
+fn test_list_containers_instances_have_role_and_memory_home() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.local]
+container = "myapp-iris"
+namespace = "USER"
+role = "workspace"
+
+[instance.prod]
+host = "prod.example.com"
+namespace = "PROD"
+role = "subject"
+memory-home = "local"
+subject = "Acme Corp"
+"#,
+    );
+    let running = serde_json::json!([{"name": "myapp-iris"}]);
+    let containers = running.as_array().unwrap();
+    let json = build_workspace_config_json(Some(dir.path().to_str().unwrap()), containers);
+
+    let instances = &json["instances"];
+    assert!(
+        instances["local"].is_object(),
+        "local instance must be present"
+    );
+    assert_eq!(instances["local"]["role"].as_str(), Some("workspace"));
+    assert_eq!(
+        instances["local"]["running"].as_bool(),
+        Some(true),
+        "myapp-iris is running"
+    );
+
+    assert!(
+        instances["prod"].is_object(),
+        "prod instance must be present"
+    );
+    assert_eq!(instances["prod"]["role"].as_str(), Some("subject"));
+    assert_eq!(instances["prod"]["memory_home"].as_str(), Some("local"));
+    assert_eq!(instances["prod"]["subject"].as_str(), Some("Acme Corp"));
+    assert_eq!(
+        instances["prod"]["running"].as_bool(),
+        Some(false),
+        "prod not in running list"
+    );
+}
+
+// T010-c: develop mode response has no "mode" or "instances" field (SC-011)
+#[test]
+fn test_list_containers_develop_mode_response_unchanged() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"container = "loanapp-iris"
+namespace = "USER"
+"#,
+    );
+    let json = build_workspace_config_json(Some(dir.path().to_str().unwrap()), &[]);
+    assert!(
+        json["mode"].is_null(),
+        "develop mode must not include mode field"
+    );
+    assert!(
+        json["instances"].is_null(),
+        "develop mode must not include instances field"
+    );
+    // Must still include the existing develop-mode shape
+    assert_eq!(
+        json["container"].as_str(),
+        Some("loanapp-iris"),
+        "develop mode must include container field"
+    );
+    assert!(
+        json["found"].as_bool().unwrap_or(false),
+        "found must be true"
+    );
+}
+
+// ── Amendment 001: iris-dev init --mode operate (FR-025–FR-026) ──────────────
+
+// T026-a: generate_operate_toml_content produces parseable FleetConfig with mode="operate"
+#[test]
+fn test_generate_operate_toml_content_parses_as_fleet_config() {
+    use iris_agentic_dev_core::iris::workspace_config::generate_operate_toml_content;
+    let content = generate_operate_toml_content("myapp-iris", "USER");
+    // Strip comment lines and parse only the active TOML
+    let fleet: FleetConfig =
+        toml::from_str(&content).expect("generated operate template must parse as FleetConfig");
+    assert_eq!(
+        fleet.mode.as_deref(),
+        Some("operate"),
+        "generated template must have mode = \"operate\""
+    );
+}
+
+// T026-b: generated operate template has [instance.local] with role="workspace"
+#[test]
+fn test_generate_operate_toml_has_instance_local_workspace() {
+    use iris_agentic_dev_core::iris::workspace_config::generate_operate_toml_content;
+    let content = generate_operate_toml_content("myapp-iris", "USER");
+    let fleet: FleetConfig = toml::from_str(&content).expect("parses");
+    assert!(
+        fleet.instance.contains_key("local"),
+        "generated template must have [instance.local]"
+    );
+    assert_eq!(
+        fleet.instance["local"].role,
+        ConnectionRole::Workspace,
+        "[instance.local] must have role = workspace"
+    );
+    assert_eq!(
+        fleet.instance["local"].container.as_deref(),
+        Some("myapp-iris"),
+        "[instance.local] must have the provided container name"
+    );
+}
+
+// T026-c: generated operate template has commented-out [instance.subject] block
+#[test]
+fn test_generate_operate_toml_has_commented_subject_block() {
+    use iris_agentic_dev_core::iris::workspace_config::generate_operate_toml_content;
+    let content = generate_operate_toml_content("myapp-iris", "USER");
+    assert!(
+        content.contains("# [instance.subject]") || content.contains("#[instance.subject]"),
+        "generated template must have a commented-out [instance.subject] block"
+    );
+}
+
+// T026-d: existing generate_toml_content has no mode field (develop mode unchanged)
+#[test]
+fn test_generate_develop_toml_content_has_no_mode_field() {
+    use iris_agentic_dev_core::iris::workspace_config::generate_toml_content;
+    let content = generate_toml_content("myapp-iris", "USER");
+    // Parsed as FleetConfig: mode must be None
+    let fleet: FleetConfig = toml::from_str(&content).expect("develop template parses");
+    assert!(
+        fleet.mode.is_none(),
+        "develop template must not have a mode field"
+    );
+}
+
+// ── Coverage gap-fill: uncovered paths ────────────────────────────────────────
+
+// workspace_root walk-up: called with "." triggers cwd walk-up path
+#[test]
+fn test_workspace_root_dot_path_falls_through_to_walkup() {
+    std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+    // "." triggers the walk-up branch — just verify it returns a valid path without panic
+    let root = workspace_root(Some("."));
+    assert!(
+        root.is_absolute() || root.to_str() == Some("."),
+        "workspace_root('.') should return a valid path"
+    );
+}
+
+// workspace_root: None workspace_path also triggers walk-up
+#[test]
+fn test_workspace_root_none_triggers_walkup() {
+    std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+    let root = workspace_root(None);
+    assert!(
+        !root.to_string_lossy().is_empty(),
+        "should return non-empty path"
+    );
+}
+
+// build_workspace_config_json: no config file → returns Null
+#[test]
+fn test_build_workspace_config_json_no_config_returns_null() {
+    let dir = tempfile::TempDir::new().unwrap();
+    let json = build_workspace_config_json(Some(dir.path().to_str().unwrap()), &[]);
+    assert!(
+        json.is_null(),
+        "build_workspace_config_json with no config file must return Null"
+    );
+}
+
+// load_fleet_config: parse error → returns None (not panic)
+#[test]
+fn test_load_fleet_config_returns_none_on_parse_error() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(&dir, "this is not valid toml = = !!!");
+    let result = load_fleet_config(Some(dir.path().to_str().unwrap()));
+    assert!(
+        result.is_none(),
+        "load_fleet_config should return None on parse error, not panic"
+    );
+}
+
+// load_fleet_config: legacy .iris-dev.toml fallback
+#[test]
+fn test_load_fleet_config_falls_back_to_legacy() {
+    let dir = tempfile::tempdir().unwrap();
+    let legacy = dir.path().join(".iris-dev.toml");
+    std::fs::write(&legacy, "container = \"legacy-fleet-iris\"\n").unwrap();
+    let fleet = load_fleet_config(Some(dir.path().to_str().unwrap()));
+    assert!(
+        fleet.is_some(),
+        "load_fleet_config should fall back to legacy .iris-dev.toml"
+    );
+    assert_eq!(
+        fleet.unwrap().workspace.container.as_deref(),
+        Some("legacy-fleet-iris")
+    );
+}
+
+// workspace_config_to_connection: host + container sets IRIS_CONTAINER too
+#[test]
+fn test_host_with_container_sets_iris_container_env() {
+    std::env::remove_var("IRIS_CONTAINER");
+    let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
+        host: Some("remotehost".to_string()),
+        container: Some("remote-iris".to_string()),
+        ..Default::default()
+    };
+    let conn = workspace_config_to_connection(&cfg, "USER");
+    assert!(
+        conn.is_some(),
+        "host config must return Some(IrisConnection)"
+    );
+    assert_eq!(
+        std::env::var("IRIS_CONTAINER").ok().as_deref(),
+        Some("remote-iris"),
+        "IRIS_CONTAINER should be set even when host is specified alongside container"
+    );
+    std::env::remove_var("IRIS_CONTAINER");
 }

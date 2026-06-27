@@ -29,6 +29,46 @@ pub struct WorkspaceConfig {
     pub docker_only: bool,
 }
 
+/// Connection role for fleet/operate mode instances.
+#[derive(Debug, Deserialize, Clone, PartialEq, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConnectionRole {
+    #[default]
+    Workspace,
+    Subject,
+    ControlPlane,
+}
+
+/// Per-instance config block for `mode = "operate"` fleet configs.
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub struct InstanceConfig {
+    pub container: Option<String>,
+    pub namespace: Option<String>,
+    pub host: Option<String>,
+    pub web_port: Option<u16>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    #[serde(default)]
+    pub role: ConnectionRole,
+    pub memory_home: Option<String>,
+    pub subject: Option<String>,
+}
+
+/// Top-level fleet config. Wraps WorkspaceConfig for backward-compatible develop mode.
+///
+/// Parsing rule: load as FleetConfig.
+/// - mode absent or "develop" → use `workspace` (flat fields); ignore `instance` map.
+/// - mode = "operate" → use `instance` map; flat `workspace` fields are informational.
+#[derive(Debug, Deserialize, Default, Clone)]
+pub struct FleetConfig {
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub instance: std::collections::HashMap<String, InstanceConfig>,
+    #[serde(flatten)]
+    pub workspace: WorkspaceConfig,
+}
+
 /// Resolve the workspace root path.
 /// Priority: OBJECTSCRIPT_WORKSPACE env var > workspace_path arg > walk up from cwd.
 ///
@@ -110,6 +150,196 @@ pub fn load_workspace_config(workspace_path: Option<&str>) -> Option<WorkspaceCo
                 None
             }
         },
+    }
+}
+
+/// Load `.iris-agentic-dev.toml` as a `FleetConfig` (Amendment 001).
+/// Returns `None` if the file does not exist or fails to parse (with a warning).
+pub fn load_fleet_config(workspace_path: Option<&str>) -> Option<FleetConfig> {
+    let root = workspace_root(workspace_path);
+    let config_path = if root.join(".iris-agentic-dev.toml").exists() {
+        root.join(".iris-agentic-dev.toml")
+    } else if root.join(".iris-dev.toml").exists() {
+        root.join(".iris-dev.toml")
+    } else {
+        return None;
+    };
+
+    match std::fs::read_to_string(&config_path) {
+        Err(e) => {
+            tracing::warn!("Could not read config at {}: {}", config_path.display(), e);
+            None
+        }
+        Ok(contents) => match toml::from_str::<FleetConfig>(&contents) {
+            Ok(cfg) => {
+                tracing::debug!("Loaded fleet config from {}", config_path.display());
+                Some(cfg)
+            }
+            Err(e) => {
+                tracing::warn!("Could not parse config at {}: {}", config_path.display(), e);
+                None
+            }
+        },
+    }
+}
+
+/// Validate a FleetConfig: replace unknown `memory_home` keys with `"self"` (with a warning).
+pub fn validate_fleet_config(cfg: &mut FleetConfig) {
+    let known_keys: std::collections::HashSet<String> = cfg.instance.keys().cloned().collect();
+    for (name, inst) in cfg.instance.iter_mut() {
+        if let Some(ref mh) = inst.memory_home.clone() {
+            if mh != "self" && !known_keys.contains(mh.as_str()) {
+                tracing::warn!(
+                    "instance '{}': memory-home '{}' is not a declared instance key — falling back to 'self'",
+                    name, mh
+                );
+                inst.memory_home = Some("self".into());
+            }
+        }
+    }
+}
+
+/// Role-gate check for subject instances (FR-019, FR-020).
+///
+/// Returns `Some(error_json)` when the call should be blocked, `None` when it should proceed.
+///
+/// - `role`: the connection role to check.
+/// - `tool_name`: tool identifier, e.g. `"iris_compile"` or `"iris_source_control:commit"`.
+///   For `iris_query`, pass `"iris_query:SELECT"` / `"iris_query:INSERT"` etc.
+///   SELECT (and other read-only SQL) should be passed as `"iris_query:SELECT"` — not gated.
+/// - `confirm`: whether the caller passed `confirm: true`.
+/// - `instance_name`: the `[instance.*]` key (for the error message).
+/// - `hard_block`: if `true`, no confirm path exists (used for source_control writes).
+///
+/// Pure function — no I/O, no side effects.
+pub fn check_role_gate(
+    role: &ConnectionRole,
+    tool_name: &str,
+    confirm: bool,
+    instance_name: &str,
+    hard_block: bool,
+) -> Option<serde_json::Value> {
+    // Workspace and ControlPlane are never gated
+    if *role != ConnectionRole::Subject {
+        return None;
+    }
+
+    // SELECT and other read-only queries are never gated
+    if tool_name == "iris_query:SELECT"
+        || tool_name == "iris_query:select"
+        || tool_name.starts_with("iris_source_control:status")
+        || tool_name.starts_with("iris_source_control:diff")
+        || tool_name.starts_with("iris_source_control:log")
+        || tool_name.starts_with("iris_source_control:list")
+        || tool_name.starts_with("iris_source_control:get")
+    {
+        return None;
+    }
+
+    // Hard block: no confirm path (source_control writes).
+    // confirm: true is silently accepted at the parameter level (shared field with soft-gate ops)
+    // but has no effect here — confirm_ignored: true makes this explicit to agents.
+    if hard_block {
+        return Some(serde_json::json!({
+            "error": "role_gate",
+            "role_gate": true,
+            "hard_block": true,
+            "confirm_ignored": true,
+            "instance": instance_name,
+            "role": "subject",
+            "message": format!(
+                "Instance '{}' has role 'subject'. Source-control write operations are not permitted on subject instances. confirm: true has no effect on hard-blocked operations.",
+                instance_name
+            ),
+        }));
+    }
+
+    // Soft gate: confirm=true bypasses
+    if confirm {
+        return None;
+    }
+
+    Some(serde_json::json!({
+        "error": "role_gate",
+        "role_gate": true,
+        "instance": instance_name,
+        "role": "subject",
+        "required_confirmation": tool_name,
+        "message": format!(
+            "Instance '{}' has role 'subject'. Re-issue with confirm: true to proceed.",
+            instance_name
+        ),
+    }))
+}
+
+/// Build the `workspace_config` JSON field for `iris_list_containers`.
+///
+/// - `mode = "operate"`: returns an object with `mode`, `instances` (each with role/memory_home/subject/running).
+/// - develop mode or absent: returns the existing shape (found/path/container/namespace/running).
+/// - no config file: returns `serde_json::Value::Null`.
+pub fn build_workspace_config_json(
+    workspace_path: Option<&str>,
+    running_containers: &[serde_json::Value],
+) -> serde_json::Value {
+    let mut cfg = match load_fleet_config(workspace_path) {
+        None => return serde_json::Value::Null,
+        Some(c) => c,
+    };
+    validate_fleet_config(&mut cfg);
+
+    let config_path = workspace_root(workspace_path)
+        .join(".iris-agentic-dev.toml")
+        .to_string_lossy()
+        .to_string();
+
+    if cfg.mode.as_deref() == Some("operate") {
+        let mut instances = serde_json::Map::new();
+        for (name, inst) in &cfg.instance {
+            let memory_home = inst.memory_home.clone().unwrap_or_else(|| "self".into());
+            let running = inst
+                .container
+                .as_deref()
+                .map(|c| {
+                    running_containers
+                        .iter()
+                        .any(|r| r["name"].as_str() == Some(c))
+                })
+                .unwrap_or(false);
+            let role_str = match inst.role {
+                ConnectionRole::Workspace => "workspace",
+                ConnectionRole::Subject => "subject",
+                ConnectionRole::ControlPlane => "control-plane",
+            };
+            instances.insert(
+                name.clone(),
+                serde_json::json!({
+                    "role": role_str,
+                    "memory_home": memory_home,
+                    "subject": inst.subject,
+                    "running": running,
+                }),
+            );
+        }
+        serde_json::json!({
+            "found": true,
+            "path": config_path,
+            "mode": "operate",
+            "instances": serde_json::Value::Object(instances),
+        })
+    } else {
+        // Develop mode — return existing shape unchanged
+        let container_name = cfg.workspace.container.as_deref().unwrap_or("");
+        let running = !container_name.is_empty()
+            && running_containers
+                .iter()
+                .any(|c| c["name"].as_str() == Some(container_name));
+        serde_json::json!({
+            "found": true,
+            "path": config_path,
+            "container": cfg.workspace.container,
+            "namespace": cfg.workspace.namespace,
+            "running": running,
+        })
     }
 }
 
@@ -274,6 +504,36 @@ namespace = "{namespace}"
 # username = "_SYSTEM"
 # password = "..."  # not recommended in committed files
 "#
+    )
+}
+
+/// Generate starter `.iris-agentic-dev.toml` for `iris-dev init --mode operate`.
+/// Produces one active `[instance.local]` block and a commented-out `[instance.subject]` block.
+pub fn generate_operate_toml_content(local_container: &str, local_namespace: &str) -> String {
+    format!(
+        r#"# iris-agentic-dev fleet configuration (operate mode)
+# Use this when managing multiple named IRIS instances.
+# Commit this file to share connection settings with your team.
+mode = "operate"
+
+# ── Local / control-plane instance ──────────────────────────────────────────
+[instance.local]
+container = "{local_container}"
+namespace = "{local_namespace}"
+role = "workspace"            # "workspace" or "control-plane": no write gating
+
+# ── Subject instance (e.g. a customer/production IRIS) ──────────────────────
+# Uncomment and fill in to add a subject instance.
+# [instance.subject]
+# host = "subject-iris.example.com"
+# web_port = 52773
+# namespace = "USER"
+# role = "subject"            # destructive ops require explicit confirm: true
+# memory-home = "local"       # route AI memory writes to the 'local' instance
+# subject = "MyCustomer"      # free-form label identifying this subject
+"#,
+        local_container = local_container,
+        local_namespace = local_namespace,
     )
 }
 

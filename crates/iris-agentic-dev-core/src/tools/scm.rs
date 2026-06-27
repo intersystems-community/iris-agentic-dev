@@ -32,6 +32,10 @@ pub struct ScmParams {
     pub elicitation_id: Option<String>,
     #[serde(default = "default_namespace")]
     pub namespace: String,
+    /// Set to true to confirm write on a subject-role instance. Has no effect: source_control
+    /// writes on subject instances are always hard-blocked regardless of confirm.
+    #[serde(default)]
+    pub confirm: bool,
 }
 
 async fn xecute(

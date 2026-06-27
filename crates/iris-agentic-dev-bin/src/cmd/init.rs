@@ -12,6 +12,9 @@ pub struct InitCommand {
     /// Output format: text or json
     #[arg(long, default_value = "text")]
     pub format: String,
+    /// Config mode: "develop" (default) or "operate" (fleet/multi-instance template)
+    #[arg(long, default_value = "develop")]
+    pub mode: String,
 }
 
 impl InitCommand {
@@ -49,10 +52,17 @@ impl InitCommand {
             .map(|s| s.to_string())
             .unwrap_or_else(|| format!("{}-iris", workspace_basename));
 
-        let content = iris_agentic_dev_core::iris::workspace_config::generate_toml_content(
-            &suggested_container,
-            "USER",
-        );
+        let content = if self.mode == "operate" {
+            iris_agentic_dev_core::iris::workspace_config::generate_operate_toml_content(
+                &suggested_container,
+                "USER",
+            )
+        } else {
+            iris_agentic_dev_core::iris::workspace_config::generate_toml_content(
+                &suggested_container,
+                "USER",
+            )
+        };
 
         std::fs::write(&config_path, &content)
             .with_context(|| format!("writing {}", config_path.display()))?;
