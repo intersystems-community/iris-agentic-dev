@@ -84,6 +84,9 @@ impl Toolset {
 pub const ERR_NO_TESTS_FOUND: &str = "NO_TESTS_FOUND";
 pub const ERR_NAMESPACE_NOT_FOUND: &str = "NAMESPACE_NOT_FOUND";
 pub const ERR_TEST_EXECUTION_ERROR: &str = "TEST_EXECUTION_ERROR";
+pub const ERR_SERVER_MANAGER_CREDENTIAL: &str = "SERVER_MANAGER_CREDENTIAL_ERROR";
+pub const ERR_SERVER_MANAGER_AMBIGUOUS: &str = "SERVER_MANAGER_AMBIGUOUS";
+pub const ERR_POLICY_GATE: &str = "POLICY_GATE";
 
 // ── Live connection hot-reload types (034) ───────────────────────────────────
 
@@ -1739,6 +1742,55 @@ impl IrisTools {
         (ConnectionRole::Workspace, String::new())
     }
 
+    /// Returns the active Server Manager server name (if the connection came from SM) and
+    /// the `ConnectionPolicy` for that server (if one is configured in `.iris-agentic-dev.toml`).
+    /// Returns `(None, None)` for all other connection sources.
+    fn active_server_manager_policy(
+        &self,
+    ) -> (
+        Option<String>,
+        Option<crate::iris::workspace_config::ConnectionPolicy>,
+    ) {
+        use crate::iris::connection::DiscoverySource;
+        use crate::iris::workspace_config::load_fleet_config;
+
+        let (workspace_path, iris_arc) = {
+            let watcher_ws = {
+                let w = self.config_watcher.lock().unwrap();
+                w.as_ref()
+                    .and_then(|w| w.config_path.parent())
+                    .and_then(|p| p.to_str())
+                    .map(|s| s.to_string())
+            };
+            let conn = self.connection.lock().unwrap();
+            let ws = watcher_ws.or_else(|| {
+                conn.config_file
+                    .as_ref()
+                    .and_then(|p| p.parent())
+                    .and_then(|p| p.to_str())
+                    .map(|s| s.to_string())
+            });
+            (ws, conn.iris.clone())
+        };
+
+        let iris = match iris_arc {
+            Some(i) => i,
+            None => return (None, None),
+        };
+        let server_name = match &iris.source {
+            DiscoverySource::ServerManager { server_name } => server_name.clone(),
+            _ => return (None, None),
+        };
+
+        let fleet = load_fleet_config(workspace_path.as_deref());
+        let policy = fleet
+            .as_ref()
+            .and_then(|fc| fc.policies.get(&server_name))
+            .cloned();
+
+        (Some(server_name), policy)
+    }
+
     /// Returns the active connection as Option<Arc>, for interop helpers that take Option<&IrisConnection>.
     fn iris_arc(&self) -> Option<Arc<IrisConnection>> {
         self.connection.lock().unwrap().iris.clone()
@@ -1832,6 +1884,47 @@ impl IrisTools {
         }
     }
 
+    /// Write an audit log entry for a policy-gated tool call.
+    /// No-op when the current connection has no active policy block.
+    #[allow(clippy::too_many_arguments)]
+    fn write_audit_entry(
+        &self,
+        tool: &str,
+        server_name: &str,
+        policy: Option<&crate::iris::workspace_config::ConnectionPolicy>,
+        status: &str,
+        gate: Option<&str>,
+        allowed_categories: Option<Vec<String>>,
+        params: serde_json::Value,
+    ) {
+        use crate::iris::audit_log::{AuditLog, AuditLogEntry};
+        if !AuditLog::should_write(policy) {
+            return;
+        }
+        let Some(path) = AuditLog::default_path() else {
+            return;
+        };
+        let namespace = self
+            .connection
+            .lock()
+            .ok()
+            .and_then(|c| c.iris.clone())
+            .map(|i| i.namespace.clone())
+            .unwrap_or_default();
+        let entry = AuditLogEntry {
+            ts: chrono::Utc::now().to_rfc3339(),
+            tool: tool.to_string(),
+            connection: server_name.to_string(),
+            namespace,
+            status: status.to_string(),
+            gate: gate.map(|s| s.to_string()),
+            allowed_categories,
+            params,
+        };
+        let log = AuditLog::new(path);
+        let _ = log.write(&entry);
+    }
+
     #[tool(
         description = "Compile an ObjectScript class, routine, or wildcard package on IRIS via Atelier REST. Supports 'MyApp.*.cls' for package-level compilation. Returns structured errors with line numbers, columns, and severity. No Python required."
     )]
@@ -1840,6 +1933,38 @@ impl IrisTools {
         Parameters(p): Parameters<CompileParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.get_iris_reloaded().await?;
+        let (sm_server, policy) = self.active_server_manager_policy();
+        let params_json = serde_json::json!({ "target": p.target, "namespace": p.namespace });
+        if let Some(gate) = crate::iris::server_manager::policy_gate(
+            "iris_compile",
+            sm_server.as_deref().unwrap_or(""),
+            policy.as_ref(),
+        ) {
+            let allowed = gate["allowed_categories"].as_array().map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            });
+            self.write_audit_entry(
+                "iris_compile",
+                sm_server.as_deref().unwrap_or(""),
+                policy.as_ref(),
+                "blocked",
+                Some("policy"),
+                allowed,
+                params_json,
+            );
+            return ok_json(gate);
+        }
+        self.write_audit_entry(
+            "iris_compile",
+            sm_server.as_deref().unwrap_or(""),
+            policy.as_ref(),
+            "allowed",
+            None,
+            None,
+            params_json,
+        );
         let (role, instance_name) = self.instance_role();
         if let Some(gate) = crate::iris::workspace_config::check_role_gate(
             &role,
@@ -2498,6 +2623,38 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         Parameters(p): Parameters<ExecuteParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.get_iris_reloaded().await?;
+        let (sm_server, policy) = self.active_server_manager_policy();
+        let params_json = serde_json::json!({ "namespace": p.namespace });
+        if let Some(gate) = crate::iris::server_manager::policy_gate(
+            "iris_execute",
+            sm_server.as_deref().unwrap_or(""),
+            policy.as_ref(),
+        ) {
+            let allowed = gate["allowed_categories"].as_array().map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            });
+            self.write_audit_entry(
+                "iris_execute",
+                sm_server.as_deref().unwrap_or(""),
+                policy.as_ref(),
+                "blocked",
+                Some("policy"),
+                allowed,
+                params_json,
+            );
+            return ok_json(gate);
+        }
+        self.write_audit_entry(
+            "iris_execute",
+            sm_server.as_deref().unwrap_or(""),
+            policy.as_ref(),
+            "allowed",
+            None,
+            None,
+            params_json,
+        );
         let (role, instance_name) = self.instance_role();
         if let Some(gate) = crate::iris::workspace_config::check_role_gate(
             &role,
@@ -2664,6 +2821,42 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         Parameters(p): Parameters<QueryParams>,
     ) -> Result<CallToolResult, McpError> {
         tracing::info!(namespace = %p.namespace, force = p.force, "iris_query");
+
+        // Policy gate (044): fires before role gate.
+        let (sm_server_q, policy_q) = self.active_server_manager_policy();
+        {
+            let params_json = serde_json::json!({ "namespace": p.namespace });
+            if let Some(gate) = crate::iris::server_manager::policy_gate(
+                "iris_query",
+                sm_server_q.as_deref().unwrap_or(""),
+                policy_q.as_ref(),
+            ) {
+                let allowed = gate["allowed_categories"].as_array().map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                });
+                self.write_audit_entry(
+                    "iris_query",
+                    sm_server_q.as_deref().unwrap_or(""),
+                    policy_q.as_ref(),
+                    "blocked",
+                    Some("policy"),
+                    allowed,
+                    params_json,
+                );
+                return ok_json(gate);
+            }
+            self.write_audit_entry(
+                "iris_query",
+                sm_server_q.as_deref().unwrap_or(""),
+                policy_q.as_ref(),
+                "allowed",
+                None,
+                None,
+                params_json,
+            );
+        }
 
         // Role gate: SELECT is always permitted on subject; write SQL requires confirm.
         {
@@ -3033,6 +3226,66 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
         if let Some(ref err) = conn.config_parse_error {
             response["config_parse_error"] = serde_json::Value::String(err.clone());
+        }
+
+        // Server Manager section (044-servermanager-discovery)
+        {
+            use crate::iris::server_manager::{
+                build_server_manager_config_json, parse_sm_settings, resolve_credential,
+                sm_settings_path, CredentialStatus, ServerManagerCredentialEntry,
+            };
+
+            let sm_section = if let Some(path) = sm_settings_path() {
+                let profiles = parse_sm_settings(&path);
+                if profiles.is_empty() {
+                    serde_json::json!({ "available": false })
+                } else {
+                    let active_name = match &conn.iris {
+                        Some(iris) => match &iris.source {
+                            crate::iris::connection::DiscoverySource::ServerManager {
+                                server_name,
+                            } => Some(server_name.clone()),
+                            _ => None,
+                        },
+                        None => None,
+                    };
+                    let fleet = conn
+                        .config_file
+                        .as_deref()
+                        .and_then(|p| p.parent())
+                        .and_then(|dir| dir.to_str())
+                        .and_then(|dir_str| {
+                            crate::iris::workspace_config::load_fleet_config(Some(dir_str))
+                        });
+                    let cred_entries: Vec<ServerManagerCredentialEntry> = profiles
+                        .iter()
+                        .map(|p| {
+                            let status = match resolve_credential(&p.name, &p.username) {
+                                Ok(_) => CredentialStatus::RESOLVED.to_string(),
+                                Err(_) => CredentialStatus::NOT_CONFIGURED.to_string(),
+                            };
+                            let policy: Option<crate::iris::workspace_config::ConnectionPolicy> =
+                                fleet
+                                    .as_ref()
+                                    .and_then(|fc| fc.policies.get(&p.name))
+                                    .cloned();
+                            ServerManagerCredentialEntry {
+                                server_name: p.name.clone(),
+                                status,
+                                policy,
+                            }
+                        })
+                        .collect();
+                    build_server_manager_config_json(
+                        &profiles,
+                        active_name.as_deref(),
+                        &cred_entries,
+                    )
+                }
+            } else {
+                serde_json::json!({ "available": false })
+            };
+            response["server_manager"] = sm_section;
         }
 
         ok_json(response)
@@ -4003,6 +4256,41 @@ Methods:
         Parameters(p): Parameters<ScmParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.get_iris_reloaded().await?;
+        // Policy gate (044): check before role gate.
+        let (sm_server_sc, policy_sc) = self.active_server_manager_policy();
+        {
+            let params_json = serde_json::json!({ "action": p.action, "namespace": p.namespace });
+            if let Some(gate) = crate::iris::server_manager::policy_gate(
+                "iris_source_control",
+                sm_server_sc.as_deref().unwrap_or(""),
+                policy_sc.as_ref(),
+            ) {
+                let allowed = gate["allowed_categories"].as_array().map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .collect()
+                });
+                self.write_audit_entry(
+                    "iris_source_control",
+                    sm_server_sc.as_deref().unwrap_or(""),
+                    policy_sc.as_ref(),
+                    "blocked",
+                    Some("policy"),
+                    allowed,
+                    params_json,
+                );
+                return ok_json(gate);
+            }
+            self.write_audit_entry(
+                "iris_source_control",
+                sm_server_sc.as_deref().unwrap_or(""),
+                policy_sc.as_ref(),
+                "allowed",
+                None,
+                None,
+                params_json,
+            );
+        }
         // Role gate: write actions (checkout, execute) are hard-blocked on subject instances.
         // Read actions (status, menu) are always permitted.
         {

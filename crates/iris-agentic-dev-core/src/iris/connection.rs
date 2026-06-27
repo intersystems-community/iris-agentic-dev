@@ -67,11 +67,19 @@ impl fmt::Debug for IrisConnection {
 
 #[derive(Debug, Clone)]
 pub enum DiscoverySource {
-    LocalhostScan { port: u16 },
-    Docker { container_name: String },
+    LocalhostScan {
+        port: u16,
+    },
+    Docker {
+        container_name: String,
+    },
     VsCodeSettings,
     EnvVar,
     ExplicitFlag,
+    /// Discovered via VS Code Server Manager settings.json + OS keychain (044).
+    ServerManager {
+        server_name: String,
+    },
 }
 
 /// Structured result from a document compile operation.

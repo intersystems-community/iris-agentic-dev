@@ -26,6 +26,8 @@ urlencoding = "2"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 dirs = "5"
+keyring = { version = "4", features = ["v1"], registry = "artifactory" }
+keyring-core = { version = "1", registry = "artifactory" }
 tree-sitter = "0.26"
 tree-sitter-objectscript = "1.7"
 tree-sitter-objectscript-routine = "1.7"
@@ -37,7 +39,6 @@ tempfile = "3"
 serde_json.workspace = true
 reqwest.workspace = true
 wiremock = "0.6"
-
 [[test]]
 name = "discovery_tests"
 path = "tests/discovery_tests.rs"
@@ -230,3 +231,19 @@ path = "tests/integration/test_role_gate_e2e.rs"
 name = "test_handlers_live"
 path = "tests/integration/test_handlers_live.rs"
 required-features = ["testing"]
+
+[[test]]
+name = "test_server_manager"
+path = "tests/unit/test_server_manager.rs"
+
+[[test]]
+name = "test_policy_gate"
+path = "tests/unit/test_policy_gate.rs"
+
+[[test]]
+name = "test_audit_log"
+path = "tests/unit/test_audit_log.rs"
+
+[[test]]
+name = "test_sm_e2e"
+path = "tests/integration/test_sm_e2e.rs"

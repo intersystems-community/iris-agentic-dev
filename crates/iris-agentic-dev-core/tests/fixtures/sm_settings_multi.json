@@ -1,0 +1,32 @@
+{
+  "intersystems": {
+    "servers": {
+      "/default": "dev-local",
+      "dev-local": {
+        "webServer": {
+          "scheme": "http",
+          "host": "127.0.0.1",
+          "port": 52773
+        },
+        "username": "_SYSTEM"
+      },
+      "staging": {
+        "webServer": {
+          "scheme": "https",
+          "host": "staging.example.com",
+          "port": 443
+        },
+        "username": "admin"
+      },
+      "prod": {
+        "webServer": {
+          "scheme": "https",
+          "host": "prod.example.com",
+          "port": 443,
+          "pathPrefix": "iris"
+        },
+        "username": "svc_account"
+      }
+    }
+  }
+}

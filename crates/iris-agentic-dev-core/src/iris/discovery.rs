@@ -257,6 +257,16 @@ pub async fn discover_iris(explicit: Option<IrisConnection>) -> IrisDiscovery {
         return IrisDiscovery::Found(conn);
     }
 
+    // 7. VS Code Server Manager (intersystems.servers in user settings.json)
+    match discover_via_server_manager().await {
+        SmDiscovery::Found(conn) => return IrisDiscovery::Found(conn),
+        SmDiscovery::CredentialError(msg) => {
+            tracing::warn!("{msg}");
+            return IrisDiscovery::Explained;
+        }
+        SmDiscovery::NotAvailable => {}
+    }
+
     IrisDiscovery::NotFound
 }
 
@@ -593,6 +603,75 @@ async fn discover_via_docker() -> Option<IrisConnection> {
         }
     }
     None
+}
+
+// ── Server Manager discovery (044) ───────────────────────────────────────────
+
+enum SmDiscovery {
+    Found(IrisConnection),
+    /// SM settings found + server matched but credential lookup failed. Callers must
+    /// stop the cascade and surface the error — do NOT fall through to NotAvailable.
+    CredentialError(String),
+    /// SM not installed or settings empty. Cascade may continue.
+    NotAvailable,
+}
+
+async fn discover_via_server_manager() -> SmDiscovery {
+    use crate::iris::server_manager::{
+        init_platform_keystore, parse_sm_settings, resolve_credential, select_server,
+        sm_settings_path, SmCredentialError,
+    };
+
+    let path = match sm_settings_path() {
+        Some(p) => p,
+        None => return SmDiscovery::NotAvailable,
+    };
+
+    let profiles = parse_sm_settings(&path);
+    if profiles.is_empty() {
+        return SmDiscovery::NotAvailable;
+    }
+
+    let profile = match select_server(&profiles) {
+        Ok(p) => p,
+        Err(SmCredentialError::Ambiguous { available }) => {
+            let msg = format!(
+                "Multiple Server Manager servers found: {}. Set IRIS_SERVER_NAME to select one.",
+                available.join(", ")
+            );
+            return SmDiscovery::CredentialError(msg);
+        }
+        Err(e) => return SmDiscovery::CredentialError(e.to_string()),
+    };
+
+    // Initialize platform keystore (once-only via Once guard).
+    init_platform_keystore();
+
+    let password = match resolve_credential(&profile.name, &profile.username) {
+        Ok(pw) => pw,
+        Err(e) => return SmDiscovery::CredentialError(e.to_string()),
+    };
+
+    let namespace = std::env::var("IRIS_NAMESPACE").unwrap_or_else(|_| "USER".to_string());
+    let base_url = match &profile.path_prefix {
+        Some(prefix) => format!(
+            "{}://{}:{}/{}",
+            profile.scheme, profile.host, profile.port, prefix
+        ),
+        None => format!("{}://{}:{}", profile.scheme, profile.host, profile.port),
+    };
+
+    let mut conn = IrisConnection::new(
+        base_url,
+        namespace,
+        profile.username.clone(),
+        password,
+        DiscoverySource::ServerManager {
+            server_name: profile.name.clone(),
+        },
+    );
+    conn.probe().await;
+    SmDiscovery::Found(conn)
 }
 
 /// Attempt to find IRIS connection from VS Code settings.json in common locations.

@@ -1,0 +1,15 @@
+{
+  "intersystems": {
+    "servers": {
+      "legacy-server": {
+        "webServer": {
+          "scheme": "http",
+          "host": "10.0.0.5",
+          "port": 52773
+        },
+        "username": "admin",
+        "password": "old-plaintext-password"
+      }
+    }
+  }
+}

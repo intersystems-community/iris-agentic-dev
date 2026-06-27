@@ -1,0 +1,15 @@
+{
+  "intersystems": {
+    "servers": {
+      "dev-local": {
+        "webServer": {
+          "scheme": "http",
+          "host": "127.0.0.1",
+          "port": 52773
+        },
+        "username": "_SYSTEM",
+        "description": "Local dev IRIS"
+      }
+    }
+  }
+}

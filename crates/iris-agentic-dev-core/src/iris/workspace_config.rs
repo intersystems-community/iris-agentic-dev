@@ -55,6 +55,76 @@ pub struct InstanceConfig {
     pub subject: Option<String>,
 }
 
+/// Tool categories for per-connection policy gates (044-servermanager-discovery).
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCategory {
+    Compile,
+    Execute,
+    Query,
+    Search,
+    Docs,
+    SourceControl,
+    Debug,
+    Admin,
+    Skill,
+    Kb,
+}
+
+impl ToolCategory {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ToolCategory::Compile => "compile",
+            ToolCategory::Execute => "execute",
+            ToolCategory::Query => "query",
+            ToolCategory::Search => "search",
+            ToolCategory::Docs => "docs",
+            ToolCategory::SourceControl => "source_control",
+            ToolCategory::Debug => "debug",
+            ToolCategory::Admin => "admin",
+            ToolCategory::Skill => "skill",
+            ToolCategory::Kb => "kb",
+        }
+    }
+}
+
+impl std::str::FromStr for ToolCategory {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "compile" => Ok(ToolCategory::Compile),
+            "execute" => Ok(ToolCategory::Execute),
+            "query" => Ok(ToolCategory::Query),
+            "search" => Ok(ToolCategory::Search),
+            "docs" => Ok(ToolCategory::Docs),
+            "source_control" => Ok(ToolCategory::SourceControl),
+            "debug" => Ok(ToolCategory::Debug),
+            "admin" => Ok(ToolCategory::Admin),
+            "skill" => Ok(ToolCategory::Skill),
+            "kb" => Ok(ToolCategory::Kb),
+            other => Err(format!("unknown tool category: '{other}'")),
+        }
+    }
+}
+
+/// Raw TOML deserialization form of a policy block.
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct ConnectionPolicyRaw {
+    pub allow: Option<Vec<ToolCategory>>,
+}
+
+/// Per-connection policy config from `[policy.<server-name>]` in `.iris-agentic-dev.toml`.
+///
+/// - `allow = None` → all categories permitted.
+/// - `allow = Some([...])` → only listed categories permitted; all others blocked.
+#[derive(Debug, Clone)]
+pub struct ConnectionPolicy {
+    /// The `[policy.<server-name>]` map key.
+    pub server_name: String,
+    /// Allowlist of permitted categories. `None` = all permitted.
+    pub allow: Option<Vec<ToolCategory>>,
+}
+
 /// Top-level fleet config. Wraps WorkspaceConfig for backward-compatible develop mode.
 ///
 /// Parsing rule: load as FleetConfig.
@@ -65,8 +135,14 @@ pub struct FleetConfig {
     pub mode: Option<String>,
     #[serde(default)]
     pub instance: std::collections::HashMap<String, InstanceConfig>,
+    /// Per-connection policy blocks: `[policy.<server-name>]`
+    #[serde(default)]
+    pub policy: std::collections::HashMap<String, ConnectionPolicyRaw>,
     #[serde(flatten)]
     pub workspace: WorkspaceConfig,
+    /// Resolved policies (populated after parsing).
+    #[serde(skip)]
+    pub policies: std::collections::HashMap<String, ConnectionPolicy>,
 }
 
 /// Resolve the workspace root path.
@@ -170,7 +246,7 @@ pub fn load_fleet_config(workspace_path: Option<&str>) -> Option<FleetConfig> {
             tracing::warn!("Could not read config at {}: {}", config_path.display(), e);
             None
         }
-        Ok(contents) => match toml::from_str::<FleetConfig>(&contents) {
+        Ok(contents) => match load_fleet_config_from_str(&contents) {
             Ok(cfg) => {
                 tracing::debug!("Loaded fleet config from {}", config_path.display());
                 Some(cfg)
@@ -181,6 +257,23 @@ pub fn load_fleet_config(workspace_path: Option<&str>) -> Option<FleetConfig> {
             }
         },
     }
+}
+
+/// Parse a `FleetConfig` from a TOML string.
+/// Resolves `policy` blocks into the `policies` map post-parse.
+pub fn load_fleet_config_from_str(contents: &str) -> Result<FleetConfig, toml::de::Error> {
+    let mut cfg: FleetConfig = toml::from_str(contents)?;
+    // Resolve raw policy blocks into ConnectionPolicy structs
+    for (name, raw) in &cfg.policy {
+        cfg.policies.insert(
+            name.clone(),
+            ConnectionPolicy {
+                server_name: name.clone(),
+                allow: raw.allow.clone(),
+            },
+        );
+    }
+    Ok(cfg)
 }
 
 /// Validate a FleetConfig: replace unknown `memory_home` keys with `"self"` (with a warning).

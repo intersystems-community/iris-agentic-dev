@@ -1,5 +1,7 @@
+pub mod audit_log;
 pub mod connection;
 pub mod discovery;
+pub mod server_manager;
 pub mod vscode_config;
 pub mod workspace_config;
 
