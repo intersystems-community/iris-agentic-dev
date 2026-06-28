@@ -181,7 +181,17 @@ impl McpCommand {
         }
 
         // Build ConfigWatcher for .iris-agentic-dev.toml hot-reload (034-live-connection-reload).
-        let config_watcher = ConfigWatcher::new(ws_root.join(".iris-agentic-dev.toml"));
+        // When spawned from a launcher (e.g. Claude Desktop) the CWD is often "/" — fall back
+        // to $HOME so the watch path is usable without setting OBJECTSCRIPT_WORKSPACE.
+        let config_root = if ws_root == std::path::Path::new("/") {
+            std::env::var("HOME")
+                .ok()
+                .map(std::path::PathBuf::from)
+                .unwrap_or(ws_root)
+        } else {
+            ws_root
+        };
+        let config_watcher = ConfigWatcher::new(config_root.join(".iris-agentic-dev.toml"));
         let tools = IrisTools::with_registry_and_toolset(iris, registry, toolset, config_watcher)?;
 
         // FR-007: periodically sweep expired elicitation entries.
