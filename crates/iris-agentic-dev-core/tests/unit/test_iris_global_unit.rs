@@ -200,10 +200,10 @@ fn invalid_subscript_error_code() {
 #[test]
 fn build_set_objectscript_correct() {
     let code = build_set_objectscript(r#"^MyApp("a","b")"#, "hello");
-    assert!(code.contains(r#"Set @gref = "hello""#), "code: {code}");
+    // Direct Set — gref embedded literally, no @indirection
     assert!(
-        code.contains(r#"Set gref = "^MyApp(\"a\",\"b\")""#) || code.contains("^MyApp"),
-        "gref in code: {code}"
+        code.contains(r#"Set ^MyApp("a","b") = "hello""#),
+        "code: {code}"
     );
 }
 
@@ -273,9 +273,10 @@ fn clamp_max_subscripts_lower() {
 #[test]
 fn build_kill_code_contains_kill() {
     let code = build_kill_code("^IrisDevTest");
-    assert!(code.contains("Kill @gref"), "code: {code}");
-    // ObjectScript doubles quotes inside string literals: {"success":true} → {""success"":true}
-    assert!(code.contains(r#"{""success"":true}"#), "code: {code}");
+    // Direct Kill — gref embedded literally, no @indirection
+    assert!(code.contains("Kill ^IrisDevTest"), "code: {code}");
+    // Output is plain "ok" — no JSON braces in generator output
+    assert!(code.contains("\"ok\""), "code: {code}");
 }
 
 #[test]

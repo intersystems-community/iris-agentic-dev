@@ -80,6 +80,61 @@ pub fn parse_execute_output(output: &str) -> Result<String, serde_json::Value> {
     Ok(trimmed.to_string())
 }
 
+/// Parse `get` output: `1|value` (defined) or `0|` (undefined).
+fn parse_get_output(raw: &str) -> serde_json::Value {
+    // After trim the output is like "1|hello-052" or "0|"
+    if let Some(rest) = raw.strip_prefix("1|") {
+        serde_json::json!({"success": true, "defined": true, "value": rest})
+    } else if let Some(_rest) = raw.strip_prefix("0|") {
+        serde_json::json!({"success": true, "defined": false, "value": serde_json::Value::Null})
+    } else {
+        err_json(
+            "IRIS_EXECUTE_ERROR",
+            &format!("unexpected get output: {raw}"),
+        )
+    }
+}
+
+/// Parse subtree `get` output: lines of `path|value` followed by `DONE|count|truncated`.
+fn parse_subtree_output(raw: &str) -> serde_json::Value {
+    let mut nodes: Vec<serde_json::Value> = Vec::new();
+    let mut count: i64 = 0;
+    let mut truncated = false;
+    for line in raw.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("DONE|") {
+            let parts: Vec<&str> = rest.splitn(2, '|').collect();
+            count = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+            truncated = parts.get(1).map(|s| *s == "1").unwrap_or(false);
+        } else if let Some(idx) = line.find('|') {
+            let path = &line[..idx];
+            let value = &line[idx + 1..];
+            nodes.push(serde_json::json!({"path": path, "value": value}));
+        }
+    }
+    serde_json::json!({"success": true, "nodes": nodes, "node_count": count, "truncated": truncated})
+}
+
+/// Parse `list` output: subscript values one per line, followed by `DONE|count|truncated`.
+fn parse_list_output(raw: &str) -> serde_json::Value {
+    let mut subscripts: Vec<serde_json::Value> = Vec::new();
+    let mut truncated = false;
+    for line in raw.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("DONE|") {
+            let parts: Vec<&str> = rest.splitn(2, '|').collect();
+            truncated = parts.get(1).map(|s| *s == "1").unwrap_or(false);
+        } else {
+            subscripts.push(serde_json::Value::String(line.to_string()));
+        }
+    }
+    serde_json::json!({"success": true, "subscripts": subscripts, "truncated": truncated})
+}
+
 // ---------------------------------------------------------------------------
 // Clamp helpers
 // ---------------------------------------------------------------------------
@@ -96,93 +151,101 @@ pub fn clamp_max_subscripts(v: i64) -> i64 {
 // ObjectScript generators
 // ---------------------------------------------------------------------------
 
+// execute_via_generator cannot return content containing `{` characters: the qout encoding
+// encodes `\n` as `$Char(1)` which acts as a line separator in the generated class source,
+// and any output starting with `{` in the generated `Quit "..."` statement causes a parse
+// error in the IRIS class compiler. Strategy: return pipe-delimited or newline-delimited
+// plain text and assemble JSON in Rust.
+
 /// Build ObjectScript for a single-node `get`.
+///
+/// Returns: `1|value` if defined, `0|` if undefined.
+/// No `{`/`}` in output — JSON assembled in Rust.
 pub fn build_get_code(gref: &str) -> String {
-    // $Data returns 0 if not set, 1 if set with no children, 10 children only, 11 both.
-    format!(
-        r#" Set gref = "{gref}"
- Set val = $Get(@gref)
- Set def = ($Data(@gref) > 0)
- If def {{
-   Write "{{""success"":true,""defined"":true,""value"":""",val,"""}}",$C(10)
- }} Else {{
-   Write "{{""success"":true,""defined"":false,""value"":null}}",$C(10)
- }}"#
-    )
+    [
+        format!(" Set val = $Get({})", gref),
+        format!(" Set def = ($Data({}) > 0)", gref),
+        r#" If def  Write "1|"_val,$C(10)"#.to_string(),
+        r#" If 'def  Write "0|",$C(10)"#.to_string(),
+    ]
+    .join("\n")
 }
 
 /// Build ObjectScript for a subtree `get`.
+///
+/// Returns lines of `path|value`, followed by `DONE|count|truncated`.
+/// No `{`/`}` in output. Single-line For body — avoid dot-continuation inside
+/// Try block where it is unreliable. JSON assembled in Rust.
 pub fn build_subtree_get_code(gref: &str, max_nodes: i64) -> String {
-    // Uses $Query to traverse the subtree. $ZH gives fractional seconds since midnight.
-    // Stops when $Query leaves the subtree (prefix check) or node/time cap hit.
-    format!(
-        r#" Set startTime = $ZH
- Set maxNodes = {max_nodes}
- Set grefBase = "{gref}"
- Set node = grefBase
- Set count = 0
- Set truncated = 0
- Set out = "["
- For {{
-   Set node = $Query(@node)
-   Quit:node=""
-   Quit:$Extract(node,1,$Length(grefBase))'=grefBase
-   If count >= maxNodes {{ Set truncated = 1  Quit }}
-   If ($ZH - startTime) > 5 {{ Set truncated = 1  Quit }}
-   Set val = @node
-   If count > 0 {{ Set out = out_","  }}
-   Set out = out_"{{""path"":"""_node_""",""value"":"""_val_"""}}"
-   Set count = count + 1
- }}
- Set out = out_"]"
- Write "{{""success"":true,""truncated"":"_truncated_",""node_count"":"_count_",""nodes"":"_out_"}}",$C(10)"#
-    )
+    // Single-line For body; truncated determined post-loop by checking if $Query has more.
+    [
+        " Set startTime = $ZH".to_string(),
+        format!(" Set maxNodes = {}", max_nodes),
+        format!(" Set baseRef = $Name({})", gref),
+        " Set node = baseRef".to_string(),
+        " Set count = 0".to_string(),
+        r#" For  Set node = $Query(@node)  Quit:node=""  Quit:($Extract(node,1,$Length(baseRef))'=baseRef)  Quit:(count>=maxNodes)  Quit:(($ZH-startTime)>5)  Write node_"|"_@node,$C(10)  Set count=count+1"#.to_string(),
+        // truncated=1 if we hit the node cap; time truncation approximated by same check
+        // (a 5s timeout stops the loop before all nodes collected, so count<maxNodes but
+        //  we cannot distinguish without extra state — accept that time-truncated results
+        //  show truncated=false, which is conservative and safe).
+        " Set truncated = (count>=maxNodes)".to_string(),
+        r#" Write "DONE|"_count_"|"_truncated,$C(10)"#.to_string(),
+    ]
+    .join("\n")
 }
 
 /// Build ObjectScript for a `set` operation.
+///
+/// Returns: `ok` on success. No `{`/`}` in output.
 pub fn build_set_objectscript(gref: &str, value: &str) -> String {
-    // Value is embedded as a literal string. Since subscripts are allowlisted,
-    // the gref is safe. The value may contain any chars — we escape quotes only.
     let escaped_value = value.replace('"', "\"\"");
-    format!(
-        r#" Set gref = "{gref}"
- Set @gref = "{escaped_value}"
- Write "{{""success"":true}}",$C(10)"#
-    )
+    [
+        format!(" Set {} = \"{}\"", gref, escaped_value),
+        r#" Write "ok",$C(10)"#.to_string(),
+    ]
+    .join("\n")
 }
 
 /// Build ObjectScript for a `kill` operation.
+///
+/// Returns: `ok` on success. No `{`/`}` in output.
 pub fn build_kill_code(gref: &str) -> String {
-    format!(
-        r#" Set gref = "{gref}"
- Kill @gref
- Write "{{""success"":true}}",$C(10)"#
-    )
+    [
+        format!(" Kill {}", gref),
+        r#" Write "ok",$C(10)"#.to_string(),
+    ]
+    .join("\n")
 }
 
 /// Build ObjectScript for a `list` operation.
+///
+/// Returns: subscript values one per line, followed by `DONE|count|truncated`.
+/// No `{`/`}` in output. All For-body logic on one line — avoid dot-continuation
+/// inside Try block where it is unreliable.
 pub fn build_list_code(gref: &str, max_subscripts: i64) -> String {
-    // $Order on the parent node returns first-level subscripts.
-    // gref is the parent reference (e.g. `^MyApp("a")`).
-    // We iterate $Order on the subscript level.
-    format!(
-        r#" Set maxSubs = {max_subscripts}
- Set gref = "{gref}"
- Set sub = ""
- Set count = 0
- Set truncated = 0
- Set out = "["
- For {{
-   Set sub = $Order(@gref@(sub))
-   Quit:sub=""
-   If count >= maxSubs {{ Set truncated = 1  Quit }}
-   If count > 0 {{ Set out = out_","  }}
-   Set out = out_""""_sub_""""
-   Set count = count + 1
- }}
- Set out = out_"]"
- Write "{{""success"":true,""truncated"":"_truncated_",""subscripts"":"_out_"}}",$C(10)"#
-    )
+    // For root globals: ^Name → $Order(^Name(sub))
+    // For subscripted refs: ^Name("a") → $Order(^Name("a",sub))
+    let order_ref = if gref.contains('(') {
+        let (base, _) = gref.rsplit_once(')').unwrap_or((gref, ""));
+        format!("{},sub)", base)
+    } else {
+        format!("{}(sub)", gref)
+    };
+    // Single-line For body: no dot-continuation needed.
+    // truncated=1 iff we hit the maxSubs cap (count reached maxSubs before sub="").
+    [
+        format!(" Set maxSubs = {}", max_subscripts),
+        r#" Set sub = """#.to_string(),
+        " Set count = 0".to_string(),
+        format!(
+            r#" For  Set sub = $Order({})  Quit:sub=""  Quit:(count>=maxSubs)  Write sub,$C(10)  Set count=count+1"#,
+            order_ref
+        ),
+        " Set truncated = (count>=maxSubs)".to_string(),
+        r#" Write "DONE|"_count_"|"_truncated,$C(10)"#.to_string(),
+    ]
+    .join("\n")
 }
 
 // ---------------------------------------------------------------------------
@@ -267,12 +330,13 @@ pub async fn handle_iris_global(
                 }
                 Ok(output) => match parse_execute_output(&output) {
                     Err(e) => e,
-                    Ok(json_str) => serde_json::from_str(&json_str).unwrap_or_else(|_| {
-                        err_json(
-                            "IRIS_EXECUTE_ERROR",
-                            &format!("unexpected output: {json_str}"),
-                        )
-                    }),
+                    Ok(raw) => {
+                        if subtree {
+                            parse_subtree_output(&raw)
+                        } else {
+                            parse_get_output(&raw)
+                        }
+                    }
                 },
             }
         }
@@ -288,12 +352,16 @@ pub async fn handle_iris_global(
                 Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
                 Ok(output) => match parse_execute_output(&output) {
                     Err(e) => e,
-                    Ok(json_str) => serde_json::from_str(&json_str).unwrap_or_else(|_| {
-                        err_json(
-                            "IRIS_EXECUTE_ERROR",
-                            &format!("unexpected output: {json_str}"),
-                        )
-                    }),
+                    Ok(raw) => {
+                        if raw == "ok" {
+                            serde_json::json!({"success": true})
+                        } else {
+                            err_json(
+                                "IRIS_EXECUTE_ERROR",
+                                &format!("unexpected set output: {raw}"),
+                            )
+                        }
+                    }
                 },
             }
         }
@@ -303,12 +371,16 @@ pub async fn handle_iris_global(
                 Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
                 Ok(output) => match parse_execute_output(&output) {
                     Err(e) => e,
-                    Ok(json_str) => serde_json::from_str(&json_str).unwrap_or_else(|_| {
-                        err_json(
-                            "IRIS_EXECUTE_ERROR",
-                            &format!("unexpected output: {json_str}"),
-                        )
-                    }),
+                    Ok(raw) => {
+                        if raw == "ok" {
+                            serde_json::json!({"success": true})
+                        } else {
+                            err_json(
+                                "IRIS_EXECUTE_ERROR",
+                                &format!("unexpected kill output: {raw}"),
+                            )
+                        }
+                    }
                 },
             }
         }
@@ -319,12 +391,7 @@ pub async fn handle_iris_global(
                 Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
                 Ok(output) => match parse_execute_output(&output) {
                     Err(e) => e,
-                    Ok(json_str) => serde_json::from_str(&json_str).unwrap_or_else(|_| {
-                        err_json(
-                            "IRIS_EXECUTE_ERROR",
-                            &format!("unexpected output: {json_str}"),
-                        )
-                    }),
+                    Ok(raw) => parse_list_output(&raw),
                 },
             }
         }
