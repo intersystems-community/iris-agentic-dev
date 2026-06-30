@@ -227,3 +227,321 @@ fn audit_write_latency_under_100ms() {
         elapsed.as_millis()
     );
 }
+
+// ── edge cases and error paths ───────────────────────────────────────────────
+
+#[test]
+fn write_with_all_optional_fields_none() {
+    // Test entry with None gate and allowed_categories for "allowed" status
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let log = AuditLog::new(path.clone());
+    let entry = AuditLogEntry {
+        ts: "2026-06-26T14:00:00Z".to_string(),
+        tool: "iris_query".to_string(),
+        connection: "dev".to_string(),
+        namespace: "USER".to_string(),
+        status: "allowed".to_string(),
+        gate: None,
+        allowed_categories: None,
+        params: serde_json::json!({}),
+    };
+    log.write(&entry).unwrap();
+    let contents = fs::read_to_string(&path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+    assert_eq!(parsed["status"], "allowed");
+    assert!(!parsed.as_object().unwrap().contains_key("gate") || parsed["gate"].is_null());
+}
+
+#[test]
+fn write_with_error_status_and_optional_fields() {
+    // Test entry with "error" status and optional fields
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let log = AuditLog::new(path.clone());
+    let entry = AuditLogEntry {
+        ts: "2026-06-26T14:00:00Z".to_string(),
+        tool: "iris_compile".to_string(),
+        connection: "prod".to_string(),
+        namespace: "USER".to_string(),
+        status: "error".to_string(),
+        gate: None,
+        allowed_categories: None,
+        params: serde_json::json!({"error_code": 500}),
+    };
+    log.write(&entry).unwrap();
+    let contents = fs::read_to_string(&path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+    assert_eq!(parsed["status"], "error");
+}
+
+#[test]
+fn write_with_complex_params_object() {
+    // Test nested JSON structures in params
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let log = AuditLog::new(path.clone());
+    let entry = AuditLogEntry {
+        ts: "2026-06-26T14:00:00Z".to_string(),
+        tool: "iris_query".to_string(),
+        connection: "test".to_string(),
+        namespace: "TESTDB".to_string(),
+        status: "allowed".to_string(),
+        gate: None,
+        allowed_categories: None,
+        params: serde_json::json!({
+            "query": "SELECT * FROM User",
+            "limit": 100,
+            "nested": {
+                "key": "value"
+            },
+            "array": [1, 2, 3]
+        }),
+    };
+    log.write(&entry).unwrap();
+    let contents = fs::read_to_string(&path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+    assert!(parsed["params"]["nested"].is_object());
+    assert!(parsed["params"]["array"].is_array());
+}
+
+#[test]
+fn write_with_empty_params_object() {
+    // Test with empty params JSON object
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let log = AuditLog::new(path.clone());
+    let entry = AuditLogEntry {
+        ts: "2026-06-26T14:00:00Z".to_string(),
+        tool: "iris_compile".to_string(),
+        connection: "prod".to_string(),
+        namespace: "USER".to_string(),
+        status: "allowed".to_string(),
+        gate: None,
+        allowed_categories: None,
+        params: serde_json::json!({}),
+    };
+    log.write(&entry).unwrap();
+    let contents = fs::read_to_string(&path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+    assert!(parsed["params"].is_object());
+}
+
+#[test]
+fn write_with_multiple_credential_fields() {
+    // Test multiple credential fields in same params
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let log = AuditLog::new(path.clone());
+    let entry = AuditLogEntry {
+        ts: "2026-06-26T14:00:00Z".to_string(),
+        tool: "iris_query".to_string(),
+        connection: "test".to_string(),
+        namespace: "USER".to_string(),
+        status: "allowed".to_string(),
+        gate: None,
+        allowed_categories: None,
+        params: serde_json::json!({
+            "password": "pwd123",
+            "token": "tok456",
+            "api_key": "key789",
+            "host": "server.com"
+        }),
+    };
+    log.write(&entry).unwrap();
+    let contents = fs::read_to_string(&path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+    assert_eq!(parsed["params"]["password"], "[REDACTED]");
+    assert_eq!(parsed["params"]["token"], "[REDACTED]");
+    assert_eq!(parsed["params"]["api_key"], "[REDACTED]");
+    assert_eq!(parsed["params"]["host"], "server.com");
+}
+
+#[test]
+fn write_with_all_credential_field_types() {
+    // Test all credential field names from CREDENTIAL_FIELDS constant
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let log = AuditLog::new(path.clone());
+    let entry = AuditLogEntry {
+        ts: "2026-06-26T14:00:00Z".to_string(),
+        tool: "iris_query".to_string(),
+        connection: "test".to_string(),
+        namespace: "USER".to_string(),
+        status: "allowed".to_string(),
+        gate: None,
+        allowed_categories: None,
+        params: serde_json::json!({
+            "password": "pwd",
+            "token": "tok",
+            "api_key": "key",
+            "secret": "sec",
+            "access_token": "at",
+            "auth_token": "at2"
+        }),
+    };
+    log.write(&entry).unwrap();
+    let contents = fs::read_to_string(&path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+    assert_eq!(parsed["params"]["password"], "[REDACTED]");
+    assert_eq!(parsed["params"]["token"], "[REDACTED]");
+    assert_eq!(parsed["params"]["api_key"], "[REDACTED]");
+    assert_eq!(parsed["params"]["secret"], "[REDACTED]");
+    assert_eq!(parsed["params"]["access_token"], "[REDACTED]");
+    assert_eq!(parsed["params"]["auth_token"], "[REDACTED]");
+}
+
+#[test]
+fn write_path_without_parent_directory() {
+    // Test write when path is a relative filename with no parent directory
+    let dir = TempDir::new().unwrap();
+    let filename = dir.path().join("audit.jsonl");
+
+    let log = AuditLog::new(filename.clone());
+    let entry = make_entry("iris_compile", "blocked", true);
+    log.write(&entry).unwrap();
+
+    assert!(filename.exists());
+}
+
+#[test]
+fn write_updates_timestamps_independently() {
+    // Verify that each entry can have different timestamps
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let log = AuditLog::new(path.clone());
+
+    let entry1 = AuditLogEntry {
+        ts: "2026-06-26T14:00:00Z".to_string(),
+        tool: "iris_compile".to_string(),
+        connection: "prod".to_string(),
+        namespace: "USER".to_string(),
+        status: "allowed".to_string(),
+        gate: None,
+        allowed_categories: None,
+        params: serde_json::json!({"target": "A"}),
+    };
+    let entry2 = AuditLogEntry {
+        ts: "2026-06-26T14:00:01Z".to_string(),
+        tool: "iris_query".to_string(),
+        connection: "prod".to_string(),
+        namespace: "USER".to_string(),
+        status: "allowed".to_string(),
+        gate: None,
+        allowed_categories: None,
+        params: serde_json::json!({"target": "B"}),
+    };
+
+    log.write(&entry1).unwrap();
+    log.write(&entry2).unwrap();
+
+    let contents = fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = contents.lines().collect();
+
+    let parsed1: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+    let parsed2: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+
+    assert_eq!(parsed1["ts"], "2026-06-26T14:00:00Z");
+    assert_eq!(parsed2["ts"], "2026-06-26T14:00:01Z");
+}
+
+#[test]
+fn write_preserves_all_connection_names() {
+    // Verify connection name is preserved exactly
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let log = AuditLog::new(path.clone());
+
+    let entry = AuditLogEntry {
+        ts: "2026-06-26T14:00:00Z".to_string(),
+        tool: "iris_compile".to_string(),
+        connection: "prod-us-east-1".to_string(),
+        namespace: "HSLIB".to_string(),
+        status: "allowed".to_string(),
+        gate: None,
+        allowed_categories: None,
+        params: serde_json::json!({}),
+    };
+
+    log.write(&entry).unwrap();
+    let contents = fs::read_to_string(&path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+    assert_eq!(parsed["connection"], "prod-us-east-1");
+}
+
+#[test]
+fn write_preserves_namespace_values() {
+    // Verify namespace is preserved exactly (various IRIS namespaces)
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let log = AuditLog::new(path.clone());
+
+    for ns in &["USER", "HSLIB", "SAMPLES", "%SYS", "CUSTOM"] {
+        let entry = AuditLogEntry {
+            ts: "2026-06-26T14:00:00Z".to_string(),
+            tool: "iris_query".to_string(),
+            connection: "test".to_string(),
+            namespace: ns.to_string(),
+            status: "allowed".to_string(),
+            gate: None,
+            allowed_categories: None,
+            params: serde_json::json!({"ns": ns}),
+        };
+
+        log.write(&entry).unwrap();
+    }
+
+    let contents = fs::read_to_string(&path).unwrap();
+    let lines: Vec<&str> = contents.lines().collect();
+    assert_eq!(lines.len(), 5);
+}
+
+#[test]
+fn write_handles_role_gate_type() {
+    // Test write with "role" gate instead of "policy"
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let log = AuditLog::new(path.clone());
+
+    let entry = AuditLogEntry {
+        ts: "2026-06-26T14:00:00Z".to_string(),
+        tool: "iris_compile".to_string(),
+        connection: "prod".to_string(),
+        namespace: "USER".to_string(),
+        status: "blocked".to_string(),
+        gate: Some("role".to_string()),
+        allowed_categories: Some(vec!["read".to_string()]),
+        params: serde_json::json!({"target": "User.Foo.cls"}),
+    };
+
+    log.write(&entry).unwrap();
+    let contents = fs::read_to_string(&path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+    assert_eq!(parsed["gate"], "role");
+    assert_eq!(parsed["status"], "blocked");
+}
+
+#[test]
+fn write_handles_empty_allowed_categories() {
+    // Test blocked entry with empty allowed_categories list
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("audit.jsonl");
+    let log = AuditLog::new(path.clone());
+
+    let entry = AuditLogEntry {
+        ts: "2026-06-26T14:00:00Z".to_string(),
+        tool: "iris_compile".to_string(),
+        connection: "prod".to_string(),
+        namespace: "USER".to_string(),
+        status: "blocked".to_string(),
+        gate: Some("policy".to_string()),
+        allowed_categories: Some(vec![]),
+        params: serde_json::json!({"target": "User.Foo.cls"}),
+    };
+
+    log.write(&entry).unwrap();
+    let contents = fs::read_to_string(&path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(contents.trim()).unwrap();
+    assert!(parsed["allowed_categories"].is_array());
+    assert_eq!(parsed["allowed_categories"].as_array().unwrap().len(), 0);
+}

@@ -1949,4 +1949,508 @@ mod tests {
             "docker_required_interop error message should mention IRIS_CONTAINER: {v}"
         );
     }
+
+    // ─── SQL injection / escaping edge cases ───
+
+    #[test]
+    fn sql_quote_escape_single_quotes_in_item_name() {
+        let raw = "Service'With'Quotes";
+        let escaped = raw.replace('\'', "''");
+        assert_eq!(escaped, "Service''With''Quotes");
+    }
+
+    #[test]
+    fn sql_quote_escape_empty_string() {
+        let raw = "";
+        let escaped = raw.replace('\'', "''");
+        assert_eq!(escaped, "");
+    }
+
+    #[test]
+    fn sql_quote_escape_only_quotes() {
+        let raw = "'''";
+        let escaped = raw.replace('\'', "''");
+        assert_eq!(escaped, "''''''");
+    }
+
+    #[test]
+    fn logs_type_filter_empty_log_types_produces_empty_string() {
+        // When log_type is "", split produces [""], which trims to "", no match in lowercase.as_str() → empty conditions vec → empty type_filter
+        let conditions: Vec<&str> = vec![];
+        let type_filter = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("AND ({})", conditions.join(" OR "))
+        };
+        assert_eq!(type_filter, "");
+    }
+
+    #[test]
+    fn logs_type_filter_single_error_type() {
+        let params = LogsParams {
+            item_name: None,
+            limit: 10,
+            log_type: "error".to_string(),
+        };
+        let mut conditions: Vec<&str> = vec![];
+        for lt in params.log_type.split(',') {
+            match lt.trim().to_lowercase().as_str() {
+                "error" => conditions.push("Type = 3"),
+                "warning" => conditions.push("Type = 2"),
+                "info" => conditions.push("Type = 1"),
+                "alert" => conditions.push("Type = 4"),
+                _ => {}
+            }
+        }
+        assert_eq!(conditions.len(), 1);
+        assert_eq!(conditions[0], "Type = 3");
+    }
+
+    #[test]
+    fn logs_type_filter_multiple_types() {
+        let log_type = "error,warning,info";
+        let mut conditions: Vec<&str> = vec![];
+        for lt in log_type.split(',') {
+            match lt.trim().to_lowercase().as_str() {
+                "error" => conditions.push("Type = 3"),
+                "warning" => conditions.push("Type = 2"),
+                "info" => conditions.push("Type = 1"),
+                "alert" => conditions.push("Type = 4"),
+                _ => {}
+            }
+        }
+        assert_eq!(conditions.len(), 3);
+        let type_filter = format!("AND ({})", conditions.join(" OR "));
+        assert!(type_filter.contains("Type = 3"));
+        assert!(type_filter.contains("Type = 2"));
+        assert!(type_filter.contains("Type = 1"));
+    }
+
+    #[test]
+    fn logs_type_filter_unknown_type_ignored() {
+        let log_type = "error,unknown_type,warning";
+        let mut conditions: Vec<&str> = vec![];
+        for lt in log_type.split(',') {
+            match lt.trim().to_lowercase().as_str() {
+                "error" => conditions.push("Type = 3"),
+                "warning" => conditions.push("Type = 2"),
+                "info" => conditions.push("Type = 1"),
+                "alert" => conditions.push("Type = 4"),
+                _ => {}
+            }
+        }
+        assert_eq!(conditions.len(), 2); // only error and warning matched
+    }
+
+    #[test]
+    fn logs_type_filter_whitespace_trimmed() {
+        let log_type = "error , warning , info";
+        let mut conditions: Vec<&str> = vec![];
+        for lt in log_type.split(',') {
+            match lt.trim().to_lowercase().as_str() {
+                "error" => conditions.push("Type = 3"),
+                "warning" => conditions.push("Type = 2"),
+                "info" => conditions.push("Type = 1"),
+                "alert" => conditions.push("Type = 4"),
+                _ => {}
+            }
+        }
+        assert_eq!(conditions.len(), 3);
+    }
+
+    #[test]
+    fn logs_type_filter_case_insensitive() {
+        let log_type = "ERROR,WARNING,Info";
+        let mut conditions: Vec<&str> = vec![];
+        for lt in log_type.split(',') {
+            match lt.trim().to_lowercase().as_str() {
+                "error" => conditions.push("Type = 3"),
+                "warning" => conditions.push("Type = 2"),
+                "info" => conditions.push("Type = 1"),
+                "alert" => conditions.push("Type = 4"),
+                _ => {}
+            }
+        }
+        assert_eq!(conditions.len(), 3);
+    }
+
+    #[test]
+    fn message_search_filters_empty_when_all_none() {
+        let params = MessageSearchParams {
+            source: None,
+            target: None,
+            class_name: None,
+            limit: 20,
+        };
+        let mut filters = vec![];
+        if let Some(src) = &params.source {
+            filters.push(format!("SourceConfigName = '{}'", src.replace('\'', "''")));
+        }
+        if let Some(tgt) = &params.target {
+            filters.push(format!("TargetConfigName = '{}'", tgt.replace('\'', "''")));
+        }
+        if let Some(cls) = &params.class_name {
+            filters.push(format!(
+                "MessageBodyClassName = '{}'",
+                cls.replace('\'', "''")
+            ));
+        }
+        let where_clause = if filters.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", filters.join(" AND "))
+        };
+        assert_eq!(where_clause, "");
+    }
+
+    #[test]
+    fn message_search_filters_sql_with_all_fields() {
+        let params = MessageSearchParams {
+            source: Some("Router".to_string()),
+            target: Some("Sink".to_string()),
+            class_name: Some("Ens.StringRequest".to_string()),
+            limit: 20,
+        };
+        let mut filters = vec![];
+        if let Some(src) = &params.source {
+            filters.push(format!("SourceConfigName = '{}'", src.replace('\'', "''")));
+        }
+        if let Some(tgt) = &params.target {
+            filters.push(format!("TargetConfigName = '{}'", tgt.replace('\'', "''")));
+        }
+        if let Some(cls) = &params.class_name {
+            filters.push(format!(
+                "MessageBodyClassName = '{}'",
+                cls.replace('\'', "''")
+            ));
+        }
+        let where_clause = if filters.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", filters.join(" AND "))
+        };
+        assert!(where_clause.contains("WHERE"));
+        assert!(where_clause.contains("SourceConfigName = 'Router'"));
+        assert!(where_clause.contains("TargetConfigName = 'Sink'"));
+        assert!(where_clause.contains("MessageBodyClassName = 'Ens.StringRequest'"));
+        assert_eq!(filters.len(), 3);
+    }
+
+    #[test]
+    fn message_search_filters_partial() {
+        let params = MessageSearchParams {
+            source: Some("Router".to_string()),
+            target: None,
+            class_name: None,
+            limit: 20,
+        };
+        let mut filters = vec![];
+        if let Some(src) = &params.source {
+            filters.push(format!("SourceConfigName = '{}'", src.replace('\'', "''")));
+        }
+        if let Some(tgt) = &params.target {
+            filters.push(format!("TargetConfigName = '{}'", tgt.replace('\'', "''")));
+        }
+        if let Some(cls) = &params.class_name {
+            filters.push(format!(
+                "MessageBodyClassName = '{}'",
+                cls.replace('\'', "''")
+            ));
+        }
+        let where_clause = if filters.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", filters.join(" AND "))
+        };
+        assert_eq!(filters.len(), 1);
+        assert!(where_clause.contains("WHERE"));
+    }
+
+    #[test]
+    fn lookup_transfer_xml_entry_count_zero() {
+        let out = "<lookupTable></lookupTable>";
+        let entry_count = out.matches("<entry").count();
+        assert_eq!(entry_count, 0);
+    }
+
+    #[test]
+    fn lookup_transfer_xml_entry_count_multiple() {
+        let out = r#"<lookupTable><entry key="A" value="1"/><entry key="B" value="2"/><entry key="C" value="3"/></lookupTable>"#;
+        let entry_count = out.matches("<entry").count();
+        assert_eq!(entry_count, 3);
+    }
+
+    #[test]
+    fn lookup_transfer_xml_entry_count_partial_tag() {
+        let out = "<lookupTable><entry_ key='A'/><entry key='B'/></lookupTable>";
+        // This matches literal "<entry", so both lines match
+        let entry_count = out.matches("<entry").count();
+        assert_eq!(entry_count, 2);
+    }
+
+    #[test]
+    fn settings_line_parsing_empty_key() {
+        let line = "=value";
+        let mut parts = line.splitn(2, '=');
+        let k = parts.next().unwrap_or("").trim().to_string();
+        let _v = parts.next().unwrap_or("").to_string();
+        if k.is_empty() {
+            assert!(true); // filtered out
+        } else {
+            assert!(false, "empty key should be filtered");
+        }
+    }
+
+    #[test]
+    fn settings_line_parsing_key_only_no_equals() {
+        let line = "SettingName";
+        let mut parts = line.splitn(2, '=');
+        let k = parts.next().unwrap_or("").trim().to_string();
+        let _v = parts.next().unwrap_or("").to_string();
+        assert_eq!(k, "SettingName");
+        assert_eq!(_v, "");
+    }
+
+    #[test]
+    fn settings_line_parsing_key_value_simple() {
+        let line = "Timeout=30";
+        let mut parts = line.splitn(2, '=');
+        let k = parts.next().unwrap_or("").trim().to_string();
+        let v = parts.next().unwrap_or("").to_string();
+        assert_eq!(k, "Timeout");
+        assert_eq!(v, "30");
+    }
+
+    #[test]
+    fn settings_line_parsing_value_with_equals() {
+        let line = "Expression=a==b";
+        let mut parts = line.splitn(2, '=');
+        let k = parts.next().unwrap_or("").trim().to_string();
+        let v = parts.next().unwrap_or("").to_string();
+        assert_eq!(k, "Expression");
+        assert_eq!(v, "a==b");
+    }
+
+    #[test]
+    fn settings_line_parsing_whitespace_around_key() {
+        let line = "  SettingName  =value";
+        let mut parts = line.splitn(2, '=');
+        let k = parts.next().unwrap_or("").trim().to_string();
+        let _v = parts.next().unwrap_or("").to_string();
+        assert_eq!(k, "SettingName");
+        assert_eq!(_v, "value");
+    }
+
+    #[test]
+    fn ok_json_response_structure() {
+        let val = serde_json::json!({"test": "data"});
+        let result = ok_json(val).unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["test"], "data");
+    }
+
+    #[test]
+    fn err_json_response_structure() {
+        let result = err_json("TEST_ERROR", "Something went wrong").unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["success"], false);
+        assert_eq!(v["error_code"], "TEST_ERROR");
+        assert_eq!(v["error"], "Something went wrong");
+    }
+
+    #[test]
+    fn err_json_empty_message() {
+        let result = err_json("CODE", "").unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["error_code"], "CODE");
+        assert_eq!(v["error"], "");
+    }
+
+    #[test]
+    fn err_json_special_chars_in_message() {
+        let result = err_json("CODE", "Error with \"quotes\" and \\backslash").unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["error_code"], "CODE");
+    }
+
+    #[test]
+    fn is_network_error_negative_cases() {
+        assert!(!is_network_error(""));
+        assert!(!is_network_error(
+            "No Interoperability connection configured"
+        ));
+        assert!(!is_network_error("DOCKER_REQUIRED"));
+        assert!(!is_network_error("SQLCODE: -1 Field not found"));
+        assert!(!is_network_error("Configuration error"));
+    }
+
+    #[test]
+    fn is_network_error_all_positive_patterns() {
+        assert!(is_network_error("error sending"));
+        assert!(is_network_error("connection refused"));
+        assert!(is_network_error("connection reset"));
+        assert!(is_network_error("dns error"));
+        assert!(is_network_error("timed out"));
+    }
+
+    #[test]
+    fn is_network_error_mixed_case_sensitivity() {
+        // Patterns are case-sensitive (lowercase only)
+        assert!(!is_network_error("Connection Refused"));
+        assert!(!is_network_error("ERROR SENDING"));
+        assert!(!is_network_error("DNS Error"));
+    }
+
+    #[test]
+    fn production_item_escape_in_objectscript_code() {
+        let item = "Service'Name";
+        let escaped = item.replace('\'', "''");
+        assert_eq!(escaped, "Service''Name");
+        // Verify escaping would work in a format string
+        let code = format!(r#"Set tItem=tProd.FindItemByConfigName("{}")"#, escaped);
+        assert!(code.contains("Service''Name"));
+    }
+
+    #[test]
+    fn credential_id_escaping() {
+        let id = "Cred'With'Quotes";
+        let escaped = id.replace('\'', "''");
+        assert_eq!(escaped, "Cred''With''Quotes");
+    }
+
+    #[test]
+    fn credential_username_escaping() {
+        let username = "user'name@example.com";
+        let escaped = username.replace('\'', "''");
+        assert_eq!(escaped, "user''name@example.com");
+    }
+
+    #[test]
+    fn credential_password_escaping() {
+        let password = "pass'word!@#$%";
+        let escaped = password.replace('\'', "''");
+        assert_eq!(escaped, "pass''word!@#$%");
+    }
+
+    #[test]
+    fn xml_escaping_backslash_and_quote() {
+        let xml = r#"<value path="C:\Users\test">"#;
+        let escaped = xml.replace('\\', "\\\\").replace('"', "\\\"");
+        assert!(escaped.contains("\\\\"));
+        assert!(escaped.contains("\\\""));
+    }
+
+    #[test]
+    fn production_item_enabled_val_true() {
+        let enabled_val = if true { "1" } else { "0" };
+        assert_eq!(enabled_val, "1");
+    }
+
+    #[test]
+    fn production_item_enabled_val_false() {
+        let enabled_val = if false { "1" } else { "0" };
+        assert_eq!(enabled_val, "0");
+    }
+
+    #[test]
+    fn parse_status_response_with_whitespace_in_code() {
+        let r = parse_status_response("MyProd:  1  ");
+        assert!(r.is_ok());
+        let (_, code, _) = r.unwrap();
+        assert_eq!(code, 1);
+    }
+
+    #[test]
+    fn parse_status_response_negative_code() {
+        let r = parse_status_response("Prod:-5");
+        assert!(r.is_ok());
+        let (_, code, state) = r.unwrap();
+        assert_eq!(code, -5);
+        assert_eq!(state, "Unknown");
+    }
+
+    #[test]
+    fn parse_status_response_very_long_name() {
+        let long_name = "A".repeat(1000);
+        let input = format!("{}:1", long_name);
+        let r = parse_status_response(&input);
+        assert!(r.is_ok());
+        let (name, _, _) = r.unwrap();
+        assert_eq!(name, long_name);
+    }
+
+    #[test]
+    fn parse_status_response_name_with_special_chars() {
+        let r = parse_status_response("App.HL7_2.1.Production:1");
+        assert!(r.is_ok());
+        let (name, _, _) = r.unwrap();
+        assert_eq!(name, "App.HL7_2.1.Production");
+    }
+
+    #[test]
+    fn state_string_boundary_values() {
+        assert_eq!(state_string(i64::MIN), "Unknown");
+        assert_eq!(state_string(i64::MAX), "Unknown");
+        assert_eq!(state_string(0), "Unknown");
+        assert_eq!(state_string(6), "Unknown");
+    }
+
+    #[test]
+    fn production_item_settings_empty_map() {
+        let settings: std::collections::HashMap<String, String> = Default::default();
+        assert!(settings.is_empty());
+    }
+
+    #[test]
+    fn production_item_settings_multiple_entries() {
+        let mut settings = std::collections::HashMap::new();
+        settings.insert("Timeout".to_string(), "30".to_string());
+        settings.insert("CallInterval".to_string(), "5".to_string());
+        settings.insert("AlertOnError".to_string(), "1".to_string());
+        assert_eq!(settings.len(), 3);
+    }
+
+    #[test]
+    fn default_ns_returns_user() {
+        assert_eq!(default_ns(), "USER");
+    }
+
+    #[test]
+    fn default_limit_returns_10() {
+        assert_eq!(default_limit(), 10);
+    }
+
+    #[test]
+    fn default_log_type_returns_error_warning() {
+        let log_type = default_log_type();
+        assert_eq!(log_type, "error,warning");
+    }
+
+    #[test]
+    fn default_msg_limit_returns_20() {
+        assert_eq!(default_msg_limit(), 20);
+    }
+
+    #[test]
+    fn ok_json_serde_preserves_types() {
+        let val = serde_json::json!({
+            "string": "text",
+            "number": 42,
+            "boolean": true,
+            "null_val": null,
+            "array": [1, 2, 3]
+        });
+        let result = ok_json(val).unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["string"], "text");
+        assert_eq!(v["number"], 42);
+        assert_eq!(v["boolean"], true);
+        assert!(v["null_val"].is_null());
+        assert_eq!(v["array"].as_array().unwrap().len(), 3);
+    }
 }

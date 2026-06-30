@@ -43,6 +43,7 @@ pub mod global;
 pub mod info;
 pub mod interop;
 pub mod log_store;
+pub mod observability;
 pub mod scm;
 pub mod search;
 pub mod skills_tools;
@@ -4935,9 +4936,15 @@ Methods:
 
     // ── 026-admin-tools: iris_admin dispatcher ───────────────────────────────
 
-    #[tool(
-        description = "IRIS administration dispatcher. action: list_namespaces, list_databases, list_users, list_roles, list_user_roles, check_permission, list_webapps, get_webapp (read — always available); create_user, update_user, delete_user, create_namespace, delete_namespace, create_webapp, delete_webapp (write — requires IRIS_ADMIN_TOOLS=1). All operations run in %SYS namespace. check_permission checks the currently connected user (IRIS_USERNAME), not an arbitrary user."
-    )]
+    #[tool(description = "IRIS administration dispatcher. \
+        Read actions (always available): list_namespaces, list_databases, list_users, list_roles, \
+        list_user_roles, check_permission, list_webapps, get_webapp, \
+        view_locks, view_processes, journal_search, namespace_mappings, database_status. \
+        Write actions (require IRIS_ADMIN_TOOLS=1): create_user, update_user, delete_user, \
+        create_namespace, delete_namespace, create_webapp, delete_webapp. \
+        All operations run in %SYS namespace. check_permission checks the currently connected \
+        user (IRIS_USERNAME). view_processes requires dataPolicy param (block/redact/allow). \
+        journal_search requires dataPolicy=allow and at least one of global_pattern or time_range.")]
     async fn iris_admin(
         &self,
         Parameters(p): Parameters<AnyParams>,
@@ -4970,9 +4977,15 @@ Methods:
             }
             "check_permission" => {
                 let resource = p.get("resource").and_then(|v| v.as_str()).unwrap_or("");
-                let permission = p.get("permission").and_then(|v| v.as_str()).unwrap_or("USE");
+                let permission = p
+                    .get("permission")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("USE");
                 if resource.is_empty() {
-                    return err_json("INVALID_PARAMS", "resource is required for check_permission");
+                    return err_json(
+                        "INVALID_PARAMS",
+                        "resource is required for check_permission",
+                    );
                 }
                 admin::admin_check_permission_impl(iris_opt, resource, permission).await
             }
@@ -4980,13 +4993,19 @@ Methods:
                 let username = p.get("username").and_then(|v| v.as_str()).unwrap_or("");
                 let password = p.get("password").and_then(|v| v.as_str()).unwrap_or("");
                 if username.is_empty() || password.is_empty() {
-                    return err_json("INVALID_PARAMS", "username and password are required for create_user");
+                    return err_json(
+                        "INVALID_PARAMS",
+                        "username and password are required for create_user",
+                    );
                 }
                 admin::admin_create_user_impl(
-                    iris_opt, username, password,
+                    iris_opt,
+                    username,
+                    password,
                     p.get("full_name").and_then(|v| v.as_str()),
                     p.get("roles").and_then(|v| v.as_str()),
-                ).await
+                )
+                .await
             }
             "update_user" => {
                 let username = p.get("username").and_then(|v| v.as_str()).unwrap_or("");
@@ -4994,11 +5013,13 @@ Methods:
                     return err_json("INVALID_PARAMS", "username is required for update_user");
                 }
                 admin::admin_update_user_impl(
-                    iris_opt, username,
+                    iris_opt,
+                    username,
                     p.get("password").and_then(|v| v.as_str()),
                     p.get("enabled").and_then(|v| v.as_bool()),
                     p.get("roles").and_then(|v| v.as_str()),
-                ).await
+                )
+                .await
             }
             "delete_user" => {
                 let username = p.get("username").and_then(|v| v.as_str()).unwrap_or("");
@@ -5009,10 +5030,19 @@ Methods:
             }
             "create_namespace" => {
                 let name = p.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                let code_db = p.get("code_database").and_then(|v| v.as_str()).unwrap_or("");
-                let data_db = p.get("data_database").and_then(|v| v.as_str()).unwrap_or("");
+                let code_db = p
+                    .get("code_database")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                let data_db = p
+                    .get("data_database")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if name.is_empty() || code_db.is_empty() || data_db.is_empty() {
-                    return err_json("INVALID_PARAMS", "name, code_database, and data_database are required");
+                    return err_json(
+                        "INVALID_PARAMS",
+                        "name, code_database, and data_database are required",
+                    );
                 }
                 admin::admin_create_namespace_impl(iris_opt, name, code_db, data_db).await
             }
@@ -5027,13 +5057,19 @@ Methods:
                 let path = p.get("path").and_then(|v| v.as_str()).unwrap_or("");
                 let ns = p.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
                 if path.is_empty() || ns.is_empty() {
-                    return err_json("INVALID_PARAMS", "path and namespace are required for create_webapp");
+                    return err_json(
+                        "INVALID_PARAMS",
+                        "path and namespace are required for create_webapp",
+                    );
                 }
                 admin::admin_create_webapp_impl(
-                    iris_opt, path, ns,
+                    iris_opt,
+                    path,
+                    ns,
                     p.get("dispatch_class").and_then(|v| v.as_str()),
                     p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(true),
-                ).await
+                )
+                .await
             }
             "delete_webapp" => {
                 let path = p.get("path").and_then(|v| v.as_str()).unwrap_or("");
@@ -5042,9 +5078,49 @@ Methods:
                 }
                 admin::admin_delete_webapp_impl(iris_opt, path).await
             }
+            // ── 055-system-observability ──────────────────────────────────────
+            "view_locks" => observability::view_locks_impl(iris_opt).await,
+            "view_processes" => {
+                let data_policy = p
+                    .get("dataPolicy")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("block");
+                let ns_filter = p.get("namespace").and_then(|v| v.as_str());
+                observability::view_processes_impl(iris_opt, data_policy, ns_filter).await
+            }
+            "journal_search" => {
+                let data_policy = p
+                    .get("dataPolicy")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("block");
+                let global_pattern = p.get("global_pattern").and_then(|v| v.as_str());
+                let time_range = p.get("time_range");
+                let max_records = p.get("max_records").and_then(|v| v.as_u64());
+                observability::journal_search_impl(
+                    iris_opt,
+                    data_policy,
+                    global_pattern,
+                    time_range,
+                    max_records,
+                )
+                .await
+            }
+            "namespace_mappings" => {
+                let ns_param = p.get("namespace").and_then(|v| v.as_str());
+                let conn_ns = iris_opt.map(|i| i.namespace.as_str()).unwrap_or("USER");
+                observability::namespace_mappings_impl(iris_opt, ns_param, conn_ns).await
+            }
+            "database_status" => {
+                let name_filter = p.get("name").and_then(|v| v.as_str());
+                observability::database_status_impl(iris_opt, name_filter).await
+            }
             _ => err_json(
                 "INVALID_ACTION",
-                "iris_admin: action must be one of: list_namespaces, list_databases, list_users, list_roles, list_user_roles, check_permission, list_webapps, get_webapp, create_user, update_user, delete_user, create_namespace, delete_namespace, create_webapp, delete_webapp",
+                "iris_admin: action must be one of: list_namespaces, list_databases, \
+                 list_users, list_roles, list_user_roles, check_permission, list_webapps, \
+                 get_webapp, view_locks, view_processes, journal_search, namespace_mappings, \
+                 database_status, create_user, update_user, delete_user, create_namespace, \
+                 delete_namespace, create_webapp, delete_webapp",
             ),
         };
         self.record_call("iris_admin", result.is_ok());

@@ -640,3 +640,606 @@ fn iris_execute_method_in_registered_tool_names() {
         "iris_execute_method must appear in Merged toolset registered_tool_names()"
     );
 }
+
+// ── Additional coverage for parse_sm_settings nested paths ────────────────────
+
+#[test]
+fn parse_nested_object_format_servers_key() {
+    use std::io::Write;
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("settings.json");
+    let json = r#"{
+  "intersystems": {
+    "servers": {
+      "dev": {
+        "webServer": {
+          "host": "localhost",
+          "port": 52773
+        },
+        "username": "_SYSTEM"
+      }
+    }
+  }
+}"#;
+    let mut f = std::fs::File::create(&path).unwrap();
+    f.write_all(json.as_bytes()).unwrap();
+    let profiles = parse_sm_settings(&path);
+    assert_eq!(
+        profiles.len(),
+        1,
+        "nested object format must be parsed correctly"
+    );
+    assert_eq!(profiles[0].name, "dev");
+    assert_eq!(profiles[0].host, "localhost");
+}
+
+#[test]
+fn parse_both_formats_flat_takes_precedence() {
+    use std::io::Write;
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("settings.json");
+    // Both flat and nested format present — flat key should be checked first
+    let json = r#"{
+  "intersystems.servers": {
+    "flat-server": {
+      "webServer": {
+        "host": "flat.localhost",
+        "port": 52773
+      }
+    }
+  },
+  "intersystems": {
+    "servers": {
+      "nested-server": {
+        "webServer": {
+          "host": "nested.localhost",
+          "port": 52774
+        }
+      }
+    }
+  }
+}"#;
+    let mut f = std::fs::File::create(&path).unwrap();
+    f.write_all(json.as_bytes()).unwrap();
+    let profiles = parse_sm_settings(&path);
+    assert_eq!(
+        profiles.len(),
+        1,
+        "flat format should take precedence when both present"
+    );
+    assert_eq!(profiles[0].name, "flat-server");
+    assert_eq!(profiles[0].host, "flat.localhost");
+}
+
+#[test]
+fn parse_servers_key_not_object_returns_empty() {
+    use std::io::Write;
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("settings.json");
+    // servers value is a string, not an object
+    let json = r#"{"intersystems": {"servers": "not-an-object"}}"#;
+    let mut f = std::fs::File::create(&path).unwrap();
+    f.write_all(json.as_bytes()).unwrap();
+    let profiles = parse_sm_settings(&path);
+    assert!(
+        profiles.is_empty(),
+        "servers value that is not an object must return empty"
+    );
+}
+
+#[test]
+fn parse_flat_dotted_not_object_returns_empty() {
+    use std::io::Write;
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("settings.json");
+    let json = r#"{"intersystems.servers": "string-value"}"#;
+    let mut f = std::fs::File::create(&path).unwrap();
+    f.write_all(json.as_bytes()).unwrap();
+    let profiles = parse_sm_settings(&path);
+    assert!(
+        profiles.is_empty(),
+        "flat dotted format when not an object must return empty"
+    );
+}
+
+#[test]
+fn parse_slash_prefixed_key_skipped() {
+    use std::io::Write;
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("settings.json");
+    let json = r#"{
+  "intersystems": {
+    "servers": {
+      "/default": "dev-local",
+      "/metadata": {"some": "data"},
+      "dev-local": {
+        "webServer": {"host": "localhost"},
+        "username": "_SYSTEM"
+      }
+    }
+  }
+}"#;
+    let mut f = std::fs::File::create(&path).unwrap();
+    f.write_all(json.as_bytes()).unwrap();
+    let profiles = parse_sm_settings(&path);
+    assert_eq!(profiles.len(), 1, "slash-prefixed keys must be skipped");
+    assert_eq!(profiles[0].name, "dev-local");
+}
+
+#[test]
+fn parse_multiple_slash_keys_all_skipped() {
+    use std::io::Write;
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("settings.json");
+    let json = r#"{
+  "intersystems": {
+    "servers": {
+      "/default": "prod",
+      "/metadata": {},
+      "/version": 1,
+      "prod": {
+        "webServer": {"host": "prod.server"},
+        "username": "admin"
+      }
+    }
+  }
+}"#;
+    let mut f = std::fs::File::create(&path).unwrap();
+    f.write_all(json.as_bytes()).unwrap();
+    let profiles = parse_sm_settings(&path);
+    assert_eq!(
+        profiles.len(),
+        1,
+        "all slash-prefixed keys must be skipped, only 'prod' should remain"
+    );
+}
+
+#[test]
+fn parse_malformed_server_entry_skipped_others_ok() {
+    use std::io::Write;
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("settings.json");
+    let json = r#"{
+  "intersystems": {
+    "servers": {
+      "good": {
+        "webServer": {"host": "good.local"},
+        "username": "_SYSTEM"
+      },
+      "bad": {
+        "webServer": "not-a-webserver-object"
+      },
+      "also-good": {
+        "webServer": {"host": "also-good.local"},
+        "username": "user2"
+      }
+    }
+  }
+}"#;
+    let mut f = std::fs::File::create(&path).unwrap();
+    f.write_all(json.as_bytes()).unwrap();
+    let profiles = parse_sm_settings(&path);
+    assert_eq!(
+        profiles.len(),
+        2,
+        "malformed entry must be skipped, valid entries preserved"
+    );
+    let names: Vec<&str> = profiles.iter().map(|p| p.name.as_str()).collect();
+    assert!(names.contains(&"good"));
+    assert!(names.contains(&"also-good"));
+    assert!(!names.contains(&"bad"));
+}
+
+#[test]
+fn parse_server_defaults_used_correctly() {
+    use std::io::Write;
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("settings.json");
+    // Minimal server entry with no optional fields
+    let json = r#"{
+  "intersystems": {
+    "servers": {
+      "minimal": {
+        "webServer": {"host": "minimal.host"}
+      }
+    }
+  }
+}"#;
+    let mut f = std::fs::File::create(&path).unwrap();
+    f.write_all(json.as_bytes()).unwrap();
+    let profiles = parse_sm_settings(&path);
+    assert_eq!(profiles.len(), 1);
+    let p = &profiles[0];
+    assert_eq!(p.port, 52773, "port should default to 52773");
+    assert_eq!(p.scheme, "http", "scheme should default to 'http'");
+    assert_eq!(
+        p.username, "_SYSTEM",
+        "username should default to '_SYSTEM'"
+    );
+    assert!(p.path_prefix.is_none(), "path_prefix should be None");
+}
+
+#[test]
+fn parse_host_none_variant_skipped() {
+    use std::io::Write;
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join("settings.json");
+    let json = r#"{
+  "intersystems": {
+    "servers": {
+      "no-host": {
+        "webServer": {"port": 52773},
+        "username": "_SYSTEM"
+      },
+      "has-host": {
+        "webServer": {"host": "valid.host"},
+        "username": "_SYSTEM"
+      }
+    }
+  }
+}"#;
+    let mut f = std::fs::File::create(&path).unwrap();
+    f.write_all(json.as_bytes()).unwrap();
+    let profiles = parse_sm_settings(&path);
+    assert_eq!(profiles.len(), 1, "entry without host must be skipped");
+    assert_eq!(profiles[0].name, "has-host");
+}
+
+// ── build_server_manager_config_json coverage ────────────────────────────────
+
+#[test]
+fn build_config_active_marker_only_on_selected_server() {
+    use iris_agentic_dev_core::iris::server_manager::build_server_manager_config_json;
+    let profiles = parse_sm_settings(&fixture("sm_settings_multi.json"));
+    let json = build_server_manager_config_json(&profiles, Some("staging"), &[]);
+    let servers = json["servers"].as_array().unwrap();
+    for server in servers {
+        let name = server["name"].as_str().unwrap();
+        let active = server["active"].as_bool().unwrap();
+        if name == "staging" {
+            assert!(active, "active server 'staging' must have active=true");
+        } else {
+            assert!(!active, "non-active server must have active=false");
+        }
+    }
+}
+
+#[test]
+fn build_config_no_active_server_all_false() {
+    use iris_agentic_dev_core::iris::server_manager::build_server_manager_config_json;
+    let profiles = parse_sm_settings(&fixture("sm_settings_multi.json"));
+    let json = build_server_manager_config_json(&profiles, None, &[]);
+    let servers = json["servers"].as_array().unwrap();
+    for server in servers {
+        let active = server["active"].as_bool().unwrap();
+        assert!(
+            !active,
+            "all servers must be inactive when active_server_name is None"
+        );
+    }
+}
+
+#[test]
+fn build_config_default_credential_status_not_configured() {
+    use iris_agentic_dev_core::iris::server_manager::build_server_manager_config_json;
+    let profiles = parse_sm_settings(&fixture("sm_settings_multi.json"));
+    // No cred_entries provided — all should default to NOT_CONFIGURED
+    let json = build_server_manager_config_json(&profiles, None, &[]);
+    let servers = json["servers"].as_array().unwrap();
+    for server in servers {
+        let status = server["credential_status"].as_str().unwrap();
+        assert_eq!(
+            status, "not_configured",
+            "server without cred entry must have status 'not_configured'"
+        );
+    }
+}
+
+#[test]
+fn build_config_mixed_credential_statuses() {
+    use iris_agentic_dev_core::iris::server_manager::{
+        build_server_manager_config_json, ServerManagerCredentialEntry,
+    };
+    let profiles = parse_sm_settings(&fixture("sm_settings_multi.json"));
+    let cred_entries = vec![
+        ServerManagerCredentialEntry {
+            server_name: "dev-local".to_string(),
+            status: "resolved".to_string(),
+            policy: None,
+        },
+        ServerManagerCredentialEntry {
+            server_name: "prod".to_string(),
+            status: "error".to_string(),
+            policy: None,
+        },
+    ];
+    let json = build_server_manager_config_json(&profiles, None, &cred_entries);
+    let servers = json["servers"].as_array().unwrap();
+    let mut found_resolved = false;
+    let mut found_error = false;
+    let mut found_not_configured = false;
+    for server in servers {
+        let name = server["name"].as_str().unwrap();
+        let status = server["credential_status"].as_str().unwrap();
+        match name {
+            "dev-local" => {
+                assert_eq!(status, "resolved");
+                found_resolved = true;
+            }
+            "prod" => {
+                assert_eq!(status, "error");
+                found_error = true;
+            }
+            "staging" => {
+                assert_eq!(status, "not_configured");
+                found_not_configured = true;
+            }
+            _ => {}
+        }
+    }
+    assert!(found_resolved);
+    assert!(found_error);
+    assert!(found_not_configured);
+}
+
+#[test]
+fn build_config_policy_data_policy_dev_template() {
+    use iris_agentic_dev_core::iris::server_manager::{
+        build_server_manager_config_json, ServerManagerCredentialEntry,
+    };
+    use iris_agentic_dev_core::iris::workspace_config::{
+        ConnectionPolicy, DataPolicy, McpTemplate,
+    };
+    let profiles = parse_sm_settings(&fixture("sm_settings_single.json"));
+    let cred_entries = vec![ServerManagerCredentialEntry {
+        server_name: "dev-local".to_string(),
+        status: "resolved".to_string(),
+        policy: Some(ConnectionPolicy {
+            server_name: "dev-local".to_string(),
+            allow: None,
+            mcp_template: Some(McpTemplate::Dev),
+            data_policy: Some(DataPolicy::Allow),
+            global_blocklist: vec![],
+            data_policy_kill_allowlist: vec![],
+        }),
+    }];
+    let json = build_server_manager_config_json(&profiles, Some("dev-local"), &cred_entries);
+    let servers = json["servers"].as_array().unwrap();
+    let policy = &servers[0]["policy"];
+    assert_eq!(
+        policy["mcp_template"].as_str(),
+        Some("dev"),
+        "mcp_template Dev must serialize to 'dev'"
+    );
+    assert_eq!(
+        policy["data_policy"].as_str(),
+        Some("allow"),
+        "data_policy Allow must serialize to 'allow'"
+    );
+}
+
+#[test]
+fn build_config_policy_test_template_redact() {
+    use iris_agentic_dev_core::iris::server_manager::{
+        build_server_manager_config_json, ServerManagerCredentialEntry,
+    };
+    use iris_agentic_dev_core::iris::workspace_config::{
+        ConnectionPolicy, DataPolicy, McpTemplate,
+    };
+    let profiles = parse_sm_settings(&fixture("sm_settings_single.json"));
+    let cred_entries = vec![ServerManagerCredentialEntry {
+        server_name: "dev-local".to_string(),
+        status: "resolved".to_string(),
+        policy: Some(ConnectionPolicy {
+            server_name: "dev-local".to_string(),
+            allow: None,
+            mcp_template: Some(McpTemplate::Test),
+            data_policy: Some(DataPolicy::Redact),
+            global_blocklist: vec![],
+            data_policy_kill_allowlist: vec![],
+        }),
+    }];
+    let json = build_server_manager_config_json(&profiles, Some("dev-local"), &cred_entries);
+    let servers = json["servers"].as_array().unwrap();
+    let policy = &servers[0]["policy"];
+    assert_eq!(
+        policy["mcp_template"].as_str(),
+        Some("test"),
+        "mcp_template Test must serialize to 'test'"
+    );
+    assert_eq!(
+        policy["data_policy"].as_str(),
+        Some("redact"),
+        "data_policy Redact must serialize to 'redact'"
+    );
+}
+
+#[test]
+fn build_config_policy_null_when_allow_none() {
+    use iris_agentic_dev_core::iris::server_manager::{
+        build_server_manager_config_json, ServerManagerCredentialEntry,
+    };
+    use iris_agentic_dev_core::iris::workspace_config::ConnectionPolicy;
+    let profiles = parse_sm_settings(&fixture("sm_settings_single.json"));
+    let cred_entries = vec![ServerManagerCredentialEntry {
+        server_name: "dev-local".to_string(),
+        status: "resolved".to_string(),
+        policy: Some(ConnectionPolicy {
+            server_name: "dev-local".to_string(),
+            allow: None,
+            mcp_template: None,
+            data_policy: None,
+            global_blocklist: vec![],
+            data_policy_kill_allowlist: vec![],
+        }),
+    }];
+    let json = build_server_manager_config_json(&profiles, Some("dev-local"), &cred_entries);
+    let servers = json["servers"].as_array().unwrap();
+    let policy = &servers[0]["policy"];
+    // allow is None, so serialization should not include it (or null)
+    assert!(
+        policy["allow"].is_null()
+            || policy["allow"]
+                .as_array()
+                .map(|a| a.is_empty())
+                .unwrap_or(false),
+        "allow must be null or empty when None"
+    );
+    // mcp_template and data_policy are None, should serialize to null
+    assert!(
+        policy["mcp_template"].is_null(),
+        "mcp_template should be null when None"
+    );
+    assert!(
+        policy["data_policy"].is_null(),
+        "data_policy should be null when None"
+    );
+}
+
+#[test]
+fn build_config_multiple_servers_each_with_policy() {
+    use iris_agentic_dev_core::iris::server_manager::{
+        build_server_manager_config_json, ServerManagerCredentialEntry,
+    };
+    use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, ToolCategory};
+    let profiles = parse_sm_settings(&fixture("sm_settings_multi.json"));
+    let cred_entries = vec![
+        ServerManagerCredentialEntry {
+            server_name: "dev-local".to_string(),
+            status: "resolved".to_string(),
+            policy: Some(ConnectionPolicy {
+                server_name: "dev-local".to_string(),
+                allow: Some(vec![ToolCategory::Query]),
+                mcp_template: None,
+                data_policy: None,
+                global_blocklist: vec![],
+                data_policy_kill_allowlist: vec![],
+            }),
+        },
+        ServerManagerCredentialEntry {
+            server_name: "prod".to_string(),
+            status: "resolved".to_string(),
+            policy: Some(ConnectionPolicy {
+                server_name: "prod".to_string(),
+                allow: Some(vec![ToolCategory::Execute, ToolCategory::Docs]),
+                mcp_template: None,
+                data_policy: None,
+                global_blocklist: vec![],
+                data_policy_kill_allowlist: vec![],
+            }),
+        },
+    ];
+    let json = build_server_manager_config_json(&profiles, None, &cred_entries);
+    let servers = json["servers"].as_array().unwrap();
+    let mut found_dev = false;
+    let mut found_prod = false;
+    for server in servers {
+        let name = server["name"].as_str().unwrap();
+        if name == "dev-local" {
+            let allow = server["policy"]["allow"].as_array().unwrap();
+            assert_eq!(allow.len(), 1, "dev-local should have 1 allowed category");
+            found_dev = true;
+        } else if name == "prod" {
+            let allow = server["policy"]["allow"].as_array().unwrap();
+            assert_eq!(allow.len(), 2, "prod should have 2 allowed categories");
+            found_prod = true;
+        }
+    }
+    assert!(found_dev);
+    assert!(found_prod);
+}
+
+// ── policy_gate additional coverage ──────────────────────────────────────────
+
+#[test]
+fn policy_gate_permitted_category_returns_none() {
+    use iris_agentic_dev_core::iris::server_manager::policy_gate;
+    use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, ToolCategory};
+    let policy = ConnectionPolicy {
+        server_name: "prod".to_string(),
+        allow: Some(vec![ToolCategory::Query, ToolCategory::Docs]),
+        mcp_template: None,
+        data_policy: None,
+        global_blocklist: vec![],
+        data_policy_kill_allowlist: vec![],
+    };
+    let gate = policy_gate("iris_query", "prod", Some(&policy));
+    assert!(
+        gate.is_none(),
+        "iris_query (Query category) should be permitted"
+    );
+}
+
+#[test]
+fn policy_gate_blocked_category_returns_error() {
+    use iris_agentic_dev_core::iris::server_manager::policy_gate;
+    use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, ToolCategory};
+    let policy = ConnectionPolicy {
+        server_name: "prod".to_string(),
+        allow: Some(vec![ToolCategory::Query]),
+        mcp_template: None,
+        data_policy: None,
+        global_blocklist: vec![],
+        data_policy_kill_allowlist: vec![],
+    };
+    let gate = policy_gate("iris_compile", "prod", Some(&policy));
+    assert!(
+        gate.is_some(),
+        "iris_compile (Compile category) should be blocked"
+    );
+    let err = gate.unwrap();
+    assert_eq!(err["policy_gate"], true);
+    assert_eq!(err["server_name"], "prod");
+    assert!(err["message"].as_str().unwrap().contains("iris_compile"));
+}
+
+#[test]
+fn policy_gate_no_policy_allows_all() {
+    use iris_agentic_dev_core::iris::server_manager::policy_gate;
+    let gate = policy_gate("iris_compile", "prod", None);
+    assert!(gate.is_none(), "no policy should allow all tools");
+}
+
+#[test]
+fn policy_gate_allow_none_permits_all() {
+    use iris_agentic_dev_core::iris::server_manager::policy_gate;
+    use iris_agentic_dev_core::iris::workspace_config::ConnectionPolicy;
+    let policy = ConnectionPolicy {
+        server_name: "prod".to_string(),
+        allow: None,
+        mcp_template: None,
+        data_policy: None,
+        global_blocklist: vec![],
+        data_policy_kill_allowlist: vec![],
+    };
+    let gate = policy_gate("iris_execute", "prod", Some(&policy));
+    assert!(
+        gate.is_none(),
+        "allow=None should permit all tools (no restriction)"
+    );
+}
+
+#[test]
+fn policy_gate_tool_suffix_ignored() {
+    use iris_agentic_dev_core::iris::server_manager::policy_gate;
+    use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, ToolCategory};
+    let policy = ConnectionPolicy {
+        server_name: "prod".to_string(),
+        allow: Some(vec![ToolCategory::SourceControl]),
+        mcp_template: None,
+        data_policy: None,
+        global_blocklist: vec![],
+        data_policy_kill_allowlist: vec![],
+    };
+    // Tool with action suffix — source control tools map to SourceControl category
+    let gate = policy_gate("iris_source_control:commit", "prod", Some(&policy));
+    assert!(
+        gate.is_none(),
+        "iris_source_control:commit should be allowed (SourceControl category)"
+    );
+    let gate = policy_gate("iris_compile:fast", "prod", Some(&policy));
+    assert!(
+        gate.is_some(),
+        "iris_compile:fast should be blocked (Compile category not allowed)"
+    );
+}

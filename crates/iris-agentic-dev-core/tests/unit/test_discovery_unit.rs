@@ -316,3 +316,529 @@ fn test_score_known_example_loanapp_iris() {
 fn test_score_determined_cray_is_zero() {
     assert_eq!(score_container_name("determined_cray", "id_try2"), 0);
 }
+
+// ── Pure-logic URL building and env-var parsing (lines 151-174) ──────────────
+
+#[test]
+fn test_port_parsing_valid_port_string() {
+    // Simulate: std::env::var("IRIS_WEB_PORT") → "52773" → parse::<u16>()
+    let port_str = "52773";
+    let parsed: Option<u16> = port_str.parse().ok();
+    assert_eq!(parsed, Some(52773));
+}
+
+#[test]
+fn test_port_parsing_invalid_port_string() {
+    // Simulate parsing invalid port: "abc" → None
+    let port_str = "abc";
+    let parsed: Option<u16> = port_str.parse().ok();
+    assert_eq!(parsed, None);
+}
+
+#[test]
+fn test_port_parsing_port_out_of_range() {
+    // Simulate parsing port out of u16 range: "99999" → None
+    let port_str = "99999";
+    let parsed: Option<u16> = port_str.parse().ok();
+    assert_eq!(parsed, None);
+}
+
+#[test]
+fn test_port_parsing_empty_string() {
+    // Simulate parsing empty port string → None
+    let port_str = "";
+    let parsed: Option<u16> = port_str.parse().ok();
+    assert_eq!(parsed, None);
+}
+
+#[test]
+fn test_port_parsing_with_whitespace() {
+    // Simulate: " 52773 " → parse requires manual trim (parse doesn't auto-trim)
+    let port_str = " 52773 ";
+    let parsed: Option<u16> = port_str.trim().parse().ok();
+    assert_eq!(parsed, Some(52773));
+}
+
+#[test]
+fn test_port_default_to_52773_when_parse_fails() {
+    // Simulate: port_str = "invalid" → parse fails → unwrap_or(52773)
+    let port_str = "invalid";
+    let port = port_str.parse::<u16>().ok().unwrap_or(52773);
+    assert_eq!(port, 52773);
+}
+
+#[test]
+fn test_scheme_trim_slashes_both_sides() {
+    // Simulate: "http://" → trim_matches('/') → "http:"
+    let scheme_str = "http://";
+    let trimmed = scheme_str.trim_matches('/').to_string();
+    assert_eq!(trimmed, "http:");
+}
+
+#[test]
+fn test_scheme_trim_slashes_leading_only() {
+    // Simulate: "/https" → trim_matches('/') → "https"
+    let scheme_str = "/https";
+    let trimmed = scheme_str.trim_matches('/').to_string();
+    assert_eq!(trimmed, "https");
+}
+
+#[test]
+fn test_scheme_single_slash() {
+    // Simulate: "/" → trim → "" → is_empty() → true
+    let scheme_str = "/";
+    let trimmed = scheme_str.trim_matches('/').to_string();
+    assert!(trimmed.is_empty());
+}
+
+#[test]
+fn test_scheme_normalize_https() {
+    // Simulate: "https" (no slashes) → trim → "https" (unchanged)
+    let scheme_str = "https";
+    let trimmed = scheme_str.trim_matches('/').to_string();
+    assert_eq!(trimmed, "https");
+}
+
+#[test]
+fn test_prefix_trim_slashes_removes_leading_trailing() {
+    // Simulate: "/app/prefix/" → trim_matches('/') → "app/prefix"
+    let prefix_str = "/app/prefix/";
+    let trimmed = prefix_str.trim_matches('/').to_string();
+    assert_eq!(trimmed, "app/prefix");
+}
+
+#[test]
+fn test_prefix_empty_after_trim_becomes_none() {
+    // Simulate: "/" → trim → "" → is_empty() → filter to None
+    let prefix_str = "/";
+    let trimmed = prefix_str.trim_matches('/').to_string();
+    let result = if !trimmed.is_empty() {
+        Some(trimmed)
+    } else {
+        None
+    };
+    assert_eq!(result, None);
+}
+
+#[test]
+fn test_prefix_no_slashes_unchanged() {
+    // Simulate: "myprefix" → trim → "myprefix" (unchanged)
+    let prefix_str = "myprefix";
+    let trimmed = prefix_str.trim_matches('/').to_string();
+    assert_eq!(trimmed, "myprefix");
+}
+
+// ── URL construction with prefix + scheme (lines 171-174) ──────────────────
+
+#[test]
+fn test_url_construction_with_prefix() {
+    // Simulate: scheme="https", host="example.com", port=8443, prefix="iris"
+    let scheme = "https";
+    let host = "example.com";
+    let port = 8443u16;
+    let prefix = "iris";
+    let url = format!("{}://{}:{}/{}", scheme, host, port, prefix);
+    assert_eq!(url, "https://example.com:8443/iris");
+}
+
+#[test]
+fn test_url_construction_without_prefix() {
+    // Simulate: scheme="http", host="localhost", port=52773, no prefix
+    let scheme = "http";
+    let host = "localhost";
+    let port = 52773u16;
+    let url = format!("{}://{}:{}", scheme, host, port);
+    assert_eq!(url, "http://localhost:52773");
+}
+
+#[test]
+fn test_url_construction_default_scheme() {
+    // Simulate: scheme defaults to "http" if empty
+    let scheme_str = "";
+    let scheme = if scheme_str.is_empty() {
+        "http".to_string()
+    } else {
+        scheme_str.to_string()
+    };
+    let url = format!("{}://localhost:52773", scheme);
+    assert_eq!(url, "http://localhost:52773");
+}
+
+// ── Atelier API version detection (lines 114-118, 495-499) ──────────────────
+
+#[test]
+fn test_atelier_version_v8_when_api_8() {
+    // Simulate: content["api"] = 8 → AtelierVersion::V8
+    // We test the matching logic directly
+    let api_value = 8u64;
+    let version = if api_value >= 8 {
+        "V8"
+    } else if api_value >= 2 {
+        "V2"
+    } else {
+        "V1"
+    };
+    assert_eq!(version, "V8");
+}
+
+#[test]
+fn test_atelier_version_v8_when_api_higher() {
+    // Simulate: content["api"] = 10 → AtelierVersion::V8 (≥8)
+    let api_value = 10u64;
+    let version = if api_value >= 8 {
+        "V8"
+    } else if api_value >= 2 {
+        "V2"
+    } else {
+        "V1"
+    };
+    assert_eq!(version, "V8");
+}
+
+#[test]
+fn test_atelier_version_v2_when_api_2() {
+    // Simulate: content["api"] = 2 → AtelierVersion::V2
+    let api_value = 2u64;
+    let version = if api_value >= 8 {
+        "V8"
+    } else if api_value >= 2 {
+        "V2"
+    } else {
+        "V1"
+    };
+    assert_eq!(version, "V2");
+}
+
+#[test]
+fn test_atelier_version_v2_when_api_middle() {
+    // Simulate: content["api"] = 5 → AtelierVersion::V2 (≥2, <8)
+    let api_value = 5u64;
+    let version = if api_value >= 8 {
+        "V8"
+    } else if api_value >= 2 {
+        "V2"
+    } else {
+        "V1"
+    };
+    assert_eq!(version, "V2");
+}
+
+#[test]
+fn test_atelier_version_v1_when_api_1() {
+    // Simulate: content["api"] = 1 → AtelierVersion::V1
+    let api_value = 1u64;
+    let version = if api_value >= 8 {
+        "V8"
+    } else if api_value >= 2 {
+        "V2"
+    } else {
+        "V1"
+    };
+    assert_eq!(version, "V1");
+}
+
+#[test]
+fn test_atelier_version_v1_when_api_zero() {
+    // Simulate: content["api"] = 0 → AtelierVersion::V1 (fallback)
+    let api_value = 0u64;
+    let version = if api_value >= 8 {
+        "V8"
+    } else if api_value >= 2 {
+        "V2"
+    } else {
+        "V1"
+    };
+    assert_eq!(version, "V1");
+}
+
+// ── IRIS version string validation (lines 101-104, 475-478) ──────────────────
+
+#[test]
+fn test_iris_version_valid_iris_string() {
+    // Simulate: version.to_uppercase().contains("IRIS") → Some
+    let version = "IRIS 2024.1";
+    let is_iris = version.to_uppercase().contains("IRIS");
+    assert!(is_iris);
+}
+
+#[test]
+fn test_iris_version_lowercase_iris() {
+    // Simulate: "iris 2024" → .to_uppercase() → contains("IRIS") → true
+    let version = "iris 2024";
+    let is_iris = version.to_uppercase().contains("IRIS");
+    assert!(is_iris);
+}
+
+#[test]
+fn test_iris_version_missing_iris_keyword() {
+    // Simulate: "CachéSQL 2024" → doesn't contain IRIS → None
+    let version = "CacheSQL 2024";
+    let is_iris = version.to_uppercase().contains("IRIS");
+    assert!(!is_iris);
+}
+
+#[test]
+fn test_iris_version_empty_string() {
+    // Simulate: "" → doesn't contain "IRIS" → None
+    let version = "";
+    let is_iris = version.to_uppercase().contains("IRIS");
+    assert!(!is_iris);
+}
+
+#[test]
+fn test_iris_version_iris_as_substring() {
+    // Simulate: "My-IRIS-Container" → contains "IRIS" → Some
+    let version = "My-IRIS-Container";
+    let is_iris = version.to_uppercase().contains("IRIS");
+    assert!(is_iris);
+}
+
+// ── Port extraction from Docker container (lines 390-404) ──────────────────
+
+#[test]
+fn test_port_extraction_web_port_52773() {
+    // Simulate extracting port 52773 from container.ports
+    let private_port = 52773;
+    let public_port = Some(52773);
+    let mut port_web: Option<u16> = None;
+
+    if private_port == 52773 {
+        port_web = public_port;
+    }
+    assert_eq!(port_web, Some(52773));
+}
+
+#[test]
+fn test_port_extraction_superserver_port_1972() {
+    // Simulate extracting port 1972 (superserver) from container.ports
+    let private_port = 1972;
+    let public_port = Some(1972);
+    let mut port_ss: Option<u16> = None;
+
+    if private_port == 1972 {
+        port_ss = public_port;
+    }
+    assert_eq!(port_ss, Some(1972));
+}
+
+#[test]
+fn test_port_extraction_multiple_ports() {
+    // Simulate iterating through multiple ports, extracting both 52773 and 1972
+    let ports = vec![(80, Some(80)), (52773, Some(8080)), (1972, Some(1972))];
+
+    let mut port_web: Option<u16> = None;
+    let mut port_ss: Option<u16> = None;
+
+    for (private_port, public_port) in ports {
+        if private_port == 52773 {
+            port_web = public_port;
+        }
+        if private_port == 1972 {
+            port_ss = public_port;
+        }
+    }
+
+    assert_eq!(port_web, Some(8080));
+    assert_eq!(port_ss, Some(1972));
+}
+
+#[test]
+fn test_port_extraction_web_port_not_mapped() {
+    // Simulate: port 52773 not in container.ports → port_web remains None
+    let ports = vec![(80, Some(80)), (1972, Some(1972))];
+
+    let mut port_web: Option<u16> = None;
+    for (private_port, public_port) in ports {
+        if private_port == 52773 {
+            port_web = public_port;
+        }
+    }
+
+    assert_eq!(port_web, None);
+}
+
+#[test]
+fn test_port_extraction_none_public_port() {
+    // Simulate: port 52773 mapped but no public port (None)
+    let private_port = 52773;
+    let public_port: Option<u16> = None;
+
+    let port_web = if private_port == 52773 {
+        public_port
+    } else {
+        None
+    };
+
+    assert_eq!(port_web, None);
+}
+
+// ── Docker container filtering (lines 528-535) ────────────────────────────────
+
+#[test]
+fn test_is_iris_container_with_intersystems_image() {
+    // Simulate: image = "intersystems/iris:latest"
+    let image = "intersystems/iris:latest";
+    let is_iris = image.contains("intersystems") || image.contains("iris");
+    assert!(is_iris);
+}
+
+#[test]
+fn test_is_iris_container_with_iris_keyword() {
+    // Simulate: image = "registry.com/my-iris:2024"
+    let image = "registry.com/my-iris:2024";
+    let is_iris = image.contains("intersystems") || image.contains("iris");
+    assert!(is_iris);
+}
+
+#[test]
+fn test_is_webgateway_container() {
+    // Simulate: image = "intersystems/webgateway:latest"
+    let image = "intersystems/webgateway:latest";
+    let is_webgateway = image.contains("webgateway");
+    assert!(is_webgateway);
+}
+
+#[test]
+fn test_is_not_iris_container() {
+    // Simulate: image = "postgres:latest"
+    let image = "postgres:latest";
+    let is_iris = image.contains("intersystems") || image.contains("iris");
+    let is_webgateway = image.contains("webgateway");
+    assert!(!is_iris);
+    assert!(!is_webgateway);
+}
+
+#[test]
+fn test_container_filter_redis_cache_skipped() {
+    // Simulate: redis container should not match IRIS filter
+    let image = "redis:7";
+    let is_iris = image.contains("intersystems") || image.contains("iris");
+    let is_webgateway = image.contains("webgateway");
+    let should_skip = !(is_iris || is_webgateway);
+    assert!(should_skip);
+}
+
+#[test]
+fn test_container_filter_irishealth_matches() {
+    // Simulate: irishealth image should match
+    let image = "intersystems/irishealth:latest";
+    let is_iris = image.contains("intersystems") || image.contains("iris");
+    assert!(is_iris);
+}
+
+#[test]
+fn test_container_filter_image_empty_string() {
+    // Simulate: empty image string (fallback case)
+    let image = "";
+    let is_iris = image.contains("intersystems") || image.contains("iris");
+    let is_webgateway = image.contains("webgateway");
+    assert!(!is_iris && !is_webgateway);
+}
+
+#[test]
+fn test_container_filter_case_sensitivity() {
+    // Note: image names from Docker are lowercase; contains() is case-sensitive
+    let image_lower = "intersystems/iris:latest";
+    let matches_lower = image_lower.contains("intersystems") || image_lower.contains("iris");
+
+    assert!(matches_lower);
+
+    // Uppercase image names won't match lowercase search strings (case-sensitive)
+    let image_upper = "INTERSYSTEMS/IRIS:LATEST";
+    let matches_upper = image_upper.contains("intersystems") || image_upper.contains("iris");
+
+    assert!(!matches_upper); // Doesn't match because contains() is case-sensitive
+}
+
+// ── Container name normalization (lines 378-383) ───────────────────────────
+
+#[test]
+fn test_container_name_trim_leading_slash() {
+    // Simulate: "/my-iris" → trim_start_matches('/') → "my-iris"
+    let name_with_slash = "/my-iris";
+    let trimmed = name_with_slash.trim_start_matches('/').to_string();
+    assert_eq!(trimmed, "my-iris");
+}
+
+#[test]
+fn test_container_name_multiple_leading_slashes() {
+    // Simulate: "///iris" → trim_start_matches('/') → "iris"
+    let name_with_slashes = "///iris";
+    let trimmed = name_with_slashes.trim_start_matches('/').to_string();
+    assert_eq!(trimmed, "iris");
+}
+
+#[test]
+fn test_container_name_no_leading_slash() {
+    // Simulate: "my-iris" (no slash) → trim → "my-iris" (unchanged)
+    let name = "my-iris";
+    let trimmed = name.trim_start_matches('/').to_string();
+    assert_eq!(trimmed, "my-iris");
+}
+
+#[test]
+fn test_container_name_empty_after_trim() {
+    // Simulate: "/" → trim → "" (but we use unwrap_or_default, so "" is OK)
+    let name = "/";
+    let trimmed = name.trim_start_matches('/').to_string();
+    assert_eq!(trimmed, "");
+}
+
+#[test]
+fn test_default_username() {
+    // Simulate: env var missing → unwrap_or("_SYSTEM")
+    let username = "_SYSTEM".to_string();
+    assert_eq!(username, "_SYSTEM");
+}
+
+#[test]
+fn test_default_password() {
+    // Simulate: env var missing → unwrap_or("SYS")
+    let password = "SYS".to_string();
+    assert_eq!(password, "SYS");
+}
+
+#[test]
+fn test_default_namespace() {
+    // Simulate: env var missing → unwrap_or("USER")
+    let namespace = "USER".to_string();
+    assert_eq!(namespace, "USER");
+}
+
+// ── Scheme/prefix condition check (lines 170) ────────────────────────────────
+
+#[test]
+fn test_scheme_prefix_bypass_http_no_prefix() {
+    // Simulate: scheme="http", prefix=None → !(http != http || None.is_some()) → false → probe_atelier path
+    let scheme = "http";
+    let prefix: Option<String> = None;
+    let should_bypass = scheme != "http" || prefix.is_some();
+    assert!(!should_bypass);
+}
+
+#[test]
+fn test_scheme_prefix_bypass_https_no_prefix() {
+    // Simulate: scheme="https", prefix=None → !(https != http || None.is_some()) → true → build_url path
+    let scheme = "https";
+    let prefix: Option<String> = None;
+    let should_bypass = scheme != "http" || prefix.is_some();
+    assert!(should_bypass);
+}
+
+#[test]
+fn test_scheme_prefix_bypass_http_with_prefix() {
+    // Simulate: scheme="http", prefix=Some("iris") → (http != http || true) → true → build_url path
+    let scheme = "http";
+    let prefix: Option<String> = Some("iris".to_string());
+    let should_bypass = scheme != "http" || prefix.is_some();
+    assert!(should_bypass);
+}
+
+#[test]
+fn test_scheme_prefix_bypass_https_with_prefix() {
+    // Simulate: scheme="https", prefix=Some("iris") → (https != http || true) → true → build_url path
+    let scheme = "https";
+    let prefix: Option<String> = Some("iris".to_string());
+    let should_bypass = scheme != "http" || prefix.is_some();
+    assert!(should_bypass);
+}

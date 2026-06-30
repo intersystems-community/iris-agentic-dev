@@ -257,3 +257,420 @@ fn iris_tools_registered_tool_names_non_empty() {
         "iris_global must be registered (052-iris-global)"
     );
 }
+
+// ── validate_read_only_sql: edge cases and comment handling ─────────────────
+
+#[test]
+fn validate_read_only_sql_block_comment() {
+    // SQL with /* */ block comment containing a keyword should still pass if outer SQL is clean
+    assert!(validate_read_only_sql("SELECT /* DELETE */ id FROM t").is_ok());
+}
+
+#[test]
+fn validate_read_only_sql_line_comment() {
+    // SQL with -- line comment containing a keyword should pass
+    assert!(validate_read_only_sql("SELECT id FROM t -- DELETE this later").is_ok());
+}
+
+#[test]
+fn validate_read_only_sql_quoted_keyword() {
+    // Quoted string containing a keyword should not trigger block
+    assert!(validate_read_only_sql("SELECT 'DELETE ME' as msg FROM t").is_ok());
+}
+
+#[test]
+fn validate_read_only_sql_double_quoted_identifier() {
+    // Double-quoted identifier containing keyword should not trigger
+    assert!(validate_read_only_sql("SELECT \"UPDATE\" FROM t").is_ok());
+}
+
+#[test]
+fn validate_read_only_sql_select_into_with_subquery() {
+    // SELECT INTO with subquery is allowed (e.g., INTO (SELECT ...))
+    assert!(validate_read_only_sql("SELECT col INTO (SELECT * FROM foo) FROM bar").is_ok());
+}
+
+#[test]
+fn validate_read_only_sql_create_blocked() {
+    assert!(validate_read_only_sql("CREATE TABLE Foo (id INT)").is_err());
+}
+
+#[test]
+fn validate_read_only_sql_drop_blocked() {
+    assert!(validate_read_only_sql("DROP TABLE Foo").is_err());
+}
+
+#[test]
+fn validate_read_only_sql_alter_blocked() {
+    assert!(validate_read_only_sql("ALTER TABLE Foo ADD col INT").is_err());
+}
+
+#[test]
+fn validate_read_only_sql_merge_blocked() {
+    assert!(validate_read_only_sql("MERGE INTO target t USING source s ON t.id=s.id").is_err());
+}
+
+#[test]
+fn validate_read_only_sql_truncate_blocked() {
+    assert!(validate_read_only_sql("TRUNCATE TABLE Foo").is_err());
+}
+
+#[test]
+fn validate_read_only_sql_exec_blocked() {
+    assert!(validate_read_only_sql("EXEC sp_stored_proc").is_err());
+}
+
+#[test]
+fn validate_read_only_sql_execute_blocked() {
+    assert!(validate_read_only_sql("EXECUTE sp_stored_proc").is_err());
+}
+
+#[test]
+fn validate_read_only_sql_load_blocked() {
+    assert!(validate_read_only_sql("LOAD DATA INTO TABLE Foo").is_err());
+}
+
+#[test]
+fn validate_read_only_sql_kill_blocked() {
+    assert!(validate_read_only_sql("KILL SESSION 123").is_err());
+}
+
+#[test]
+fn validate_read_only_sql_lock_blocked() {
+    assert!(validate_read_only_sql("LOCK TABLE Foo").is_err());
+}
+
+#[test]
+fn validate_read_only_sql_word_boundary_underscore() {
+    // "_UPDATE" is not a keyword (underscore-prefixed), should pass
+    assert!(validate_read_only_sql("SELECT _UPDATE FROM t").is_ok());
+}
+
+#[test]
+fn validate_read_only_sql_empty_after_comment_stripping() {
+    // Only comments and whitespace should fail with EMPTY
+    let result = validate_read_only_sql("/* comment */ -- line comment");
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err(), "EMPTY");
+}
+
+#[test]
+fn validate_read_only_sql_escaped_quote_in_string() {
+    // String with escaped quote should not break quote tracking
+    assert!(validate_read_only_sql("SELECT 'it\\'s ok' FROM t").is_ok());
+}
+
+#[test]
+fn validate_read_only_sql_nested_parens_for_depth_tracking() {
+    // Test that nested parens in WHERE clause don't confuse parsing
+    assert!(
+        validate_read_only_sql("SELECT id FROM t WHERE (a > 5 AND (b < 10 OR c = 20))").is_ok()
+    );
+}
+
+// ── translate_sql_macros: edge cases ───────────────────────────────────────
+
+#[test]
+fn translate_sql_macros_multiple_macros() {
+    let code = "&sql(SELECT 1 INTO :x FROM t)&sql(SELECT y INTO :z FROM u)";
+    let result = translate_sql_macros(code);
+    assert!(result.found, "multiple macros should be detected");
+    // Should have at least one translated — may not handle second depending on spacing
+    assert!(result.translated_code.contains("sqlrs1"));
+}
+
+#[test]
+fn translate_sql_macros_nested_parens() {
+    let code = "&sql(SELECT a, (SELECT b FROM c) as sub FROM t)";
+    let result = translate_sql_macros(code);
+    // Should not panic on nested parens
+    assert_eq!(result.found, true);
+}
+
+#[test]
+fn translate_sql_macros_call_statement_unsupported() {
+    let code = "&sql(CALL MyProc(:result OUT))";
+    let result = translate_sql_macros(code);
+    assert!(result.found);
+    assert!(!result.warnings.is_empty(), "CALL should have warning");
+    assert!(
+        result.warnings[0].contains("CALL"),
+        "Warning should mention CALL"
+    );
+}
+
+#[test]
+fn translate_sql_macros_dml_insert() {
+    let code = "&sql(INSERT INTO foo (a, b) VALUES (:x, :y))";
+    let result = translate_sql_macros(code);
+    assert!(result.found);
+    // Should translate to DML form
+    assert!(result.translated_code.contains("sqlrs1"));
+}
+
+#[test]
+fn translate_sql_macros_dml_update() {
+    let code = "&sql(UPDATE foo SET a=:x WHERE id=:y)";
+    let result = translate_sql_macros(code);
+    assert!(result.found);
+}
+
+#[test]
+fn translate_sql_macros_dml_delete() {
+    let code = "&sql(DELETE FROM foo WHERE id=:x)";
+    let result = translate_sql_macros(code);
+    assert!(result.found);
+}
+
+#[test]
+fn translate_sql_macros_dml_merge() {
+    let code =
+        "&sql(MERGE INTO target t USING source s ON t.id=s.id WHEN MATCHED THEN UPDATE SET val=:x)";
+    let result = translate_sql_macros(code);
+    assert!(result.found);
+}
+
+#[test]
+fn translate_sql_macros_unknown_statement() {
+    let code = "&sql(WITH cte AS (SELECT 1) SELECT * FROM cte)";
+    let result = translate_sql_macros(code);
+    assert!(result.found);
+    // WITH is not recognized, should have warning
+    assert!(!result.warnings.is_empty());
+}
+
+#[test]
+fn translate_sql_macros_case_insensitive_keywords() {
+    let code = "&sql(select id from t)";
+    let result = translate_sql_macros(code);
+    assert!(result.found, "lowercase select should be recognized");
+}
+
+// ── build_test_run_from_sql: comprehensive test outcomes ──────────────────
+
+#[test]
+fn build_test_run_from_sql_all_passed() {
+    use iris_agentic_dev_core::tools::{build_test_run_from_sql, MethodRow, SuiteRow};
+
+    let suites = vec![SuiteRow {
+        id: "1".to_string(),
+        name: "MySuite".to_string(),
+        status: 1,
+        duration_ms: Some(100.0),
+    }];
+    let methods = vec![
+        MethodRow {
+            suite_id: "1".to_string(),
+            name: "test1".to_string(),
+            class_name: "MyTest".to_string(),
+            status: 1, // passed
+            error_action: "".to_string(),
+            error_description: "".to_string(),
+            duration_ms: Some(50.0),
+        },
+        MethodRow {
+            suite_id: "1".to_string(),
+            name: "test2".to_string(),
+            class_name: "MyTest".to_string(),
+            status: 1, // passed
+            error_action: "".to_string(),
+            error_description: "".to_string(),
+            duration_ms: Some(50.0),
+        },
+    ];
+
+    let result = build_test_run_from_sql(&suites, &methods);
+    assert_eq!(result["success"], true);
+    assert_eq!(result["outcome"], "passed");
+    assert_eq!(result["total"], 2);
+    assert_eq!(result["passed"], 2);
+    assert_eq!(result["failed"], 0);
+    assert_eq!(result["errors"], 0);
+}
+
+#[test]
+fn build_test_run_from_sql_with_failures() {
+    use iris_agentic_dev_core::tools::{build_test_run_from_sql, MethodRow, SuiteRow};
+
+    let suites = vec![SuiteRow {
+        id: "1".to_string(),
+        name: "MySuite".to_string(),
+        status: 0,
+        duration_ms: Some(100.0),
+    }];
+    let methods = vec![
+        MethodRow {
+            suite_id: "1".to_string(),
+            name: "test1".to_string(),
+            class_name: "MyTest".to_string(),
+            status: 1, // passed
+            error_action: "".to_string(),
+            error_description: "".to_string(),
+            duration_ms: Some(50.0),
+        },
+        MethodRow {
+            suite_id: "1".to_string(),
+            name: "test2".to_string(),
+            class_name: "MyTest".to_string(),
+            status: 0, // failed
+            error_action: "".to_string(),
+            error_description: "".to_string(),
+            duration_ms: Some(50.0),
+        },
+    ];
+
+    let result = build_test_run_from_sql(&suites, &methods);
+    assert_eq!(result["success"], true);
+    assert_eq!(result["outcome"], "failed");
+    assert_eq!(result["total"], 2);
+    assert_eq!(result["passed"], 1);
+    assert_eq!(result["failed"], 1);
+}
+
+#[test]
+fn build_test_run_from_sql_with_errors() {
+    use iris_agentic_dev_core::tools::{build_test_run_from_sql, MethodRow, SuiteRow};
+
+    let suites = vec![SuiteRow {
+        id: "1".to_string(),
+        name: "MySuite".to_string(),
+        status: 2,
+        duration_ms: Some(100.0),
+    }];
+    let methods = vec![MethodRow {
+        suite_id: "1".to_string(),
+        name: "test1".to_string(),
+        class_name: "MyTest".to_string(),
+        status: 2, // error
+        error_action: "some_action".to_string(),
+        error_description: "error occurred".to_string(),
+        duration_ms: Some(100.0),
+    }];
+
+    let result = build_test_run_from_sql(&suites, &methods);
+    assert_eq!(result["success"], true);
+    assert_eq!(result["outcome"], "errored");
+    assert_eq!(result["errors"], 1);
+}
+
+#[test]
+fn build_test_run_from_sql_multiple_suites() {
+    use iris_agentic_dev_core::tools::{build_test_run_from_sql, MethodRow, SuiteRow};
+
+    let suites = vec![
+        SuiteRow {
+            id: "1".to_string(),
+            name: "Suite1".to_string(),
+            status: 1,
+            duration_ms: Some(50.0),
+        },
+        SuiteRow {
+            id: "2".to_string(),
+            name: "Suite2".to_string(),
+            status: 1,
+            duration_ms: Some(75.0),
+        },
+    ];
+    let methods = vec![
+        MethodRow {
+            suite_id: "1".to_string(),
+            name: "test1".to_string(),
+            class_name: "Test1".to_string(),
+            status: 1,
+            error_action: "".to_string(),
+            error_description: "".to_string(),
+            duration_ms: Some(50.0),
+        },
+        MethodRow {
+            suite_id: "2".to_string(),
+            name: "test2".to_string(),
+            class_name: "Test2".to_string(),
+            status: 1,
+            error_action: "".to_string(),
+            error_description: "".to_string(),
+            duration_ms: Some(75.0),
+        },
+    ];
+
+    let result = build_test_run_from_sql(&suites, &methods);
+    assert_eq!(result["total"], 2);
+    assert_eq!(result["duration_ms"], 125.0);
+    assert!(result["test_suites"].is_array());
+    assert_eq!(result["test_suites"].as_array().unwrap().len(), 2);
+}
+
+// ── build_test_detail: test case formatting ───────────────────────────────
+
+#[test]
+fn build_test_detail_with_failure_messages() {
+    use iris_agentic_dev_core::tools::{build_test_detail, MethodRow, SuiteRow};
+
+    let suites = vec![SuiteRow {
+        id: "1".to_string(),
+        name: "Suite".to_string(),
+        status: 0,
+        duration_ms: Some(100.0),
+    }];
+    let methods = vec![
+        MethodRow {
+            suite_id: "1".to_string(),
+            name: "test_pass".to_string(),
+            class_name: "MyTest".to_string(),
+            status: 1,
+            error_action: "".to_string(),
+            error_description: "".to_string(),
+            duration_ms: Some(50.0),
+        },
+        MethodRow {
+            suite_id: "1".to_string(),
+            name: "test_fail".to_string(),
+            class_name: "MyTest".to_string(),
+            status: 0,
+            error_action: "".to_string(),
+            error_description: "Assertion failed: expected 5, got 3".to_string(),
+            duration_ms: Some(50.0),
+        },
+    ];
+
+    let result = build_test_detail(&suites, &methods);
+    assert!(result["test_suites"].is_array());
+    let suite = &result["test_suites"][0];
+    assert_eq!(suite["tests"], 2);
+    assert_eq!(suite["failures"], 1);
+    let cases = &suite["test_cases"];
+    assert_eq!(
+        cases[1]["failure_message"],
+        "Assertion failed: expected 5, got 3"
+    );
+}
+
+// ── translate_symbols_query edge cases ──────────────────────────────────────
+
+#[test]
+fn translate_symbols_query_empty_query() {
+    let (sql, params) = iris_agentic_dev_core::tools::translate_symbols_query(50, "");
+    assert!(sql.contains("SELECT TOP 50"));
+    assert!(!sql.contains("WHERE"));
+    assert!(params.is_empty());
+}
+
+#[test]
+fn translate_symbols_query_custom_limit() {
+    let (sql, _) = iris_agentic_dev_core::tools::translate_symbols_query(100, "*");
+    assert!(sql.contains("TOP 100"));
+}
+
+#[test]
+fn translate_symbols_query_multiple_wildcards() {
+    let (sql, params) = iris_agentic_dev_core::tools::translate_symbols_query(50, "My.*.Service");
+    // Query with wildcard in middle uses LIKE
+    assert!(sql.contains("LIKE"));
+    assert_eq!(params[0].as_str().unwrap(), "My.%.Service");
+}
+
+#[test]
+fn translate_symbols_query_dot_prefix_with_wildcard() {
+    let (sql, params) = iris_agentic_dev_core::tools::translate_symbols_query(50, "HT.*");
+    assert!(sql.contains("STARTSWITH"));
+    assert_eq!(params[0].as_str().unwrap(), "HT.");
+}

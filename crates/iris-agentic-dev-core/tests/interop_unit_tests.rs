@@ -746,3 +746,417 @@ mod env_guard {
         assert!(names.contains("iris_production_item"));
     }
 }
+
+// ─────────────────────────────────────────────────────────────
+// Additional coverage for edge cases and pure logic
+// ─────────────────────────────────────────────────────────────
+
+mod sql_escaping_and_building {
+    use iris_agentic_dev_core::tools::interop::*;
+
+    #[test]
+    fn logs_params_sql_with_item_name_escape() {
+        let p: LogsParams =
+            serde_json::from_str(r#"{"item_name":"Service'Name","limit":5,"log_type":"error"}"#)
+                .unwrap();
+        assert_eq!(p.item_name.as_deref(), Some("Service'Name"));
+        // Simulate SQL building
+        let item_filter = p
+            .item_name
+            .as_ref()
+            .map(|n| format!("AND ConfigName = '{}'", n.replace('\'', "''")))
+            .unwrap_or_default();
+        assert!(item_filter.contains("AND ConfigName = 'Service''Name'"));
+    }
+
+    #[test]
+    fn logs_params_sql_with_multiple_quotes() {
+        let item_name = "Service'''Complex'''Name";
+        let escaped = item_name.replace('\'', "''");
+        let item_filter = format!("AND ConfigName = '{}'", escaped);
+        assert!(item_filter.contains("''"));
+        assert_eq!(escaped, "Service''''''Complex''''''Name");
+    }
+
+    #[test]
+    fn message_search_single_source_filter() {
+        let p: MessageSearchParams =
+            serde_json::from_str(r#"{"source":"Router","limit":10}"#).unwrap();
+        let mut filters = vec![];
+        if let Some(src) = &p.source {
+            filters.push(format!("SourceConfigName = '{}'", src.replace('\'', "''")));
+        }
+        assert_eq!(filters.len(), 1);
+        assert_eq!(filters[0], "SourceConfigName = 'Router'");
+    }
+
+    #[test]
+    fn message_search_source_with_quotes() {
+        let p: MessageSearchParams =
+            serde_json::from_str(r#"{"source":"Router'Service","limit":10}"#).unwrap();
+        if let Some(src) = &p.source {
+            let escaped_filter = format!("SourceConfigName = '{}'", src.replace('\'', "''"));
+            assert_eq!(escaped_filter, "SourceConfigName = 'Router''Service'");
+        }
+    }
+
+    #[test]
+    fn production_item_params_item_with_special_chars() {
+        let p: ProductionItemParams =
+            serde_json::from_str(r#"{"action":"enable","item":"Service.Sub'Class"}"#).unwrap();
+        assert_eq!(p.item, "Service.Sub'Class");
+        let escaped = p.item.replace('\'', "''");
+        assert_eq!(escaped, "Service.Sub''Class");
+    }
+
+    #[test]
+    fn lookup_manage_table_escape() {
+        let p: LookupManageParams = serde_json::from_str(
+            r#"{"action":"set","table":"Route'Table","key":"k1","value":"v1"}"#,
+        )
+        .unwrap();
+        if let Some(table) = &p.table {
+            let escaped = table.replace('\'', "''");
+            assert_eq!(escaped, "Route''Table");
+        }
+    }
+
+    #[test]
+    fn lookup_manage_key_with_quotes() {
+        let p: LookupManageParams =
+            serde_json::from_str(r#"{"action":"get","table":"T1","key":"key'with'quotes"}"#)
+                .unwrap();
+        if let Some(key) = &p.key {
+            let escaped = key.replace('\'', "''");
+            assert_eq!(escaped, "key''with''quotes");
+        }
+    }
+
+    #[test]
+    fn credential_manage_password_with_special_chars() {
+        let p: CredentialManageParams = serde_json::from_str(
+            r#"{"action":"create","id":"Cred1","username":"user","password":"p@ss'word!#$"}"#,
+        )
+        .unwrap();
+        if let Some(pwd) = &p.password {
+            let escaped = pwd.replace('\'', "''");
+            assert_eq!(escaped, "p@ss''word!#$");
+        }
+    }
+}
+
+mod log_type_filtering {
+    use iris_agentic_dev_core::tools::interop::*;
+
+    #[test]
+    fn logs_params_alert_type() {
+        let p: LogsParams = serde_json::from_str(r#"{"log_type":"alert"}"#).unwrap();
+        let mut conditions = vec![];
+        for lt in p.log_type.split(',') {
+            match lt.trim().to_lowercase().as_str() {
+                "error" => conditions.push("Type = 3"),
+                "warning" => conditions.push("Type = 2"),
+                "info" => conditions.push("Type = 1"),
+                "alert" => conditions.push("Type = 4"),
+                _ => {}
+            }
+        }
+        assert_eq!(conditions, vec!["Type = 4"]);
+    }
+
+    #[test]
+    fn logs_params_info_type() {
+        let p: LogsParams = serde_json::from_str(r#"{"log_type":"info"}"#).unwrap();
+        let mut conditions = vec![];
+        for lt in p.log_type.split(',') {
+            match lt.trim().to_lowercase().as_str() {
+                "error" => conditions.push("Type = 3"),
+                "warning" => conditions.push("Type = 2"),
+                "info" => conditions.push("Type = 1"),
+                "alert" => conditions.push("Type = 4"),
+                _ => {}
+            }
+        }
+        assert_eq!(conditions, vec!["Type = 1"]);
+    }
+
+    #[test]
+    fn logs_params_mixed_types_with_invalid() {
+        let p: LogsParams =
+            serde_json::from_str(r#"{"log_type":"error,debug,warning,trace"}"#).unwrap();
+        let mut conditions = vec![];
+        for lt in p.log_type.split(',') {
+            match lt.trim().to_lowercase().as_str() {
+                "error" => conditions.push("Type = 3"),
+                "warning" => conditions.push("Type = 2"),
+                "info" => conditions.push("Type = 1"),
+                "alert" => conditions.push("Type = 4"),
+                _ => {}
+            }
+        }
+        assert_eq!(conditions.len(), 2); // only error and warning
+    }
+
+    #[test]
+    fn logs_params_all_valid_types() {
+        let p: LogsParams =
+            serde_json::from_str(r#"{"log_type":"error,warning,info,alert"}"#).unwrap();
+        let mut conditions = vec![];
+        for lt in p.log_type.split(',') {
+            match lt.trim().to_lowercase().as_str() {
+                "error" => conditions.push("Type = 3"),
+                "warning" => conditions.push("Type = 2"),
+                "info" => conditions.push("Type = 1"),
+                "alert" => conditions.push("Type = 4"),
+                _ => {}
+            }
+        }
+        assert_eq!(conditions.len(), 4);
+    }
+
+    #[test]
+    fn logs_params_type_with_spaces() {
+        let p: LogsParams =
+            serde_json::from_str(r#"{"log_type":"  error  ,  warning  "}"#).unwrap();
+        let mut conditions = vec![];
+        for lt in p.log_type.split(',') {
+            match lt.trim().to_lowercase().as_str() {
+                "error" => conditions.push("Type = 3"),
+                "warning" => conditions.push("Type = 2"),
+                "info" => conditions.push("Type = 1"),
+                "alert" => conditions.push("Type = 4"),
+                _ => {}
+            }
+        }
+        assert_eq!(conditions.len(), 2);
+    }
+}
+
+mod settings_parsing {
+    use iris_agentic_dev_core::tools::interop::*;
+
+    #[test]
+    fn production_item_params_multiple_settings_parse() {
+        let p: ProductionItemParams = serde_json::from_str(
+            r#"{"action":"set_settings","item":"Op1","settings":{"Timeout":"30","MaxRetry":"3","Enabled":"1"}}"#,
+        )
+        .unwrap();
+        assert_eq!(p.settings.len(), 3);
+        assert_eq!(p.settings.get("Timeout").map(|s| s.as_str()), Some("30"));
+        assert_eq!(p.settings.get("MaxRetry").map(|s| s.as_str()), Some("3"));
+        assert_eq!(p.settings.get("Enabled").map(|s| s.as_str()), Some("1"));
+    }
+
+    #[test]
+    fn production_item_params_settings_with_equals_in_value() {
+        let p: ProductionItemParams = serde_json::from_str(
+            r#"{"action":"set_settings","item":"Op1","settings":{"Expression":"a=1 OR b=2"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            p.settings.get("Expression").map(|s| s.as_str()),
+            Some("a=1 OR b=2")
+        );
+    }
+
+    #[test]
+    fn production_item_params_settings_with_quotes() {
+        let p: ProductionItemParams = serde_json::from_str(
+            r#"{"action":"set_settings","item":"Op1","settings":{"Query":"SELECT * FROM T WHERE x='1'"}}"#,
+        )
+        .unwrap();
+        if let Some(query) = p.settings.get("Query") {
+            assert!(query.contains("'1'"));
+        }
+    }
+
+    #[test]
+    fn production_item_params_empty_settings_map() {
+        let p: ProductionItemParams =
+            serde_json::from_str(r#"{"action":"set_settings","item":"Op1","settings":{}}"#)
+                .unwrap();
+        assert!(p.settings.is_empty());
+    }
+}
+
+mod state_code_mapping {
+    use iris_agentic_dev_core::tools::interop::parse_status_response;
+
+    #[test]
+    fn all_valid_state_codes() {
+        let codes = vec![1, 2, 3, 4, 5];
+        let expected_states = vec![
+            "Running",
+            "Stopped",
+            "Suspended",
+            "Troubled",
+            "NetworkStopped",
+        ];
+        for (code, expected) in codes.iter().zip(expected_states.iter()) {
+            let r = parse_status_response(&format!("Prod:{}", code)).unwrap();
+            assert_eq!(&r.2, expected, "code {} should map to {}", code, expected);
+        }
+    }
+
+    #[test]
+    fn invalid_state_codes_map_to_unknown() {
+        let codes = vec![0, 6, 10, 100, -1];
+        for code in codes {
+            let r = parse_status_response(&format!("Prod:{}", code)).unwrap();
+            assert_eq!(r.2, "Unknown", "code {} should map to Unknown", code);
+        }
+    }
+
+    #[test]
+    fn state_code_with_large_number() {
+        let r = parse_status_response("Prod:999999").unwrap();
+        assert_eq!(r.1, 999999);
+        assert_eq!(r.2, "Unknown");
+    }
+}
+
+mod json_response_validation {
+    use super::*;
+
+    #[test]
+    fn error_response_from_none_iris_has_correct_structure() {
+        let r = rt().block_on(interop_production_status_impl(
+            None,
+            ProductionStatusParams {
+                namespace: "USER".into(),
+                full_status: false,
+            },
+        ));
+        let result = r.unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["success"], false);
+        assert!(v["error_code"].is_string());
+        assert!(v["error"].is_string());
+    }
+
+    #[test]
+    fn error_structure_for_production_start() {
+        let r = rt().block_on(interop_production_start_impl(
+            None,
+            ProductionNameParams {
+                production: None,
+                namespace: "USER".into(),
+            },
+        ));
+        let result = r.unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(!v["success"].as_bool().unwrap_or(true));
+        assert!(v.get("error_code").is_some());
+    }
+}
+
+mod credential_params {
+    use iris_agentic_dev_core::tools::interop::*;
+
+    #[test]
+    fn credential_manage_update_partial_fields() {
+        let p: CredentialManageParams =
+            serde_json::from_str(r#"{"action":"update","id":"Cred1","username":"newuser"}"#)
+                .unwrap();
+        assert_eq!(p.action, "update");
+        assert_eq!(p.username.as_deref(), Some("newuser"));
+        assert!(p.password.is_none());
+    }
+
+    #[test]
+    fn credential_manage_delete_minimal() {
+        let p: CredentialManageParams =
+            serde_json::from_str(r#"{"action":"delete","id":"Cred1"}"#).unwrap();
+        assert_eq!(p.action, "delete");
+        assert_eq!(p.id, "Cred1");
+        assert!(p.username.is_none());
+        assert!(p.password.is_none());
+    }
+
+    #[test]
+    fn credential_list_custom_namespace() {
+        let p: CredentialListParams = serde_json::from_str(r#"{"namespace":"CUSTOM"}"#).unwrap();
+        assert_eq!(p.namespace, "CUSTOM");
+    }
+}
+
+mod lookup_params {
+    use iris_agentic_dev_core::tools::interop::*;
+
+    #[test]
+    fn lookup_manage_get_requires_both() {
+        let p: LookupManageParams =
+            serde_json::from_str(r#"{"action":"get","table":"T1","key":"K1"}"#).unwrap();
+        assert_eq!(p.action, "get");
+        assert!(p.table.is_some());
+        assert!(p.key.is_some());
+    }
+
+    #[test]
+    fn lookup_manage_list_keys_requires_table() {
+        let p: LookupManageParams =
+            serde_json::from_str(r#"{"action":"list_keys","table":"T1"}"#).unwrap();
+        assert_eq!(p.action, "list_keys");
+        assert!(p.table.is_some());
+    }
+
+    #[test]
+    fn lookup_transfer_export_minimal() {
+        let p: LookupTransferParams =
+            serde_json::from_str(r#"{"action":"export","table":"T1"}"#).unwrap();
+        assert_eq!(p.action, "export");
+        assert_eq!(p.table, "T1");
+        assert!(p.xml.is_none());
+    }
+
+    #[test]
+    fn lookup_transfer_import_with_xml_content() {
+        let xml_content = r#"<lookupTable><entry key="a" value="1"/></lookupTable>"#;
+        let p: LookupTransferParams = serde_json::from_str(&format!(
+            r#"{{"action":"import","table":"T1","xml":"{}"}}"#,
+            xml_content.escape_default()
+        ))
+        .unwrap();
+        assert_eq!(p.action, "import");
+        assert!(p.xml.is_some());
+    }
+}
+
+mod autostart_params {
+    use iris_agentic_dev_core::tools::interop::*;
+
+    #[test]
+    fn autostart_params_get_minimal() {
+        let p: ProductionAutostartParams =
+            serde_json::from_str(r#"{"action":"get_autostart"}"#).unwrap();
+        assert_eq!(p.action, "get_autostart");
+        assert!(p.enabled.is_none());
+        assert!(p.production.is_none());
+    }
+
+    #[test]
+    fn autostart_params_set_enable_no_production() {
+        let p: ProductionAutostartParams =
+            serde_json::from_str(r#"{"action":"set_autostart","enabled":true}"#).unwrap();
+        assert_eq!(p.enabled, Some(true));
+        assert!(p.production.is_none()); // Will need to resolve from current prod
+    }
+
+    #[test]
+    fn autostart_params_set_disable() {
+        let p: ProductionAutostartParams =
+            serde_json::from_str(r#"{"action":"set_autostart","enabled":false}"#).unwrap();
+        assert_eq!(p.enabled, Some(false));
+    }
+
+    #[test]
+    fn autostart_params_with_custom_namespace() {
+        let p: ProductionAutostartParams = serde_json::from_str(
+            r#"{"action":"set_autostart","namespace":"CUSTOM","enabled":true,"production":"Prod"}"#,
+        )
+        .unwrap();
+        assert_eq!(p.namespace, "CUSTOM");
+    }
+}

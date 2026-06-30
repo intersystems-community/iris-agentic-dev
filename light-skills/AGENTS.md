@@ -130,6 +130,53 @@ iris_execute_method(class="%Library.Integer", method="IsValid", args=["42"])
 
 **Do NOT use `docker exec` / `docker cp` / `iris session` bash commands when the MCP is connected.** The MCP handles container targeting automatically after `iris_select_container`.
 
+### iris_admin — IRIS administration dispatcher
+
+All administration actions go through a single `iris_admin(action=..., ...)` dispatcher. Runs in `%SYS` namespace.
+
+**Read-only (always available, all mcpTemplates):**
+
+```
+iris_admin(action="list_namespaces")
+iris_admin(action="list_databases")
+iris_admin(action="list_users")
+iris_admin(action="list_roles")
+iris_admin(action="list_user_roles", username="jdoe")
+iris_admin(action="check_permission", resource="MyApp.Service", permission="USE")
+iris_admin(action="list_webapps")
+iris_admin(action="get_webapp", name="/myapp")
+
+# Observability (055-system-observability) — read-only, always permitted
+iris_admin(action="view_locks")                                  # active lock table
+iris_admin(action="view_processes", dataPolicy="allow")          # running PIDs (PHI-capable; block/redact/allow)
+iris_admin(action="view_processes", dataPolicy="redact")         # username/client redacted
+iris_admin(action="journal_search",                              # journal records; dataPolicy=allow required
+    dataPolicy="allow", global_pattern="IrisDevTest.*", max_records=100)
+iris_admin(action="journal_search",
+    dataPolicy="allow", time_range={"from": "2026-06-01T00:00:00Z", "to": "2026-06-30T00:00:00Z"})
+iris_admin(action="namespace_mappings", namespace="USER")        # glob/package/routine mappings for a namespace
+iris_admin(action="database_status")                             # all mounted databases + free space
+iris_admin(action="database_status", name="USER")                # single database
+```
+
+**Write (blocked on `mcpTemplate=live/test`):**
+
+```
+iris_admin(action="create_user", username="bob", password="...", roles="Developer")
+iris_admin(action="update_user", username="bob", enabled=false)
+iris_admin(action="delete_user", username="bob")
+iris_admin(action="create_namespace", name="MYNS", code_database="MYNS", data_database="MYNS")
+iris_admin(action="delete_namespace", name="MYNS")
+iris_admin(action="create_webapp", name="/myapp", namespace="USER")
+iris_admin(action="delete_webapp", name="/myapp")
+```
+
+**`dataPolicy` for view_processes / journal_search:**
+
+- `"block"` (default) — returns `DATA_POLICY_BLOCKED` immediately
+- `"redact"` — returns rows with `username`, `client_node_name`, `client_ip` replaced by `"[REDACTED]"`
+- `"allow"` — returns full data; `journal_search` requires this value; set in connection policy
+
 ### Reading class source from IRIS (INT / system classes)
 
 To read the source of any class — including system classes like `%ASQ.Engine` that have no `.cls` on disk:
@@ -396,6 +443,9 @@ Error codes returned in the `error_code` field of tool responses. All follow `SC
 | `UPLOAD_FAILED` | Atelier PUT rejected the document | `document`, `http_status` |
 | `CONTAINER_NOT_FOUND` | Named container not running in Docker | `container` |
 | `CONTAINER_UNREACHABLE` | Container found but Atelier HTTP probe failed | `container`, `port` |
+| `MISSING_PARAMS` | Required parameter absent — e.g. `journal_search` with neither `global_pattern` nor `time_range` | — |
+| `NAMESPACE_NOT_FOUND` | Requested namespace does not exist on this IRIS instance | `namespace` |
+| `DATABASE_NOT_FOUND` | Requested database name not found | `name` |
 
 **PHI gate bypass** — for `PHI_GATE_BLOCKED`, add `"acknowledgePhi": true` to the tool call params. This only works for per-global name checks; `DATA_POLICY_BLOCKED` (bulk-PHI tools like `journal_search`) cannot be bypassed with `acknowledgePhi`.
 

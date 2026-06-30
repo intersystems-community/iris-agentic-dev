@@ -580,4 +580,272 @@ mod tests {
     fn test_default_limit_value() {
         assert_eq!(default_limit(), 20);
     }
+
+    // ── Additional pure helper tests for line coverage ─────────────────────────
+
+    #[test]
+    fn test_ok_json_basic_value() {
+        let v = serde_json::json!({"success": true, "data": "test"});
+        let result = ok_json(v).unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        assert!(text.contains("success"));
+        assert!(text.contains("test"));
+    }
+
+    #[test]
+    fn test_ok_json_empty_object() {
+        let v = serde_json::json!({});
+        let result = ok_json(v).unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        assert_eq!(text, "{}");
+    }
+
+    #[test]
+    fn test_ok_json_array() {
+        let v = serde_json::json!([1, 2, 3]);
+        let result = ok_json(v).unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(parsed.is_array());
+    }
+
+    #[test]
+    fn test_ok_json_nested() {
+        let v = serde_json::json!({
+            "success": true,
+            "nested": {
+                "deep": {
+                    "value": 42
+                }
+            }
+        });
+        let result = ok_json(v).unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["nested"]["deep"]["value"], 42);
+    }
+
+    #[test]
+    fn test_err_json_basic() {
+        let result = err_json("TEST_CODE", "Test message").unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["success"], false);
+        assert_eq!(v["error_code"], "TEST_CODE");
+        assert_eq!(v["error"], "Test message");
+    }
+
+    #[test]
+    fn test_err_json_empty_code() {
+        let result = err_json("", "message").unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["success"], false);
+    }
+
+    #[test]
+    fn test_err_json_empty_message() {
+        let result = err_json("CODE", "").unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["success"], false);
+        assert_eq!(v["error"], "");
+    }
+
+    #[test]
+    fn test_err_json_special_chars() {
+        let result = err_json("ERR", "Message with \"quotes\" and 'apostrophes'").unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(v["error"].as_str().unwrap().contains("quotes"));
+    }
+
+    #[test]
+    fn test_learning_enabled_default_true() {
+        std::env::remove_var("OBJECTSCRIPT_LEARNING");
+        assert!(learning_enabled());
+    }
+
+    #[test]
+    fn test_learning_enabled_when_true() {
+        std::env::set_var("OBJECTSCRIPT_LEARNING", "true");
+        assert!(learning_enabled());
+        std::env::remove_var("OBJECTSCRIPT_LEARNING");
+    }
+
+    #[test]
+    fn test_learning_enabled_when_false() {
+        std::env::set_var("OBJECTSCRIPT_LEARNING", "false");
+        assert!(!learning_enabled());
+        std::env::remove_var("OBJECTSCRIPT_LEARNING");
+    }
+
+    #[test]
+    fn test_learning_enabled_various_true_values() {
+        let true_values = vec!["1", "yes", "anything-not-false"];
+        for val in true_values {
+            std::env::set_var("OBJECTSCRIPT_LEARNING", val);
+            assert!(learning_enabled(), "Value '{}' should enable learning", val);
+        }
+        std::env::remove_var("OBJECTSCRIPT_LEARNING");
+    }
+
+    #[test]
+    fn test_learning_enabled_only_false_disables() {
+        std::env::set_var("OBJECTSCRIPT_LEARNING", "false");
+        assert!(!learning_enabled());
+        std::env::set_var("OBJECTSCRIPT_LEARNING", "False");
+        assert!(learning_enabled(), "Only lowercase 'false' should disable");
+        std::env::remove_var("OBJECTSCRIPT_LEARNING");
+    }
+
+    #[test]
+    fn test_skills_namespace_custom() {
+        std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "CUSTOM");
+        let ns = skills_namespace();
+        assert_eq!(ns, "CUSTOM");
+        std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+    }
+
+    #[test]
+    fn test_skills_namespace_empty_string() {
+        std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "");
+        let ns = skills_namespace();
+        assert_eq!(ns, "");
+        std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+    }
+
+    #[test]
+    fn test_skills_namespace_special_chars() {
+        std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "SKILLS-TEST_1");
+        let ns = skills_namespace();
+        assert_eq!(ns, "SKILLS-TEST_1");
+        std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+    }
+
+    #[test]
+    fn test_kb_params_top_k_boundary_zero() {
+        let p: KbParams =
+            serde_json::from_str(r#"{"action": "recall", "query": "q", "top_k": 0}"#).unwrap();
+        assert_eq!(p.top_k, 0);
+    }
+
+    #[test]
+    fn test_kb_params_top_k_large() {
+        let p: KbParams =
+            serde_json::from_str(r#"{"action": "recall", "query": "q", "top_k": 1000}"#).unwrap();
+        assert_eq!(p.top_k, 1000);
+    }
+
+    #[test]
+    fn test_kb_params_all_fields() {
+        let p: KbParams = serde_json::from_str(
+            r#"{"action": "index", "path": "/docs", "query": "test", "top_k": 15}"#,
+        )
+        .unwrap();
+        assert_eq!(p.action, "index");
+        assert_eq!(p.path.as_deref(), Some("/docs"));
+        assert_eq!(p.query.as_deref(), Some("test"));
+        assert_eq!(p.top_k, 15);
+    }
+
+    #[test]
+    fn test_agent_info_params_limit_zero() {
+        let p: AgentInfoParams =
+            serde_json::from_str(r#"{"what": "history", "limit": 0}"#).unwrap();
+        assert_eq!(p.limit, 0);
+    }
+
+    #[test]
+    fn test_agent_info_params_limit_very_large() {
+        let p: AgentInfoParams =
+            serde_json::from_str(r#"{"what": "history", "limit": 999999}"#).unwrap();
+        assert_eq!(p.limit, 999999);
+    }
+
+    #[test]
+    fn test_agent_info_params_both_stats_and_history() {
+        let stats = AgentInfoParams {
+            what: "stats".to_string(),
+            limit: 10,
+        };
+        let history = AgentInfoParams {
+            what: "history".to_string(),
+            limit: 50,
+        };
+        assert_ne!(stats.what, history.what);
+        assert_eq!(stats.what, "stats");
+        assert_eq!(history.what, "history");
+    }
+
+    #[test]
+    fn test_skill_community_params_missing_action_error() {
+        let r: Result<SkillCommunityParams, _> = serde_json::from_str(r#"{"package": "test"}"#);
+        assert!(r.is_err());
+    }
+
+    #[test]
+    fn test_skill_params_empty_action() {
+        let p: SkillParams = serde_json::from_str(r#"{"action": ""}"#).unwrap();
+        assert_eq!(p.action, "");
+    }
+
+    #[test]
+    fn test_kb_params_empty_query() {
+        let p: KbParams = serde_json::from_str(r#"{"action": "recall", "query": ""}"#).unwrap();
+        assert_eq!(p.query.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn test_skill_params_null_query() {
+        let p: SkillParams =
+            serde_json::from_str(r#"{"action": "search", "query": null}"#).unwrap();
+        assert!(p.query.is_none());
+    }
+
+    #[test]
+    fn test_ok_json_null_value() {
+        let v = serde_json::json!(null);
+        let result = ok_json(v).unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        assert_eq!(text, "null");
+    }
+
+    #[test]
+    fn test_ok_json_string_value() {
+        let v = serde_json::json!("simple string");
+        let result = ok_json(v).unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        assert!(text.contains("simple string"));
+    }
+
+    #[test]
+    fn test_err_json_multiline_message() {
+        let result = err_json("MULTILINE", "Line 1\nLine 2\nLine 3").unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["error_code"], "MULTILINE");
+    }
+
+    #[test]
+    fn test_default_top_k_boundary() {
+        let val = default_top_k();
+        assert!(val > 0);
+        assert!(val <= 100);
+    }
+
+    #[test]
+    fn test_default_limit_boundary() {
+        let val = default_limit();
+        assert!(val > 0);
+        assert!(val <= 100);
+    }
+
+    #[test]
+    fn test_skills_namespace_reset_cycle() {
+        std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "TEMP");
+        assert_eq!(skills_namespace(), "TEMP");
+        std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+        assert_eq!(skills_namespace(), "USER");
+    }
 }

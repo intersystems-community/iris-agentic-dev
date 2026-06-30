@@ -1158,3 +1158,816 @@ fn test_host_with_container_sets_iris_container_env() {
     );
     std::env::remove_var("IRIS_CONTAINER");
 }
+
+// ── ToolCategory::as_str coverage ────────────────────────────────────────────
+
+#[test]
+fn test_tool_category_as_str_compile() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    assert_eq!(ToolCategory::Compile.as_str(), "compile");
+}
+
+#[test]
+fn test_tool_category_as_str_execute() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    assert_eq!(ToolCategory::Execute.as_str(), "execute");
+}
+
+#[test]
+fn test_tool_category_as_str_query() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    assert_eq!(ToolCategory::Query.as_str(), "query");
+}
+
+#[test]
+fn test_tool_category_as_str_search() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    assert_eq!(ToolCategory::Search.as_str(), "search");
+}
+
+#[test]
+fn test_tool_category_as_str_docs() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    assert_eq!(ToolCategory::Docs.as_str(), "docs");
+}
+
+#[test]
+fn test_tool_category_as_str_source_control() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    assert_eq!(ToolCategory::SourceControl.as_str(), "source_control");
+}
+
+#[test]
+fn test_tool_category_as_str_debug() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    assert_eq!(ToolCategory::Debug.as_str(), "debug");
+}
+
+#[test]
+fn test_tool_category_as_str_admin() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    assert_eq!(ToolCategory::Admin.as_str(), "admin");
+}
+
+#[test]
+fn test_tool_category_as_str_skill() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    assert_eq!(ToolCategory::Skill.as_str(), "skill");
+}
+
+#[test]
+fn test_tool_category_as_str_kb() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    assert_eq!(ToolCategory::Kb.as_str(), "kb");
+}
+
+// ── ToolCategory::from_str coverage ─────────────────────────────────────────
+
+#[test]
+fn test_tool_category_from_str_compile() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    use std::str::FromStr;
+    let cat = ToolCategory::from_str("compile").unwrap();
+    assert_eq!(cat, ToolCategory::Compile);
+}
+
+#[test]
+fn test_tool_category_from_str_execute() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    use std::str::FromStr;
+    let cat = ToolCategory::from_str("execute").unwrap();
+    assert_eq!(cat, ToolCategory::Execute);
+}
+
+#[test]
+fn test_tool_category_from_str_query() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    use std::str::FromStr;
+    let cat = ToolCategory::from_str("query").unwrap();
+    assert_eq!(cat, ToolCategory::Query);
+}
+
+#[test]
+fn test_tool_category_from_str_search() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    use std::str::FromStr;
+    let cat = ToolCategory::from_str("search").unwrap();
+    assert_eq!(cat, ToolCategory::Search);
+}
+
+#[test]
+fn test_tool_category_from_str_docs() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    use std::str::FromStr;
+    let cat = ToolCategory::from_str("docs").unwrap();
+    assert_eq!(cat, ToolCategory::Docs);
+}
+
+#[test]
+fn test_tool_category_from_str_source_control() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    use std::str::FromStr;
+    let cat = ToolCategory::from_str("source_control").unwrap();
+    assert_eq!(cat, ToolCategory::SourceControl);
+}
+
+#[test]
+fn test_tool_category_from_str_debug() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    use std::str::FromStr;
+    let cat = ToolCategory::from_str("debug").unwrap();
+    assert_eq!(cat, ToolCategory::Debug);
+}
+
+#[test]
+fn test_tool_category_from_str_admin() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    use std::str::FromStr;
+    let cat = ToolCategory::from_str("admin").unwrap();
+    assert_eq!(cat, ToolCategory::Admin);
+}
+
+#[test]
+fn test_tool_category_from_str_skill() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    use std::str::FromStr;
+    let cat = ToolCategory::from_str("skill").unwrap();
+    assert_eq!(cat, ToolCategory::Skill);
+}
+
+#[test]
+fn test_tool_category_from_str_kb() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    use std::str::FromStr;
+    let cat = ToolCategory::from_str("kb").unwrap();
+    assert_eq!(cat, ToolCategory::Kb);
+}
+
+#[test]
+fn test_tool_category_from_str_unknown() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    use std::str::FromStr;
+    let result = ToolCategory::from_str("unknown_category");
+    assert!(result.is_err(), "unknown tool category should be Err");
+    assert_eq!(
+        result.unwrap_err(),
+        "unknown tool category: 'unknown_category'"
+    );
+}
+
+// ── check_role_gate function coverage ────────────────────────────────────────
+
+#[test]
+fn test_check_role_gate_workspace_returns_none() {
+    use iris_agentic_dev_core::iris::workspace_config::{check_role_gate, ConnectionRole};
+    let result = check_role_gate(
+        &ConnectionRole::Workspace,
+        "iris_compile",
+        false,
+        "local",
+        false,
+    );
+    assert!(result.is_none(), "Workspace role should not be gated");
+}
+
+#[test]
+fn test_check_role_gate_control_plane_returns_none() {
+    use iris_agentic_dev_core::iris::workspace_config::{check_role_gate, ConnectionRole};
+    let result = check_role_gate(
+        &ConnectionRole::ControlPlane,
+        "iris_compile",
+        false,
+        "local",
+        false,
+    );
+    assert!(result.is_none(), "ControlPlane role should not be gated");
+}
+
+#[test]
+fn test_check_role_gate_subject_select_query_not_gated() {
+    use iris_agentic_dev_core::iris::workspace_config::{check_role_gate, ConnectionRole};
+    let result = check_role_gate(
+        &ConnectionRole::Subject,
+        "iris_query:SELECT",
+        false,
+        "subject",
+        false,
+    );
+    assert!(
+        result.is_none(),
+        "SELECT queries should not be gated on Subject"
+    );
+}
+
+#[test]
+fn test_check_role_gate_subject_lowercase_select_not_gated() {
+    use iris_agentic_dev_core::iris::workspace_config::{check_role_gate, ConnectionRole};
+    let result = check_role_gate(
+        &ConnectionRole::Subject,
+        "iris_query:select",
+        false,
+        "subject",
+        false,
+    );
+    assert!(result.is_none(), "lowercase select should not be gated");
+}
+
+#[test]
+fn test_check_role_gate_subject_source_control_status_not_gated() {
+    use iris_agentic_dev_core::iris::workspace_config::{check_role_gate, ConnectionRole};
+    let result = check_role_gate(
+        &ConnectionRole::Subject,
+        "iris_source_control:status",
+        false,
+        "subject",
+        false,
+    );
+    assert!(
+        result.is_none(),
+        "source_control:status should not be gated"
+    );
+}
+
+#[test]
+fn test_check_role_gate_subject_source_control_diff_not_gated() {
+    use iris_agentic_dev_core::iris::workspace_config::{check_role_gate, ConnectionRole};
+    let result = check_role_gate(
+        &ConnectionRole::Subject,
+        "iris_source_control:diff",
+        false,
+        "subject",
+        false,
+    );
+    assert!(result.is_none(), "source_control:diff should not be gated");
+}
+
+#[test]
+fn test_check_role_gate_subject_source_control_log_not_gated() {
+    use iris_agentic_dev_core::iris::workspace_config::{check_role_gate, ConnectionRole};
+    let result = check_role_gate(
+        &ConnectionRole::Subject,
+        "iris_source_control:log",
+        false,
+        "subject",
+        false,
+    );
+    assert!(result.is_none(), "source_control:log should not be gated");
+}
+
+#[test]
+fn test_check_role_gate_subject_source_control_list_not_gated() {
+    use iris_agentic_dev_core::iris::workspace_config::{check_role_gate, ConnectionRole};
+    let result = check_role_gate(
+        &ConnectionRole::Subject,
+        "iris_source_control:list",
+        false,
+        "subject",
+        false,
+    );
+    assert!(result.is_none(), "source_control:list should not be gated");
+}
+
+#[test]
+fn test_check_role_gate_subject_source_control_get_not_gated() {
+    use iris_agentic_dev_core::iris::workspace_config::{check_role_gate, ConnectionRole};
+    let result = check_role_gate(
+        &ConnectionRole::Subject,
+        "iris_source_control:get",
+        false,
+        "subject",
+        false,
+    );
+    assert!(result.is_none(), "source_control:get should not be gated");
+}
+
+#[test]
+fn test_check_role_gate_subject_hard_block_returns_error_json() {
+    use iris_agentic_dev_core::iris::workspace_config::{check_role_gate, ConnectionRole};
+    let result = check_role_gate(
+        &ConnectionRole::Subject,
+        "iris_source_control:commit",
+        false,
+        "prod",
+        true,
+    );
+    assert!(result.is_some(), "hard_block should return Some error");
+    let json = result.unwrap();
+    assert_eq!(json["error"].as_str(), Some("role_gate"));
+    assert_eq!(json["hard_block"].as_bool(), Some(true));
+    assert_eq!(json["confirm_ignored"].as_bool(), Some(true));
+    assert_eq!(json["role"].as_str(), Some("subject"));
+    assert_eq!(json["instance"].as_str(), Some("prod"));
+}
+
+#[test]
+fn test_check_role_gate_subject_soft_gate_confirm_true_bypasses() {
+    use iris_agentic_dev_core::iris::workspace_config::{check_role_gate, ConnectionRole};
+    let result = check_role_gate(
+        &ConnectionRole::Subject,
+        "iris_compile",
+        true,
+        "subject",
+        false,
+    );
+    assert!(result.is_none(), "confirm=true should bypass soft gate");
+}
+
+#[test]
+fn test_check_role_gate_subject_soft_gate_confirm_false_returns_error() {
+    use iris_agentic_dev_core::iris::workspace_config::{check_role_gate, ConnectionRole};
+    let result = check_role_gate(
+        &ConnectionRole::Subject,
+        "iris_compile",
+        false,
+        "mysubject",
+        false,
+    );
+    assert!(result.is_some(), "confirm=false should return error");
+    let json = result.unwrap();
+    assert_eq!(json["error"].as_str(), Some("role_gate"));
+    assert_eq!(json["role_gate"].as_bool(), Some(true));
+    assert_eq!(json["instance"].as_str(), Some("mysubject"));
+    assert_eq!(json["role"].as_str(), Some("subject"));
+    assert_eq!(json["required_confirmation"].as_str(), Some("iris_compile"));
+}
+
+// ── workspace_config_to_connection: scheme and username/password defaults ─────
+
+#[test]
+fn test_workspace_config_host_default_username_and_password() {
+    let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
+        host: Some("localhost".to_string()),
+        web_port: Some(52773),
+        username: None,
+        password: None,
+        ..Default::default()
+    };
+    let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
+    assert_eq!(
+        conn.username, "_SYSTEM",
+        "default username should be _SYSTEM"
+    );
+    assert_eq!(conn.password, "SYS", "default password should be SYS");
+}
+
+#[test]
+fn test_workspace_config_host_uses_username_password() {
+    let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
+        host: Some("localhost".to_string()),
+        web_port: Some(52773),
+        username: Some("custom_user".to_string()),
+        password: Some("custom_pass".to_string()),
+        ..Default::default()
+    };
+    let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
+    assert_eq!(conn.username, "custom_user");
+    assert_eq!(conn.password, "custom_pass");
+}
+
+#[test]
+fn test_workspace_config_scheme_strips_slashes() {
+    let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
+        host: Some("localhost".to_string()),
+        web_port: Some(52773),
+        scheme: Some("//https//".to_string()),
+        ..Default::default()
+    };
+    let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
+    assert!(
+        conn.base_url.contains("https"),
+        "scheme should strip slashes, got: {}",
+        conn.base_url
+    );
+}
+
+#[test]
+fn test_workspace_config_scheme_empty_string_becomes_http() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::remove_var("IRIS_SCHEME");
+    let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
+        host: Some("localhost".to_string()),
+        web_port: Some(52773),
+        scheme: Some("".to_string()),
+        ..Default::default()
+    };
+    let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
+    assert!(
+        conn.base_url.starts_with("http://"),
+        "empty scheme should default to http"
+    );
+}
+
+// ── workspace_config_to_connection: container env var priority ───────────────
+
+#[test]
+fn test_container_config_respects_custom_namespace_default() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::remove_var("IRIS_NAMESPACE");
+    std::env::remove_var("IRIS_CONTAINER");
+    let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
+        container: Some("iris-container".to_string()),
+        namespace: Some("FROM_CONFIG".to_string()),
+        ..Default::default()
+    };
+    workspace_config_to_connection(&cfg, "CUSTOM_DEFAULT");
+    assert_eq!(
+        std::env::var("IRIS_NAMESPACE").ok().as_deref(),
+        Some("FROM_CONFIG"),
+        "should use namespace from config when present"
+    );
+    std::env::remove_var("IRIS_NAMESPACE");
+    std::env::remove_var("IRIS_CONTAINER");
+}
+
+#[test]
+fn test_container_config_with_docker_only_sets_unreachable_url() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::remove_var("IRIS_CONTAINER");
+    let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
+        container: Some("docker-only-iris".to_string()),
+        docker_only: true,
+        ..Default::default()
+    };
+    let conn = workspace_config_to_connection(&cfg, "USER");
+    std::env::remove_var("IRIS_CONTAINER");
+    assert!(conn.is_some());
+    assert_eq!(conn.unwrap().base_url, "http://127.0.0.1:1");
+}
+
+// ── empty config field handling ──────────────────────────────────────────────
+
+#[test]
+fn test_load_toml_with_empty_web_prefix() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"host = "localhost"
+web_port = 52773
+web_prefix = ""
+"#,
+    );
+    let cfg = load_workspace_config(Some(dir.path().to_str().unwrap())).unwrap();
+    assert_eq!(
+        cfg.web_prefix.as_deref(),
+        Some(""),
+        "empty web_prefix should be preserved as Some(\"\")"
+    );
+}
+
+#[test]
+fn test_workspace_config_empty_web_prefix_ignored_in_url() {
+    let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
+        host: Some("localhost".to_string()),
+        web_port: Some(52773),
+        web_prefix: Some("".to_string()),
+        ..Default::default()
+    };
+    let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
+    assert_eq!(
+        conn.base_url, "http://localhost:52773",
+        "empty web_prefix should not create URL with trailing slash"
+    );
+}
+
+// ── env vars fallback for web_prefix/scheme ──────────────────────────────────
+
+#[test]
+fn test_iris_scheme_env_var_with_slashes_stripped() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::set_var("IRIS_SCHEME", "//https//");
+    let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
+        host: Some("localhost".to_string()),
+        web_port: Some(443),
+        scheme: None,
+        ..Default::default()
+    };
+    let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
+    std::env::remove_var("IRIS_SCHEME");
+    assert!(
+        conn.base_url.contains("https"),
+        "IRIS_SCHEME env var should strip slashes"
+    );
+}
+
+#[test]
+fn test_iris_web_prefix_env_var_with_slashes_stripped() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::set_var("IRIS_WEB_PREFIX", "//myprefix//");
+    let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
+        host: Some("localhost".to_string()),
+        web_port: Some(52773),
+        web_prefix: None,
+        ..Default::default()
+    };
+    let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
+    std::env::remove_var("IRIS_WEB_PREFIX");
+    assert_eq!(
+        conn.base_url, "http://localhost:52773/myprefix",
+        "IRIS_WEB_PREFIX should strip leading/trailing slashes"
+    );
+}
+
+// ── empty string edge cases ──────────────────────────────────────────────────
+
+#[test]
+fn test_iris_scheme_env_var_empty_defaults_to_http() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::set_var("IRIS_SCHEME", "");
+    let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
+        host: Some("localhost".to_string()),
+        web_port: Some(52773),
+        scheme: None,
+        ..Default::default()
+    };
+    let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
+    std::env::remove_var("IRIS_SCHEME");
+    assert!(
+        conn.base_url.starts_with("http://"),
+        "empty IRIS_SCHEME env var should default to http"
+    );
+}
+
+#[test]
+fn test_iris_web_prefix_env_var_empty_not_included() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    std::env::set_var("IRIS_WEB_PREFIX", "");
+    let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
+        host: Some("localhost".to_string()),
+        web_port: Some(52773),
+        web_prefix: None,
+        ..Default::default()
+    };
+    let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
+    std::env::remove_var("IRIS_WEB_PREFIX");
+    assert_eq!(
+        conn.base_url, "http://localhost:52773",
+        "empty IRIS_WEB_PREFIX env var should be filtered out"
+    );
+}
+
+// ── build_workspace_config_json: edge cases ──────────────────────────────────
+
+#[test]
+fn test_build_workspace_config_json_operate_mode_empty_instances() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"mode = "operate"
+"#,
+    );
+    let json = build_workspace_config_json(Some(dir.path().to_str().unwrap()), &[]);
+    assert_eq!(json["mode"].as_str(), Some("operate"));
+    assert!(json["instances"].is_object());
+    assert_eq!(json["instances"].as_object().unwrap().len(), 0);
+}
+
+#[test]
+fn test_build_workspace_config_json_instance_no_container_running_false() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.remote]
+host = "example.com"
+"#,
+    );
+    let json = build_workspace_config_json(Some(dir.path().to_str().unwrap()), &[]);
+    assert_eq!(
+        json["instances"]["remote"]["running"].as_bool(),
+        Some(false)
+    );
+}
+
+#[test]
+fn test_build_workspace_config_json_develop_mode_with_no_container() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(&dir, r#"namespace = "USER""#);
+    let json = build_workspace_config_json(Some(dir.path().to_str().unwrap()), &[]);
+    assert!(json["found"].as_bool().unwrap_or(false));
+    assert!(json["container"].is_null() || json["container"].as_str() == Some(""));
+}
+
+// ── validate_fleet_config edge cases ─────────────────────────────────────────
+
+#[test]
+fn test_validate_fleet_config_known_memory_home_unchanged() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.local]
+container = "local-iris"
+
+[instance.remote]
+host = "remote.example.com"
+memory-home = "local"
+"#,
+    );
+    let mut fleet = load_fleet_config(Some(dir.path().to_str().unwrap())).unwrap();
+    validate_fleet_config(&mut fleet);
+    assert_eq!(
+        fleet.instance["remote"].memory_home.as_deref(),
+        Some("local"),
+        "known memory-home should remain unchanged"
+    );
+}
+
+#[test]
+fn test_validate_fleet_config_multiple_unknown_memory_homes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.inst1]
+host = "inst1.example.com"
+memory-home = "unknown1"
+
+[instance.inst2]
+host = "inst2.example.com"
+memory-home = "unknown2"
+"#,
+    );
+    let mut fleet = load_fleet_config(Some(dir.path().to_str().unwrap())).unwrap();
+    validate_fleet_config(&mut fleet);
+    assert_eq!(
+        fleet.instance["inst1"].memory_home.as_deref(),
+        Some("self"),
+        "first unknown memory-home should fall back to self"
+    );
+    assert_eq!(
+        fleet.instance["inst2"].memory_home.as_deref(),
+        Some("self"),
+        "second unknown memory-home should fall back to self"
+    );
+}
+
+// ── generate_operate_toml_content specifics ──────────────────────────────────
+
+#[test]
+fn test_generate_operate_toml_content_interpolates_container_name() {
+    use iris_agentic_dev_core::iris::workspace_config::generate_operate_toml_content;
+    let content = generate_operate_toml_content("myspecialapp-iris", "MYAPP");
+    assert!(content.contains("myspecialapp-iris"));
+    assert!(content.contains("MYAPP"));
+}
+
+#[test]
+fn test_generate_operate_toml_content_has_mode_operate() {
+    use iris_agentic_dev_core::iris::workspace_config::generate_operate_toml_content;
+    let content = generate_operate_toml_content("app-iris", "USER");
+    assert!(content.contains("mode = \"operate\""));
+}
+
+// ── DataPolicy enum variant coverage ─────────────────────────────────────────
+
+#[test]
+fn test_data_policy_block_deserialization() {
+    use iris_agentic_dev_core::iris::workspace_config::{load_fleet_config_from_str, DataPolicy};
+    let toml_str = r#"
+[policy.server1]
+dataPolicy = "block"
+"#;
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    assert_eq!(
+        fleet.policies["server1"].data_policy,
+        Some(DataPolicy::Block)
+    );
+}
+
+#[test]
+fn test_data_policy_allow_deserialization() {
+    use iris_agentic_dev_core::iris::workspace_config::{load_fleet_config_from_str, DataPolicy};
+    let toml_str = r#"
+[policy.server1]
+dataPolicy = "allow"
+"#;
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    assert_eq!(
+        fleet.policies["server1"].data_policy,
+        Some(DataPolicy::Allow)
+    );
+}
+
+#[test]
+fn test_data_policy_redact_deserialization() {
+    use iris_agentic_dev_core::iris::workspace_config::{load_fleet_config_from_str, DataPolicy};
+    let toml_str = r#"
+[policy.server1]
+dataPolicy = "redact"
+"#;
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    assert_eq!(
+        fleet.policies["server1"].data_policy,
+        Some(DataPolicy::Redact)
+    );
+}
+
+// ── McpTemplate enum variant coverage ─────────────────────────────────────────
+
+#[test]
+fn test_mcp_template_dev_deserialization() {
+    use iris_agentic_dev_core::iris::workspace_config::{load_fleet_config_from_str, McpTemplate};
+    let toml_str = r#"
+[policy.server1]
+mcpTemplate = "dev"
+"#;
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    assert_eq!(
+        fleet.policies["server1"].mcp_template,
+        Some(McpTemplate::Dev)
+    );
+}
+
+#[test]
+fn test_mcp_template_test_deserialization() {
+    use iris_agentic_dev_core::iris::workspace_config::{load_fleet_config_from_str, McpTemplate};
+    let toml_str = r#"
+[policy.server1]
+mcpTemplate = "test"
+"#;
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    assert_eq!(
+        fleet.policies["server1"].mcp_template,
+        Some(McpTemplate::Test)
+    );
+}
+
+#[test]
+fn test_mcp_template_live_deserialization() {
+    use iris_agentic_dev_core::iris::workspace_config::{load_fleet_config_from_str, McpTemplate};
+    let toml_str = r#"
+[policy.server1]
+mcpTemplate = "live"
+"#;
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    assert_eq!(
+        fleet.policies["server1"].mcp_template,
+        Some(McpTemplate::Live)
+    );
+}
+
+#[test]
+fn test_mcp_template_unknown_returns_none_with_warning() {
+    use iris_agentic_dev_core::iris::workspace_config::load_fleet_config_from_str;
+    let toml_str = r#"
+[policy.server1]
+mcpTemplate = "unknown_template"
+"#;
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    // Unknown template should be treated as None (deserialize_opt_mcp_template returns Ok(None))
+    assert!(
+        fleet.policies["server1"].mcp_template.is_none(),
+        "unknown mcpTemplate should return None"
+    );
+}
+
+// ── policy blocklist fields ──────────────────────────────────────────────────
+
+#[test]
+fn test_policy_global_blocklist_deserialization() {
+    use iris_agentic_dev_core::iris::workspace_config::load_fleet_config_from_str;
+    let toml_str = r#"
+[policy.server1]
+globalBlocklist = ["pattern1", "pattern2"]
+"#;
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    assert_eq!(
+        fleet.policies["server1"].global_blocklist,
+        vec!["pattern1", "pattern2"]
+    );
+}
+
+#[test]
+fn test_policy_data_policy_kill_allowlist_deserialization() {
+    use iris_agentic_dev_core::iris::workspace_config::load_fleet_config_from_str;
+    let toml_str = r#"
+[policy.server1]
+dataPolicyKillAllowlist = ["kill_pattern1", "kill_pattern2"]
+"#;
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    assert_eq!(
+        fleet.policies["server1"].data_policy_kill_allowlist,
+        vec!["kill_pattern1", "kill_pattern2"]
+    );
+}
+
+// ── policy allow list (tool categories) ──────────────────────────────────────
+
+#[test]
+fn test_policy_allow_list_deserialization() {
+    use iris_agentic_dev_core::iris::workspace_config::load_fleet_config_from_str;
+    let toml_str = r#"
+[policy.server1]
+allow = ["compile", "execute", "query"]
+"#;
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    let allow = fleet.policies["server1"].allow.as_ref().unwrap();
+    assert_eq!(allow.len(), 3);
+    assert!(allow.contains(&ToolCategory::Compile));
+    assert!(allow.contains(&ToolCategory::Execute));
+    assert!(allow.contains(&ToolCategory::Query));
+}

@@ -395,6 +395,12 @@ fn test_handle_iris_doc_get_object_cls() {
             elicitation_id: None,
             elicitation_answer: None,
             compile: false,
+            start: None,
+            end: None,
+            compiled_type: None,
+            pattern: None,
+            category: None,
+            max_results: None,
         };
         let r = handle_iris_doc(&conn, &client, p, &elicitation_store).await;
         let v = result_json(r);
@@ -433,6 +439,12 @@ fn test_handle_iris_doc_head_object_cls() {
             elicitation_id: None,
             elicitation_answer: None,
             compile: false,
+            start: None,
+            end: None,
+            compiled_type: None,
+            pattern: None,
+            category: None,
+            max_results: None,
         };
         // Must not panic; any structured JSON response is acceptable
         let r = handle_iris_doc(&conn, &client, p, &elicitation_store).await;
@@ -671,6 +683,12 @@ fn test_handle_iris_doc_batch_get() {
             elicitation_id: None,
             elicitation_answer: None,
             compile: false,
+            start: None,
+            end: None,
+            compiled_type: None,
+            pattern: None,
+            category: None,
+            max_results: None,
         };
         let r = handle_iris_doc(&conn, &client, p, &elicitation_store).await;
         let v = result_json(r);
@@ -11633,6 +11651,12 @@ async fn test_doc_put_returns_200_with_status_errors() {
             elicitation_id: None,
             elicitation_answer: None,
             compile: false,
+            start: None,
+            end: None,
+            compiled_type: None,
+            pattern: None,
+            category: None,
+            max_results: None,
         },
         &elicitation_store,
     )
@@ -11703,6 +11727,12 @@ async fn test_doc_put_compile_non_2xx_compile_request() {
             elicitation_id: None,
             elicitation_answer: None,
             compile: true,
+            start: None,
+            end: None,
+            compiled_type: None,
+            pattern: None,
+            category: None,
+            max_results: None,
         },
         &elicitation_store,
     )
@@ -11762,6 +11792,12 @@ async fn test_doc_delete_non_2xx_non_404() {
             elicitation_id: None,
             elicitation_answer: None,
             compile: false,
+            start: None,
+            end: None,
+            compiled_type: None,
+            pattern: None,
+            category: None,
+            max_results: None,
         },
         &elicitation_store,
     )
@@ -11819,6 +11855,12 @@ async fn test_doc_put_non_2xx_upload() {
             elicitation_id: None,
             elicitation_answer: None,
             compile: false,
+            start: None,
+            end: None,
+            compiled_type: None,
+            pattern: None,
+            category: None,
+            max_results: None,
         },
         &elicitation_store,
     )

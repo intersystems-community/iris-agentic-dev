@@ -1269,4 +1269,373 @@ mod tests {
         assert!(!stripped.contains("Storage Old"));
         assert!(stripped.contains("Property X"));
     }
+
+    // ── derive_routine_name pure function tests ───────────────────────────────
+
+    #[test]
+    fn test_derive_routine_name_cls() {
+        // .cls files should map to .1 routine name
+        let result = derive_routine_name("MyApp.Foo.cls");
+        assert_eq!(result, Some("MyApp.Foo.1".to_string()));
+    }
+
+    #[test]
+    fn test_derive_routine_name_cls_uppercase() {
+        // Uppercase .CLS should also work
+        let result = derive_routine_name("MyApp.Foo.CLS");
+        assert_eq!(result, Some("MyApp.Foo.1".to_string()));
+    }
+
+    #[test]
+    fn test_derive_routine_name_cls_mixed_case() {
+        let result = derive_routine_name("MyApp.Foo.Cls");
+        assert_eq!(result, Some("MyApp.Foo.1".to_string()));
+    }
+
+    #[test]
+    fn test_derive_routine_name_mac() {
+        // .mac files should strip extension
+        let result = derive_routine_name("MyRoutine.mac");
+        assert_eq!(result, Some("MyRoutine".to_string()));
+    }
+
+    #[test]
+    fn test_derive_routine_name_mac_uppercase() {
+        let result = derive_routine_name("MyRoutine.MAC");
+        assert_eq!(result, Some("MyRoutine".to_string()));
+    }
+
+    #[test]
+    fn test_derive_routine_name_int() {
+        // .int files should strip extension
+        let result = derive_routine_name("MyRoutine.int");
+        assert_eq!(result, Some("MyRoutine".to_string()));
+    }
+
+    #[test]
+    fn test_derive_routine_name_int_uppercase() {
+        let result = derive_routine_name("MyRoutine.INT");
+        assert_eq!(result, Some("MyRoutine".to_string()));
+    }
+
+    #[test]
+    fn test_derive_routine_name_inc_returns_none() {
+        // .inc files have no INT form — return None
+        let result = derive_routine_name("MyMacros.inc");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_derive_routine_name_inc_uppercase_returns_none() {
+        let result = derive_routine_name("MyMacros.INC");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_derive_routine_name_unknown_ext_strips_ext() {
+        // Unknown extension should strip it
+        let result = derive_routine_name("MyFile.xyz");
+        assert_eq!(result, Some("MyFile".to_string()));
+    }
+
+    #[test]
+    fn test_derive_routine_name_no_extension() {
+        // No extension — return as-is
+        let result = derive_routine_name("MyRoutine");
+        assert_eq!(result, Some("MyRoutine".to_string()));
+    }
+
+    #[test]
+    fn test_derive_routine_name_complex_namespace() {
+        // Complex multi-level namespace
+        let result = derive_routine_name("App.Module.Sub.Class.cls");
+        assert_eq!(result, Some("App.Module.Sub.Class.1".to_string()));
+    }
+
+    // ── glob_to_regex pure function tests ──────────────────────────────────────
+
+    #[test]
+    fn test_glob_to_regex_basic_wildcard() {
+        let re_str = glob_to_regex("User.*");
+        // Should convert * to .* and escape literal dots
+        assert!(re_str.contains("User\\..*"));
+        assert!(re_str.starts_with("(?i)^"));
+        assert!(re_str.ends_with("$"));
+    }
+
+    #[test]
+    fn test_glob_to_regex_question_mark() {
+        let re_str = glob_to_regex("My?.cls");
+        // ? should map to . (any single char)
+        assert!(re_str.contains("My."));
+        let re = regex::Regex::new(&re_str).unwrap();
+        assert!(re.is_match("Myf.cls"));
+        assert!(re.is_match("MYF.CLS")); // case-insensitive
+    }
+
+    #[test]
+    fn test_glob_to_regex_case_insensitive() {
+        let re_str = glob_to_regex("User.*");
+        let re = regex::Regex::new(&re_str).unwrap();
+        // Regex should be case-insensitive (?i prefix)
+        assert!(re.is_match("USER.Foo"));
+        assert!(re.is_match("user.bar"));
+        assert!(re.is_match("User.Test"));
+    }
+
+    #[test]
+    fn test_glob_to_regex_exact_match() {
+        let re_str = glob_to_regex("Exact.Name.cls");
+        // No wildcards — exact match with escaping
+        assert!(re_str.contains("Exact\\.Name\\.cls"));
+        let re = regex::Regex::new(&re_str).unwrap();
+        assert!(re.is_match("Exact.Name.cls"));
+        assert!(!re.is_match("Exact.Name.clsx"));
+    }
+
+    #[test]
+    fn test_glob_to_regex_multiple_wildcards() {
+        let re_str = glob_to_regex("App.*.Sub.*");
+        let re = regex::Regex::new(&re_str).unwrap();
+        assert!(re.is_match("App.Module.Sub.Class.cls"));
+        assert!(re.is_match("App.X.Sub.Y"));
+    }
+
+    #[test]
+    fn test_glob_to_regex_all_wildcards() {
+        let re_str = glob_to_regex("*.*");
+        let re = regex::Regex::new(&re_str).unwrap();
+        assert!(re.is_match("Anything.AtAll"));
+        assert!(re.is_match("X.Y"));
+    }
+
+    #[test]
+    fn test_glob_to_regex_dot_escaping() {
+        let re_str = glob_to_regex("File.mac");
+        // Literal dots must be escaped in regex
+        let re = regex::Regex::new(&re_str).unwrap();
+        assert!(re.is_match("File.mac"));
+        assert!(!re.is_match("FilXmac")); // dot is not a wildcard
+    }
+
+    #[test]
+    fn test_glob_to_regex_empty_string() {
+        let re_str = glob_to_regex("");
+        // Empty pattern should produce (?i)^$ regex
+        assert_eq!(re_str, "(?i)^$");
+    }
+
+    // ── Additional slice_lines edge case tests ─────────────────────────────────
+
+    #[test]
+    fn test_slice_lines_single_line_request() {
+        let lines = vec!["only".to_string()];
+        let (sliced, start, end, clamped) = slice_lines(&lines, 1, 1);
+        assert_eq!(sliced.len(), 1);
+        assert_eq!(sliced[0], "only");
+        assert_eq!(start, 1);
+        assert_eq!(end, 1);
+        assert!(!clamped);
+    }
+
+    #[test]
+    fn test_slice_lines_empty_array() {
+        let lines: Vec<String> = vec![];
+        let (sliced, _, _, clamped) = slice_lines(&lines, 1, 10);
+        assert!(sliced.is_empty());
+        assert!(clamped);
+    }
+
+    #[test]
+    fn test_slice_lines_negative_start_clamped() {
+        let lines: Vec<String> = (1..=5).map(|i| format!("line{i}")).collect();
+        let (sliced, start, _, _) = slice_lines(&lines, -10, 3);
+        // Negative start should be clamped to 1
+        assert_eq!(start, 1);
+        assert_eq!(sliced.len(), 3);
+    }
+
+    #[test]
+    fn test_slice_lines_zero_start_clamped() {
+        let lines: Vec<String> = (1..=5).map(|i| format!("line{i}")).collect();
+        let (sliced, start, _, _) = slice_lines(&lines, 0, 3);
+        // Zero start should be clamped to 1
+        assert_eq!(start, 1);
+        assert_eq!(sliced.len(), 3);
+    }
+
+    #[test]
+    fn test_slice_lines_exact_boundaries() {
+        let lines: Vec<String> = (1..=10).map(|i| format!("line{i}")).collect();
+        let (sliced, start, end, clamped) = slice_lines(&lines, 5, 10);
+        assert_eq!(sliced.len(), 6); // lines 5-10 inclusive = 6 lines
+        assert_eq!(start, 5);
+        assert_eq!(end, 10);
+        assert!(!clamped);
+        assert_eq!(sliced[0], "line5");
+        assert_eq!(sliced[5], "line10");
+    }
+
+    #[test]
+    fn test_slice_lines_middle_range() {
+        let lines: Vec<String> = (1..=20).map(|i| format!("line{i}")).collect();
+        let (sliced, _, _, _) = slice_lines(&lines, 5, 10);
+        assert_eq!(sliced.len(), 6);
+        assert_eq!(sliced[0], "line5");
+    }
+
+    // ── Additional strip_storage_blocks edge cases ─────────────────────────────
+
+    #[test]
+    fn test_strip_storage_blocks_nested_braces() {
+        // Storage block with nested braces
+        let cls =
+            "Class Foo {\nStorage Default {\n<Data>{\n  <Item>{value}</Item>\n}\n</Data>\n}\n}";
+        let (stripped, flag) = strip_storage_blocks(cls);
+        assert!(flag);
+        assert!(!stripped.contains("Storage Default"));
+        assert!(stripped.contains("Class Foo"));
+    }
+
+    #[test]
+    fn test_strip_storage_blocks_empty_class() {
+        let cls = "Class Foo {\n}";
+        let (stripped, flag) = strip_storage_blocks(cls);
+        assert!(!flag);
+        assert_eq!(stripped, cls);
+    }
+
+    #[test]
+    fn test_strip_storage_blocks_only_storage() {
+        // Class with only Storage block
+        let cls = "Class Foo {\nStorage Default {\n<Type>T</Type>\n}\n}";
+        let (stripped, flag) = strip_storage_blocks(cls);
+        assert!(flag);
+        assert!(stripped.contains("Class Foo"));
+        assert!(!stripped.contains("Storage"));
+    }
+
+    #[test]
+    fn test_strip_storage_blocks_storage_with_different_name() {
+        let cls = "Class Foo {\nStorage MyCustom {\n<Data/>\n}\n}";
+        let (stripped, flag) = strip_storage_blocks(cls);
+        assert!(flag);
+        assert!(!stripped.contains("Storage MyCustom"));
+        assert!(stripped.contains("Class Foo"));
+    }
+
+    #[test]
+    fn test_strip_storage_blocks_storage_at_end() {
+        let cls = "Class Foo {\nProperty X As %String;\nStorage Default {\n<Type>T</Type>\n}\n}";
+        let (stripped, flag) = strip_storage_blocks(cls);
+        assert!(flag);
+        assert!(stripped.contains("Property X"));
+        assert!(!stripped.contains("Storage Default"));
+    }
+
+    #[test]
+    fn test_strip_storage_blocks_storage_multiple_lines_no_brace_on_first() {
+        // Storage block where opening brace is on next line
+        let cls = "Class Foo {\nStorage Default\n{\n<Type>T</Type>\n}\n}";
+        let (stripped, flag) = strip_storage_blocks(cls);
+        assert!(flag);
+        assert!(!stripped.contains("Storage Default"));
+        assert!(stripped.contains("Class Foo"));
+    }
+
+    // ── Additional doc_content_to_string edge cases ────────────────────────────
+
+    #[test]
+    fn test_doc_content_to_string_mixed_types() {
+        let body = serde_json::json!({
+            "result": {
+                "content": ["line1", 123, "line2", null, "line3"]
+            }
+        });
+        let s = doc_content_to_string(&body);
+        assert!(s.contains("line1"));
+        assert!(s.contains("line2"));
+        assert!(s.contains("line3"));
+        // Non-string values are filtered out
+        let line_count = s.lines().count();
+        assert_eq!(line_count, 3);
+    }
+
+    #[test]
+    fn test_doc_content_to_string_all_non_strings() {
+        let body = serde_json::json!({
+            "result": {
+                "content": [123, null, true]
+            }
+        });
+        let s = doc_content_to_string(&body);
+        assert_eq!(s, "");
+    }
+
+    #[test]
+    fn test_doc_content_to_string_single_line() {
+        let body = serde_json::json!({
+            "result": {
+                "content": ["single line"]
+            }
+        });
+        let s = doc_content_to_string(&body);
+        assert_eq!(s, "single line");
+    }
+
+    #[test]
+    fn test_doc_content_to_string_with_empty_strings() {
+        let body = serde_json::json!({
+            "result": {
+                "content": ["line1", "", "line2"]
+            }
+        });
+        let s = doc_content_to_string(&body);
+        assert!(s.contains("line1"));
+        assert!(s.contains("line2"));
+        let parts: Vec<&str> = s.split('\n').collect();
+        assert_eq!(parts.len(), 3); // line1, empty string, line2
+    }
+
+    #[test]
+    fn test_doc_content_to_string_special_chars() {
+        let body = serde_json::json!({
+            "result": {
+                "content": ["Class Foo {", "  Property X;", "}"]
+            }
+        });
+        let s = doc_content_to_string(&body);
+        assert!(s.contains("Class Foo {"));
+        assert!(s.contains("Property X"));
+        assert!(s.contains("}"));
+    }
+
+    // ── ok_json and err_json helper tests ──────────────────────────────────────
+
+    #[test]
+    fn test_ok_json_creates_success_response() {
+        let val = serde_json::json!({"data": "test"});
+        let result = ok_json(val).unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["data"], "test");
+    }
+
+    #[test]
+    fn test_err_json_creates_error_response() {
+        let result = err_json("TEST_ERROR", "Test message").unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["success"], false);
+        assert_eq!(v["error_code"], "TEST_ERROR");
+        assert_eq!(v["error"], "Test message");
+    }
+
+    #[test]
+    fn test_err_json_empty_message() {
+        let result = err_json("CODE", "").unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["error"], "");
+    }
 }

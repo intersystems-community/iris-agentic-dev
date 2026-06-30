@@ -12,6 +12,9 @@
 //!   DATA_POLICY_BLOCKED — dataPolicy=block on PHI-capable tool
 //!   SYSTEM_BLOCKLIST    — global name matches hardcoded or custom blocklist
 //!   PHI_GATE_BLOCKED    — global name matches PHI pattern, no acknowledgePhi
+//!   MISSING_PARAMS      — required parameter absent (e.g. journal_search with no filters)
+//!   NAMESPACE_NOT_FOUND — requested namespace does not exist on this IRIS instance
+//!   DATABASE_NOT_FOUND  — requested database name not found
 
 use crate::iris::workspace_config::ConnectionPolicy;
 

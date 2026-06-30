@@ -292,6 +292,15 @@ name = "test_coverage_gaps"
 path = "tests/unit/test_coverage_gaps.rs"
 
 [[test]]
+name = "test_iris_admin_observability_unit"
+path = "tests/unit/test_iris_admin_observability_unit.rs"
+
+[[test]]
+name = "test_iris_admin_observability_live"
+path = "tests/integration/test_iris_admin_observability_live.rs"
+required-features = ["testing"]
+
+[[test]]
 name = "test_sm_e2e"
 path = "tests/integration/test_sm_e2e.rs"
 

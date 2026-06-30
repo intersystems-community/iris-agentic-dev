@@ -805,4 +805,193 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "ADMIN_WRITE_DISABLED");
     }
+
+    // ── Additional pure helper tests for line coverage ─────────────────────────
+
+    #[test]
+    fn test_ok_json_empty_object() {
+        let v = serde_json::json!({});
+        let result = ok_json(v).unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        assert!(text.contains("{}"), "ok_json should preserve empty object");
+    }
+
+    #[test]
+    fn test_ok_json_nested_structure() {
+        let v = serde_json::json!({
+            "success": true,
+            "data": {
+                "nested": "value",
+                "count": 42
+            }
+        });
+        let result = ok_json(v).unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["data"]["nested"], "value");
+        assert_eq!(parsed["data"]["count"], 42);
+    }
+
+    #[test]
+    fn test_ok_json_array() {
+        let v = serde_json::json!([1, 2, 3, 4, 5]);
+        let result = ok_json(v).unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(parsed.is_array());
+        assert_eq!(parsed.as_array().unwrap().len(), 5);
+    }
+
+    #[test]
+    fn test_err_json_code_and_message() {
+        let result = err_json("TEST_ERROR", "This is a test error message").unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["error_code"], "TEST_ERROR");
+        assert_eq!(v["error"], "This is a test error message");
+        assert_eq!(v["success"], false);
+    }
+
+    #[test]
+    fn test_err_json_with_special_chars() {
+        let result = err_json("ENCODE_TEST", "Error with \"quotes\" and 'apostrophes'").unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["error_code"], "ENCODE_TEST");
+        assert!(v["error"].as_str().unwrap().contains("quotes"));
+    }
+
+    #[test]
+    fn test_err_json_empty_message() {
+        let result = err_json("EMPTY_ERROR", "").unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["error_code"], "EMPTY_ERROR");
+        assert_eq!(v["error"], "");
+        assert_eq!(v["success"], false);
+    }
+
+    #[test]
+    fn test_iris_unreachable_error_format() {
+        let err = iris_unreachable();
+        let msg = format!("{:?}", err);
+        assert!(msg.contains("IRIS_UNREACHABLE"));
+    }
+
+    #[test]
+    fn test_write_disabled_has_correct_message() {
+        let result = write_disabled().unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["success"], false);
+        assert_eq!(v["error_code"], "ADMIN_WRITE_DISABLED");
+        assert!(v["error"].as_str().unwrap().contains("IRIS_ADMIN_TOOLS"));
+    }
+
+    #[test]
+    fn test_admin_write_allowed_various_invalid_values() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let invalid_values = vec!["false", "2", "yes", "no", "", "null"];
+        for val in invalid_values {
+            std::env::set_var("IRIS_ADMIN_TOOLS", val);
+            assert!(
+                !admin_write_allowed(),
+                "Value '{}' should not allow writes",
+                val
+            );
+        }
+        std::env::remove_var("IRIS_ADMIN_TOOLS");
+    }
+
+    #[test]
+    fn test_admin_write_allowed_true_mixed_case() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let mixed_cases = vec!["True", "TRUE", "TrUe"];
+        for val in mixed_cases {
+            std::env::set_var("IRIS_ADMIN_TOOLS", val);
+            assert!(admin_write_allowed(), "Value '{}' should allow writes", val);
+        }
+        std::env::remove_var("IRIS_ADMIN_TOOLS");
+    }
+
+    #[test]
+    fn test_ok_json_number_values() {
+        let v = serde_json::json!({
+            "int_val": 42,
+            "float_val": 3.14,
+            "negative": -10,
+            "zero": 0
+        });
+        let result = ok_json(v).unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["int_val"], 42);
+        assert!(parsed["float_val"].as_f64().is_some());
+        assert_eq!(parsed["negative"], -10);
+        assert_eq!(parsed["zero"], 0);
+    }
+
+    #[test]
+    fn test_ok_json_boolean_values() {
+        let v = serde_json::json!({
+            "enabled": true,
+            "disabled": false
+        });
+        let result = ok_json(v).unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["enabled"], true);
+        assert_eq!(parsed["disabled"], false);
+    }
+
+    #[test]
+    fn test_err_json_multi_word_code() {
+        let result = err_json("COMPLEX_ERROR_CODE_123", "Multi-code test").unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["error_code"], "COMPLEX_ERROR_CODE_123");
+    }
+
+    #[test]
+    fn test_err_json_unicode_message() {
+        let result = err_json("UNICODE_ERROR", "Error with émojis and ümlaut").unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["error_code"], "UNICODE_ERROR");
+        assert!(v["error"].as_str().unwrap().contains("moji"));
+    }
+
+    #[test]
+    fn test_response_content_structure() {
+        let v = serde_json::json!({"test": "data"});
+        let result = ok_json(v).unwrap();
+        assert!(!result.content.is_empty());
+        let content = &result.content[0];
+        assert!(content.raw.as_text().is_some());
+    }
+
+    #[test]
+    fn test_err_json_response_always_has_success_false() {
+        let cases = vec![("CODE1", "msg1"), ("CODE2", "msg2"), ("", "")];
+        for (code, msg) in cases {
+            let result = err_json(code, msg).unwrap();
+            let text = result.content[0].raw.as_text().unwrap().text.clone();
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(
+                v["success"], false,
+                "err_json should always set success=false"
+            );
+        }
+    }
+
+    #[test]
+    fn test_admin_write_allowed_unset_and_set_again() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("IRIS_ADMIN_TOOLS");
+        assert!(!admin_write_allowed());
+        std::env::set_var("IRIS_ADMIN_TOOLS", "1");
+        assert!(admin_write_allowed());
+        std::env::remove_var("IRIS_ADMIN_TOOLS");
+        assert!(!admin_write_allowed());
+    }
 }
