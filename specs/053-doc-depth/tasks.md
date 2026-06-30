@@ -140,11 +140,20 @@ a live IRIS with a compiled class. Verify INT content returned.
 - [ ] T026 [US2] Implement `DocMode::Compiled` arm in `handle_iris_doc` in
       `crates/iris-agentic-dev-core/src/tools/doc.rs`:
   - Return `NOT_COMPILED` immediately if `name` ends with `.inc` (case-insensitive)
-  - Validate `compiled_type` if provided — only `"INT"` or `"OBJ"` (default `"INT"`)
-  - Derive target doc name: strip original extension, append `.INT` or `.OBJ`
-  - Fetch via Atelier GET `/doc/{derived_name}` using existing get path
-  - Return `{success: true, name: original_name, compiled_name: derived_name, category: "INT",
-content: String, total_lines: i64}` — join lines with `\n` for content field
+  - Validate `compiled_type` if provided — only `"INT"` supported in v1 (OBJ deferred);
+    return `INVALID_PARAMS` for unknown values
+  - Derive IRIS routine name: `.cls` → strip `.cls`, append `.1`; `.mac` → strip `.mac`;
+    `.int` → use as-is (see research.md Decision 2)
+  - Build ObjectScript for `execute_via_generator`:
+    `Set rtn = ##class(%Library.Routine).%OpenId("{routine}.INT")`
+    `If rtn = "" { Write "NOT_COMPILED",$C(10)  Quit }`
+    `Do rtn.Rewind()`
+    `While 'rtn.AtEnd { Write rtn.ReadLine(),$C(10) }`
+    `Write "DONE",$C(10)`
+  - Parse output: if first line is `NOT_COMPILED` → return `NOT_COMPILED` error;
+    else collect lines until `DONE` sentinel
+  - Return `{success: true, name: original_name, routine: derived_routine, category: "INT",
+content: String, total_lines: i64}` — join lines with `\n`
 - [ ] T027 [US2] Run `cargo test -p iris-agentic-dev-core test_iris_doc_depth` — all US1+US2
       unit tests pass
 
@@ -174,7 +183,7 @@ on a live IRIS. Verify array of doc metadata objects returned.
       `pattern` → `MISSING_PARAMS`
 - [ ] T032 [US3] Add integration test to `test_iris_doc_depth_live.rs` — `#[ignore]`;
       list with `pattern="%Library.*"`, `category="CLS"`, `max_results=5`; verify response
-      has `{success: true, documents: [...], total_returned: 5, truncated: true}`
+      has `{success: true, documents: [...], count: 5, truncated: true}`
 
 ### Implementation for US3
 
@@ -184,11 +193,14 @@ on a live IRIS. Verify array of doc metadata objects returned.
   - Validate `category` if provided — allowed values: `"CLS"`, `"MAC"`, `"INT"`, `"INC"`,
     `"ALL"` (default `"ALL"`) → `INVALID_PARAMS` on unknown
   - Clamp `max_results` (default 200) via `clamp_max_results`
-  - Build Atelier URL: `GET /api/atelier/v1/{ns}/docs?filter={pattern}&cat={cat}&generated=0`
-  - Fetch, parse `result.content` array of `{name, cat, ts, size}` objects
+  - Build Atelier URL: `GET /api/atelier/v1/{ns}/docnames/{cat}` (no filter; server-side
+    glob not supported — see research.md Decision 1)
+  - Fetch full listing, convert glob pattern to Rust regex, filter client-side
+    (same approach as `iris_compile` wildcard expansion in `mod.rs:2111`)
+  - For `category="ALL"`: fetch CLS, MAC, INT, INC endpoints and merge
   - Apply `max_results` cap, set `truncated` if capped
-  - Return `{success: true, documents: [{name, category, ts, size}...],
-total_returned: i64, truncated: bool, namespace: String}`
+  - Return `{success: true, documents: [{name, category, ts}...],
+count: i64, truncated: bool, namespace: String}`
 - [ ] T034 [US3] Run `cargo test -p iris-agentic-dev-core test_iris_doc_depth` — all US1–US3
       unit tests pass
 
@@ -234,7 +246,7 @@ total_returned: i64, truncated: bool, namespace: String}`
     - Code: `Set result = ##class({class}).{method}({args_csv})\n Write result,$C(10)`
     - **No `{`/`}` in output** — plain string result only; document v1 limitation
   - Call `execute_via_generator(&code, &ns, client)`
-  - Return `{success: true, result: String}` on success; `IRIS_EXECUTE_ERROR` on error
+  - Return `{success: true, return_value: String}` on success; `IRIS_EXECUTE_ERROR` on error
 - [ ] T041 [US4] Run `cargo test -p iris-agentic-dev-core test_iris_doc_depth` — all US1–US4
       unit tests pass
 

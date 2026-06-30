@@ -67,32 +67,55 @@ No new Atelier endpoint needed — reuses existing `/doc/{name}` GET.
 
 ## Compiled Implementation
 
-Atelier supports fetching compiled INT by appending `.INT` to the class name:
+**Verified 2026-06-29**: `GET /doc/ClassName.INT` returns error 16005 "Document does NOT exist"
+on IRIS 2026.2.0L. INT documents are NOT exposed via Atelier `docnames` or `doc` endpoints.
 
-```text
-GET /api/atelier/v1/{ns}/doc/MyClass.INT
+**Implementation**: Use `execute_via_generator` + `%Library.Routine` ObjectScript:
+
+```objectscript
+ Set rtn = ##class(%Library.Routine).%OpenId("{routine_name}.INT")
+ If rtn = "" { Write "NOT_COMPILED",$C(10)  Quit }
+ Do rtn.Rewind()
+ While 'rtn.AtEnd { Write rtn.ReadLine(),$C(10) }
+ Write "DONE",$C(10)
 ```
 
-For `.MAC` routines: request `MyRoutine.INT` (same pattern).
-For `.INC` includes: return `NOT_COMPILED` immediately (no INT form exists).
+Routine name derivation:
 
-The response shape mirrors `mode=get` but with `category: "INT"`.
+- `.cls` → strip extension, IRIS compiles `MyApp.Foo.cls` to routine `MyApp.Foo.1`
+- `.mac` → strip extension directly (`MyRoutine.mac` → `MyRoutine`)
+- `.inc` → return `NOT_COMPILED` immediately (no INT form exists)
+- `.int` → use as-is
 
-Stale detection: compare `ts` field from the INT response vs the CLS source `ts` — if INT
-`ts` is older, set `stale: true`. If either timestamp is absent, omit `stale`.
+Tool category remains **Query** — `%Library.Routine` read is read-only.
+
+The generator body must not contain `{`/`}` characters — plain text lines from the
+routine are safe. Output parsed in Rust: lines until `DONE`, or `NOT_COMPILED` if absent.
+
+Stale detection: omit (Atelier `.INT` endpoint unavailable; `%Library.Routine` does not
+expose a compile timestamp separate from source `ts`). Reserve for a future version.
 
 ## List Implementation
 
-Atelier `GET /docs?filter={pattern}&cat={category}` returns a document listing.
-Check the existing `iris_info(what=documents)` handler in `info.rs` — it uses `/docnames/CLS`
-already. For `mode=list` we need the richer `/docs` endpoint that returns metadata
-(size, modified date per document).
+**Verified 2026-06-29**: Atelier `/docs` endpoint returns `{result: {}}` (empty) on
+IRIS 2026.2.0L. The `filter=` param on `/docnames/` only matches exact names — wildcards
+return 0 results. Server-side glob filtering is NOT supported.
+
+**Implementation**: Fetch all documents for the category, filter client-side with Rust regex:
 
 ```text
-GET /api/atelier/v1/{ns}/docs?filter={glob}&cat={cat}&generated=0
+GET /api/atelier/v1/{ns}/docnames/{cat}   (no filter param)
+→ returns [{name, cat, ts, upd, db, gen}, ...]
 ```
 
-Response: `result.content` array of `{name, cat, ts, size}` objects.
+In Rust: convert the user's glob pattern to a regex (same approach as `iris_compile`
+wildcard expansion at `mod.rs:2111`), filter entries, apply `max_results` cap.
+
+Response fields from Atelier: `name` (string), `cat` (string), `ts` (timestamp string),
+`size` is NOT returned by `/docnames/` — **omit `size` from the response** (spec update
+needed; see research.md Decision 4).
+
+For `category="ALL"`: fetch from CLS, MAC, INT, INC endpoints and merge results.
 
 Clamp to `max_results` (default 200, max 1000). Pattern validation: reject empty,
 `*`, `**`, or patterns starting with `*` with no prefix — `MISSING_PARAMS`.

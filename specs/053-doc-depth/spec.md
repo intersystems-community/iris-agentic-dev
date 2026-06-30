@@ -140,7 +140,7 @@ the IRIS version string.
 
 - **FR-001**: `iris_doc` MUST support `mode=fragment` accepting `name`, `start` (integer, 1-based), and `end` (integer, inclusive). Returns lines `start`–`end` with original line numbers. Clamps `end` to document length; returns `clamped: true` when clamped.
 - **FR-002**: `iris_doc` MUST support `mode=compiled` accepting `name` and optional `type` (`INT` default, `OBJ`). Returns the compiled representation. Returns `NOT_COMPILED` if no compiled form exists. `.INC` files always return `NOT_COMPILED`.
-- **FR-003**: `iris_doc` MUST support `mode=list` accepting `pattern` (required glob), optional `category` filter, and `max_results` (default 200, max 1000). Returns `{documents: [{name, size, modified, category}], count, truncated}`.
+- **FR-003**: `iris_doc` MUST support `mode=list` accepting `pattern` (required glob), optional `category` filter (default `"ALL"`), and `max_results` (default 200, max 1000). Returns `{documents: [{name, ts, category}], count, truncated}`. Note: Atelier `/docnames/` does not expose `size`; omitted from v1 response.
 - **FR-004**: `mode=list` MUST reject a missing or wildcard-only pattern (`*`, `**`, `*.cls` with nothing before the wildcard) with `MISSING_PARAMS`.
 - **FR-005**: A new `iris_execute_method` tool MUST accept `class`, `method`, `args` (string array, optional), and `namespace`. Invokes the named ClassMethod and returns `{success: true, return_value: string}`.
 - **FR-006**: `iris_execute_method` MUST be `ToolCategory::Execute` — blocked by `mcpTemplate=live` and `mcpTemplate=test`.
@@ -154,7 +154,7 @@ the IRIS version string.
 
 - **Document Fragment**: A contiguous line range from a named IRIS document. Identified by `(name, start, end)`. Read-only; does not persist independently.
 - **Compiled Document**: The intermediate compiled form of a source document (`INT` or `OBJ` category). May be stale relative to source.
-- **Document Listing Entry**: Metadata record containing `name`, `size` (bytes), `modified` (ISO timestamp), and `category`.
+- **Document Listing Entry**: Metadata record containing `name`, `size` (bytes), `ts` (Atelier timestamp string), and `category`.
 - **ClassMethod Invocation**: A stateless single-shot call identified by `(class, method, args[], namespace)`. No object or session is retained between calls.
 
 ---
