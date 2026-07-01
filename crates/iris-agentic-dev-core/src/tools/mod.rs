@@ -1366,6 +1366,266 @@ pub fn clamp_max_rows_affected(value: Option<u32>) -> u32 {
     }
 }
 
+/// True if a tool-call result's JSON body has `success: true`.
+fn is_success(result: &CallToolResult) -> bool {
+    result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t.text).ok())
+        .and_then(|v| v.get("success").and_then(|s| s.as_bool()))
+        .unwrap_or(false)
+}
+
+/// `iris_query` `mode="explain"` — returns the raw IRIS query plan for a SELECT/WITH
+/// statement, with no rows transferred. See spec 057-sql-power FR-003/FR-004.
+async fn iris_query_explain(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    p: &QueryParams,
+) -> Result<CallToolResult, McpError> {
+    let first_word = p
+        .query
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_uppercase();
+    if p.query.trim().is_empty() {
+        return err_json("EMPTY_QUERY", "SQL query is empty.");
+    }
+    if first_word != "SELECT" && first_word != "WITH" {
+        return err_json(
+            "EXPLAIN_REQUIRES_SELECT",
+            "explain mode only accepts SELECT statements (including WITH/CTE).",
+        );
+    }
+
+    let query_url = iris.versioned_ns_url(&p.namespace, "/action/query");
+    let explain_sql = format!("EXPLAIN {}", p.query);
+    let resp = client
+        .post(&query_url)
+        .basic_auth(&iris.username, Some(&iris.password))
+        .json(&serde_json::json!({"query": explain_sql}))
+        .send()
+        .await
+        .map_err(|e| McpError::internal_error(format!("HTTP error: {e}"), None))?;
+
+    if !resp.status().is_success() {
+        return err_json_with_url(
+            "IRIS_UNREACHABLE",
+            &format!("HTTP {}", resp.status()),
+            &query_url,
+        );
+    }
+
+    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    if let Some(errors) = body["status"]["errors"].as_array() {
+        if !errors.is_empty() {
+            let msg = errors[0]["error"].as_str().unwrap_or("SQL error");
+            return err_json("SQL_ERROR", msg);
+        }
+    }
+
+    let plan_text = body["result"]["content"][0]["Plan"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    if plan_text.is_empty() {
+        return err_json(
+            "EXPLAIN_NOT_SUPPORTED",
+            "IRIS returned no plan text for EXPLAIN on this query/version.",
+        );
+    }
+
+    ok_json(serde_json::json!({
+        "success": true,
+        "plan_text": plan_text,
+        "query_hash": query_hash(&p.query),
+    }))
+}
+
+/// `iris_query` `mode="count"` — returns a row count for `table` or `query` without
+/// transferring rows. See spec 057-sql-power FR-006/FR-007/FR-008.
+async fn iris_query_count(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    p: &QueryParams,
+) -> Result<CallToolResult, McpError> {
+    let table = p.table.as_deref();
+    let query = if p.query.trim().is_empty() {
+        None
+    } else {
+        Some(p.query.as_str())
+    };
+    if table.is_none() && query.is_none() {
+        return err_json(
+            "MISSING_TARGET",
+            "mode=\"count\" requires either `table` or `query`.",
+        );
+    }
+
+    let count_sql = build_count_query(table, query);
+    let query_url = iris.versioned_ns_url(&p.namespace, "/action/query");
+    let resp = client
+        .post(&query_url)
+        .basic_auth(&iris.username, Some(&iris.password))
+        .json(&serde_json::json!({"query": count_sql}))
+        .send()
+        .await
+        .map_err(|e| McpError::internal_error(format!("HTTP error: {e}"), None))?;
+
+    if !resp.status().is_success() {
+        return err_json_with_url(
+            "IRIS_UNREACHABLE",
+            &format!("HTTP {}", resp.status()),
+            &query_url,
+        );
+    }
+
+    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    if let Some(errors) = body["status"]["errors"].as_array() {
+        if !errors.is_empty() {
+            let msg = errors[0]["error"].as_str().unwrap_or("SQL error");
+            return err_json("SQL_ERROR", msg);
+        }
+    }
+
+    let count = body["result"]["content"][0]
+        .as_object()
+        .and_then(|obj| obj.values().next())
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+
+    ok_json(serde_json::json!({"success": true, "count": count}))
+}
+
+/// `iris_query` `mode="write"` — executes INSERT/UPDATE/DELETE/CALL/TRUNCATE via
+/// `%SQL.Statement` (the Atelier `/action/query` REST endpoint returns no row-count
+/// information for DML — see research.md). UPDATE/DELETE are pre-checked against
+/// `max_rows_affected` before executing. See spec 057-sql-power FR-011 through FR-015.
+async fn iris_query_write(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    p: &QueryParams,
+) -> Result<CallToolResult, McpError> {
+    match validate_dml_sql(&p.query) {
+        Err(ref reason) if reason == "EMPTY" => {
+            return err_json("EMPTY_QUERY", "SQL query is empty after removing comments.");
+        }
+        Err(ref reason) if reason == "SELECT_IN_WRITE" => {
+            return err_json(
+                "SELECT_NOT_ALLOWED_IN_WRITE",
+                "mode=\"write\" is DML-only. Use mode=\"read\" for SELECT.",
+            );
+        }
+        Err(ref reason) if reason == "UNKNOWN_STATEMENT" => {
+            return err_json(
+                "DDL_NOT_ALLOWED",
+                "Statement type not recognized as allowed DML.",
+            );
+        }
+        Err(keyword) => {
+            return ok_json(serde_json::json!({
+                "success": false,
+                "error_code": "DDL_NOT_ALLOWED",
+                "error": format!("DDL keyword '{keyword}' is not allowed in mode=\"write\"."),
+                "blocked_keyword": keyword,
+            }));
+        }
+        Ok(()) => {}
+    }
+
+    let max_rows_affected = clamp_max_rows_affected(p.max_rows_affected);
+    let upper_first_word = p
+        .query
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_uppercase();
+    let needs_precheck = upper_first_word == "UPDATE" || upper_first_word == "DELETE";
+
+    let mut rows_check_skipped = false;
+    if needs_precheck {
+        match build_rows_precheck_query(&p.query) {
+            Some(count_sql) => {
+                let code = format!(
+                    r#"Set st=##class(%SQL.Statement).%New()
+Set sc=st.%Prepare("{count_sql}")
+If $$$ISERR(sc) {{ Write "ERROR:ROWS_CHECK_FAILED:"_$System.Status.GetErrorText(sc) Quit }}
+Set rs=st.%Execute()
+If rs.%SQLCODE<0 {{ Write "ERROR:ROWS_CHECK_FAILED:"_rs.%Message Quit }}
+If rs.%Next() {{ Write "OK:"_rs.%GetData(1) }} Else {{ Write "OK:0" }}"#,
+                    count_sql = count_sql.replace('"', "\"\""),
+                );
+                match iris
+                    .execute_via_generator(&code, &p.namespace, client)
+                    .await
+                {
+                    Ok(out) => {
+                        let out = out.trim();
+                        if let Some(msg) = out.strip_prefix("ERROR:ROWS_CHECK_FAILED:") {
+                            return err_json("ROWS_CHECK_FAILED", msg);
+                        }
+                        let actual_count: i64 = out
+                            .strip_prefix("OK:")
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0);
+                        if actual_count > max_rows_affected as i64 {
+                            return ok_json(serde_json::json!({
+                                "success": false,
+                                "error_code": "ROWS_LIMIT_EXCEEDED",
+                                "error": format!(
+                                    "Statement would affect {actual_count} rows, exceeding max_rows_affected={max_rows_affected}."
+                                ),
+                                "actual_count": actual_count,
+                                "limit": max_rows_affected,
+                            }));
+                        }
+                    }
+                    Err(e) => {
+                        return err_json("ROWS_CHECK_FAILED", &e.to_string());
+                    }
+                }
+            }
+            None => rows_check_skipped = true,
+        }
+    }
+
+    let code = format!(
+        r#"Set st=##class(%SQL.Statement).%New()
+Set sc=st.%Prepare("{sql}")
+If $$$ISERR(sc) {{ Write "ERROR:SQL_ERROR:"_$System.Status.GetErrorText(sc) Quit }}
+Set rs=st.%Execute()
+If rs.%SQLCODE<0 {{ Write "ERROR:SQL_ERROR:"_rs.%Message Quit }}
+Write "OK:"_rs.%ROWCOUNT"#,
+        sql = p.query.replace('"', "\"\""),
+    );
+    match iris
+        .execute_via_generator(&code, &p.namespace, client)
+        .await
+    {
+        Ok(out) => {
+            let out = out.trim();
+            if let Some(msg) = out.strip_prefix("ERROR:SQL_ERROR:") {
+                return err_json("SQL_ERROR", msg);
+            }
+            let rows_affected: i64 = out
+                .strip_prefix("OK:")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let mut resp = serde_json::json!({"success": true, "rows_affected": rows_affected});
+            if p.force {
+                resp["force_ignored"] = serde_json::Value::Bool(true);
+            }
+            if rows_check_skipped {
+                resp["rows_check_skipped"] = serde_json::Value::Bool(true);
+            }
+            ok_json(resp)
+        }
+        Err(e) => err_json("SQL_ERROR", &e.to_string()),
+    }
+}
+
 /// Extracts a `SELECT COUNT(*) FROM <table> [WHERE <clause>]` pre-check query from an
 /// UPDATE or DELETE statement, for the `mode="write"` rows-affected limit guard.
 /// Returns `None` for statement shapes it cannot confidently parse (multi-table UPDATE,
@@ -3176,9 +3436,36 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         }
 
         match mode {
-            "explain" => return self.iris_query_explain(&p).await,
-            "count" => return self.iris_query_count(&p).await,
-            "write" => return self.iris_query_write(&p).await,
+            "explain" => {
+                let iris = self.get_iris_reloaded().await?;
+                let client = self.http_client();
+                let result = iris_query_explain(&iris, client, &p).await;
+                self.record_call(
+                    "iris_query",
+                    result.as_ref().map(is_success).unwrap_or(false),
+                );
+                return result;
+            }
+            "count" => {
+                let iris = self.get_iris_reloaded().await?;
+                let client = self.http_client();
+                let result = iris_query_count(&iris, client, &p).await;
+                self.record_call(
+                    "iris_query",
+                    result.as_ref().map(is_success).unwrap_or(false),
+                );
+                return result;
+            }
+            "write" => {
+                let iris = self.get_iris_reloaded().await?;
+                let client = self.http_client();
+                let result = iris_query_write(&iris, client, &p).await;
+                self.record_call(
+                    "iris_query",
+                    result.as_ref().map(is_success).unwrap_or(false),
+                );
+                return result;
+            }
             _ => {}
         }
 
@@ -3249,267 +3536,6 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         ok_json(
             serde_json::json!({"success": true, "rows": rows, "count": count, "namespace": p.namespace}),
         )
-    }
-
-    // ── 057-sql-power: mode="explain" ───────────────────────────────────────
-    async fn iris_query_explain(&self, p: &QueryParams) -> Result<CallToolResult, McpError> {
-        let first_word = p
-            .query
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .to_uppercase();
-        if p.query.trim().is_empty() {
-            self.record_call("iris_query", false);
-            return err_json("EMPTY_QUERY", "SQL query is empty.");
-        }
-        if first_word != "SELECT" && first_word != "WITH" {
-            self.record_call("iris_query", false);
-            return err_json(
-                "EXPLAIN_REQUIRES_SELECT",
-                "explain mode only accepts SELECT statements (including WITH/CTE).",
-            );
-        }
-
-        let iris = self.get_iris_reloaded().await?;
-        let client = self.http_client();
-        let query_url = iris.versioned_ns_url(&p.namespace, "/action/query");
-        let explain_sql = format!("EXPLAIN {}", p.query);
-        let resp = client
-            .post(&query_url)
-            .basic_auth(&iris.username, Some(&iris.password))
-            .json(&serde_json::json!({"query": explain_sql}))
-            .send()
-            .await
-            .map_err(|e| McpError::internal_error(format!("HTTP error: {e}"), None))?;
-
-        if !resp.status().is_success() {
-            self.record_call("iris_query", false);
-            return err_json_with_url(
-                "IRIS_UNREACHABLE",
-                &format!("HTTP {}", resp.status()),
-                &query_url,
-            );
-        }
-
-        let body: serde_json::Value = resp.json().await.unwrap_or_default();
-        if let Some(errors) = body["status"]["errors"].as_array() {
-            if !errors.is_empty() {
-                let msg = errors[0]["error"].as_str().unwrap_or("SQL error");
-                self.record_call("iris_query", false);
-                return err_json("SQL_ERROR", msg);
-            }
-        }
-
-        let plan_text = body["result"]["content"][0]["Plan"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
-        if plan_text.is_empty() {
-            self.record_call("iris_query", false);
-            return err_json(
-                "EXPLAIN_NOT_SUPPORTED",
-                "IRIS returned no plan text for EXPLAIN on this query/version.",
-            );
-        }
-
-        self.record_call("iris_query", true);
-        ok_json(serde_json::json!({
-            "success": true,
-            "plan_text": plan_text,
-            "query_hash": query_hash(&p.query),
-        }))
-    }
-
-    // ── 057-sql-power: mode="count" ─────────────────────────────────────────
-    async fn iris_query_count(&self, p: &QueryParams) -> Result<CallToolResult, McpError> {
-        let table = p.table.as_deref();
-        let query = if p.query.trim().is_empty() {
-            None
-        } else {
-            Some(p.query.as_str())
-        };
-        if table.is_none() && query.is_none() {
-            self.record_call("iris_query", false);
-            return err_json(
-                "MISSING_TARGET",
-                "mode=\"count\" requires either `table` or `query`.",
-            );
-        }
-
-        let count_sql = build_count_query(table, query);
-        let iris = self.get_iris_reloaded().await?;
-        let client = self.http_client();
-        let query_url = iris.versioned_ns_url(&p.namespace, "/action/query");
-        let resp = client
-            .post(&query_url)
-            .basic_auth(&iris.username, Some(&iris.password))
-            .json(&serde_json::json!({"query": count_sql}))
-            .send()
-            .await
-            .map_err(|e| McpError::internal_error(format!("HTTP error: {e}"), None))?;
-
-        if !resp.status().is_success() {
-            self.record_call("iris_query", false);
-            return err_json_with_url(
-                "IRIS_UNREACHABLE",
-                &format!("HTTP {}", resp.status()),
-                &query_url,
-            );
-        }
-
-        let body: serde_json::Value = resp.json().await.unwrap_or_default();
-        if let Some(errors) = body["status"]["errors"].as_array() {
-            if !errors.is_empty() {
-                let msg = errors[0]["error"].as_str().unwrap_or("SQL error");
-                self.record_call("iris_query", false);
-                return err_json("SQL_ERROR", msg);
-            }
-        }
-
-        let count = body["result"]["content"][0]
-            .as_object()
-            .and_then(|obj| obj.values().next())
-            .and_then(|v| v.as_i64())
-            .unwrap_or(0);
-
-        self.record_call("iris_query", true);
-        ok_json(serde_json::json!({"success": true, "count": count}))
-    }
-
-    // ── 057-sql-power: mode="write" ─────────────────────────────────────────
-    async fn iris_query_write(&self, p: &QueryParams) -> Result<CallToolResult, McpError> {
-        match validate_dml_sql(&p.query) {
-            Err(ref reason) if reason == "EMPTY" => {
-                self.record_call("iris_query", false);
-                return err_json("EMPTY_QUERY", "SQL query is empty after removing comments.");
-            }
-            Err(ref reason) if reason == "SELECT_IN_WRITE" => {
-                self.record_call("iris_query", false);
-                return err_json(
-                    "SELECT_NOT_ALLOWED_IN_WRITE",
-                    "mode=\"write\" is DML-only. Use mode=\"read\" for SELECT.",
-                );
-            }
-            Err(ref reason) if reason == "UNKNOWN_STATEMENT" => {
-                self.record_call("iris_query", false);
-                return err_json(
-                    "DDL_NOT_ALLOWED",
-                    "Statement type not recognized as allowed DML.",
-                );
-            }
-            Err(keyword) => {
-                self.record_call("iris_query", false);
-                return ok_json(serde_json::json!({
-                    "success": false,
-                    "error_code": "DDL_NOT_ALLOWED",
-                    "error": format!("DDL keyword '{keyword}' is not allowed in mode=\"write\"."),
-                    "blocked_keyword": keyword,
-                }));
-            }
-            Ok(()) => {}
-        }
-
-        let max_rows_affected = clamp_max_rows_affected(p.max_rows_affected);
-        let upper_first_word = p
-            .query
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .to_uppercase();
-        let needs_precheck = upper_first_word == "UPDATE" || upper_first_word == "DELETE";
-
-        let iris = self.get_iris_reloaded().await?;
-        let client = self.http_client();
-
-        let mut rows_check_skipped = false;
-        if needs_precheck {
-            match build_rows_precheck_query(&p.query) {
-                Some(count_sql) => {
-                    let code = format!(
-                        r#"Set st=##class(%SQL.Statement).%New()
-Set sc=st.%Prepare("{count_sql}")
-If $$$ISERR(sc) {{ Write "ERROR:ROWS_CHECK_FAILED:"_$System.Status.GetErrorText(sc) Quit }}
-Set rs=st.%Execute()
-If rs.%SQLCODE<0 {{ Write "ERROR:ROWS_CHECK_FAILED:"_rs.%Message Quit }}
-If rs.%Next() {{ Write "OK:"_rs.%GetData(1) }} Else {{ Write "OK:0" }}"#,
-                        count_sql = count_sql.replace('"', "\"\""),
-                    );
-                    match iris
-                        .execute_via_generator(&code, &p.namespace, client)
-                        .await
-                    {
-                        Ok(out) => {
-                            let out = out.trim();
-                            if let Some(msg) = out.strip_prefix("ERROR:ROWS_CHECK_FAILED:") {
-                                self.record_call("iris_query", false);
-                                return err_json("ROWS_CHECK_FAILED", msg);
-                            }
-                            let actual_count: i64 = out
-                                .strip_prefix("OK:")
-                                .and_then(|s| s.parse().ok())
-                                .unwrap_or(0);
-                            if actual_count > max_rows_affected as i64 {
-                                self.record_call("iris_query", false);
-                                return ok_json(serde_json::json!({
-                                    "success": false,
-                                    "error_code": "ROWS_LIMIT_EXCEEDED",
-                                    "error": format!(
-                                        "Statement would affect {actual_count} rows, exceeding max_rows_affected={max_rows_affected}."
-                                    ),
-                                    "actual_count": actual_count,
-                                    "limit": max_rows_affected,
-                                }));
-                            }
-                        }
-                        Err(e) => {
-                            self.record_call("iris_query", false);
-                            return err_json("ROWS_CHECK_FAILED", &e.to_string());
-                        }
-                    }
-                }
-                None => rows_check_skipped = true,
-            }
-        }
-
-        let code = format!(
-            r#"Set st=##class(%SQL.Statement).%New()
-Set sc=st.%Prepare("{sql}")
-If $$$ISERR(sc) {{ Write "ERROR:SQL_ERROR:"_$System.Status.GetErrorText(sc) Quit }}
-Set rs=st.%Execute()
-If rs.%SQLCODE<0 {{ Write "ERROR:SQL_ERROR:"_rs.%Message Quit }}
-Write "OK:"_rs.%ROWCOUNT"#,
-            sql = p.query.replace('"', "\"\""),
-        );
-        match iris
-            .execute_via_generator(&code, &p.namespace, client)
-            .await
-        {
-            Ok(out) => {
-                let out = out.trim();
-                if let Some(msg) = out.strip_prefix("ERROR:SQL_ERROR:") {
-                    self.record_call("iris_query", false);
-                    return err_json("SQL_ERROR", msg);
-                }
-                let rows_affected: i64 = out
-                    .strip_prefix("OK:")
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
-                self.record_call("iris_query", true);
-                let mut resp = serde_json::json!({"success": true, "rows_affected": rows_affected});
-                if p.force {
-                    resp["force_ignored"] = serde_json::Value::Bool(true);
-                }
-                if rows_check_skipped {
-                    resp["rows_check_skipped"] = serde_json::Value::Bool(true);
-                }
-                ok_json(resp)
-            }
-            Err(e) => {
-                self.record_call("iris_query", false);
-                err_json("SQL_ERROR", &e.to_string())
-            }
-        }
     }
 
     #[tool(
