@@ -828,6 +828,8 @@ fn default_translate_sql() -> bool {
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct QueryParams {
+    /// SQL statement. Required for read/explain/write; optional for count (use `table` instead).
+    #[serde(default)]
     pub query: String,
     /// Query parameters as strings (e.g. ["Alice", "42"])
     #[serde(default)]
@@ -836,11 +838,19 @@ pub struct QueryParams {
     pub namespace: String,
     /// If true, bypass SQL safety validation. Use only for intentional administrative queries.
     /// Has no effect on production IRIS instances (where write tools are disabled).
+    /// Ignored in mode="write" — see `force_ignored` in the response.
     #[serde(default)]
     pub force: bool,
     /// Set to true to confirm execution on a subject-role instance (role-gate bypass).
     #[serde(default)]
     pub confirm: bool,
+    /// Execution mode: "read" (default), "explain", "count", or "write".
+    pub mode: Option<String>,
+    /// Table name for mode="count" when `query` is not provided.
+    pub table: Option<String>,
+    /// Max rows an UPDATE/DELETE may affect in mode="write" before ROWS_LIMIT_EXCEEDED.
+    /// Default 1000, clamped to [1, 10000]. 0 is treated as the default.
+    pub max_rows_affected: Option<u32>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListContainersParams {
@@ -1215,6 +1225,456 @@ pub fn validate_read_only_sql(sql: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// Validates that a SQL string is acceptable DML for `iris_query` `mode="write"`.
+///
+/// Mirrors `validate_read_only_sql`'s comment-stripping and quote-skipping pipeline, but
+/// with the opposite polarity: DDL (CREATE/DROP/ALTER/GRANT/REVOKE) and SELECT are blocked;
+/// DML (INSERT/UPDATE/DELETE/CALL/TRUNCATE) is allowed. Classification is based on the
+/// statement's leading keyword only — an inner SELECT subquery (e.g.
+/// `INSERT INTO t SELECT * FROM src`) does not affect the outer statement's classification.
+///
+/// Returns `Ok(())` for allowed DML, or `Err(reason)` where `reason` is one of:
+/// `"EMPTY"`, `"SELECT_IN_WRITE"`, `"UNKNOWN_STATEMENT"`, or the blocked DDL keyword.
+pub fn validate_dml_sql(sql: &str) -> Result<(), String> {
+    const DDL: &[&str] = &["CREATE", "DROP", "ALTER", "GRANT", "REVOKE"];
+    const DML: &[&str] = &["INSERT", "UPDATE", "DELETE", "CALL", "TRUNCATE"];
+
+    // Step 1: strip /* ... */ block comments (identical to validate_read_only_sql).
+    let mut cleaned = String::with_capacity(sql.len());
+    let bytes = sql.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            i += 2;
+            cleaned.push(' ');
+        } else {
+            cleaned.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    // Step 2: strip -- line comments.
+    let mut no_line_comments = String::with_capacity(cleaned.len());
+    for line in cleaned.lines() {
+        if let Some(pos) = line.find("--") {
+            no_line_comments.push_str(&line[..pos]);
+        } else {
+            no_line_comments.push_str(line);
+        }
+        no_line_comments.push(' ');
+    }
+    let cleaned = no_line_comments;
+
+    // Step 3: empty check.
+    if cleaned.trim().is_empty() {
+        return Err("EMPTY".to_string());
+    }
+
+    // Step 4: find the first unquoted word token.
+    let chars: Vec<char> = cleaned.chars().collect();
+    let n = chars.len();
+    let mut idx = 0;
+    let mut first_word = String::new();
+    while idx < n {
+        let c = chars[idx];
+        if c == '\'' {
+            idx += 1;
+            while idx < n && chars[idx] != '\'' {
+                if chars[idx] == '\\' {
+                    idx += 1;
+                }
+                idx += 1;
+            }
+            idx += 1;
+            continue;
+        }
+        if c == '"' {
+            idx += 1;
+            while idx < n && chars[idx] != '"' {
+                idx += 1;
+            }
+            idx += 1;
+            continue;
+        }
+        if c.is_whitespace() {
+            idx += 1;
+            continue;
+        }
+        if c.is_alphanumeric() || c == '_' {
+            while idx < n && (chars[idx].is_alphanumeric() || chars[idx] == '_') {
+                first_word.push(chars[idx]);
+                idx += 1;
+            }
+            break;
+        }
+        idx += 1;
+    }
+
+    let upper_word = first_word.to_uppercase();
+    if DDL.contains(&upper_word.as_str()) {
+        return Err(upper_word);
+    }
+    if upper_word == "SELECT" {
+        return Err("SELECT_IN_WRITE".to_string());
+    }
+    if DML.contains(&upper_word.as_str()) {
+        return Ok(());
+    }
+    Err("UNKNOWN_STATEMENT".to_string())
+}
+
+/// Deterministic 16-hex-char identifier for a query shape, used by `mode="explain"` to let
+/// agents correlate plan observations across runs. Not a cryptographic hash — normalizes by
+/// uppercasing and collapsing whitespace before hashing, so formatting differences that don't
+/// change the query's meaning produce the same hash.
+pub fn query_hash(query: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let normalized: String = query
+        .to_uppercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    normalized.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// Builds the COUNT query for `iris_query` `mode="count"`. `query` takes precedence over
+/// `table` per FR-006/FR-008 — when both are provided the `query` form (subquery wrap) is
+/// used and `table` is ignored.
+pub fn build_count_query(table: Option<&str>, query: Option<&str>) -> String {
+    if let Some(q) = query {
+        format!("SELECT COUNT(*) FROM ({q}) t")
+    } else {
+        format!("SELECT COUNT(*) FROM {}", table.unwrap_or_default())
+    }
+}
+
+/// Clamps `max_rows_affected` for `iris_query` `mode="write"` UPDATE/DELETE pre-checks.
+/// `None` or `Some(0)` map to the default (1000); values above 10000 are clamped to 10000.
+pub fn clamp_max_rows_affected(value: Option<u32>) -> u32 {
+    match value {
+        None | Some(0) => 1000,
+        Some(v) if v > 10000 => 10000,
+        Some(v) => v,
+    }
+}
+
+/// True if a tool-call result's JSON body has `success: true`.
+fn is_success(result: &CallToolResult) -> bool {
+    result
+        .content
+        .first()
+        .and_then(|c| c.raw.as_text())
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t.text).ok())
+        .and_then(|v| v.get("success").and_then(|s| s.as_bool()))
+        .unwrap_or(false)
+}
+
+/// `iris_query` `mode="explain"` — returns the raw IRIS query plan for a SELECT/WITH
+/// statement, with no rows transferred. See spec 057-sql-power FR-003/FR-004.
+async fn iris_query_explain(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    p: &QueryParams,
+) -> Result<CallToolResult, McpError> {
+    let first_word = p
+        .query
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_uppercase();
+    if p.query.trim().is_empty() {
+        return err_json("EMPTY_QUERY", "SQL query is empty.");
+    }
+    if first_word != "SELECT" && first_word != "WITH" {
+        return err_json(
+            "EXPLAIN_REQUIRES_SELECT",
+            "explain mode only accepts SELECT statements (including WITH/CTE).",
+        );
+    }
+
+    let query_url = iris.versioned_ns_url(&p.namespace, "/action/query");
+    let explain_sql = format!("EXPLAIN {}", p.query);
+    let resp = client
+        .post(&query_url)
+        .basic_auth(&iris.username, Some(&iris.password))
+        .json(&serde_json::json!({"query": explain_sql}))
+        .send()
+        .await
+        .map_err(|e| McpError::internal_error(format!("HTTP error: {e}"), None))?;
+
+    if !resp.status().is_success() {
+        return err_json_with_url(
+            "IRIS_UNREACHABLE",
+            &format!("HTTP {}", resp.status()),
+            &query_url,
+        );
+    }
+
+    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    if let Some(errors) = body["status"]["errors"].as_array() {
+        if !errors.is_empty() {
+            let msg = errors[0]["error"].as_str().unwrap_or("SQL error");
+            return err_json("SQL_ERROR", msg);
+        }
+    }
+
+    let plan_text = body["result"]["content"][0]["Plan"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+    if plan_text.is_empty() {
+        return err_json(
+            "EXPLAIN_NOT_SUPPORTED",
+            "IRIS returned no plan text for EXPLAIN on this query/version.",
+        );
+    }
+
+    ok_json(serde_json::json!({
+        "success": true,
+        "plan_text": plan_text,
+        "query_hash": query_hash(&p.query),
+    }))
+}
+
+/// `iris_query` `mode="count"` — returns a row count for `table` or `query` without
+/// transferring rows. See spec 057-sql-power FR-006/FR-007/FR-008.
+async fn iris_query_count(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    p: &QueryParams,
+) -> Result<CallToolResult, McpError> {
+    let table = p.table.as_deref();
+    let query = if p.query.trim().is_empty() {
+        None
+    } else {
+        Some(p.query.as_str())
+    };
+    if table.is_none() && query.is_none() {
+        return err_json(
+            "MISSING_TARGET",
+            "mode=\"count\" requires either `table` or `query`.",
+        );
+    }
+
+    let count_sql = build_count_query(table, query);
+    let query_url = iris.versioned_ns_url(&p.namespace, "/action/query");
+    let resp = client
+        .post(&query_url)
+        .basic_auth(&iris.username, Some(&iris.password))
+        .json(&serde_json::json!({"query": count_sql}))
+        .send()
+        .await
+        .map_err(|e| McpError::internal_error(format!("HTTP error: {e}"), None))?;
+
+    if !resp.status().is_success() {
+        return err_json_with_url(
+            "IRIS_UNREACHABLE",
+            &format!("HTTP {}", resp.status()),
+            &query_url,
+        );
+    }
+
+    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    if let Some(errors) = body["status"]["errors"].as_array() {
+        if !errors.is_empty() {
+            let msg = errors[0]["error"].as_str().unwrap_or("SQL error");
+            return err_json("SQL_ERROR", msg);
+        }
+    }
+
+    let count = body["result"]["content"][0]
+        .as_object()
+        .and_then(|obj| obj.values().next())
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+
+    ok_json(serde_json::json!({"success": true, "count": count}))
+}
+
+/// `iris_query` `mode="write"` — executes INSERT/UPDATE/DELETE/CALL/TRUNCATE via
+/// `%SQL.Statement` (the Atelier `/action/query` REST endpoint returns no row-count
+/// information for DML — see research.md). UPDATE/DELETE are pre-checked against
+/// `max_rows_affected` before executing. See spec 057-sql-power FR-011 through FR-015.
+async fn iris_query_write(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    p: &QueryParams,
+) -> Result<CallToolResult, McpError> {
+    match validate_dml_sql(&p.query) {
+        Err(ref reason) if reason == "EMPTY" => {
+            return err_json("EMPTY_QUERY", "SQL query is empty after removing comments.");
+        }
+        Err(ref reason) if reason == "SELECT_IN_WRITE" => {
+            return err_json(
+                "SELECT_NOT_ALLOWED_IN_WRITE",
+                "mode=\"write\" is DML-only. Use mode=\"read\" for SELECT.",
+            );
+        }
+        Err(ref reason) if reason == "UNKNOWN_STATEMENT" => {
+            return err_json(
+                "DDL_NOT_ALLOWED",
+                "Statement type not recognized as allowed DML.",
+            );
+        }
+        Err(keyword) => {
+            return ok_json(serde_json::json!({
+                "success": false,
+                "error_code": "DDL_NOT_ALLOWED",
+                "error": format!("DDL keyword '{keyword}' is not allowed in mode=\"write\"."),
+                "blocked_keyword": keyword,
+            }));
+        }
+        Ok(()) => {}
+    }
+
+    let max_rows_affected = clamp_max_rows_affected(p.max_rows_affected);
+    let upper_first_word = p
+        .query
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_uppercase();
+    let needs_precheck = upper_first_word == "UPDATE" || upper_first_word == "DELETE";
+
+    let mut rows_check_skipped = false;
+    if needs_precheck {
+        match build_rows_precheck_query(&p.query) {
+            Some(count_sql) => {
+                let code = format!(
+                    r#"Set st=##class(%SQL.Statement).%New()
+Set sc=st.%Prepare("{count_sql}")
+If $$$ISERR(sc) {{ Write "ERROR:ROWS_CHECK_FAILED:"_$System.Status.GetErrorText(sc) Quit }}
+Set rs=st.%Execute()
+If rs.%SQLCODE<0 {{ Write "ERROR:ROWS_CHECK_FAILED:"_rs.%Message Quit }}
+If rs.%Next() {{ Write "OK:"_rs.%GetData(1) }} Else {{ Write "OK:0" }}"#,
+                    count_sql = count_sql.replace('"', "\"\""),
+                );
+                match iris
+                    .execute_via_generator(&code, &p.namespace, client)
+                    .await
+                {
+                    Ok(out) => {
+                        let out = out.trim();
+                        if let Some(msg) = out.strip_prefix("ERROR:ROWS_CHECK_FAILED:") {
+                            return err_json("ROWS_CHECK_FAILED", msg);
+                        }
+                        let actual_count: i64 = out
+                            .strip_prefix("OK:")
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0);
+                        if actual_count > max_rows_affected as i64 {
+                            return ok_json(serde_json::json!({
+                                "success": false,
+                                "error_code": "ROWS_LIMIT_EXCEEDED",
+                                "error": format!(
+                                    "Statement would affect {actual_count} rows, exceeding max_rows_affected={max_rows_affected}."
+                                ),
+                                "actual_count": actual_count,
+                                "limit": max_rows_affected,
+                            }));
+                        }
+                    }
+                    Err(e) => {
+                        return err_json("ROWS_CHECK_FAILED", &e.to_string());
+                    }
+                }
+            }
+            None => rows_check_skipped = true,
+        }
+    }
+
+    let code = format!(
+        r#"Set st=##class(%SQL.Statement).%New()
+Set sc=st.%Prepare("{sql}")
+If $$$ISERR(sc) {{ Write "ERROR:SQL_ERROR:"_$System.Status.GetErrorText(sc) Quit }}
+Set rs=st.%Execute()
+If rs.%SQLCODE<0 {{ Write "ERROR:SQL_ERROR:"_rs.%Message Quit }}
+Write "OK:"_rs.%ROWCOUNT"#,
+        sql = p.query.replace('"', "\"\""),
+    );
+    match iris
+        .execute_via_generator(&code, &p.namespace, client)
+        .await
+    {
+        Ok(out) => {
+            let out = out.trim();
+            if let Some(msg) = out.strip_prefix("ERROR:SQL_ERROR:") {
+                return err_json("SQL_ERROR", msg);
+            }
+            let rows_affected: i64 = out
+                .strip_prefix("OK:")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            let mut resp = serde_json::json!({"success": true, "rows_affected": rows_affected});
+            if p.force {
+                resp["force_ignored"] = serde_json::Value::Bool(true);
+            }
+            if rows_check_skipped {
+                resp["rows_check_skipped"] = serde_json::Value::Bool(true);
+            }
+            ok_json(resp)
+        }
+        Err(e) => err_json("SQL_ERROR", &e.to_string()),
+    }
+}
+
+/// Extracts a `SELECT COUNT(*) FROM <table> [WHERE <clause>]` pre-check query from an
+/// UPDATE or DELETE statement, for the `mode="write"` rows-affected limit guard.
+/// Returns `None` for statement shapes it cannot confidently parse (multi-table UPDATE,
+/// missing table name) — callers must skip the pre-check and set `rows_check_skipped: true`
+/// rather than treating this as an error.
+pub fn build_rows_precheck_query(dml: &str) -> Option<String> {
+    let upper = dml.to_uppercase();
+    let trimmed = dml.trim();
+
+    if let Some(rest) = upper.strip_prefix("UPDATE") {
+        let table_start = dml.len() - rest.len();
+        let after_update = trimmed[table_start..].trim_start();
+        let table = after_update.split_whitespace().next()?;
+        let where_clause = extract_where_clause(dml);
+        return Some(match where_clause {
+            Some(w) => format!("SELECT COUNT(*) FROM {table} WHERE {w}"),
+            None => format!("SELECT COUNT(*) FROM {table}"),
+        });
+    }
+    if upper.starts_with("DELETE") {
+        // DELETE FROM <table> [WHERE ...] — find "FROM" then take the next token as table.
+        let from_pos = upper.find("FROM")?;
+        let after_from = trimmed[from_pos + 4..].trim_start();
+        let table = after_from.split_whitespace().next()?;
+        let where_clause = extract_where_clause(dml);
+        return Some(match where_clause {
+            Some(w) => format!("SELECT COUNT(*) FROM {table} WHERE {w}"),
+            None => format!("SELECT COUNT(*) FROM {table}"),
+        });
+    }
+    None
+}
+
+/// Extracts the text after the top-level `WHERE` keyword in a DML statement, if present.
+fn extract_where_clause(dml: &str) -> Option<String> {
+    let upper = dml.to_uppercase();
+    let pos = upper.find("WHERE")?;
+    // Word boundary check to avoid matching inside identifiers.
+    let before_ok = pos == 0 || !upper.as_bytes()[pos - 1].is_ascii_alphanumeric();
+    if !before_ok {
+        return None;
+    }
+    let after = &dml[pos + 5..];
+    let clause = after.trim();
+    if clause.is_empty() {
+        None
+    } else {
+        Some(clause.to_string())
+    }
 }
 
 fn err_json_with_url(
@@ -2888,18 +3348,19 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Execute a SQL SELECT query on IRIS via Atelier REST. Returns rows as a JSON array with column names as keys. By default, destructive SQL (DROP, DELETE, INSERT, UPDATE, ALTER, CREATE, MERGE, TRUNCATE, EXEC, EXECUTE, BULK, LOAD, KILL, LOCK, SELECT INTO) is blocked before reaching IRIS. Set force: true to bypass validation for intentional administrative queries — has no effect on production instances where write tools are disabled. No Python required."
+        description = "Execute SQL against IRIS via Atelier REST. mode=\"read\" (default): SELECT only, destructive SQL blocked unless force=true. mode=\"explain\": returns the IRIS query plan for a SELECT (plan_text, query_hash), no rows. mode=\"count\": returns a row count for `table` or `query` without transferring rows. mode=\"write\": executes INSERT/UPDATE/DELETE/CALL/TRUNCATE (Execute-gated, blocked on mcpTemplate=live/test); UPDATE/DELETE are pre-checked against max_rows_affected (default 1000, max 10000) before executing."
     )]
     async fn iris_query(
         &self,
         Parameters(p): Parameters<QueryParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(namespace = %p.namespace, force = p.force, "iris_query");
+        let mode = p.mode.as_deref().unwrap_or("read");
+        tracing::info!(namespace = %p.namespace, force = p.force, mode, "iris_query");
 
         // Policy gate (044 + 051): fires before role gate.
         let (sm_server_q, policy_q) = self.active_server_manager_policy();
         {
-            let params_json = serde_json::json!({ "namespace": p.namespace });
+            let params_json = serde_json::json!({ "namespace": p.namespace, "mode": mode });
             if let Err(gate) = crate::policy::gate::dispatch_gate(
                 "iris_query",
                 sm_server_q.as_deref().unwrap_or(""),
@@ -2972,6 +3433,40 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             ) {
                 return ok_json(gate);
             }
+        }
+
+        match mode {
+            "explain" => {
+                let iris = self.get_iris_reloaded().await?;
+                let client = self.http_client();
+                let result = iris_query_explain(&iris, client, &p).await;
+                self.record_call(
+                    "iris_query",
+                    result.as_ref().map(is_success).unwrap_or(false),
+                );
+                return result;
+            }
+            "count" => {
+                let iris = self.get_iris_reloaded().await?;
+                let client = self.http_client();
+                let result = iris_query_count(&iris, client, &p).await;
+                self.record_call(
+                    "iris_query",
+                    result.as_ref().map(is_success).unwrap_or(false),
+                );
+                return result;
+            }
+            "write" => {
+                let iris = self.get_iris_reloaded().await?;
+                let client = self.http_client();
+                let result = iris_query_write(&iris, client, &p).await;
+                self.record_call(
+                    "iris_query",
+                    result.as_ref().map(is_success).unwrap_or(false),
+                );
+                return result;
+            }
+            _ => {}
         }
 
         // SQL safety gate — validate before any network call

@@ -202,6 +202,32 @@ iris_production_diff(production="MyApp.Production")
 
 `iris_business_rule_info` and `iris_production_diff` are not PHI-gated (rule/config metadata only).
 
+### iris_query modes (057-sql-power)
+
+`iris_query` accepts a `mode` param: `"read"` (default), `"explain"`, `"count"`, `"write"`.
+
+```
+# explain — query plan inspection, read-only, permitted on all mcpTemplate values
+iris_query(mode="explain", query="SELECT * FROM Sample.Person WHERE Age > 30")
+# -> {success, plan_text, query_hash}
+
+# count — row count without transferring rows
+iris_query(mode="count", table="Sample.Person")
+iris_query(mode="count", query="SELECT * FROM Sample.Person WHERE Age > 30")
+# -> {success, count}
+
+# write — DML execution (Execute-gated: blocked on mcpTemplate=live/test)
+iris_query(mode="write", query="INSERT INTO MyApp.Log (Msg) VALUES ('hello')")
+iris_query(mode="write", query="UPDATE MyApp.Log SET Msg='x' WHERE Id=1")
+iris_query(mode="write", query="TRUNCATE TABLE MyApp.Scratch")
+iris_query(mode="write", query="UPDATE MyApp.Log SET Msg='x'", max_rows_affected=5000)
+# -> {success, rows_affected} or {error_code: "ROWS_LIMIT_EXCEEDED", actual_count, limit}
+```
+
+`mode="write"` allows INSERT/UPDATE/DELETE/CALL/TRUNCATE; DDL (CREATE/DROP/ALTER/GRANT/REVOKE)
+and SELECT are rejected before any IRIS call. UPDATE/DELETE are pre-checked against
+`max_rows_affected` (default 1000, clamp range 1–10000) to prevent accidental mass updates.
+
 ### Reading class source from IRIS (INT / system classes)
 
 To read the source of any class — including system classes like `%ASQ.Engine` that have no `.cls` on disk:
@@ -482,6 +508,13 @@ Error codes returned in the `error_code` field of tool responses. All follow `SC
 | `NO_SCM_VERSION` | `iris_production_diff` — SCM configured but no committed version yet | — |
 | `PRODUCTION_NOT_FOUND` | `iris_production_diff` — named production does not exist | `production` |
 | `NO_PRODUCTION` | `iris_production_diff` — no production currently running and none named | — |
+| `EXPLAIN_REQUIRES_SELECT` | `iris_query mode=explain` — query is not a SELECT/WITH statement | — |
+| `EXPLAIN_NOT_SUPPORTED` | `iris_query mode=explain` — IRIS returned no plan text for this query/version | — |
+| `MISSING_TARGET` | `iris_query mode=count` — neither `table` nor `query` provided | — |
+| `DDL_NOT_ALLOWED` | `iris_query mode=write` — statement is DDL (CREATE/DROP/ALTER/GRANT/REVOKE) or unrecognized | `blocked_keyword` |
+| `SELECT_NOT_ALLOWED_IN_WRITE` | `iris_query mode=write` — statement is a SELECT; write mode is DML-only | — |
+| `ROWS_LIMIT_EXCEEDED` | `iris_query mode=write` — UPDATE/DELETE would affect more rows than `max_rows_affected` | `actual_count`, `limit` |
+| `ROWS_CHECK_FAILED` | `iris_query mode=write` — the pre-execution row-count check itself failed | — |
 
 **PHI gate bypass** — for `PHI_GATE_BLOCKED`, add `"acknowledgePhi": true` to the tool call params. This only works for per-global name checks; `DATA_POLICY_BLOCKED` (bulk-PHI tools like `journal_search`) cannot be bypassed with `acknowledgePhi`.
 

@@ -44,6 +44,15 @@ pub fn check_env_gate(
         }
     }
 
+    // 057-sql-power: mode="write" is a DML operation → Execute. explain/count stay Query.
+    if tool_name == "iris_query" {
+        if let Some(mode) = params.get("mode").and_then(|v| v.as_str()) {
+            if mode == "write" {
+                category = ToolCategory::Execute;
+            }
+        }
+    }
+
     if blocked.contains(&category) {
         let template_str = match template {
             McpTemplate::Dev => "dev",

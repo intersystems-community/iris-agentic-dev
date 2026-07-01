@@ -310,6 +310,15 @@ path = "tests/integration/test_interop_depth_live.rs"
 required-features = ["testing"]
 
 [[test]]
+name = "test_sql_power_unit"
+path = "tests/unit/test_sql_power_unit.rs"
+
+[[test]]
+name = "test_sql_power_live"
+path = "tests/integration/test_sql_power_live.rs"
+required-features = ["testing"]
+
+[[test]]
 name = "test_sm_e2e"
 path = "tests/integration/test_sm_e2e.rs"
 
