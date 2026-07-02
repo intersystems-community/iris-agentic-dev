@@ -34,6 +34,8 @@ enum Commands {
     Init(cmd::init::InitCommand),
     /// Install packages from iris-dev.toml
     Install(cmd::install::InstallCommand),
+    /// Run the skill/tool benchmark harness (pass_rate/lift scoring against the ported task suite)
+    Benchmark(cmd::benchmark::BenchmarkCommand),
 }
 
 #[tokio::main]
@@ -60,6 +62,7 @@ async fn main() -> Result<()> {
         Some(Commands::Compile(cmd)) => cmd.run().await,
         Some(Commands::Init(cmd)) => cmd.run().await,
         Some(Commands::Install(cmd)) => cmd.run().await,
+        Some(Commands::Benchmark(cmd)) => cmd.run().await,
         None => {
             // Check for iris-agentic-dev-* plugin on PATH before giving up
             let args: Vec<String> = std::env::args().collect();

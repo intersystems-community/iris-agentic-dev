@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 iris-agentic-dev-core = { path = "../iris-agentic-dev-core" }
 rmcp = { workspace = true }
+reqwest = { workspace = true }
 clap.workspace = true
 which.workspace = true
 tokio.workspace = true

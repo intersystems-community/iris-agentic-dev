@@ -24,7 +24,7 @@ thiserror.workspace = true
 tracing.workspace = true
 urlencoding = "2"
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 dirs = "5"
 keyring = { version = "4", features = ["v1"], registry = "artifactory" }
 keyring-core = { version = "1", registry = "artifactory" }
@@ -329,4 +329,55 @@ path = "tests/integration/test_discovery_docker_live.rs"
 [[test]]
 name = "test_tools_mod_unit"
 path = "tests/unit/test_tools_mod_unit.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_telemetry_types"
+path = "tests/unit/test_telemetry_types.rs"
+
+[[test]]
+name = "test_telemetry_redact"
+path = "tests/unit/test_telemetry_redact.rs"
+
+[[test]]
+name = "test_benchmark_scoring"
+path = "tests/unit/test_benchmark_scoring.rs"
+
+[[test]]
+name = "test_lift_math"
+path = "tests/unit/test_lift_math.rs"
+
+[[test]]
+name = "test_benchmark_task_loading"
+path = "tests/unit/test_benchmark_task_loading.rs"
+
+[[test]]
+name = "test_telemetry_query_filter"
+path = "tests/unit/test_telemetry_query_filter.rs"
+
+[[test]]
+name = "test_telemetry_prune"
+path = "tests/unit/test_telemetry_prune.rs"
+
+[[test]]
+name = "test_trace_export"
+path = "tests/unit/test_trace_export.rs"
+
+[[test]]
+name = "test_benchmark_run_task_errors"
+path = "tests/unit/test_benchmark_run_task_errors.rs"
+
+[[test]]
+name = "test_telemetry_live"
+path = "tests/integration/test_telemetry_live.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_benchmark_live"
+path = "tests/integration/test_benchmark_live.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_trace_export_live"
+path = "tests/integration/test_trace_export_live.rs"
 required-features = ["testing"]

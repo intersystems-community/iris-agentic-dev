@@ -1,0 +1,41 @@
+{
+  "task_id": "jira-005",
+  "category": "jira_bugs",
+  "difficulty": "easy",
+  "description": "Fix date comparison logic error",
+  "goal": "Fix IsExpired to correctly compare dates",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/License.cls",
+        "content": "Class License Extends %RegisteredObject\n{\n    Property ExpirationDate As %Date;\n\n    /// Check if license is expired\n    Method IsExpired() As %Boolean\n    {\n        Set today = +$HOROLOG\n        // BUGGY: Wrong comparison operator - should check if expiration is BEFORE today\n        Quit ..ExpirationDate > today\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestLicense.cls",
+    "content": "Class TestLicense Extends %RegisteredObject\n{\n    ClassMethod TestIsExpired()\n    {\n        Set today = +$HOROLOG\n\n        // Test expired license (date in past)\n        Set lic1 = ##class(License).%New()\n        Set lic1.ExpirationDate = today - 30\n        If ('lic1.IsExpired()) {\n            Throw ##class(%Exception.General).%New(\"License 30 days ago should be expired\")\n        }\n\n        // Test valid license (date in future)\n        Set lic2 = ##class(License).%New()\n        Set lic2.ExpirationDate = today + 30\n        If (lic2.IsExpired()) {\n            Throw ##class(%Exception.General).%New(\"License 30 days from now should NOT be expired\")\n        }\n\n        // Test today's date - should NOT be expired yet\n        Set lic3 = ##class(License).%New()\n        Set lic3.ExpirationDate = today\n        If (lic3.IsExpired()) {\n            Throw ##class(%Exception.General).%New(\"License expiring today should NOT be expired yet\")\n        }\n    }\n}\n"
+  },
+  "expected_behavior": "IsExpired should return true only when ExpirationDate is before today",
+  "hints": [
+    "Expired means ExpirationDate < today, not >",
+    "Consider what happens on the expiration date itself"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "date-comparison"
+    ],
+    "bug_pattern": "date-comparison"
+  }
+}

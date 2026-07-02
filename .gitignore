@@ -33,24 +33,23 @@ docs/*.md
 .opencode/
 .claude/
 vscode-iris-dev/*.vsix
-specs/
 *.exe
 iris-dev-macos*
 iris-dev-linux*
 *.vsix
 run_benchmark.py
 *.pptx
-*.cls
-*.md
-Bench/
-EvalDemo/
-EvalDemo.*
-ListFilter.cls
-MyApp/
-example_patient*
-fixed_query*
-src/
-tests/Test/
+/*.cls
+/*.md
+/Bench/
+/EvalDemo/
+/EvalDemo.*
+/ListFilter.cls
+/MyApp/
+/example_patient*
+/fixed_query*
+/src/
+/tests/Test/
 .iris-dev/
 
 # Coverage and diagnostic artifacts

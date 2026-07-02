@@ -1,8 +1,10 @@
+pub mod benchmark;
 pub mod elicitation;
 pub mod iris;
 pub mod manifest;
 pub mod policy;
 pub mod skills;
+pub mod telemetry;
 pub mod tools;
 
 pub mod generate;

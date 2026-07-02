@@ -1,0 +1,46 @@
+{
+  "task_id": "jira-009",
+  "category": "jira_bugs",
+  "difficulty": "easy",
+  "description": "Fix null reference bug in GetSettingValue",
+  "goal": "Fix GetSettingValue to handle missing settings without crashing",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/Config/SettingReader.cls",
+        "content": "Class Config.SettingReader Extends %RegisteredObject\n{\n\n    /// Get value of a named setting\n    ClassMethod GetSettingValue(name As %String) As %String\n    {\n        // BUGGY: No null check - crashes if setting doesn't exist\n        Set setting = ##class(Config.Setting).NameIdxOpen(name)\n        Quit setting.Value\n    }\n\n}\n"
+      },
+      {
+        "path": "src/Config/Setting.cls",
+        "content": "Class Config.Setting Extends %Persistent\n{\n\n    Property Name As %String;\n    Property Value As %String;\n\n    Index NameIdx On Name [ Unique ];\n\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/Config/TestSettingReader.cls",
+    "content": "Class TestConfigSettingReader Extends %RegisteredObject\n{\n\n    ClassMethod TestGetSettingValue()\n    {\n        // Create a test setting\n        Do ##class(Config.Setting).%KillExtent()\n        Set s = ##class(Config.Setting).%New()\n        Set s.Name = \"timeout\"\n        Set s.Value = \"30\"\n        Do s.%Save()\n\n        // Should return value for existing setting\n        Set result = ##class(Config.SettingReader).GetSettingValue(\"timeout\")\n        If (result '= \"30\") {\n            Throw ##class(%Exception.General).%New(\"Expected 30, got \"_result)\n        }\n\n        // Should return empty string for missing setting (not crash)\n        Set result = ##class(Config.SettingReader).GetSettingValue(\"nonexistent\")\n        If (result '= \"\") {\n            Throw ##class(%Exception.General).%New(\"Missing setting should return empty string, got \"_result)\n        }\n    }\n\n}\n"
+  },
+  "expected_behavior": "GetSettingValue should check if the setting object is null before accessing .Value. Return empty string when setting does not exist.",
+  "hints": [
+    "Use '$IsObject(setting) to check if NameIdxOpen returned a valid object",
+    "Pattern: If '$IsObject(setting) { Return \"\" }",
+    "NameIdxOpen returns \"\" (not an object) when the record doesn't exist",
+    "Return not Quit \u2014 clearer for a method with an early exit"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 5,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2026-03-31",
+    "source": "Replaced external-dep version; same null-check pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "null-check",
+      "defensive-programming",
+      "object-reference"
+    ]
+  }
+}

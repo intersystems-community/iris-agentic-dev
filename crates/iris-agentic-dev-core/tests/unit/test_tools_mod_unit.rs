@@ -674,3 +674,169 @@ fn translate_symbols_query_dot_prefix_with_wildcard() {
     assert!(sql.contains("STARTSWITH"));
     assert_eq!(params[0].as_str().unwrap(), "HT.");
 }
+
+// ── 059-tool-telemetry-benchmark: telemetry_query / telemetry_export_trace ─────
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn telemetry_query_returns_empty_records_when_no_calls_made() {
+    use iris_agentic_dev_core::tools::IrisTools;
+
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let result = tools
+        .call_for_test("telemetry_query", serde_json::json!({}))
+        .await
+        .expect("telemetry_query should succeed");
+    let text = result
+        .content
+        .first()
+        .unwrap()
+        .raw
+        .as_text()
+        .unwrap()
+        .text
+        .clone();
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(json["records"].as_array().unwrap().is_empty());
+    assert_eq!(json["truncated"], false);
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn telemetry_query_rejects_invalid_session_id() {
+    use iris_agentic_dev_core::tools::IrisTools;
+
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let result = tools
+        .call_for_test(
+            "telemetry_query",
+            serde_json::json!({"session_id": "not-a-uuid"}),
+        )
+        .await
+        .expect("call should return a result, not an error");
+    let text = result
+        .content
+        .first()
+        .unwrap()
+        .raw
+        .as_text()
+        .unwrap()
+        .text
+        .clone();
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(json["success"], false);
+    assert_eq!(json["error_code"], "INVALID_PARAMS");
+}
+
+/// Builds an `IrisTools` with a present-but-unreachable connection, so tools that call
+/// `get_iris`/`get_iris_reloaded` succeed past the connection check (reaching
+/// `record_call`) even though the underlying HTTP call itself then fails.
+#[cfg(feature = "testing")]
+fn tools_with_unreachable_connection() -> iris_agentic_dev_core::tools::IrisTools {
+    use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
+    use iris_agentic_dev_core::tools::IrisTools;
+
+    let iris = IrisConnection::new(
+        "http://127.0.0.1:1",
+        "USER",
+        "_SYSTEM",
+        "SYS",
+        DiscoverySource::ExplicitFlag,
+    );
+    IrisTools::new(Some(iris)).expect("IrisTools::new should succeed")
+}
+
+// Note: a positive-path test asserting a durable record is actually visible via
+// telemetry_query after a real tool call lives in test_benchmark_live.rs
+// (live_telemetry_query_and_export_trace_reflect_recorded_calls) — it genuinely
+// requires a durable write to succeed, which needs either live IRIS or a tool that
+// calls record_call without first requiring a connection (none currently exist), so
+// it cannot be expressed as a connection-free unit test.
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn telemetry_export_trace_returns_empty_when_no_calls_made() {
+    use iris_agentic_dev_core::tools::IrisTools;
+
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let result = tools
+        .call_for_test("telemetry_export_trace", serde_json::json!({}))
+        .await
+        .expect("telemetry_export_trace should succeed");
+    let text = result
+        .content
+        .first()
+        .unwrap()
+        .raw
+        .as_text()
+        .unwrap()
+        .text
+        .clone();
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(json["traces"].as_array().unwrap().is_empty());
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn telemetry_export_trace_rejects_invalid_session_id() {
+    use iris_agentic_dev_core::tools::IrisTools;
+
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let result = tools
+        .call_for_test(
+            "telemetry_export_trace",
+            serde_json::json!({"session_id": "not-a-uuid"}),
+        )
+        .await
+        .expect("call should return a result, not an error");
+    let text = result
+        .content
+        .first()
+        .unwrap()
+        .raw
+        .as_text()
+        .unwrap()
+        .text
+        .clone();
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(json["success"], false);
+    assert_eq!(json["error_code"], "INVALID_PARAMS");
+}
+
+// Note: a positive-path test asserting exported traces are actually visible after real
+// tool calls lives in test_benchmark_live.rs, for the same reason noted above (durable
+// write must genuinely succeed).
+
+// ── 059-tool-telemetry-benchmark: agent_history reports duration/session fields ─
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn agent_history_includes_duration_ms_and_session_id() {
+    let tools = tools_with_unreachable_connection();
+    let _ = tools
+        .call_for_test(
+            "iris_search",
+            serde_json::json!({"query": "x", "namespace": "USER"}),
+        )
+        .await;
+
+    let result = tools
+        .call_for_test("agent_history", serde_json::json!({}))
+        .await
+        .expect("agent_history should succeed");
+    let text = result
+        .content
+        .first()
+        .unwrap()
+        .raw
+        .as_text()
+        .unwrap()
+        .text
+        .clone();
+    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let calls = json["calls"].as_array().unwrap();
+    assert!(!calls.is_empty());
+    let call = &calls[0];
+    assert!(call["duration_ms"].is_number());
+    assert!(call["session_id"].is_string());
+}

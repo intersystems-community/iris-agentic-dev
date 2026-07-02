@@ -440,6 +440,8 @@ fn tool_to_category(tool_name: &str) -> Option<crate::iris::workspace_config::To
         "iris_message_body" | "iris_business_rule_info" | "iris_production_diff" => {
             ToolCategory::Query
         }
+        // 059-tool-telemetry-benchmark: both read-only (query/export durable telemetry)
+        "telemetry_query" | "telemetry_export_trace" => ToolCategory::Query,
         _ => return None, // unknown tool — not gated
     })
 }

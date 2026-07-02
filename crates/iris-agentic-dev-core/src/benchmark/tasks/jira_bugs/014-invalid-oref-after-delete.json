@@ -1,0 +1,47 @@
+{
+  "task_id": "jira-014",
+  "category": "jira_bugs",
+  "difficulty": "medium",
+  "description": "Fix invalid object reference after related record deleted",
+  "goal": "Fix GetAttachmentName to handle case where related Attachment record has been deleted",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/Document/Entry.cls",
+        "content": "Include %occStatus\n\nClass Document.Entry Extends %Persistent\n{\n\n    Property Title As %String;\n    Property AttachmentId As %String;\n\n    /// Get the filename of the linked attachment\n    Method GetAttachmentName() As %String\n    {\n        // BUGGY: No check if attachment still exists\n        Set att = ##class(Document.Attachment).%OpenId(..AttachmentId)\n        Return att.FileName  // <INVALID OREF> if attachment was deleted\n    }\n\n}\n"
+      },
+      {
+        "path": "src/Document/Attachment.cls",
+        "content": "Class Document.Attachment Extends %Persistent\n{\n\n    Property FileName As %String;\n    Property SizeKB As %Integer;\n\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/Document/TestEntry.cls",
+    "content": "Class TestDocumentEntry Extends %RegisteredObject\n{\n\n    ClassMethod TestGetAttachmentName()\n    {\n        Do ##class(Document.Entry).%KillExtent()\n        Do ##class(Document.Attachment).%KillExtent()\n\n        // Create attachment and entry\n        Set att = ##class(Document.Attachment).%New()\n        Set att.FileName = \"report.pdf\"\n        Do att.%Save()\n\n        Set entry = ##class(Document.Entry).%New()\n        Set entry.Title = \"Q4 Report\"\n        Set entry.AttachmentId = att.%Id()\n        Do entry.%Save()\n\n        // Should return filename when attachment exists\n        Set name = entry.GetAttachmentName()\n        If (name '= \"report.pdf\") {\n            Throw ##class(%Exception.General).%New(\"Expected report.pdf, got \"_name)\n        }\n\n        // Delete attachment then re-open entry\n        Do ##class(Document.Attachment).%DeleteId(att.%Id())\n        Set entry2 = ##class(Document.Entry).%OpenId(entry.%Id())\n\n        // Should return empty string, not throw <INVALID OREF>\n        Set name = entry2.GetAttachmentName()\n        If (name '= \"\") {\n            Throw ##class(%Exception.General).%New(\"Deleted attachment should return empty string, got \"_name)\n        }\n    }\n\n}\n"
+  },
+  "expected_behavior": "GetAttachmentName should check '$IsObject(att) after %OpenId and return empty string when the attachment no longer exists.",
+  "hints": [
+    "Check '$IsObject(att) after %OpenId \u2014 %OpenId returns \"\" (not an object) when ID not found",
+    "Pattern: If '$IsObject(att) { Return \"\" }",
+    "The fix is a 2-line addition before accessing att.FileName",
+    "Use Return not Quit for early exit from a Method"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 5,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2026-03-31",
+    "source": "Replaced external-dep (Image.Scanned) version; same OREF lifecycle pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "oref",
+      "null-check",
+      "object-lifecycle",
+      "deleted-reference"
+    ]
+  }
+}

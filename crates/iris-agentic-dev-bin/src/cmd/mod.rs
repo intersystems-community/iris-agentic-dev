@@ -1,3 +1,4 @@
+pub mod benchmark;
 pub mod compile;
 pub mod init;
 pub mod install;

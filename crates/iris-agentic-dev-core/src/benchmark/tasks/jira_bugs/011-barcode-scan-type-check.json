@@ -1,0 +1,43 @@
+{
+  "task_id": "jira-011",
+  "category": "jira_bugs",
+  "difficulty": "medium",
+  "description": "Fix loop counter modification bug",
+  "goal": "Fix ProcessItems to correctly handle item removal during iteration",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/ItemProcessor.cls",
+        "content": "Class ItemProcessor Extends %RegisteredObject\n{\n    /// Remove items marked for deletion and return remaining count\n    ClassMethod ProcessItems(items As %ListOfDataTypes) As %Integer\n    {\n        // BUGGY: Modifying list while iterating causes skipped items\n        For i=1:1:items.Count() {\n            Set item = items.GetAt(i)\n            If (item [ \"DELETE\") {\n                Do items.RemoveAt(i)\n            }\n        }\n        Quit items.Count()\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestItemProcessor.cls",
+    "content": "Class TestItemProcessor Extends %RegisteredObject\n{\n    ClassMethod TestProcessItems()\n    {\n        Set items = ##class(%ListOfDataTypes).%New()\n        Do items.Insert(\"keep1\")\n        Do items.Insert(\"DELETE_this\")\n        Do items.Insert(\"DELETE_that\")\n        Do items.Insert(\"keep2\")\n        Do items.Insert(\"DELETE_also\")\n\n        Set remaining = ##class(ItemProcessor).ProcessItems(items)\n\n        // Should have 2 items remaining (keep1, keep2)\n        If (remaining '= 2) {\n            Throw ##class(%Exception.General).%New(\"Should have 2 items, got \"_remaining)\n        }\n\n        // Verify no DELETE items remain\n        For i=1:1:items.Count() {\n            If (items.GetAt(i) [ \"DELETE\") {\n                Throw ##class(%Exception.General).%New(\"DELETE item still present: \"_items.GetAt(i))\n            }\n        }\n    }\n}\n"
+  },
+  "expected_behavior": "ProcessItems should remove ALL items marked DELETE, not skip some",
+  "hints": [
+    "Iterate backwards: For i=items.Count():-1:1 { ... }",
+    "Check item contains 'DELETE' with: If (item [ \"DELETE\") { Do items.RemoveAt(i) }",
+    "The string literal is exactly \"DELETE\" with a closing quote - do not add extra characters",
+    "Backwards iteration means removals don't shift unvisited indices"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "loop-modification"
+    ],
+    "bug_pattern": "loop-modification"
+  }
+}

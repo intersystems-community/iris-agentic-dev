@@ -1,0 +1,42 @@
+{
+  "task_id": "jira-019",
+  "category": "jira_bugs",
+  "difficulty": "easy",
+  "description": "Fix duplicate name check not working",
+  "goal": "Fix IsNameUnique to correctly check for existing names",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/NameValidator.cls",
+        "content": "Class NameValidator Extends %RegisteredObject\n{\n    /// Check if name is unique in list\n    ClassMethod IsNameUnique(name As %String, existingNames As %ListOfDataTypes) As %Boolean\n    {\n        // BUGGY: Returns wrong boolean value\n        For i=1:1:existingNames.Count() {\n            If (existingNames.GetAt(i) = name) {\n                Quit 1  // Should return 0 (not unique) but returns 1\n            }\n        }\n        Quit 0  // Should return 1 (unique) but returns 0\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestNameValidator.cls",
+    "content": "Class TestNameValidator Extends %RegisteredObject\n{\n    ClassMethod TestIsNameUnique()\n    {\n        Set names = ##class(%ListOfDataTypes).%New()\n        Do names.Insert(\"Alice\")\n        Do names.Insert(\"Bob\")\n        Do names.Insert(\"Charlie\")\n\n        // \"David\" should be unique (not in list)\n        Set result = ##class(NameValidator).IsNameUnique(\"David\", names)\n        If ('result) {\n            Throw ##class(%Exception.General).%New(\"David should be unique (return 1)\")\n        }\n\n        // \"Bob\" should NOT be unique (in list)\n        Set result = ##class(NameValidator).IsNameUnique(\"Bob\", names)\n        If (result) {\n            Throw ##class(%Exception.General).%New(\"Bob should NOT be unique (return 0)\")\n        }\n    }\n}\n"
+  },
+  "expected_behavior": "IsNameUnique should return 1 if name is NOT in list, 0 if it IS in list",
+  "hints": [
+    "Return values are swapped: found=not-unique=0, not-found=unique=1",
+    "Use Return 0 and Return 1 (NOT Quit 0 / Quit 1) - inside a For loop, Quit exits the loop not the method",
+    "Pattern: For i=1:1:existingNames.Count() { If (...=name) { Return 0 } }  Return 1"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "incorrect-uniqueness-check"
+    ],
+    "bug_pattern": "incorrect-uniqueness-check"
+  }
+}

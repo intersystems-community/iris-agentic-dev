@@ -1,0 +1,43 @@
+{
+  "task_id": "jira-007",
+  "category": "jira_bugs",
+  "difficulty": "easy",
+  "description": "Fix case sensitivity in string comparison",
+  "goal": "Fix FindUser to do case-insensitive username search",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/UserManager.cls",
+        "content": "Class UserManager Extends %RegisteredObject\n{\n    /// Find user by username (should be case-insensitive)\n    ClassMethod FindUser(username As %String) As %String\n    {\n        // Simulated user list\n        Set users(\"admin\") = \"Administrator\"\n        Set users(\"JohnDoe\") = \"John Doe\"\n        Set users(\"JaneSmith\") = \"Jane Smith\"\n\n        // BUGGY: Direct lookup is case-sensitive\n        If $DATA(users(username)) {\n            Quit users(username)\n        }\n        Quit \"\"\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestUserManager.cls",
+    "content": "Class TestUserManager Extends %RegisteredObject\n{\n    ClassMethod TestFindUser()\n    {\n        // Exact case should work\n        Set result = ##class(UserManager).FindUser(\"admin\")\n        If (result '= \"Administrator\") {\n            Throw ##class(%Exception.General).%New(\"FindUser('admin') failed: got \"_result)\n        }\n\n        // Different case should also work\n        Set result = ##class(UserManager).FindUser(\"ADMIN\")\n        If (result '= \"Administrator\") {\n            Throw ##class(%Exception.General).%New(\"FindUser('ADMIN') should find admin: got \"_result)\n        }\n\n        Set result = ##class(UserManager).FindUser(\"johndoe\")\n        If (result '= \"John Doe\") {\n            Throw ##class(%Exception.General).%New(\"FindUser('johndoe') should find JohnDoe: got \"_result)\n        }\n    }\n}\n"
+  },
+  "expected_behavior": "FindUser should match usernames regardless of case",
+  "hints": [
+    "Convert both the search term and stored keys to the same case using $ZCONVERT(str, 'U')",
+    "Iterate with $ORDER: Set key='' then For { Set key=$ORDER(users(key)) Quit:key=\"\"  ...}",
+    "IMPORTANT: Postfix Quit must have NO spaces: Quit:key=\"\" not Quit:key = \"\"",
+    "Use Return inside the loop body to return from the method"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "case-sensitivity"
+    ],
+    "bug_pattern": "case-sensitivity"
+  }
+}

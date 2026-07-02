@@ -1,0 +1,42 @@
+{
+  "task_id": "jira-015",
+  "category": "jira_bugs",
+  "difficulty": "medium",
+  "description": "Fix inefficient string building in loop",
+  "goal": "Fix BuildCSV to efficiently concatenate strings",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/CSVBuilder.cls",
+        "content": "Class CSVBuilder Extends %RegisteredObject\n{\n    /// Build CSV string from list of values\n    ClassMethod BuildCSV(values As %ListOfDataTypes) As %String\n    {\n        Set result = \"\"\n        // BUGGY: Inefficient - creates new string each iteration\n        // For large lists this is O(n^2)\n        For i=1:1:values.Count() {\n            If (i > 1) {\n                Set result = result _ \",\"\n            }\n            Set result = result _ values.GetAt(i)\n        }\n        Quit result\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestCSVBuilder.cls",
+    "content": "Class TestCSVBuilder Extends %RegisteredObject\n{\n    ClassMethod TestBuildCSV()\n    {\n        // Small list test\n        Set small = ##class(%ListOfDataTypes).%New()\n        Do small.Insert(\"a\")\n        Do small.Insert(\"b\")\n        Do small.Insert(\"c\")\n        Set result = ##class(CSVBuilder).BuildCSV(small)\n        If (result '= \"a,b,c\") {\n            Throw ##class(%Exception.General).%New(\"Small CSV failed: got \"_result)\n        }\n\n        // Performance test - should complete quickly even for larger lists\n        Set large = ##class(%ListOfDataTypes).%New()\n        For i=1:1:1000 {\n            Do large.Insert(\"item\"_i)\n        }\n        Set start = $ZH\n        Set result = ##class(CSVBuilder).BuildCSV(large)\n        Set elapsed = $ZH - start\n\n        // Should complete in under 1 second (generous limit)\n        If (elapsed > 1) {\n            Throw ##class(%Exception.General).%New(\"BuildCSV too slow: \"_elapsed_\" seconds\")\n        }\n\n        // Verify result starts and ends correctly\n        If (result '[ \"item1,\") {\n            Throw ##class(%Exception.General).%New(\"Large CSV doesn't start with item1\")\n        }\n        If (result '[ \",item1000\") {\n            Throw ##class(%Exception.General).%New(\"Large CSV doesn't end with item1000\")\n        }\n    }\n}\n"
+  },
+  "expected_behavior": "BuildCSV should be efficient for large lists (use $LISTTOSTRING or stream)",
+  "hints": [
+    "Build a $LIST and use $LISTTOSTRING at the end",
+    "Or use a stream for very large data",
+    "Avoid repeated string concatenation in loops"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "string-concatenation-performance"
+    ],
+    "bug_pattern": "string-concatenation-performance"
+  }
+}

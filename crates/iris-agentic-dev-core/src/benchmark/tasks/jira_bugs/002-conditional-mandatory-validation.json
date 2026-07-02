@@ -1,0 +1,42 @@
+{
+  "task_id": "jira-002",
+  "category": "jira_bugs",
+  "difficulty": "easy",
+  "description": "Fix string concatenation null handling",
+  "goal": "Fix GetFullAddress to handle null city/state without errors",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/Address.cls",
+        "content": "Class Address Extends %RegisteredObject\n{\n    Property Street As %String;\n    Property City As %String;\n    Property State As %String;\n\n    /// Get formatted full address\n    Method GetFullAddress() As %String\n    {\n        // BUGGY: Doesn't handle null values - causes empty parts in output\n        Set addr = ..Street _ \", \" _ ..City _ \", \" _ ..State\n        Quit addr\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestAddress.cls",
+    "content": "Class TestAddress Extends %RegisteredObject\n{\n    ClassMethod TestGetFullAddress()\n    {\n        // Test with all values set\n        Set addr = ##class(Address).%New()\n        Set addr.Street = \"123 Main St\"\n        Set addr.City = \"Boston\"\n        Set addr.State = \"MA\"\n        Set result = addr.GetFullAddress()\n        If (result '= \"123 Main St, Boston, MA\") {\n            Throw ##class(%Exception.General).%New(\"Full address failed: got \"_result)\n        }\n\n        // Test with null city - should not have \", ,\" in output\n        Set addr2 = ##class(Address).%New()\n        Set addr2.Street = \"456 Oak Ave\"\n        Set addr2.State = \"CA\"\n        Set result2 = addr2.GetFullAddress()\n        If (result2 [ \", ,\") {\n            Throw ##class(%Exception.General).%New(\"Should handle null city: got \"_result2)\n        }\n    }\n}\n"
+  },
+  "expected_behavior": "GetFullAddress should skip null/empty parts and not produce ', ,' in output",
+  "hints": [
+    "Check if each property has a value before concatenating",
+    "Use $LENGTH() or conditional logic to skip empty values",
+    "Build the address parts into a list first"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "null-string-concatenation"
+    ],
+    "bug_pattern": "null-string-concatenation"
+  }
+}

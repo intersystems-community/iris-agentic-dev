@@ -1,0 +1,41 @@
+{
+  "task_id": "jira-018",
+  "category": "jira_bugs",
+  "difficulty": "medium",
+  "description": "Fix filter not applied to query results",
+  "goal": "Fix SearchProducts to actually filter by category",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/ProductSearch.cls",
+        "content": "Class ProductSearch Extends %RegisteredObject\n{\n    /// Search products by category\n    ClassMethod SearchProducts(category As %String) As %ListOfDataTypes\n    {\n        Set results = ##class(%ListOfDataTypes).%New()\n\n        // Simulated product data\n        Set products(1) = \"Electronics:Laptop\"\n        Set products(2) = \"Electronics:Phone\"\n        Set products(3) = \"Furniture:Chair\"\n        Set products(4) = \"Furniture:Desk\"\n\n        // BUGGY: Category filter variable not used in comparison\n        Set key = \"\"\n        For {\n            Set key = $ORDER(products(key))\n            Quit:key=\"\"\n            Set product = products(key)\n            // Bug: comparing to literal \"category\" string instead of variable\n            If ($PIECE(product, \":\", 1) = \"category\") {\n                Do results.Insert($PIECE(product, \":\", 2))\n            }\n        }\n\n        Quit results\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestProductSearch.cls",
+    "content": "Class TestProductSearch Extends %RegisteredObject\n{\n    ClassMethod TestSearchProducts()\n    {\n        // Search for Electronics\n        Set results = ##class(ProductSearch).SearchProducts(\"Electronics\")\n        If (results.Count() '= 2) {\n            Throw ##class(%Exception.General).%New(\"Electronics should have 2 products, got \"_results.Count())\n        }\n\n        // Search for Furniture\n        Set results = ##class(ProductSearch).SearchProducts(\"Furniture\")\n        If (results.Count() '= 2) {\n            Throw ##class(%Exception.General).%New(\"Furniture should have 2 products, got \"_results.Count())\n        }\n\n        // Search for non-existent category\n        Set results = ##class(ProductSearch).SearchProducts(\"Books\")\n        If (results.Count() '= 0) {\n            Throw ##class(%Exception.General).%New(\"Books should have 0 products, got \"_results.Count())\n        }\n    }\n}\n"
+  },
+  "expected_behavior": "SearchProducts should filter by the category parameter, not a literal string",
+  "hints": [
+    "Compare to the category variable, not the string 'category'",
+    "Remove quotes around category in the comparison"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "filter-not-applied"
+    ],
+    "bug_pattern": "filter-not-applied"
+  }
+}

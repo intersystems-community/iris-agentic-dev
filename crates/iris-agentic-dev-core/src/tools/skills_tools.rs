@@ -379,7 +379,7 @@ pub async fn handle_agent_info(
                             serde_json::json!({
                                 "tool": c.tool,
                                 "success": c.success,
-                                "ago_secs": c.timestamp.elapsed().as_secs(),
+                                "ago_secs": crate::telemetry::ago_secs(&c.timestamp),
                             })
                         })
                         .collect()

@@ -1,0 +1,41 @@
+{
+  "task_id": "jira-004",
+  "category": "jira_bugs",
+  "difficulty": "easy",
+  "description": "Fix division by zero in CalculateAverage",
+  "goal": "Fix CalculateAverage to handle empty list without error",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/Statistics.cls",
+        "content": "Class Statistics Extends %RegisteredObject\n{\n    /// Calculate average of a list of numbers\n    ClassMethod CalculateAverage(numbers As %ListOfDataTypes) As %Numeric\n    {\n        Set total = 0\n        For i=1:1:numbers.Count() {\n            Set total = total + numbers.GetAt(i)\n        }\n        // BUGGY: Division by zero when list is empty\n        Quit total / numbers.Count()\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestStatistics.cls",
+    "content": "Class TestStatistics Extends %RegisteredObject\n{\n    ClassMethod TestCalculateAverage()\n    {\n        // Test with values\n        Set nums = ##class(%ListOfDataTypes).%New()\n        Do nums.Insert(10)\n        Do nums.Insert(20)\n        Do nums.Insert(30)\n        Set avg = ##class(Statistics).CalculateAverage(nums)\n        If (avg '= 20) {\n            Throw ##class(%Exception.General).%New(\"Average of 10,20,30 should be 20: got \"_avg)\n        }\n\n        // Test empty list - should return 0, not error\n        Set empty = ##class(%ListOfDataTypes).%New()\n        Set avg = ##class(Statistics).CalculateAverage(empty)\n        If (avg '= 0) {\n            Throw ##class(%Exception.General).%New(\"Average of empty list should be 0: got \"_avg)\n        }\n    }\n}\n"
+  },
+  "expected_behavior": "CalculateAverage should return 0 for empty list instead of division by zero error",
+  "hints": [
+    "Check if count is zero before dividing",
+    "Return 0 for empty lists"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "division-by-zero"
+    ],
+    "bug_pattern": "division-by-zero"
+  }
+}

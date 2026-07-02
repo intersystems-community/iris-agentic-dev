@@ -1491,6 +1491,7 @@ dependencies = [
  "anyhow",
  "clap",
  "iris-agentic-dev-core",
+ "reqwest",
  "rmcp",
  "serde_json",
  "tempfile 3.27.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -3320,6 +3321,7 @@ checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
 dependencies = [
  "getrandom 0.4.2",
  "js-sys",
+ "serde_core 1.0.228 (registry+https://github.com/rust-lang/crates.io-index)",
  "wasm-bindgen",
 ]
 

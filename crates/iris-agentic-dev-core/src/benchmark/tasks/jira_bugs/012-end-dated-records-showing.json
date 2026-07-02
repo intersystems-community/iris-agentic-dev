@@ -1,0 +1,47 @@
+{
+  "task_id": "jira-012",
+  "category": "jira_bugs",
+  "difficulty": "easy",
+  "description": "Fix SQL query missing active-record filter",
+  "goal": "Fix SearchItems to exclude expired records (ActiveUntil < today)",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/Catalog/ItemSearch.cls",
+        "content": "Include %occStatus\n\nClass Catalog.ItemSearch Extends %RegisteredObject\n{\n\n    /// Search items by category, returning only active records\n    ClassMethod SearchItems(category As %String) As %ListOfDataTypes\n    {\n        Set results = ##class(%ListOfDataTypes).%New()\n        Set stmt = ##class(%SQL.Statement).%New()\n        // BUGGY: Missing filter to exclude expired items\n        Set sc = stmt.%Prepare(\"SELECT Name FROM Catalog_Item WHERE Category = ?\")\n        Set rs = stmt.%Execute(category)\n        While rs.%Next() {\n            Do results.Insert(rs.%Get(\"Name\"))\n        }\n        Return results\n    }\n\n}\n"
+      },
+      {
+        "path": "src/Catalog/Item.cls",
+        "content": "Class Catalog.Item Extends %Persistent\n{\n\n    Property Name As %String;\n    Property Category As %String;\n    /// NULL means never expires; otherwise $HOROLOG date of expiry\n    Property ActiveUntil As %Integer;\n\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/Catalog/TestItemSearch.cls",
+    "content": "Class TestCatalogItemSearch Extends %RegisteredObject\n{\n\n    ClassMethod TestSearchItems()\n    {\n        Do ##class(Catalog.Item).%KillExtent()\n\n        // Active item (no expiry)\n        Set i1 = ##class(Catalog.Item).%New()\n        Set i1.Name = \"ActiveWidget\"\n        Set i1.Category = \"Widgets\"\n        Set i1.ActiveUntil = \"\"\n        Do i1.%Save()\n\n        // Active item (expires far future)\n        Set i2 = ##class(Catalog.Item).%New()\n        Set i2.Name = \"FutureWidget\"\n        Set i2.Category = \"Widgets\"\n        Set i2.ActiveUntil = +$HOROLOG + 365\n        Do i2.%Save()\n\n        // Expired item\n        Set i3 = ##class(Catalog.Item).%New()\n        Set i3.Name = \"ExpiredWidget\"\n        Set i3.Category = \"Widgets\"\n        Set i3.ActiveUntil = +$HOROLOG - 1\n        Do i3.%Save()\n\n        Set results = ##class(Catalog.ItemSearch).SearchItems(\"Widgets\")\n\n        If (results.Count() '= 2) {\n            Throw ##class(%Exception.General).%New(\"Expected 2 active items, got \"_results.Count())\n        }\n\n        // Verify expired item not present\n        For i=1:1:results.Count() {\n            If (results.GetAt(i) = \"ExpiredWidget\") {\n                Throw ##class(%Exception.General).%New(\"Expired item should not appear\")\n            }\n        }\n    }\n\n}\n"
+  },
+  "expected_behavior": "SearchItems should add a WHERE clause to exclude items where ActiveUntil is not null and ActiveUntil < today's $HOROLOG date.",
+  "hints": [
+    "Add to the WHERE clause: AND (ActiveUntil IS NULL OR ActiveUntil >= ?)",
+    "Pass +$HOROLOG as the second parameter to %Execute for today's date",
+    "IMPORTANT: The SQL table name for Catalog.Item is 'Catalog.Item' (not Catalog_Item)",
+    "In IRIS SQL: for a class Pkg.SubPkg.ClassName the table is Pkg_SubPkg.ClassName, but for Catalog.Item it is just Catalog.Item",
+    "NULL in IRIS SQL means the property was never set \u2014 use IS NULL to check"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 5,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2026-03-31",
+    "source": "Replaced external-dep version; same active-record SQL filter pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "sql",
+      "date-filter",
+      "active-records"
+    ]
+  }
+}

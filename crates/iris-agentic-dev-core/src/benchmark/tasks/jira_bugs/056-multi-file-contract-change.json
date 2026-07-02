@@ -1,0 +1,33 @@
+{
+  "task_id": "jira-056",
+  "category": "jira_bugs",
+  "difficulty": "medium",
+  "description": "Multi-file repair for method signature change",
+  "goal": "Update DataValidator:Validate signature to include 'type' and check it. Also update DataProcessor:Process to pass 'type'.",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/DataValidator.cls",
+        "content": "Class User.DataValidator Extends %RegisteredObject\n{\n    ClassMethod Validate(data As %String, type As %String) As %Status\n    {\n        If (data = \"\") Quit $$$ERROR($$$GeneralError, \"Empty data\")\n        If (type = \"\") Quit $$$ERROR($$$GeneralError, \"Empty type\")\n        Quit $$$OK\n    }\n}\n"
+      },
+      {
+        "path": "src/DataProcessor.cls",
+        "content": "Class User.DataProcessor Extends %RegisteredObject\n{\n    ClassMethod Process(data As %String, type As %String) As %Status\n    {\n        Set sc = ##class(User.DataValidator).Validate(data, type)\n        If $$$ISERR(sc) Quit sc\n        Quit $$$OK\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestDataProcessor.cls",
+    "content": "Class User.TestDataProcessor Extends %RegisteredObject\n{\n    ClassMethod TestProcess()\n    {\n        // Test expects 'type' validation to be implemented\n        Set sc = ##class(User.DataProcessor).Process(\"valid data\", \"\")\n        // If type is empty, it should now fail after the fix\n        If $$$ISOK(sc) Throw ##class(%Exception.General).%New(\"Should have failed for empty type\")\n        \n        Set sc2 = ##class(User.DataProcessor).Process(\"valid data\", \"some type\")\n        If $$$ISERR(sc2) Throw ##class(%Exception.General).%New(\"Should have passed for valid type: \"_sc2)\n    }\n}\n"
+  },
+  "expected_behavior": "Both DataValidator and DataProcessor updated to handle 'type'.",
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true
+  },
+  "metadata": {
+    "created_date": "2026-01-03",
+    "source": "Synthetic multi-file test case",
+    "author": "objectscript-coder"
+  }
+}

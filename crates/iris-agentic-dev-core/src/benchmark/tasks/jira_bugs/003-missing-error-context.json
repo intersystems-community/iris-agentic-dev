@@ -1,0 +1,42 @@
+{
+  "task_id": "jira-003",
+  "category": "jira_bugs",
+  "difficulty": "easy",
+  "description": "Fix array bounds error in GetElement",
+  "goal": "Fix GetElement to handle out-of-bounds index gracefully",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/DataList.cls",
+        "content": "Class DataList Extends %RegisteredObject\n{\n    Property Items As list Of %String;\n\n    /// Get element at index (1-based)\n    Method GetElement(index As %Integer) As %String\n    {\n        // BUGGY: No bounds checking - causes <SUBSCRIPT> error\n        Quit ..Items.GetAt(index)\n    }\n\n    Method AddItem(value As %String)\n    {\n        Do ..Items.Insert(value)\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestDataList.cls",
+    "content": "Class TestDataList Extends %RegisteredObject\n{\n    ClassMethod TestGetElement()\n    {\n        Set list = ##class(DataList).%New()\n        Do list.AddItem(\"first\")\n        Do list.AddItem(\"second\")\n\n        // Test valid index\n        Set result = list.GetElement(1)\n        If (result '= \"first\") {\n            Throw ##class(%Exception.General).%New(\"GetElement(1) failed: got \"_result)\n        }\n\n        // Test out of bounds - should return empty string, not error\n        Set result = list.GetElement(99)\n        If (result '= \"\") {\n            Throw ##class(%Exception.General).%New(\"GetElement(99) should return empty: got \"_result)\n        }\n\n        // Test zero index\n        Set result = list.GetElement(0)\n        If (result '= \"\") {\n            Throw ##class(%Exception.General).%New(\"GetElement(0) should return empty: got \"_result)\n        }\n    }\n}\n"
+  },
+  "expected_behavior": "GetElement should return empty string for invalid indices instead of erroring",
+  "hints": [
+    "Check if index is within valid range before accessing",
+    "Use ..Items.Count() to get the list size",
+    "Return empty string for invalid indices"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "array-bounds"
+    ],
+    "bug_pattern": "array-bounds"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "task_id": "jira-013",
+  "category": "jira_bugs",
+  "difficulty": "medium",
+  "description": "Fix HTML injection vulnerability",
+  "goal": "Fix DisplayMessage to escape HTML special characters",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/MessageDisplay.cls",
+        "content": "Class MessageDisplay Extends %RegisteredObject\n{\n    /// Format message for HTML display\n    ClassMethod DisplayMessage(message As %String) As %String\n    {\n        // BUGGY: No HTML escaping - allows XSS attacks\n        Set html = \"<div class='message'>\" _ message _ \"</div>\"\n        Quit html\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestMessageDisplay.cls",
+    "content": "Class TestMessageDisplay Extends %RegisteredObject\n{\n    ClassMethod TestDisplayMessage()\n    {\n        // Normal message should work\n        Set result = ##class(MessageDisplay).DisplayMessage(\"Hello World\")\n        If (result '[ \"Hello World\") {\n            Throw ##class(%Exception.General).%New(\"Normal message not displayed\")\n        }\n\n        // HTML special chars should be escaped\n        Set result = ##class(MessageDisplay).DisplayMessage(\"<script>alert('xss')</script>\")\n        If (result [ \"<script>\") {\n            Throw ##class(%Exception.General).%New(\"Script tag not escaped - XSS vulnerability!\")\n        }\n\n        // Check & is escaped\n        Set result = ##class(MessageDisplay).DisplayMessage(\"A & B\")\n        If (result [ \" & \") {\n            If (result '[ \"&amp;\") {\n                Throw ##class(%Exception.General).%New(\"Ampersand not escaped\")\n            }\n        }\n    }\n}\n"
+  },
+  "expected_behavior": "DisplayMessage should escape <, >, &, and \" to prevent XSS",
+  "hints": [
+    "Escape & FIRST (before < and >), otherwise &lt; becomes &amp;lt;",
+    "Order: Set safe=$REPLACE(message,\"&\",\"&amp;\") then $REPLACE(safe,\"<\",\"&lt;\") then $REPLACE(safe,\">\",\"&gt;\")",
+    "Use $REPLACE() not $TRANSLATE() - $TRANSLATE works character by character not substring",
+    "The div wrapper stays: Set html = \"<div class='message'>\" _ safe _ \"</div>\""
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "xss-vulnerability"
+    ],
+    "bug_pattern": "xss-vulnerability"
+  }
+}

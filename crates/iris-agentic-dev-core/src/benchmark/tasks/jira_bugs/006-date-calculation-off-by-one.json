@@ -1,0 +1,41 @@
+{
+  "task_id": "jira-006",
+  "category": "jira_bugs",
+  "difficulty": "medium",
+  "description": "Fix off-by-one error in date calculation",
+  "goal": "Fix CalculateEndDate to correctly calculate duration including start date",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/Project.cls",
+        "content": "Class Project Extends %RegisteredObject\n{\n    Property StartDate As %Date;\n    Property DurationDays As %Integer;\n\n    /// Calculate end date based on duration\n    Method CalculateEndDate() As %Date\n    {\n        // BUGGY: Off-by-one - if duration is 1 day, end should equal start\n        // Current code: start + 1 day duration = start + 1 (wrong)\n        // Should be: start + 1 day duration = start (correct - 1 day includes start)\n        Quit ..StartDate + ..DurationDays\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestProject.cls",
+    "content": "Class TestProject Extends %RegisteredObject\n{\n    ClassMethod TestCalculateEndDate()\n    {\n        Set today = +$HOROLOG\n\n        // 1-day project should end on start date\n        Set proj1 = ##class(Project).%New()\n        Set proj1.StartDate = today\n        Set proj1.DurationDays = 1\n        Set endDate = proj1.CalculateEndDate()\n        If (endDate '= today) {\n            Throw ##class(%Exception.General).%New(\"1-day project should end on start date\")\n        }\n\n        // 7-day project starting today should end 6 days from now\n        Set proj2 = ##class(Project).%New()\n        Set proj2.StartDate = today\n        Set proj2.DurationDays = 7\n        Set endDate = proj2.CalculateEndDate()\n        If (endDate '= (today + 6)) {\n            Throw ##class(%Exception.General).%New(\"7-day project should end 6 days after start\")\n        }\n    }\n}\n"
+  },
+  "expected_behavior": "CalculateEndDate should account for start date being day 1 of the duration",
+  "hints": [
+    "If duration is N days, end date is start + (N-1)",
+    "A 1-day project starts and ends on the same day"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "off-by-one"
+    ],
+    "bug_pattern": "off-by-one"
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "task_id": "jira-021",
+  "category": "jira_bugs",
+  "difficulty": "easy",
+  "description": "Fix date validation allowing future dates",
+  "goal": "Fix ValidateBirthDate to reject future dates",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/DateValidator.cls",
+        "content": "Include %occStatus\n\nClass DateValidator Extends %RegisteredObject\n{\n    /// Validate birth date - must not be in future\n    ClassMethod ValidateBirthDate(birthDate As %Date) As %Status\n    {\n        Set today = +$HOROLOG\n\n        // BUGGY: Wrong comparison - allows future dates\n        If (birthDate < 0) {\n            Quit $$$ERROR($$$GeneralError, \"Invalid date format\")\n        }\n\n        // Missing: check if birthDate > today\n\n        Quit $$$OK\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestDateValidator.cls",
+    "content": "Class TestDateValidator Extends %RegisteredObject\n{\n    ClassMethod TestValidateBirthDate()\n    {\n        Set today = +$HOROLOG\n\n        // Past date should be valid\n        Set pastDate = today - 365\n        Set sc = ##class(DateValidator).ValidateBirthDate(pastDate)\n        If $$$ISERR(sc) {\n            Throw ##class(%Exception.General).%New(\"Past date should be valid\")\n        }\n\n        // Today should be valid (born today)\n        Set sc = ##class(DateValidator).ValidateBirthDate(today)\n        If $$$ISERR(sc) {\n            Throw ##class(%Exception.General).%New(\"Today should be valid birth date\")\n        }\n\n        // Future date should be INVALID\n        Set futureDate = today + 30\n        Set sc = ##class(DateValidator).ValidateBirthDate(futureDate)\n        If '$$$ISERR(sc) {\n            Throw ##class(%Exception.General).%New(\"Future date should NOT be valid\")\n        }\n    }\n}\n"
+  },
+  "expected_behavior": "ValidateBirthDate should return error for dates in the future",
+  "hints": [
+    "Add check: If birthDate > today, return error",
+    "Use $$$ERROR macro to create error status"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "date-validation"
+    ],
+    "bug_pattern": "date-validation"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "task_id": "jira-008",
+  "category": "jira_bugs",
+  "difficulty": "easy",
+  "description": "Fix missing status return on validation failure",
+  "goal": "Fix ValidateEmail to return error status for invalid emails",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/Validator.cls",
+        "content": "Class Validator Extends %RegisteredObject\n{\n    /// Validate email format and return status\n    ClassMethod ValidateEmail(email As %String) As %Status\n    {\n        // Check for @ symbol\n        If (email '[ \"@\") {\n            // BUGGY: Should return error status, not just quit\n            Quit\n        }\n\n        // Check for domain\n        Set domain = $PIECE(email, \"@\", 2)\n        If (domain = \"\") {\n            Quit\n        }\n\n        Quit $$$OK\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestValidator.cls",
+    "content": "Class TestValidator Extends %RegisteredObject\n{\n    ClassMethod TestValidateEmail()\n    {\n        // Valid email should return OK\n        Set sc = ##class(Validator).ValidateEmail(\"test@example.com\")\n        If $$$ISERR(sc) {\n            Throw ##class(%Exception.General).%New(\"Valid email should return OK status\")\n        }\n\n        // Invalid email (no @) should return error status\n        Set sc = ##class(Validator).ValidateEmail(\"invalid-email\")\n        If '$$$ISERR(sc) {\n            Throw ##class(%Exception.General).%New(\"Email without @ should return error status\")\n        }\n\n        // Invalid email (no domain) should return error\n        Set sc = ##class(Validator).ValidateEmail(\"test@\")\n        If '$$$ISERR(sc) {\n            Throw ##class(%Exception.General).%New(\"Email without domain should return error status\")\n        }\n    }\n}\n"
+  },
+  "expected_behavior": "ValidateEmail should return proper error status for invalid emails",
+  "hints": [
+    "Use $$$ERROR() macro to create error status",
+    "Don't use bare Quit - always return a status value",
+    "Example: Quit $$$ERROR($$$GeneralError, \"Invalid email format\")"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "missing-error-status"
+    ],
+    "bug_pattern": "missing-error-status"
+  }
+}

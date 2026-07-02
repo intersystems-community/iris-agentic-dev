@@ -1,0 +1,43 @@
+{
+  "task_id": "jira-020",
+  "category": "jira_bugs",
+  "difficulty": "medium",
+  "description": "Fix unit conversion calculation error",
+  "goal": "Fix ConvertUnits to handle decimal precision correctly",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/UnitConverter.cls",
+        "content": "Class UnitConverter Extends %RegisteredObject\n{\n    /// Convert kilograms to pounds\n    ClassMethod KgToPounds(kg As %Numeric) As %Numeric\n    {\n        // BUGGY: Using integer division instead of decimal\n        // 1 kg = 2.20462 pounds\n        Quit kg * 2  // Should be * 2.20462\n    }\n\n    /// Convert Celsius to Fahrenheit\n    ClassMethod CelsiusToFahrenheit(celsius As %Numeric) As %Numeric\n    {\n        // BUGGY: Integer division in the formula\n        // F = C * 9/5 + 32\n        Quit celsius * 9 / 5 + 32  // Integer 9/5 = 1, not 1.8\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestUnitConverter.cls",
+    "content": "Class TestUnitConverter Extends %RegisteredObject\n{\n    ClassMethod TestConversions()\n    {\n        // Test kg to pounds (1 kg = 2.20462 lb)\n        Set pounds = ##class(UnitConverter).KgToPounds(1)\n        If ((pounds < 2.2) || (pounds > 2.21)) {\n            Throw ##class(%Exception.General).%New(\"1kg should be ~2.2 pounds, got \"_pounds)\n        }\n\n        Set pounds = ##class(UnitConverter).KgToPounds(10)\n        If ((pounds < 22) || (pounds > 22.1)) {\n            Throw ##class(%Exception.General).%New(\"10kg should be ~22 pounds, got \"_pounds)\n        }\n\n        // Test Celsius to Fahrenheit (0C = 32F, 100C = 212F)\n        Set fahrenheit = ##class(UnitConverter).CelsiusToFahrenheit(0)\n        If (fahrenheit '= 32) {\n            Throw ##class(%Exception.General).%New(\"0C should be 32F, got \"_fahrenheit)\n        }\n\n        Set fahrenheit = ##class(UnitConverter).CelsiusToFahrenheit(100)\n        If (fahrenheit '= 212) {\n            Throw ##class(%Exception.General).%New(\"100C should be 212F, got \"_fahrenheit)\n        }\n    }\n}\n"
+  },
+  "expected_behavior": "Unit conversions should use correct conversion factors with decimal precision",
+  "hints": [
+    "KgToPounds: use the exact factor 2.20462 \u2014 Return kg * 2.20462",
+    "CelsiusToFahrenheit: ObjectScript is strictly left-to-right with no precedence \u2014 9/5 in isolation = 1.8 (float), but write it as 1.8 to be explicit: Return (celsius * 1.8) + 32",
+    "General rule: always parenthesize mixed arithmetic expressions in ObjectScript",
+    "Integer division uses backslash: n \\ 3. Regular division n/3 produces a float."
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "floating-point-precision"
+    ],
+    "bug_pattern": "floating-point-precision"
+  }
+}

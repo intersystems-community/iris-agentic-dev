@@ -1,0 +1,43 @@
+{
+  "task_id": "jira-010",
+  "category": "jira_bugs",
+  "difficulty": "medium",
+  "description": "Fix numeric string sorting as text instead of numbers",
+  "goal": "Fix SortScores to sort numerically descending, not lexicographically",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/ScoreBoard.cls",
+        "content": "Class ScoreBoard Extends %RegisteredObject\n{\n\n    /// Sort scores from highest to lowest (numeric descending)\n    ClassMethod SortScores(scores As %ListOfDataTypes) As %ListOfDataTypes\n    {\n        Set sorted = ##class(%ListOfDataTypes).%New()\n\n        Set temp = \"\"\n        For i=1:1:scores.Count() {\n            Set val = scores.GetAt(i)\n            Set temp(val) = \"\"\n        }\n\n        Set key = \"\"\n        For {\n            Set key = $ORDER(temp(key))\n            Quit:key=\"\"\n            Do sorted.Insert(key)\n        }\n\n        Quit sorted\n    }\n\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestScoreBoard.cls",
+    "content": "Class TestScoreBoard Extends %RegisteredObject\n{\n\n    ClassMethod TestSortScores()\n    {\n        Set scores = ##class(%ListOfDataTypes).%New()\n        Do scores.Insert(100)\n        Do scores.Insert(9)\n        Do scores.Insert(50)\n        Do scores.Insert(200)\n\n        Set sorted = ##class(ScoreBoard).SortScores(scores)\n\n        If (sorted.Count() '= 4) {\n            Throw ##class(%Exception.General).%New(\"Expected 4 items, got \"_sorted.Count())\n        }\n\n        If (sorted.GetAt(1) '= 200) {\n            Throw ##class(%Exception.General).%New(\"First should be 200, got \"_sorted.GetAt(1))\n        }\n        If (sorted.GetAt(2) '= 100) {\n            Throw ##class(%Exception.General).%New(\"Second should be 100, got \"_sorted.GetAt(2))\n        }\n        If (sorted.GetAt(3) '= 50) {\n            Throw ##class(%Exception.General).%New(\"Third should be 50, got \"_sorted.GetAt(3))\n        }\n        If (sorted.GetAt(4) '= 9) {\n            Throw ##class(%Exception.General).%New(\"Fourth should be 9, got \"_sorted.GetAt(4))\n        }\n    }\n\n}\n"
+  },
+  "expected_behavior": "SortScores should return scores in descending numeric order: 200, 100, 50, 9. The bug is that $ORDER iterates ascending by default \u2014 fix by iterating in reverse with $ORDER(temp(key), -1).",
+  "hints": [
+    "The $ORDER function iterates local array subscripts in ascending numeric order",
+    "To reverse (descending), use $ORDER(temp(key), -1) \u2014 second argument -1 goes backwards",
+    "Seed the backwards $ORDER with $ORDER(temp(''), -1) to get the LAST key first, then iterate",
+    "Do NOT use string comparison \u2014 numeric values stored as subscripts automatically sort numerically"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "numeric-sorting"
+    ],
+    "bug_pattern": "numeric-sorting"
+  }
+}

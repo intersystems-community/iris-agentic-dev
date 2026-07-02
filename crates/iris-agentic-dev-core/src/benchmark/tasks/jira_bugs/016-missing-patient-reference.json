@@ -1,0 +1,47 @@
+{
+  "task_id": "jira-016",
+  "category": "jira_bugs",
+  "difficulty": "easy",
+  "description": "Fix object reference not checked after open",
+  "goal": "Fix GetPatientAge to handle missing patient records",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/PatientInfo.cls",
+        "content": "Class PatientInfo Extends %RegisteredObject\n{\n    /// Get patient age by ID\n    ClassMethod GetPatientAge(id As %String) As %Integer\n    {\n        Set patient = ##class(Patient).%OpenId(id)\n        // BUGGY: No check if patient exists\n        Set birthYear = $PIECE(patient.DOB, \"-\", 1)\n        Set currentYear = +$EXTRACT($ZDATE($HOROLOG, 3), 1, 4)\n        Quit currentYear - birthYear\n    }\n}\n"
+      },
+      {
+        "path": "src/Patient.cls",
+        "content": "Class Patient Extends %Persistent\n{\n    Property Name As %String;\n    Property DOB As %String;\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestPatientInfo.cls",
+    "content": "Class TestPatientInfo Extends %RegisteredObject\n{\n    ClassMethod TestGetPatientAge()\n    {\n        // Create test patient\n        Set p = ##class(Patient).%New()\n        Set p.Name = \"Test Patient\"\n        Set p.DOB = \"1990-01-15\"\n        Do p.%Save()\n        Set id = p.%Id()\n\n        // Test with valid ID\n        Set age = ##class(PatientInfo).GetPatientAge(id)\n        Set expectedAge = +$EXTRACT($ZDATE($HOROLOG, 3), 1, 4) - 1990\n        If (age '= expectedAge) {\n            Throw ##class(%Exception.General).%New(\"Age calculation wrong: expected \"_expectedAge_\", got \"_age)\n        }\n\n        // Test with invalid ID - should return -1 or 0, not error\n        Set age = ##class(PatientInfo).GetPatientAge(\"INVALID999\")\n        If (age > 0) {\n            Throw ##class(%Exception.General).%New(\"Invalid ID should not return positive age\")\n        }\n\n        // Cleanup\n        Do ##class(Patient).%DeleteId(id)\n    }\n}\n"
+  },
+  "expected_behavior": "GetPatientAge should return -1 or 0 when patient not found, not crash",
+  "hints": [
+    "Check '$IsObject(patient) after %OpenId and return -1 if not found",
+    "Pattern: If '$IsObject(patient) { Return -1 }",
+    "Only PatientInfo.cls needs fixing - Patient.cls is correct as-is",
+    "Use Return not Quit inside If blocks for clarity"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "null-object-reference"
+    ],
+    "bug_pattern": "null-object-reference"
+  }
+}

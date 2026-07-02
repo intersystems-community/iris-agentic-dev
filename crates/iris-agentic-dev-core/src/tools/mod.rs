@@ -15,6 +15,13 @@ use serde::Deserialize;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
+tokio::task_local! {
+    /// Set once per `call_tool` invocation (see the `ServerHandler::call_tool` override
+    /// below) so `record_call` can compute an accurate `duration_ms` without changing the
+    /// signature of any of the ~50 existing `self.record_call(tool, success)` call sites.
+    static CALL_START: std::time::Instant;
+}
+
 /// Wrapper for tools that accept free-form JSON parameters.
 /// Uses a manual JsonSchema impl to emit `{"type":"object"}` instead of
 /// schemars' default `{"title":"AnyValue"}`, which Claude Code rejects.
@@ -641,13 +648,10 @@ fn replace_host_vars_with_positional(sql: &str, params: &[String]) -> String {
     result
 }
 
-/// A single tool call entry for the session history ring buffer.
-#[derive(Debug, Clone)]
-pub struct ToolCallEntry {
-    pub tool: String,
-    pub success: bool,
-    pub timestamp: std::time::Instant,
-}
+/// The in-memory ring buffer entry type. Superseded by `crate::telemetry::ToolCallRecord`
+/// (059-tool-telemetry-benchmark), which adds `duration_ms`/`session_id`/`params` beyond
+/// the original `{tool, success, timestamp}` shape.
+pub use crate::telemetry::ToolCallRecord as ToolCallEntry;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CompileParams {
@@ -740,6 +744,29 @@ pub struct KbRecallParams {
 pub struct AgentHistoryParams {
     #[serde(default = "default_limit")]
     pub limit: usize,
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TelemetryQueryParams {
+    #[serde(default)]
+    pub tool_name: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub since: Option<String>,
+    #[serde(default)]
+    pub until: Option<String>,
+    #[serde(default = "default_telemetry_query_limit")]
+    pub limit: usize,
+}
+fn default_telemetry_query_limit() -> usize {
+    500
+}
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TelemetryExportTraceParams {
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub since: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SymbolsLocalParams {
@@ -1058,6 +1085,14 @@ pub fn build_test_detail(suites: &[SuiteRow], methods: &[MethodRow]) -> serde_js
 
 fn iris_unreachable() -> McpError {
     McpError::invalid_request("IRIS_UNREACHABLE: no IRIS connection. Set IRIS_HOST and IRIS_WEB_PORT env vars, or ensure IRIS is reachable on a discoverable port (52773, 41773, 51773, 8080).", None)
+}
+
+/// Base directory for local-file-mode telemetry (JSONL sink + prune target), mirroring
+/// the `.iris-agentic-dev` home-dir convention already used by `write_open_hint`.
+pub fn telemetry_config_dir() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join(".iris-agentic-dev")
 }
 fn ok_json(v: serde_json::Value) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::success(vec![Content::text(v.to_string())]))
@@ -1858,6 +1893,9 @@ pub struct IrisTools {
     pub metadata_cache: Arc<dict::MetadataCache>,
     /// Active toolset — controls which tools are registered.
     pub toolset: Toolset,
+    /// One MCP server process lifetime (059-tool-telemetry-benchmark). Stamped onto
+    /// every `ToolCallRecord` produced during this process's life.
+    pub session: crate::telemetry::Session,
     #[allow(dead_code)] // used by #[tool_router] macro-generated code
     tool_router: ToolRouter<IrisTools>,
 }
@@ -1890,6 +1928,7 @@ impl IrisTools {
             ))),
             metadata_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             toolset: Toolset::Baseline,
+            session: crate::telemetry::Session::new(),
             tool_router: Self::tool_router(),
         })
     }
@@ -1956,6 +1995,9 @@ impl IrisTools {
             "iris_global",
             // 053-doc-depth
             "iris_execute_method",
+            // 059-tool-telemetry-benchmark
+            "telemetry_query",
+            "telemetry_export_trace",
         ];
 
         // Tools removed in nostub — 4 stubs returning NOT_IMPLEMENTED
@@ -2144,6 +2186,7 @@ impl IrisTools {
             ))),
             metadata_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             toolset,
+            session: crate::telemetry::Session::new(),
             tool_router: router,
         })
     }
@@ -2372,16 +2415,27 @@ impl IrisTools {
         &self.client
     }
     fn record_call(&self, tool: &str, success: bool) {
+        let duration_ms = CALL_START
+            .try_with(|start| start.elapsed().as_millis() as u64)
+            .unwrap_or(0);
+        let record = ToolCallEntry::now(tool, success, duration_ms, self.session.id);
+        let buffer_max = std::env::var("IRIS_TELEMETRY_BUFFER_SIZE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5000usize);
         if let Ok(mut h) = self.history.lock() {
-            if h.len() == 50 {
+            while h.len() >= buffer_max {
                 h.pop_front();
             }
-            h.push_back(ToolCallEntry {
-                tool: tool.to_string(),
-                success,
-                timestamp: std::time::Instant::now(),
-            });
+            h.push_back(record.clone());
         }
+        // Best-effort durable side write — never blocks or fails the caller (FR-014).
+        let iris = self.connection.lock().unwrap().iris.clone();
+        let client = Arc::clone(&self.client);
+        let config_dir = telemetry_config_dir();
+        tokio::spawn(async move {
+            crate::telemetry::write_durable(&record, iris, &client, &config_dir).await;
+        });
     }
 
     /// Write an audit log entry for a policy-gated tool call.
@@ -4620,13 +4674,84 @@ Methods:
                         serde_json::json!({
                             "tool": c.tool,
                             "success": c.success,
-                            "ago_secs": c.timestamp.elapsed().as_secs(),
+                            "ago_secs": crate::telemetry::ago_secs(&c.timestamp),
+                            "duration_ms": c.duration_ms,
+                            "session_id": c.session_id.to_string(),
                         })
                     })
                     .collect()
             })
             .unwrap_or_default();
         ok_json(serde_json::json!({"calls": calls, "limit": p.limit}))
+    }
+
+    #[tool(
+        description = "Query the durable telemetry record (beyond the current process's in-memory agent_history) by tool name, session id, and/or time range. Reads from the IRIS-global durable sink when connected, or the local JSONL file sink when not."
+    )]
+    async fn telemetry_query(
+        &self,
+        Parameters(p): Parameters<TelemetryQueryParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let session_id = match p.session_id.as_deref().map(uuid::Uuid::parse_str) {
+            Some(Ok(id)) => Some(id),
+            Some(Err(_)) => return err_json("INVALID_PARAMS", "session_id must be a valid UUID"),
+            None => None,
+        };
+        let limit = p.limit.min(5000);
+        let iris = self.connection.lock().unwrap().iris.clone();
+        let config_dir = telemetry_config_dir();
+        let records =
+            crate::telemetry::read_durable(session_id, iris, self.http_client(), &config_dir).await;
+        let (matches, truncated) = crate::telemetry::filter_records(
+            &records,
+            p.tool_name.as_deref(),
+            session_id,
+            p.since.as_deref(),
+            p.until.as_deref(),
+            limit,
+        );
+        let records_json: Vec<serde_json::Value> = matches
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "tool": r.tool,
+                    "success": r.success,
+                    "duration_ms": r.duration_ms,
+                    "timestamp": r.timestamp,
+                    "session_id": r.session_id.to_string(),
+                    "params": r.params,
+                })
+            })
+            .collect();
+        ok_json(serde_json::json!({"records": records_json, "truncated": truncated}))
+    }
+
+    #[tool(
+        description = "Export recorded tool-call data as {from, to, via, count, ts} dispatch-trace records, aggregating repeated identical edges into a single record with an incremented count. Directly compatible with iris_graph's record_trace ingestion format."
+    )]
+    async fn telemetry_export_trace(
+        &self,
+        Parameters(p): Parameters<TelemetryExportTraceParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let session_id = match p.session_id.as_deref().map(uuid::Uuid::parse_str) {
+            Some(Ok(id)) => Some(id),
+            Some(Err(_)) => return err_json("INVALID_PARAMS", "session_id must be a valid UUID"),
+            None => None,
+        };
+        let iris = self.connection.lock().unwrap().iris.clone();
+        let config_dir = telemetry_config_dir();
+        let records =
+            crate::telemetry::read_durable(session_id, iris, self.http_client(), &config_dir).await;
+        let (filtered, _truncated) = crate::telemetry::filter_records(
+            &records,
+            None,
+            session_id,
+            p.since.as_deref(),
+            None,
+            usize::MAX,
+        );
+        let traces = crate::telemetry::trace_export::aggregate_trace(&filtered);
+        ok_json(serde_json::json!({"traces": traces}))
     }
 
     #[tool(description = "Return learning agent status: skill count, pattern count, KB size.")]
@@ -5862,6 +5987,24 @@ Methods:
 
 #[tool_handler]
 impl ServerHandler for IrisTools {
+    /// Wraps the macro-generated dispatch with a `CALL_START` task-local so `record_call`
+    /// (called from within each tool handler) can compute an accurate `duration_ms`
+    /// without changing the signature of any existing `self.record_call(tool, success)`
+    /// call site (059-tool-telemetry-benchmark).
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<CallToolResult, McpError> {
+        let start = std::time::Instant::now();
+        CALL_START
+            .scope(start, async move {
+                let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+                self.tool_router.call(tcc).await
+            })
+            .await
+    }
+
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(
@@ -7508,6 +7651,12 @@ impl IrisTools {
         dispatch!("check_config", NoParams, check_config);
         dispatch!("agent_history", AgentHistoryParams, agent_history);
         dispatch!("agent_stats", NoParams, agent_stats);
+        dispatch!("telemetry_query", TelemetryQueryParams, telemetry_query);
+        dispatch!(
+            "telemetry_export_trace",
+            TelemetryExportTraceParams,
+            telemetry_export_trace
+        );
         dispatch!("skill_list", NoParams, skill_list);
         dispatch!("skill_describe", SkillNameParams, skill_describe);
         dispatch!("skill_search", SkillSearchParams, skill_search);

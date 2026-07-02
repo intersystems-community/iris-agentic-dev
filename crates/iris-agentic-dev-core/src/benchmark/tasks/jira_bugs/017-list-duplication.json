@@ -1,0 +1,42 @@
+{
+  "task_id": "jira-017",
+  "category": "jira_bugs",
+  "difficulty": "medium",
+  "description": "Fix duplicate entries in list append",
+  "goal": "Fix MergeLists to avoid adding duplicate items",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/ListMerger.cls",
+        "content": "Class ListMerger Extends %RegisteredObject\n{\n    /// Merge two lists without duplicates\n    ClassMethod MergeLists(list1 As %ListOfDataTypes, list2 As %ListOfDataTypes) As %ListOfDataTypes\n    {\n        Set result = ##class(%ListOfDataTypes).%New()\n\n        // Add all from list1\n        For i=1:1:list1.Count() {\n            Do result.Insert(list1.GetAt(i))\n        }\n\n        // BUGGY: Adds all from list2 without checking for duplicates\n        For i=1:1:list2.Count() {\n            Do result.Insert(list2.GetAt(i))\n        }\n\n        Quit result\n    }\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/TestListMerger.cls",
+    "content": "Class TestListMerger Extends %RegisteredObject\n{\n    ClassMethod TestMergeLists()\n    {\n        Set list1 = ##class(%ListOfDataTypes).%New()\n        Do list1.Insert(\"apple\")\n        Do list1.Insert(\"banana\")\n\n        Set list2 = ##class(%ListOfDataTypes).%New()\n        Do list2.Insert(\"banana\")\n        Do list2.Insert(\"cherry\")\n\n        Set merged = ##class(ListMerger).MergeLists(list1, list2)\n\n        // Should have 3 unique items, not 4\n        If (merged.Count() '= 3) {\n            Throw ##class(%Exception.General).%New(\"Merged should have 3 items, got \"_merged.Count())\n        }\n\n        // Count bananas - should be exactly 1\n        Set bananaCount = 0\n        For i=1:1:merged.Count() {\n            If (merged.GetAt(i) = \"banana\") Set bananaCount = bananaCount + 1\n        }\n        If (bananaCount '= 1) {\n            Throw ##class(%Exception.General).%New(\"Should have 1 banana, got \"_bananaCount)\n        }\n    }\n}\n"
+  },
+  "expected_behavior": "MergeLists should only add items from list2 that aren't already in result",
+  "hints": [
+    "Check if item exists before adding from list2",
+    "Use Find() method or iterate to check",
+    "Consider using a temporary array for O(1) lookup"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-12-14",
+    "source": "Generated ObjectScript bug pattern",
+    "author": "objectscript-coder",
+    "tags": [
+      "jira",
+      "bug-fix",
+      "duplicate-handling"
+    ],
+    "bug_pattern": "duplicate-handling"
+  }
+}

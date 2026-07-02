@@ -1,0 +1,46 @@
+{
+  "task_id": "jira-001",
+  "category": "jira_bugs",
+  "difficulty": "easy",
+  "description": "Fix null pointer error when processing empty patient records",
+  "goal": "Add null check to prevent <OBJECT REFERENCE> error when Patient object is null",
+  "initial_code": {
+    "files": [
+      {
+        "path": "src/Healthcare/PatientService.cls",
+        "content": "Class Healthcare.PatientService Extends %RegisteredObject\n{\n    /// Get patient's full name\n    ClassMethod GetPatientName(patientId As %String) As %String\n    {\n        Set patient = ##class(Healthcare.Patient).%OpenId(patientId)\n        \n        // BUGGY: No null check - causes <OBJECT REFERENCE> error if patient doesn't exist\n        Set fullName = patient.FirstName _ \" \" _ patient.LastName\n        \n        Quit fullName\n    }\n}\n"
+      },
+      {
+        "path": "src/Healthcare/Patient.cls",
+        "content": "Class Healthcare.Patient Extends %Persistent\n{\n    Property FirstName As %String;\n    \n    Property LastName As %String;\n}\n"
+      }
+    ]
+  },
+  "test_code": {
+    "path": "tests/Healthcare/TestPatientService.cls",
+    "content": "Class TestPatientService Extends %RegisteredObject\n{\n    ClassMethod TestGetPatientName()\n    {\n        // Test with valid patient\n        Set patient = ##class(Healthcare.Patient).%New()\n        Set patient.FirstName = \"John\"\n        Set patient.LastName = \"Doe\"\n        Set sc = patient.%Save()\n        If $$$ISERR(sc) { Throw ##class(%Exception.General).%New(\"Patient should save successfully\") }\n        \n        Set id = patient.%Id()\n        Set name = ##class(Healthcare.PatientService).GetPatientName(id)\n        If (name) '= (\"John Doe\") { Throw ##class(%Exception.General).%New(\"Should return full name\") }\n        \n        // Test with invalid patient ID (should not crash)\n        Set name = ##class(Healthcare.PatientService).GetPatientName(\"999999\")\n        If (name) '= (\"\") { Throw ##class(%Exception.General).%New(\"Should return empty string for non-existent patient\") }\n    }\n}\n"
+  },
+  "expected_behavior": "GetPatientName should check if patient object is null before accessing properties. Return empty string or handle error gracefully.",
+  "hints": [
+    "Use '$IsObject(patient) to check if patient is null",
+    "Return empty string or appropriate error value when patient not found",
+    "Consider using $$$ISERR() to check %OpenId() status"
+  ],
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 15,
+    "requires_symbol_preservation": true
+  },
+  "metadata": {
+    "created_date": "2025-11-10",
+    "source": "Typical null pointer bug pattern in IRIS applications",
+    "author": "objectscript-coder",
+    "tags": [
+      "null-check",
+      "defensive-programming",
+      "error-handling"
+    ],
+    "jira_reference": "Inspired by common patient record access bugs"
+  }
+}
