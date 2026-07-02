@@ -8,17 +8,43 @@ Run the repair benchmark yourself, measure your skills, and submit results to th
 
 ## Prerequisites
 
-1. **Docker** — IRIS runs in a container
-2. **Rust toolchain** (`cargo build --release`) — the harness is a native subcommand of
-   `iris-agentic-dev`, not a separate tool
+1. **The `iris-agentic-dev` binary**, a version that includes the `benchmark` subcommand —
+   run `iris-agentic-dev benchmark --help` to confirm; if it errors with "unrecognized
+   subcommand", grab the latest build from
+   [releases](https://github.com/intersystems-community/iris-agentic-dev/releases/latest)
+2. **Docker** — IRIS runs in a container
 3. **An LLM API key** — `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`
-4. **The public repository** (no private repo, no separate Python MCP server needed)
+
+No `git clone`, no Rust toolchain, no `pip install`, no separate Python MCP server — just
+the prebuilt binary you already use for compile/execute/test:
 
 ```bash
-git clone https://github.com/intersystems-community/iris-agentic-dev.git
-cd iris-agentic-dev
-cargo build --release
+# Mac (Homebrew)
+brew tap intersystems-community/iris-agentic-dev
+brew install iris-agentic-dev
+
+# Mac direct download (Apple Silicon)
+curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-macos-arm64 \
+  -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
+xattr -d com.apple.quarantine /usr/local/bin/iris-agentic-dev 2>/dev/null
+
+# Linux x86_64
+curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-linux-x86_64 \
+  -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
 ```
+
+**Windows**: download `iris-agentic-dev-windows-x86_64.exe` from the
+[releases page](https://github.com/intersystems-community/iris-agentic-dev/releases/latest)
+and place it on your PATH.
+
+Already have the binary installed? Check it's new enough:
+
+```bash
+iris-agentic-dev benchmark --help
+```
+
+If that errors with "unrecognized subcommand," reinstall using the commands above to pick
+up the latest release.
 
 ---
 
@@ -29,20 +55,25 @@ cargo build --release
 docker run -d --name iris-bench \
   -p 1972:1972 -p 52773:52773 \
   intersystemsdc/iris-community:latest
-# Wait ~30 seconds for IRIS to start
+sleep 30   # wait for IRIS to finish starting before the next step
 
-# 2. Run the benchmark with the top-ranked skill
+# 2. Get the SKILL.md files (only needed if you don't already have a local clone —
+#    the harness itself needs no repository, only the skill file you want to test)
+curl -sL https://raw.githubusercontent.com/intersystems-community/iris-agentic-dev/master/light-skills/skills/objectscript-review/SKILL.md \
+  -o objectscript-review-SKILL.md
+
+# 3. Run the benchmark with the top-ranked skill
 export IRIS_HOST=localhost
 export IRIS_WEB_PORT=52773
 export IRIS_GENERATE_CLASS_MODEL=claude-sonnet-4-6   # or any model generate.rs supports
 export ANTHROPIC_API_KEY=sk-ant-...                   # or OPENAI_API_KEY for gpt-* models
 
-./target/release/iris-agentic-dev benchmark \
-  --skill light-skills/skills/objectscript-review/SKILL.md \
+iris-agentic-dev benchmark \
+  --skill objectscript-review-SKILL.md \
   --baseline \
   --output results.json
 
-# 3. See your results
+# 4. See your results
 cat results.json | python3 -c "
 import json,sys
 d=json.load(sys.stdin)
@@ -51,9 +82,6 @@ print(f\"Baseline: {d.get('baseline_pass_rate',0):.0%}\")
 print(f\"Lift:     {d.get('lift',0):+.0%}\")
 "
 ```
-
-No `pip install`, no second repository, no separate MCP server process — the harness is
-a subcommand of the same binary you already have.
 
 ---
 
@@ -119,8 +147,8 @@ iris-agentic-dev benchmark --skill path/to/your/SKILL.md --baseline --output my_
   "iris_version": "2026.1",
   "elapsed_s": 187.4,
   "task_results": [
-    {"task_id": "jira-001", "outcome": "pass", "iterations": 1, "elapsed_s": 8.2, "reason": ""},
-    {"task_id": "jira-002", "outcome": "fail", "iterations": 1, "elapsed_s": 3.9, "reason": ""}
+    { "task_id": "jira-001", "outcome": "pass", "iterations": 1, "elapsed_s": 8.2, "reason": "" },
+    { "task_id": "jira-002", "outcome": "fail", "iterations": 1, "elapsed_s": 3.9, "reason": "" }
   ]
 }
 ```
@@ -132,6 +160,7 @@ an errored task (e.g. a tool-level failure unrelated to the fix itself) is exclu
 never silently counts against your score.
 
 **Interpreting lift:**
+
 - `+15%` or higher → genuinely useful, submit to leaderboard
 - `+5% to +15%` → useful for its specific domain, label as domain-specific
 - `0% to +5%` → marginal, probably too broad or too narrow
@@ -143,12 +172,12 @@ never silently counts against your score.
 
 The data is clear: **shorter hard-gate checklists beat long reference documents**.
 
-| Design | Example | Score |
-|--------|---------|-------|
-| 205-word hard gate checklist | `objectscript-review` | **100%** |
-| 268-word all-in-one | `iris-light-slim` | 86% |
-| 472-word pattern reference | `objectscript-list-patterns` | 91% |
-| 5,170-word comprehensive reference | `iris-light` | 21% |
+| Design                             | Example                      | Score    |
+| ---------------------------------- | ---------------------------- | -------- |
+| 205-word hard gate checklist       | `objectscript-review`        | **100%** |
+| 268-word all-in-one                | `iris-light-slim`            | 86%      |
+| 472-word pattern reference         | `objectscript-list-patterns` | 91%      |
+| 5,170-word comprehensive reference | `iris-light`                 | 21%      |
 
 ### The RED-GREEN methodology
 
@@ -233,9 +262,11 @@ Open a PR to [intersystems-community/iris-agentic-dev](https://github.com/inters
 **Words**: NNN
 
 ### What this catches that other skills don't
+
 [One paragraph]
 
 ### Benchmark output
+
 [Paste your results.json]
 ```
 
@@ -252,7 +283,8 @@ this Quick Start exercises. `--suite mf` / `--suite sql` will error with
 
 ## Troubleshooting
 
-**No IRIS connection found**
+### No IRIS connection found
+
 ```bash
 docker run -d --name iris-bench -p 1972:1972 -p 52773:52773 \
   intersystemsdc/iris-community:latest
@@ -260,7 +292,8 @@ export IRIS_HOST=localhost
 export IRIS_WEB_PORT=52773
 ```
 
-**LLM authentication failed**
+### LLM authentication failed
+
 ```bash
 # Anthropic:
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -268,17 +301,21 @@ export ANTHROPIC_API_KEY=sk-ant-...
 # OpenAI:
 export OPENAI_API_KEY=sk-...
 ```
+
 Also confirm `IRIS_GENERATE_CLASS_MODEL` is set to a model name your key has access to.
 
-**`SUITE_NOT_AVAILABLE`**
+### `SUITE_NOT_AVAILABLE`
+
 - Only `--suite jira` (the default) is available in v1 — `mf`/`sql` are not yet ported.
 
-**`BENCHMARK_RUN_IN_PROGRESS`**
+### `BENCHMARK_RUN_IN_PROGRESS`
+
 - Another benchmark run is already active against the same IRIS host. Wait for it to
   finish; a run older than `--max-time-s` (default 600) is treated as abandoned and
   automatically overridden on the next attempt.
 
-**Tasks time out**
+### Tasks time out
+
 - The LLM call is slow — raise `--task-timeout-s` (default 30) or `--max-time-s`
   (default 600), or switch to a faster model.
 
@@ -297,12 +334,17 @@ Each task is a JSON file under
   "description": "Fix null pointer error when processing empty patient records",
   "goal": "Add $IsObject check before accessing object properties",
   "initial_code": {
-    "files": [{"path": "src/X.cls", "content": "...buggy code..."}]
+    "files": [{ "path": "src/X.cls", "content": "...buggy code..." }]
   },
-  "test_code": {"path": "tests/TestX.cls", "content": "...test that fails on bug..."},
+  "test_code": { "path": "tests/TestX.cls", "content": "...test that fails on bug..." },
   "hints": [],
   "expected_behavior": "...",
-  "success_criteria": {"compile_success": true, "tests_pass": true, "max_patch_lines": 30, "requires_symbol_preservation": true}
+  "success_criteria": {
+    "compile_success": true,
+    "tests_pass": true,
+    "max_patch_lines": 30,
+    "requires_symbol_preservation": true
+  }
 }
 ```
 
@@ -312,12 +354,14 @@ and treats an uncaught exception as a failure, matching this schema's existing
 convention.
 
 **Adding new tasks**: tasks must:
+
 1. Compile on buggy code (syntax errors are a different skill test)
 2. Fail the test on buggy code
 3. Pass the test on the correct fix
 4. Be self-contained (no external class dependencies)
 
 Current suite:
+
 - `crates/iris-agentic-dev-core/src/benchmark/tasks/jira_bugs/` — 22 single-function
   repair tasks (the only suite ported in v1)
 
