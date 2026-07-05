@@ -26,8 +26,8 @@ urlencoding = "2"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 dirs = "5"
-keyring = { version = "4", features = ["v1"], registry = "artifactory" }
-keyring-core = { version = "1", registry = "artifactory" }
+keyring = { version = "4", features = ["v1"] }
+keyring-core = { version = "1" }
 tree-sitter = "0.26"
 tree-sitter-objectscript = "1.7"
 tree-sitter-objectscript-routine = "1.7"
