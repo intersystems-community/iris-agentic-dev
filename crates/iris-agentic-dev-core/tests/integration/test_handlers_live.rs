@@ -10499,6 +10499,9 @@ async fn test_probe_atelier_returns_none_on_401_no_container_env() {
         .mount(&server)
         .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12044,6 +12047,9 @@ async fn test_iris_test_output_parser_passing_via_wiremock() {
     mount_generator_mocks(&server, run_output).await;
 
     // Temporarily unset IRIS_CONTAINER so execute_via_generator HTTP path is used.
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved_container = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12102,6 +12108,9 @@ async fn test_iris_test_output_parser_failing_via_wiremock() {
 
     mount_generator_mocks(&server, run_output).await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved_container = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12244,6 +12253,9 @@ async fn test_scm_status_uncontrolled_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "UNCONTROLLED\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12281,6 +12293,9 @@ async fn test_scm_status_controlled_editable_via_wiremock() {
     // parse_action_msg("1|alice") → (1, "alice"): editable=true, owner=alice
     mount_scm_mocks(&server, "1|alice\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12328,6 +12343,9 @@ async fn test_scm_status_controlled_locked_via_wiremock() {
     // parse_action_msg("0|bob") → (0, "bob"): editable=false (locked), owner=bob
     mount_scm_mocks(&server, "0|bob\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12367,6 +12385,9 @@ async fn test_scm_menu_with_actions_via_wiremock() {
     // Each line: "name|enabled" — only enabled=1 items are included
     mount_scm_mocks(&server, "%CheckOut|1\n%UndoCheckout|0\n%CheckIn|1\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12399,6 +12420,9 @@ async fn test_scm_checkout_immediate_success_via_wiremock() {
     // parse_action_msg("0|") → (0, ""): checkout granted immediately
     mount_scm_mocks(&server, "0|\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12436,6 +12460,9 @@ async fn test_scm_checkout_elicitation_required_via_wiremock() {
     // parse_action_msg("1|Confirm checkout?") → (1, "Confirm checkout?")
     mount_scm_mocks(&server, "1|Confirm checkout?\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12475,6 +12502,9 @@ async fn test_scm_checkout_elicitation_resume_via_wiremock() {
     // First call: checkout returns action_code=1 → elicitation required
     mount_scm_mocks(&server, "1|Confirm checkout?\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12526,6 +12556,9 @@ async fn test_scm_execute_action_code_0_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "0|\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12562,6 +12595,9 @@ async fn test_scm_execute_action_code_1_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "1|Commit to trunk?\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12598,6 +12634,9 @@ async fn test_scm_execute_action_code_7_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "7|Enter commit message:\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12636,6 +12675,9 @@ async fn test_scm_execute_unknown_action_code_via_wiremock() {
     // action_code=99 is not 0, 1, or 7
     mount_scm_mocks(&server, "99|weird thing\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12668,6 +12710,9 @@ async fn test_scm_execute_generator_error_via_wiremock() {
     let server = MockServer::start().await;
     mount_generator_put_failure_mock(&server).await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12724,6 +12769,9 @@ async fn test_debug_capture_packet_success_via_wiremock() {
         serde_json::json!([{"ErrorCode": "5035", "ErrorText": "test error", "TimeStamp": "2024-01-01 00:00:00"}]),
     ).await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12759,6 +12807,9 @@ async fn test_debug_get_error_logs_success_via_wiremock() {
         serde_json::json!([{"ErrorCode": "100", "ErrorText": "some error", "TimeStamp": "2024-06-01 12:00:00"}]),
     ).await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12798,6 +12849,9 @@ async fn test_interop_logs_success_via_wiremock() {
         serde_json::json!([{"ID": "1", "TimeLogged": "2024-01-01", "Type": "3", "ConfigName": "Router", "Text": "test"}]),
     ).await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12830,6 +12884,9 @@ async fn test_interop_queues_success_via_wiremock() {
     let server = MockServer::start().await;
     mount_query_mock(&server, serde_json::json!([{"Name": "Ens.Actor"}])).await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12865,6 +12922,9 @@ async fn test_interop_messages_success_via_wiremock() {
         serde_json::json!([{"ID": "42", "TimeCreated": "2024-01-01", "SourceConfigName": "A", "TargetConfigName": "B", "MessageBodyClassName": "Ens.StringContainer", "Status": "Completed"}]),
     ).await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12902,6 +12962,9 @@ async fn test_production_item_enable_ok_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "OK\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12934,6 +12997,9 @@ async fn test_production_item_disable_ok_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "OK\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -12966,6 +13032,9 @@ async fn test_production_item_enable_item_not_found_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "ERROR:ITEM_NOT_FOUND:Item not found: Router\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13001,6 +13070,9 @@ async fn test_production_item_get_settings_via_wiremock() {
     )
     .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13033,6 +13105,9 @@ async fn test_production_item_set_settings_ok_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "OK\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13066,6 +13141,9 @@ async fn test_credential_list_success_via_wiremock() {
     )
     .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13097,6 +13175,9 @@ async fn test_credential_manage_create_ok_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "OK\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13129,6 +13210,9 @@ async fn test_credential_manage_create_exists_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "ERROR:CREDENTIAL_EXISTS:already exists\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13160,6 +13244,9 @@ async fn test_credential_manage_update_ok_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "OK\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13191,6 +13278,9 @@ async fn test_credential_manage_delete_ok_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "OK\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13224,6 +13314,9 @@ async fn test_lookup_manage_list_tables_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "MyLookup\nAnotherTable\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13256,6 +13349,9 @@ async fn test_lookup_manage_get_value_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "thevalue\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13284,6 +13380,9 @@ async fn test_lookup_manage_set_ok_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "OK\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13311,6 +13410,9 @@ async fn test_lookup_manage_delete_ok_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "OK\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13370,6 +13472,9 @@ async fn test_iris_test_http_execute_error_via_wiremock() {
     let server = MockServer::start().await;
     mount_generator_put_failure_mock(&server).await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13398,6 +13503,9 @@ async fn test_interop_logs_query_error_via_wiremock() {
     let server = MockServer::start().await;
     mount_query_error_mock(&server, "INTEROP_ERROR: query failed").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13429,6 +13537,9 @@ async fn test_interop_queues_query_error_via_wiremock() {
     let server = MockServer::start().await;
     mount_query_error_mock(&server, "Ens.Queue not found").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13460,6 +13571,9 @@ async fn test_interop_messages_query_error_via_wiremock() {
     let server = MockServer::start().await;
     mount_query_error_mock(&server, "Ens.MessageHeader not found").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13491,6 +13605,9 @@ async fn test_debug_capture_packet_unreachable_error_via_wiremock() {
     let server = MockServer::start().await;
     mount_query_error_mock(&server, "Generic query failure").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13522,6 +13639,9 @@ async fn test_debug_get_error_logs_unreachable_error_via_wiremock() {
     let server = MockServer::start().await;
     mount_query_error_mock(&server, "Some generic error not SQLCODE -30").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13553,6 +13673,9 @@ async fn test_credential_list_error_via_wiremock() {
     let server = MockServer::start().await;
     mount_query_error_mock(&server, "Ens.Config.Credentials not found").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13613,6 +13736,9 @@ async fn test_scm_checkout_generator_error_via_wiremock() {
         .mount(&server)
         .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13667,6 +13793,9 @@ async fn test_production_item_enable_generator_error_via_wiremock() {
         .mount(&server)
         .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13704,6 +13833,9 @@ async fn test_credential_manage_create_generator_error_via_wiremock() {
         .mount(&server)
         .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13741,6 +13873,9 @@ async fn test_lookup_manage_set_generator_error_via_wiremock() {
         .mount(&server)
         .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13777,6 +13912,9 @@ async fn test_production_status_docker_required_via_wiremock() {
     use wiremock::MockServer;
     let server = MockServer::start().await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -13975,6 +14113,9 @@ async fn test_production_get_autostart_via_wiremock() {
     // get_autostart uses execute_via_generator, returns "true" or "false" or "OK" (if disabled)
     mount_scm_mocks(&server, "false\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14074,6 +14215,9 @@ async fn test_iris_debug_map_int_docker_required_via_wiremock() {
     use wiremock::MockServer;
     let server = MockServer::start().await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14104,6 +14248,9 @@ async fn test_iris_debug_capture_docker_required_via_wiremock() {
     use wiremock::MockServer;
     let server = MockServer::start().await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14134,6 +14281,9 @@ async fn test_iris_debug_source_map_docker_required_via_wiremock() {
     use wiremock::MockServer;
     let server = MockServer::start().await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14175,6 +14325,9 @@ async fn test_iris_macro_list_success_via_wiremock() {
         .mount(&server)
         .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14256,6 +14409,9 @@ async fn test_iris_table_info_ddl_with_row_count_via_wiremock() {
         .mount(&server)
         .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14289,6 +14445,9 @@ async fn test_iris_table_info_ddl_path_via_wiremock() {
     // include_row_count=false so no extra query needed
     mount_scm_mocks(&server, "DDL_TABLE\n").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14330,6 +14489,9 @@ async fn test_lookup_transfer_export_via_wiremock() {
     )
     .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14368,6 +14530,9 @@ async fn test_resolve_dynamic_dispatch_with_candidates_via_wiremock() {
     )
     .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14403,6 +14568,9 @@ async fn test_extract_message_map_routing_success_via_wiremock() {
     )
     .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14436,6 +14604,9 @@ async fn test_find_subclass_implementations_empty_descendants_via_wiremock() {
     // Generator returns empty output → descendants.is_empty() → early return with empty list
     mount_scm_mocks(&server, "").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14478,6 +14649,9 @@ async fn test_iris_doc_get_http_error_via_wiremock() {
         .mount(&server)
         .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14610,6 +14784,9 @@ async fn test_admin_query_error_paths_via_wiremock() {
     let server = MockServer::start().await;
     mount_query_error_mock(&server, "Query failed: table not found").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14649,6 +14826,9 @@ async fn test_admin_generator_error_paths_via_wiremock() {
     let server = MockServer::start().await;
     mount_generator_put_failure_mock(&server).await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14695,6 +14875,9 @@ async fn test_admin_list_webapps_type_mapping_via_wiremock() {
         {"Name": "/csp/web", "NameSpace": "USER", "DispatchClass": "", "Enabled": 1, "Type": 0}
     ])).await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14723,6 +14906,9 @@ async fn test_admin_list_databases_interop_error_via_wiremock() {
     let server = MockServer::start().await;
     mount_generator_mocks_any_ns(&server, "ERROR:permission denied").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14755,6 +14941,9 @@ async fn test_admin_list_user_roles_empty_via_wiremock() {
     // Empty output → out.is_empty() → roles = vec![] (line 313)
     mount_generator_mocks_any_ns(&server, "").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14787,6 +14976,9 @@ async fn test_admin_get_webapp_unexpected_response_via_wiremock() {
     // Return output with fewer than 4 |-separated parts → parts.len() < 4 → INTEROP_ERROR
     mount_generator_mocks_any_ns(&server, "UNEXPECTED_GARBAGE").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14816,6 +15008,9 @@ async fn test_admin_write_ops_interop_error_via_wiremock() {
     let server = MockServer::start().await;
     mount_generator_mocks_any_ns(&server, "UNEXPECTED").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14854,6 +15049,9 @@ async fn test_admin_create_webapp_ok_via_wiremock() {
     let server = MockServer::start().await;
     mount_generator_mocks_any_ns(&server, "OK").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -14940,6 +15138,9 @@ async fn test_iris_table_info_class_projection_row_count_via_wiremock() {
         .mount(&server)
         .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -15021,6 +15222,9 @@ async fn test_iris_table_info_row_count_err_via_wiremock() {
         .mount(&server)
         .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -15053,6 +15257,9 @@ async fn test_find_subclass_hierarchy_expansion_error_via_wiremock() {
     let server = MockServer::start().await;
     mount_generator_put_failure_mock(&server).await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -15135,6 +15342,9 @@ async fn test_find_subclass_implementations_query_error_prefix_via_wiremock() {
         .mount(&server)
         .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -15165,6 +15375,9 @@ async fn test_resolve_dynamic_dispatch_error_prefix_via_wiremock() {
     let server = MockServer::start().await;
     mount_scm_mocks(&server, "ERROR:SQL error: table not found").await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -15196,6 +15409,9 @@ async fn test_extract_message_map_routing_cache_hit_via_wiremock() {
     )
     .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -15239,6 +15455,9 @@ async fn test_extract_message_map_routing_json_error_field_via_wiremock() {
     )
     .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
@@ -15322,6 +15541,9 @@ async fn test_find_subclass_implementations_with_results_via_wiremock() {
         .mount(&server)
         .await;
 
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");

@@ -384,7 +384,7 @@ fn translate_sql_macros_nested_parens() {
     let code = "&sql(SELECT a, (SELECT b FROM c) as sub FROM t)";
     let result = translate_sql_macros(code);
     // Should not panic on nested parens
-    assert_eq!(result.found, true);
+    assert!(result.found);
 }
 
 #[test]
