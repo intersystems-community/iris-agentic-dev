@@ -54,11 +54,28 @@ fn run_relocated(args: &[&str]) -> std::process::Output {
 
     // Run with cwd inside the temp dir too, so no ambient CWD-relative path could
     // accidentally paper over the bug.
-    Command::new(&relocated)
-        .args(args)
-        .current_dir(dir.path())
-        .output()
-        .expect("failed to run relocated binary")
+    //
+    // Retry on ETXTBSY ("Text file busy", Rust's ExecutableFileBusy): on Linux, a
+    // freshly fs::copy'd + chmod'd file can transiently refuse exec if the kernel or
+    // another process still holds it open for writing — observed in CI when this
+    // file's two tests each copy+exec their own binary within milliseconds of the
+    // build step finishing. Not a logic bug; a well-known filesystem race.
+    let mut last_err = None;
+    for attempt in 0..5 {
+        match Command::new(&relocated)
+            .args(args)
+            .current_dir(dir.path())
+            .output()
+        {
+            Ok(output) => return output,
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                last_err = Some(e);
+                std::thread::sleep(std::time::Duration::from_millis(50 * (attempt + 1)));
+            }
+            Err(e) => panic!("failed to run relocated binary: {e}"),
+        }
+    }
+    panic!("failed to run relocated binary after retries: {last_err:?}");
 }
 
 #[test]
