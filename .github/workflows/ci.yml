@@ -13,28 +13,30 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
-      # Build binary first (required for mcp_handshake test which spawns it)
-      - run: cargo build -p iris-agentic-dev
-      # Unit + handshake tests — no live IRIS needed.
-      # Integration tests (test_mcp_iris, test_e2e_all_tools, test_scm, discovery_tests,
-      # interop_e2e_tests) require IRIS_HOST/IRIS_WEB_PORT; run them locally.
-      - run: |
-          cargo test -p iris-agentic-dev-core --features testing --lib \
-            --test test_compile_params \
-            --test test_doc_params \
-            --test test_elicitation \
-            --test interop_unit_tests \
-            --test manifest_tests \
-            --test skills_tests \
-            --test vscode_config_tests \
-            --test mcp_handshake \
-            --test test_tools_mod_unit
+      # Build binary first (required for mcp_handshake/plugin_dispatch/benchmark_relocated
+      # tests, which spawn it as a subprocess).
+      - run: cargo build --workspace
+      # Runs EVERY declared test target across both crates — no hardcoded --test list.
+      # A hand-maintained list drifts silently as new #[[test]] targets are added (this
+      # bit us for real: 66 of 83 targets were missing from this job before, including
+      # a genuinely broken plugin-dispatch feature that no test run ever caught). Tests
+      # requiring live IRIS self-skip via an IRIS_HOST-is-empty check or #[ignore] — they
+      # run for real in the e2e-tests job below, where a live container is up.
+      #
+      # --test-threads=1: several test files mutate process-global env vars (e.g.
+      # IRIS_WEB_PREFIX) under their own in-file mutex, which only serializes tests
+      # within that one binary — cargo runs each test binary as a separate process, but
+      # --workspace --all-targets can still schedule multiple *binaries* concurrently,
+      # and process env vars are inherited, not isolated, so two binaries' tests can
+      # race on the same var. Verified: flakes under default parallelism, 100% stable
+      # at --test-threads=1 (whole run: ~20s, negligible cost for correctness here).
+      - run: cargo test --workspace --all-targets --features testing --no-fail-fast -- --test-threads=1
         env:
           RUST_LOG: warn
 
@@ -60,7 +62,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.92.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo build -p iris-agentic-dev
       - name: MCP handshake smoke test on Windows
@@ -85,7 +87,7 @@ jobs:
     if: github.ref == 'refs/heads/master'
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.92.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo build -p iris-agentic-dev
       - name: Start IRIS container
@@ -166,30 +168,44 @@ jobs:
             -d '{"query":"SET ^%SYS(\"Studio\",\"SourceControl\",\"USER\")=\"%Studio.SourceControl.Default\""}' \
             "http://$HOST:52773/api/atelier/v1/USER/action/query" | cat
           echo "SCM configured for USER namespace"
-      - name: Run E2E tests against live IRIS (Rust)
-        run: cargo test --test test_e2e -- --nocapture
-        env:
-          IRIS_HOST: ${{ env.IRIS_HOST }}
-          IRIS_WEB_PORT: "52773"
-          IRIS_USERNAME: ${{ env.IRIS_USERNAME }}
-          IRIS_PASSWORD: ${{ env.IRIS_PASSWORD }}
-          IRIS_NAMESPACE: USER
-          IRIS_CONTAINER: iris-e2e
-      # `required-features = ["testing"]` test targets were previously never run
-      # anywhere (no CI job passed --features testing), so this file — the bulk
-      # of per-tool live-IRIS coverage — silently never executed on any push or
-      # PR. Run it here now that a live container is up.
-      - name: Run live handler tests against live IRIS (Rust)
+      # Runs EVERY declared test target across both crates against a live IRIS
+      # container, --include-ignored so #[ignore]'d live-IRIS tests actually execute
+      # (that flag was missing here before and silently skipped ~600 tests in the
+      # very files this job exists to run). No hardcoded --test list — see the
+      # `test` job above for why that's load-bearing, not stylistic.
+      #
+      # A small --skip list is still needed for tests that are #[ignore]'d for reasons
+      # OTHER than "needs live IRIS" — this job's env satisfies the live-IRIS case for
+      # everything else, but cannot satisfy these:
+      #   - discovery_tests: 2 tests assert NotFound behavior and explicitly require an
+      #     env with NO IRIS_HOST/IRIS_CONTAINER set — the opposite of this job's env.
+      #   - test_sm_e2e: needs a real VS Code Server Manager install + OS keychain
+      #     entry, which cannot exist on a CI runner.
+      #   - docker_discovery_e2e: needs enterprise IRIS_LICENSE_KEY_PATH or spinning up
+      #     separate throwaway containers with specific port-mapping states, not the
+      #     one general-purpose container this job provides.
+      #   - test_benchmark_live: 2 tests exercise the LLM fix-proposal path and need
+      #     IRIS_GENERATE_CLASS_MODEL + a real API key, which CI does not have.
+      #   - test_admin_webapp_crud: Security.Applications.Create() calls
+      #     %ZHSLIB.HealthShareMgr internally, which doesn't exist on Community
+      #     edition (confirmed via %ExistsId=0) — needs an Enterprise/Ensemble image.
+      - name: Run full test suite against live IRIS (Rust)
         run: |
-          cargo test --features testing \
-            --test test_handlers_live \
-            --test test_iris_global_live \
-            --test test_iris_doc_depth_live \
-            --test test_dispatch_gate_handlers \
-            --test test_iris_admin_observability_live \
-            --test test_interop_depth_live \
-            --test test_sql_power_live \
-            -- --include-ignored --nocapture
+          cargo test --workspace --all-targets --features testing --no-fail-fast -- \
+            --include-ignored --nocapture \
+            --skip discover_iris_reads_env_vars \
+            --skip discover_iris_returns_none_when_nothing_found \
+            --skip e2e_sm_discovery_finds_connection \
+            --skip e2e_sm_credential_resolves \
+            --skip e2e_sm_tools_work_after_discovery \
+            --skip test_all_enterprise_images \
+            --skip test_enterprise_web_server_absent_message \
+            --skip test_container_not_found_message \
+            --skip test_port_not_mapped_message \
+            --skip test_all_community_images \
+            --skip live_benchmark_run_covers_all_tasks_with_a_verdict \
+            --skip live_benchmark_baseline_computes_absolute_difference_lift \
+            --skip test_admin_webapp_crud
         env:
           IRIS_HOST: ${{ env.IRIS_HOST }}
           IRIS_WEB_PORT: "52773"
@@ -291,7 +307,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.92.0
         with:
           targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
       - uses: mlugg/setup-zig@v2

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
+use std::ffi::OsString;
 use tracing_subscriber::EnvFilter;
 
 mod cmd;
@@ -36,6 +37,12 @@ enum Commands {
     Install(cmd::install::InstallCommand),
     /// Run the skill/tool benchmark harness (pass_rate/lift scoring against the ported task suite)
     Benchmark(cmd::benchmark::BenchmarkCommand),
+    /// Any unrecognized subcommand — dispatched to an `iris-agentic-dev-<name>` plugin on
+    /// PATH if one exists (regression: clap rejects unknown subcommands with exit code 2
+    /// before main()'s own dispatch logic ever runs, so plugin dispatch was dead code
+    /// without this catch-all variant — see plugin_dispatch_tests.rs).
+    #[command(external_subcommand)]
+    External(Vec<OsString>),
 }
 
 #[tokio::main]
@@ -63,12 +70,21 @@ async fn main() -> Result<()> {
         Some(Commands::Init(cmd)) => cmd.run().await,
         Some(Commands::Install(cmd)) => cmd.run().await,
         Some(Commands::Benchmark(cmd)) => cmd.run().await,
+        Some(Commands::External(args)) => {
+            let name = args
+                .first()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let rest: Vec<String> = args
+                .iter()
+                .skip(1)
+                .map(|s| s.to_string_lossy().into_owned())
+                .collect();
+            cmd::plugin::try_dispatch_plugin(&name, &rest)?;
+            eprintln!("Run `iris-agentic-dev --help` for usage.");
+            std::process::exit(1);
+        }
         None => {
-            // Check for iris-agentic-dev-* plugin on PATH before giving up
-            let args: Vec<String> = std::env::args().collect();
-            if args.len() > 1 {
-                cmd::plugin::try_dispatch_plugin(&args[1], &args[2..])?;
-            }
             eprintln!("Run `iris-agentic-dev --help` for usage.");
             std::process::exit(1);
         }
