@@ -18,6 +18,12 @@ fn make_iris_tools() -> IrisTools {
     IrisTools::new(Some(live_iris())).expect("IrisTools::new")
 }
 
+/// Serializes tests that PUT+compile the shared IrisDevTest.SqlPower class. Without
+/// this, two tests running concurrently can race — one's PUT+compile leaves the class
+/// transiently uncompiled while another's INSERT/TRUNCATE runs against it, producing
+/// "Table not found, class has not been fully compiled" (observed in CI).
+static SQL_POWER_TABLE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn parse_call_result(r: Result<rmcp::model::CallToolResult, String>) -> serde_json::Value {
     let r = r.expect("call_for_test returned Err");
     let text = r.content[0].raw.as_text().unwrap().text.clone();
@@ -59,6 +65,9 @@ async fn put_and_compile_test_table(iris: &IrisConnection) {
 #[tokio::test]
 #[ignore]
 async fn live_write_insert_returns_rows_affected_one() {
+    let _guard = SQL_POWER_TABLE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let iris = live_iris();
     put_and_compile_test_table(&iris).await;
     let tools = make_iris_tools();
@@ -123,6 +132,9 @@ async fn live_write_ddl_rejected_before_iris_call() {
 #[tokio::test]
 #[ignore]
 async fn live_write_truncate_succeeds() {
+    let _guard = SQL_POWER_TABLE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let iris = live_iris();
     put_and_compile_test_table(&iris).await;
     let tools = make_iris_tools();

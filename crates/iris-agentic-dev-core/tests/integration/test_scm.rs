@@ -219,8 +219,13 @@ fn iris_compile_open_uri() {
         result
     );
 
-    // Verify sentinel file was written
-    let hint_path = dirs::home_dir().unwrap().join(".iris-dev/open-hint.json");
+    // Verify sentinel file was written. Regression: this checked .iris-dev/ (the
+    // pre-rename directory name, commit 7eb8b96) while write_open_hint() writes to
+    // .iris-agentic-dev/ — this assertion could never have passed since the rename;
+    // it just never ran anywhere to reveal it.
+    let hint_path = dirs::home_dir()
+        .unwrap()
+        .join(".iris-agentic-dev/open-hint.json");
     assert!(
         hint_path.exists(),
         "sentinel file should exist at {:?}",

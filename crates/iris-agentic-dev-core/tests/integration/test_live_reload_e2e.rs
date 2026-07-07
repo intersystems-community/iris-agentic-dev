@@ -38,6 +38,13 @@ fn iris_host() -> String {
     std::env::var("IRIS_HOST").unwrap_or_default()
 }
 
+/// The container to select via iris_containers(action=select)/iris_select_container.
+/// Was hardcoded to "iris-dev-iris" (a personal dev-machine convention) — broke
+/// immediately in CI, where the container is named iris-e2e.
+fn select_container_name() -> String {
+    std::env::var("IRIS_CONTAINER").unwrap_or_else(|_| "iris-dev-iris".to_string())
+}
+
 fn mcp_call_with_toml(
     toml_dir: Option<&std::path::Path>,
     extra_env: &[(&str, &str)],
@@ -200,7 +207,7 @@ fn test_e2e_select_container_updates_check_config() {
     let mut msgs = init_msgs();
     msgs.push(serde_json::json!({
         "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"iris_containers","arguments":{"action":"select","name":"iris-dev-iris","namespace":"USER"}}
+        "params":{"name":"iris_containers","arguments":{"action":"select","name":select_container_name(),"namespace":"USER"}}
     }));
     msgs.push(serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
@@ -239,7 +246,7 @@ fn test_e2e_select_container_execute_uses_new_connection() {
     let mut msgs = init_msgs();
     msgs.push(serde_json::json!({
         "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"iris_select_container","arguments":{"name":"iris-dev-iris","namespace":"USER"}}
+        "params":{"name":"iris_containers","arguments":{"action":"select","name":select_container_name(),"namespace":"USER"}}
     }));
     msgs.push(serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",

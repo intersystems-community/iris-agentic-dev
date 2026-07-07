@@ -235,31 +235,52 @@ async fn live_telemetry_query_and_export_trace_reflect_recorded_calls() {
             )
             .await;
     }
-    // record_call's durable write is fire-and-forget (tokio::spawn) — give it a moment.
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    // record_call's durable write is fire-and-forget (tokio::spawn). A fixed sleep
+    // (previously 500ms) is not reliably enough under load — poll instead, up to a
+    // few seconds. Scoped to this test's own session_id: an unscoped query makes
+    // read_durable_iris enumerate + do a separate execute_via_generator round trip
+    // PER accumulated session — on a long-lived dev container with thousands of
+    // sessions from prior test runs, that alone can take well over any reasonable
+    // poll budget (observed: >1700 sessions, unscoped query never completing in 5s).
+    let session_id = tools.session.id.to_string();
+    let mut records: Vec<serde_json::Value> = Vec::new();
+    for _ in 0..20 {
+        let query_result = tools
+            .call_for_test(
+                "telemetry_query",
+                serde_json::json!({"tool_name": "iris_search", "session_id": session_id}),
+            )
+            .await
+            .expect("telemetry_query should succeed");
+        let text = query_result
+            .content
+            .first()
+            .unwrap()
+            .raw
+            .as_text()
+            .unwrap()
+            .text
+            .clone();
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        records = json["records"].as_array().cloned().unwrap_or_default();
+        if records.iter().any(|r| r["tool"] == "iris_search") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    assert!(
+        records.iter().any(|r| r["tool"] == "iris_search"),
+        "iris_search record should appear in telemetry_query within 5s, got: {records:?}"
+    );
 
-    let query_result = tools
-        .call_for_test(
-            "telemetry_query",
-            serde_json::json!({"tool_name": "iris_search"}),
-        )
-        .await
-        .expect("telemetry_query should succeed");
-    let text = query_result
-        .content
-        .first()
-        .unwrap()
-        .raw
-        .as_text()
-        .unwrap()
-        .text
-        .clone();
-    let json: serde_json::Value = serde_json::from_str(&text).unwrap();
-    let records = json["records"].as_array().unwrap();
-    assert!(records.iter().any(|r| r["tool"] == "iris_search"));
-
+    // Scoped to this test's own session_id — same unbounded-enumeration issue as the
+    // telemetry_query call above; an unfiltered call enumerates every accumulated
+    // session on the container.
     let trace_result = tools
-        .call_for_test("telemetry_export_trace", serde_json::json!({}))
+        .call_for_test(
+            "telemetry_export_trace",
+            serde_json::json!({"session_id": session_id}),
+        )
         .await
         .expect("telemetry_export_trace should succeed");
     let text = trace_result

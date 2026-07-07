@@ -193,10 +193,14 @@ jobs:
       #     name "iris-dev-iris" (a personal dev machine's convention); this job's
       #     container is named iris-e2e. The rest of test_discovery_docker_live.rs
       #     (5 tests) has no such hardcoding and passes here.
+      # --test-threads=1: same cross-binary env-var race as the `test` job above (e.g.
+      # OBJECTSCRIPT_SKILLMCP_NAMESPACE) — observed here too, intermittently, once in
+      # ~5 full runs. The IRIS container startup dominates this job's wall-clock time
+      # regardless, so serializing test execution costs little in exchange for no flakes.
       - name: Run full test suite against live IRIS (Rust)
         run: |
           cargo test --workspace --all-targets --features testing --no-fail-fast -- \
-            --include-ignored --nocapture \
+            --include-ignored --nocapture --test-threads=1 \
             --skip discover_iris_reads_env_vars \
             --skip discover_iris_returns_none_when_nothing_found \
             --skip e2e_sm_discovery_finds_connection \
