@@ -1,11 +1,41 @@
 // Unit tests for scm.rs internal logic (no IRIS needed).
-// Tests SCM_MENU constant and ScmParams deserialization.
+// Tests ScmAction enum, SCM_MENU constant, and ScmParams deserialization.
 
-use iris_agentic_dev_core::tools::scm::{ScmParams, SCM_MENU};
+use iris_agentic_dev_core::tools::scm::{ScmAction, ScmParams, SCM_MENU};
 
 #[test]
 fn test_scm_menu_prefix_is_percent_source_menu() {
     assert_eq!(SCM_MENU, "%SourceMenu");
+}
+
+#[test]
+fn test_scm_action_known_variants() {
+    assert_eq!(ScmAction::from_id("%CheckOut"), ScmAction::CheckOut);
+    assert_eq!(ScmAction::from_id("%UndoCheckout"), ScmAction::UndoCheckout);
+    assert_eq!(ScmAction::from_id("%CheckIn"), ScmAction::CheckIn);
+    assert_eq!(ScmAction::from_id("%GetLatest"), ScmAction::GetLatest);
+    assert_eq!(
+        ScmAction::from_id("%AddToSourceControl"),
+        ScmAction::AddToSourceControl
+    );
+    assert_eq!(ScmAction::from_id("Diff"), ScmAction::Diff);
+    assert_eq!(ScmAction::from_id("%Disconnect"), ScmAction::Disconnect);
+    assert_eq!(ScmAction::from_id("%Reconnect"), ScmAction::Reconnect);
+}
+
+#[test]
+fn test_scm_action_checkin_blocked() {
+    // Both with and without % prefix must resolve to CheckIn
+    assert_eq!(ScmAction::from_id("CheckIn"), ScmAction::CheckIn);
+    assert_eq!(ScmAction::from_id("%CheckIn"), ScmAction::CheckIn);
+}
+
+#[test]
+fn test_scm_action_unknown() {
+    assert_eq!(
+        ScmAction::from_id("SomeWeirdAction"),
+        ScmAction::Unknown("SomeWeirdAction".to_string())
+    );
 }
 
 #[test]

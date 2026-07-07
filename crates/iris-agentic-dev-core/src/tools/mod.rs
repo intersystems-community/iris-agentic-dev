@@ -57,7 +57,7 @@ pub mod skills_tools;
 pub mod symbols_local;
 
 pub use doc::{DocMode, IrisDocParams};
-pub use scm::ScmParams;
+pub use scm::{ScmAction, ScmParams};
 
 /// Controls which tools are registered at startup.
 /// Read from `IRIS_TOOLSET` env var or `--toolset` CLI flag.
@@ -3195,7 +3195,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.get_iris_reloaded().await?;
         let (sm_server, policy) = self.active_server_manager_policy();
-        let params_json = serde_json::json!({ "namespace": p.namespace });
+        let params_json = serde_json::json!({ "namespace": p.namespace, "code": p.code });
         if let Err(gate) = crate::policy::gate::dispatch_gate(
             "iris_execute",
             sm_server.as_deref().unwrap_or(""),
@@ -3414,7 +3414,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         // Policy gate (044 + 051): fires before role gate.
         let (sm_server_q, policy_q) = self.active_server_manager_policy();
         {
-            let params_json = serde_json::json!({ "namespace": p.namespace, "mode": mode });
+            let params_json =
+                serde_json::json!({ "namespace": p.namespace, "mode": mode, "query": p.query });
             if let Err(gate) = crate::policy::gate::dispatch_gate(
                 "iris_query",
                 sm_server_q.as_deref().unwrap_or(""),

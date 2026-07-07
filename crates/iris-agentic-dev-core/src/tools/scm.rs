@@ -20,6 +20,36 @@ fn default_namespace() -> String {
 /// Menu prefix used for source control actions.
 pub const SCM_MENU: &str = "%SourceMenu";
 
+/// SCM menu actions as reported by %Studio.SourceControl.Interface:MenuItems.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ScmAction {
+    CheckOut,
+    UndoCheckout,
+    CheckIn,
+    GetLatest,
+    AddToSourceControl,
+    Diff,
+    Disconnect,
+    Reconnect,
+    Unknown(String),
+}
+
+impl ScmAction {
+    pub fn from_id(id: &str) -> Self {
+        match id.trim_start_matches('%') {
+            "CheckOut" => Self::CheckOut,
+            "UndoCheckout" => Self::UndoCheckout,
+            "CheckIn" => Self::CheckIn,
+            "GetLatest" => Self::GetLatest,
+            "AddToSourceControl" => Self::AddToSourceControl,
+            "Diff" => Self::Diff,
+            "Disconnect" => Self::Disconnect,
+            "Reconnect" => Self::Reconnect,
+            other => Self::Unknown(other.to_string()),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ScmParams {
     /// Action: status, menu, checkout, execute
@@ -174,7 +204,10 @@ pub async fn handle_iris_source_control(
                     .next()
                     .and_then(|s| s.trim().parse().ok())
                     .unwrap_or(0);
-                if enabled == 1 && !name.is_empty() {
+                if enabled == 1
+                    && !name.is_empty()
+                    && ScmAction::from_id(name) != ScmAction::CheckIn
+                {
                     actions.push(serde_json::json!({"id": name, "label": name, "enabled": true}));
                 }
             }
@@ -223,6 +256,9 @@ pub async fn handle_iris_source_control(
 
         "execute" => {
             let action_id = p.action_id.as_deref().unwrap_or("");
+            if ScmAction::from_id(action_id) == ScmAction::CheckIn {
+                return err_json("BLOCKED", "CheckIn is not allowed");
+            }
             let code = user_action_code(action_id, doc, &iris.username, &iris.password);
             let raw = match xecute(iris, client, &code, ns).await {
                 Ok(o) => o,
@@ -768,5 +804,23 @@ mod tests {
         let (code, msg) = parse_action_msg("  1  |  some msg  ");
         assert_eq!(code, 1);
         assert_eq!(msg, "some msg");
+    }
+
+    // ── ScmAction ─────────────────────────────────────────────────────────────
+    #[test]
+    fn test_scm_action_from_id() {
+        assert_eq!(ScmAction::from_id("CheckOut"), ScmAction::CheckOut);
+        assert_eq!(ScmAction::from_id("%CheckIn"), ScmAction::CheckIn);
+        assert_eq!(ScmAction::from_id("%GetLatest"), ScmAction::GetLatest);
+        assert_eq!(
+            ScmAction::from_id("Unknown"),
+            ScmAction::Unknown("Unknown".to_string())
+        );
+    }
+
+    #[test]
+    fn test_checkin_is_blocked() {
+        assert_eq!(ScmAction::from_id("%CheckIn"), ScmAction::CheckIn);
+        assert_eq!(ScmAction::from_id("CheckIn"), ScmAction::CheckIn);
     }
 }

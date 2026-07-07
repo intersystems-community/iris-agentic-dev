@@ -395,3 +395,70 @@ fn dispatch_gate_does_not_check_policy_allow_list() {
         "dispatch_gate does not enforce policy.allow list — that is policy_gate's job"
     );
 }
+
+// ── Gate [0]: code-edit hard-block (non-configurable) ─────────────────────────
+
+#[test]
+fn gate0_blocks_iris_execute_dictionary_edit() {
+    let params = serde_json::json!({
+        "namespace": "USER",
+        "code": r#"set c=##class(%Dictionary.ClassDefinition).%OpenId("My.Class") do c.%Save()"#,
+    });
+    let r = dispatch_gate("iris_execute", "iris-dev", Some(&policy_dev_allow()), &params);
+    assert!(r.is_err());
+    assert_eq!(r.unwrap_err()["error_code"], "CODE_EDIT_BLOCKED");
+}
+
+#[test]
+fn gate0_blocks_iris_execute_obj_compile() {
+    let params = serde_json::json!({
+        "namespace": "USER",
+        "code": r#"do $system.OBJ.Compile("My.Class","ck")"#,
+    });
+    let r = dispatch_gate("iris_execute", "iris-dev", Some(&policy_dev_allow()), &params);
+    assert!(r.is_err());
+    assert_eq!(r.unwrap_err()["error_code"], "CODE_EDIT_BLOCKED");
+}
+
+#[test]
+fn gate0_fires_even_with_no_policy() {
+    // Non-configurable: the code-edit block must fire before the no-policy early return.
+    let params = serde_json::json!({
+        "namespace": "USER",
+        "code": "set ^oddDEF(\"My.Class\")=1",
+    });
+    let r = dispatch_gate("iris_execute", "server", None, &params);
+    assert!(r.is_err(), "code-edit block must fire even with no policy");
+    assert_eq!(r.unwrap_err()["error_code"], "CODE_EDIT_BLOCKED");
+}
+
+#[test]
+fn gate0_permits_ordinary_execute() {
+    let params = serde_json::json!({ "namespace": "USER", "code": "write $ZVERSION,!" });
+    let r = dispatch_gate("iris_execute", "iris-dev", Some(&policy_dev_allow()), &params);
+    assert!(r.is_ok(), "ordinary ObjectScript must not be blocked");
+}
+
+#[test]
+fn gate0_blocks_iris_query_write_to_dictionary() {
+    let params = serde_json::json!({
+        "namespace": "USER",
+        "mode": "write",
+        "query": "UPDATE %Dictionary.MethodDefinition SET Name='x' WHERE parent='My.Class'",
+    });
+    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    assert!(r.is_err());
+    assert_eq!(r.unwrap_err()["error_code"], "CODE_EDIT_BLOCKED");
+}
+
+#[test]
+fn gate0_permits_iris_query_read_of_dictionary() {
+    // read-mode introspection against %Dictionary must remain allowed.
+    let params = serde_json::json!({
+        "namespace": "USER",
+        "mode": "read",
+        "query": "SELECT Name FROM %Dictionary.CompiledClass",
+    });
+    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    assert!(r.is_ok(), "read-mode %Dictionary introspection must be permitted");
+}

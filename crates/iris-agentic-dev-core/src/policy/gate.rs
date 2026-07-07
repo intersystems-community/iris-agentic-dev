@@ -2,12 +2,14 @@
 //!
 //! `dispatch_gate()` is the single pre-dispatch check that runs before every tool call.
 //! Gate evaluation order (fixed):
+//!   [0] Code-edit hard-block (non-configurable; scans iris_execute code / iris_query write SQL)
 //!   [1] Environment template (mcpTemplate)
 //!   [2] Bulk-PHI hard-block (dataPolicy + bulk-PHI tool list)
 //!   [3] System global blocklist (hardcoded + custom)
 //!   [4] Per-global PHI name pattern gate (acknowledgePhi bypass)
 //!
 //! New error codes (per constitution Error Code Registry):
+//!   CODE_EDIT_BLOCKED   — attempt to edit class/routine code via arbitrary execution
 //!   ENV_GATE_BLOCKED    — mcpTemplate blocks the tool category
 //!   DATA_POLICY_BLOCKED — dataPolicy=block on PHI-capable tool
 //!   SYSTEM_BLOCKLIST    — global name matches hardcoded or custom blocklist
@@ -38,6 +40,30 @@ pub fn dispatch_gate(
     policy: Option<&ConnectionPolicy>,
     params: &serde_json::Value,
 ) -> GateResult {
+    // [0] Code-edit hard-block — non-configurable, fires regardless of policy presence.
+    // Blocks editing class/routine code through arbitrary-execution tools, which otherwise
+    // sidestep the system blocklist (that gate only fires on tools carrying a global_name).
+    if tool_name == "iris_execute" {
+        if let Some(code) = params.get("code").and_then(|v| v.as_str()) {
+            if let Some(err) =
+                crate::policy::code_edit_gate::check_objectscript_code_edit(code, server_name)
+            {
+                return Err(err);
+            }
+        }
+    } else if tool_name == "iris_query" {
+        let is_write = params.get("mode").and_then(|v| v.as_str()) == Some("write");
+        if is_write {
+            if let Some(query) = params.get("query").and_then(|v| v.as_str()) {
+                if let Some(err) =
+                    crate::policy::code_edit_gate::check_sql_code_edit(query, server_name)
+                {
+                    return Err(err);
+                }
+            }
+        }
+    }
+
     let Some(policy) = policy else {
         return Ok(());
     };
