@@ -237,10 +237,27 @@ iris-agentic-dev resolves the IRIS connection in this order — first match wins
 | `IRIS_WEB_PREFIX` | *(empty)* | URL path prefix for non-root gateway installs |
 | `IRIS_USERNAME` | `_SYSTEM` | IRIS username |
 | `IRIS_PASSWORD` | `SYS` | IRIS password |
+| `IRIS_SERVICE_USERNAME` | *(empty)* | Restricted service account for arbitrary-execution tools (see below) |
+| `IRIS_SERVICE_PASSWORD` | *(empty)* | Password for `IRIS_SERVICE_USERNAME` |
 | `IRIS_NAMESPACE` | `USER` | Default namespace |
 | `IRIS_CONTAINER` | *(empty)* | Docker container name — required for Docker-dependent tools |
 | `IRIS_SERVER_NAME` | *(empty)* | Server Manager server name when multiple are configured |
 | `OBJECTSCRIPT_WORKSPACE` | `$PWD` | Workspace root for `.iris-agentic-dev.toml` lookup |
+
+### Privilege separation for arbitrary execution
+
+`iris_execute`, `iris_execute_method`, `iris_query` (`mode="write"`), and `iris_global`
+(`set`/`kill`) can run arbitrary ObjectScript/SQL. Under a `%All` account these can edit class
+and routine code — even by indirection (`$classmethod`, `$method("%Sa"_"ve")`, `xecute`) —
+bypassing the SCM lock and the `CODE_EDIT_BLOCKED` string filter, since no static text filter
+can be exhaustive against a fully-privileged identity.
+
+Set `IRIS_SERVICE_USERNAME` / `IRIS_SERVICE_PASSWORD` to a **least-privilege** IRIS account
+(no `%Development` resource, code database mounted read-only). Those four tools then authenticate
+as that account, so code edits fail with `<PROTECT>` at the IRIS privilege layer regardless of
+indirection. Code-writing tools (`iris_document` put, `iris_source_control`, `iris_compile`)
+deliberately keep using the primary `IRIS_USERNAME`, so SCM checkouts and audit stay attributed
+to the real user. When unset, all tools use the primary connection (unchanged behaviour).
 
 ---
 
