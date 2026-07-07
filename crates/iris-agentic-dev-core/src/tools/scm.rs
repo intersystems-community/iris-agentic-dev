@@ -482,16 +482,10 @@ fn derive_scm_status(
     let owner_opt = Some(owner.trim().to_string()).filter(|s| !s.is_empty());
     let any_signal =
         is_in_sc || has_checkout || has_undo_checkout || has_add_to_sc || owner_opt.is_some();
-    // No signal at all → no SCM configured, document is freely editable.
-    // (GetStatus errors with empty menus also land here — treat as uncontrolled.)
+    // No signal at all → we genuinely don't know. Reporting "editable: true" here is the exact
+    // false-positive this rewrite eliminates (GetStatus errors and empty menus both land here).
     if !any_signal {
-        return Some(ScmStatus {
-            controlled: false,
-            editable: true,
-            locked: false,
-            checked_out_by_me: false,
-            owner: None,
-        });
+        return None;
     }
 
     // A document is uncontrolled iff we are offered the action to add it to source control.
@@ -558,19 +552,13 @@ fn parse_scm_status_line(line: &str) -> Option<(bool, bool, bool, bool, String)>
     let has_undo_checkout = flag(parts.next())?;
     let has_add_to_sc = flag(parts.next())?;
     let owner = parts.next().unwrap_or("").trim().to_string();
-    Some((
-        is_in_sc,
-        has_checkout,
-        has_undo_checkout,
-        has_add_to_sc,
-        owner,
-    ))
+    Some((is_in_sc, has_checkout, has_undo_checkout, has_add_to_sc, owner))
 }
 
 /// Fallback owner detection from the SCM provider's native `checked out by user '<name>'` notice.
 ///
 /// Some source-control providers emit a native `NOTICE: … is currently checked out by user
-/// 'todor', and was last updated at 2026-07-07 12:34:56` message (often followed by a `<PROTECT>`)
+/// 'xxx', and was last updated at 2026-07-07 12:34:56` message (often followed by a `<PROTECT>`)
 /// that short-circuits `status_check_code` before the `SCMSTATUS|` sentinel is ever written. In
 /// that case `parse_scm_status_line` finds nothing, yet the raw output already tells us the
 /// document is controlled and locked by another user — so we scrape it here instead of reporting
@@ -583,9 +571,11 @@ fn parse_checked_out_by(raw: &str) -> Option<(String, Option<String>)> {
     use std::sync::OnceLock;
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        // "checked out by user 'todor'" — timestamp captured only if the line isn't truncated.
-        regex::Regex::new(r"checked out by user '([^']+)'(?:.*?updated at ([0-9-]+ [0-9:]+))?")
-            .expect("static SCM checked-out regex is valid")
+        // "checked out by user 'xxx'" — timestamp captured only if the line isn't truncated.
+        regex::Regex::new(
+            r"checked out by user '([^']+)'(?:.*?updated at ([0-9-]+ [0-9:]+))?",
+        )
+        .expect("static SCM checked-out regex is valid")
     });
     let caps = re.captures(raw)?;
     let owner = caps.get(1)?.as_str().trim().to_string();
@@ -1038,16 +1028,10 @@ mod tests {
     }
 
     #[test]
-    fn test_derive_no_signal_is_uncontrolled() {
-        // No in-SC flag, no menu items, no owner → no SCM configured in this namespace.
-        // Must return controlled:false, editable:true — NOT None/SCM_UNAVAILABLE, which
-        // was a false-positive error for namespaces that simply have no SCM.
-        let s = derive_scm_status(false, false, false, false, "", "me").unwrap();
-        assert!(!s.controlled);
-        assert!(s.editable);
-        assert!(!s.locked);
-        assert!(!s.checked_out_by_me);
-        assert!(s.owner.is_none());
+    fn test_derive_no_signal_is_indeterminate() {
+        // No in-SC flag, no menu items, no owner → indeterminate → None (caller reports
+        // SCM_UNAVAILABLE), never a false "editable: true".
+        assert!(derive_scm_status(false, false, false, false, "", "me").is_none());
     }
 
     #[test]
