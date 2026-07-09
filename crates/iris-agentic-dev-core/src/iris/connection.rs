@@ -450,10 +450,6 @@ impl IrisConnection {
             // A residual like <ENDOFFILE> is often left as a benign side effect of an
             // SCM provider's internal Read even when the operation fully succeeded;
             // appending it to a non-empty result corrupted otherwise-valid output.
-            // Only surface a non-exception $ZERROR when the body produced NO output.
-            // A residual like <ENDOFFILE> is often left as a benign side effect of an
-            // SCM provider's internal Read even when the operation fully succeeded;
-            // appending it to a non-empty result corrupted otherwise-valid output.
             "  If (out=\"\") && (ze'=\"\") && (ze'=\",\") { Set out = \"ERROR($ZERROR): \"_ze_$Char(10) }"
                 .into(),
             "  Quit out".into(),
