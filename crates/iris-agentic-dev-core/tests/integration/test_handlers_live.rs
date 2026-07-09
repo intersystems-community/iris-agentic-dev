@@ -12,7 +12,7 @@
 //!   IRIS_USERNAME=_SYSTEM IRIS_PASSWORD=SYS  — override credentials
 
 use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
-use iris_agentic_dev_core::tools::doc::{handle_iris_doc, DocMode, IrisDocParams};
+use iris_agentic_dev_core::tools::doc::{handle_iris_doc, IrisDocParams};
 use iris_agentic_dev_core::tools::info::{
     handle_iris_info, handle_iris_macro, handle_iris_table_info, InfoParams, MacroParams,
     TableInfoParams,
@@ -387,7 +387,7 @@ fn test_handle_iris_doc_get_object_cls() {
         };
         let elicitation_store = iris_agentic_dev_core::elicitation::ElicitationStore::new();
         let p = IrisDocParams {
-            mode: DocMode::Get,
+            mode: "get".to_string(),
             name: Some("%Library.Object.cls".to_string()),
             names: vec![],
             content: None,
@@ -431,7 +431,7 @@ fn test_handle_iris_doc_head_object_cls() {
         };
         let elicitation_store = iris_agentic_dev_core::elicitation::ElicitationStore::new();
         let p = IrisDocParams {
-            mode: DocMode::Head,
+            mode: "head".to_string(),
             name: Some("%Library.Object.cls".to_string()),
             names: vec![],
             content: None,
@@ -672,7 +672,7 @@ fn test_handle_iris_doc_batch_get() {
         };
         let elicitation_store = iris_agentic_dev_core::elicitation::ElicitationStore::new();
         let p = IrisDocParams {
-            mode: DocMode::Get,
+            mode: "get".to_string(),
             name: None,
             names: vec![
                 "%Library.Object.cls".to_string(),
@@ -11655,7 +11655,7 @@ async fn test_doc_put_returns_200_with_status_errors() {
         &conn,
         &client,
         iris_agentic_dev_core::tools::doc::IrisDocParams {
-            mode: iris_agentic_dev_core::tools::doc::DocMode::Put,
+            mode: "put".to_string(),
             name: Some("Test.Cls.cls".to_string()),
             names: vec![],
             content: Some("Class Test.Cls {}".to_string()),
@@ -11731,7 +11731,7 @@ async fn test_doc_put_compile_non_2xx_compile_request() {
         &conn,
         &client,
         iris_agentic_dev_core::tools::doc::IrisDocParams {
-            mode: iris_agentic_dev_core::tools::doc::DocMode::Put,
+            mode: "put".to_string(),
             name: Some("Test.ConcurrentCompile.cls".to_string()),
             names: vec![],
             content: Some("Class Test.ConcurrentCompile {}".to_string()),
@@ -11796,7 +11796,7 @@ async fn test_doc_delete_non_2xx_non_404() {
         &conn,
         &client,
         iris_agentic_dev_core::tools::doc::IrisDocParams {
-            mode: iris_agentic_dev_core::tools::doc::DocMode::Delete,
+            mode: "delete".to_string(),
             name: Some("Test.DeleteMe.cls".to_string()),
             names: vec![],
             content: None,
@@ -11859,7 +11859,7 @@ async fn test_doc_put_non_2xx_upload() {
         &conn,
         &client,
         iris_agentic_dev_core::tools::doc::IrisDocParams {
-            mode: iris_agentic_dev_core::tools::doc::DocMode::Put,
+            mode: "put".to_string(),
             name: Some("Test.ReadOnly.cls".to_string()),
             names: vec![],
             content: Some("Class Test.ReadOnly {}".to_string()),

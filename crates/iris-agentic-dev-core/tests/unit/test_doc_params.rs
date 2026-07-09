@@ -1,6 +1,6 @@
 //! T015: Unit tests for IrisDocParams elicitation fields.
 
-use iris_agentic_dev_core::tools::{DocMode, IrisDocParams};
+use iris_agentic_dev_core::tools::IrisDocParams;
 
 #[test]
 fn doc_params_elicitation_fields() {
@@ -14,7 +14,7 @@ fn doc_params_elicitation_fields() {
     }"#,
     )
     .unwrap();
-    assert!(matches!(p.mode, DocMode::Put));
+    assert_eq!(p.mode, "put");
     assert_eq!(p.elicitation_id.as_deref(), Some("abc-123"));
     assert_eq!(p.elicitation_answer.as_deref(), Some("yes"));
 }

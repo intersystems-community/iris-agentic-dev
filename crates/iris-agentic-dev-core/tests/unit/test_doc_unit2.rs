@@ -1,12 +1,12 @@
 //! Unit tests for doc.rs — IrisDocParams serde.
 
-use iris_agentic_dev_core::tools::doc::{DocMode, IrisDocParams};
+use iris_agentic_dev_core::tools::doc::IrisDocParams;
 
 #[test]
 fn doc_params_defaults() {
     let p: IrisDocParams = serde_json::from_str(r#"{"name":"Foo.Bar.cls"}"#).unwrap();
     assert_eq!(p.name.as_deref(), Some("Foo.Bar.cls"));
-    assert!(matches!(p.mode, DocMode::Get));
+    assert!(p.mode == "get");
     assert!(!p.compile);
     assert_eq!(p.namespace, "USER");
 }
@@ -14,13 +14,13 @@ fn doc_params_defaults() {
 #[test]
 fn doc_params_put_mode_lowercase() {
     let p: IrisDocParams = serde_json::from_str(r#"{"name":"x.cls","mode":"put"}"#).unwrap();
-    assert!(matches!(p.mode, DocMode::Put));
+    assert!(p.mode == "put");
 }
 
 #[test]
 fn doc_params_action_alias_delete() {
     let p: IrisDocParams = serde_json::from_str(r#"{"name":"x.cls","action":"delete"}"#).unwrap();
-    assert!(matches!(p.mode, DocMode::Delete));
+    assert!(p.mode == "delete");
 }
 
 #[test]
@@ -39,5 +39,5 @@ fn doc_params_names_list() {
 #[test]
 fn doc_mode_head_lowercase() {
     let p: IrisDocParams = serde_json::from_str(r#"{"name":"x.cls","mode":"head"}"#).unwrap();
-    assert!(matches!(p.mode, DocMode::Head));
+    assert!(p.mode == "head");
 }

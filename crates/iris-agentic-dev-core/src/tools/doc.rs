@@ -4,8 +4,13 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
+/// Internal dispatch enum for iris_doc. NOTE: this is deliberately NOT used as the
+/// `mode` field type. schemars renders an enum field as a `$ref` into `$defs`, and
+/// several MCP tool-use layers (incl. Anthropic's) do not resolve `$ref` in tool
+/// input schemas — the model then cannot construct `mode` and the entire tool call
+/// arrives with empty arguments. To keep the schema flat (no `$defs`/`$ref`), `mode`
+/// is a plain `String` on the params struct and parsed here.
+#[derive(Debug, PartialEq, Eq)]
 pub enum DocMode {
     Get,
     Put,
@@ -15,23 +20,37 @@ pub enum DocMode {
     Compiled,
     List,
     Insert,
-    #[serde(rename = "delete_lines")]
     DeleteLines,
 }
 
-fn default_mode() -> DocMode {
-    DocMode::Get
+impl DocMode {
+    /// Parse the string `mode` argument. Case-insensitive. Returns None for unknown.
+    fn parse(s: &str) -> Option<DocMode> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "get" => Some(DocMode::Get),
+            "put" => Some(DocMode::Put),
+            "delete" => Some(DocMode::Delete),
+            "head" => Some(DocMode::Head),
+            "fragment" => Some(DocMode::Fragment),
+            "compiled" => Some(DocMode::Compiled),
+            "list" => Some(DocMode::List),
+            "insert" => Some(DocMode::Insert),
+            "delete_lines" => Some(DocMode::DeleteLines),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct IrisDocParams {
-    /// Operation. Defaults to "get".
-    /// get=fetch source, put=write whole doc, delete=remove, head=check existence,
-    /// fragment=read a line range, compiled=read INT form, list=glob docnames,
-    /// insert=splice `content` before 1-based `line` (omit `line` to append at EOF),
-    /// delete_lines=remove inclusive `start`..`end` (requires `expected`).
+    /// Operation, one of: get, put, delete, head, fragment, compiled, list, insert,
+    /// delete_lines. Defaults to "get". get=fetch source, put=write whole doc,
+    /// delete=remove, head=check existence, fragment=read a line range, compiled=read
+    /// INT form, list=glob docnames, insert=splice `content` before 1-based `line`
+    /// (omit `line` to append at EOF), delete_lines=remove inclusive `start`..`end`
+    /// (requires `expected`).
     #[serde(default = "default_mode", alias = "action")]
-    pub mode: DocMode,
+    pub mode: String,
     /// Document name e.g. 'MyApp.Patient.cls'
     #[serde(alias = "document")]
     pub name: Option<String>,
@@ -119,6 +138,9 @@ where
 
 fn default_namespace() -> String {
     "USER".to_string()
+}
+fn default_mode() -> String {
+    "get".to_string()
 }
 use crate::iris::connection::IrisConnection;
 
@@ -253,7 +275,20 @@ pub async fn handle_iris_doc(
         );
     }
 
-    match p.mode {
+    let mode = match DocMode::parse(&p.mode) {
+        Some(m) => m,
+        None => {
+            return err_json(
+                "INVALID_PARAMS",
+                &format!(
+                    "unknown mode {:?}. Valid: get, put, delete, head, fragment, compiled, \
+                     list, insert, delete_lines.",
+                    p.mode
+                ),
+            )
+        }
+    };
+    match mode {
         DocMode::Get => handle_get(iris, client, p).await,
         DocMode::Put => handle_put(iris, client, p, elicitation_store).await,
         DocMode::Delete => handle_delete(iris, client, p).await,
@@ -1580,7 +1615,7 @@ mod tests {
     #[test]
     fn test_iris_doc_params_get_mode_default() {
         let p: IrisDocParams = serde_json::from_str(r#"{"name": "Foo.cls"}"#).unwrap();
-        assert!(matches!(p.mode, DocMode::Get));
+        assert!(DocMode::parse(&p.mode) == Some(DocMode::Get));
     }
 
     #[test]
@@ -1589,7 +1624,7 @@ mod tests {
             r#"{"mode": "put", "name": "Foo.cls", "content": "Class Foo {}"}"#,
         )
         .unwrap();
-        assert!(matches!(p.mode, DocMode::Put));
+        assert!(DocMode::parse(&p.mode) == Some(DocMode::Put));
         assert_eq!(p.content.as_deref(), Some("Class Foo {}"));
     }
 
@@ -1597,7 +1632,7 @@ mod tests {
     fn test_iris_doc_params_mode_alias_action() {
         let p: IrisDocParams =
             serde_json::from_str(r#"{"action": "delete", "name": "Foo.cls"}"#).unwrap();
-        assert!(matches!(p.mode, DocMode::Delete));
+        assert!(DocMode::parse(&p.mode) == Some(DocMode::Delete));
     }
 
     #[test]
@@ -1648,14 +1683,14 @@ mod tests {
     fn test_iris_doc_params_head_mode() {
         let p: IrisDocParams =
             serde_json::from_str(r#"{"mode": "head", "name": "Foo.cls"}"#).unwrap();
-        assert!(matches!(p.mode, DocMode::Head));
+        assert!(DocMode::parse(&p.mode) == Some(DocMode::Head));
     }
 
     #[test]
     fn test_iris_doc_params_delete_mode() {
         let p: IrisDocParams =
             serde_json::from_str(r#"{"mode": "delete", "name": "Foo.cls"}"#).unwrap();
-        assert!(matches!(p.mode, DocMode::Delete));
+        assert!(DocMode::parse(&p.mode) == Some(DocMode::Delete));
     }
 
     #[test]
@@ -2332,7 +2367,7 @@ mod tests {
             r#"{"mode": "insert", "name": "Foo.cls", "line": 10, "content": "  // hi"}"#,
         )
         .unwrap();
-        assert!(matches!(p.mode, DocMode::Insert));
+        assert!(DocMode::parse(&p.mode) == Some(DocMode::Insert));
         assert_eq!(p.line, Some(10));
     }
 
@@ -2342,7 +2377,7 @@ mod tests {
             r#"{"mode": "delete_lines", "name": "Foo.cls", "start": 5, "end": 8}"#,
         )
         .unwrap();
-        assert!(matches!(p.mode, DocMode::DeleteLines));
+        assert!(DocMode::parse(&p.mode) == Some(DocMode::DeleteLines));
         assert_eq!(p.start, Some(5));
         assert_eq!(p.end, Some(8));
     }
