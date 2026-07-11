@@ -74,8 +74,8 @@ do ##class(%Monitor.System.LineByLine).Stop()
 set routines = $lb("MyApp.MyClass.1", "MyApp.OtherClass.1")
 set sc = ##class(%Monitor.System.LineByLine).Start(routines, "", "")
 
-// 3. Run tests
-do ##class(%UnitTest.Manager).RunTest("MyApp/Tests", "/nodelete")
+// 3. Run tests (compiled class pattern, /noload always)
+do ##class(%UnitTest.Manager).RunTest("MyApp.Tests", "/noload/nodelete")
 
 // 4. Stop
 do ##class(%Monitor.System.LineByLine).Stop()
@@ -101,11 +101,16 @@ write hit _ "/" _ total _ " = " _ $fnumber(hit/total*100,"",1) _ "%", !
 ```text
 iris_coverage(
     mode: "start" | "stop" | "report" | "run",
-    classes: ["MyApp.MyClass", ...],  // product class names (without .1)
-    test_path: "MyApp/Tests",          // for mode=run only
+    classes: ["MyApp.MyClass", ...],  // explicit class list (without .1) — mutually exclusive with package
+    package: "MyApp",                  // auto-discover all concrete classes in package via %Dictionary.ClassDefinition
+    test_path: "MyApp.Tests",           // compiled class pattern for mode=run; /noload always used
     namespace: "MYNS"
 )
 ```
+
+Either `classes` or `package` must be provided for modes that need a class list (start, report, run).
+`package` queries `%Dictionary.ClassDefinition WHERE Name %STARTSWITH 'MyApp.' AND Abstract = 0`
+to build the class list automatically — no need to enumerate every class by hand.
 
 **mode=start**: Stops any existing session, calls `Start()` with class list converted to `.1` routines.
 Returns `{started: true, routines: [...], bbsiz_ok: bool}`.
@@ -128,10 +133,9 @@ Returns `{started: true, routines: [...], bbsiz_ok: bool}`.
 
 **mode=run**: start + RunTest + stop + report in one call.
 
-### `iris_coverage_check`
-
-Pre-flight check: verifies `bbsiz` is set, `$zu(84,0,1,1,1,1,1,1)` returns 1, no other monitor session
-active. Returns actionable error if setup is wrong, including the exact CPF fix needed.
+**mode=check**: Pre-flight check — verifies `$zu(84,0,1,1,1,1,1,1)` returns 1 and no other monitor
+session is active. Returns `{ok: true, bbsiz_state: "ready"}` or actionable error with exact CPF fix
+commands. No separate `iris_coverage_check` tool — this is `iris_coverage(mode="check")`.
 
 ## Implementation Notes
 
@@ -143,10 +147,77 @@ active. Returns actionable error if setup is wrong, including the exact CPF fix 
 - Class names → routine names: append `.1` (handles single inheritance; doesn't need to walk
   superclasses since we only want coverage of the specific modified class)
 
+## Clarifications
+
+### Session 2026-07-11
+
+- Q: Should `iris_coverage` support a `package` shorthand that auto-discovers all concrete classes
+  in a package? → A: Yes — `package: "MyApp"` as optional alternative to `classes`; mutually
+  exclusive; expands via `%Dictionary.ClassDefinition WHERE Name %STARTSWITH 'pkg.' AND Abstract = 0`
+- Q: Which format should `test_path` accept — filesystem directory or compiled class pattern?
+  → A: Compiled class pattern only (`"MyApp.Tests"`); tool always passes `/noload` to RunTest;
+  tests must be compiled before calling `iris_coverage`
+- Q: `mode=check` — separate tool or mode on `iris_coverage`?
+  → A: Mode on `iris_coverage` — `iris_coverage(mode="check")`; no separate `iris_coverage_check` tool
+
+## Lift Evidence Requirement
+
+**Non-negotiable**: `iris_coverage` ships with a benchmark task that demonstrates positive lift.
+No release without measured lift data.
+
+### Benchmark task
+
+Add to `crates/iris-agentic-dev-core/src/benchmark/tasks/`:
+
+```json
+{
+  "id": "coverage-001",
+  "description": "Measure line coverage for the IrisDevTest.SqlPower class by running its test suite",
+  "setup": "IrisDevTest.SqlPower and its test class already compiled in USER namespace",
+  "success_criteria": [
+    "Returns JSON with total_pct field (numeric, 0-100)",
+    "Returns per-class breakdown with hit and total counts",
+    "Does not hallucinate MonitorEnabled CPF key",
+    "Correctly uses /noload flag for RunTest"
+  ],
+  "tool": "iris_coverage",
+  "expected_params": {
+    "mode": "run",
+    "classes": ["IrisDevTest.SqlPower"],
+    "test_path": "IrisDevTest.SqlPowerTest",
+    "namespace": "USER"
+  }
+}
+```
+
+### Baseline hypothesis
+
+Without `iris_coverage`, an agent asked to "measure coverage" will:
+
+- Hallucinate `MonitorEnabled=1` in iris.cpf (crashes IRIS on restart) — observed in fhir-017
+- Use wrong `test_path` format (slash path without `/noload`)
+- Fail to query results in the same process as `Stop()`
+- Succeed rate: estimated < 20% without the tool
+
+With `iris_coverage(mode="run", ...)`:
+
+- Single tool call returns structured result
+- All `$zu(84)` / `bbsiz` / same-process complexity hidden
+- Expected success rate: > 80%
+
+### Required before merge to master
+
+- [ ] Benchmark task `coverage-001` added and passes against live IRIS
+- [ ] A/B lift run: baseline (no tool, agent uses raw ObjectScript) vs tool-assisted
+- [ ] Lift ≥ +0.20 on success rate or documented explanation if lower
+
 ## Acceptance Criteria
 
 1. `iris_coverage(mode="run", classes=[...], test_path=...)` returns structured JSON with per-class
    line coverage percentages
-2. Returns `bbsiz_not_configured` error with fix instructions if `$zu(84)` subsystem not available
-3. Handles "monitor already running" gracefully (stop + restart)
-4. Works on AI builds and SQLT.145+; returns clear build-incompatibility error on TBLP 127
+2. `iris_coverage(mode="run", package="MyApp", test_path=...)` auto-discovers all concrete classes
+   in the package and monitors them — no explicit class list needed
+3. Returns `bbsiz_not_configured` error with fix instructions if `$zu(84)` subsystem not available
+4. Handles "monitor already running" gracefully (stop + restart)
+5. Works on AI builds and SQLT.145+; returns clear build-incompatibility error on TBLP 127
+6. Benchmark task `coverage-001` shows lift ≥ +0.20 vs baseline (no tool)
