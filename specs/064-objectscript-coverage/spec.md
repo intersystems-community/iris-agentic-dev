@@ -2,9 +2,9 @@
 
 ## Summary
 
-Add two tools to iris-agentic-dev: `iris_coverage_start` / `iris_coverage_stop` + `iris_coverage_report`.
-These wrap `%Monitor.System.LineByLine` to measure which executable lines of a target class list were
-executed during a test run, and return a structured per-class and total coverage report.
+Add a single `iris_coverage` MCP tool (mode-based: `start`/`stop`/`report`/`run`/`check`) that wraps
+`%Monitor.System.LineByLine` to measure which executable lines of a target class list were executed
+during a test run, and returns a structured per-class and total coverage report.
 
 ## Background / Hard-Won Findings
 
@@ -100,7 +100,7 @@ write hit _ "/" _ total _ " = " _ $fnumber(hit/total*100,"",1) _ "%", !
 
 ```text
 iris_coverage(
-    mode: "start" | "stop" | "report" | "run",
+    mode: "start" | "stop" | "report" | "run" | "check",
     classes: ["MyApp.MyClass", ...],  // explicit class list (without .1) — mutually exclusive with package
     package: "MyApp",                  // auto-discover all concrete classes in package via %Dictionary.ClassDefinition
     test_path: "MyApp.Tests",           // compiled class pattern for mode=run; /noload always used
@@ -140,7 +140,8 @@ commands. No separate `iris_coverage_check` tool — this is `iris_coverage(mode
 ## Implementation Notes
 
 - Tools live in a new `coverage.rs` in `crates/iris-agentic-dev-core/src/tools/`
-- Use `iris_execute` internally (docker exec path) since Atelier doesn't support streaming
+- Use `execute_via_generator` (HTTP path, constitution §III) — the entire start→run→stop→collect
+  sequence runs in one generated class method; docker exec is not required
 - The `Result` query must be issued in the same IRIS process that called `Stop()` — use a single
   atomic ObjectScript execution that starts, runs tests, stops, and collects results
 - Non-executable lines (`execCount = -1`) must be excluded from denominator

@@ -10,8 +10,8 @@
 **Goal**: `iris_coverage` tool compiles, registers, dispatches.
 **Phase gate**: `cargo build -p iris-agentic-dev-core` passes; tool appears in `registered_tool_names`.
 
-- [ ] T001 Write unit tests for `build_routine_name`, `parse_coverage_output`, `IrisCoverageParams` deserialization, and `MISSING_PARAM` validation in `crates/iris-agentic-dev-core/tests/unit/test_coverage_unit.rs`
-- [ ] T002 Implement `crates/iris-agentic-dev-core/src/tools/coverage.rs`: `IrisCoverageParams` struct, `build_routine_name()`, `build_coverage_code()`, `parse_coverage_output()`, `handle_iris_coverage()` async fn
+- [ ] T001 Write unit tests for `build_routine_name`, `parse_coverage_output`, `IrisCoverageParams` deserialization, `MISSING_PARAM` validation, `parse_check_output("<FUNCTION>...")` → `BBSIZ_NOT_CONFIGURED`, and `expand_package_to_classes` SQL output parsing in `crates/iris-agentic-dev-core/tests/unit/test_coverage_unit.rs`
+- [ ] T002 Implement `crates/iris-agentic-dev-core/src/tools/coverage.rs`: `IrisCoverageParams` struct, `build_routine_name()`, `build_coverage_code()`, `parse_coverage_output()`, `expand_package_to_classes()` (queries `%Dictionary.ClassDefinition` WHERE `Name %STARTSWITH pkg AND Abstract=0`), `handle_iris_coverage()` async fn
 - [ ] T003 Wire `coverage` module into `crates/iris-agentic-dev-core/src/tools/mod.rs`: add `mod coverage; use coverage::*;`, add `iris_coverage` to `registered_tool_names`, add `iris_coverage` tool definition with `#[tool]` macro, add `iris_coverage` to `call_for_test` dispatch table
 - [ ] T004 Add `[[test]]` entry for `test_coverage_unit` in `crates/iris-agentic-dev-core/Cargo.toml`
 - [ ] T005 Run unit tests: `cargo test -p iris-agentic-dev-core --test test_coverage_unit`
@@ -26,7 +26,7 @@
 **Phase gate**: `live_coverage_check` passes (or returns expected `BBSIZ_NOT_CONFIGURED`).
 
 - [ ] T006 Write live integration test `live_coverage_check_returns_ok_or_bbsiz_error` — calls `iris_coverage(mode="check")` and asserts result is either `{ok: true}` or `{error_code: "BBSIZ_NOT_CONFIGURED"}` in `crates/iris-agentic-dev-core/tests/integration/test_coverage_live.rs`
-- [ ] T007 [P] Write live integration test `live_coverage_run_returns_structured_result` — calls `iris_coverage(mode="run", classes=["USER.IrisDevTest.SqlPower"], test_path=...)` (or a minimal always-present class); asserts JSON has `total_pct`, `classes`, `meets_target` fields in same file
+- [ ] T007 [P] Write live integration test `live_coverage_run_returns_structured_result` — calls `iris_coverage(mode="run", classes=["IrisDevTest.SqlPower"], namespace="USER", test_path="IrisDevTest.SqlPowerTest")`; asserts JSON has `total_pct`, `classes`, `meets_target` fields in same file
 - [ ] T008 Add `[[test]]` entry for `test_coverage_live` in `crates/iris-agentic-dev-core/Cargo.toml` with `required-features = ["testing"]`
 - [ ] T009 Run integration tests: `IRIS_HOST=localhost IRIS_WEB_PORT=52780 IRIS_ALLOW_PROD=1 cargo test -p iris-agentic-dev-core --features testing --test test_coverage_live -- --include-ignored`
 
@@ -47,6 +47,7 @@
 - [ ] T013 Update `README.md` Tools table — add `iris_coverage` row with description and modes
 - [ ] T014 [P] `cargo fmt --all -- --check` and `cargo clippy -- -D warnings` — fix any issues in `coverage.rs`
 - [ ] T015 [P] Verify `iris-agentic-dev tool iris_coverage --args '{"mode":"check"}'` works end-to-end via the CLI bin
+- [ ] T016 Run coverage gate: `IRIS_HOST=localhost IRIS_WEB_PORT=52780 cargo llvm-cov --summary-only -p iris-agentic-dev-core --features testing -- --include-ignored`; assert TOTAL line coverage ≥ 90% (constitution §VIII)
 
 ---
 
@@ -59,7 +60,7 @@ Phase 2 (T006–T009): live IRIS validation
   ↓
 Phase 3 (T010–T012): lift evidence  ← required before release
   ↓
-Phase 4 (T013–T015): polish
+Phase 4 (T013–T016): polish + coverage gate
 ```
 
 ## Key implementation notes
