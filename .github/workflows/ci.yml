@@ -85,10 +85,34 @@ jobs:
   e2e-tests:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/master'
+    # Three-version matrix — catches API compatibility regressions across IRIS generations:
+    #   2023.1  — LTS baseline; Atelier V1/V2 only (no V8), oldest credential scheme
+    #   2025.1  — current stable release
+    #   2026.1  — latest community build; Atelier V8, newest management APIs
+    # Each version runs in its own job so a regression on one version never masks another.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - iris_version: "2023.1.0.229.0"
+            iris_image: "intersystemsdc/iris-community:2023.1.0.229.0-zpm"
+            # 2023.1 community starts slower; give it an extra minute
+            initial_wait_secs: 120
+          - iris_version: "2025.1"
+            iris_image: "intersystemsdc/iris-community:2025.1"
+            initial_wait_secs: 90
+          - iris_version: "2026.1"
+            iris_image: "intersystemsdc/iris-community:2026.1"
+            initial_wait_secs: 90
+    name: "e2e-tests (IRIS ${{ matrix.iris_version }})"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.92.0
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Separate cache per IRIS version so a binary built against one version
+          # doesn't silently run against another.
+          key: "iris-${{ matrix.iris_version }}"
       - run: cargo build -p iris-agentic-dev
       - name: Start IRIS container
         run: |
@@ -96,7 +120,7 @@ jobs:
             -p 52773:52773 \
             -e IRIS_PASSWORD=SYS \
             -e IRIS_USERNAME=_SYSTEM \
-            intersystemsdc/iris-community:2026.1
+            ${{ matrix.iris_image }}
           # Wait for container to be running
           sleep 10
           docker ps | grep iris-e2e
@@ -104,9 +128,9 @@ jobs:
         run: |
           IRIS_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' iris-e2e)
           echo "IRIS container IP: $IRIS_IP"
-          # Wait for IRIS process to start first
-          echo "Waiting 90s for IRIS to initialize..."
-          sleep 90
+          # Wait for IRIS process to start first (duration varies by version — older images start slower)
+          echo "Waiting ${{ matrix.initial_wait_secs }}s for IRIS to initialize..."
+          sleep ${{ matrix.initial_wait_secs }}
           # Then poll for the web server
           for i in $(seq 1 60); do
             for host in $IRIS_IP localhost; do
@@ -197,6 +221,13 @@ jobs:
       # OBJECTSCRIPT_SKILLMCP_NAMESPACE) — observed here too, intermittently, once in
       # ~5 full runs. The IRIS container startup dominates this job's wall-clock time
       # regardless, so serializing test execution costs little in exchange for no flakes.
+      - name: Log Atelier API version
+        run: |
+          HOST=${{ env.IRIS_HOST }}
+          USER=${{ env.IRIS_USERNAME }}
+          PASS=${{ env.IRIS_PASSWORD }}
+          echo "=== Atelier API info for IRIS ${{ matrix.iris_version }} ==="
+          curl -s -u "$USER:$PASS" "http://$HOST:52773/api/atelier/" | head -c 500
       - name: Run full test suite against live IRIS (Rust)
         run: |
           cargo test --workspace --all-targets --features testing --no-fail-fast -- \
@@ -222,6 +253,8 @@ jobs:
           IRIS_PASSWORD: ${{ env.IRIS_PASSWORD }}
           IRIS_NAMESPACE: USER
           IRIS_CONTAINER: iris-e2e
+          # Exposed so tests can skip/adjust for known version-specific behavior
+          IRIS_MATRIX_VERSION: ${{ matrix.iris_version }}
 
   doc-lint:
     runs-on: ubuntu-latest
