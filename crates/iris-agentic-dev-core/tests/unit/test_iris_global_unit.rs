@@ -1021,3 +1021,323 @@ fn parse_list_output_skips_blank_lines() {
     assert_eq!(subs[1], "sub2");
     assert_eq!(subs[2], "sub3");
 }
+
+// ---------------------------------------------------------------------------
+// T151-T160: parse_get_output — unexpected formats and edge cases
+// Covers the branch for non-0/1 prefixes that are not covered by existing tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parse_get_output_unexpected_prefix_2() {
+    use iris_agentic_dev_core::tools::global;
+    // Prefix "2|" is neither defined (1|) nor undefined (0|), should error
+    let result = global::parse_get_output("2|value");
+    assert_eq!(result["success"], false);
+    assert_eq!(result["error_code"], "IRIS_EXECUTE_ERROR");
+    assert!(result["message"]
+        .as_str()
+        .unwrap()
+        .contains("unexpected get output"));
+}
+
+#[test]
+fn parse_get_output_unexpected_prefix_pipe_only() {
+    use iris_agentic_dev_core::tools::global;
+    // Leading pipe with no 0/1 flag
+    let result = global::parse_get_output("|value");
+    assert_eq!(result["success"], false);
+    assert_eq!(result["error_code"], "IRIS_EXECUTE_ERROR");
+    assert!(result["message"]
+        .as_str()
+        .unwrap()
+        .contains("unexpected get output"));
+}
+
+#[test]
+fn parse_get_output_unexpected_prefix_numeric() {
+    use iris_agentic_dev_core::tools::global;
+    // High numeric prefix: "99|value"
+    let result = global::parse_get_output("99|value");
+    assert_eq!(result["success"], false);
+    assert_eq!(result["error_code"], "IRIS_EXECUTE_ERROR");
+}
+
+#[test]
+fn parse_get_output_unexpected_prefix_no_pipe() {
+    use iris_agentic_dev_core::tools::global;
+    // No pipe at all — same case as parse_get_output_unexpected_format
+    let result = global::parse_get_output("orphan_value");
+    assert_eq!(result["success"], false);
+    assert_eq!(result["error_code"], "IRIS_EXECUTE_ERROR");
+}
+
+// ---------------------------------------------------------------------------
+// T161-T170: parse_subtree_output — silent skip and malformed DONE
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parse_subtree_output_silently_skips_lines_without_pipe() {
+    use iris_agentic_dev_core::tools::global;
+    // One well-formed node line, one orphan line (no pipe), one DONE marker
+    let input = r#"^MyApp("x")|v
+orphanline
+DONE|1|0
+"#;
+    let result = global::parse_subtree_output(input);
+    assert_eq!(result["success"], true);
+    let nodes = result["nodes"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1, "should have exactly one node");
+    assert_eq!(nodes[0]["path"], r#"^MyApp("x")"#);
+    assert_eq!(nodes[0]["value"], "v");
+    // Confirm orphan line was silently skipped (not included in nodes)
+    for node in nodes {
+        assert_ne!(
+            node["path"], "orphanline",
+            "orphan line should not appear as a node"
+        );
+    }
+}
+
+#[test]
+fn parse_subtree_output_done_with_non_numeric_count() {
+    use iris_agentic_dev_core::tools::global;
+    // DONE line with non-numeric count (e.g., 'abc') → parse().ok() defaults to 0
+    let input = r#"^A("x")|v
+DONE|abc|0
+"#;
+    let result = global::parse_subtree_output(input);
+    assert_eq!(result["success"], true);
+    let nodes = result["nodes"].as_array().unwrap();
+    assert_eq!(nodes.len(), 1, "one node collected");
+    // node_count defaults to 0 when parse fails (documents the silent-default behavior)
+    assert_eq!(result["node_count"], 0, "non-numeric count defaults to 0");
+    assert_eq!(result["truncated"], false);
+}
+
+#[test]
+fn parse_subtree_output_multiple_lines_without_pipe() {
+    use iris_agentic_dev_core::tools::global;
+    // Multiple orphan lines to ensure they're all skipped
+    let input = r#"^App("a")|val1
+no_pipe_line_1
+no_pipe_line_2
+^App("b")|val2
+incomplete
+DONE|2|0
+"#;
+    let result = global::parse_subtree_output(input);
+    assert_eq!(result["success"], true);
+    let nodes = result["nodes"].as_array().unwrap();
+    assert_eq!(nodes.len(), 2, "only two well-formed nodes");
+    assert_eq!(nodes[0]["value"], "val1");
+    assert_eq!(nodes[1]["value"], "val2");
+}
+
+// ---------------------------------------------------------------------------
+// T171-T180: parse_list_output — missing truncation flag
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parse_list_output_done_missing_truncation_flag() {
+    use iris_agentic_dev_core::tools::global;
+    // DONE line without the second pipe (truncation flag)
+    // e.g., "DONE|5" instead of "DONE|5|0"
+    // parts.get(1) returns None, truncated defaults to false
+    let input = "a\nb\nDONE|2\n";
+    let result = global::parse_list_output(input);
+    assert_eq!(result["success"], true);
+    let subs = result["subscripts"].as_array().unwrap();
+    assert_eq!(subs.len(), 2);
+    assert_eq!(subs[0], "a");
+    assert_eq!(subs[1], "b");
+    // Confirm truncated defaults to false when flag is missing
+    assert_eq!(
+        result["truncated"], false,
+        "missing flag should default to false"
+    );
+}
+
+#[test]
+fn parse_list_output_done_malformed_truncation_flag() {
+    use iris_agentic_dev_core::tools::global;
+    // Truncation flag is neither "0" nor "1" (e.g., "DONE|3|xyz")
+    // The comparison *s == "1" will be false, so truncated = false
+    let input = "sub1\nsub2\nsub3\nDONE|3|xyz\n";
+    let result = global::parse_list_output(input);
+    assert_eq!(result["success"], true);
+    let subs = result["subscripts"].as_array().unwrap();
+    assert_eq!(subs.len(), 3);
+    // xyz != "1", so truncated is false (documents the behavior)
+    assert_eq!(result["truncated"], false);
+}
+
+// ---------------------------------------------------------------------------
+// T181-T185: parse_execute_output — all-whitespace input
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parse_execute_output_all_whitespace() {
+    use iris_agentic_dev_core::tools::global;
+    // Input that is entirely whitespace (spaces, tabs, newlines)
+    let result = global::parse_execute_output("   \t  \n  ");
+    assert!(result.is_ok(), "all-whitespace should return Ok after trim");
+    assert_eq!(result.unwrap(), "");
+}
+
+#[test]
+fn parse_execute_output_all_whitespace_then_get_output_fails() {
+    use iris_agentic_dev_core::tools::global;
+    // Chain: parse_execute_output on whitespace, then parse_get_output on the result
+    let output = global::parse_execute_output("   ");
+    assert!(output.is_ok());
+    let empty_str = output.unwrap();
+    assert_eq!(empty_str, "");
+    // Now try to parse this empty string as get output
+    let get_result = global::parse_get_output(&empty_str);
+    assert_eq!(get_result["success"], false);
+    assert_eq!(get_result["error_code"], "IRIS_EXECUTE_ERROR");
+    assert!(get_result["message"]
+        .as_str()
+        .unwrap()
+        .contains("unexpected get output"));
+}
+
+// ---------------------------------------------------------------------------
+// T186-T195: validate_subscripts — control characters (tab, newline)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn validate_subscripts_rejects_tab() {
+    use iris_agentic_dev_core::tools::global;
+    let result = validate_subscripts(&["key\tvalue".into()]);
+    assert!(result.is_err(), "tab character should be rejected");
+    assert_eq!(result.unwrap_err()["error_code"], "INVALID_SUBSCRIPT");
+}
+
+#[test]
+fn validate_subscripts_rejects_newline() {
+    use iris_agentic_dev_core::tools::global;
+    let result = validate_subscripts(&["line1\nline2".into()]);
+    assert!(result.is_err(), "newline should be rejected");
+    assert_eq!(result.unwrap_err()["error_code"], "INVALID_SUBSCRIPT");
+}
+
+#[test]
+fn validate_subscripts_rejects_carriage_return() {
+    use iris_agentic_dev_core::tools::global;
+    let result = validate_subscripts(&["line1\rline2".into()]);
+    assert!(result.is_err(), "carriage return should be rejected");
+    assert_eq!(result.unwrap_err()["error_code"], "INVALID_SUBSCRIPT");
+}
+
+#[test]
+fn validate_subscripts_rejects_bell_character() {
+    use iris_agentic_dev_core::tools::global;
+    // \x07 is the bell character, a control character
+    let result = validate_subscripts(&["bell\x07char".into()]);
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err()["error_code"], "INVALID_SUBSCRIPT");
+}
+
+// ---------------------------------------------------------------------------
+// T196-T205: build_list_code — parenthesis in subscript value edge case
+// ---------------------------------------------------------------------------
+
+#[test]
+fn build_list_code_with_paren_in_subscript() {
+    use iris_agentic_dev_core::tools::global;
+    // A subscript containing a closing paren: "a(b)"
+    // This creates a reference like: ^App("a(b)")
+    // rsplit_once(')') will split on the LAST ')', producing:
+    //   base = ^App("a(b"
+    //   remainder = ""
+    // The generated code will then use ^App("a(b,sub) which is malformed.
+    let code = build_list_code(r#"^App("a(b)")"#, 10);
+    // Document the behavior: the code contains the split result
+    assert!(code.contains("maxSubs"));
+    // The order_ref will include the partial reference — this is the known limitation
+    // (documented in the gap analysis). We confirm the behavior rather than fix it
+    // since the fix requires rethinking the parsing strategy.
+    assert!(code.contains("$Order"));
+}
+
+#[test]
+fn build_list_code_multiple_parens_in_subscript() {
+    use iris_agentic_dev_core::tools::global;
+    // Multiple nested parens: "a(b(c))"
+    // This tests that rsplit_once splits only on the last one
+    let code = build_list_code(r#"^App("a(b(c))")"#, 10);
+    assert!(code.contains("maxSubs"));
+    assert!(code.contains("$Order"));
+    // The behavior is documented: splits on the last ), leaving "a(b(c" in the base
+}
+
+#[test]
+fn build_list_code_root_global_no_issue() {
+    use iris_agentic_dev_core::tools::global;
+    // Root globals without subscripts should work fine (no rsplit needed)
+    let code = build_list_code("^App", 10);
+    assert!(code.contains("$Order(^App(sub))"));
+    assert!(code.contains("Set maxSubs = 10"));
+}
+
+// ---------------------------------------------------------------------------
+// T206-T215: build_set_objectscript — no extra escaping (backslash, $, newline)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn build_set_objectscript_backslash_pass_through() {
+    use iris_agentic_dev_core::tools::global;
+    // Backslash should NOT be escaped; it should appear verbatim
+    let code = build_set_objectscript("^G", "back\\slash");
+    assert!(
+        code.contains(r#"back\slash"#),
+        "backslash should not be escaped"
+    );
+}
+
+#[test]
+fn build_set_objectscript_dollar_sign_pass_through() {
+    use iris_agentic_dev_core::tools::global;
+    // $ should appear verbatim (not expanded as ObjectScript function)
+    let code = build_set_objectscript("^G", "$ZV");
+    assert!(code.contains("$ZV"), "$ZV should appear literally in code");
+    // Make sure it's inside the string literal, not as a function call
+    assert!(code.contains(r#""$ZV""#) || code.contains(r#"= "$ZV""#));
+}
+
+#[test]
+fn build_set_objectscript_newline_pass_through() {
+    use iris_agentic_dev_core::tools::global;
+    // Newline in value should be embedded verbatim
+    let code = build_set_objectscript("^G", "line1\nline2");
+    assert!(code.contains("line1"));
+    assert!(code.contains("line2"));
+    // The newline is literal in the string, not escaped as \n
+}
+
+#[test]
+fn build_set_objectscript_percent_sign() {
+    use iris_agentic_dev_core::tools::global;
+    // % sign should pass through unchanged
+    let code = build_set_objectscript("^G", "%SYS");
+    assert!(code.contains("%SYS"));
+}
+
+#[test]
+fn build_set_objectscript_only_quote_is_doubled() {
+    use iris_agentic_dev_core::tools::global;
+    // Only " is escaped (doubled); other chars are unchanged
+    let code = build_set_objectscript("^G", r#"a"b$c%d\e"#);
+    // The " should be doubled to ""
+    assert!(code.contains(r#"a""b$c%d\e"#));
+}
+
+#[test]
+fn build_set_objectscript_mixed_special_chars() {
+    use iris_agentic_dev_core::tools::global;
+    // Mix of special chars that should all pass through except "
+    let code = build_set_objectscript("^MyApp", r#"$ZV\$ZERROR%SYS"key"#);
+    // Quote should be doubled, everything else verbatim
+    assert!(code.contains(r#"$ZV\$ZERROR%SYS""key"#));
+}

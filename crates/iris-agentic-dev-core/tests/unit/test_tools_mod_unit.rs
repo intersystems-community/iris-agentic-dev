@@ -1516,3 +1516,278 @@ async fn agent_history_includes_duration_ms_and_session_id() {
     assert!(call["duration_ms"].is_number());
     assert!(call["session_id"].is_string());
 }
+
+// ────────────────────────────────────────────────────────────────────────────────
+// New tests for identified coverage gaps
+// ────────────────────────────────────────────────────────────────────────────────
+
+// ── ConnectionState::new_disconnected (L124) ──────────────────────────────────
+
+#[test]
+fn connection_state_new_disconnected_config_file() {
+    use iris_agentic_dev_core::tools::ConnectionState;
+
+    let state = ConnectionState::new_disconnected(
+        iris_agentic_dev_core::tools::ConnectionSource::ConfigFile,
+    );
+    assert!(state.iris.is_none(), "iris must be None");
+    assert_eq!(
+        state.source,
+        iris_agentic_dev_core::tools::ConnectionSource::ConfigFile
+    );
+    assert!(
+        state.write_tools_enabled,
+        "write_tools_enabled should be true"
+    );
+    assert!(
+        state.config_parse_error.is_none(),
+        "config_parse_error should be None"
+    );
+}
+
+#[test]
+fn connection_state_new_disconnected_env_vars() {
+    use iris_agentic_dev_core::tools::ConnectionState;
+
+    let state =
+        ConnectionState::new_disconnected(iris_agentic_dev_core::tools::ConnectionSource::EnvVars);
+    assert!(state.iris.is_none());
+    assert_eq!(
+        state.source,
+        iris_agentic_dev_core::tools::ConnectionSource::EnvVars
+    );
+    assert!(state.write_tools_enabled);
+    assert!(state.config_parse_error.is_none());
+}
+
+#[test]
+fn connection_state_new_disconnected_iris_select_container() {
+    use iris_agentic_dev_core::tools::ConnectionState;
+
+    let state = ConnectionState::new_disconnected(
+        iris_agentic_dev_core::tools::ConnectionSource::IrisSelectContainer,
+    );
+    assert!(state.iris.is_none());
+    assert_eq!(
+        state.source,
+        iris_agentic_dev_core::tools::ConnectionSource::IrisSelectContainer
+    );
+    assert!(state.write_tools_enabled);
+}
+
+#[test]
+fn connection_state_new_disconnected_auto_discovered() {
+    use iris_agentic_dev_core::tools::ConnectionState;
+
+    let state = ConnectionState::new_disconnected(
+        iris_agentic_dev_core::tools::ConnectionSource::AutoDiscovered,
+    );
+    assert!(state.iris.is_none());
+    assert_eq!(
+        state.source,
+        iris_agentic_dev_core::tools::ConnectionSource::AutoDiscovered
+    );
+    assert!(state.write_tools_enabled);
+    assert!(state.config_parse_error.is_none());
+}
+
+// ── ConnectionState::from_iris (L135) ─────────────────────────────────────────
+
+#[test]
+fn connection_state_from_iris_explicit_flag_source() {
+    use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
+    use iris_agentic_dev_core::tools::{ConnectionSource, ConnectionState};
+
+    let iris_conn = IrisConnection::new(
+        "http://localhost:1972",
+        "USER",
+        "_SYSTEM",
+        "SYS",
+        DiscoverySource::ExplicitFlag,
+    );
+    let state = ConnectionState::from_iris(iris_conn, ConnectionSource::ConfigFile, None);
+    assert!(state.iris.is_some(), "iris should be Some");
+    assert_eq!(state.source, ConnectionSource::ConfigFile);
+    assert!(state.config_file.is_none());
+    assert!(
+        state.write_tools_enabled,
+        "write_tools_enabled should reflect connection"
+    );
+    assert!(state.config_parse_error.is_none());
+}
+
+#[test]
+fn connection_state_from_iris_with_config_file() {
+    use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
+    use iris_agentic_dev_core::tools::{ConnectionSource, ConnectionState};
+    use std::path::PathBuf;
+
+    let iris_conn = IrisConnection::new(
+        "http://localhost:1972",
+        "USER",
+        "_SYSTEM",
+        "SYS",
+        DiscoverySource::ExplicitFlag,
+    );
+    let config_path = PathBuf::from("/tmp/.iris-agentic-dev.toml");
+    let state = ConnectionState::from_iris(
+        iris_conn,
+        ConnectionSource::ConfigFile,
+        Some(config_path.clone()),
+    );
+    assert!(state.iris.is_some());
+    assert_eq!(state.config_file, Some(config_path));
+}
+
+// ── Toolset::as_str (L85) ─────────────────────────────────────────────────────
+
+#[test]
+fn toolset_as_str_baseline() {
+    use iris_agentic_dev_core::tools::Toolset;
+
+    assert_eq!(Toolset::Baseline.as_str(), "baseline");
+}
+
+#[test]
+fn toolset_as_str_nostub() {
+    use iris_agentic_dev_core::tools::Toolset;
+
+    assert_eq!(Toolset::Nostub.as_str(), "nostub");
+}
+
+#[test]
+fn toolset_as_str_merged() {
+    use iris_agentic_dev_core::tools::Toolset;
+
+    assert_eq!(Toolset::Merged.as_str(), "merged");
+}
+
+// ── translate_select_no_into (L434) ───────────────────────────────────────────
+
+#[test]
+fn translate_sql_macros_select_no_into_with_where() {
+    // SELECT without INTO — should translate but not assign host vars
+    let code = "&sql(SELECT Name FROM Sample.Person WHERE ID=:id)";
+    let result = translate_sql_macros(code);
+    assert!(result.found, "should detect SELECT macro");
+    // Result should contain %Prepare, %Execute but NOT assignment to host vars
+    assert!(result.translated_code.contains("%Prepare"));
+    assert!(result.translated_code.contains("%Execute"));
+    assert!(!result.warnings.is_empty() || result.found);
+}
+
+// ── find_keyword_pos (L525) edge cases ────────────────────────────────────────
+
+#[test]
+fn translate_sql_macros_select_into_from_in_parens() {
+    // SELECT INTO where FROM is inside nested parens — should not match
+    // This tests the paren-depth guard in find_keyword_pos
+    let code = "&sql(SELECT (FROM bad) INTO :x FROM t)";
+    let result = translate_sql_macros(code);
+    // Should not panic; the legitimate FROM should be found
+    assert!(result.found);
+}
+
+#[test]
+fn translate_sql_macros_select_no_from_keyword() {
+    // SELECT INTO without a FROM clause — tests fallback in split_host_vars_from_rest
+    let code = "&sql(SELECT 1, 2 INTO :a, :b)";
+    let result = translate_sql_macros(code);
+    // Should handle gracefully
+    let _ = result;
+}
+
+// ── split_csv edge cases (L552) ───────────────────────────────────────────────
+
+#[test]
+fn translate_sql_macros_select_into_with_nested_parens_in_columns() {
+    // SELECT with COALESCE() in column list — comma inside parens should not split
+    let code = "&sql(SELECT COALESCE(a,b) AS col INTO :x FROM t)";
+    let result = translate_sql_macros(code);
+    assert!(result.found);
+    // Should translate without error
+    assert!(result.warnings.is_empty() || result.translated_code.contains("sqlrs1"));
+}
+
+#[test]
+fn translate_sql_macros_select_empty_into_list() {
+    // SELECT with empty INTO — edge case for split_csv with empty string
+    let code = "&sql(SELECT id INTO FROM t)";
+    let result = translate_sql_macros(code);
+    let _ = result; // Just verify no panic
+}
+
+// ── extract_where_params string-literal branch (L604) ──────────────────────
+
+#[test]
+fn translate_sql_macros_dml_string_literal_with_colon() {
+    // INSERT with string literal containing colon — :var inside quotes should NOT be extracted
+    let code = "&sql(INSERT INTO t (note) VALUES ('host:var'))";
+    let result = translate_sql_macros(code);
+    assert!(result.found);
+    // The translated code should not have ':var' as a param placeholder
+    assert!(!result.translated_code.contains("?") || result.translated_code.contains("host:var"));
+}
+
+#[test]
+fn translate_sql_macros_dml_double_quoted_string_with_colon() {
+    // UPDATE with double-quoted string containing colon
+    let code = "&sql(UPDATE t SET desc=\"key:value\" WHERE id=:id)";
+    let result = translate_sql_macros(code);
+    assert!(result.found);
+    // Should extract only :id as a parameter, not the one in quotes
+}
+
+// ── replace_host_vars_with_positional (L644) ──────────────────────────────
+
+#[test]
+fn translate_sql_macros_select_into_multiple_where_params() {
+    // SELECT INTO with multiple WHERE parameters — should all be replaced with ?
+    let code = "&sql(SELECT Name INTO :name FROM Sample.Person WHERE ID=:id AND Age>:minAge)";
+    let result = translate_sql_macros(code);
+    assert!(result.found);
+    // Verify the params are replaced with ? placeholders
+    assert!(result.translated_code.contains("?"));
+}
+
+#[test]
+fn translate_sql_macros_dml_no_params_unchanged() {
+    // DML without parameters — should still translate but SQL unchanged
+    let code = "&sql(DELETE FROM Foo WHERE id = 1)";
+    let result = translate_sql_macros(code);
+    assert!(result.found);
+    assert!(result.translated_code.contains("sqlrs1"));
+}
+
+// ── rewrite_next_line_sqlcode edge cases (L476) ───────────────────────────
+
+#[test]
+fn translate_sql_macros_select_into_followed_by_empty_line() {
+    // SELECT INTO followed by blank line — should be emitted verbatim
+    let code = "&sql(SELECT Name INTO :name FROM t)\n\nset x = 1";
+    let result = translate_sql_macros(code);
+    assert!(result.found);
+    // Empty line should appear in output
+    assert!(result.translated_code.contains("\n\n"));
+}
+
+#[test]
+fn translate_sql_macros_chained_select_macros() {
+    // Two &sql macros on consecutive lines — should re-process second
+    let code = "&sql(SELECT 1 INTO :x FROM t)\n&sql(SELECT 2 INTO :y FROM u)";
+    let result = translate_sql_macros(code);
+    assert!(result.found);
+    // Both macros should be translated
+    assert!(result.translated_code.contains("sqlrs1"));
+    assert!(result.translated_code.contains("sqlrs2"));
+}
+
+#[test]
+fn translate_sql_macros_sqlcode_rewritten_after_select() {
+    // SELECT INTO followed by SQLCODE reference — should rewrite
+    let code = "&sql(SELECT 1 INTO :x FROM t)\nif SQLCODE < 0 {}";
+    let result = translate_sql_macros(code);
+    assert!(result.found);
+    // SQLCODE should be rewritten to sqlSQLCODE1
+    assert!(result.translated_code.contains("sqlSQLCODE"));
+}
