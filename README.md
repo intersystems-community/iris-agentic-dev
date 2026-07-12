@@ -330,6 +330,7 @@ write-gated (suppressed on Live instances unless `IRIS_ALLOW_PROD=1`).
 | `iris_query` | Execute SQL, return rows as JSON. `mode=explain\|count\|write` for query plans, row-count estimates, and gated DML. |
 | `iris_test` | Run `%UnitTest` tests, return structured pass/fail results. |
 | `iris_global` | Read, write, kill, or list IRIS global nodes. PHI and system-blocklist gates enforced. |
+| `iris_coverage` | Measure ObjectScript line coverage via `%Monitor.System.LineByLine`. `mode=run`: start+RunTest+stop+report in one call. `mode=check`: verify monitor is available. Returns per-class and total coverage percentages. Requires `gmheap ≥ 256` (Management Portal > Configuration > Advanced Memory) and IRIS restart. |
 | `iris_source_control` ✦ | Check lock status, checkout, execute SCM actions. |
 
 ### Search and introspection

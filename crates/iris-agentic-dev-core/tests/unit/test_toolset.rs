@@ -220,8 +220,8 @@ fn test_merged_tool_count_is_23() {
     let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
     let count = tools.registered_tool_names().len();
     assert_eq!(
-        count, 40,
-        "Merged toolset must have exactly 40 tools (38 + telemetry_query + telemetry_export_trace from 059-tool-telemetry-benchmark), got {}",
+        count, 41,
+        "Merged toolset must have exactly 41 tools (38 + telemetry_query + telemetry_export_trace from 059, + iris_coverage from 064), got {}",
         count
     );
     // iris_get_log must be registered in Merged (027-progressive-disclosure)

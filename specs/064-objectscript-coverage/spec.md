@@ -29,15 +29,18 @@ This spec captures lessons from fhir-017 (2026-07-11) trying to get line coverag
 - Key call: `$zu(84,0,1,1,1,1,1,1)` must return `1` to allocate monitor shared memory
 - If it throws `<FUNCTION>`, the `$zu(84)` subsystem is **not implemented** in this kernel build
 
-### The `bbsiz` CPF parameter
+### The `gmheap` memory parameter
 
-- Lives in `[config]` section of `iris.cpf`
-- Controls the line-by-line monitor shared memory buffer size (KB)
-- Default: `-1` (disabled — no buffer allocated, `$zu(84)` memory calls fail)
-- Correct value: `4096` (4 MB) or larger
-- Set via: `##class(Config.config).Open()` → `set cfg.bbsiz = 4096` → `cfg.%Save()` → restart IRIS
+- Controls the general-purpose shared memory heap used by the Line-by-Line monitor
+- Default: `0` (use IRIS default, which may be too small for the monitor)
+- Correct value: `256` MB or larger
+- Set via: Management Portal → System Administration → Configuration → Additional Settings → Advanced Memory → `gmheap`
 - **Requires IRIS restart to take effect** (shared memory allocated at startup)
-- The CPF key is `bbsiz` (NOT `MonitorEnabled` — that key is invalid and crashes IRIS on startup)
+- The parameter is `gmheap` (NOT `bbsiz`, NOT `MonitorEnabled` — both are wrong)
+- `bbsiz` controls the routine buffer size and is unrelated to coverage
+- `MonitorEnabled` is an invalid CPF key that crashes IRIS on startup — never use it
+
+**Verified on build 2026.2.0L.208**: `gmheap=256` enables `%Monitor.System.LineByLine.Start()` successfully.
 
 ### Build compatibility
 
@@ -47,21 +50,25 @@ This spec captures lessons from fhir-017 (2026-07-11) trying to get line coverag
 | SQLT.145+ / sqlt146     | Expected to work   | Standard AI/release builds have it             |
 | AI builds (2026.x.0AI)  | Expected to work   | Standard kernel                                |
 
-### Correct `bbsiz` setup sequence (for builds where it works)
+### Correct `gmheap` setup sequence
+
+Use Management Portal or via ObjectScript in %SYS:
 
 ```objectscript
 // In %SYS namespace
 set cfg = ##class(Config.config).Open()
-write cfg.bbsiz  // should be -1 (disabled)
-set cfg.bbsiz = 4096
+write cfg.gmheap  // 0 = use default (may be insufficient)
+set cfg.gmheap = 256
 do cfg.%Save()
-// Then restart IRIS — bbsiz takes effect at startup only
+// Then restart IRIS — gmheap takes effect at startup only
 ```
 
-After restart, verify:
+After restart, verify monitor starts cleanly:
 
 ```objectscript
-write $zu(84,0,1,1,1,1,1,1)  // must return 1, not throw <FUNCTION>
+set sc = ##class(%Monitor.System.LineByLine).Start($lb("MyApp.MyClass.1"),"","")
+write $system.Status.IsError(sc)  // must be 0 (no error)
+do ##class(%Monitor.System.LineByLine).Stop()
 ```
 
 ### Running coverage

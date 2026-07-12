@@ -708,21 +708,41 @@ pub fn strip_iris_banner(output: &str) -> String {
 }
 
 /// Returns true if the line is purely an IRIS session prompt with no following content.
-/// Examples: "USER>", "IRIS>", "%SYS>", "USER> " (trailing space only).
+/// Examples: "USER>", "IRIS>", "%SYS>", "USER 1S1>" (continuation), "USER> " (trailing space).
+///
+/// IRIS terminal continuation prompts have the format "NS LineNumSDepth>" e.g. "USER 1S1>",
+/// "USER 2S1>", "%SYS 1S1>" — these appear when multi-line code is sent via stdin.
 fn is_bare_prompt_line(s: &str) -> bool {
-    // Strip trailing whitespace for the check
     let s = s.trim_end();
     if !s.ends_with('>') {
         return false;
     }
-    // The prompt token is everything before '>'
     let token = &s[..s.len() - 1];
-    // Allow optional leading '%'
-    let token = token.strip_prefix('%').unwrap_or(token);
-    // Prompt namespace is uppercase alphanumeric + underscore, non-empty, reasonable length
-    !token.is_empty()
-        && token.len() <= 16
-        && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    // Primary prompt: "USER", "IRIS", "%SYS" etc.
+    // Check the namespace part (before optional space + continuation suffix)
+    let (ns_part, rest) = match token.find(' ') {
+        None => (token, ""),
+        Some(pos) => (&token[..pos], &token[pos + 1..]),
+    };
+    let ns = ns_part.strip_prefix('%').unwrap_or(ns_part);
+    // Namespace must be non-empty alphanumeric+underscore, reasonable length
+    if ns.is_empty() || ns.len() > 16 || !ns.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return false;
+    }
+    // If there's a continuation suffix, it must match the pattern \d+S\d+ (e.g. "1S1", "12S2")
+    if rest.is_empty() {
+        return true;
+    }
+    let mut digits = rest;
+    while digits.starts_with(|c: char| c.is_ascii_digit()) {
+        digits = &digits[1..];
+    }
+    if !digits.starts_with('S') {
+        return false;
+    }
+    let digits = &digits[1..];
+    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
 }
 
 #[cfg(test)]
@@ -987,6 +1007,18 @@ mod pure_fn_tests {
         assert!(
             stripped.trim().is_empty(),
             "only prompts → empty: {stripped:?}"
+        );
+    }
+
+    #[test]
+    fn strip_iris_banner_strips_continuation_prompts() {
+        // IRIS multi-line stdin produces "USER 1S1>", "USER 2S1>" continuation prompts
+        let raw = "USER>\nUSER 1S1>\nUSER 2S1>\nOK|ready\nUSER 3S1>\nUSER>\n";
+        let stripped = strip_iris_banner(raw);
+        assert_eq!(
+            stripped.trim(),
+            "OK|ready",
+            "continuation prompts must be stripped: {stripped:?}"
         );
     }
 

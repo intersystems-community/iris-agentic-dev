@@ -28,6 +28,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "iris_generate",
     "iris_generate_class",
     "iris_get_log",
+    "iris_coverage",
     "iris_global",
     "iris_info",
     "iris_interop_query",

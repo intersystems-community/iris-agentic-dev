@@ -44,6 +44,7 @@ impl std::ops::Deref for AnyParams {
     }
 }
 pub mod admin;
+pub mod coverage;
 pub mod dict;
 pub mod doc;
 pub mod gate_macro;
@@ -2044,6 +2045,8 @@ impl IrisTools {
             "iris_message_body",
             "iris_business_rule_info",
             "iris_production_diff",
+            // 064-objectscript-coverage
+            "iris_coverage",
         ];
 
         let mut names: std::collections::HashSet<String> =
@@ -5256,6 +5259,20 @@ Methods:
         ok_json(result)
     }
 
+    // ── 064: iris_coverage ────────────────────────────────────────────────────
+
+    #[tool(
+        description = "Measure ObjectScript line coverage using %Monitor.System.LineByLine. mode=run: start monitoring + run compiled test suite + stop + return per-class and total coverage in one call (use this for most tasks). mode=check: verify the monitor is available by doing a dry Start() — if BBSIZ_NOT_CONFIGURED is returned, increase gmheap to 256+ in Management Portal > System Administration > Configuration > Additional Settings > Advanced Memory, then restart IRIS. mode=start/stop/report: manual multi-step control. Provide either classes=['MyApp.MyClass',...] or package='MyApp' (auto-discovers concrete classes). test_path must be a compiled class pattern (e.g. 'MyApp.Tests') — /noload always used. Returns {total_pct, hits, total, classes:[{class,routine,hit,total,pct}], meets_target, target_pct}. Error codes: BBSIZ_NOT_CONFIGURED (gmheap too small), MONITOR_IN_USE, MISSING_PARAM."
+    )]
+    async fn iris_coverage(
+        &self,
+        Parameters(p): Parameters<coverage::IrisCoverageParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let iris = self.get_iris_reloaded().await?;
+        let result = coverage::handle_iris_coverage(&iris, &self.client, &p).await;
+        ok_json(result)
+    }
+
     // ── 053: iris_execute_method ──────────────────────────────────────────────
 
     #[tool(
@@ -7866,6 +7883,7 @@ impl IrisTools {
             IrisExecuteMethodParams,
             iris_execute_method
         );
+        dispatch!("iris_coverage", coverage::IrisCoverageParams, iris_coverage);
         Err(format!("unknown tool: {tool}"))
     }
 }

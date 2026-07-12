@@ -1,0 +1,6 @@
+id: COV-01
+category: COV
+path: both
+description: "Measure line coverage for the IrisDevTest.SqlPower class by running its test suite. IrisDevTest.SqlPower and IrisDevTest.SqlPowerTest are already compiled in the USER namespace. Return a structured coverage report."
+expected_behavior: "Returns JSON with total_pct (numeric 0-100), per-class breakdown with hit and total counts, and meets_target field. Does not hallucinate MonitorEnabled CPF key. Correctly uses /noload flag for RunTest. Uses iris_coverage(mode=run, classes=[IrisDevTest.SqlPower], test_path=IrisDevTest.SqlPowerTest, namespace=USER)."
+tags: [coverage, line-coverage, iris_coverage]
