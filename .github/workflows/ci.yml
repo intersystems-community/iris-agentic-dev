@@ -118,6 +118,7 @@ jobs:
         run: |
           docker run -d --name iris-e2e \
             -p 52773:52773 \
+            --shm-size 512m \
             -e IRIS_PASSWORD=SYS \
             -e IRIS_USERNAME=_SYSTEM \
             ${{ matrix.iris_image }}

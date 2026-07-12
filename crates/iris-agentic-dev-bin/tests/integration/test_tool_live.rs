@@ -1,13 +1,17 @@
 use std::process::Command;
 
+fn env_or(key: &str, default: &str) -> String {
+    std::env::var(key).unwrap_or_else(|_| default.to_string())
+}
+
 fn iris_dev() -> Command {
     let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
     let mut cmd = Command::new(bin);
-    cmd.env("IRIS_HOST", "localhost")
-        .env("IRIS_WEB_PORT", "52780")
-        .env("IRIS_NAMESPACE", "USER")
-        .env("IRIS_USERNAME", "_SYSTEM")
-        .env("IRIS_PASSWORD", "SYS");
+    cmd.env("IRIS_HOST", env_or("IRIS_HOST", "localhost"))
+        .env("IRIS_WEB_PORT", env_or("IRIS_WEB_PORT", "52780"))
+        .env("IRIS_NAMESPACE", env_or("IRIS_NAMESPACE", "USER"))
+        .env("IRIS_USERNAME", env_or("IRIS_USERNAME", "_SYSTEM"))
+        .env("IRIS_PASSWORD", env_or("IRIS_PASSWORD", "SYS"));
     cmd
 }
 
@@ -43,7 +47,7 @@ fn test_tool_check_config_shows_host() {
     assert!(out.status.success(), "expected exit 0\nstdout: {}", stdout);
     // SC-004: active IRIS host/namespace visible
     assert!(
-        stdout.contains("localhost") || stdout.contains("USER") || stdout.contains("52780"),
+        stdout.contains("localhost") || stdout.contains("USER") || stdout.contains("connected"),
         "expected host/namespace in check_config output, got: {}",
         &stdout[..stdout.len().min(400)]
     );

@@ -26,7 +26,7 @@ macro_rules! tool_gate {
         let params_json = $params_json;
 
         // Check dispatch_gate (custom policy rules engine)
-        if let Err(gate) = crate::policy::gate::dispatch_gate(
+        if let Err(gate) = $crate::policy::gate::dispatch_gate(
             $tool_name,
             sm_server.as_deref().unwrap_or(""),
             policy.as_ref(),
@@ -45,7 +45,7 @@ macro_rules! tool_gate {
         }
 
         // Check policy_gate (server manager policy)
-        if let Some(gate) = crate::iris::server_manager::policy_gate(
+        if let Some(gate) = $crate::iris::server_manager::policy_gate(
             $tool_name,
             sm_server.as_deref().unwrap_or(""),
             policy.as_ref(),
