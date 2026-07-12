@@ -217,6 +217,11 @@ jobs:
       #     name "iris-dev-iris" (a personal dev machine's convention); this job's
       #     container is named iris-e2e. The rest of test_discovery_docker_live.rs
       #     (5 tests) has no such hardcoding and passes here.
+      #   - test_scm_*_via_wiremock / test_search_sync_with_wiremock_null_work_id:
+      #     these tests spin up their own wiremock MockServer in-process but the CI
+      #     environment's IRIS_HOST is set, which causes the handler to attempt a
+      #     real IRIS call instead of hitting the mock. They pass fine in the `test`
+      #     job (no IRIS_HOST set) and are NOT skipped there.
       # --test-threads=1: same cross-binary env-var race as the `test` job above (e.g.
       # OBJECTSCRIPT_SKILLMCP_NAMESPACE) — observed here too, intermittently, once in
       # ~5 full runs. The IRIS container startup dominates this job's wall-clock time
@@ -245,7 +250,13 @@ jobs:
             --skip live_benchmark_run_covers_all_tasks_with_a_verdict \
             --skip live_benchmark_baseline_computes_absolute_difference_lift \
             --skip test_admin_webapp_crud \
-            --skip discover_via_docker_named_finds_real_container
+            --skip discover_via_docker_named_finds_real_container \
+            --skip test_scm_checkout_immediate_success_via_wiremock \
+            --skip test_scm_execute_action_code_0_via_wiremock \
+            --skip test_scm_execute_action_code_1_via_wiremock \
+            --skip test_scm_execute_action_code_7_via_wiremock \
+            --skip test_scm_menu_with_actions_via_wiremock \
+            --skip test_search_sync_with_wiremock_null_work_id
         env:
           IRIS_HOST: ${{ env.IRIS_HOST }}
           IRIS_WEB_PORT: "52773"
