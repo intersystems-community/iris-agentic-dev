@@ -1,4 +1,7 @@
 //! Integration tests for iris_query SQL power extensions (057-sql-power): explain, count, write.
+// These tests intentionally hold std::sync::MutexGuard across awaits to serialize
+// test execution against shared table state. This is correct behaviour.
+#![allow(clippy::await_holding_lock)]
 //! Requires live IRIS on iris-dev-iris container (port from IRIS_HOST/IRIS_WEB_PORT env).
 //! All tests are #[ignore] — run with:
 //!   cargo test -p iris-agentic-dev-core --features testing --test test_sql_power_live -- --include-ignored

@@ -8,8 +8,6 @@
 #[cfg(feature = "testing")]
 mod tests {
     use iris_agentic_dev_core::tools::IrisTools;
-    #[allow(unused_imports)]
-    use rmcp;
 
     fn tools() -> IrisTools {
         IrisTools::new(None).expect("IrisTools::new")

@@ -1,4 +1,7 @@
 //! Live integration tests for IRIS handler functions.
+// These tests intentionally hold std::sync::MutexGuard across awaits to serialize
+// test execution against shared env-vars and resources. This is correct behaviour.
+#![allow(clippy::await_holding_lock)]
 //!
 //! These tests require a running IRIS instance. All tests skip gracefully when
 //! IRIS_HOST is not set in the environment.
@@ -1418,7 +1421,7 @@ async fn test_dispatch_iris_get_log_nonexistent_id() {
     let v = parse_result(result);
     // Should return error_code LOG_NOT_FOUND
     assert!(
-        v.get("error_code").is_some() || v.get("success").map(|s| s == &false).unwrap_or(false),
+        v.get("error_code").is_some() || v.get("success").map(|s| s == false).unwrap_or(false),
         "get_log nonexistent id: {v}"
     );
 }
@@ -2258,7 +2261,7 @@ async fn test_dispatch_iris_interop_query_invalid_what() {
         .await;
     let v = parse_result(result);
     assert!(
-        v.get("error_code").is_some() || v.get("success").map(|s| s == &false).unwrap_or(false),
+        v.get("error_code").is_some() || v.get("success").map(|s| s == false).unwrap_or(false),
         "interop_query invalid what: {v}"
     );
 }
@@ -8853,7 +8856,7 @@ async fn test_dispatch_iris_lookup_transfer_export_existing() {
         v.get("success").is_some() || v.get("error_code").is_some(),
         "lookup_transfer export existing: {v}"
     );
-    if v.get("success").map(|s| s.as_bool()).flatten() == Some(true) {
+    if v.get("success").and_then(|s| s.as_bool()) == Some(true) {
         // Verify entry_count field exists and xml field present
         assert!(
             v.get("entry_count").is_some(),
@@ -15834,16 +15837,14 @@ fn make_subject_tools_with_fleet(
     let tools = iris_agentic_dev_core::tools::IrisTools::new(Some(conn)).expect("IrisTools::new");
 
     let dir = tempfile::TempDir::new().unwrap();
-    let fleet_toml = format!(
-        r#"mode = "operate"
+    let fleet_toml = r#"mode = "operate"
 
 [instance.test-subject]
 host = "127.0.0.1"
 role = "subject"
-"#
-    );
+"#;
     let _ = port; // used indirectly via server.uri()
-    std::fs::write(dir.path().join(".iris-agentic-dev.toml"), &fleet_toml).unwrap();
+    std::fs::write(dir.path().join(".iris-agentic-dev.toml"), fleet_toml).unwrap();
     {
         let mut conn_state = tools.connection.lock().unwrap();
         conn_state.config_file = Some(dir.path().join(".iris-agentic-dev.toml"));

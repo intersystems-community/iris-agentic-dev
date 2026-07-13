@@ -1,4 +1,7 @@
 // Unit tests for iris/discovery.rs — score_container_name + IrisDiscovery types.
+// These tests intentionally hold std::sync::MutexGuard across awaits to serialize
+// env-var mutation. This is correct behaviour for test serialization.
+#![allow(clippy::await_holding_lock)]
 // No Docker, no network required.
 
 use iris_agentic_dev_core::iris::discovery::{

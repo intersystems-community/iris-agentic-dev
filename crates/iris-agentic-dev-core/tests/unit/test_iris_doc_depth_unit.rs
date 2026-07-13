@@ -503,7 +503,7 @@ fn test_stale_content_error_preserves_content() {
         "success": false,
         "error_code": "STALE_CONTENT",
         "error": "test error",
-        "line": block_start + 0,
+        "line": block_start,
         "expected_line": diff.1,
         "actual_line": diff.2,
     });

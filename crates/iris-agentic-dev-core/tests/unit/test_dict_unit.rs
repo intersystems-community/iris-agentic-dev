@@ -262,7 +262,7 @@ mod tests {
     fn test_confidence_formula_decimal_values() {
         // Verify confidence is in valid range
         let conf = confidence_for_count(3);
-        assert!(conf >= 0.0 && conf <= 1.0, "confidence should be 0-1");
+        assert!((0.0..=1.0).contains(&conf), "confidence should be 0-1");
         assert_eq!(conf, 0.75);
     }
 

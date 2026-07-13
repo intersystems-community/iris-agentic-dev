@@ -2,7 +2,6 @@
 //! No live IRIS required — exercises write_jsonl and read_durable_local.
 
 use iris_agentic_dev_core::telemetry::{read_durable, write_durable, ToolCallRecord};
-use std::sync::Arc;
 use tempfile::TempDir;
 use uuid::Uuid;
 
