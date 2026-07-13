@@ -11527,7 +11527,7 @@ async fn test_search_sync_with_wiremock_null_work_id() {
         regex: false,
         case_sensitive: false,
         category: None,
-        documents: vec![],
+        documents: vec!["Test.*.cls".to_string()],
         namespace: "USER".to_string(),
         inline: true,
     };
@@ -12419,8 +12419,10 @@ async fn test_scm_menu_with_actions_via_wiremock() {
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
+    let saved_checkin = std::env::var("IRIS_SCM_ALLOW_CHECKIN").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
+        std::env::set_var("IRIS_SCM_ALLOW_CHECKIN", "1");
     }
     let tools = make_wiremock_tools(&server);
     let result = tools
@@ -12432,6 +12434,10 @@ async fn test_scm_menu_with_actions_via_wiremock() {
     unsafe {
         if let Some(v) = saved {
             std::env::set_var("IRIS_CONTAINER", v);
+        }
+        match saved_checkin {
+            Some(v) => std::env::set_var("IRIS_SCM_ALLOW_CHECKIN", v),
+            None => std::env::remove_var("IRIS_SCM_ALLOW_CHECKIN"),
         }
     }
     let v = parse_result(result);
@@ -12445,10 +12451,56 @@ async fn test_scm_menu_with_actions_via_wiremock() {
 /// scm checkout → action_code=0, immediate success (lines 195-202).
 #[tokio::test]
 async fn test_scm_checkout_immediate_success_via_wiremock() {
-    use wiremock::MockServer;
+    use wiremock::matchers::{method, path_regex};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
     let server = MockServer::start().await;
-    // parse_action_msg("0|") → (0, ""): checkout granted immediately
-    mount_scm_mocks(&server, "0|\n").await;
+
+    // PUT/DELETE/compile mocks (same as mount_scm_mocks)
+    Mock::given(method("PUT"))
+        .and(path_regex("/api/atelier/v1/USER/doc/.*"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({
+            "status": {"errors": [], "summary": ""},
+            "result": {"name": "IrisDevTmp.IrisDevRun.cls", "db": "USER"}
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path_regex("/api/atelier/v1/USER/doc/.*"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": {"errors": [], "summary": ""},
+            "result": {}
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex("/api/atelier/v1/USER/action/compile.*"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": {"errors": [], "summary": ""},
+            "console": [],
+            "result": {"log": []}
+        })))
+        .mount(&server)
+        .await;
+
+    // First query call: UserAction returns "0|" (checkout granted, no dialog needed).
+    Mock::given(method("POST"))
+        .and(path_regex("/api/atelier/v1/USER/action/query"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": {"errors": [], "summary": ""},
+            "result": {"content": [{"result": "0|"}]}
+        })))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    // Second query call: AfterUserAction returns empty (checkout persisted successfully).
+    Mock::given(method("POST"))
+        .and(path_regex("/api/atelier/v1/USER/action/query"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "status": {"errors": [], "summary": ""},
+            "result": {"content": [{"result": ""}]}
+        })))
+        .mount(&server)
+        .await;
 
     let _docker_guard = DOCKER_REQUIRED_LOCK
         .lock()
@@ -12590,8 +12642,10 @@ async fn test_scm_execute_action_code_0_via_wiremock() {
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
+    let saved_checkin = std::env::var("IRIS_SCM_ALLOW_CHECKIN").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
+        std::env::set_var("IRIS_SCM_ALLOW_CHECKIN", "1");
     }
     let tools = make_wiremock_tools(&server);
     let result = tools
@@ -12603,6 +12657,10 @@ async fn test_scm_execute_action_code_0_via_wiremock() {
     unsafe {
         if let Some(v) = saved {
             std::env::set_var("IRIS_CONTAINER", v);
+        }
+        match saved_checkin {
+            Some(v) => std::env::set_var("IRIS_SCM_ALLOW_CHECKIN", v),
+            None => std::env::remove_var("IRIS_SCM_ALLOW_CHECKIN"),
         }
     }
     let v = parse_result(result);
@@ -12629,8 +12687,10 @@ async fn test_scm_execute_action_code_1_via_wiremock() {
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
+    let saved_checkin = std::env::var("IRIS_SCM_ALLOW_CHECKIN").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
+        std::env::set_var("IRIS_SCM_ALLOW_CHECKIN", "1");
     }
     let tools = make_wiremock_tools(&server);
     let result = tools
@@ -12642,6 +12702,10 @@ async fn test_scm_execute_action_code_1_via_wiremock() {
     unsafe {
         if let Some(v) = saved {
             std::env::set_var("IRIS_CONTAINER", v);
+        }
+        match saved_checkin {
+            Some(v) => std::env::set_var("IRIS_SCM_ALLOW_CHECKIN", v),
+            None => std::env::remove_var("IRIS_SCM_ALLOW_CHECKIN"),
         }
     }
     let v = parse_result(result);
@@ -12668,8 +12732,10 @@ async fn test_scm_execute_action_code_7_via_wiremock() {
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     let saved = std::env::var("IRIS_CONTAINER").ok();
+    let saved_checkin = std::env::var("IRIS_SCM_ALLOW_CHECKIN").ok();
     unsafe {
         std::env::remove_var("IRIS_CONTAINER");
+        std::env::set_var("IRIS_SCM_ALLOW_CHECKIN", "1");
     }
     let tools = make_wiremock_tools(&server);
     let result = tools
@@ -12681,6 +12747,10 @@ async fn test_scm_execute_action_code_7_via_wiremock() {
     unsafe {
         if let Some(v) = saved {
             std::env::set_var("IRIS_CONTAINER", v);
+        }
+        match saved_checkin {
+            Some(v) => std::env::set_var("IRIS_SCM_ALLOW_CHECKIN", v),
+            None => std::env::remove_var("IRIS_SCM_ALLOW_CHECKIN"),
         }
     }
     let v = parse_result(result);

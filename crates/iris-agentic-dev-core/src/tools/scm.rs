@@ -247,9 +247,12 @@ pub async fn handle_iris_source_control(
                     .next()
                     .and_then(|s| s.trim().parse().ok())
                     .unwrap_or(0);
+                let checkin_allowed = std::env::var("IRIS_SCM_ALLOW_CHECKIN")
+                    .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+                    .unwrap_or(false);
                 if enabled == 1
                     && !name.is_empty()
-                    && ScmAction::from_id(name) != ScmAction::CheckIn
+                    && (ScmAction::from_id(name) != ScmAction::CheckIn || checkin_allowed)
                 {
                     actions.push(serde_json::json!({"id": name, "label": name, "enabled": true}));
                 }
