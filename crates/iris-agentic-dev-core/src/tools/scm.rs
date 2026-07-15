@@ -552,7 +552,13 @@ fn parse_scm_status_line(line: &str) -> Option<(bool, bool, bool, bool, String)>
     let has_undo_checkout = flag(parts.next())?;
     let has_add_to_sc = flag(parts.next())?;
     let owner = parts.next().unwrap_or("").trim().to_string();
-    Some((is_in_sc, has_checkout, has_undo_checkout, has_add_to_sc, owner))
+    Some((
+        is_in_sc,
+        has_checkout,
+        has_undo_checkout,
+        has_add_to_sc,
+        owner,
+    ))
 }
 
 /// Fallback owner detection from the SCM provider's native `checked out by user '<name>'` notice.
@@ -573,10 +579,8 @@ fn parse_checked_out_by(raw: &str) -> Option<(String, Option<String>)> {
     let re = RE.get_or_init(|| {
         // "checked out by user 'xxx'" — timestamp captured only if the line isn't truncated.
 
-        regex::Regex::new(
-            r"checked out by user '([^']+)'(?:.*?updated at ([0-9-]+ [0-9:]+))?",
-        )
-        .expect("static SCM checked-out regex is valid")
+        regex::Regex::new(r"checked out by user '([^']+)'(?:.*?updated at ([0-9-]+ [0-9:]+))?")
+            .expect("static SCM checked-out regex is valid")
     });
     let caps = re.captures(raw)?;
     let owner = caps.get(1)?.as_str().trim().to_string();
