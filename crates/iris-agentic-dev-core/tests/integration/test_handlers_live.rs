@@ -407,7 +407,14 @@ fn test_handle_iris_doc_get_object_cls() {
             expected: None,
             line: None,
         };
-        let r = handle_iris_doc(&conn, &client, p, &elicitation_store).await;
+        let r = handle_iris_doc(
+            &conn,
+            &client,
+            p,
+            &elicitation_store,
+            &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
+        )
+        .await;
         let v = result_json(r);
         assert!(
             v.get("success").is_some(),
@@ -454,7 +461,14 @@ fn test_handle_iris_doc_head_object_cls() {
             line: None,
         };
         // Must not panic; any structured JSON response is acceptable
-        let r = handle_iris_doc(&conn, &client, p, &elicitation_store).await;
+        let r = handle_iris_doc(
+            &conn,
+            &client,
+            p,
+            &elicitation_store,
+            &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
+        )
+        .await;
         let v = result_json(r);
         assert!(
             v.get("success").is_some(),
@@ -699,7 +713,14 @@ fn test_handle_iris_doc_batch_get() {
             expected: None,
             line: None,
         };
-        let r = handle_iris_doc(&conn, &client, p, &elicitation_store).await;
+        let r = handle_iris_doc(
+            &conn,
+            &client,
+            p,
+            &elicitation_store,
+            &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
+        )
+        .await;
         let v = result_json(r);
         assert!(
             v.get("success").is_some(),
@@ -10185,6 +10206,9 @@ Method GetName() As %String { QUIT ..Name }\n\
 // Covers symbols_local.rs lines 606-613: Err(_) from std::fs::read for a .cls path.
 // Using a zero-permission .cls file — fs::read returns EACCES.
 
+// Unix-only: relies on chmod 0o000 to force an fs::read EACCES, which has no
+// Windows equivalent (a zero-mode file is still readable by the owner there).
+#[cfg(unix)]
 #[tokio::test]
 async fn test_dispatch_iris_symbols_local_cls_read_error() {
     let tools = match make_iris_tools() {
@@ -11682,6 +11706,7 @@ async fn test_doc_put_returns_200_with_status_errors() {
             line: None,
         },
         &elicitation_store,
+        &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
     )
     .await;
 
@@ -11760,6 +11785,7 @@ async fn test_doc_put_compile_non_2xx_compile_request() {
             line: None,
         },
         &elicitation_store,
+        &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
     )
     .await;
 
@@ -11827,6 +11853,7 @@ async fn test_doc_delete_non_2xx_non_404() {
             line: None,
         },
         &elicitation_store,
+        &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
     )
     .await;
 
@@ -11892,6 +11919,7 @@ async fn test_doc_put_non_2xx_upload() {
             line: None,
         },
         &elicitation_store,
+        &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
     )
     .await;
 
