@@ -4,7 +4,7 @@
 //!   IRIS_HOST=localhost IRIS_WEB_PORT=52780 \
 //!   cargo test --test test_iris_doc_depth_live -- --ignored --nocapture
 
-use iris_agentic_dev_core::elicitation::ElicitationStore;
+use iris_agentic_dev_core::elicitation::{CheckoutCache, ElicitationStore};
 use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
 use iris_agentic_dev_core::tools::doc::{
     handle_iris_doc, handle_iris_execute_method, IrisDocParams,
@@ -78,8 +78,11 @@ async fn test_fragment_live_library_integer() {
         return;
     };
     let store = ElicitationStore::default();
+    let cache = CheckoutCache::default();
     let p = fragment_params("%Library.Integer.cls", 1, 5);
-    let result = handle_iris_doc(&iris, &client, p, &store).await.unwrap();
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache)
+        .await
+        .unwrap();
     let text = result.content[0].raw.as_text().unwrap().text.clone();
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
     println!("fragment result: {v}");
@@ -101,8 +104,11 @@ async fn test_compiled_live_library_integer() {
         return;
     };
     let store = ElicitationStore::default();
+    let cache = CheckoutCache::default();
     let p = compiled_params("%Library.Integer.cls");
-    let result = handle_iris_doc(&iris, &client, p, &store).await.unwrap();
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache)
+        .await
+        .unwrap();
     let text = result.content[0].raw.as_text().unwrap().text.clone();
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
     println!(
@@ -137,8 +143,11 @@ async fn test_list_live_library_cls() {
         return;
     };
     let store = ElicitationStore::default();
+    let cache = CheckoutCache::default();
     let p = list_params("%Library.*", "CLS", 5);
-    let result = handle_iris_doc(&iris, &client, p, &store).await.unwrap();
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache)
+        .await
+        .unwrap();
     let text = result.content[0].raw.as_text().unwrap().text.clone();
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
     println!("list result: {v}");

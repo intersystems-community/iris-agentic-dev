@@ -3,7 +3,7 @@
 //!   IRIS_HOST=localhost IRIS_WEB_PORT=52780 \
 //!   cargo test --test test_doc_live -- --ignored --nocapture --test-threads=1
 
-use iris_agentic_dev_core::elicitation::ElicitationStore;
+use iris_agentic_dev_core::elicitation::{CheckoutCache, ElicitationStore};
 use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
 use iris_agentic_dev_core::tools::doc::{handle_iris_doc, IrisDocParams};
 
@@ -45,6 +45,7 @@ async fn test_doc_put_and_get_cls() {
         return;
     };
     let store = ElicitationStore::new();
+    let cache = CheckoutCache::new();
 
     let name = "CoverageTest.DocLive.cls";
     let content = "Class CoverageTest.DocLive {}";
@@ -57,7 +58,7 @@ async fn test_doc_put_and_get_cls() {
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     assert_eq!(json["success"], true, "put failed: {}", json);
 
@@ -68,7 +69,7 @@ async fn test_doc_put_and_get_cls() {
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     assert_eq!(json["success"], true, "get failed: {}", json);
     assert!(json["content"].as_str().unwrap().contains("DocLive"));
@@ -80,7 +81,7 @@ async fn test_doc_put_and_get_cls() {
         "namespace": "USER"
     }))
     .unwrap();
-    let _ = handle_iris_doc(&iris, &client, p, &store).await;
+    let _ = handle_iris_doc(&iris, &client, p, &store, &cache).await;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -94,6 +95,7 @@ async fn test_doc_put_mac_injects_routine_header() {
         return;
     };
     let store = ElicitationStore::new();
+    let cache = CheckoutCache::new();
 
     let name = "CoverageTest.DocLiveMac.mac";
     let content = "Write \"Hello\"\nQuit";
@@ -106,7 +108,7 @@ async fn test_doc_put_mac_injects_routine_header() {
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     assert_eq!(json["success"], true, "put .mac failed: {}", json);
 
@@ -117,7 +119,7 @@ async fn test_doc_put_mac_injects_routine_header() {
         "namespace": "USER"
     }))
     .unwrap();
-    let _ = handle_iris_doc(&iris, &client, p, &store).await;
+    let _ = handle_iris_doc(&iris, &client, p, &store, &cache).await;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -131,6 +133,7 @@ async fn test_doc_put_inc_injects_routine_header() {
         return;
     };
     let store = ElicitationStore::new();
+    let cache = CheckoutCache::new();
 
     let name = "CoverageTest.DocLiveInc.inc";
     let content = "#define MyMacro 123";
@@ -143,7 +146,7 @@ async fn test_doc_put_inc_injects_routine_header() {
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     assert_eq!(json["success"], true, "put .inc failed: {}", json);
 
@@ -154,7 +157,7 @@ async fn test_doc_put_inc_injects_routine_header() {
         "namespace": "USER"
     }))
     .unwrap();
-    let _ = handle_iris_doc(&iris, &client, p, &store).await;
+    let _ = handle_iris_doc(&iris, &client, p, &store, &cache).await;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -168,6 +171,7 @@ async fn test_doc_head_exists() {
         return;
     };
     let store = ElicitationStore::new();
+    let cache = CheckoutCache::new();
 
     // Put a class first so we have something known to HEAD against
     let put_p: IrisDocParams = serde_json::from_value(serde_json::json!({
@@ -177,7 +181,7 @@ async fn test_doc_head_exists() {
         "namespace": "USER"
     }))
     .unwrap();
-    let _ = handle_iris_doc(&iris, &client, put_p, &store).await;
+    let _ = handle_iris_doc(&iris, &client, put_p, &store, &cache).await;
 
     let p: IrisDocParams = serde_json::from_value(serde_json::json!({
         "mode": "head",
@@ -185,7 +189,7 @@ async fn test_doc_head_exists() {
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     assert_eq!(json["success"], true, "head failed: {}", json);
     assert_eq!(json["exists"], true, "exists should be true");
@@ -197,7 +201,7 @@ async fn test_doc_head_exists() {
         "namespace": "USER"
     }))
     .unwrap();
-    let _ = handle_iris_doc(&iris, &client, del_p, &store).await;
+    let _ = handle_iris_doc(&iris, &client, del_p, &store, &cache).await;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -211,6 +215,7 @@ async fn test_doc_head_not_found() {
         return;
     };
     let store = ElicitationStore::new();
+    let cache = CheckoutCache::new();
 
     let p: IrisDocParams = serde_json::from_value(serde_json::json!({
         "mode": "head",
@@ -218,7 +223,7 @@ async fn test_doc_head_not_found() {
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     // head returns success:true always, but exists:false for 404
     assert_eq!(json["success"], true);
@@ -236,6 +241,7 @@ async fn test_doc_get_not_found() {
         return;
     };
     let store = ElicitationStore::new();
+    let cache = CheckoutCache::new();
 
     let p: IrisDocParams = serde_json::from_value(serde_json::json!({
         "mode": "get",
@@ -243,7 +249,7 @@ async fn test_doc_get_not_found() {
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     assert_eq!(json["success"], false);
     assert_eq!(json["error_code"], "NOT_FOUND", "error_code: {}", json);
@@ -260,6 +266,7 @@ async fn test_doc_batch_get() {
         return;
     };
     let store = ElicitationStore::new();
+    let cache = CheckoutCache::new();
 
     let p: IrisDocParams = serde_json::from_value(serde_json::json!({
         "mode": "get",
@@ -267,7 +274,7 @@ async fn test_doc_batch_get() {
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     assert_eq!(json["success"], true, "batch get failed: {}", json);
     let docs = json["documents"].as_array().unwrap();
@@ -285,6 +292,7 @@ async fn test_doc_insert_and_delete_lines() {
         return;
     };
     let store = ElicitationStore::new();
+    let cache = CheckoutCache::new();
 
     let name = "CoverageTest.DocLiveInsert.cls";
 
@@ -297,7 +305,7 @@ async fn test_doc_insert_and_delete_lines() {
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     assert_eq!(json["success"], true, "put failed: {}", json);
 
@@ -308,7 +316,7 @@ async fn test_doc_insert_and_delete_lines() {
         "namespace": "USER"
     }))
     .unwrap();
-    let fetch_result = handle_iris_doc(&iris, &client, fetch_p, &store).await;
+    let fetch_result = handle_iris_doc(&iris, &client, fetch_p, &store, &cache).await;
     let fetch_json = result_json(fetch_result);
     // IRIS normalizes "Class Foo {\n\n}" → ["Class Foo", "{", "", "}"], so line 2 = "{"
     // Use the actual content at line index 1 (0-based) as the stale-edit guard.
@@ -330,7 +338,7 @@ async fn test_doc_insert_and_delete_lines() {
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     assert_eq!(json["success"], true, "insert failed: {}", json);
     assert_eq!(json["edit"], "insert");
@@ -342,7 +350,7 @@ async fn test_doc_insert_and_delete_lines() {
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     assert_eq!(json["success"], true);
     assert!(
@@ -369,7 +377,7 @@ async fn test_doc_insert_and_delete_lines() {
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     assert_eq!(json["success"], true, "delete_lines failed: {}", json);
     assert_eq!(json["edit"], "delete_lines");
@@ -381,7 +389,7 @@ async fn test_doc_insert_and_delete_lines() {
         "namespace": "USER"
     }))
     .unwrap();
-    let _ = handle_iris_doc(&iris, &client, p, &store).await;
+    let _ = handle_iris_doc(&iris, &client, p, &store, &cache).await;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -395,6 +403,7 @@ async fn test_doc_put_missing_name_returns_error() {
         return;
     };
     let store = ElicitationStore::new();
+    let cache = CheckoutCache::new();
 
     let p: IrisDocParams = serde_json::from_value(serde_json::json!({
         "mode": "put",
@@ -403,7 +412,7 @@ async fn test_doc_put_missing_name_returns_error() {
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     assert_eq!(json["success"], false);
     assert_eq!(json["error_code"], "MISSING_PARAMS", "error: {}", json);
@@ -420,6 +429,7 @@ async fn test_doc_delete() {
         return;
     };
     let store = ElicitationStore::new();
+    let cache = CheckoutCache::new();
 
     let name = "CoverageTest.DocLiveDelete.cls";
 
@@ -431,7 +441,7 @@ async fn test_doc_delete() {
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     assert_eq!(json["success"], true, "put failed: {}", json);
 
@@ -442,7 +452,7 @@ async fn test_doc_delete() {
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     assert_eq!(json["success"], true, "delete failed: {}", json);
 }
@@ -458,13 +468,14 @@ async fn test_doc_get_missing_name_returns_error() {
         return;
     };
     let store = ElicitationStore::new();
+    let cache = CheckoutCache::new();
 
     let p: IrisDocParams = serde_json::from_value(serde_json::json!({
         "mode": "get",
         "namespace": "USER"
     }))
     .unwrap();
-    let result = handle_iris_doc(&iris, &client, p, &store).await;
+    let result = handle_iris_doc(&iris, &client, p, &store, &cache).await;
     let json = result_json(result);
     assert_eq!(json["success"], false);
     assert_eq!(json["error_code"], "MISSING_PARAMS", "error: {}", json);
