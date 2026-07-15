@@ -527,7 +527,10 @@ fn scan_dir_skips_symlinks() {
     // Try to create a symlink (may fail on some systems)
     let symlink_path = dir.path().join("Link");
     let target = dir.path().join("Real.cls");
+    #[cfg(unix)]
     let _ = std::os::unix::fs::symlink(&target, &symlink_path);
+    #[cfg(windows)]
+    let _ = std::os::windows::fs::symlink_file(&target, &symlink_path);
 
     let result = scan_workspace(dir.path(), "*", 100);
     // Should find the real file and skip the symlink without errors
