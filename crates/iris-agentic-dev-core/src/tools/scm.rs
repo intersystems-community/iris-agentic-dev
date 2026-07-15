@@ -101,6 +101,7 @@ pub async fn handle_iris_source_control(
     client: &reqwest::Client,
     p: ScmParams,
     elicitation_store: &ElicitationStore,
+    checkout_cache: &crate::elicitation::CheckoutCache,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     let raw_doc = p.document.as_deref().unwrap_or("");
     let doc_owned;
@@ -155,6 +156,9 @@ pub async fn handle_iris_source_control(
         };
         let out = out.lines().next().unwrap_or("").trim().to_string();
         if out.is_empty() {
+            // Any resumed SCM action (checkout/undo/checkin/disconnect) changes checkout state,
+            // so drop the cached entry — the next write re-probes and re-caches if still ours.
+            checkout_cache.invalidate(&pending.namespace, &pending.document);
             return ok_json(
                 serde_json::json!({"success": true, "document": pending.document, "action_id": action_id}),
             );
@@ -301,6 +305,8 @@ pub async fn handle_iris_source_control(
                         }))
                     }
                 }
+                // Checkout committed — cache it so a following iris_doc write skips the probe.
+                checkout_cache.mark(ns, doc);
                 return ok_json(
                     serde_json::json!({"success": true, "document": doc, "editable": true}),
                 );
@@ -353,9 +359,14 @@ pub async fn handle_iris_source_control(
             let (action_code, msg) = parse_action_msg(out);
 
             match action_code {
-                0 => ok_json(
-                    serde_json::json!({"success": true, "document": doc, "action_id": action_id}),
-                ),
+                0 => {
+                    // A completed execute (undo checkout / checkin / disconnect / …) changes
+                    // checkout state — drop any cached entry so the next write re-probes.
+                    checkout_cache.invalidate(ns, doc);
+                    ok_json(
+                        serde_json::json!({"success": true, "document": doc, "action_id": action_id}),
+                    )
+                }
                 1 => {
                     // Yes/No confirmation
                     let eid = elicitation_store.insert(
@@ -552,7 +563,13 @@ fn parse_scm_status_line(line: &str) -> Option<(bool, bool, bool, bool, String)>
     let has_undo_checkout = flag(parts.next())?;
     let has_add_to_sc = flag(parts.next())?;
     let owner = parts.next().unwrap_or("").trim().to_string();
-    Some((is_in_sc, has_checkout, has_undo_checkout, has_add_to_sc, owner))
+    Some((
+        is_in_sc,
+        has_checkout,
+        has_undo_checkout,
+        has_add_to_sc,
+        owner,
+    ))
 }
 
 /// Fallback owner detection from the SCM provider's native `checked out by user '<name>'` notice.
@@ -572,10 +589,8 @@ fn parse_checked_out_by(raw: &str) -> Option<(String, Option<String>)> {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
         // "checked out by user 'xxx'" — timestamp captured only if the line isn't truncated.
-        regex::Regex::new(
-            r"checked out by user '([^']+)'(?:.*?updated at ([0-9-]+ [0-9:]+))?",
-        )
-        .expect("static SCM checked-out regex is valid")
+        regex::Regex::new(r"checked out by user '([^']+)'(?:.*?updated at ([0-9-]+ [0-9:]+))?")
+            .expect("static SCM checked-out regex is valid")
     });
     let caps = re.captures(raw)?;
     let owner = caps.get(1)?.as_str().trim().to_string();
