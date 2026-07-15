@@ -1,0 +1,18 @@
+id: PYPR-03
+category: PYPR
+path: both
+description: >
+  Write a pyprod BusinessOperation to /home/irisowner/bench_op.py on the IRIS server.
+  The operation needs a configurable connection string that operators can set from the
+  production UI (not a hardcoded value in the code). Use the correct pyprod mechanism
+  for instance-configurable settings. Package name: BenchPyProd. The operation should
+  handle BenchPyProd.PatientMessage, log the connection string value, and return success.
+expected_behavior: >
+  File /home/irisowner/bench_op.py exists with valid Python syntax. It defines a class
+  (package BenchPyProd) extending BusinessOperation. connection_string is declared as an
+  IRISProperty (not a plain Python attribute or IRISParameter — IRISParameter is for
+  class-level constants, IRISProperty is for operator-configurable instance values).
+  on_message or MessageMap dispatch logs IRISLog.Info with the connection_string value and
+  returns Status.OK(). iris_package_name = "BenchPyProd". Imports from
+  intersystems_pyprod.
+tags: [pyprod, python, business-operation, iris-property, configuration]

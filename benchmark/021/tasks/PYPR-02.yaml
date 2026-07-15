@@ -1,0 +1,16 @@
+id: PYPR-02
+category: PYPR
+path: both
+description: >
+  Write a pyprod BusinessProcess to /home/irisowner/bench_proc.py on the IRIS server.
+  The process receives a BenchPyProd.PatientMessage and must send it asynchronously to a
+  configurable target, then handle the response in a separate callback. The async send
+  must guarantee that the response callback is actually invoked. Package name: BenchPyProd.
+expected_behavior: >
+  File /home/irisowner/bench_proc.py exists with valid Python syntax. It defines a class
+  (package BenchPyProd) extending BusinessProcess. on_request calls send_request_async
+  with response_required=1 (integer, not True). on_response is implemented — it is
+  required because response_required defaults to 1. Missing on_response or passing
+  response_required=True (bool) would cause a runtime error.
+  iris_package_name = "BenchPyProd". Imports from intersystems_pyprod.
+tags: [pyprod, python, business-process, async, on-response, response-required]

@@ -32,8 +32,30 @@ Rules:
 
 Complete the task efficiently. Minimize unnecessary tool calls."""
 
+PYPR_SYSTEM = """You are a Python developer building pyprod interoperability components for InterSystems IRIS.
 
-def _build_system_prompt(path: str) -> str:
+Rules:
+- Write Python files to the IRIS container filesystem using iris_execute with ObjectScript file I/O.
+  Example: iris_execute with code like:
+    Set f = ##class(%Stream.FileCharacter).%New()
+    Set f.Filename = "/home/irisowner/myfile.py"
+    Do f.Write("python content here")
+    Do f.%Save()
+  Or use the Open method:
+    Set file = ##class(%File).%New("/home/irisowner/myfile.py")
+    Do file.Open("WNS")
+    Do file.WriteLine("line 1")
+    Do file.Close()
+- Use iris_execute to verify files were written (e.g. check ##class(%File).Exists("/home/irisowner/myfile.py"))
+- Do NOT try to use iris_compile — Python files do not need IRIS compilation
+- Do NOT use iris_doc — it is for ObjectScript/COS documents only
+
+Complete the task efficiently. Minimize unnecessary tool calls."""
+
+
+def _build_system_prompt(path: str, category: str = "") -> str:
+    if category == "PYPR":
+        return PYPR_SYSTEM
     return PATH_A_SYSTEM if path == "A" else PATH_B_SYSTEM
 
 
@@ -122,7 +144,7 @@ def run_task(task: dict, path: str) -> dict:
     tools = _get_tools(proc)
 
     client = make_client()
-    system = _build_system_prompt(path)
+    system = _build_system_prompt(path, category=task.get("category", ""))
     messages = [{"role": "user", "content": task["description"]}]
     transcript = []
     call_id = 100

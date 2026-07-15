@@ -82,3 +82,12 @@ def test_run_task_path_b_prompt_mentions_iris_doc():
     prompt = _build_system_prompt("B")
     assert "iris_doc" in prompt.lower()
     assert "isfs" in prompt.lower() or "remote" in prompt.lower()
+
+
+def test_run_task_pypr_category_uses_pypr_prompt():
+    from claude_code import _build_system_prompt
+    prompt = _build_system_prompt("A", category="PYPR")
+    assert "pyprod" in prompt.lower() or "intersystems_pyprod" in prompt.lower()
+    assert "iris_execute" in prompt.lower()
+    # PYPR prompt must explicitly warn against iris_compile (Python files don't need it)
+    assert "do not" in prompt.lower() and "iris_compile" in prompt.lower()

@@ -42,19 +42,23 @@ python -m benchmark.021.runner --report-only results/2026-04-22T14-00-00Z/scores
 
 ## Task Categories
 
-| Category | Description | Path |
-|----------|-------------|------|
-| GEN | Write new ObjectScript classes from scratch | both |
-| MOD | Read and modify existing classes | both |
-| DBG | Diagnose and fix bugs | both |
-| SCM | Source control operations with elicitation | B only |
-| LEG | MAC routines and globals, no classes (legacy) | both |
+| Category | Description                                            | Path   |
+| -------- | ------------------------------------------------------ | ------ |
+| GEN      | Write new ObjectScript classes from scratch            | both   |
+| MOD      | Read and modify existing classes                       | both   |
+| DBG      | Diagnose and fix bugs                                  | both   |
+| SCM      | Source control operations with elicitation             | B only |
+| LEG      | MAC routines and globals, no classes (legacy)          | both   |
+| PYPR     | Python interoperability production components (pyprod) | both   |
 
 ## Scoring (0-3, LLM-as-judge)
 
+Scores are assigned by **Claude Haiku** acting as arbiter (consistent, cheap, fast).
+The same model is used for all skill comparisons so scores are comparable across runs.
+
 - **3** — Correct and efficient, minimal tool calls
 - **2** — Correct but >2 unnecessary tool calls (agent confusion)
-- **1** — Compiled but incorrect behavior
+- **1** — Partial — compiled/loaded but incorrect behavior
 - **0** — Failed or wrong output
 
 ## Adding New Tasks
@@ -66,6 +70,7 @@ Required fields: `id`, `category`, `description`, `expected_behavior`, `path`
 ## Results
 
 Results are written to `results/<timestamp>/`:
+
 - `scores.json` — machine-readable per-task scores
 - `report.html` — visual comparison report
 

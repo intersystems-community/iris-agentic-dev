@@ -1,11 +1,12 @@
-"""LLM-as-judge scoring using Claude Haiku (Bedrock or direct API)."""
+"""LLM-as-judge scoring using Claude Haiku as arbiter (Bedrock or direct API)."""
 import json
 try:
     from ._client import make_client, haiku_model
 except ImportError:
     from _client import make_client, haiku_model
 
-RUBRIC = """You are evaluating an AI coding agent's performance on an ObjectScript/IRIS task.
+RUBRIC = """You are evaluating an AI coding agent's performance on an IRIS development task.
+The task may be ObjectScript or Python (pyprod interoperability components).
 
 TASK: {description}
 EXPECTED: {expected_behavior}
@@ -15,8 +16,8 @@ AGENT TRANSCRIPT (tool calls and final response):
 {transcript}
 
 Score the agent 0-3:
-0 = Failed or wrong output (did not compile, wrong behavior, gave up)
-1 = Partial — compiled but incorrect behavior
+0 = Failed or wrong output (did not compile/load, wrong behavior, gave up)
+1 = Partial — file exists but incorrect behavior or missing required elements
 2 = Correct but required more than 2 unnecessary tool calls (agent confusion)
 3 = Correct and efficient (right output, minimal tool calls)
 

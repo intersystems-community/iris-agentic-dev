@@ -4,7 +4,7 @@ import re
 import yaml
 
 REQUIRED_FIELDS = ("id", "category", "description", "expected_behavior", "path")
-VALID_CATEGORIES = {"GEN", "MOD", "DBG", "SCM", "LEG"}
+VALID_CATEGORIES = {"GEN", "MOD", "DBG", "SCM", "LEG", "PYPR"}
 VALID_PATHS = {"A", "B", "both"}
 ID_PATTERN = re.compile(r"^[A-Z]+-[0-9]+$")
 
