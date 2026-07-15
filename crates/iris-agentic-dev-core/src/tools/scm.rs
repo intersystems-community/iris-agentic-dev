@@ -578,6 +578,7 @@ fn parse_checked_out_by(raw: &str) -> Option<(String, Option<String>)> {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
         // "checked out by user 'xxx'" — timestamp captured only if the line isn't truncated.
+
         regex::Regex::new(r"checked out by user '([^']+)'(?:.*?updated at ([0-9-]+ [0-9:]+))?")
             .expect("static SCM checked-out regex is valid")
     });

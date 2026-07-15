@@ -804,6 +804,59 @@ pub fn apply_delete_lines(lines: &[String], start: i64, end: i64) -> (Vec<String
     (out, removed, actual_start, actual_end)
 }
 
+/// Number of unchanged context lines shown around a change in the rendered diff.
+const DIFF_CONTEXT: usize = 3;
+
+/// Build a git-style unified diff for a single contiguous edit, ready to drop into a
+/// ```diff fenced block. `before`/`after` are the full line vectors; the changed region is
+/// `before[del_start..del_start+del_len]` replaced by `add` (0-based `del_start`). Because
+/// surgical edits (insert/delete_lines) only ever touch one contiguous span, we can emit an
+/// exact hunk without running a diff algorithm — the caller already knows what changed.
+///
+/// Returns the diff body (no ```diff fence — the display layer adds that): a single
+/// `@@ -l,s +l,s @@` hunk header, then ` ` context / `-` removed / `+` added lines.
+///
+/// Context lines (leading and trailing) are identical on both sides of the change, so they
+/// are taken from `before`; only `before`, the removed span, and `add` are needed.
+fn unified_diff(before: &[String], del_start: usize, del_len: usize, add: &[String]) -> String {
+    let ctx_start = del_start.saturating_sub(DIFF_CONTEXT);
+    // Leading context precedes the change on both sides identically.
+    let lead = &before[ctx_start..del_start];
+    // Trailing context follows the change; take it from `before` after the removed span.
+    let after_change = del_start + del_len;
+    let trail_end = (after_change + DIFF_CONTEXT).min(before.len());
+    let trail = &before[after_change..trail_end];
+
+    // 1-based hunk line numbers and spans (old side / new side).
+    let old_start = ctx_start + 1;
+    let old_count = lead.len() + del_len + trail.len();
+    let new_start = old_start; // context before the change is identical, so same first line
+    let new_count = lead.len() + add.len() + trail.len();
+
+    let mut out = String::new();
+    out.push_str(&format!(
+        "@@ -{},{} +{},{} @@\n",
+        old_start, old_count, new_start, new_count
+    ));
+    for l in lead {
+        out.push_str(&format!(" {l}\n"));
+    }
+    for l in &before[del_start..after_change] {
+        out.push_str(&format!("-{l}\n"));
+    }
+    for l in add {
+        out.push_str(&format!("+{l}\n"));
+    }
+    for l in trail {
+        out.push_str(&format!(" {l}\n"));
+    }
+    // Drop the trailing newline so the fenced block has no blank last line.
+    if out.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
 /// Compare `expected` (multi-line) against `actual` lines, ignoring trailing
 /// whitespace on each line and a single trailing blank line on either side.
 /// Returns None if they match, or Some((line_offset, expected_line, actual_line))
@@ -939,6 +992,9 @@ async fn handle_insert(
     let block: Vec<String> = block_src.lines().map(|s| s.to_string()).collect();
     let (new_lines, actual_at) = apply_insert(&existing, at, &block);
     let new_content = new_lines.join("\n");
+    // Build the diff before the write, while we still hold before/after in memory (no extra
+    // IRIS round-trip). An insert removes nothing at (actual_at - 1) and adds `block` there.
+    let diff = unified_diff(&existing, (actual_at - 1) as usize, 0, &block);
 
     let result = write_with_scm(
         iris,
@@ -960,6 +1016,7 @@ async fn handle_insert(
             "edit": "insert",
             "inserted_at": actual_at,
             "lines_added": block.len(),
+            "diff": diff,
         }),
     )
     .await)
@@ -1038,6 +1095,14 @@ async fn handle_delete_lines(
         );
     }
     let new_content = new_lines.join("\n");
+    // Build the diff before the write, while we still hold before/after in memory (no extra
+    // IRIS round-trip). delete_lines removes [actual_start, actual_end] and adds nothing.
+    let diff = unified_diff(
+        &existing,
+        (actual_start - 1) as usize,
+        removed as usize,
+        &[],
+    );
 
     let result = write_with_scm(
         iris,
@@ -1060,6 +1125,7 @@ async fn handle_delete_lines(
             "deleted_start": actual_start,
             "deleted_end": actual_end,
             "lines_removed": removed,
+            "diff": diff,
         }),
     )
     .await)
@@ -2359,6 +2425,82 @@ mod tests {
         let (out, removed, _, _) = apply_delete_lines(&lines, 1, 3);
         assert!(out.is_empty());
         assert_eq!(removed, 3);
+    }
+
+    // ── unified_diff (rendered markdown diff) ─────────────────────────────────
+    #[test]
+    fn test_unified_diff_insert_middle_has_context_and_plus_lines() {
+        // Insert "X" before line 3 (0-based index 2) of a-b-c-d-e.
+        let before = v(&["a", "b", "c", "d", "e"]);
+        let add = v(&["X"]);
+        let diff = unified_diff(&before, 2, 0, &add);
+        // Hunk header: 3 context before + 0 removed + 2 trailing = old span 5 from line 1;
+        // new span = 3 context + 1 added + 2 trailing... but leading context is capped at
+        // del_start (2 lines here: a,b). So old=4 (a,b + c,d trailing? no): verify structurally.
+        assert!(
+            diff.starts_with("@@ -1,"),
+            "hunk header starts at line 1: {diff}"
+        );
+        assert!(diff.contains("+X"), "added line is prefixed with +: {diff}");
+        // The inserted line is the only + line; everything else is context (space-prefixed).
+        assert_eq!(
+            diff.matches("\n+").count() + diff.starts_with('+') as usize,
+            1
+        );
+        // No removed lines on a pure insert.
+        assert!(
+            !diff.contains("\n-"),
+            "insert must have no removed lines: {diff}"
+        );
+    }
+
+    #[test]
+    fn test_unified_diff_delete_has_minus_lines_and_no_plus() {
+        // Delete lines 2..3 (b,c) from a-b-c-d-e → 0-based del_start=1, del_len=2.
+        let before = v(&["a", "b", "c", "d", "e"]);
+        let diff = unified_diff(&before, 1, 2, &[]);
+        assert!(diff.contains("-b"), "removed line b: {diff}");
+        assert!(diff.contains("-c"), "removed line c: {diff}");
+        assert!(
+            !diff.contains("\n+"),
+            "delete must have no added lines: {diff}"
+        );
+        // Context line a precedes the change.
+        assert!(diff.contains(" a"), "leading context present: {diff}");
+    }
+
+    #[test]
+    fn test_unified_diff_context_capped_at_document_bounds() {
+        // Change at the very start → no leading context available; header still starts at 1.
+        let before = v(&["a", "b", "c"]);
+        let diff = unified_diff(&before, 0, 1, &[]);
+        assert!(diff.starts_with("@@ -1,"), "header from line 1: {diff}");
+        assert!(diff.contains("-a"), "first line removed: {diff}");
+        // Trailing context (b,c) shown as space-prefixed, no panic on out-of-range.
+        assert!(
+            diff.contains(" b") && diff.contains(" c"),
+            "trailing context: {diff}"
+        );
+    }
+
+    #[test]
+    fn test_unified_diff_replace_shows_minus_then_plus() {
+        // Replace line 2 (b) with Y: del_start=1, del_len=1, add=[Y].
+        let before = v(&["a", "b", "c"]);
+        let diff = unified_diff(&before, 1, 1, &v(&["Y"]));
+        let minus = diff.find("-b").expect("removed b");
+        let plus = diff.find("+Y").expect("added Y");
+        assert!(minus < plus, "removed line comes before added line: {diff}");
+    }
+
+    #[test]
+    fn test_unified_diff_no_trailing_newline() {
+        let before = v(&["a", "b", "c"]);
+        let diff = unified_diff(&before, 1, 0, &v(&["X"]));
+        assert!(
+            !diff.ends_with('\n'),
+            "diff must not end with a newline: {diff:?}"
+        );
     }
 
     // ── diff_expected (stale-edit guard) ──────────────────────────────────────
