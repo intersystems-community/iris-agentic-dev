@@ -32,30 +32,30 @@ Rules:
 
 Complete the task efficiently. Minimize unnecessary tool calls."""
 
-PYPR_SYSTEM = """You are a Python developer building pyprod interoperability components for InterSystems IRIS.
+PYPR_SYSTEM_BASELINE = """You are a Python developer building pyprod interoperability components for InterSystems IRIS.
 
 Rules:
-- Write Python files to the IRIS container filesystem using iris_execute with ObjectScript file I/O.
-  Example: iris_execute with code like:
-    Set f = ##class(%Stream.FileCharacter).%New()
-    Set f.Filename = "/home/irisowner/myfile.py"
-    Do f.Write("python content here")
-    Do f.%Save()
-  Or use the Open method:
-    Set file = ##class(%File).%New("/home/irisowner/myfile.py")
-    Do file.Open("WNS")
-    Do file.WriteLine("line 1")
-    Do file.Close()
-- Use iris_execute to verify files were written (e.g. check ##class(%File).Exists("/home/irisowner/myfile.py"))
-- Do NOT try to use iris_compile — Python files do not need IRIS compilation
-- Do NOT use iris_doc — it is for ObjectScript/COS documents only
+- Produce the complete, correct Python source code in your response
+- Do NOT call iris_compile — Python files do not need IRIS compilation
+- Do NOT call iris_doc — it is for ObjectScript/COS documents only
+- Answer directly from your knowledge — do not spend turns on reconnaissance
 
-Complete the task efficiently. Minimize unnecessary tool calls."""
+Complete the task efficiently."""
+
+PYPR_SYSTEM_MERGED = """You are a Python developer building pyprod interoperability components for InterSystems IRIS.
+
+Workflow — follow exactly:
+1. Call skill(name="pyprod") — ONE call, read the result
+2. Write the complete Python source code in your NEXT response — do not make any more tool calls
+
+Do NOT call any other tools. Do NOT search for additional documentation.
+Do NOT call iris_compile, iris_doc, skill_search, kb_recall, or anything else.
+The skill has everything you need. Read it once, then write the code."""
 
 
-def _build_system_prompt(path: str, category: str = "") -> str:
+def _build_system_prompt(path: str, category: str = "", condition: str = "baseline") -> str:
     if category == "PYPR":
-        return PYPR_SYSTEM
+        return PYPR_SYSTEM_MERGED if condition == "merged" else PYPR_SYSTEM_BASELINE
     return PATH_A_SYSTEM if path == "A" else PATH_B_SYSTEM
 
 
@@ -137,22 +137,23 @@ def _get_tools(proc: subprocess.Popen) -> list:
     return []
 
 
-def run_task(task: dict, path: str) -> dict:
+def run_task(task: dict, path: str, condition: str = "baseline") -> dict:
     """Run one benchmark task via Claude Code (Anthropic API + iris-dev MCP)."""
     proc = _spawn_mcp()
     _handshake(proc)
     tools = _get_tools(proc)
 
     client = make_client()
-    system = _build_system_prompt(path, category=task.get("category", ""))
+    system = _build_system_prompt(path, category=task.get("category", ""), condition=condition)
     messages = [{"role": "user", "content": task["description"]}]
     transcript = []
     call_id = 100
 
     for _ in range(20):  # max 20 turns
+        max_tokens = 8192 if task.get("category") == "PYPR" else 4096
         response = client.messages.create(
             model=sonnet_model(),
-            max_tokens=4096,
+            max_tokens=max_tokens,
             system=system,
             tools=tools,
             messages=messages,

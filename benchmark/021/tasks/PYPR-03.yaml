@@ -2,17 +2,17 @@ id: PYPR-03
 category: PYPR
 path: both
 description: >
-  Write a pyprod BusinessOperation to /home/irisowner/bench_op.py on the IRIS server.
-  The operation needs a configurable connection string that operators can set from the
-  production UI (not a hardcoded value in the code). Use the correct pyprod mechanism
-  for instance-configurable settings. Package name: BenchPyProd. The operation should
-  handle BenchPyProd.PatientMessage, log the connection string value, and return success.
+  Write a complete Python pyprod BusinessOperation that handles BenchPyProd.PatientMessage
+  requests. The operation must have a connection_url setting that operators can configure
+  from the IRIS production UI — it should not be hardcoded. Log the connection_url value
+  when processing a request and return success. Package name: BenchPyProd. Produce the
+  complete Python source code as your response.
 expected_behavior: >
-  File /home/irisowner/bench_op.py exists with valid Python syntax. It defines a class
-  (package BenchPyProd) extending BusinessOperation. connection_string is declared as an
-  IRISProperty (not a plain Python attribute or IRISParameter — IRISParameter is for
-  class-level constants, IRISProperty is for operator-configurable instance values).
-  on_message or MessageMap dispatch logs IRISLog.Info with the connection_string value and
-  returns Status.OK(). iris_package_name = "BenchPyProd". Imports from
-  intersystems_pyprod.
+  The agent's response contains a complete, correct Python source file. It imports from
+  intersystems_pyprod. iris_package_name = "BenchPyProd". The class extends
+  BusinessOperation. connection_url is an IRISProperty (not IRISParameter — IRISParameter
+  is a class constant, not operator-configurable, and does not appear in the UI). The
+  operation handles BenchPyProd.PatientMessage via MessageMap or on_message, logs
+  IRISLog.Info with the connection_url value, and returns Status.OK(). Code is
+  syntactically valid Python.
 tags: [pyprod, python, business-operation, iris-property, configuration]

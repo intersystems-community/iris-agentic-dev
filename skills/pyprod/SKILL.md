@@ -2,7 +2,7 @@
 name: pyprod
 description: Use when creating or modifying InterSystems IRIS interoperability production components in Python — Business Services, Business Processes, Business Operations, Adapters, Messages, or Production definitions.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   compatibility: iris, python, pyprod
 references:
   - setup: references/setup.md
@@ -12,28 +12,11 @@ references:
 
 # Building with pyprod
 
-pyprod is the Python library for building InterSystems IRIS interoperability productions. See [[pyprod-setup]] for installation.
+**Read this skill once, then write all required files in one pass. Do not re-read
+between writes.**
 
----
-
-## Core Concepts
-
-An IRIS production is a message-passing pipeline of **Business Hosts**:
-
-```text
-External Input
-  -> InboundAdapter       (optional, receives raw data)
-  -> BusinessService      (packages into persistable message, routes)
-  -> BusinessProcess      (orchestrates logic, transforms)
-  -> BusinessOperation    (sends to external targets)
-  -> OutboundAdapter      (optional, formats output)
-```
-
-All communication between BusinessService / BusinessProcess / BusinessOperation uses **persistable messages** (JsonSerialize or PickleSerialize subclasses).
-
----
-
-## Import
+pyprod is the InterSystems Python library for IRIS interoperability productions.
+Import everything from `intersystems_pyprod` — not `grongier.pex` or any other package.
 
 ```python
 from intersystems_pyprod import (
@@ -46,299 +29,170 @@ from intersystems_pyprod import (
 )
 ```
 
----
-
-## Package Name
-
-All classes in a script belong to a package. Set at module or class level:
+Set the IRIS package name at module level (applies to all classes in the file):
 
 ```python
-iris_package_name = "MyPackage"   # module-level (applies to all classes)
-```
-
-Classes appear in the UI as `iris_package_name.ClassName`. Class-level `iris_package_name` overrides module-level.
-
----
-
-## Status Objects
-
-Every callback returns `Status` as the first return value:
-
-```python
-return Status.OK()
-return Status.ERROR("Descriptive error message")
-```
-
-Success = `1`. Failure = encoded error string.
-
----
-
-## Persistable Messages
-
-Messages passed between Business Hosts must be persistable. Choose serializer:
-
-| Class             | Serializer    | Use when                             |
-| ----------------- | ------------- | ------------------------------------ |
-| `JsonSerialize`   | json / orjson | JSON-compatible fields               |
-| `PickleSerialize` | pickle        | Python objects not JSON-serializable |
-
-**WARNING**: Never unpickle from untrusted sources.
-
-```python
-class MyMessage(JsonSerialize):
-    field_1: str = Column(index=True)
-    field_2 = Column(datatype=int)
-    field_3 = "default_value"    # not a Column, not queryable via SQL
-
-class MyPickleMessage(PickleSerialize):
-    field_1 = ("tuple", "default")
-    field_2: int
-```
-
-Instantiate:
-
-```python
-msg = MyMessage("value1", 42)
-msg = MyMessage(field_2=42)
-msg = MyMessage()
-msg.field_1 = "value1"
-```
-
-### Column
-
-`Column()` fields appear as separate SQL columns in the IRIS database:
-
-```python
-Column(default=None, datatype=None, description=None, index=False)
-```
-
-Supports string and numeric datatypes only.
-
----
-
-## IRISProperty
-
-Instance variables linked to the IRIS UI. State persists for adapters, services, and operations (not processes — new instance per message):
-
-```python
-prop = IRISProperty(default=None, datatype="", description="", settings="category:control")
-```
-
-| `settings` value       | Effect                             |
-| ---------------------- | ---------------------------------- |
-| `""`                   | Shows in UI as empty text box      |
-| `"MyCategory"`         | Shows under that category          |
-| `"MyCategory:control"` | Shows with named control           |
-| `":control"`           | Shows with control, no category    |
-| `"-"`                  | Removes inherited property from UI |
-
-Selector for host list:
-
-```python
-settings="Target:selector?context={Ens.ContextSearch/ProductionItems?targets=1&productionName=@productionId}"
-```
-
-**Custom `__init__`**: must preserve base class signature:
-
-```python
-def __init__(self, iris_host_object):
-    super().__init__(iris_host_object)
-    self.instance_variable = 0
+iris_package_name = "MyPackage"
 ```
 
 ---
 
-## IRISParameter
+## Messages
 
-Class constants on the IRIS side. Required for linking adapters:
-
-```python
-IRISParameter(value, datatype="", description="")
-```
-
-`value` format: `"iris_package_name.ClassName"`. No special characters allowed.
+Messages passed between Business Hosts **must** subclass `JsonSerialize` or
+`PickleSerialize`. Use `Column()` for fields that should be SQL-queryable — a plain
+Python attribute is not persisted as a separate column.
 
 ```python
-ADAPTER = IRISParameter("MyPackage.MyAdapter")
+class OrderMessage(JsonSerialize):
+    order_id: str = Column(index=True)   # SQL column, indexed
+    amount = Column(datatype=int)        # SQL column, integer
+    note = "default"                     # NOT a Column — not SQL-queryable
 ```
+
+`Column(default=None, datatype=None, description=None, index=False)` — string and
+numeric types only.
 
 ---
 
-## IRISLog
+## BusinessService
 
-Sends log messages to the IRIS Production Log Viewer:
-
-```python
-IRISLog.Info("info message")
-IRISLog.Warning("warning message")
-IRISLog.Error("error message")
-IRISLog.Status(Status.OK())
-IRISLog.Status(Status.ERROR("error string"))
-```
-
----
-
-## Components
-
-Both PascalCase and snake_case are accepted for callbacks and message-passing methods. **snake_case is preferred** — it follows Python conventions. The examples below use snake_case throughout.
-
-### InboundAdapter
-
-Polls external systems and passes data to Business Service.
+Receives input from an adapter (or direct call), packages it as a message, routes
+forward.
 
 ```python
-class MyInboundAdapter(InboundAdapter):
+class MyService(BusinessService):
 
-    def on_task(self):          # also accepted: OnTask
-        data = ...              # fetch from external source
-        status = self.business_host_process_input(data)   # also: BusinessHost_ProcessInput
-        return status
-```
+    ADAPTER = IRISParameter("MyPackage.MyAdapter")   # omit → adapterless (set pool_size=0)
+    target = IRISProperty(
+        settings="Target:selector?context={Ens.ContextSearch/ProductionItems?targets=1&productionName=@productionId}"
+    )
 
-- Required callback: `on_task`
-- No message persistence at this stage — any Python type accepted
-- Runs in same CPU process as its Business Service
-
----
-
-### BusinessService
-
-Receives data from adapter (or direct call), packages as persistable message, routes forward.
-
-```python
-class MyBusinessService(BusinessService):
-
-    ADAPTER = IRISParameter("MyPackage.MyAdapter")   # omit for adapterless
-    target = IRISProperty(settings="Target:selector?context={...}")
-
-    def on_process_input(self, input):          # also accepted: OnProcessInput
-        request = MyMessage(input)
-        status, response = self.send_request_sync(self.target, request, timeout=-1)  # also: SendRequestSync
-        # or non-blocking (no response_required param on BusinessService):
-        status = self.send_request_async(self.target, request)                        # also: SendRequestAsync
+    def on_process_input(self, input):
+        request = OrderMessage(input)
+        status, response = self.send_request_sync(self.target, request, timeout=-1)
         return status, response
 ```
 
-- Required callback: `on_process_input`
-- Adapterless service: omit `ADAPTER` parameter; set `pool_size=0` in `ServiceItem`
-- `send_request_async` on BusinessService: `(target, request, description="")` — no `response_required`
+`send_request_async` on BusinessService: `(target, request, description="")` — **no
+`response_required`**.
 
 ---
 
-### BusinessProcess
+## BusinessProcess
 
-Core orchestration logic. New instance created per incoming message (no persistent state).
-
-```python
-class MyBusinessProcess(BusinessProcess):
-
-    target = IRISProperty(settings="Target:selector?context={...}")
-
-    def on_request(self, request):              # also accepted: OnRequest
-        status, response = self.send_request_sync(self.target, request, timeout=-1)  # also: SendRequestSync
-        return status, response
-
-    def on_response(self, request, response, call_request, call_response, completion_key):  # also: OnResponse
-        # required when send_request_async is called with response_required=1
-        return status, response
-```
-
-- Required callback: `on_request`
-- `on_response` is **required** whenever `send_request_async` is called with `response_required=1`
-
-**`send_request_async` signature on BusinessProcess:**
+Orchestrates logic. **New instance per message — no persistent state.**
 
 ```python
-self.send_request_async(target, request, response_required=1, completion_key=0, description="")
+class MyProcess(BusinessProcess):
+
+    target = IRISProperty(
+        settings="Target:selector?context={Ens.ContextSearch/ProductionItems?targets=1&productionName=@productionId}"
+    )
+
+    def on_request(self, request):
+        # Async with response: response_required=1 (integer, not True)
+        status = self.send_request_async(self.target, request, response_required=1)
+        return status, None
+
+    def on_response(self, request, response, call_request, call_response, completion_key):
+        # REQUIRED when send_request_async is called with response_required=1 (the default)
+        return Status.OK(), response
 ```
 
-`response_required` defaults to `1` — so `on_response` must be implemented unless you explicitly pass `response_required=0`. It is an **integer**, not a bool.
+**Critical:** `response_required` defaults to `1`. If you call `send_request_async`
+without `response_required=0`, you **must** implement `on_response` — or get a
+`NotImplementedError` at runtime. Pass `0` or `1` (integer), never `True`/`False`.
+
+For sync dispatch:
+
+```python
+status, response = self.send_request_sync(self.target, request, timeout=-1)
+return status, response
+```
 
 ---
 
-### BusinessOperation
+## BusinessOperation
 
-Receives typed requests, dispatches to methods via `MessageMap`. Sends to external targets via adapter or directly.
+Receives typed requests, dispatches via `MessageMap`.
 
 ```python
-class MyBusinessOperation(BusinessOperation):
+class MyOperation(BusinessOperation):
 
     ADAPTER = IRISParameter("MyPackage.MyAdapter")   # optional
+    connection_url = IRISProperty(default="http://localhost", description="Target URL")
 
     MessageMap = {
-        "MyPackage.MessageType1": "method_1",
-        "MyPackage.MessageType2": "method_2"
+        "MyPackage.OrderMessage": "handle_order",   # key = iris_package_name.ClassName
+        "MyPackage.CancelMessage": "handle_cancel",
     }
 
-    def method_1(self, request):
-        status, result = self.ADAPTER.adapter_method("arg")
-        response = MyMessage(result)
-        return status, response
+    def handle_order(self, request):
+        IRISLog.Info(f"Processing order to {self.connection_url}")
+        return Status.OK(), None
 
-    def method_2(self, request):
-        status = self.ADAPTER.adapter_method()
-        return status
+    def handle_cancel(self, request):
+        return Status.OK(), None
 
-    def on_message(self, request):              # also accepted: OnMessage
-        # optional: handles message types not in MessageMap
+    def on_message(self, request):   # optional fallback for unmatched types
         return Status.OK()
 ```
 
-MessageMap key format: `"iris_package_name.MessageClassName"`
+`send_request_async` on BusinessOperation: `(target, request, description="")` — **no
+`response_required`**.
 
-To send within the production from a BO:
+---
+
+## IRISProperty vs IRISParameter
+
+|         | `IRISProperty`                                                | `IRISParameter`                |
+| ------- | ------------------------------------------------------------- | ------------------------------ |
+| Purpose | Operator-configurable instance value (shows in production UI) | Class-level constant           |
+| Mutable | Yes, per-instance                                             | No                             |
+| Use for | URLs, targets, credentials, timeouts                          | Adapter class name (`ADAPTER`) |
 
 ```python
-status, response = self.send_request_sync(target, request)   # also: SendRequestSync
-status = self.send_request_async(target, request)            # also: SendRequestAsync
+ADAPTER = IRISParameter("MyPackage.MyAdapter")   # constant — links adapter class
+timeout = IRISProperty(default=30, description="Timeout in seconds")  # UI-editable
 ```
-
-`send_request_async` on BusinessOperation: `(target, request, description="")` — no `response_required`.
 
 ---
 
-### OutboundAdapter
+## Status and Logging
 
-Interface to external systems. Called directly by Business Operation methods.
+Every callback returns `Status` as its first return value:
 
 ```python
-class MyOutboundAdapter(OutboundAdapter):
-
-    def adapter_method(self, arg1="default", arg2="default"):
-        status = Status.OK()
-        output = ...
-        return status, output   # response can be any type
+return Status.OK(), response      # success with response
+return Status.OK()                # success, no response
+return Status.ERROR("message")    # failure
 ```
 
-- No required callbacks
-- No message persistence beyond this point
-- Method names called from BO are converted from snake_case to PascalCase automatically
-
----
-
-## Production Definition
-
-See [[pyprod-production-definition]] for the full `Production` class reference, item type arguments, and loading instructions.
-
----
-
-## Director Module
-
-See [[pyprod-director]] for controlling productions programmatically — start, stop, status, injecting messages.
+```python
+IRISLog.Info("message")
+IRISLog.Warning("message")
+IRISLog.Error("message")
+```
 
 ---
 
 ## Common Mistakes
 
-| Mistake                                                            | Fix                                                                                                                                               |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Not returning Status as first value                                | Every callback must return `Status.OK()` or `Status.ERROR(...)` first                                                                             |
-| Passing non-persistable message between hosts                      | Wrap data in `JsonSerialize` or `PickleSerialize` subclass before `SendRequest*`                                                                  |
-| MessageMap key wrong package                                       | Key must be `iris_package_name.ClassName` where `iris_package_name` is the value in the message's module                                          |
-| `pool_size=1` for adapterless service                              | Use `pool_size=0` to run from shared actor pool                                                                                                   |
-| `Column()` with complex Python types                               | Columns support string and numeric only; use plain class attribute for other types                                                                |
-| IRISProperty usedf or class-level constants                        | Use `IRISParameter` for constants; `IRISProperty` is for instance-configurable values                                                             |
-| Business Process maintaining state                                 | BP creates a new instance per message — use `IRISProperty` only on adapters, services, and operations                                             |
-| `BusinessProcess.send_request_async` with no `on_response` defined | Default is `response_required=1` — causes `NotImplementedError` unless `on_response` is implemented or `response_required=0` is passed explicitly |
-| Passing `response_required=True` (bool)                            | `response_required` is an integer: use `0` or `1`                                                                                                 |
-| Calling BS/BO `send_request_async` expecting `response_required`   | Only `BusinessProcess` has `response_required` — `BusinessService` and `BusinessOperation` `send_request_async` signatures do not include it      |
+| Mistake                                    | Effect                                | Fix                                                          |
+| ------------------------------------------ | ------------------------------------- | ------------------------------------------------------------ |
+| Plain attribute instead of `Column()`      | Field not SQL-queryable               | Use `Column(datatype=...)`                                   |
+| `response_required=True` (bool)            | Runtime error                         | Use integer `1`                                              |
+| `send_request_async` without `on_response` | `NotImplementedError`                 | Implement `on_response` or pass `response_required=0`        |
+| `IRISParameter` for UI-editable value      | Not visible in production UI          | Use `IRISProperty`                                           |
+| `IRISProperty` on BusinessProcess          | State lost (new instance per message) | Use only on adapters, services, operations                   |
+| Wrong MessageMap key package               | Messages not dispatched               | Key must match `iris_package_name` of the **message** module |
+| `pool_size=1` for adapterless service      | Hangs                                 | Use `pool_size=0`                                            |
+| Import from `grongier.pex`                 | Wrong library                         | Import from `intersystems_pyprod`                            |
+
+---
+
+## Production Definition and Director
+
+See [[pyprod-production-definition]] for the `Production` class and item types.
+See [[pyprod-director]] for start/stop/inject via `Director`.

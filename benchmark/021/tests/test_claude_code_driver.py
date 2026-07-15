@@ -84,10 +84,19 @@ def test_run_task_path_b_prompt_mentions_iris_doc():
     assert "isfs" in prompt.lower() or "remote" in prompt.lower()
 
 
-def test_run_task_pypr_category_uses_pypr_prompt():
+def test_run_task_pypr_baseline_prompt_is_direct():
     from claude_code import _build_system_prompt
-    prompt = _build_system_prompt("A", category="PYPR")
-    assert "pyprod" in prompt.lower() or "intersystems_pyprod" in prompt.lower()
-    assert "iris_execute" in prompt.lower()
-    # PYPR prompt must explicitly warn against iris_compile (Python files don't need it)
-    assert "do not" in prompt.lower() and "iris_compile" in prompt.lower()
+    prompt = _build_system_prompt("A", category="PYPR", condition="baseline")
+    assert "pyprod" in prompt.lower() or "python" in prompt.lower()
+    assert "iris_compile" in prompt.lower() and "not" in prompt.lower()
+    assert ".cls" not in prompt.lower()
+    # baseline should NOT instruct agent to call the skill tool
+    assert "skill(" not in prompt
+
+
+def test_run_task_pypr_merged_prompt_calls_skill():
+    from claude_code import _build_system_prompt
+    prompt = _build_system_prompt("A", category="PYPR", condition="merged")
+    assert "skill(" in prompt or "skill tool" in prompt.lower()
+    assert "iris_compile" in prompt.lower() and "not" in prompt.lower()
+    assert ".cls" not in prompt.lower()

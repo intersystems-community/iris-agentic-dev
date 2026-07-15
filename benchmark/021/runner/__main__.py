@@ -114,7 +114,7 @@ def main():
                 print(f"  [{path}/{harness}] {task['id']} ...", end=" ", flush=True)
                 from .fixtures import apply_fixtures
                 apply_fixtures(task.get("fixtures", []))
-                result = run_task(task, path)
+                result = run_task(task, path, condition=active_condition)
                 from .judge import score_result
                 scored = score_result(task, result)
                 writer.record(task["id"], task["category"], path, harness, scored, result,
