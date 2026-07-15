@@ -2076,6 +2076,18 @@ impl IrisTools {
                 }
             }
         }
+
+        // Apply user-disabled tools (IRIS_DISABLED_TOOLS env var or toml disabled_tools field).
+        let disabled: Vec<String> = std::env::var("IRIS_DISABLED_TOOLS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        for name in &disabled {
+            names.remove(name.as_str());
+        }
+
         names
     }
 
@@ -2153,6 +2165,22 @@ impl IrisTools {
             for name in merged_only {
                 router.remove_route(name);
             }
+        }
+
+        // Apply user-specified disabled tools from IRIS_DISABLED_TOOLS env var or toml
+        // disabled_tools field (config loader sets the env var from toml before this runs).
+        // Comma-separated tool names, e.g. "iris_source_control,iris_admin".
+        let disabled: Vec<String> = std::env::var("IRIS_DISABLED_TOOLS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        for name in &disabled {
+            router.remove_route(name.as_str());
+        }
+        if !disabled.is_empty() {
+            tracing::info!(disabled = ?disabled, "iris-agentic-dev: user-disabled tools removed");
         }
 
         let conn_state = match iris {

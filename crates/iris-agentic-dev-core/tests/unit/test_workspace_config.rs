@@ -1971,3 +1971,87 @@ allow = ["compile", "execute", "query"]
     assert!(allow.contains(&ToolCategory::Execute));
     assert!(allow.contains(&ToolCategory::Query));
 }
+
+// ── disabled_tools config field ───────────────────────────────────────────────
+
+#[test]
+fn test_disabled_tools_parsed_from_toml() {
+    use iris_agentic_dev_core::iris::workspace_config::load_fleet_config_from_str;
+    let toml_str = r#"
+container = "iris-dev"
+namespace = "USER"
+disabled_tools = ["iris_source_control", "iris_admin"]
+"#;
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    assert_eq!(
+        fleet.workspace.disabled_tools,
+        vec!["iris_source_control", "iris_admin"]
+    );
+}
+
+#[test]
+fn test_disabled_tools_empty_by_default() {
+    use iris_agentic_dev_core::iris::workspace_config::load_fleet_config_from_str;
+    let toml_str = r#"container = "iris-dev""#;
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    assert!(fleet.workspace.disabled_tools.is_empty());
+}
+
+#[test]
+fn test_workspace_config_to_connection_exports_disabled_tools_env() {
+    use iris_agentic_dev_core::iris::workspace_config::{
+        load_fleet_config_from_str, workspace_config_to_connection,
+    };
+    let _lock = ENV_LOCK.lock().unwrap();
+    std::env::remove_var("IRIS_DISABLED_TOOLS");
+
+    let toml_str = r#"
+host = "localhost"
+web_port = 52773
+namespace = "USER"
+username = "_SYSTEM"
+password = "SYS"
+disabled_tools = ["iris_admin", "iris_credential_manage"]
+"#;
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    let _ = workspace_config_to_connection(&fleet.workspace, "USER");
+
+    let exported = std::env::var("IRIS_DISABLED_TOOLS").unwrap_or_default();
+    assert!(
+        exported.contains("iris_admin"),
+        "iris_admin must appear in IRIS_DISABLED_TOOLS"
+    );
+    assert!(
+        exported.contains("iris_credential_manage"),
+        "iris_credential_manage must appear in IRIS_DISABLED_TOOLS"
+    );
+    std::env::remove_var("IRIS_DISABLED_TOOLS");
+}
+
+#[test]
+fn test_workspace_config_to_connection_respects_existing_env_var() {
+    use iris_agentic_dev_core::iris::workspace_config::{
+        load_fleet_config_from_str, workspace_config_to_connection,
+    };
+    let _lock = ENV_LOCK.lock().unwrap();
+    // Pre-set env var — toml field must NOT override it
+    std::env::set_var("IRIS_DISABLED_TOOLS", "iris_compile");
+
+    let toml_str = r#"
+host = "localhost"
+web_port = 52773
+namespace = "USER"
+username = "_SYSTEM"
+password = "SYS"
+disabled_tools = ["iris_admin"]
+"#;
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    let _ = workspace_config_to_connection(&fleet.workspace, "USER");
+
+    let exported = std::env::var("IRIS_DISABLED_TOOLS").unwrap();
+    assert_eq!(
+        exported, "iris_compile",
+        "existing env var must not be overwritten by toml"
+    );
+    std::env::remove_var("IRIS_DISABLED_TOOLS");
+}

@@ -252,3 +252,86 @@ fn test_iris_get_log_absent_from_baseline_and_nostub() {
         "iris_get_log must NOT appear in Nostub toolset"
     );
 }
+
+// ── IRIS_DISABLED_TOOLS env-var filtering ─────────────────────────────────────
+
+// Serialize tests that set/remove env vars
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn test_disabled_tools_env_removes_named_tool() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    std::env::set_var("IRIS_DISABLED_TOOLS", "iris_source_control");
+    let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
+    let names = tools.registered_tool_names();
+    std::env::remove_var("IRIS_DISABLED_TOOLS");
+    assert!(
+        !names.contains("iris_source_control"),
+        "iris_source_control must be absent when in IRIS_DISABLED_TOOLS"
+    );
+}
+
+#[test]
+fn test_disabled_tools_env_removes_multiple_tools() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    std::env::set_var("IRIS_DISABLED_TOOLS", "iris_admin,iris_credential_manage");
+    let tools = IrisTools::new_with_toolset(None, Toolset::Nostub).expect("IrisTools::new");
+    let names = tools.registered_tool_names();
+    std::env::remove_var("IRIS_DISABLED_TOOLS");
+    assert!(!names.contains("iris_admin"), "iris_admin must be absent");
+    assert!(
+        !names.contains("iris_credential_manage"),
+        "iris_credential_manage must be absent"
+    );
+}
+
+#[test]
+fn test_disabled_tools_env_empty_string_removes_nothing() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    std::env::set_var("IRIS_DISABLED_TOOLS", "");
+    let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
+    let names = tools.registered_tool_names();
+    std::env::remove_var("IRIS_DISABLED_TOOLS");
+    // Core tools must still be present
+    assert!(
+        names.contains("iris_execute"),
+        "iris_execute must remain when disabled list is empty"
+    );
+    assert!(
+        names.contains("iris_query"),
+        "iris_query must remain when disabled list is empty"
+    );
+}
+
+#[test]
+fn test_disabled_tools_env_ignores_whitespace() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    std::env::set_var(
+        "IRIS_DISABLED_TOOLS",
+        " iris_source_control , iris_compile ",
+    );
+    let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
+    let names = tools.registered_tool_names();
+    std::env::remove_var("IRIS_DISABLED_TOOLS");
+    assert!(
+        !names.contains("iris_source_control"),
+        "whitespace-padded name must still be removed"
+    );
+    assert!(
+        !names.contains("iris_compile"),
+        "whitespace-padded name must still be removed"
+    );
+}
+
+#[test]
+fn test_disabled_tools_env_unknown_name_is_ignored() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    std::env::set_var("IRIS_DISABLED_TOOLS", "nonexistent_tool");
+    // Should not panic — remove_route on a name that doesn't exist must be a no-op
+    let result = IrisTools::new_with_toolset(None, Toolset::Baseline);
+    std::env::remove_var("IRIS_DISABLED_TOOLS");
+    assert!(
+        result.is_ok(),
+        "unknown disabled tool name must not cause construction to fail"
+    );
+}

@@ -184,3 +184,4 @@ iris-agentic-dev resolves the IRIS connection in this order — first match wins
 | `IRIS_SERVER_NAME`         | _(empty)_   | Server Manager server name when multiple are configured                     |
 | `OBJECTSCRIPT_WORKSPACE`   | `$PWD`      | Workspace root for `.iris-agentic-dev.toml` lookup                          |
 | `IRIS_SEARCH_SYNC_TIMEOUT` | `30`        | Seconds to wait for synchronous search before falling back to async polling |
+| `IRIS_DISABLED_TOOLS`      | _(empty)_   | Comma-separated tool names to exclude, e.g. `iris_source_control,iris_admin` |
