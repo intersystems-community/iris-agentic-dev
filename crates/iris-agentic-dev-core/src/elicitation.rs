@@ -42,6 +42,68 @@ pub struct PendingElicitation {
     pub expires_at: Instant,
 }
 
+/// TTL for a cached "this document is checked out by me" entry. Kept short so a
+/// stale entry (e.g. someone reverted the checkout out-of-band) self-heals quickly;
+/// the IRIS-side write rejection is the ultimate backstop, and any SCM action we run
+/// on the doc invalidates the entry immediately (see [`CheckoutCache::invalidate`]).
+const CHECKOUT_CACHE_TTL: Duration = Duration::from_secs(60);
+
+/// Session-scoped cache of documents we have already checked out under this connection.
+///
+/// The pre-write SCM probe (query MenuItems / UserAction) is one IRIS round-trip per write.
+/// On a chained surgical edit (repeated insert/delete_lines on the same doc) that probe
+/// returns the same "already checked out by me → proceed" answer every time, so we cache it.
+///
+/// Keyed by `(namespace, document)`. Entries expire after [`CHECKOUT_CACHE_TTL`] and are
+/// cleared explicitly whenever an SCM action (undo checkout, check-in, disconnect) runs on
+/// the doc. A cached write that IRIS still rejects must clear its own entry so the retry
+/// re-probes rather than looping on a bad cache.
+#[derive(Clone, Default)]
+pub struct CheckoutCache(Arc<Mutex<HashMap<(String, String), Instant>>>);
+
+impl CheckoutCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    fn key(namespace: &str, document: &str) -> (String, String) {
+        (namespace.to_string(), document.to_string())
+    }
+
+    /// Record that `document` in `namespace` is checked out by us (or freely writable),
+    /// so subsequent writes can skip the pre-write SCM probe until the entry expires.
+    pub fn mark(&self, namespace: &str, document: &str) {
+        self.0.lock().unwrap().insert(
+            Self::key(namespace, document),
+            Instant::now() + CHECKOUT_CACHE_TTL,
+        );
+    }
+
+    /// Returns true if we have a live (non-expired) checkout entry for this document.
+    /// Expired entries are removed on access so a cache miss always re-probes IRIS.
+    pub fn is_checked_out(&self, namespace: &str, document: &str) -> bool {
+        let mut store = self.0.lock().unwrap();
+        let key = Self::key(namespace, document);
+        match store.get(&key) {
+            Some(expires) if Instant::now() <= *expires => true,
+            Some(_) => {
+                store.remove(&key);
+                false
+            }
+            None => false,
+        }
+    }
+
+    /// Drop the cached checkout entry for this document — call after any SCM action that
+    /// changes checkout state (undo/checkin/disconnect) or after a write IRIS rejected.
+    pub fn invalidate(&self, namespace: &str, document: &str) {
+        self.0
+            .lock()
+            .unwrap()
+            .remove(&Self::key(namespace, document));
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct ElicitationStore(Arc<Mutex<HashMap<String, PendingElicitation>>>);
 
@@ -351,5 +413,60 @@ mod tests {
         // Expired entry gone, fresh entry still there
         assert!(store.lookup(&expired_id).is_none());
         assert!(store.lookup(&fresh_id).is_some());
+    }
+
+    // ── CheckoutCache ─────────────────────────────────────────────────────────
+    #[test]
+    fn test_checkout_cache_miss_by_default() {
+        let cache = CheckoutCache::new();
+        assert!(!cache.is_checked_out("USER", "Foo.cls"));
+    }
+
+    #[test]
+    fn test_checkout_cache_hit_after_mark() {
+        let cache = CheckoutCache::new();
+        cache.mark("USER", "Foo.cls");
+        assert!(cache.is_checked_out("USER", "Foo.cls"));
+    }
+
+    #[test]
+    fn test_checkout_cache_is_keyed_by_namespace_and_doc() {
+        let cache = CheckoutCache::new();
+        cache.mark("USER", "Foo.cls");
+        // Same doc, different namespace → miss.
+        assert!(!cache.is_checked_out("DVP", "Foo.cls"));
+        // Same namespace, different doc → miss.
+        assert!(!cache.is_checked_out("USER", "Bar.cls"));
+    }
+
+    #[test]
+    fn test_checkout_cache_invalidate_clears_entry() {
+        let cache = CheckoutCache::new();
+        cache.mark("USER", "Foo.cls");
+        cache.invalidate("USER", "Foo.cls");
+        assert!(!cache.is_checked_out("USER", "Foo.cls"));
+    }
+
+    #[test]
+    fn test_checkout_cache_invalidate_missing_is_noop() {
+        let cache = CheckoutCache::new();
+        cache.invalidate("USER", "Nonexistent.cls"); // must not panic
+        assert!(!cache.is_checked_out("USER", "Nonexistent.cls"));
+    }
+
+    #[test]
+    fn test_checkout_cache_expired_entry_is_a_miss() {
+        let cache = CheckoutCache::new();
+        // Insert an already-expired entry directly (expires 1s in the past).
+        cache.0.lock().unwrap().insert(
+            ("USER".to_string(), "Old.cls".to_string()),
+            Instant::now() - Duration::from_secs(1),
+        );
+        assert!(
+            !cache.is_checked_out("USER", "Old.cls"),
+            "expired entry must read as a miss"
+        );
+        // And the expired entry is evicted on access.
+        assert!(cache.0.lock().unwrap().is_empty());
     }
 }
