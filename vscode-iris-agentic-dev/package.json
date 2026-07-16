@@ -85,6 +85,7 @@
   },
   "scripts": {
     "compile": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
+    "test": "esbuild src/redact.ts --bundle --outfile=.test-out/redact.cjs --format=cjs --platform=node && node --test test/redact.test.cjs",
     "package": "npm run compile && vsce package --no-dependencies"
   },
   "dependencies": {

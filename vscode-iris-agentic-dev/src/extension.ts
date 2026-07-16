@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import which from 'which';
 import * as serverManager from '@intersystems-community/intersystems-servermanager';
+import { stringifyForLog } from './redact';
 
 function findIrisDev(): string | null {
   const cfg = vscode.workspace.getConfiguration('iris-agentic-dev');
@@ -87,7 +88,7 @@ export class IrisDevMcpProvider
       .getConfiguration('objectscript', wsFolder ?? null)
       .get<ObjectScriptConn>('conn');
 
-    this.log.info(`iris-agentic-dev: objectscript.conn = ${JSON.stringify(conn)}`);
+    this.log.info(`iris-agentic-dev: objectscript.conn = ${stringifyForLog(conn)}`);
 
     if (!conn || conn.active === false) {
       this.log.warn('iris-agentic-dev: ObjectScript connection is not configured or inactive');
@@ -152,7 +153,7 @@ export class IrisDevMcpProvider
         return [];
       }
       named = servers[conn.server];
-      this.log.info(`iris-agentic-dev: named server resolved = ${JSON.stringify(named)}`);
+      this.log.info(`iris-agentic-dev: named server resolved = ${stringifyForLog(named)}`);
     }
 
     const host = conn.host ?? 'localhost';
@@ -195,7 +196,7 @@ export class IrisDevMcpProvider
     ) as Record<string, string | number>;
 
     this.log.info(`iris-agentic-dev: scheme=${webScheme ?? 'http'} prefix=${webPrefix ?? '(none)'}`);
-    this.log.info(`iris-agentic-dev: launching binary with env = ${JSON.stringify(env)}`);
+    this.log.info(`iris-agentic-dev: launching binary with env = ${stringifyForLog(env)}`);
 
     const definition = new vscode.McpStdioServerDefinition(
       'iris-agentic-dev (IRIS)',
