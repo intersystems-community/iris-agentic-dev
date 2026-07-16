@@ -12,8 +12,8 @@ test('redacts password fields without changing the source object', () => {
 
   assert.deepEqual(redactSecrets(source), {
     username: 'SuperUser',
-    password: '[REDACTED]',
-    nested: { IRIS_PASSWORD: '[REDACTED]', host: 'localhost' },
+    password: '********',
+    nested: { IRIS_PASSWORD: '********', host: 'localhost' },
   });
   assert.equal(source.password, 'settings-secret');
   assert.equal(source.nested.IRIS_PASSWORD, 'SYS');
@@ -28,7 +28,7 @@ test('redacts related credential fields in nested objects and arrays', () => {
   assert.equal(logValue.includes('token-value'), false);
   assert.equal(logValue.includes('key-value'), false);
   assert.equal(logValue.includes('secret-value'), false);
-  assert.equal(logValue.includes('[REDACTED]'), true);
+  assert.equal(logValue.includes('********'), true);
 });
 
 test('keeps non-sensitive launch environment values visible', () => {

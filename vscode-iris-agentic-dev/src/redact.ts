@@ -1,4 +1,4 @@
-const REDACTED = '[REDACTED]';
+const MASK = '********';
 
 // Match credential-bearing field names used by VS Code, Server Manager, and
 // process environments. Keeping this key-based avoids altering benign values.
@@ -14,7 +14,7 @@ export function redactSecrets(value: unknown): unknown {
     return Object.fromEntries(
       Object.entries(value).map(([key, nestedValue]) => [
         key,
-        SENSITIVE_KEY.test(key) ? REDACTED : redactSecrets(nestedValue),
+        SENSITIVE_KEY.test(key) ? MASK : redactSecrets(nestedValue),
       ])
     );
   }
