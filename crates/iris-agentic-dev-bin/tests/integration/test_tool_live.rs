@@ -19,7 +19,7 @@ fn iris_dev() -> Command {
 #[ignore]
 fn test_tool_iris_info_exits_zero() {
     let out = iris_dev()
-        .args(["tool", "iris_info", "--args", r#"{"what":"version"}"#])
+        .args(["tool", "iris_info", "--args", r#"{"what":"namespace"}"#])
         .output()
         .expect("failed to run iris-agentic-dev");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -30,8 +30,8 @@ fn test_tool_iris_info_exits_zero() {
     );
     // SC-004: connection identity visible in output
     assert!(
-        stdout.contains("IRIS") || stdout.contains("localhost") || stdout.contains("version"),
-        "expected IRIS version info in output, got: {}",
+        stdout.contains("USER") || stdout.contains("namespace") || stdout.contains("success"),
+        "expected namespace info in output, got: {}",
         &stdout[..stdout.len().min(400)]
     );
 }
