@@ -8,5 +8,6 @@ pub mod install;
 pub mod mcp;
 pub mod plugin;
 pub mod query;
+pub mod skill;
 pub mod tool;
 pub mod tsv;

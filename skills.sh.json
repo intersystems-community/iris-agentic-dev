@@ -1,0 +1,76 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "groupings": [
+    {
+      "title": "ObjectScript Code Quality",
+      "skills": [
+        "objectscript-review",
+        "objectscript-guardrails",
+        "objectscript-tdd",
+        "objectscript-unit-test",
+        "objectscript-repair",
+        "objectscript-debugging"
+      ]
+    },
+    {
+      "title": "ObjectScript Patterns Reference",
+      "skills": [
+        "objectscript-list-patterns",
+        "objectscript-loop-patterns",
+        "objectscript-sql-patterns",
+        "objectscript-navigation"
+      ]
+    },
+    {
+      "title": "IRIS SQL",
+      "skills": [
+        "iris-sql"
+      ]
+    },
+    {
+      "title": "IRIS Vector & AI",
+      "skills": [
+        "iris-vector-ai",
+        "iris-vector-graph",
+        "iris-vector-rag"
+      ]
+    },
+    {
+      "title": "Interoperability & Productions",
+      "skills": [
+        "ensemble-production",
+        "iris-objectscript-eval"
+      ]
+    },
+    {
+      "title": "IRIS Connectivity & Setup",
+      "skills": [
+        "iris-connectivity",
+        "iris-product-features",
+        "iris-linux-docker",
+        "iris-windows-iis-setup",
+        "iris-container-graceful-shutdown",
+        "iris-cpf-merge",
+        "iris-vscode-objectscript",
+        "irishealth-container"
+      ]
+    },
+    {
+      "title": "Ecosystem Projects",
+      "skills": [
+        "iris-embedded-python",
+        "iris-agentic-dev",
+        "iris-devtester",
+        "iris-docs"
+      ]
+    },
+    {
+      "title": "MCP & Tools",
+      "skills": [
+        "opencode-introspect",
+        "introspect",
+        "aihub-eap"
+      ]
+    }
+  ]
+}

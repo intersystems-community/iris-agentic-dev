@@ -25,7 +25,7 @@ metadata:
   red_phase: Model denies MCP exists, invents Python HL7 APIs, confuses IRIS/HealthShare,
     uses PostgreSQL FTS syntax
   version: 1.0.0
-name: tdyar/iris-product-features
+name: iris-product-features
 pass_rate: 0.714
 state: reviewed
 tags:

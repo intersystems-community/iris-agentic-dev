@@ -44,6 +44,8 @@ enum Commands {
     Install(cmd::install::InstallCommand),
     /// Run the skill/tool benchmark harness (pass_rate/lift scoring against the ported task suite)
     Benchmark(cmd::benchmark::BenchmarkCommand),
+    /// Install and manage the official InterSystems skill pack
+    Skill(cmd::skill::SkillCommand),
     /// Any unrecognized subcommand — dispatched to an `iris-agentic-dev-<name>` plugin on
     /// PATH if one exists (regression: clap rejects unknown subcommands with exit code 2
     /// before main()'s own dispatch logic ever runs, so plugin dispatch was dead code
@@ -81,6 +83,7 @@ async fn main() -> Result<()> {
         Some(Commands::Init(cmd)) => cmd.run().await,
         Some(Commands::Install(cmd)) => cmd.run().await,
         Some(Commands::Benchmark(cmd)) => cmd.run().await,
+        Some(Commands::Skill(cmd)) => cmd.run().await,
         Some(Commands::External(args)) => {
             let name = args
                 .first()

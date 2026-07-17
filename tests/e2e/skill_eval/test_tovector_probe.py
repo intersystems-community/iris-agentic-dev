@@ -24,7 +24,7 @@ def test_tovector_arg_count():
                     dest = os.path.join(env.skills_dir, "iris-vector-ai")
                     os.makedirs(dest, exist_ok=True)
                     shutil.copy2(
-                        "light-skills/skills/iris-vector-ai/SKILL.md",
+                        "skills/skills/iris-vector-ai/SKILL.md",
                         os.path.join(dest, "SKILL.md"),
                     )
                 events = collect_events(prompt, env.env_vars(), model=model, working_dir=workdir)

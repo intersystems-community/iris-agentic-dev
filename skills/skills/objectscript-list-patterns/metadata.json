@@ -1,0 +1,9 @@
+{
+  "version": "1.0.0",
+  "organization": "InterSystems Community",
+  "abstract": "Complete reference for %List, %ListOfDataTypes, $LISTBUILD, $LISTTOSTRING, $LISTFROMSTRING, and $LISTDATA — the ObjectScript list primitives that AI models most often get wrong.",
+  "references": [
+    "https://github.com/intersystems-community/iris-agentic-dev",
+    "https://docs.intersystems.com/iris20241/csp/docbook/DocBook.UI.Page.cls?KEY=RCOS_flistbuild"
+  ]
+}

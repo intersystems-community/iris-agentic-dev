@@ -31,7 +31,7 @@ use tokio::sync::watch;
 ///      (default tries CSPSystem which doesn't exist in fresh enterprise containers)
 ///   c) Wrong Apache directive: use "CSP On" in <Location />, not "SetHandler csp-handler-sa"
 ///   d) Expired password: run UnExpireUserPasswords("*") in %SYS on first start
-///   See: https://github.com/intersystems-community/iris-dev/blob/master/light-skills/skills/iris-vscode-objectscript/SKILL.md
+///   See: https://github.com/intersystems-community/iris-agentic-dev/blob/master/skills/skills/iris-vscode-objectscript/SKILL.md
 ///
 /// CONNECTION DISCOVERY (in priority order)
 ///   1. --host / IRIS_HOST env var

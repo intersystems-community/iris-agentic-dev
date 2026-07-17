@@ -14,7 +14,7 @@ SAMPLE_README = textwrap.dedent("""\
     ### Step 1: Copy AGENTS.md to your repo
 
     ```bash
-    curl -sL https://raw.githubusercontent.com/intersystems-community/iris-agentic-dev/master/light-skills/AGENTS.md \\
+    curl -sL https://raw.githubusercontent.com/intersystems-community/iris-agentic-dev/master/skills/AGENTS.md \\
       > AGENTS.md
     ```
 
@@ -22,7 +22,7 @@ SAMPLE_README = textwrap.dedent("""\
 
     ```bash
     mkdir -p ~/.claude/skills/objectscript-review
-    curl -sL https://raw.githubusercontent.com/intersystems-community/iris-agentic-dev/master/light-skills/skills/objectscript-review/SKILL.md \\
+    curl -sL https://raw.githubusercontent.com/intersystems-community/iris-agentic-dev/master/skills/skills/objectscript-review/SKILL.md \\
       > ~/.claude/skills/objectscript-review/SKILL.md
     ```
 

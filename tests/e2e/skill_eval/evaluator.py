@@ -34,12 +34,12 @@ class SkillResult:
     task_ids_used: list[str]
 
 
-def discover_skills(light_skills_dir: str) -> list[str]:
-    """Scan light-skills/skills/ and return all subdirectory names that contain SKILL.md."""
+def discover_skills(skills_pack_dir: str) -> list[str]:
+    """Scan skills/skills/ and return all subdirectory names that contain SKILL.md."""
     skills = []
-    for entry in sorted(os.listdir(light_skills_dir)):
-        skill_md = os.path.join(light_skills_dir, entry, "SKILL.md")
-        if os.path.isdir(os.path.join(light_skills_dir, entry)) and os.path.exists(skill_md):
+    for entry in sorted(os.listdir(skills_pack_dir)):
+        skill_md = os.path.join(skills_pack_dir, entry, "SKILL.md")
+        if os.path.isdir(os.path.join(skills_pack_dir, entry)) and os.path.exists(skill_md):
             skills.append(entry)
     return skills
 

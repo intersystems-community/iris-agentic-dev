@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from tests.e2e.skill_eval.evaluator import SkillEvalConfig
 
-_LIGHT_SKILLS_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "light-skills", "skills")
+_SKILLS_PACK_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "skills", "skills")
 )
 _TASKS_SKILLS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "tasks", "skills")
@@ -64,11 +64,11 @@ def measure_fire_rate(
 
 
 def _install_skill_local(skill_name: str, skills_dir: str) -> None:
-    """Copy skill from local light-skills/ directory."""
+    """Copy skill from local skills/ directory."""
     import shutil
-    src = os.path.join(_LIGHT_SKILLS_DIR, skill_name, "SKILL.md")
+    src = os.path.join(_SKILLS_PACK_DIR, skill_name, "SKILL.md")
     if not os.path.exists(src):
-        raise FileNotFoundError(f"Skill '{skill_name}' not found in README or light-skills/")
+        raise FileNotFoundError(f"Skill '{skill_name}' not found in README or skills/")
     dest_dir = os.path.join(skills_dir, skill_name)
     os.makedirs(dest_dir, exist_ok=True)
     shutil.copy2(src, os.path.join(dest_dir, "SKILL.md"))

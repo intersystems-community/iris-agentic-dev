@@ -9,8 +9,8 @@ if TYPE_CHECKING:
 _BENCHMARK_TASKS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "benchmark", "021", "tasks")
 )
-_LIGHT_SKILLS_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "light-skills", "skills")
+_SKILLS_PACK_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "skills", "skills")
 )
 
 

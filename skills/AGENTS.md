@@ -447,15 +447,15 @@ CALLEE
 
 ### Key differences from classes
 
-| .MAC routines | ObjectScript classes |
-|---------------|---------------------|
-| `#include file.inc` | `Include ClassName` |
-| `Do LABEL^ROUTINE` | `Do ##class(X).Method()` |
-| `$$FUNC^ROUTINE(args)` | `##class(X).Method(args)` |
-| `$ZTRAP = "LABEL"` | `Try { } Catch e { }` |
-| `New var` for scope | Method variables auto-scoped |
-| No `..` for self-reference | `..Property`, `..Method()` |
-| Globals for shared state | Properties for instance state |
+| .MAC routines              | ObjectScript classes          |
+| -------------------------- | ----------------------------- |
+| `#include file.inc`        | `Include ClassName`           |
+| `Do LABEL^ROUTINE`         | `Do ##class(X).Method()`      |
+| `$$FUNC^ROUTINE(args)`     | `##class(X).Method(args)`     |
+| `$ZTRAP = "LABEL"`         | `Try { } Catch e { }`         |
+| `New var` for scope        | Method variables auto-scoped  |
+| No `..` for self-reference | `..Property`, `..Method()`    |
+| Globals for shared state   | Properties for instance state |
 
 ---
 
@@ -473,48 +473,48 @@ CALLEE
 
 Error codes returned in the `error_code` field of tool responses. All follow `SCREAMING_SNAKE_CASE`.
 
-| Error Code | Meaning | Key Fields |
-|---|---|---|
-| `IRIS_UNREACHABLE` | Cannot reach IRIS — network error, wrong port, container down | `attempted_url` |
-| `AUTH_ERROR` | HTTP 401/403 — wrong credentials or insufficient privilege | — |
-| `COMPILE_ERROR` | Class/routine failed to compile | `errors[]`, `open_uri` |
-| `TIMEOUT` | Operation exceeded configured timeout | — |
-| `DOCKER_REQUIRED` | Operation needs docker exec but `IRIS_CONTAINER` not set | — |
-| `IRIS_NAMESPACE_NOT_FOUND` | Namespace does not exist on this IRIS instance | `namespace` |
-| `NO_TESTS_FOUND` | Test pattern matched no test classes | `pattern` |
-| `POLICY_GATE` | Tool not in the connection's `allow` category list | `server_name`, `allowed_categories` |
-| `ENV_GATE_BLOCKED` | `mcpTemplate` for this server blocks the tool's category | `server_name`, `template`, `blocked_category`, `remediation` |
-| `DATA_POLICY_BLOCKED` | `dataPolicy=block` (default) prevents bulk-PHI tool | `tool`, `policy`, `remediation` |
-| `SYSTEM_BLOCKLIST` | Global name matches system or per-connection blocklist | `global_name`, `matched_pattern` |
-| `PHI_GATE_BLOCKED` | Global name matches PHI name pattern; pass `acknowledgePhi=true` to proceed | `global_name`, `matched_pattern`, `remediation` |
-| `INVALID_SUBSCRIPT` | `iris_global` subscript contains disallowed characters (allowed: `a-z A-Z 0-9 space . _ : -`) | `subscript`, `pattern` |
-| `INVALID_ACTION` | `iris_global` action not one of `get`, `set`, `kill`, `list` | `action` |
-| `INVALID_PARAMS` | Required parameter missing (e.g. `action=set` without `value`) | — |
-| `READ_ERROR` | Could not read local source file | `path` |
-| `UPLOAD_FAILED` | Atelier PUT rejected the document | `document`, `http_status` |
-| `CONTAINER_NOT_FOUND` | Named container not running in Docker | `container` |
-| `CONTAINER_UNREACHABLE` | Container found but Atelier HTTP probe failed | `container`, `port` |
-| `MISSING_PARAMS` | Required parameter absent — e.g. `journal_search` with neither `global_pattern` nor `time_range` | — |
-| `NAMESPACE_NOT_FOUND` | Requested namespace does not exist on this IRIS instance | `namespace` |
-| `DATABASE_NOT_FOUND` | Requested database name not found | `name` |
-| `MESSAGE_NOT_FOUND` | `iris_message_body` — no body record for the given `message_id` | `message_id` |
-| `PHI_ACK_REQUIRED` | `iris_message_body` with `dataPolicy=allow` and no `acknowledgePhi=true` | — |
-| `INVALID_MESSAGE_ID` | `iris_message_body` — `message_id` is not a valid integer | `message_id` |
-| `STREAM_READ_ERROR` | `iris_message_body` — stream-backed body could not be read | — |
-| `UNSUPPORTED_BODY_CLASS` | `iris_message_body` — body class is not a recognized stream/text type | `body_class` |
-| `RULE_NOT_FOUND` | `iris_business_rule_info action=get` — no rule set with the given `rule_name` | `rule_name` |
-| `INTEROP_NOT_AVAILABLE` | Ensemble/Interoperability is not installed in this namespace | — |
-| `NO_SCM` | `iris_production_diff` — no source control configured for this production | — |
-| `NO_SCM_VERSION` | `iris_production_diff` — SCM configured but no committed version yet | — |
-| `PRODUCTION_NOT_FOUND` | `iris_production_diff` — named production does not exist | `production` |
-| `NO_PRODUCTION` | `iris_production_diff` — no production currently running and none named | — |
-| `EXPLAIN_REQUIRES_SELECT` | `iris_query mode=explain` — query is not a SELECT/WITH statement | — |
-| `EXPLAIN_NOT_SUPPORTED` | `iris_query mode=explain` — IRIS returned no plan text for this query/version | — |
-| `MISSING_TARGET` | `iris_query mode=count` — neither `table` nor `query` provided | — |
-| `DDL_NOT_ALLOWED` | `iris_query mode=write` — statement is DDL (CREATE/DROP/ALTER/GRANT/REVOKE) or unrecognized | `blocked_keyword` |
-| `SELECT_NOT_ALLOWED_IN_WRITE` | `iris_query mode=write` — statement is a SELECT; write mode is DML-only | — |
-| `ROWS_LIMIT_EXCEEDED` | `iris_query mode=write` — UPDATE/DELETE would affect more rows than `max_rows_affected` | `actual_count`, `limit` |
-| `ROWS_CHECK_FAILED` | `iris_query mode=write` — the pre-execution row-count check itself failed | — |
+| Error Code                    | Meaning                                                                                          | Key Fields                                                   |
+| ----------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| `IRIS_UNREACHABLE`            | Cannot reach IRIS — network error, wrong port, container down                                    | `attempted_url`                                              |
+| `AUTH_ERROR`                  | HTTP 401/403 — wrong credentials or insufficient privilege                                       | —                                                            |
+| `COMPILE_ERROR`               | Class/routine failed to compile                                                                  | `errors[]`, `open_uri`                                       |
+| `TIMEOUT`                     | Operation exceeded configured timeout                                                            | —                                                            |
+| `DOCKER_REQUIRED`             | Operation needs docker exec but `IRIS_CONTAINER` not set                                         | —                                                            |
+| `IRIS_NAMESPACE_NOT_FOUND`    | Namespace does not exist on this IRIS instance                                                   | `namespace`                                                  |
+| `NO_TESTS_FOUND`              | Test pattern matched no test classes                                                             | `pattern`                                                    |
+| `POLICY_GATE`                 | Tool not in the connection's `allow` category list                                               | `server_name`, `allowed_categories`                          |
+| `ENV_GATE_BLOCKED`            | `mcpTemplate` for this server blocks the tool's category                                         | `server_name`, `template`, `blocked_category`, `remediation` |
+| `DATA_POLICY_BLOCKED`         | `dataPolicy=block` (default) prevents bulk-PHI tool                                              | `tool`, `policy`, `remediation`                              |
+| `SYSTEM_BLOCKLIST`            | Global name matches system or per-connection blocklist                                           | `global_name`, `matched_pattern`                             |
+| `PHI_GATE_BLOCKED`            | Global name matches PHI name pattern; pass `acknowledgePhi=true` to proceed                      | `global_name`, `matched_pattern`, `remediation`              |
+| `INVALID_SUBSCRIPT`           | `iris_global` subscript contains disallowed characters (allowed: `a-z A-Z 0-9 space . _ : -`)    | `subscript`, `pattern`                                       |
+| `INVALID_ACTION`              | `iris_global` action not one of `get`, `set`, `kill`, `list`                                     | `action`                                                     |
+| `INVALID_PARAMS`              | Required parameter missing (e.g. `action=set` without `value`)                                   | —                                                            |
+| `READ_ERROR`                  | Could not read local source file                                                                 | `path`                                                       |
+| `UPLOAD_FAILED`               | Atelier PUT rejected the document                                                                | `document`, `http_status`                                    |
+| `CONTAINER_NOT_FOUND`         | Named container not running in Docker                                                            | `container`                                                  |
+| `CONTAINER_UNREACHABLE`       | Container found but Atelier HTTP probe failed                                                    | `container`, `port`                                          |
+| `MISSING_PARAMS`              | Required parameter absent — e.g. `journal_search` with neither `global_pattern` nor `time_range` | —                                                            |
+| `NAMESPACE_NOT_FOUND`         | Requested namespace does not exist on this IRIS instance                                         | `namespace`                                                  |
+| `DATABASE_NOT_FOUND`          | Requested database name not found                                                                | `name`                                                       |
+| `MESSAGE_NOT_FOUND`           | `iris_message_body` — no body record for the given `message_id`                                  | `message_id`                                                 |
+| `PHI_ACK_REQUIRED`            | `iris_message_body` with `dataPolicy=allow` and no `acknowledgePhi=true`                         | —                                                            |
+| `INVALID_MESSAGE_ID`          | `iris_message_body` — `message_id` is not a valid integer                                        | `message_id`                                                 |
+| `STREAM_READ_ERROR`           | `iris_message_body` — stream-backed body could not be read                                       | —                                                            |
+| `UNSUPPORTED_BODY_CLASS`      | `iris_message_body` — body class is not a recognized stream/text type                            | `body_class`                                                 |
+| `RULE_NOT_FOUND`              | `iris_business_rule_info action=get` — no rule set with the given `rule_name`                    | `rule_name`                                                  |
+| `INTEROP_NOT_AVAILABLE`       | Ensemble/Interoperability is not installed in this namespace                                     | —                                                            |
+| `NO_SCM`                      | `iris_production_diff` — no source control configured for this production                        | —                                                            |
+| `NO_SCM_VERSION`              | `iris_production_diff` — SCM configured but no committed version yet                             | —                                                            |
+| `PRODUCTION_NOT_FOUND`        | `iris_production_diff` — named production does not exist                                         | `production`                                                 |
+| `NO_PRODUCTION`               | `iris_production_diff` — no production currently running and none named                          | —                                                            |
+| `EXPLAIN_REQUIRES_SELECT`     | `iris_query mode=explain` — query is not a SELECT/WITH statement                                 | —                                                            |
+| `EXPLAIN_NOT_SUPPORTED`       | `iris_query mode=explain` — IRIS returned no plan text for this query/version                    | —                                                            |
+| `MISSING_TARGET`              | `iris_query mode=count` — neither `table` nor `query` provided                                   | —                                                            |
+| `DDL_NOT_ALLOWED`             | `iris_query mode=write` — statement is DDL (CREATE/DROP/ALTER/GRANT/REVOKE) or unrecognized      | `blocked_keyword`                                            |
+| `SELECT_NOT_ALLOWED_IN_WRITE` | `iris_query mode=write` — statement is a SELECT; write mode is DML-only                          | —                                                            |
+| `ROWS_LIMIT_EXCEEDED`         | `iris_query mode=write` — UPDATE/DELETE would affect more rows than `max_rows_affected`          | `actual_count`, `limit`                                      |
+| `ROWS_CHECK_FAILED`           | `iris_query mode=write` — the pre-execution row-count check itself failed                        | —                                                            |
 
 **PHI gate bypass** — for `PHI_GATE_BLOCKED`, add `"acknowledgePhi": true` to the tool call params. This only works for per-global name checks; `DATA_POLICY_BLOCKED` (bulk-PHI tools like `journal_search`) cannot be bypassed with `acknowledgePhi`.
 
@@ -522,13 +522,13 @@ Error codes returned in the `error_code` field of tool responses. All follow `SC
 
 ## 7. Using AI Skills (no MCP server required)
 
-The `light-skills/` directory contains two standalone skills you can use with Claude Code,
+The `skills/` directory contains standalone skills you can use with Claude Code,
 opencode, or any agent that supports markdown skill files:
 
-| Skill | What it does |
-|---|---|
+| Skill           | What it does                                                                                                                                                  |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `introspect.md` | Fetches a class definition from IRIS via Atelier REST — gives the AI full method signatures, parameters, and return types for any class in your IRIS instance |
-| `compile.md` | Compiles a class via Atelier REST and returns structured error output for the AI to fix |
+| `compile.md`    | Compiles a class via Atelier REST and returns structured error output for the AI to fix                                                                       |
 
 Copy them to `.claude/skills/` or `.opencode/skills/` in your repo. Then invoke:
 

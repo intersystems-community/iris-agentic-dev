@@ -25,7 +25,7 @@ metadata:
   red_phase: 12 prompts tested — model plagiarizes pgvector syntax 100% of the time
     without this skill
   version: 1.0.0
-name: tdyar/iris-vector-ai
+name: iris-vector-ai
 pass_rate: 1.0
 state: reviewed
 tags:

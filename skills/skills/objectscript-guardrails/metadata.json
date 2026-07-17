@@ -1,0 +1,9 @@
+{
+  "version": "1.0.0",
+  "organization": "InterSystems Community",
+  "abstract": "Ten-item hardgate checklist for ObjectScript — the non-negotiable correctness checks every generated class must pass before being presented to the user. Blocks bad patterns at generation time.",
+  "references": [
+    "https://github.com/intersystems-community/iris-agentic-dev",
+    "https://docs.intersystems.com/iris20241/csp/docbook/DocBook.UI.Page.cls?KEY=GCOS_intro"
+  ]
+}

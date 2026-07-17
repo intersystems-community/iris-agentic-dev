@@ -42,8 +42,8 @@ async fn probe_atelier_respects_timeout() {
 #[tokio::test]
 #[ignore = "requires isolated env — no Docker IRIS, no VS Code Server Manager configured"]
 async fn discover_iris_reads_env_vars() {
-    if std::env::var("IRIS_ISOLATED_ENV").is_err() {
-        eprintln!("skip: IRIS_ISOLATED_ENV not set — test requires env with no running IRIS");
+    // Skip on machines with Docker IRIS running — Docker discovery fires before env vars
+    if std::env::var("IRIS_CONTAINER").is_ok() || std::env::var("IRIS_WEB_PORT").is_ok() {
         return;
     }
     // Set env vars to a non-existent host
@@ -73,8 +73,8 @@ async fn discover_iris_reads_env_vars() {
 #[tokio::test]
 #[ignore = "requires isolated env — no Docker IRIS, no VS Code Server Manager configured"]
 async fn discover_iris_returns_none_when_nothing_found() {
-    if std::env::var("IRIS_ISOLATED_ENV").is_err() {
-        eprintln!("skip: IRIS_ISOLATED_ENV not set — test requires env with no running IRIS");
+    // Skip on machines with Docker IRIS running — Docker discovery fires even after env var cleanup
+    if std::env::var("IRIS_CONTAINER").is_ok() || std::env::var("IRIS_WEB_PORT").is_ok() {
         return;
     }
     // Ensure no env vars interfere — IRIS_CONTAINER must also be cleared, since the

@@ -9,7 +9,7 @@ from tests.e2e.readme_validator import ReadmeValidator
 @pytest.mark.us1
 @pytest.mark.network_curl
 def test_us1_readme_urls_valid(tmp_path):
-    """All curl URLs in light-skills/README.md must return HTTP 200."""
+    """All curl URLs in skills/README.md must return HTTP 200."""
     v = ReadmeValidator(skills_dir=str(tmp_path))
     urls = v.validate_urls()
     assert len(urls) > 0, "README must contain at least one curl URL"

@@ -28,7 +28,7 @@ benchmark_tasks:
 description: Use when writing or reviewing any ObjectScript code. Hard gate — 10-item
   checklist catches the most common AI mistakes before showing code to the user.
 iris_version: '>=2024.1'
-name: tdyar/objectscript-guardrails
+name: objectscript-guardrails
 pass_rate: 0.8636363636363636
 state: reviewed
 tags:

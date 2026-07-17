@@ -1,0 +1,9 @@
+{
+  "version": "1.0.0",
+  "organization": "InterSystems Community",
+  "abstract": "Reviews ObjectScript code for the 15 most common LLM mistakes — missing argument counts, QUIT vs Return, %Status error handling, and more. Run after any ObjectScript generation to catch errors before compilation.",
+  "references": [
+    "https://github.com/intersystems-community/iris-agentic-dev",
+    "https://docs.intersystems.com/iris20241/csp/docbook/DocBook.UI.Page.cls?KEY=GCOS_intro"
+  ]
+}

@@ -69,12 +69,12 @@ async fn e2e_subscribe_to_iris_vector_rag() {
 }
 
 /// Unit test: subscribe parsing uses iris-dev.toml from the skills/ subdirectory.
-/// Verifies the path convention: light-skills/ as the package root.
+/// Verifies the path convention: skills/ as the package root.
 #[tokio::test]
 async fn subscribe_path_convention_is_light_skills_subdir() {
-    // The iris-dev.toml lives at light-skills/iris-dev.toml in the repo.
+    // The iris-dev.toml lives at skills/iris-dev.toml in the repo.
     // The GitHub raw URL would be:
-    // https://raw.githubusercontent.com/intersystems-community/vscode-objectscript-mcp/HEAD/light-skills/iris-dev.toml
+    // https://raw.githubusercontent.com/intersystems-community/iris-agentic-dev/HEAD/skills/iris-dev.toml
     // This test verifies our manifest parser handles the skills paths correctly.
     use iris_agentic_dev_core::manifest::parse_manifest;
     let dir = tempfile::tempdir().unwrap();

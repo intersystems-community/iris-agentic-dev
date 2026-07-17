@@ -682,6 +682,8 @@ fn translate_symbols_query_dot_prefix_with_wildcard() {
 async fn telemetry_query_returns_empty_records_when_no_calls_made() {
     use iris_agentic_dev_core::tools::IrisTools;
 
+    let tmp = tempfile::tempdir().unwrap();
+    std::env::set_var("HOME", tmp.path());
     let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
     let result = tools
         .call_for_test("telemetry_query", serde_json::json!({}))
@@ -758,6 +760,8 @@ fn tools_with_unreachable_connection() -> iris_agentic_dev_core::tools::IrisTool
 async fn telemetry_export_trace_returns_empty_when_no_calls_made() {
     use iris_agentic_dev_core::tools::IrisTools;
 
+    let tmp = tempfile::tempdir().unwrap();
+    std::env::set_var("HOME", tmp.path());
     let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
     let result = tools
         .call_for_test("telemetry_export_trace", serde_json::json!({}))

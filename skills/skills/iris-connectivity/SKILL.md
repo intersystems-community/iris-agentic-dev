@@ -24,7 +24,7 @@ metadata:
   red_phase: Model uses wrong Python package, wrong JDBC prefix, wrong proc-call syntax
     in 100% of cases without this skill
   version: 1.0.0
-name: tdyar/iris-connectivity
+name: iris-connectivity
 pass_rate: 0.857
 state: reviewed
 tags:

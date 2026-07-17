@@ -1,0 +1,10 @@
+{
+  "version": "1.0.0",
+  "organization": "InterSystems Community",
+  "abstract": "Vector search patterns for InterSystems IRIS — HNSW index creation, embedding storage, similarity queries using VECTOR_DOT_PRODUCT and VECTOR_COSINE, and integration with OpenAI/embedding APIs.",
+  "references": [
+    "https://github.com/intersystems-community/iris-agentic-dev",
+    "https://github.com/intersystems-community/iris-vector-graph",
+    "https://docs.intersystems.com/iris20241/csp/docbook/DocBook.UI.Page.cls?KEY=GSQL_vecsearch"
+  ]
+}

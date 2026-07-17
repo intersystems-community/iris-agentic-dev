@@ -16,8 +16,8 @@ from tests.e2e.skill_eval.baseline import load_baseline, save_baseline, compute_
 from tests.e2e.skill_eval.cost_estimator import estimate, format_dry_run
 from tests.e2e.skill_eval.reporter import EvalRun, print_summary, write_result
 
-_LIGHT_SKILLS_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "light-skills", "skills")
+_SKILLS_PACK_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "skills", "skills")
 )
 _TASKS_SKILLS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "tasks", "skills")
@@ -113,13 +113,13 @@ def main():
     iris_host = "localhost"
 
     # Discover all skills
-    all_skills = discover_skills(_LIGHT_SKILLS_DIR)
+    all_skills = discover_skills(_SKILLS_PACK_DIR)
 
     # Apply filters
     if args.skill:
         target_skills = [args.skill] if args.skill in all_skills else []
         if not target_skills:
-            print(f"ERROR: skill '{args.skill}' not found in light-skills/skills/", file=sys.stderr)
+            print(f"ERROR: skill '{args.skill}' not found in skills/skills/", file=sys.stderr)
             sys.exit(2)
     elif args.category:
         if args.category == "domain":

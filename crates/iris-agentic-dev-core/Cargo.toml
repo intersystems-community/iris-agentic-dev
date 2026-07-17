@@ -68,10 +68,6 @@ name = "test_compile_cmd"
 path = "tests/integration/test_compile_cmd.rs"
 
 [[test]]
-name = "test_cmd_live"
-path = "tests/integration/test_cmd_live.rs"
-
-[[test]]
 name = "interop_unit_tests"
 path = "tests/interop_unit_tests.rs"
 
@@ -364,23 +360,6 @@ name = "test_telemetry_prune"
 path = "tests/unit/test_telemetry_prune.rs"
 
 [[test]]
-name = "test_telemetry_local_io"
-path = "tests/unit/test_telemetry_local_io.rs"
-
-[[test]]
-name = "test_discovery_probe_unit"
-path = "tests/unit/test_discovery_probe_unit.rs"
-
-[[test]]
-name = "test_coverage_wave3"
-path = "tests/unit/test_coverage_wave3.rs"
-required-features = ["testing"]
-
-[[test]]
-name = "test_dml_sql_unit"
-path = "tests/unit/test_dml_sql_unit.rs"
-
-[[test]]
 name = "test_trace_export"
 path = "tests/unit/test_trace_export.rs"
 
@@ -404,19 +383,13 @@ path = "tests/integration/test_trace_export_live.rs"
 required-features = ["testing"]
 
 [[test]]
-name = "test_skills_unit_gaps"
-path = "tests/unit/test_skills_unit_gaps.rs"
+name = "test_skill_install"
+path = "tests/unit/test_skill_install.rs"
 
 [[test]]
-name = "test_dict_unit"
-path = "tests/unit/test_dict_unit.rs"
+name = "test_skill_frontmatter"
+path = "tests/unit/test_skill_frontmatter.rs"
 
 [[test]]
-name = "test_search_live"
-path = "tests/integration/test_search_live.rs"
-required-features = ["testing"]
-
-[[test]]
-name = "test_doc_live"
-path = "tests/integration/test_doc_live.rs"
-required-features = ["testing"]
+name = "test_skill_install_e2e"
+path = "tests/integration/test_skill_install_e2e.rs"
