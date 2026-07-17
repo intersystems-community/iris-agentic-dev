@@ -55,6 +55,10 @@ run_benchmark.py
 /tests/Test/
 .iris-dev/
 
+# npx skills artifacts (local paths, machine-specific)
+skills-lock.json
+.agents/
+
 # Coverage and diagnostic artifacts
 .coverage
 tarpaulin-report.json
