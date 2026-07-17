@@ -131,9 +131,9 @@ jobs:
     # Three-version matrix — catches API compatibility regressions across IRIS generations.
     # NOTE: community image licenses expire ~150 days after image publish date. When an image
     # starts failing with "Community License expired", replace it with a newer published image.
-    # Last updated: 2026-07-13 (2023.1/2025.1 expired; replaced with 2026.1/2026.2)
-    #   2026.1  — stable release; Atelier V8, published 2026-06-10
-    #   2026.2  — preview/CD build; published 2026-06-04
+    # Last updated: 2026-07-17 (2026.2 CD build fails post-startup on GHA runners; replaced with latest-cd)
+    #   2026.1      — stable release; Atelier V8, published 2026-06-10
+    #   latest-cd   — tracks CD stream (was 2026.2 but that image fails post-startup on GHA)
     # Each version runs in its own job so a regression on one version never masks another.
     strategy:
       fail-fast: false
@@ -142,9 +142,9 @@ jobs:
           - iris_version: "2026.1"
             iris_image: "intersystemsdc/iris-community:2026.1"
             initial_wait_secs: 90
-          - iris_version: "2026.2"
-            iris_image: "intersystemsdc/iris-community:2026.2"
-            initial_wait_secs: 90
+          - iris_version: "latest-cd"
+            iris_image: "intersystemsdc/iris-community:latest-cd"
+            initial_wait_secs: 120
     name: "e2e-tests (IRIS ${{ matrix.iris_version }})"
     steps:
       - uses: actions/checkout@v4

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-fn extract_frontmatter_field<'a>(content: &'a str, field: &str) -> Option<String> {
+fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {
     let inside = content.strip_prefix("---")?.split("---").next()?;
     for line in inside.lines() {
         if let Some(val) = line.strip_prefix(&format!("{}:", field)) {

@@ -123,8 +123,18 @@ fn install_writes_file_with_marker() {
 fn reinstall_managed_file_returns_updated() {
     let tmp = TempDir::new().unwrap();
     let target = cc_target("pyprod", tmp.path());
-    install_skill("pyprod", MANAGED_CONTENT, &[target.clone()], false);
-    let results = install_skill("pyprod", MANAGED_CONTENT, &[target], false);
+    install_skill(
+        "pyprod",
+        MANAGED_CONTENT,
+        std::slice::from_ref(&target),
+        false,
+    );
+    let results = install_skill(
+        "pyprod",
+        MANAGED_CONTENT,
+        std::slice::from_ref(&target),
+        false,
+    );
     assert_eq!(results[0].outcome, InstallOutcome::Updated);
 }
 
@@ -158,9 +168,19 @@ fn dry_run_existing_managed_reports_updated_without_write() {
     let tmp = TempDir::new().unwrap();
     let target = cc_target("pyprod", tmp.path());
     // First real install
-    install_skill("pyprod", MANAGED_CONTENT, &[target.clone()], false);
+    install_skill(
+        "pyprod",
+        MANAGED_CONTENT,
+        std::slice::from_ref(&target),
+        false,
+    );
     // Dry-run re-install
-    let results = install_skill("pyprod", MANAGED_CONTENT, &[target], true);
+    let results = install_skill(
+        "pyprod",
+        MANAGED_CONTENT,
+        std::slice::from_ref(&target),
+        true,
+    );
     assert_eq!(results[0].outcome, InstallOutcome::Updated);
 }
 
@@ -213,7 +233,7 @@ fn list_installed_shows_correct_state() {
 
     // Install pyprod for Claude Code only
     let cc = InstallTarget::for_claude_code("pyprod", Some(tmp_home.path())).unwrap();
-    install_skill("pyprod", MANAGED_CONTENT, &[cc.clone()], false);
+    install_skill("pyprod", MANAGED_CONTENT, std::slice::from_ref(&cc), false);
 
     // Claude Code: installed
     assert!(cc.target_path.exists());
