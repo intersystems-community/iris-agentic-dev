@@ -3190,10 +3190,28 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         // Treat any run with no parsed method results as NO_TESTS_FOUND.
         if total == 0 || test_cases.is_empty() {
             self.record_call("iris_test", false);
+            // Produce an actionable hint based on the pattern shape.
+            let hint = if p.pattern.ends_with(".cls") || p.pattern.contains('*') {
+                format!(
+                    "iris_test requires a bare package name (e.g. \"App.Tests\"), not a \
+                     class name or wildcard. Try: \"{}\"",
+                    p.pattern
+                        .trim_end_matches(".cls")
+                        .rsplit_once('.')
+                        .map(|(pkg, _)| pkg)
+                        .unwrap_or(p.pattern.trim_end_matches('*').trim_end_matches('.'))
+                )
+            } else {
+                "Pattern matched no test classes. Verify the package name is correct, \
+                 the classes extend %UnitTest.TestCase, and ^UnitTestRoot is set to \
+                 your tests directory."
+                    .to_string()
+            };
             return ok_json(serde_json::json!({
                 "success": false,
                 "error_code": ERR_NO_TESTS_FOUND,
                 "error": "Pattern matched no test classes",
+                "hint": hint,
                 "pattern": p.pattern,
                 "namespace": p.namespace,
                 "total": 0,
@@ -3959,6 +3977,23 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
         if let Some(ref err) = conn.config_parse_error {
             response["config_parse_error"] = serde_json::Value::String(err.clone());
+        }
+
+        // Warn when connected via fallback discovery with no config file — the agent
+        // may be attached to the wrong IRIS instance (IDE-launched MCP with cwd=/).
+        // Explicit flags or env vars are intentional — no warning needed for those.
+        // See issue #82.
+        let is_explicit = matches!(
+            conn.source,
+            ConnectionSource::ConfigFile | ConnectionSource::EnvVars
+        );
+        if conn.config_file.is_none() && !is_explicit && conn.iris.is_some() {
+            response["fallback_warning"] = serde_json::Value::String(
+                "No .iris-agentic-dev.toml config file found. Connection established via \
+                 fallback discovery (Docker/Server Manager/port scan). Set OBJECTSCRIPT_WORKSPACE \
+                 or create a .iris-agentic-dev.toml in your project root to pin the target instance."
+                    .to_string(),
+            );
         }
 
         // Server Manager section (044-servermanager-discovery)

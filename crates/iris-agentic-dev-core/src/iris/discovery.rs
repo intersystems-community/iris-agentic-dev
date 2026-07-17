@@ -353,7 +353,7 @@ pub fn score_container_name(container_name: &str, workspace_basename: &str) -> u
 /// Returns a structured `DiscoveryResult` — never emits log messages itself.
 /// `pub` so live Docker integration tests can probe real containers directly.
 pub async fn discover_via_docker_named(target: &str) -> DiscoveryResult {
-    use bollard::container::ListContainersOptions;
+    use bollard::query_parameters::ListContainersOptionsBuilder;
     use bollard::Docker;
 
     let docker = match Docker::connect_with_defaults() {
@@ -362,10 +362,9 @@ pub async fn discover_via_docker_named(target: &str) -> DiscoveryResult {
     };
     let containers = match tokio::time::timeout(
         Duration::from_secs(3),
-        docker.list_containers(Some(ListContainersOptions::<String> {
-            all: false,
-            ..Default::default()
-        })),
+        docker.list_containers(Some(
+            ListContainersOptionsBuilder::default().all(false).build(),
+        )),
     )
     .await
     {
@@ -506,7 +505,7 @@ async fn probe_atelier_for_container(
 
 /// `pub` so live Docker integration tests can exercise the full unnamed scan directly.
 pub async fn discover_via_docker() -> Option<IrisConnection> {
-    use bollard::container::ListContainersOptions;
+    use bollard::query_parameters::ListContainersOptionsBuilder;
     use bollard::Docker;
 
     let workspace_basename = std::env::current_dir()
@@ -517,10 +516,9 @@ pub async fn discover_via_docker() -> Option<IrisConnection> {
     let docker = Docker::connect_with_defaults().ok()?;
     let containers = tokio::time::timeout(
         Duration::from_secs(3),
-        docker.list_containers(Some(ListContainersOptions::<String> {
-            all: false,
-            ..Default::default()
-        })),
+        docker.list_containers(Some(
+            ListContainersOptionsBuilder::default().all(false).build(),
+        )),
     )
     .await
     .ok()?

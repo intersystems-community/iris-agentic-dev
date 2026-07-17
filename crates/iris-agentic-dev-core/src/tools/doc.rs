@@ -1524,10 +1524,13 @@ pub fn strip_storage_blocks(content: &str) -> (String, bool) {
                 in_storage = true;
                 found = true;
                 // Count any opening braces on this line
-                brace_depth += line.chars().filter(|&c| c == '{').count() as i32;
-                brace_depth -= line.chars().filter(|&c| c == '}').count() as i32;
-                if brace_depth <= 0 {
-                    // Single-line storage (rare) — done immediately
+                let opens = line.chars().filter(|&c| c == '{').count() as i32;
+                let closes = line.chars().filter(|&c| c == '}').count() as i32;
+                brace_depth += opens - closes;
+                // Only exit immediately if this line contained a { and it balanced
+                // (single-line storage like "Storage Default {}"). If brace_depth==0
+                // because no { appeared yet, the { is on the next line — stay in_storage.
+                if opens > 0 && brace_depth <= 0 {
                     in_storage = false;
                     brace_depth = 0;
                 }
@@ -2416,6 +2419,62 @@ mod tests {
         assert!(DocMode::parse(&p.mode) == Some(DocMode::DeleteLines));
         assert_eq!(p.start, Some(5));
         assert_eq!(p.end, Some(8));
+    }
+
+    // ── strip_storage_blocks: brace-on-next-line (issue #80) ─────────────────
+    #[test]
+    fn test_strip_storage_blocks_brace_on_next_line() {
+        // Reproduces the exact class from issue #80: "Storage Default" on its own line,
+        // opening "{" on the following line. Prior to the fix, brace_depth was 0 after
+        // the "Storage Default" line, triggering immediate in_storage=false and leaving
+        // the XML body and closing "}" in the output.
+        let cls = r#"Class App.Data.ZZStorageProbe Extends %Persistent
+{
+Property Nome As %String(MAXLEN = 80);
+
+Storage Default
+{
+<Data name="ZZStorageProbeDefaultData">
+<Value name="1"><Value>%%CLASSNAME</Value></Value>
+<Value name="2"><Value>Nome</Value></Value>
+</Data>
+<DataLocation>^ZZProbeCustomD</DataLocation>
+<DefaultData>ZZStorageProbeDefaultData</DefaultData>
+<IdLocation>^ZZProbeCustomD</IdLocation>
+<IndexLocation>^ZZProbeCustomI</IndexLocation>
+<StreamLocation>^ZZProbeCustomS</StreamLocation>
+<Type>%Storage.Persistent</Type>
+}
+}"#;
+        let (stripped, flag) = strip_storage_blocks(cls);
+        assert!(flag, "should detect storage");
+        assert!(
+            !stripped.contains("Storage Default"),
+            "Storage header must be stripped"
+        );
+        assert!(
+            !stripped.contains("<Data name="),
+            "Storage XML body must be stripped"
+        );
+        assert!(
+            !stripped.contains("<Type>%Storage.Persistent</Type>"),
+            "Storage XML must be stripped"
+        );
+        assert!(
+            stripped.contains("Property Nome"),
+            "Property must be preserved"
+        );
+        assert!(
+            stripped.contains("Class App.Data.ZZStorageProbe"),
+            "Class header must be preserved"
+        );
+        // Must be valid UDL — exactly one closing brace for the class
+        let opens = stripped.chars().filter(|&c| c == '{').count();
+        let closes = stripped.chars().filter(|&c| c == '}').count();
+        assert_eq!(
+            opens, closes,
+            "braces must be balanced after strip: {stripped:?}"
+        );
     }
 
     // ── annotate_edit ─────────────────────────────────────────────────────────
