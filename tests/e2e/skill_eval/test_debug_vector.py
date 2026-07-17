@@ -22,7 +22,7 @@ def test_debug_vector_cold():
                 if install_skill:
                     dest = os.path.join(env.skills_dir, "iris-vector-ai")
                     os.makedirs(dest, exist_ok=True)
-                    shutil.copy2("light-skills/skills/iris-vector-ai/SKILL.md", os.path.join(dest, "SKILL.md"))
+                    shutil.copy2("skills/skills/iris-vector-ai/SKILL.md", os.path.join(dest, "SKILL.md"))
                 events = collect_events(task["description"], env.env_vars(), model=model, working_dir=workdir)
 
             content = _read_cls_files_from_workdir(workdir) or _extract_written_content(events)

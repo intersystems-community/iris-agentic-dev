@@ -1,0 +1,9 @@
+{
+  "version": "1.0.0",
+  "organization": "InterSystems Community",
+  "abstract": "SQL query patterns for InterSystems IRIS — schema-qualified table naming, reserved word handling, date/time functions, NULL semantics, and common optimization techniques distinct from standard SQL dialects.",
+  "references": [
+    "https://github.com/intersystems-community/iris-agentic-dev",
+    "https://docs.intersystems.com/iris20241/csp/docbook/DocBook.UI.Page.cls?KEY=RSQL_intro"
+  ]
+}

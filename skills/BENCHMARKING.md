@@ -59,7 +59,7 @@ sleep 30   # wait for IRIS to finish starting before the next step
 
 # 2. Get the SKILL.md files (only needed if you don't already have a local clone —
 #    the harness itself needs no repository, only the skill file you want to test)
-curl -sL https://raw.githubusercontent.com/intersystems-community/iris-agentic-dev/master/light-skills/skills/objectscript-review/SKILL.md \
+curl -sL https://raw.githubusercontent.com/intersystems-community/iris-agentic-dev/master/skills/skills/objectscript-review/SKILL.md \
   -o objectscript-review-SKILL.md
 
 # 3. Run the benchmark with the top-ranked skill
@@ -285,7 +285,7 @@ If clean: > ✅ Passed.
 
 Open a PR to [intersystems-community/iris-agentic-dev](https://github.com/intersystems-community/iris-agentic-dev) with:
 
-1. Your skill file at `light-skills/skills/yourgithub/your-skill/SKILL.md`
+1. Your skill file at `skills/skills/yourgithub/your-skill/SKILL.md`
 2. PR description including:
 
 ```markdown

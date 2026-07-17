@@ -12,7 +12,7 @@ _CURL_URL_RE = re.compile(
 _SHELL_VAR_RE = re.compile(r"\$\{?\w+")
 
 _README_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "..", "light-skills", "README.md"
+    os.path.dirname(__file__), "..", "..", "skills", "README.md"
 )
 
 

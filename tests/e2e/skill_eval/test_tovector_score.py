@@ -26,7 +26,7 @@ def test_score_vector_python():
             if skill:
                 dest = os.path.join(env.skills_dir, skill)
                 os.makedirs(dest, exist_ok=True)
-                shutil.copy2(f"light-skills/skills/{skill}/SKILL.md", os.path.join(dest, "SKILL.md"))
+                shutil.copy2(f"skills/skills/{skill}/SKILL.md", os.path.join(dest, "SKILL.md"))
             events = collect_events(task["description"], env.env_vars(), model=model, working_dir=workdir)
 
         disk = _read_cls_files_from_workdir(workdir)

@@ -425,10 +425,8 @@ documented Security.Applications API. Fails with \
 Community-edition containers; only run this test against an Enterprise/ \
 Ensemble-capable IRIS instance."]
 fn test_admin_webapp_crud() {
+    // Skip on Community edition — requires HealthShare/Ensemble (%ZHSLIB.HealthShareMgr)
     if std::env::var("IRIS_HEALTHSHARE").is_err() {
-        eprintln!(
-            "skip: IRIS_HEALTHSHARE not set — test requires HealthShare/Ensemble-capable IRIS"
-        );
         return;
     }
     assert!(iris_available());

@@ -1,3 +1,8 @@
+---
+name: iris-windows-iis-setup
+description: Configure IIS for IRIS installed natively on Windows so iris-agentic-dev can connect
+---
+
 # Skill: iris-windows-iis-setup
 
 **Type**: How-to guide
@@ -16,12 +21,14 @@ The #1 failure mode: `/api/atelier` returns 404 even when the Management Portal 
 Open **IIS Manager** (run `inetmgr`). Expand the server → **Sites** → **Default Web Site**. Look for an application named `api` in the tree.
 
 **If it is missing**, add it:
+
 1. Right-click **Default Web Site** → **Add Application**
 2. Alias: `api`
 3. Physical path: the Web Gateway bin directory, typically `C:\InterSystems\IRIS\CSP\bin`
 4. Click OK
 
 Then add a wildcard script handler:
+
 1. Click the new `api` application → **Handler Mappings** → **Add Wildcard Script Map**
 2. Request path: `*`
 3. Executable: full path to `CSPms.dll`, e.g. `C:\InterSystems\IRIS\CSP\bin\CSPms.dll`
@@ -51,10 +58,10 @@ If missing, add it (the IRIS installer normally does this; IIS reconfiguration m
 
 ## Step 3: Confirm the correct port
 
-| IRIS version | Web server | Default port |
-|---|---|---|
-| IRIS 2024.1+ | IIS | 80 |
-| Pre-2024.1 | Private Web Server (PWS) | 52773 |
+| IRIS version | Web server               | Default port |
+| ------------ | ------------------------ | ------------ |
+| IRIS 2024.1+ | IIS                      | 80           |
+| Pre-2024.1   | Private Web Server (PWS) | 52773        |
 
 If you are on IRIS 2024.1+ and IIS is configured, use port 80. If you are on an older version and the PWS is still running, use 52773.
 
@@ -88,6 +95,7 @@ namespace = "USER"          # your target namespace
 ```
 
 **Verification**: Run `check_config` via `iris-agentic-dev`. The response should show:
+
 - `"connected": true`
 - `"connection_source": "http"`
 - `"host": "localhost"` (or `"127.0.0.1"`)

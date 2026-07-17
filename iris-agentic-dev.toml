@@ -1,0 +1,48 @@
+[package]
+name = "iris-agentic-dev-skills"
+version = "1.0.0"
+description = "Official InterSystems skill pack for AI coding agents — IRIS, ObjectScript, and ecosystem projects"
+authors = ["Thomas Dyar <thomas.dyar@intersystems.com>"]
+license = "MIT"
+repository = "https://github.com/intersystems-community/iris-agentic-dev"
+
+[provides]
+skills = [
+    # ObjectScript code quality
+    "skills/skills/objectscript-review",
+    "skills/skills/objectscript-guardrails",
+    "skills/skills/objectscript-tdd",
+    "skills/skills/objectscript-unit-test",
+    "skills/skills/objectscript-repair",
+    "skills/skills/objectscript-debugging",
+    # ObjectScript pattern reference
+    "skills/skills/objectscript-list-patterns",
+    "skills/skills/objectscript-loop-patterns",
+    "skills/skills/objectscript-sql-patterns",
+    "skills/skills/objectscript-navigation",
+    # IRIS SQL
+    "skills/skills/iris-sql",
+    # IRIS Vector & AI
+    "skills/skills/iris-vector-ai",
+    "skills/skills/iris-vector-graph",
+    "skills/skills/iris-vector-rag",
+    # Interoperability
+    "skills/skills/ensemble-production",
+    "skills/skills/iris-objectscript-eval",
+    # Connectivity & setup
+    "skills/skills/iris-connectivity",
+    "skills/skills/iris-product-features",
+    "skills/skills/iris-linux-docker",
+    "skills/skills/iris-windows-iis-setup",
+    "skills/skills/iris-container-graceful-shutdown",
+    "skills/skills/iris-cpf-merge",
+    "skills/skills/iris-vscode-objectscript",
+    "skills/skills/irishealth-container",
+    # Ecosystem projects
+    "skills/skills/iris-embedded-python",
+    "skills/skills/iris-agentic-dev",
+    "skills/skills/iris-devtester",
+    "skills/skills/iris-docs",
+    # MCP & Tools
+    "skills/skills/opencode-introspect",
+]

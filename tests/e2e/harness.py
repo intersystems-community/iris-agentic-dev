@@ -20,15 +20,15 @@ from tests.e2e.result_writer import (
 )
 from tests.e2e.task_loader import HarnessTask, load_task, TASKS_DIR
 
-_LIGHT_SKILLS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "light-skills", "skills")
+_SKILLS_PACK_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "skills", "skills")
 
 
 def _install_skill_local(skill_name: str, skills_dir: str) -> None:
-    """Copy a skill from the local light-skills/ directory."""
+    """Copy a skill from the local skills/ directory."""
     import shutil
-    src = os.path.join(_LIGHT_SKILLS_DIR, skill_name, "SKILL.md")
+    src = os.path.join(_SKILLS_PACK_DIR, skill_name, "SKILL.md")
     if not os.path.exists(src):
-        raise FileNotFoundError(f"Skill '{skill_name}' not found in README or light-skills/")
+        raise FileNotFoundError(f"Skill '{skill_name}' not found in README or skills/")
     dest_dir = os.path.join(skills_dir, skill_name)
     os.makedirs(dest_dir, exist_ok=True)
     shutil.copy2(src, os.path.join(dest_dir, "SKILL.md"))
@@ -49,14 +49,14 @@ def run_task(
         if iris_host and iris_web_port and iris_container:
             env.with_mcp(iris_host=iris_host, iris_web_port=iris_web_port, iris_container=iris_container)
 
-        # Install skills — from README curl if available, else from local light-skills/
+        # Install skills — from README curl if available, else from local skills/
         if task.skills_to_install:
             validator = ReadmeValidator(skills_dir=env.skills_dir, readme_path=readme_path)
             for skill_name in task.skills_to_install:
                 try:
                     validator.install_skill(skill_name)
                 except ValueError:
-                    # Skill not in README — fall back to local light-skills/ directory
+                    # Skill not in README — fall back to local skills/ directory
                     _install_skill_local(skill_name, env.skills_dir)
 
         # Run OpenCode — task.model overrides the caller's default

@@ -5,8 +5,8 @@ import pytest
 import yaml
 from tests.e2e.skill_eval.evaluator import discover_skills, load_eval_config, SkillEvalConfig
 
-LIGHT_SKILLS_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "light-skills", "skills")
+SKILLS_PACK_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "skills", "skills")
 )
 TASKS_SKILLS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "tasks", "skills")
@@ -14,7 +14,7 @@ TASKS_SKILLS_DIR = os.path.abspath(
 
 
 def test_discover_skills_finds_all():
-    skills = discover_skills(LIGHT_SKILLS_DIR)
+    skills = discover_skills(SKILLS_PACK_DIR)
     assert len(skills) == 25
     assert "objectscript-review" in skills
     assert "iris-vector-ai" in skills

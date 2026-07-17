@@ -1,0 +1,17 @@
+Title: feat: register repo as skills CLI pack for zero-install skill setup
+
+Hi @gjsjohnmurray — I'm working on making the InterSystems AI coding skills installable via the `skills` CLI (Vercel Labs, https://github.com/vercel-labs/skills), which supports Claude Code, OpenCode, Copilot, Cursor, and 70+ other agents.
+
+The goal is to let any developer install the full InterSystems skill pack with a single command, no iris-agentic-dev binary required, no IRIS instance required:
+
+  npx skills add intersystems-community/iris-agentic-dev
+
+This is tracked as part of the 061-official-skill-pack feature. The work involves:
+
+1. Renaming light-skills/ → skills/ at repo root to match the skills CLI convention
+2. Adding metadata.json to each skill (version, abstract, references)
+3. Adding a skills.sh.json manifest for grouping/discovery
+
+No custom npm package needed — the skills CLI handles everything once the repo follows the pack format.
+
+One question: do you happen to own or have access to the intersystems-community npm org (https://www.npmjs.com/org/intersystems-community)? Not needed for the skills CLI path, but came up as a related question while researching this.
