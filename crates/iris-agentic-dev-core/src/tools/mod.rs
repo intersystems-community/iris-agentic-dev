@@ -3961,6 +3961,12 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 .unwrap_or(serde_json::Value::Null)
         };
 
+        let objectscript_workspace = std::env::var("OBJECTSCRIPT_WORKSPACE")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(serde_json::Value::String)
+            .unwrap_or(serde_json::Value::Null);
+
         let mut response = serde_json::json!({
             "connected": conn.iris.is_some(),
             "connection_source": connection_source,
@@ -3973,6 +3979,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             "iris_version": iris_version,
             "write_tools_enabled": conn.write_tools_enabled,
             "config_watch_path": config_watcher_path,
+            "objectscript_workspace": objectscript_workspace,
         });
 
         if let Some(ref err) = conn.config_parse_error {
@@ -3987,13 +3994,27 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             conn.source,
             ConnectionSource::ConfigFile | ConnectionSource::EnvVars
         );
+        let ws_env = std::env::var("OBJECTSCRIPT_WORKSPACE")
+            .ok()
+            .filter(|s| !s.is_empty());
         if conn.config_file.is_none() && !is_explicit && conn.iris.is_some() {
-            response["fallback_warning"] = serde_json::Value::String(
-                "No .iris-agentic-dev.toml config file found. Connection established via \
-                 fallback discovery (Docker/Server Manager/port scan). Set OBJECTSCRIPT_WORKSPACE \
-                 or create a .iris-agentic-dev.toml in your project root to pin the target instance."
-                    .to_string(),
-            );
+            if let Some(ref ws) = ws_env {
+                // OBJECTSCRIPT_WORKSPACE is set but no config file was found there.
+                // Connection is via fallback discovery — remind the user to create a
+                // config in the workspace the IDE pointed us at.
+                response["fallback_warning"] = serde_json::Value::String(format!(
+                    "No .iris-agentic-dev.toml found in OBJECTSCRIPT_WORKSPACE ({ws}). \
+                     Connection established via fallback discovery. Create .iris-agentic-dev.toml \
+                     in that directory to pin the target instance."
+                ));
+            } else {
+                response["fallback_warning"] = serde_json::Value::String(
+                    "No .iris-agentic-dev.toml config file found. Connection established via \
+                     fallback discovery (Docker/Server Manager/port scan). Set OBJECTSCRIPT_WORKSPACE \
+                     or create a .iris-agentic-dev.toml in your project root to pin the target instance."
+                        .to_string(),
+                );
+            }
         }
 
         // Server Manager section (044-servermanager-discovery)
