@@ -30,7 +30,7 @@ tokio = { version = "1", features = ["full"] }
 # IRIS HTTP client
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "cookies"], default-features = false }
 # Docker discovery
-bollard = "0.17"
+bollard = "0.21"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
