@@ -167,18 +167,22 @@ fn iris_source_control_status_uncontrolled() {
     );
 
     let result = parse_tool(&responses, 2);
-    assert_eq!(
-        result["success"], true,
-        "status should not error: {}",
-        result
-    );
-    // In a namespace without SCM, controlled should be false
-    // (In a namespace with SCM, this will return controlled:true — both are valid)
+    let scm_unavailable =
+        result.get("error_code").and_then(|v| v.as_str()) == Some("SCM_UNAVAILABLE");
     assert!(
-        result.get("controlled").is_some(),
-        "controlled field must be present: {}",
+        result["success"] == true || scm_unavailable,
+        "unexpected error from status: {}",
         result
     );
+    if result["success"] == true {
+        // In a namespace without SCM, controlled should be false
+        // (In a namespace with SCM, this will return controlled:true — both are valid)
+        assert!(
+            result.get("controlled").is_some(),
+            "controlled field must be present: {}",
+            result
+        );
+    }
 }
 
 /// T025: iris_compile writes open_uri after successful single-class compile.

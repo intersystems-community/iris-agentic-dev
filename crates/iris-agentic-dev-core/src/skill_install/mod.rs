@@ -100,6 +100,24 @@ pub fn install_skill(
         .collect()
 }
 
+/// Inject `managed_by: "iris-agentic-dev"` into the YAML frontmatter so
+/// `is_managed()` can recognise files written by this installer and overwrite
+/// them on upgrade.  If no frontmatter is present the marker is prepended.
+fn inject_managed_by(content: &str) -> String {
+    const MARKER: &str = r#"managed_by: "iris-agentic-dev""#;
+    if content.contains(MARKER) {
+        return content.to_string();
+    }
+    if let Some(rest) = content.strip_prefix("---\n") {
+        if let Some(close) = rest.find("\n---\n") {
+            let frontmatter = &rest[..close];
+            let body = &rest[close + 5..];
+            return format!("---\n{}\n{}\n---\n{}", frontmatter, MARKER, body);
+        }
+    }
+    format!("---\n{}\n---\n{}", MARKER, content)
+}
+
 fn write_skill_file(
     target: &InstallTarget,
     skill_name: &str,
@@ -124,7 +142,7 @@ fn write_skill_file(
 
     let final_content = match target.agent {
         AgentKind::Copilot => copilot::wrap_content(skill_name, content),
-        _ => content.to_string(),
+        _ => inject_managed_by(content),
     };
 
     if let Some(parent) = path.parent() {
