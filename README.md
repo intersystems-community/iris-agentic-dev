@@ -18,7 +18,11 @@ This is the fastest path if you already use VS Code with the InterSystems Object
 
 **iris-agentic-dev (IRIS)** now appears in **Copilot Chat → Agent mode → tools**. It reads your existing `objectscript.conn` or `intersystems.servers` configuration — no additional setup needed.
 
+![iris-agentic-dev tools visible in the Copilot Configure Tools panel](docs/images/copilot-tools-panel.png)
+
 To verify the connection, ask Copilot: *"Call check_config and show me the result."*
+
+![check_config result showing connected: true, auto-discovered connection, and IRIS version](docs/images/check-config-result.png)
 
 If the [InterSystems Server Manager](https://marketplace.visualstudio.com/items?itemName=intersystems-community.servermanager) extension is installed, iris-agentic-dev reads your server list and retrieves credentials from the OS keychain automatically — no additional config needed. Set `IRIS_SERVER_NAME` if you have multiple servers configured.
 
@@ -429,6 +433,17 @@ iris-agentic-dev install                 # Install packages from iris-dev.toml
 iris-agentic-dev benchmark --skill <path> --baseline   # Run the skill benchmark harness
 iris-agentic-dev --version               # Print version
 ```
+
+---
+
+## Documentation
+
+| Guide | Contents |
+|-------|----------|
+| [docs/connecting.md](docs/connecting.md) | Native IRIS, Docker, Server Manager, policy gates, env vars, discovery order |
+| [docs/tools.md](docs/tools.md) | Full tool catalog with descriptions and error codes |
+| [docs/skills.md](docs/skills.md) | Skill inventory, benchmark results, install instructions |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Symptom table, CLI commands, verbose logging |
 
 ---
 
