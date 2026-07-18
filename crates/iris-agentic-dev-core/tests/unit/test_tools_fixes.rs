@@ -237,17 +237,15 @@ fn test_extract_method_symbol_arguments_no_parens() {
     let (symbols, warnings) = extract_cls_symbols(src, "test.cls", "*");
 
     // Should parse without hard failures
-    assert!(
-        warnings.is_empty() || warnings.len() > 0,
-        "parsing completed"
-    );
+    // Either no warnings or some warnings — either outcome means parsing completed
+    let _ = &warnings;
 
     // If method symbol exists, verify formal_spec is not empty and contains the raw value
     let method_sym = symbols.iter().find(|s| s.kind == "method");
     if let Some(m) = method_sym {
         // formal_spec should exist and NOT be empty (raw trimmed text retained)
         assert!(
-            m.formal_spec.is_some() && m.formal_spec.as_ref().unwrap().len() > 0,
+            m.formal_spec.is_some() && !m.formal_spec.as_ref().unwrap().is_empty(),
             "formal_spec should contain trimmed argument text, got: {:?}",
             m.formal_spec
         );
@@ -481,7 +479,11 @@ fn test_extract_method_symbol_formal_spec_field() {
         let spec = m.formal_spec.as_ref().unwrap();
         // Should contain argument information (may be as complex as "arg1 As %String, arg2 As %Integer"
         // or as simple as the raw content depending on how tree-sitter parses it)
-        assert!(spec.len() > 0, "formal_spec should not be empty: {}", spec);
+        assert!(
+            !spec.is_empty(),
+            "formal_spec should not be empty: {}",
+            spec
+        );
     }
 }
 

@@ -1705,5 +1705,5 @@ fn message_body_content_type_detection_in_parser() {
     // Since detect_content_type is already unit-tested, we verify
     // the overall flow produces JSON with the expected fields.
     // This is documented as a gap requiring refactoring or integration tests.
-    assert!(true, "Output parsing gap documented");
+    // Output parsing gap documented — requires integration test or refactoring
 }

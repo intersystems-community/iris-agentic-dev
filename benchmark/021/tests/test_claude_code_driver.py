@@ -94,9 +94,11 @@ def test_run_task_pypr_baseline_prompt_is_direct():
     assert "skill(" not in prompt
 
 
-def test_run_task_pypr_merged_prompt_calls_skill():
+def test_run_task_pypr_merged_prompt_injects_skill():
     from claude_code import _build_system_prompt
     prompt = _build_system_prompt("A", category="PYPR", condition="merged")
-    assert "skill(" in prompt or "skill tool" in prompt.lower()
+    # merged prompt must embed skill content, not instruct agent to call skill()
+    assert "SKILL: pyprod" in prompt or "intersystems_pyprod" in prompt.lower()
+    assert "skill(" not in prompt  # must NOT ask agent to call skill tool
     assert "iris_compile" in prompt.lower() and "not" in prompt.lower()
     assert ".cls" not in prompt.lower()

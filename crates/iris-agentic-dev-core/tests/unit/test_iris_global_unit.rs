@@ -3,7 +3,8 @@
 use iris_agentic_dev_core::tools::global::{
     build_get_code, build_global_ref, build_kill_code, build_list_code, build_set_objectscript,
     build_subtree_get_code, clamp_max_nodes, clamp_max_subscripts, normalize_global_name,
-    parse_execute_output, validate_subscripts,
+    parse_execute_output, parse_get_output, parse_list_output, parse_subtree_output,
+    validate_subscripts,
 };
 
 // ---------------------------------------------------------------------------
@@ -403,40 +404,35 @@ fn dispatch_gate_kill_non_blocklisted_passes() {
 #[test]
 fn parse_get_output_defined_with_value() {
     // Internal helper test — imports for testing internal functions
-    use iris_agentic_dev_core::tools::global;
-    let result = global::parse_execute_output("1|hello-052");
+    let result = parse_execute_output("1|hello-052");
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "1|hello-052");
 }
 
 #[test]
 fn parse_get_output_undefined() {
-    use iris_agentic_dev_core::tools::global;
-    let result = global::parse_execute_output("0|");
+    let result = parse_execute_output("0|");
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "0|");
 }
 
 #[test]
 fn parse_get_output_empty_string_value() {
-    use iris_agentic_dev_core::tools::global;
-    let result = global::parse_execute_output("1|");
+    let result = parse_execute_output("1|");
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "1|");
 }
 
 #[test]
 fn parse_get_output_with_pipe_in_value() {
-    use iris_agentic_dev_core::tools::global;
-    let result = global::parse_execute_output("1|value|with|pipes");
+    let result = parse_execute_output("1|value|with|pipes");
     assert!(result.is_ok());
     assert_eq!(result.unwrap(), "1|value|with|pipes");
 }
 
 #[test]
 fn parse_execute_output_error_with_whitespace() {
-    use iris_agentic_dev_core::tools::global;
-    let result = global::parse_execute_output("  ERROR: some error msg  ");
+    let result = parse_execute_output("  ERROR: some error msg  ");
     assert!(result.is_err());
     let v = result.unwrap_err();
     assert_eq!(v["error_code"], "IRIS_EXECUTE_ERROR");
@@ -445,8 +441,7 @@ fn parse_execute_output_error_with_whitespace() {
 
 #[test]
 fn parse_execute_output_multiline_with_error_prefix() {
-    use iris_agentic_dev_core::tools::global;
-    let result = global::parse_execute_output("ERROR: <SYNTAX>");
+    let result = parse_execute_output("ERROR: <SYNTAX>");
     assert!(result.is_err());
     let v = result.unwrap_err();
     assert_eq!(v["error_code"], "IRIS_EXECUTE_ERROR");
@@ -813,9 +808,8 @@ fn normalize_then_build() {
 
 #[test]
 fn parse_execute_output_error_prefix_case_sensitive() {
-    use iris_agentic_dev_core::tools::global;
     // Should NOT match "error:" in lowercase
-    let result = global::parse_execute_output("error: something");
+    let result = parse_execute_output("error: something");
     assert!(
         result.is_ok(),
         "lowercase 'error:' should not trigger error path"
@@ -824,8 +818,7 @@ fn parse_execute_output_error_prefix_case_sensitive() {
 
 #[test]
 fn parse_execute_output_error_with_special_chars() {
-    use iris_agentic_dev_core::tools::global;
-    let result = global::parse_execute_output("ERROR: <TAG>message</TAG>");
+    let result = parse_execute_output("ERROR: <TAG>message</TAG>");
     assert!(result.is_err());
     assert!(result.unwrap_err()["message"]
         .as_str()
@@ -839,8 +832,7 @@ fn parse_execute_output_error_with_special_chars() {
 
 #[test]
 fn parse_get_output_returns_defined_with_value() {
-    use iris_agentic_dev_core::tools::global;
-    let result = global::parse_get_output("1|hello");
+    let result = parse_get_output("1|hello");
     assert_eq!(result["success"], true);
     assert_eq!(result["defined"], true);
     assert_eq!(result["value"], "hello");
@@ -848,8 +840,7 @@ fn parse_get_output_returns_defined_with_value() {
 
 #[test]
 fn parse_get_output_returns_undefined() {
-    use iris_agentic_dev_core::tools::global;
-    let result = global::parse_get_output("0|");
+    let result = parse_get_output("0|");
     assert_eq!(result["success"], true);
     assert_eq!(result["defined"], false);
     assert_eq!(result["value"], serde_json::Value::Null);
@@ -857,8 +848,7 @@ fn parse_get_output_returns_undefined() {
 
 #[test]
 fn parse_get_output_empty_defined_value() {
-    use iris_agentic_dev_core::tools::global;
-    let result = global::parse_get_output("1|");
+    let result = parse_get_output("1|");
     assert_eq!(result["success"], true);
     assert_eq!(result["defined"], true);
     assert_eq!(result["value"], "");
@@ -866,8 +856,7 @@ fn parse_get_output_empty_defined_value() {
 
 #[test]
 fn parse_get_output_value_with_pipes() {
-    use iris_agentic_dev_core::tools::global;
-    let result = global::parse_get_output("1|a|b|c");
+    let result = parse_get_output("1|a|b|c");
     assert_eq!(result["success"], true);
     assert_eq!(result["defined"], true);
     assert_eq!(result["value"], "a|b|c");
@@ -875,8 +864,7 @@ fn parse_get_output_value_with_pipes() {
 
 #[test]
 fn parse_get_output_unexpected_format() {
-    use iris_agentic_dev_core::tools::global;
-    let result = global::parse_get_output("bad");
+    let result = parse_get_output("bad");
     assert_eq!(result["success"], false);
     assert_eq!(result["error_code"], "IRIS_EXECUTE_ERROR");
     assert!(result["message"].as_str().unwrap().contains("unexpected"));
@@ -888,11 +876,10 @@ fn parse_get_output_unexpected_format() {
 
 #[test]
 fn parse_subtree_output_single_node() {
-    use iris_agentic_dev_core::tools::global;
     let input = r#"^MyApp("a")|hello
 DONE|1|0
 "#;
-    let result = global::parse_subtree_output(input);
+    let result = parse_subtree_output(input);
     assert_eq!(result["success"], true);
     assert_eq!(result["nodes"].as_array().unwrap().len(), 1);
     assert_eq!(result["nodes"][0]["path"], r#"^MyApp("a")"#);
@@ -903,12 +890,11 @@ DONE|1|0
 
 #[test]
 fn parse_subtree_output_truncated() {
-    use iris_agentic_dev_core::tools::global;
     let input = r#"^Global("x")|value1
 ^Global("y")|value2
 DONE|100|1
 "#;
-    let result = global::parse_subtree_output(input);
+    let result = parse_subtree_output(input);
     assert_eq!(result["success"], true);
     assert_eq!(result["node_count"], 100);
     assert_eq!(result["truncated"], true);
@@ -916,9 +902,8 @@ DONE|100|1
 
 #[test]
 fn parse_subtree_output_empty() {
-    use iris_agentic_dev_core::tools::global;
     let input = "DONE|0|0\n";
-    let result = global::parse_subtree_output(input);
+    let result = parse_subtree_output(input);
     assert_eq!(result["success"], true);
     assert_eq!(result["nodes"].as_array().unwrap().len(), 0);
     assert_eq!(result["node_count"], 0);
@@ -927,13 +912,12 @@ fn parse_subtree_output_empty() {
 
 #[test]
 fn parse_subtree_output_multiple_nodes() {
-    use iris_agentic_dev_core::tools::global;
     let input = r#"^App("a")|val1
 ^App("b")|val2
 ^App("c")|val3
 DONE|3|0
 "#;
-    let result = global::parse_subtree_output(input);
+    let result = parse_subtree_output(input);
     assert_eq!(result["success"], true);
     let nodes = result["nodes"].as_array().unwrap();
     assert_eq!(nodes.len(), 3);
@@ -944,14 +928,13 @@ DONE|3|0
 
 #[test]
 fn parse_subtree_output_skips_empty_lines() {
-    use iris_agentic_dev_core::tools::global;
     let input = r#"^App("a")|val1
 
 ^App("b")|val2
 
 DONE|2|0
 "#;
-    let result = global::parse_subtree_output(input);
+    let result = parse_subtree_output(input);
     assert_eq!(result["success"], true);
     let nodes = result["nodes"].as_array().unwrap();
     assert_eq!(nodes.len(), 2);
@@ -964,9 +947,8 @@ DONE|2|0
 
 #[test]
 fn parse_list_output_single_subscript() {
-    use iris_agentic_dev_core::tools::global;
     let input = "foo\nDONE|1|0\n";
-    let result = global::parse_list_output(input);
+    let result = parse_list_output(input);
     assert_eq!(result["success"], true);
     let subs = result["subscripts"].as_array().unwrap();
     assert_eq!(subs.len(), 1);
@@ -976,9 +958,8 @@ fn parse_list_output_single_subscript() {
 
 #[test]
 fn parse_list_output_multiple_subscripts() {
-    use iris_agentic_dev_core::tools::global;
     let input = "a\nb\nc\nDONE|3|0\n";
-    let result = global::parse_list_output(input);
+    let result = parse_list_output(input);
     assert_eq!(result["success"], true);
     let subs = result["subscripts"].as_array().unwrap();
     assert_eq!(subs.len(), 3);
@@ -989,9 +970,8 @@ fn parse_list_output_multiple_subscripts() {
 
 #[test]
 fn parse_list_output_truncated() {
-    use iris_agentic_dev_core::tools::global;
     let input = "sub1\nsub2\nDONE|50|1\n";
-    let result = global::parse_list_output(input);
+    let result = parse_list_output(input);
     assert_eq!(result["success"], true);
     assert_eq!(result["truncated"], true);
     let subs = result["subscripts"].as_array().unwrap();
@@ -1000,9 +980,8 @@ fn parse_list_output_truncated() {
 
 #[test]
 fn parse_list_output_empty() {
-    use iris_agentic_dev_core::tools::global;
     let input = "DONE|0|0\n";
-    let result = global::parse_list_output(input);
+    let result = parse_list_output(input);
     assert_eq!(result["success"], true);
     let subs = result["subscripts"].as_array().unwrap();
     assert_eq!(subs.len(), 0);
@@ -1011,9 +990,8 @@ fn parse_list_output_empty() {
 
 #[test]
 fn parse_list_output_skips_blank_lines() {
-    use iris_agentic_dev_core::tools::global;
     let input = "sub1\n\nsub2\n\nsub3\nDONE|3|0\n";
-    let result = global::parse_list_output(input);
+    let result = parse_list_output(input);
     assert_eq!(result["success"], true);
     let subs = result["subscripts"].as_array().unwrap();
     assert_eq!(subs.len(), 3);
@@ -1029,9 +1007,8 @@ fn parse_list_output_skips_blank_lines() {
 
 #[test]
 fn parse_get_output_unexpected_prefix_2() {
-    use iris_agentic_dev_core::tools::global;
     // Prefix "2|" is neither defined (1|) nor undefined (0|), should error
-    let result = global::parse_get_output("2|value");
+    let result = parse_get_output("2|value");
     assert_eq!(result["success"], false);
     assert_eq!(result["error_code"], "IRIS_EXECUTE_ERROR");
     assert!(result["message"]
@@ -1042,9 +1019,8 @@ fn parse_get_output_unexpected_prefix_2() {
 
 #[test]
 fn parse_get_output_unexpected_prefix_pipe_only() {
-    use iris_agentic_dev_core::tools::global;
     // Leading pipe with no 0/1 flag
-    let result = global::parse_get_output("|value");
+    let result = parse_get_output("|value");
     assert_eq!(result["success"], false);
     assert_eq!(result["error_code"], "IRIS_EXECUTE_ERROR");
     assert!(result["message"]
@@ -1055,18 +1031,16 @@ fn parse_get_output_unexpected_prefix_pipe_only() {
 
 #[test]
 fn parse_get_output_unexpected_prefix_numeric() {
-    use iris_agentic_dev_core::tools::global;
     // High numeric prefix: "99|value"
-    let result = global::parse_get_output("99|value");
+    let result = parse_get_output("99|value");
     assert_eq!(result["success"], false);
     assert_eq!(result["error_code"], "IRIS_EXECUTE_ERROR");
 }
 
 #[test]
 fn parse_get_output_unexpected_prefix_no_pipe() {
-    use iris_agentic_dev_core::tools::global;
     // No pipe at all — same case as parse_get_output_unexpected_format
-    let result = global::parse_get_output("orphan_value");
+    let result = parse_get_output("orphan_value");
     assert_eq!(result["success"], false);
     assert_eq!(result["error_code"], "IRIS_EXECUTE_ERROR");
 }
@@ -1077,13 +1051,12 @@ fn parse_get_output_unexpected_prefix_no_pipe() {
 
 #[test]
 fn parse_subtree_output_silently_skips_lines_without_pipe() {
-    use iris_agentic_dev_core::tools::global;
     // One well-formed node line, one orphan line (no pipe), one DONE marker
     let input = r#"^MyApp("x")|v
 orphanline
 DONE|1|0
 "#;
-    let result = global::parse_subtree_output(input);
+    let result = parse_subtree_output(input);
     assert_eq!(result["success"], true);
     let nodes = result["nodes"].as_array().unwrap();
     assert_eq!(nodes.len(), 1, "should have exactly one node");
@@ -1100,12 +1073,11 @@ DONE|1|0
 
 #[test]
 fn parse_subtree_output_done_with_non_numeric_count() {
-    use iris_agentic_dev_core::tools::global;
     // DONE line with non-numeric count (e.g., 'abc') → parse().ok() defaults to 0
     let input = r#"^A("x")|v
 DONE|abc|0
 "#;
-    let result = global::parse_subtree_output(input);
+    let result = parse_subtree_output(input);
     assert_eq!(result["success"], true);
     let nodes = result["nodes"].as_array().unwrap();
     assert_eq!(nodes.len(), 1, "one node collected");
@@ -1116,7 +1088,6 @@ DONE|abc|0
 
 #[test]
 fn parse_subtree_output_multiple_lines_without_pipe() {
-    use iris_agentic_dev_core::tools::global;
     // Multiple orphan lines to ensure they're all skipped
     let input = r#"^App("a")|val1
 no_pipe_line_1
@@ -1125,7 +1096,7 @@ no_pipe_line_2
 incomplete
 DONE|2|0
 "#;
-    let result = global::parse_subtree_output(input);
+    let result = parse_subtree_output(input);
     assert_eq!(result["success"], true);
     let nodes = result["nodes"].as_array().unwrap();
     assert_eq!(nodes.len(), 2, "only two well-formed nodes");
@@ -1139,12 +1110,11 @@ DONE|2|0
 
 #[test]
 fn parse_list_output_done_missing_truncation_flag() {
-    use iris_agentic_dev_core::tools::global;
     // DONE line without the second pipe (truncation flag)
     // e.g., "DONE|5" instead of "DONE|5|0"
     // parts.get(1) returns None, truncated defaults to false
     let input = "a\nb\nDONE|2\n";
-    let result = global::parse_list_output(input);
+    let result = parse_list_output(input);
     assert_eq!(result["success"], true);
     let subs = result["subscripts"].as_array().unwrap();
     assert_eq!(subs.len(), 2);
@@ -1159,11 +1129,10 @@ fn parse_list_output_done_missing_truncation_flag() {
 
 #[test]
 fn parse_list_output_done_malformed_truncation_flag() {
-    use iris_agentic_dev_core::tools::global;
     // Truncation flag is neither "0" nor "1" (e.g., "DONE|3|xyz")
     // The comparison *s == "1" will be false, so truncated = false
     let input = "sub1\nsub2\nsub3\nDONE|3|xyz\n";
-    let result = global::parse_list_output(input);
+    let result = parse_list_output(input);
     assert_eq!(result["success"], true);
     let subs = result["subscripts"].as_array().unwrap();
     assert_eq!(subs.len(), 3);
@@ -1177,23 +1146,21 @@ fn parse_list_output_done_malformed_truncation_flag() {
 
 #[test]
 fn parse_execute_output_all_whitespace() {
-    use iris_agentic_dev_core::tools::global;
     // Input that is entirely whitespace (spaces, tabs, newlines)
-    let result = global::parse_execute_output("   \t  \n  ");
+    let result = parse_execute_output("   \t  \n  ");
     assert!(result.is_ok(), "all-whitespace should return Ok after trim");
     assert_eq!(result.unwrap(), "");
 }
 
 #[test]
 fn parse_execute_output_all_whitespace_then_get_output_fails() {
-    use iris_agentic_dev_core::tools::global;
     // Chain: parse_execute_output on whitespace, then parse_get_output on the result
-    let output = global::parse_execute_output("   ");
+    let output = parse_execute_output("   ");
     assert!(output.is_ok());
     let empty_str = output.unwrap();
     assert_eq!(empty_str, "");
     // Now try to parse this empty string as get output
-    let get_result = global::parse_get_output(&empty_str);
+    let get_result = parse_get_output(&empty_str);
     assert_eq!(get_result["success"], false);
     assert_eq!(get_result["error_code"], "IRIS_EXECUTE_ERROR");
     assert!(get_result["message"]
@@ -1208,7 +1175,6 @@ fn parse_execute_output_all_whitespace_then_get_output_fails() {
 
 #[test]
 fn validate_subscripts_rejects_tab() {
-    use iris_agentic_dev_core::tools::global;
     let result = validate_subscripts(&["key\tvalue".into()]);
     assert!(result.is_err(), "tab character should be rejected");
     assert_eq!(result.unwrap_err()["error_code"], "INVALID_SUBSCRIPT");
@@ -1216,7 +1182,6 @@ fn validate_subscripts_rejects_tab() {
 
 #[test]
 fn validate_subscripts_rejects_newline() {
-    use iris_agentic_dev_core::tools::global;
     let result = validate_subscripts(&["line1\nline2".into()]);
     assert!(result.is_err(), "newline should be rejected");
     assert_eq!(result.unwrap_err()["error_code"], "INVALID_SUBSCRIPT");
@@ -1224,7 +1189,6 @@ fn validate_subscripts_rejects_newline() {
 
 #[test]
 fn validate_subscripts_rejects_carriage_return() {
-    use iris_agentic_dev_core::tools::global;
     let result = validate_subscripts(&["line1\rline2".into()]);
     assert!(result.is_err(), "carriage return should be rejected");
     assert_eq!(result.unwrap_err()["error_code"], "INVALID_SUBSCRIPT");
@@ -1232,7 +1196,6 @@ fn validate_subscripts_rejects_carriage_return() {
 
 #[test]
 fn validate_subscripts_rejects_bell_character() {
-    use iris_agentic_dev_core::tools::global;
     // \x07 is the bell character, a control character
     let result = validate_subscripts(&["bell\x07char".into()]);
     assert!(result.is_err());
@@ -1245,7 +1208,6 @@ fn validate_subscripts_rejects_bell_character() {
 
 #[test]
 fn build_list_code_with_paren_in_subscript() {
-    use iris_agentic_dev_core::tools::global;
     // A subscript containing a closing paren: "a(b)"
     // This creates a reference like: ^App("a(b)")
     // rsplit_once(')') will split on the LAST ')', producing:
@@ -1263,7 +1225,6 @@ fn build_list_code_with_paren_in_subscript() {
 
 #[test]
 fn build_list_code_multiple_parens_in_subscript() {
-    use iris_agentic_dev_core::tools::global;
     // Multiple nested parens: "a(b(c))"
     // This tests that rsplit_once splits only on the last one
     let code = build_list_code(r#"^App("a(b(c))")"#, 10);
@@ -1274,7 +1235,6 @@ fn build_list_code_multiple_parens_in_subscript() {
 
 #[test]
 fn build_list_code_root_global_no_issue() {
-    use iris_agentic_dev_core::tools::global;
     // Root globals without subscripts should work fine (no rsplit needed)
     let code = build_list_code("^App", 10);
     assert!(code.contains("$Order(^App(sub))"));
@@ -1287,7 +1247,6 @@ fn build_list_code_root_global_no_issue() {
 
 #[test]
 fn build_set_objectscript_backslash_pass_through() {
-    use iris_agentic_dev_core::tools::global;
     // Backslash should NOT be escaped; it should appear verbatim
     let code = build_set_objectscript("^G", "back\\slash");
     assert!(
@@ -1298,7 +1257,6 @@ fn build_set_objectscript_backslash_pass_through() {
 
 #[test]
 fn build_set_objectscript_dollar_sign_pass_through() {
-    use iris_agentic_dev_core::tools::global;
     // $ should appear verbatim (not expanded as ObjectScript function)
     let code = build_set_objectscript("^G", "$ZV");
     assert!(code.contains("$ZV"), "$ZV should appear literally in code");
@@ -1308,7 +1266,6 @@ fn build_set_objectscript_dollar_sign_pass_through() {
 
 #[test]
 fn build_set_objectscript_newline_pass_through() {
-    use iris_agentic_dev_core::tools::global;
     // Newline in value should be embedded verbatim
     let code = build_set_objectscript("^G", "line1\nline2");
     assert!(code.contains("line1"));
@@ -1318,7 +1275,6 @@ fn build_set_objectscript_newline_pass_through() {
 
 #[test]
 fn build_set_objectscript_percent_sign() {
-    use iris_agentic_dev_core::tools::global;
     // % sign should pass through unchanged
     let code = build_set_objectscript("^G", "%SYS");
     assert!(code.contains("%SYS"));
@@ -1326,7 +1282,6 @@ fn build_set_objectscript_percent_sign() {
 
 #[test]
 fn build_set_objectscript_only_quote_is_doubled() {
-    use iris_agentic_dev_core::tools::global;
     // Only " is escaped (doubled); other chars are unchanged
     let code = build_set_objectscript("^G", r#"a"b$c%d\e"#);
     // The " should be doubled to ""
@@ -1335,7 +1290,6 @@ fn build_set_objectscript_only_quote_is_doubled() {
 
 #[test]
 fn build_set_objectscript_mixed_special_chars() {
-    use iris_agentic_dev_core::tools::global;
     // Mix of special chars that should all pass through except "
     let code = build_set_objectscript("^MyApp", r#"$ZV\$ZERROR%SYS"key"#);
     // Quote should be doubled, everything else verbatim

@@ -706,10 +706,7 @@ fn database_status_parser_read_only_database() {
     let line = "ARCHIVES|/archives/|Mounted|100.0|1|none";
     let p: Vec<&str> = line.splitn(6, '|').collect();
     let read_only = p.get(4).copied().unwrap_or("0") != "0";
-    assert_eq!(
-        read_only, true,
-        "read_only should be true when value is '1'"
-    );
+    assert!(read_only, "read_only should be true when value is '1'");
 }
 
 // ---------------------------------------------------------------------------

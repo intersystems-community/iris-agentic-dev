@@ -16,18 +16,16 @@ references:
 between writes.**
 
 pyprod is the InterSystems Python library for IRIS interoperability productions.
-Import everything from `intersystems_pyprod` — not `grongier.pex` or any other package.
+Import from `intersystems_pyprod` — not `grongier.pex` or any other package.
 
-```python
-from intersystems_pyprod import (
-    IRISParameter, IRISProperty,
-    InboundAdapter, BusinessService,
-    BusinessProcess, BusinessOperation, OutboundAdapter,
-    Column, JsonSerialize, PickleSerialize,
-    IRISLog, Status,
-    Production, ServiceItem, ProcessItem, OperationItem
-)
-```
+Import only what your component needs — do not copy-paste the full import list into every file:
+
+| Component           | Typical imports                                                              |
+| ------------------- | ---------------------------------------------------------------------------- |
+| Message             | `Column, JsonSerialize` (or `PickleSerialize`)                               |
+| BusinessService     | `IRISParameter, IRISProperty, BusinessService, IRISLog, Status`              |
+| BusinessProcess     | `IRISProperty, BusinessProcess, IRISLog, Status`                             |
+| BusinessOperation   | `IRISParameter, IRISProperty, BusinessOperation, IRISLog, Status`            |
 
 Set the IRIS package name at module level (applies to all classes in the file):
 
@@ -91,18 +89,19 @@ class MyProcess(BusinessProcess):
     )
 
     def on_request(self, request):
-        # Async with response: response_required=1 (integer, not True)
+        # response_required=1 (integer, not True) — MUST also implement on_response below
         status = self.send_request_async(self.target, request, response_required=1)
         return status, None
 
+    # ⚠ REQUIRED — omitting on_response causes NotImplementedError at runtime
     def on_response(self, request, response, call_request, call_response, completion_key):
-        # REQUIRED when send_request_async is called with response_required=1 (the default)
         return Status.OK(), response
 ```
 
-**Critical:** `response_required` defaults to `1`. If you call `send_request_async`
-without `response_required=0`, you **must** implement `on_response` — or get a
-`NotImplementedError` at runtime. Pass `0` or `1` (integer), never `True`/`False`.
+**Rule:** Every async dispatch with `response_required=1` **must** have a matching
+`on_response` in the same class. No exceptions. If you only want fire-and-forget,
+pass `response_required=0` and omit `on_response`. Never use `True`/`False` — integer
+only.
 
 For sync dispatch:
 
@@ -161,13 +160,16 @@ timeout = IRISProperty(default=30, description="Timeout in seconds")  # UI-edita
 
 ## Status and Logging
 
-Every callback returns `Status` as its first return value:
+Every callback returns `Status` as its first element. Use a tuple return in all
+message-handling methods:
 
 ```python
-return Status.OK(), response      # success with response
-return Status.OK()                # success, no response
-return Status.ERROR("message")    # failure
+return Status.OK(), response      # handler: success, pass response back
+return Status.OK(), None          # handler: success, no response to pass back
+return Status.ERROR("message"), None   # handler: failure
 ```
+
+`on_message` (BusinessOperation fallback only) may return bare `Status.OK()`.
 
 ```python
 IRISLog.Info("message")
@@ -183,7 +185,7 @@ IRISLog.Error("message")
 | ------------------------------------------ | ------------------------------------- | ------------------------------------------------------------ |
 | Plain attribute instead of `Column()`      | Field not SQL-queryable               | Use `Column(datatype=...)`                                   |
 | `response_required=True` (bool)            | Runtime error                         | Use integer `1`                                              |
-| `send_request_async` without `on_response` | `NotImplementedError`                 | Implement `on_response` or pass `response_required=0`        |
+| `send_request_async(response_required=1)` without `on_response` | `NotImplementedError` at runtime | Always implement `on_response` alongside the async call |
 | `IRISParameter` for UI-editable value      | Not visible in production UI          | Use `IRISProperty`                                           |
 | `IRISProperty` on BusinessProcess          | State lost (new instance per message) | Use only on adapters, services, operations                   |
 | Wrong MessageMap key package               | Messages not dispatched               | Key must match `iris_package_name` of the **message** module |
