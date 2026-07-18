@@ -921,3 +921,419 @@ mod generate_toml {
         assert!(out.contains("USER"), "must include namespace");
     }
 }
+
+// ── coverage.rs: parse_coverage_output pipe-delimited paths ─────────────────
+
+mod coverage_parse_output_pipes {
+    use iris_agentic_dev_core::tools::coverage::parse_coverage_output;
+
+    #[test]
+    fn parse_pipe_delimited_single_class_to_total() {
+        let output = "MyApp.Foo|MyApp.Foo.1|45|60\nTOTAL|45|60";
+        let v = parse_coverage_output(output);
+        assert_eq!(
+            v["success"], true,
+            "pipe-delimited should parse successfully"
+        );
+        assert_eq!(v["total_pct"], 75.0, "45/60 = 75.0%");
+        assert_eq!(v["hits"], 45);
+        assert_eq!(v["total"], 60);
+        let classes = v["classes"].as_array().unwrap();
+        assert_eq!(classes.len(), 1);
+        assert_eq!(classes[0]["class"], "MyApp.Foo");
+        assert_eq!(classes[0]["routine"], "MyApp.Foo.1");
+        assert_eq!(classes[0]["hit"], 45);
+        assert_eq!(classes[0]["total"], 60);
+        assert_eq!(classes[0]["pct"], 75.0);
+    }
+
+    #[test]
+    fn parse_pipe_delimited_multiple_classes() {
+        let output = "MyApp.A|MyApp.A.1|10|20\nMyApp.B|MyApp.B.1|15|30\nTOTAL|25|50";
+        let v = parse_coverage_output(output);
+        assert_eq!(v["success"], true);
+        assert_eq!(v["total_pct"], 50.0);
+        let classes = v["classes"].as_array().unwrap();
+        assert_eq!(classes.len(), 2);
+        assert_eq!(classes[0]["class"], "MyApp.A");
+        assert_eq!(classes[1]["class"], "MyApp.B");
+    }
+
+    #[test]
+    fn parse_pipe_error_prefix_early_return() {
+        let output = "ERROR|MONITOR_IN_USE|Monitor already running";
+        let v = parse_coverage_output(output);
+        assert_eq!(v["success"], false);
+        assert_eq!(v["error_code"], "MONITOR_IN_USE");
+        assert_eq!(v["message"], "Monitor already running");
+    }
+
+    #[test]
+    fn parse_total_only_no_classes() {
+        let output = "TOTAL|0|0";
+        let v = parse_coverage_output(output);
+        assert_eq!(v["success"], true);
+        assert_eq!(v["total_pct"], 0.0);
+        assert_eq!(v["hits"], 0);
+        assert_eq!(v["total"], 0);
+        let classes = v["classes"].as_array().unwrap();
+        assert_eq!(classes.len(), 0, "empty classes array when no class rows");
+    }
+
+    #[test]
+    fn parse_invalid_line_skipped() {
+        let output = "junk line\nTOTAL|0|0";
+        let v = parse_coverage_output(output);
+        assert_eq!(
+            v["success"], true,
+            "single invalid line with valid TOTAL should succeed"
+        );
+    }
+
+    #[test]
+    fn parse_no_total_and_no_classes_returns_error() {
+        let output = "junk line only";
+        let v = parse_coverage_output(output);
+        assert_eq!(v["success"], false);
+        assert_eq!(v["error_code"], "PARSE_ERROR");
+    }
+
+    #[test]
+    fn parse_class_with_zero_total_pct_is_zero() {
+        let output = "MyApp.X|MyApp.X.1|0|0\nTOTAL|0|0";
+        let v = parse_coverage_output(output);
+        assert_eq!(v["success"], true);
+        let classes = v["classes"].as_array().unwrap();
+        assert_eq!(classes[0]["pct"], 0.0, "zero total should give 0.0%");
+    }
+
+    #[test]
+    fn parse_pct_rounding_one_decimal() {
+        let output = "MyApp.X|MyApp.X.1|1|3\nTOTAL|1|3";
+        let v = parse_coverage_output(output);
+        assert_eq!(v["success"], true);
+        let classes = v["classes"].as_array().unwrap();
+        // 1/3 = 0.333... → * 10 = 3.333... → round = 3 → / 10 = 0.3? No, should be 33.3
+        // Actually: (1/3)*100 = 33.333 → *10 = 333.33 → round = 333 → / 10 = 33.3
+        assert_eq!(classes[0]["pct"], 33.3, "1/3 of 100 rounded to 1 decimal");
+    }
+
+    #[test]
+    fn parse_json_without_required_fields_returns_parse_error() {
+        let output = r#"{"foo":"bar","some_field":123}"#;
+        let v = parse_coverage_output(output);
+        assert_eq!(v["error_code"], "PARSE_ERROR");
+        assert!(
+            v["message"].as_str().unwrap().contains("unexpected JSON"),
+            "must mention it was unexpected JSON"
+        );
+    }
+
+    #[test]
+    fn parse_json_with_success_field_passes_through() {
+        let output = r#"{"success":true,"total_pct":88.5,"hits":100,"total":113,"classes":[]}"#;
+        let v = parse_coverage_output(output);
+        assert_eq!(v["success"], true);
+        assert_eq!(v["total_pct"], 88.5);
+    }
+
+    #[test]
+    fn parse_json_with_error_code_passes_through() {
+        let output = r#"{"error_code":"CUSTOM_ERROR","message":"something"}"#;
+        let v = parse_coverage_output(output);
+        assert_eq!(v["error_code"], "CUSTOM_ERROR");
+        assert_eq!(v["message"], "something");
+    }
+}
+
+// ── coverage.rs: parse_check_output pipe-delimited paths ────────────────────
+
+mod coverage_parse_check_output {
+    use iris_agentic_dev_core::tools::coverage::parse_check_output;
+
+    #[test]
+    fn parse_check_ok_raw_pipe() {
+        let output = "OK|ready";
+        let v = parse_check_output(output);
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["bbsiz_state"], "ready");
+    }
+
+    #[test]
+    fn parse_check_bbsiz_not_configured_pipe() {
+        let output = "BBSIZ_NOT_CONFIGURED|needs gmheap increase";
+        let v = parse_check_output(output);
+        assert_eq!(v["success"], false);
+        assert_eq!(v["error_code"], "BBSIZ_NOT_CONFIGURED");
+        assert_eq!(v["message"], "needs gmheap increase");
+        assert!(v["fix"].as_str().is_some(), "fix field must be present");
+    }
+
+    #[test]
+    fn parse_check_error_pipe() {
+        let output = "ERROR|MONITOR_IN_USE";
+        let v = parse_check_output(output);
+        assert_eq!(v["success"], false);
+        // splitn(2, '|') means "ERROR|MONITOR_IN_USE" → ["ERROR", "MONITOR_IN_USE"]
+        // So parts[1] = "MONITOR_IN_USE"
+        assert_eq!(v["error_code"], "MONITOR_IN_USE");
+    }
+
+    #[test]
+    fn parse_check_error_no_third_segment() {
+        let output = "ERROR|CUSTOM_CODE";
+        let v = parse_check_output(output);
+        assert_eq!(v["error_code"], "CUSTOM_CODE");
+    }
+
+    #[test]
+    fn parse_check_unknown_prefix_returns_parse_error() {
+        let output = "UNKNOWN|something";
+        let v = parse_check_output(output);
+        assert_eq!(v["error_code"], "PARSE_ERROR");
+        assert!(v["message"].as_str().is_some());
+    }
+
+    #[test]
+    fn parse_check_json_passthrough() {
+        let output = r#"{"ok":true,"bbsiz_state":"ready"}"#;
+        let v = parse_check_output(output);
+        assert_eq!(v["ok"], true);
+        assert_eq!(v["bbsiz_state"], "ready");
+    }
+
+    #[test]
+    fn parse_check_multiline_uses_first() {
+        let output = "OK|ready\nsome extra line";
+        let v = parse_check_output(output);
+        assert_eq!(v["ok"], true);
+    }
+}
+
+// ── coverage.rs: parse_package_expand_output ──────────────────────────────
+
+mod coverage_parse_package_expand {
+    use iris_agentic_dev_core::tools::coverage::parse_package_expand_output;
+
+    #[test]
+    fn parse_expand_empty_input_returns_error() {
+        let output = "";
+        let r = parse_package_expand_output(output);
+        assert!(r.is_err());
+        let err = r.unwrap_err();
+        assert_eq!(err["error_code"], "IRIS_EXECUTE_ERROR");
+    }
+
+    #[test]
+    fn parse_expand_normal_classes() {
+        let output = "MyApp.A\nMyApp.B\nMyApp.C\nDONE|3";
+        let r = parse_package_expand_output(output);
+        assert!(r.is_ok());
+        let classes = r.unwrap();
+        assert_eq!(classes.len(), 3);
+        assert_eq!(classes[0], "MyApp.A");
+        assert_eq!(classes[1], "MyApp.B");
+        assert_eq!(classes[2], "MyApp.C");
+    }
+
+    #[test]
+    fn parse_expand_error_line_early_return() {
+        let output = "ERROR|SQL_ERROR|bad query\nMyApp.A";
+        let r = parse_package_expand_output(output);
+        assert!(r.is_err());
+        let err = r.unwrap_err();
+        assert_eq!(err["error_code"], "SQL_ERROR");
+        assert_eq!(err["message"], "bad query");
+    }
+
+    #[test]
+    fn parse_expand_error_no_third_segment() {
+        let output = "ERROR|SOMETHING_WRONG\nMyApp.A";
+        let r = parse_package_expand_output(output);
+        assert!(r.is_err());
+        let err = r.unwrap_err();
+        assert_eq!(err["error_code"], "SQL_ERROR");
+        assert_eq!(err["message"], "unknown SQL error");
+    }
+
+    #[test]
+    fn parse_expand_done_terminates() {
+        let output = "MyApp.A\nDONE|1\nMyApp.B";
+        let r = parse_package_expand_output(output);
+        assert!(r.is_ok());
+        let classes = r.unwrap();
+        assert_eq!(classes.len(), 1, "lines after DONE| are not included");
+        assert_eq!(classes[0], "MyApp.A");
+    }
+
+    #[test]
+    fn parse_expand_empty_lines_skipped() {
+        let output = "MyApp.A\n\nMyApp.B\n\nDONE|2";
+        let r = parse_package_expand_output(output);
+        assert!(r.is_ok());
+        let classes = r.unwrap();
+        assert_eq!(classes.len(), 2);
+    }
+}
+
+// ── coverage.rs: build_coverage_run_code ──────────────────────────────────
+
+mod coverage_build_run_code {
+    use iris_agentic_dev_core::tools::coverage::build_coverage_run_code;
+
+    #[test]
+    fn build_run_empty_routines() {
+        let code = build_coverage_run_code(&[], "Tests", "USER");
+        assert!(
+            code.contains("TOTAL"),
+            "TOTAL line must be present even with no routines"
+        );
+        assert!(
+            !code.contains("rset0"),
+            "no rset0 when no routines provided"
+        );
+    }
+
+    #[test]
+    fn build_run_routine_without_dot_one_suffix() {
+        let code = build_coverage_run_code(&["MyApp.ClassA".to_string()], "MyApp.Tests", "USER");
+        // Routine is used as-is in the ResultSet.Execute call
+        assert!(code.contains("MyApp.ClassA"), "full routine name used");
+        // strip_suffix in write statement should use the name as-is
+        assert!(
+            code.contains("MyApp.ClassA|MyApp.ClassA"),
+            "class name = routine when no .1"
+        );
+    }
+
+    #[test]
+    fn build_run_routine_with_dot_one_suffix() {
+        let code = build_coverage_run_code(&["MyApp.ClassA.1".to_string()], "MyApp.Tests", "USER");
+        // Class name extracted by stripping .1
+        assert!(
+            code.contains("MyApp.ClassA|MyApp.ClassA.1"),
+            "class extracted by strip_suffix(.1)"
+        );
+    }
+
+    #[test]
+    fn build_run_namespace_embedded() {
+        let code = build_coverage_run_code(&[], "Tests", "MYNS");
+        assert!(code.contains("MYNS"), "namespace must be embedded");
+    }
+
+    #[test]
+    fn build_run_no_curly_braces() {
+        let code = build_coverage_run_code(
+            &["MyApp.A.1".to_string(), "MyApp.B.1".to_string()],
+            "MyApp.Tests",
+            "USER",
+        );
+        assert!(!code.contains('{'), "no curly braces in code");
+    }
+}
+
+// ── coverage.rs: build_package_expand_code ────────────────────────────────
+
+mod coverage_build_package_expand_code {
+    use iris_agentic_dev_core::tools::coverage::build_package_expand_code;
+
+    #[test]
+    fn build_expand_contains_sql_select() {
+        let code = build_package_expand_code("MyApp", "USER");
+        assert!(code.contains("SELECT Name FROM %Dictionary.ClassDefinition"));
+    }
+
+    #[test]
+    fn build_expand_contains_startswith() {
+        let code = build_package_expand_code("MyApp", "USER");
+        assert!(code.contains("%STARTSWITH"));
+    }
+
+    #[test]
+    fn build_expand_contains_abstract_check() {
+        let code = build_package_expand_code("MyApp", "USER");
+        assert!(code.contains("Abstract = 0"));
+    }
+
+    #[test]
+    fn build_expand_namespace_embedded() {
+        let code = build_package_expand_code("MyApp", "MYNS");
+        assert!(code.contains("MYNS"), "namespace must be embedded");
+    }
+
+    #[test]
+    fn build_expand_package_prefix_with_dot() {
+        let code = build_package_expand_code("MyApp", "USER");
+        // Prefix must be "MyApp." (plain dot) — NOT "MyApp.%" (literal percent breaks %STARTSWITH)
+        assert!(
+            code.contains("MyApp.") && !code.contains("MyApp.%"),
+            "package prefix must be 'MyApp.' not 'MyApp.%'"
+        );
+    }
+
+    #[test]
+    fn build_expand_single_quote_escaping() {
+        let code = build_package_expand_code("O'Corp", "USER");
+        // Single quotes in SQL strings must be doubled; prefix uses plain dot
+        assert!(
+            code.contains("O''Corp."),
+            "single quote must be escaped as ''"
+        );
+    }
+
+    #[test]
+    fn build_expand_no_curly_braces() {
+        let code = build_package_expand_code("MyApp", "USER");
+        assert!(!code.contains('{'), "no curly braces in code");
+    }
+
+    #[test]
+    fn build_expand_contains_done_output() {
+        let code = build_package_expand_code("MyApp", "USER");
+        assert!(code.contains("DONE|"), "DONE terminator must be in output");
+    }
+}
+
+// ── coverage.rs: build_coverage_check_code ────────────────────────────────
+
+mod coverage_build_check_code {
+    use iris_agentic_dev_core::tools::coverage::build_coverage_check_code;
+
+    #[test]
+    fn build_check_namespace_embedded() {
+        let code = build_coverage_check_code("MYNS");
+        assert!(
+            code.contains("MYNS"),
+            "namespace must be set in output code"
+        );
+        assert!(
+            code.contains("Set $NAMESPACE"),
+            "explicit namespace set command"
+        );
+    }
+
+    #[test]
+    fn build_check_no_curly_braces() {
+        let code = build_coverage_check_code("USER");
+        assert!(!code.contains('{'), "no curly braces allowed");
+    }
+
+    #[test]
+    fn build_check_contains_ok_ready_output() {
+        let code = build_coverage_check_code("USER");
+        assert!(code.contains("OK|ready"));
+    }
+
+    #[test]
+    fn build_check_contains_bbsiz_not_configured_error() {
+        let code = build_coverage_check_code("USER");
+        assert!(code.contains("BBSIZ_NOT_CONFIGURED"));
+    }
+
+    #[test]
+    fn build_check_contains_linebyline_class() {
+        let code = build_coverage_check_code("USER");
+        assert!(code.contains("%Monitor.System.LineByLine"));
+    }
+}

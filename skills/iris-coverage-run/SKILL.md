@@ -17,7 +17,7 @@ Prerequisite: `/iris-coverage-setup` must have been run (bbsiz set, IRIS restart
 Example — fhir-017 full suite:
 
 ```text
-/iris-coverage-run Test/HS/FHIRServer/VectorSearch \
+/iris-coverage-run Test.HS.FHIRServer.VectorSearch \
   HS.FHIRServer.VectorSearchParameter \
   HS.FHIRServer.Storage.Json.SearchColumn \
   HS.FHIRServer.Storage.SearchTableBuilder \
@@ -77,9 +77,9 @@ if $$$ISERR(sc) {
     quit
 }
 
-// 4. Run tests (set ^UnitTestRoot first if needed)
-set ^UnitTestRoot = "/path/to/test/cls"
-do ##class(%UnitTest.Manager).RunTest("My/Test/Path", "/nodelete")
+// 4. Run tests — use compiled class pattern with /noload
+// Tests must already be compiled. /noload skips disk load; /nodelete keeps results.
+do ##class(%UnitTest.Manager).RunTest("My.Test.Package", "/noload/nodelete")
 
 // 5. Stop
 do ##class(%Monitor.System.LineByLine).Stop()

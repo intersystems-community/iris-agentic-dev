@@ -44,6 +44,7 @@ impl std::ops::Deref for AnyParams {
     }
 }
 pub mod admin;
+pub mod coverage;
 pub mod dict;
 pub mod doc;
 pub mod gate_macro;
@@ -678,6 +679,12 @@ pub struct TestParams {
     pub namespace: String,
     #[serde(default = "default_test_timeout")]
     pub timeout: u64,
+    /// Set true to also measure line coverage inline (wraps iris_coverage mode=run)
+    pub coverage: Option<bool>,
+    /// Explicit class list for coverage; if omitted, derived from pattern package
+    pub coverage_classes: Option<Vec<String>>,
+    /// Coverage target percentage threshold
+    pub coverage_target_pct: Option<f64>,
 }
 
 fn default_test_timeout() -> u64 {
@@ -2044,6 +2051,8 @@ impl IrisTools {
             "iris_message_body",
             "iris_business_rule_info",
             "iris_production_diff",
+            // 064-objectscript-coverage
+            "iris_coverage",
         ];
 
         let mut names: std::collections::HashSet<String> =
@@ -3255,7 +3264,33 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         };
 
         self.record_call("iris_test", success);
-        ok_json(serde_json::json!({
+
+        // coverage=true: run iris_coverage mode=run after the test pass
+        let coverage_result = if p.coverage == Some(true) {
+            let pkg = p
+                .pattern
+                .rsplit_once('.')
+                .map(|(pkg, _)| pkg)
+                .unwrap_or(&p.pattern);
+            let cov_params = coverage::IrisCoverageParams {
+                mode: "run".to_string(),
+                classes: p.coverage_classes.clone(),
+                package: if p.coverage_classes.is_none() {
+                    Some(pkg.to_string())
+                } else {
+                    None
+                },
+                test_path: Some(p.pattern.clone()),
+                target_pct: p.coverage_target_pct,
+                namespace: Some(p.namespace.clone()),
+                cobertura_path: None,
+            };
+            Some(coverage::handle_iris_coverage(&iris, client, &cov_params).await)
+        } else {
+            None
+        };
+
+        let mut resp = serde_json::json!({
             "success": success,
             "total": total,
             "passed": passed,
@@ -3268,7 +3303,11 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             "pattern": p.pattern,
             "namespace": p.namespace,
             "test_suites": test_suites,
-        }))
+        });
+        if let Some(cov) = coverage_result {
+            resp["coverage"] = cov;
+        }
+        ok_json(resp)
     }
 
     #[tool(
@@ -5253,6 +5292,20 @@ Methods:
             None,
             params_json,
         );
+        ok_json(result)
+    }
+
+    // ── 064: iris_coverage ────────────────────────────────────────────────────
+
+    #[tool(
+        description = "Measure ObjectScript line coverage using %Monitor.System.LineByLine. mode=run: start monitoring + run compiled test suite + stop + return per-class and total coverage in one call (use this for most tasks). mode=check: verify the monitor is available by doing a dry Start() — if BBSIZ_NOT_CONFIGURED is returned, increase gmheap to 256+ in Management Portal > System Administration > Configuration > Additional Settings > Advanced Memory, then restart IRIS. mode=start/stop/report: manual multi-step control. Provide either classes=['MyApp.MyClass',...] or package='MyApp' (auto-discovers concrete classes). test_path must be a compiled class pattern (e.g. 'MyApp.Tests') — /noload always used. Returns {total_pct, hits, total, classes:[{class,routine,hit,total,pct}], meets_target, target_pct}. Error codes: BBSIZ_NOT_CONFIGURED (gmheap too small), MONITOR_IN_USE, MISSING_PARAM."
+    )]
+    async fn iris_coverage(
+        &self,
+        Parameters(p): Parameters<coverage::IrisCoverageParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let iris = self.get_iris_reloaded().await?;
+        let result = coverage::handle_iris_coverage(&iris, &self.client, &p).await;
         ok_json(result)
     }
 
@@ -7866,6 +7919,7 @@ impl IrisTools {
             IrisExecuteMethodParams,
             iris_execute_method
         );
+        dispatch!("iris_coverage", coverage::IrisCoverageParams, iris_coverage);
         Err(format!("unknown tool: {tool}"))
     }
 }

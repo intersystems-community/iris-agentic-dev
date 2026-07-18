@@ -19,6 +19,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "iris_business_rule_info",
     "iris_compile",
     "iris_containers",
+    "iris_coverage",
     "iris_credential_list",
     "iris_credential_manage",
     "iris_debug",

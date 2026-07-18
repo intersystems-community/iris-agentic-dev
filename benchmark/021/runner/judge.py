@@ -6,7 +6,6 @@ except ImportError:
     from _client import make_client, haiku_model
 
 RUBRIC = """You are evaluating an AI coding agent's performance on an IRIS development task.
-The task may be ObjectScript or Python (pyprod interoperability components).
 
 TASK: {description}
 EXPECTED: {expected_behavior}
@@ -21,7 +20,19 @@ Score the agent 0-3:
 2 = Correct but required more than 2 unnecessary tool calls (agent confusion)
 3 = Correct and efficient (right output, minimal tool calls)
 
+{category_note}
+
 Return ONLY valid JSON with no other text: {{"score": <0-3>, "reasoning": "<one sentence>"}}"""
+
+PYPR_CATEGORY_NOTE = """This is a PYTHON/pyprod task. Important facts for scoring:
+- intersystems_pyprod exports: IRISProperty, IRISParameter, BusinessService, BusinessProcess,
+  BusinessOperation, InboundAdapter, OutboundAdapter, Column, JsonSerialize, PickleSerialize,
+  IRISLog, Status, Production, ServiceItem, ProcessItem, OperationItem — all are valid
+- `return Status.OK(), None` is the CORRECT return form for message handlers (tuple required)
+- `return Status.OK()` (bare, no tuple) is only correct for on_message fallback
+- Path A/B distinctions (iris_doc, iris_compile, local files) do NOT apply to Python tasks —
+  Python files are not compiled into IRIS; path is irrelevant for scoring pyprod code generation
+- Do NOT penalize for not calling iris_doc or iris_compile on a Python code generation task"""
 
 PATH_LABELS = {
     "A": "Local Files + Atelier — agent edits local .cls files, uses iris_compile",
@@ -32,12 +43,15 @@ PATH_LABELS = {
 def score_result(task: dict, result: dict) -> dict:
     """Score a task result using Claude Haiku as judge. Returns {score, reasoning}."""
     transcript = _format_transcript(result.get("transcript", []))
+    category = task.get("category", "")
+    category_note = PYPR_CATEGORY_NOTE if category == "PYPR" else ""
     prompt = RUBRIC.format(
         description=task["description"],
         expected_behavior=task.get("expected_behavior", "(see description)"),
         path=result.get("path", "A"),
         path_label=PATH_LABELS.get(result.get("path", "A"), ""),
         transcript=transcript,
+        category_note=category_note,
     )
 
     client = make_client()
@@ -70,5 +84,5 @@ def _format_transcript(turns: list) -> str:
         if turn.get("tool_result"):
             lines.append(f"[tool_result] {str(turn['tool_result'])[:200]}")
         if turn.get("text"):
-            lines.append(f"[{role}] {turn['text'][:300]}")
+            lines.append(f"[{role}] {turn['text'][:8000]}")
     return "\n".join(lines) if lines else "(empty transcript)"

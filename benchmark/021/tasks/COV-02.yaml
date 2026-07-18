@@ -1,0 +1,6 @@
+id: COV-02
+category: COV
+path: both
+description: "Check whether the IRIS line-by-line coverage monitor is available on the current instance. Return the check result including whether TestCoverage IPM package is installed."
+expected_behavior: "Calls iris_coverage(mode=check, namespace=USER). Returns a response containing either ok:true or error_code:BBSIZ_NOT_CONFIGURED. Response includes testcoverage_available field (boolean). If BBSIZ_NOT_CONFIGURED, response includes actionable fix instructions mentioning gmheap."
+tags: [coverage, pre-flight, iris_coverage]

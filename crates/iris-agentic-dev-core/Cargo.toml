@@ -432,3 +432,12 @@ required-features = ["testing"]
 name = "test_doc_live"
 path = "tests/integration/test_doc_live.rs"
 required-features = ["testing"]
+
+[[test]]
+name = "test_coverage_unit"
+path = "tests/unit/test_coverage_unit.rs"
+
+[[test]]
+name = "test_coverage_live"
+path = "tests/integration/test_coverage_live.rs"
+required-features = ["testing"]

@@ -42,20 +42,61 @@ Rules:
 
 Complete the task efficiently."""
 
-PYPR_SYSTEM_MERGED = """You are a Python developer building pyprod interoperability components for InterSystems IRIS.
+def _load_skill(name: str) -> str:
+    """Load skill content from light-skills/skills/<name>/SKILL.md, stripping frontmatter."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.normpath(os.path.join(here, "..", "..", "..", "light-skills", "skills"))
+    path = os.path.join(root, name, "SKILL.md")
+    if not os.path.exists(path):
+        return ""
+    with open(path) as f:
+        content = f.read()
+    # Strip YAML frontmatter (--- ... ---)
+    if content.startswith("---"):
+        end = content.find("---", 3)
+        if end != -1:
+            content = content[end + 3:].lstrip()
+    return content
 
-Workflow — follow exactly:
-1. Call skill(name="pyprod") — ONE call, read the result
-2. Write the complete Python source code in your NEXT response — do not make any more tool calls
+COV_SYSTEM_BASELINE = """You are an ObjectScript developer. Use IRIS MCP tools to complete the coverage task.
+The IRIS namespace is USER.
+Complete the task efficiently."""
 
-Do NOT call any other tools. Do NOT search for additional documentation.
-Do NOT call iris_compile, iris_doc, skill_search, kb_recall, or anything else.
-The skill has everything you need. Read it once, then write the code."""
+COV_SYSTEM_MERGED = """You are an ObjectScript developer measuring ObjectScript line coverage.
+
+Key rules:
+- Use iris_coverage tool — NOT iris_execute — for all coverage operations
+- mode=run runs tests and measures coverage in one call (most tasks)
+- mode=check verifies monitor availability (run if unsure)
+- Provide either classes=["ClassName"] or package="PackageName" — never both
+- test_path is a compiled class pattern (e.g. "MyApp.Tests") — /noload always used
+- The IRIS namespace is USER
+
+Complete the task in as few tool calls as possible."""
 
 
 def _build_system_prompt(path: str, category: str = "", condition: str = "baseline") -> str:
     if category == "PYPR":
-        return PYPR_SYSTEM_MERGED if condition == "merged" else PYPR_SYSTEM_BASELINE
+        if condition == "merged":
+            skill_content = _load_skill("pyprod")
+            return (
+                "You are a Python developer building pyprod interoperability components "
+                "for InterSystems IRIS.\n\n"
+                "The following skill reference has been loaded for you. "
+                "Use it to write correct code — do not call any tools to look up documentation.\n\n"
+                "--- SKILL: pyprod ---\n"
+                + skill_content
+                + "\n--- END SKILL ---\n\n"
+                "Rules:\n"
+                "- Produce the complete, correct Python source code in your response\n"
+                "- Do NOT call iris_compile — Python files do not need IRIS compilation\n"
+                "- Do NOT call iris_doc, skill_search, kb_recall, or any other tool\n"
+                "- Answer directly using the skill above — no reconnaissance needed\n\n"
+                "Complete the task efficiently."
+            )
+        return PYPR_SYSTEM_BASELINE
+    if category == "COV":
+        return COV_SYSTEM_MERGED if condition == "merged" else COV_SYSTEM_BASELINE
     return PATH_A_SYSTEM if path == "A" else PATH_B_SYSTEM
 
 

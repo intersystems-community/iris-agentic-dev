@@ -1,0 +1,6 @@
+id: COV-03
+category: COV
+path: both
+description: "Measure line coverage for all classes in the IrisDevTest package by running IrisDevTest.SqlPowerTest. Use the package auto-discovery feature rather than listing classes explicitly."
+expected_behavior: "Calls iris_coverage(mode=run, package=IrisDevTest, test_path=IrisDevTest.SqlPowerTest, namespace=USER). Returns total_pct (numeric), classes array with per-class coverage data, and testcoverage_available. Does not require the caller to enumerate class names manually."
+tags: [coverage, package-discovery, iris_coverage]
