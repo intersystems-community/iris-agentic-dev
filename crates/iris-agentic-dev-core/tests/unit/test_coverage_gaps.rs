@@ -1265,15 +1265,19 @@ mod coverage_build_package_expand_code {
     #[test]
     fn build_expand_package_prefix_with_dot() {
         let code = build_package_expand_code("MyApp", "USER");
-        assert!(code.contains("MyApp.%"), "package prefix must end with .%");
+        // Prefix must be "MyApp." (plain dot) — NOT "MyApp.%" (literal percent breaks %STARTSWITH)
+        assert!(
+            code.contains("MyApp.") && !code.contains("MyApp.%"),
+            "package prefix must be 'MyApp.' not 'MyApp.%'"
+        );
     }
 
     #[test]
     fn build_expand_single_quote_escaping() {
         let code = build_package_expand_code("O'Corp", "USER");
-        // Single quotes in SQL strings must be doubled
+        // Single quotes in SQL strings must be doubled; prefix uses plain dot
         assert!(
-            code.contains("O''Corp.%"),
+            code.contains("O''Corp."),
             "single quote must be escaped as ''"
         );
     }
