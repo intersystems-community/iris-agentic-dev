@@ -43,12 +43,14 @@ jobs:
 
       - name: Start IRIS community container
         run: |
+          # 2026.1 + latest-cd fail post-startup on GHA ("dbapi.connect" wrapper crash).
+          # Using 2025.3 — last known-good stable on GHA runners as of 2026-07-17.
           docker run -d --name iris-skill-eval \
             -p 52773:52773 \
             --shm-size 1g \
             --ulimit nofile=65536:65536 \
             -e ISC_DATA_DIRECTORY=/dur/irisdata \
-            intersystemsdc/iris-community:2026.1
+            intersystemsdc/iris-community:2025.3
           sleep 15
           docker ps -a | grep iris-skill-eval
           echo "=== Early container logs ==="
