@@ -1,8 +1,9 @@
 //! Unit tests for iris_coverage tool — no IRIS connection required.
 
 use iris_agentic_dev_core::tools::coverage::{
-    build_coverage_check_code, build_coverage_run_code, build_routine_name, parse_check_output,
-    parse_coverage_output, strip_routine_suffix,
+    build_coverage_check_code, build_coverage_run_code, build_package_expand_code,
+    build_routine_name, parse_check_output, parse_coverage_output, parse_package_expand_output,
+    strip_routine_suffix,
 };
 
 // ── build_routine_name ────────────────────────────────────────────────────────
@@ -201,4 +202,169 @@ fn coverage_params_target_pct_defaults_to_none() {
     }));
     let p = v.unwrap();
     assert_eq!(p.target_pct, None);
+}
+
+// ── cobertura_path ────────────────────────────────────────────────────────────
+
+#[test]
+fn coverage_params_cobertura_path_optional() {
+    use iris_agentic_dev_core::tools::coverage::IrisCoverageParams;
+    let v: Result<IrisCoverageParams, _> = serde_json::from_value(serde_json::json!({
+        "mode": "run",
+        "classes": ["MyApp.MyClass"],
+        "test_path": "MyApp.Tests",
+        "cobertura_path": "/tmp/coverage.xml"
+    }));
+    assert!(v.is_ok());
+    let p = v.unwrap();
+    assert_eq!(p.cobertura_path.as_deref(), Some("/tmp/coverage.xml"));
+}
+
+#[test]
+fn coverage_params_cobertura_path_absent_is_none() {
+    use iris_agentic_dev_core::tools::coverage::IrisCoverageParams;
+    let v: Result<IrisCoverageParams, _> = serde_json::from_value(serde_json::json!({
+        "mode": "check"
+    }));
+    let p = v.unwrap();
+    assert!(p.cobertura_path.is_none());
+}
+
+// ── parse_package_expand_output ───────────────────────────────────────────────
+
+#[test]
+fn package_expand_parses_class_list() {
+    let output = "MyApp.ClassA\nMyApp.ClassB\nMyApp.ClassC\nDONE|3\n";
+    let result = parse_package_expand_output(output);
+    assert!(result.is_ok());
+    let classes = result.unwrap();
+    assert_eq!(
+        classes,
+        vec!["MyApp.ClassA", "MyApp.ClassB", "MyApp.ClassC"]
+    );
+}
+
+#[test]
+fn package_expand_empty_output_returns_error() {
+    let result = parse_package_expand_output("");
+    assert!(result.is_err());
+}
+
+#[test]
+fn package_expand_error_line_returns_err() {
+    let output = "ERROR|SQL_ERROR|SQL prepare failed\n";
+    let result = parse_package_expand_output(output);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err["error_code"], "SQL_ERROR");
+}
+
+#[test]
+fn package_expand_empty_package_returns_empty_vec() {
+    let output = "DONE|0\n";
+    let result = parse_package_expand_output(output);
+    assert!(result.is_ok());
+    assert!(result.unwrap().is_empty());
+}
+
+// ── pipe-delimited coverage output parsing ────────────────────────────────────
+
+#[test]
+fn parse_coverage_output_pipe_delimited() {
+    // With sentinel
+    let output = "COVERAGE_DATA_START\nMyApp.ClassA|MyApp.ClassA.1|45|60\nTOTAL|45|60\n";
+    let v = parse_coverage_output(output);
+    assert_eq!(v["success"], true);
+    assert_eq!(v["hits"], 45);
+    assert_eq!(v["total"], 60);
+    let classes = v["classes"].as_array().unwrap();
+    assert_eq!(classes.len(), 1);
+    assert_eq!(classes[0]["class"], "MyApp.ClassA");
+    assert_eq!(classes[0]["hit"], 45);
+    assert_eq!(classes[0]["total"], 60);
+    let pct = classes[0]["pct"].as_f64().unwrap();
+    assert!((pct - 75.0).abs() < 0.2, "pct {pct} should be ~75");
+}
+
+#[test]
+fn parse_coverage_output_with_runtest_preamble() {
+    // RunTest stdout mixed in before sentinel — must be ignored
+    let output = "  TestFoo begins ...\n  TestFoo PASSED\nAll PASSEDCOVERAGE_DATA_START\nMyApp.ClassA|MyApp.ClassA.1|45|60\nTOTAL|45|60\n";
+    let v = parse_coverage_output(output);
+    assert_eq!(v["success"], true);
+    assert_eq!(v["hits"], 45);
+    // class name must not include RunTest preamble
+    let class = v["classes"][0]["class"].as_str().unwrap_or("");
+    assert_eq!(
+        class, "MyApp.ClassA",
+        "class name must not include RunTest output: {v}"
+    );
+}
+
+#[test]
+fn parse_coverage_output_error_line() {
+    let output = "ERROR|MONITOR_IN_USE|monitor already running\n";
+    let v = parse_coverage_output(output);
+    assert_eq!(v["success"], false);
+    assert_eq!(v["error_code"], "MONITOR_IN_USE");
+}
+
+#[test]
+fn parse_coverage_output_multiple_classes() {
+    let output =
+        "COVERAGE_DATA_START\nMyApp.A|MyApp.A.1|10|20\nMyApp.B|MyApp.B.1|15|15\nTOTAL|25|35\n";
+    let v = parse_coverage_output(output);
+    assert_eq!(v["success"], true);
+    assert_eq!(v["hits"], 25);
+    assert_eq!(v["total"], 35);
+    assert_eq!(v["classes"].as_array().unwrap().len(), 2);
+}
+
+// ── parse_check_output pipe-delimited ────────────────────────────────────────
+
+#[test]
+fn check_output_pipe_ok_returns_ready() {
+    let v = parse_check_output("OK|ready\n");
+    assert_eq!(v["ok"], true);
+    assert_eq!(v["bbsiz_state"], "ready");
+}
+
+#[test]
+fn check_output_pipe_bbsiz_not_configured() {
+    let v = parse_check_output("BBSIZ_NOT_CONFIGURED|Start() failed — increase gmheap");
+    assert_eq!(v["error_code"], "BBSIZ_NOT_CONFIGURED");
+    assert!(
+        v["fix"].as_str().is_some(),
+        "should include fix instructions"
+    );
+}
+
+// ── build_package_expand_code ─────────────────────────────────────────────────
+
+#[test]
+fn package_expand_code_uses_dot_prefix_not_percent() {
+    // Regression: old code used "Package.%" as prefix, which IRIS %STARTSWITH interprets
+    // as a literal percent sign — no classes match. Correct prefix is "Package.".
+    let code = build_package_expand_code("MyApp", "USER");
+    assert!(
+        code.contains("MyApp."),
+        "SQL should use 'MyApp.' as prefix: {code}"
+    );
+    assert!(
+        !code.contains("MyApp.%"),
+        "SQL must NOT use 'MyApp.%' (literal percent) as prefix: {code}"
+    );
+}
+
+#[test]
+fn package_expand_code_uses_startswith() {
+    let code = build_package_expand_code("MyApp", "USER");
+    assert!(code.contains("%STARTSWITH"), "must use %STARTSWITH: {code}");
+    assert!(code.contains("Abstract"), "must filter Abstract=0: {code}");
+}
+
+#[test]
+fn package_expand_code_sets_namespace() {
+    let code = build_package_expand_code("MyApp", "MYNAMESPACE");
+    assert!(code.contains("MYNAMESPACE"), "must set namespace: {code}");
 }

@@ -679,6 +679,12 @@ pub struct TestParams {
     pub namespace: String,
     #[serde(default = "default_test_timeout")]
     pub timeout: u64,
+    /// Set true to also measure line coverage inline (wraps iris_coverage mode=run)
+    pub coverage: Option<bool>,
+    /// Explicit class list for coverage; if omitted, derived from pattern package
+    pub coverage_classes: Option<Vec<String>>,
+    /// Coverage target percentage threshold
+    pub coverage_target_pct: Option<f64>,
 }
 
 fn default_test_timeout() -> u64 {
@@ -3258,7 +3264,33 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         };
 
         self.record_call("iris_test", success);
-        ok_json(serde_json::json!({
+
+        // coverage=true: run iris_coverage mode=run after the test pass
+        let coverage_result = if p.coverage == Some(true) {
+            let pkg = p
+                .pattern
+                .rsplit_once('.')
+                .map(|(pkg, _)| pkg)
+                .unwrap_or(&p.pattern);
+            let cov_params = coverage::IrisCoverageParams {
+                mode: "run".to_string(),
+                classes: p.coverage_classes.clone(),
+                package: if p.coverage_classes.is_none() {
+                    Some(pkg.to_string())
+                } else {
+                    None
+                },
+                test_path: Some(p.pattern.clone()),
+                target_pct: p.coverage_target_pct,
+                namespace: Some(p.namespace.clone()),
+                cobertura_path: None,
+            };
+            Some(coverage::handle_iris_coverage(&iris, client, &cov_params).await)
+        } else {
+            None
+        };
+
+        let mut resp = serde_json::json!({
             "success": success,
             "total": total,
             "passed": passed,
@@ -3271,7 +3303,11 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             "pattern": p.pattern,
             "namespace": p.namespace,
             "test_suites": test_suites,
-        }))
+        });
+        if let Some(cov) = coverage_result {
+            resp["coverage"] = cov;
+        }
+        ok_json(resp)
     }
 
     #[tool(

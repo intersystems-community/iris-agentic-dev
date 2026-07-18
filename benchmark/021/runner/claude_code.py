@@ -52,10 +52,28 @@ Do NOT call any other tools. Do NOT search for additional documentation.
 Do NOT call iris_compile, iris_doc, skill_search, kb_recall, or anything else.
 The skill has everything you need. Read it once, then write the code."""
 
+COV_SYSTEM_BASELINE = """You are an ObjectScript developer. Use IRIS MCP tools to complete the coverage task.
+The IRIS namespace is USER.
+Complete the task efficiently."""
+
+COV_SYSTEM_MERGED = """You are an ObjectScript developer measuring ObjectScript line coverage.
+
+Key rules:
+- Use iris_coverage tool — NOT iris_execute — for all coverage operations
+- mode=run runs tests and measures coverage in one call (most tasks)
+- mode=check verifies monitor availability (run if unsure)
+- Provide either classes=["ClassName"] or package="PackageName" — never both
+- test_path is a compiled class pattern (e.g. "MyApp.Tests") — /noload always used
+- The IRIS namespace is USER
+
+Complete the task in as few tool calls as possible."""
+
 
 def _build_system_prompt(path: str, category: str = "", condition: str = "baseline") -> str:
     if category == "PYPR":
         return PYPR_SYSTEM_MERGED if condition == "merged" else PYPR_SYSTEM_BASELINE
+    if category == "COV":
+        return COV_SYSTEM_MERGED if condition == "merged" else COV_SYSTEM_BASELINE
     return PATH_A_SYSTEM if path == "A" else PATH_B_SYSTEM
 
 

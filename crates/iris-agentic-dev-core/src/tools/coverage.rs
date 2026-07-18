@@ -23,6 +23,8 @@ pub struct IrisCoverageParams {
     pub target_pct: Option<f64>,
     /// IRIS namespace (defaults to connection default)
     pub namespace: Option<String>,
+    /// Write Cobertura XML to this path (requires TestCoverage IPM package)
+    pub cobertura_path: Option<String>,
 }
 
 // ── Routine name helpers ──────────────────────────────────────────────────────
@@ -96,6 +98,7 @@ pub fn build_coverage_run_code(routines: &[String], test_path: &str, namespace: 
             test_path
         ),
         " Do ##class(%Monitor.System.LineByLine).Stop()".to_string(),
+        r#" Write $C(10),"COVERAGE_DATA_START",$C(10)"#.to_string(),
         " Set totalHit=0  Set totalExec=0".to_string(),
     ];
 
@@ -136,7 +139,7 @@ pub fn build_coverage_run_code(routines: &[String], test_path: &str, namespace: 
 ///
 /// Uses single-line form (no curly-brace blocks) for cross-context compatibility.
 pub fn build_package_expand_code(package: &str, namespace: &str) -> String {
-    let prefix = format!("{}.%", package);
+    let prefix = format!("{}.", package);
     let sql = format!(
         "SELECT Name FROM %Dictionary.ClassDefinition WHERE Name %STARTSWITH '{}' AND Abstract = 0",
         prefix.replace('\'', "''")
@@ -215,12 +218,20 @@ pub fn parse_coverage_output(output: &str) -> serde_json::Value {
         return err_json("PARSE_ERROR", "unexpected JSON in coverage output");
     }
 
+    // Skip RunTest stdout that precedes the sentinel line
+    let data_section = if let Some(pos) = trimmed.find("COVERAGE_DATA_START") {
+        let after = &trimmed[pos + "COVERAGE_DATA_START".len()..];
+        after.trim_start_matches('\n').trim_start_matches('\r')
+    } else {
+        trimmed
+    };
+
     let mut classes: Vec<serde_json::Value> = Vec::new();
     let mut total_hit: i64 = 0;
     let mut total_exec: i64 = 0;
     let mut found_total = false;
 
-    for line in trimmed.lines() {
+    for line in data_section.lines() {
         if line.is_empty() {
             continue;
         }
@@ -374,6 +385,30 @@ fn build_coverage_report_code(routines: &[String], namespace: &str) -> String {
     lines.join("\n")
 }
 
+/// Build ObjectScript that checks if TestCoverage.Manager exists in the namespace.
+/// Output: "YES" or "NO"
+fn build_testcoverage_check_code(namespace: &str) -> String {
+    [
+        format!(" New $NAMESPACE  Set $NAMESPACE=\"{}\"", namespace),
+        r#" If ##class(%Dictionary.ClassDefinition).%ExistsId("TestCoverage.Manager")  Write "YES",$C(10)  Quit"#.to_string(),
+        r#" Write "NO",$C(10)"#.to_string(),
+    ]
+    .join("\n")
+}
+
+/// Returns true if the TestCoverage IPM package is installed in the given namespace.
+pub async fn testcoverage_available(
+    iris: &crate::iris::connection::IrisConnection,
+    client: &reqwest::Client,
+    ns: &str,
+) -> bool {
+    let code = build_testcoverage_check_code(ns);
+    match execute_coverage_code(iris, client, &code, ns).await {
+        Ok(output) => output.trim().starts_with("YES"),
+        Err(_) => false,
+    }
+}
+
 /// Handle an `iris_coverage` tool call.
 /// Returns the JSON response value (caller wraps in CallToolResult).
 pub async fn handle_iris_coverage(
@@ -389,9 +424,27 @@ pub async fn handle_iris_coverage(
     match params.mode.as_str() {
         "check" => {
             let code = build_coverage_check_code(&ns);
+            let tc_avail = testcoverage_available(iris, client, &ns).await;
             match execute_coverage_code(iris, client, &code, &ns).await {
                 Err(e) => e,
-                Ok(output) => parse_check_output(&output),
+                Ok(output) => {
+                    let mut result = parse_check_output(&output);
+                    if let Some(obj) = result.as_object_mut() {
+                        obj.insert(
+                            "testcoverage_available".to_string(),
+                            serde_json::Value::Bool(tc_avail),
+                        );
+                        if !tc_avail {
+                            obj.insert(
+                                "testcoverage_hint".to_string(),
+                                serde_json::json!(
+                                    "Install TestCoverage: zpm \"install testcoverage\""
+                                ),
+                            );
+                        }
+                    }
+                    result
+                }
             }
         }
 
@@ -421,19 +474,35 @@ pub async fn handle_iris_coverage(
             let routines: Vec<String> = classes.iter().map(|c| build_routine_name(c)).collect();
             let code = build_coverage_run_code(&routines, &test_path, &ns);
 
+            let tc_avail = testcoverage_available(iris, client, &ns).await;
+
             match execute_coverage_code(iris, client, &code, &ns).await {
                 Err(e) => e,
                 Ok(output) => {
                     let mut result = parse_coverage_output(&output);
-                    // Attach meets_target if caller supplied target_pct
-                    if let (Some(obj), Some(target)) = (result.as_object_mut(), params.target_pct) {
-                        let total_pct =
-                            obj.get("total_pct").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    if let Some(obj) = result.as_object_mut() {
+                        // meets_target field
+                        if let Some(target) = params.target_pct {
+                            let total_pct =
+                                obj.get("total_pct").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            obj.insert(
+                                "meets_target".to_string(),
+                                serde_json::Value::Bool(total_pct >= target),
+                            );
+                            obj.insert("target_pct".to_string(), serde_json::json!(target));
+                        }
+                        // testcoverage_available field
                         obj.insert(
-                            "meets_target".to_string(),
-                            serde_json::Value::Bool(total_pct >= target),
+                            "testcoverage_available".to_string(),
+                            serde_json::Value::Bool(tc_avail),
                         );
-                        obj.insert("target_pct".to_string(), serde_json::json!(target));
+                        // cobertura_skipped when requested but unavailable
+                        if params.cobertura_path.is_some() && !tc_avail {
+                            obj.insert(
+                                "cobertura_skipped".to_string(),
+                                serde_json::json!("TestCoverage IPM package not installed; install with: zpm \"install testcoverage\""),
+                            );
+                        }
                     }
                     result
                 }
