@@ -8,16 +8,17 @@ write-gated (suppressed on Live instances unless `IRIS_ALLOW_PROD=1`).
 
 ## Code
 
-| Tool                    | What it does                                                                                                        |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `iris_compile`          | Compile a class, routine, or wildcard. Returns errors with line numbers.                                            |
-| `iris_doc`              | Read, write, delete, insert, or check any IRIS document. Supports stale-edit guards via `expected`.                 |
-| `iris_execute`          | Run ObjectScript, return output.                                                                                    |
-| `iris_execute_method`   | Invoke a `ClassMethod` directly by class+method+args, no boilerplate. String-returning methods only (v1).           |
-| `iris_query`            | Execute SQL, return rows as JSON. `mode=explain\|count\|write` for query plans, row-count estimates, and gated DML. |
-| `iris_test`             | Run `%UnitTest` tests, return structured pass/fail results.                                                         |
-| `iris_global`           | Read, write, kill, or list IRIS global nodes. PHI and system-blocklist gates enforced.                              |
-| `iris_source_control` ✦ | Check lock status, checkout, execute SCM actions. CheckIn is opt-in via `IRIS_SCM_ALLOW_CHECKIN=1`.                 |
+| Tool                    | What it does                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `iris_compile`          | Compile a class, routine, or wildcard. Returns errors with line numbers.                                                  |
+| `iris_doc`              | Read, write, delete, insert, or check any IRIS document. Supports stale-edit guards via `expected`.                       |
+| `iris_execute`          | Run ObjectScript, return output.                                                                                          |
+| `iris_execute_method`   | Invoke a `ClassMethod` directly by class+method+args, no boilerplate. String-returning methods only (v1).                 |
+| `iris_query`            | Execute SQL, return rows as JSON. `mode=explain\|count\|write` for query plans, row-count estimates, and gated DML.       |
+| `iris_test`             | Run `%UnitTest` tests, return structured pass/fail results. Set `coverage=true` to also measure line coverage inline.     |
+| `iris_coverage`         | Measure ObjectScript line coverage via `%Monitor.System.LineByLine`. `mode=run` is all-in-one. See [Coverage](#coverage). |
+| `iris_global`           | Read, write, kill, or list IRIS global nodes. PHI and system-blocklist gates enforced.                                    |
+| `iris_source_control` ✦ | Check lock status, checkout, execute SCM actions. CheckIn is opt-in via `IRIS_SCM_ALLOW_CHECKIN=1`.                       |
 
 ---
 
@@ -95,6 +96,37 @@ write-gated (suppressed on Live instances unless `IRIS_ALLOW_PROD=1`).
 | `skill`                  | Manage the learning agent skill registry: list, describe, search, forget, or propose (mines recent calls into a new skill). |
 | `skill_community`        | Browse or install community skills published to subscribed GitHub repos.                                                    |
 | `kb`                     | Index markdown/text into the IRIS knowledge base, or recall content by keyword.                                             |
+
+---
+
+## Coverage
+
+`iris_coverage` measures which executable lines of your ObjectScript classes were hit
+during a `%UnitTest` test run, powered by `%Monitor.System.LineByLine`.
+
+**Requires** `gmheap ≥ 256 MB` — run `mode=check` first to verify. If `BBSIZ_NOT_CONFIGURED`
+is returned, increase `gmheap` in Management Portal → System Administration →
+Configuration → Additional Settings → Advanced Memory, then restart IRIS.
+
+| Mode     | What it does                                                                  |
+| -------- | ----------------------------------------------------------------------------- |
+| `check`  | Pre-flight: verify monitor available; includes `testcoverage_available` field |
+| `run`    | All-in-one: start → RunTest → stop → collect results                          |
+| `start`  | Start monitoring the given class list                                         |
+| `stop`   | Stop monitoring                                                               |
+| `report` | Collect results from a previously stopped monitor run                         |
+
+**Quick reference:**
+
+```text
+iris_coverage(mode="run", classes=["MyApp.MyClass"], test_path="MyApp.Tests", target_pct=80)
+iris_coverage(mode="run", package="MyApp", test_path="MyApp.Tests")
+iris_test(pattern="MyApp.Tests", coverage=true, coverage_target_pct=80)
+```
+
+Every response includes `testcoverage_available`. When the
+[TestCoverage](https://github.com/intersystems/TestCoverage) IPM package is installed,
+`cobertura_path` writes Cobertura XML output.
 
 ---
 
