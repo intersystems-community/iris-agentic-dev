@@ -44,6 +44,8 @@ run_benchmark.py
 /*.md
 !ROADMAP.md
 !CONTRIBUTING.md
+!AGENTS.md
+!CLAUDE.md
 /Bench/
 /EvalDemo/
 /EvalDemo.*
