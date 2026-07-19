@@ -4,9 +4,32 @@ iris-agentic-dev connects to IRIS via the Atelier REST API — the same API the 
 ObjectScript extension uses. No special IRIS configuration is required beyond what you
 already have for VS Code.
 
+**If something isn't working, call `check_config` first** — it shows exactly which
+connection source won, what host/port/namespace was resolved, and whether Atelier REST
+is available. No IRIS network calls are made; it always succeeds.
+
+```text
+Call check_config and show me the result.
+```
+
+Or from the terminal:
+
+```bash
+iris-agentic-dev tool check_config --args '{}'
+```
+
 ---
 
 ## Native IRIS on Windows or Linux (no Docker)
+
+Run `iris-agentic-dev init` in your project root to generate a documented
+`.iris-agentic-dev.toml` template with all available options:
+
+```bash
+iris-agentic-dev init
+```
+
+Or create it manually:
 
 Add a `.iris-agentic-dev.toml` file to your project root:
 
@@ -171,17 +194,57 @@ iris-agentic-dev resolves the IRIS connection in this order — first match wins
 
 ## Environment variables
 
-| Variable                   | Default     | Description                                                                 |
-| -------------------------- | ----------- | --------------------------------------------------------------------------- |
-| `IRIS_HOST`                | `localhost` | IRIS web gateway hostname                                                   |
-| `IRIS_WEB_PORT`            | `52773`     | Web gateway port                                                            |
-| `IRIS_SCHEME`              | `http`      | `http` or `https`                                                           |
-| `IRIS_WEB_PREFIX`          | _(empty)_   | URL path prefix for non-root gateway installs                               |
-| `IRIS_USERNAME`            | `_SYSTEM`   | IRIS username                                                               |
-| `IRIS_PASSWORD`            | `SYS`       | IRIS password                                                               |
-| `IRIS_NAMESPACE`           | `USER`      | Default namespace                                                           |
-| `IRIS_CONTAINER`           | _(empty)_   | Docker container name — required for Docker-dependent tools                 |
-| `IRIS_SERVER_NAME`         | _(empty)_   | Server Manager server name when multiple are configured                     |
-| `OBJECTSCRIPT_WORKSPACE`   | `$PWD`      | Workspace root for `.iris-agentic-dev.toml` lookup                          |
-| `IRIS_SEARCH_SYNC_TIMEOUT` | `30`        | Seconds to wait for synchronous search before falling back to async polling |
+| Variable                   | Default     | Description                                                                  |
+| -------------------------- | ----------- | ---------------------------------------------------------------------------- |
+| `IRIS_HOST`                | `localhost` | IRIS web gateway hostname                                                    |
+| `IRIS_WEB_PORT`            | `52773`     | Web gateway port                                                             |
+| `IRIS_SCHEME`              | `http`      | `http` or `https`                                                            |
+| `IRIS_WEB_PREFIX`          | _(empty)_   | URL path prefix for non-root gateway installs                                |
+| `IRIS_USERNAME`            | `_SYSTEM`   | IRIS username                                                                |
+| `IRIS_PASSWORD`            | `SYS`       | IRIS password                                                                |
+| `IRIS_NAMESPACE`           | `USER`      | Default namespace                                                            |
+| `IRIS_CONTAINER`           | _(empty)_   | Docker container name — required for Docker-dependent tools                  |
+| `IRIS_SERVER_NAME`         | _(empty)_   | Server Manager server name when multiple are configured                      |
+| `OBJECTSCRIPT_WORKSPACE`   | `$PWD`      | Workspace root for `.iris-agentic-dev.toml` lookup                           |
+| `IRIS_SEARCH_SYNC_TIMEOUT` | `30`        | Seconds to wait for synchronous search before falling back to async polling  |
 | `IRIS_DISABLED_TOOLS`      | _(empty)_   | Comma-separated tool names to exclude, e.g. `iris_source_control,iris_admin` |
+
+---
+
+## Global config file
+
+Credentials you don't want to repeat in every project can go in a global config
+file. Project-local `.iris-agentic-dev.toml` always takes precedence.
+
+| Platform    | Path                                          |
+| ----------- | --------------------------------------------- |
+| Mac / Linux | `~/.config/iris-agentic-dev/config.toml`      |
+| Windows     | `%USERPROFILE%\.iris-agentic-dev\config.toml` |
+
+```toml
+# Global defaults — apply to every project that has no local .toml
+username = "_SYSTEM"
+password = "SYS"
+```
+
+---
+
+## Restricting writes on shared servers
+
+Set `write_tools_enabled = false` in `.iris-agentic-dev.toml` to put the server
+in read-only mode — compile, execute, doc-write, source control, and global-write
+tools all return a clear error instead of modifying anything. Query, search, and
+doc-read tools continue to work.
+
+```toml
+# .iris-agentic-dev.toml on a shared dev or production server
+host = "shared-iris"
+web_port = 52773
+namespace = "USER"
+username = "_SYSTEM"
+password = "SYS"
+write_tools_enabled = false
+```
+
+This is the recommended default for any server that more than one person connects
+to, or any server that isn't purely local.

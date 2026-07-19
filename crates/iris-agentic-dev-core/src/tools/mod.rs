@@ -1883,6 +1883,80 @@ pub fn translate_symbols_query(limit: usize, query: &str) -> (String, Vec<serde_
     )
 }
 
+/// Extract the web port from an Atelier base URL (e.g. "http://localhost:52780/iris").
+fn extract_web_port_from_url(base_url: &str) -> Option<u16> {
+    let without_scheme = base_url
+        .trim_start_matches("http://")
+        .trim_start_matches("https://");
+    let host_port = without_scheme.split('/').next().unwrap_or("");
+    host_port
+        .rsplit_once(':')
+        .and_then(|(_, port)| port.parse::<u16>().ok())
+}
+
+/// Extract the web prefix path from an Atelier base URL (e.g. "/iris" from "http://host:52780/iris").
+fn extract_web_prefix_from_url(base_url: &str) -> Option<String> {
+    let without_scheme = base_url
+        .trim_start_matches("http://")
+        .trim_start_matches("https://");
+    let slash = without_scheme.find('/')?;
+    let prefix = &without_scheme[slash..];
+    if prefix.is_empty() || prefix == "/" {
+        None
+    } else {
+        Some(prefix.trim_end_matches('/').to_string())
+    }
+}
+
+/// Derive connection capabilities from already-known state — zero network calls.
+///
+/// `docker_only` is true when `base_url` is the unreachable sentinel (`http://127.0.0.1:1`),
+/// meaning the connection was configured with `docker_only = true` in the toml.
+pub fn derive_capabilities(
+    iris_version: Option<&str>,
+    docker_only: bool,
+    web_port: Option<u16>,
+    web_prefix: Option<&str>,
+) -> serde_json::Value {
+    // NoPWS: 2026.2.0AI builds shipped without a private web server (DPP-1192).
+    let no_pws = iris_version
+        .map(|v| {
+            // Matches e.g. "IRIS for UNIX (Ubuntu Server LTS for x86-64) 2026.2.0AI (Build 237U)"
+            v.contains("2026.2.0AI")
+        })
+        .unwrap_or(false);
+
+    let atelier_rest = !docker_only && !no_pws;
+
+    let compile_path = if atelier_rest {
+        "atelier"
+    } else {
+        "docker_exec"
+    };
+
+    let webgateway_url = if atelier_rest {
+        web_prefix
+            .map(|prefix| {
+                // We have a non-default prefix — webgateway is at host:port<prefix>
+                serde_json::Value::String(format!(
+                    "http://host:{}{}",
+                    web_port.unwrap_or(52773),
+                    prefix
+                ))
+            })
+            .unwrap_or(serde_json::Value::Null)
+    } else {
+        serde_json::Value::Null
+    };
+
+    serde_json::json!({
+        "private_web_server": !no_pws,
+        "atelier_rest": atelier_rest,
+        "compile_path": compile_path,
+        "webgateway_url": webgateway_url,
+    })
+}
+
 #[derive(Clone)]
 pub struct IrisTools {
     /// Active connection state — wraps iris, source, config metadata, write gate.
@@ -2626,6 +2700,65 @@ impl IrisTools {
             return ok_json(gate);
         }
         tracing::info!(namespace = %p.namespace, target = %p.target, "iris_compile");
+
+        // Capability gate: if atelier_rest is unavailable (docker_only or NoPWS build),
+        // compile via docker exec immediately — no 52773 probe, no retry.
+        {
+            let (docker_only, no_pws) = {
+                let conn_lock = self.connection.lock().unwrap();
+                let docker_only = conn_lock
+                    .iris
+                    .as_ref()
+                    .map(|i| {
+                        i.base_url == "http://127.0.0.1:1"
+                            || i.base_url.starts_with("http://127.0.0.1:1/")
+                    })
+                    .unwrap_or(false);
+                let no_pws = conn_lock
+                    .iris
+                    .as_ref()
+                    .and_then(|i| i.version.as_deref())
+                    .map(|v| v.contains("2026.2.0AI"))
+                    .unwrap_or(false);
+                (docker_only, no_pws)
+            };
+
+            if docker_only || no_pws {
+                let code = format!(
+                    "do $SYSTEM.OBJ.Compile(\"{}\",\"{}\")",
+                    p.target.replace('"', "\\\""),
+                    p.flags.replace('"', "\\\""),
+                );
+                let result = iris.execute(&code, &p.namespace).await;
+                self.record_call("iris_compile", result.is_ok());
+                return match result {
+                    Ok(output) => {
+                        let trimmed = output.trim().to_string();
+                        let success = !trimmed.contains("ERROR");
+                        ok_json(serde_json::json!({
+                            "success": success,
+                            "target": p.target,
+                            "namespace": p.namespace,
+                            "method": "docker_exec",
+                            "output": trimmed,
+                        }))
+                    }
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if msg == "DOCKER_REQUIRED" {
+                            err_json(
+                                "DOCKER_REQUIRED",
+                                "compile_path=docker_exec but IRIS_CONTAINER env var is not set. \
+                                 Set IRIS_CONTAINER to the container name and retry.",
+                            )
+                        } else {
+                            err_json("COMPILE_FAILED", &msg)
+                        }
+                    }
+                };
+            }
+        }
+
         let client = self.http_client();
 
         // Local file path support: if target looks like a file path (contains / or \,
@@ -3927,7 +4060,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active. To switch connection mid-session without restart: call check_config first to get config_watch_path, then write a .iris-agentic-dev.toml to that exact path, then call any tool — the reload fires automatically. Fields: connected, connection_source (http|docker|disconnected), host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled."
+        description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active. To switch connection mid-session without restart: call check_config first to get config_watch_path, then write a .iris-agentic-dev.toml to that exact path, then call any tool — the reload fires automatically. Fields: connected, connection_source (http|docker|disconnected), host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled, capabilities."
     )]
     async fn check_config(
         &self,
@@ -4009,6 +4142,27 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             .map(serde_json::Value::String)
             .unwrap_or(serde_json::Value::Null);
 
+        let capabilities = {
+            let ver_str = iris_version.as_str();
+            let docker_only = conn
+                .iris
+                .as_ref()
+                .map(|i| {
+                    i.base_url == "http://127.0.0.1:1"
+                        || i.base_url.starts_with("http://127.0.0.1:1/")
+                })
+                .unwrap_or(false);
+            let web_port = conn
+                .iris
+                .as_ref()
+                .and_then(|i| extract_web_port_from_url(&i.base_url));
+            let web_prefix = conn
+                .iris
+                .as_ref()
+                .and_then(|i| extract_web_prefix_from_url(&i.base_url));
+            derive_capabilities(ver_str, docker_only, web_port, web_prefix.as_deref())
+        };
+
         let mut response = serde_json::json!({
             "connected": conn.iris.is_some(),
             "connection_source": connection_source,
@@ -4022,6 +4176,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             "write_tools_enabled": conn.write_tools_enabled,
             "config_watch_path": config_watcher_path,
             "objectscript_workspace": objectscript_workspace,
+            "capabilities": capabilities,
         });
 
         if let Some(ref err) = conn.config_parse_error {

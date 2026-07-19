@@ -32,7 +32,7 @@ or ensure IRIS is reachable on a discoverable port (52773, 41773, 51773, 8080).
 
 **Common cause with OrbStack/Docker:** `container = "<name>"` triggers port-discovery
 against a **fixed probe list (52773 / 41773 / 51773 / 8080)**. OrbStack maps the
-container's 52773 to a *different, dynamic* host port (e.g. 42773) — not on the list
+container's 52773 to a _different, dynamic_ host port (e.g. 42773) — not on the list
 → `IRIS_UNREACHABLE`, even though the container is healthy.
 
 **Fix — add `host` + `web_port` to the project `.iris-agentic-dev.toml`:**
@@ -107,3 +107,28 @@ docker exec -i <container> iris session IRIS < /tmp/script.txt
 `--toolset merged` (default) exposes the full tool set including interop and container tools.
 `--toolset baseline` — standard ObjectScript dev tools only.
 `--toolset nostub` — excludes preview/stub tools.
+
+## Adding skills for private or local packages
+
+Ecosystem skills from public repos are registered in `skills-lock.json` with
+`sourceType: "github"` — iad fetches them on demand from the package repo.
+
+For a **private or not-yet-public** package, keep the skill local instead:
+
+1. Add `skills/skills/<name>/SKILL.md` directly in the iad repo.
+2. Add a `sourceType: "local"` entry to `skills-lock.json` (no `skillPath` needed —
+   iad resolves it from the local tree):
+
+```json
+"my-private-pkg": {
+  "source": "/path/to/iris-agentic-dev",
+  "sourceType": "local",
+  "computedHash": ""
+}
+```
+
+1. Add the name to the appropriate grouping in `skills.sh.json`.
+
+Anyone who clones iad gets the skill immediately — no github fetch, no auth.
+When the repo goes public, flip `sourceType` to `"github"`, add `source` and
+`skillPath`, and delete the local `SKILL.md`.
