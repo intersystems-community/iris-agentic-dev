@@ -34,6 +34,15 @@ PYPR_CATEGORY_NOTE = """This is a PYTHON/pyprod task. Important facts for scorin
   Python files are not compiled into IRIS; path is irrelevant for scoring pyprod code generation
 - Do NOT penalize for not calling iris_doc or iris_compile on a Python code generation task"""
 
+DOC_CATEGORY_NOTE = """This is a DOCUMENTATION RETRIEVAL task. Scoring rules:
+- Score 3: all key facts in expected_behavior present and correct; method/class names exact
+- Score 2: mostly correct but agent used more than 2 unnecessary tool calls, OR missed one fact
+- Score 1: partially correct — right concept but wrong detail (e.g. wrong method name, hallucinated class)
+- Score 0: hallucinated API that doesn't exist, or missing the core answer entirely
+CRITICAL: Penalize hallucinated method names (e.g. CheckPermission, HasPermission, $VERSION) even if
+the surrounding answer sounds plausible. The exact name matters — wrong name = score 1 at most.
+Path A/B distinction does NOT apply to documentation tasks — ignore path labels for scoring."""
+
 PATH_LABELS = {
     "A": "Local Files + Atelier — agent edits local .cls files, uses iris_compile",
     "B": "ISFS Only — agent uses iris_doc to read/write, no local files",
@@ -44,7 +53,12 @@ def score_result(task: dict, result: dict) -> dict:
     """Score a task result using Claude Haiku as judge. Returns {score, reasoning}."""
     transcript = _format_transcript(result.get("transcript", []))
     category = task.get("category", "")
-    category_note = PYPR_CATEGORY_NOTE if category == "PYPR" else ""
+    if category == "PYPR":
+        category_note = PYPR_CATEGORY_NOTE
+    elif category == "DOC":
+        category_note = DOC_CATEGORY_NOTE
+    else:
+        category_note = ""
     prompt = RUBRIC.format(
         description=task["description"],
         expected_behavior=task.get("expected_behavior", "(see description)"),

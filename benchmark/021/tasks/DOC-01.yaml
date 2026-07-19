@@ -1,0 +1,6 @@
+id: DOC-01
+category: DOC
+path: both
+description: "List all the different ways to execute a SQL query in IRIS ObjectScript. For each method give the class name and one sentence on when to use it."
+expected_behavior: "Answer names at least 4 distinct mechanisms: (1) embedded SQL (&sql()), (2) %SQL.Statement / %SQL.StatementResult (dynamic SQL), (3) %Library.ResultSet (legacy), (4) $SYSTEM.SQL.Execute() or SQL shell for interactive use. Optionally mentions ODBC/JDBC and iris.dbapi (Python). Answer is grounded in documentation (agent called iris_doc_search). Score 2 if 3+ mechanisms correct. Score 1 if only 1-2 mechanisms."
+tags: [docs, sql, discovery]

@@ -43,11 +43,15 @@ Rules:
 Complete the task efficiently."""
 
 def _load_skill(name: str) -> str:
-    """Load skill content from light-skills/skills/<name>/SKILL.md, stripping frontmatter."""
+    """Load skill SKILL.md, checking light-skills/ then skills/skills/ for the file."""
     here = os.path.dirname(os.path.abspath(__file__))
-    root = os.path.normpath(os.path.join(here, "..", "..", "..", "light-skills", "skills"))
-    path = os.path.join(root, name, "SKILL.md")
-    if not os.path.exists(path):
+    repo_root = os.path.normpath(os.path.join(here, "..", "..", ".."))
+    candidates = [
+        os.path.join(repo_root, "light-skills", "skills", name, "SKILL.md"),
+        os.path.join(repo_root, "skills", "skills", name, "SKILL.md"),
+    ]
+    path = next((p for p in candidates if os.path.exists(p)), None)
+    if path is None:
         return ""
     with open(path) as f:
         content = f.read()
@@ -74,6 +78,22 @@ Key rules:
 
 Complete the task in as few tool calls as possible."""
 
+DOC_SYSTEM_BASELINE = """You are an IRIS developer. Use available MCP tools to answer documentation questions.
+Complete the task efficiently."""
+
+
+def _build_doc_merged_prompt() -> str:
+    skill_content = _load_skill("iris-docs")
+    return (
+        "You are an IRIS developer answering documentation questions.\n\n"
+        "The iris-docs skill is loaded below. "
+        "Use iris_doc_search to find authoritative answers from docs.intersystems.com.\n\n"
+        "--- SKILL: iris-docs ---\n"
+        + skill_content
+        + "\n--- END SKILL ---\n\n"
+        "Complete the task efficiently."
+    )
+
 
 def _build_system_prompt(path: str, category: str = "", condition: str = "baseline") -> str:
     if category == "PYPR":
@@ -97,6 +117,8 @@ def _build_system_prompt(path: str, category: str = "", condition: str = "baseli
         return PYPR_SYSTEM_BASELINE
     if category == "COV":
         return COV_SYSTEM_MERGED if condition == "merged" else COV_SYSTEM_BASELINE
+    if category == "DOC":
+        return _build_doc_merged_prompt() if condition == "merged" else DOC_SYSTEM_BASELINE
     return PATH_A_SYSTEM if path == "A" else PATH_B_SYSTEM
 
 

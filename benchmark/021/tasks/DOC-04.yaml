@@ -1,0 +1,6 @@
+id: DOC-04
+category: DOC
+path: both
+description: "What new AI/ML capability was introduced in IRIS 2026.1? Search the 2026.1 release notes using iris_doc_search with query 'IRIS 2026.1 new AI ML features' and version='2026.1'. Name the specific feature and describe what it enables."
+expected_behavior: "Identifies IntegratedML Custom Models as the new 2026.1 AI/ML feature. Correctly describes that it allows users to define, train, and run custom Python ML models from SQL using CREATE MODEL, TRAIN MODEL, and PREDICT(). The agent must call iris_doc_search with version filter '2026.1' and find the 'Enhancing Analytics and AI' page. Score 3 if feature named correctly and described. Score 0 if agent guesses without fetching docs."
+tags: [docs, release-notes, 2026.1, integratedml]

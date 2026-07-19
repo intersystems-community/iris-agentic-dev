@@ -1791,3 +1791,113 @@ fn translate_sql_macros_sqlcode_rewritten_after_select() {
     // SQLCODE should be rewritten to sqlSQLCODE1
     assert!(result.translated_code.contains("sqlSQLCODE"));
 }
+
+// ── derive_capabilities ───────────────────────────────────────────────────────
+
+#[test]
+fn derive_capabilities_normal_http_connection() {
+    use iris_agentic_dev_core::tools::derive_capabilities;
+    let caps = derive_capabilities(
+        Some("IRIS for UNIX (Ubuntu Server LTS for x86-64) 2024.1 (Build 267U)"),
+        false,
+        Some(52780),
+        None,
+    );
+    assert_eq!(caps["private_web_server"], true);
+    assert_eq!(caps["atelier_rest"], true);
+    assert_eq!(caps["compile_path"], "atelier");
+}
+
+#[test]
+fn derive_capabilities_docker_only_flag() {
+    use iris_agentic_dev_core::tools::derive_capabilities;
+    let caps = derive_capabilities(
+        Some("IRIS for UNIX 2024.1"),
+        true, // docker_only=true
+        None,
+        None,
+    );
+    assert_eq!(caps["private_web_server"], true);
+    assert_eq!(caps["atelier_rest"], false);
+    assert_eq!(caps["compile_path"], "docker_exec");
+}
+
+#[test]
+fn derive_capabilities_nopws_build() {
+    use iris_agentic_dev_core::tools::derive_capabilities;
+    let caps = derive_capabilities(
+        Some("IRIS for UNIX (Ubuntu Server LTS for x86-64) 2026.2.0AI (Build 237U)"),
+        false,
+        None,
+        None,
+    );
+    assert_eq!(caps["private_web_server"], false);
+    assert_eq!(caps["atelier_rest"], false);
+    assert_eq!(caps["compile_path"], "docker_exec");
+}
+
+#[test]
+fn derive_capabilities_no_version_defaults_to_atelier() {
+    use iris_agentic_dev_core::tools::derive_capabilities;
+    let caps = derive_capabilities(None, false, None, None);
+    assert_eq!(caps["private_web_server"], true);
+    assert_eq!(caps["atelier_rest"], true);
+    assert_eq!(caps["compile_path"], "atelier");
+}
+
+#[test]
+fn derive_capabilities_docker_only_beats_nopws() {
+    use iris_agentic_dev_core::tools::derive_capabilities;
+    // docker_only=true + NoPWS version: docker_only wins, both flags push to docker_exec
+    let caps = derive_capabilities(
+        Some("IRIS for UNIX 2026.2.0AI (Build 237U)"),
+        true,
+        None,
+        None,
+    );
+    assert_eq!(caps["atelier_rest"], false);
+    assert_eq!(caps["compile_path"], "docker_exec");
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn check_config_returns_capabilities_field() {
+    use iris_agentic_dev_core::tools::IrisTools;
+
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let result = tools
+        .call_for_test("check_config", serde_json::json!({}))
+        .await;
+
+    match result {
+        Ok(r) => {
+            let text = r
+                .content
+                .first()
+                .and_then(|c| c.raw.as_text())
+                .map(|t| t.text.clone())
+                .unwrap_or_default();
+            let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+            assert!(
+                v.get("capabilities").is_some(),
+                "check_config must include capabilities field: {v}"
+            );
+            let caps = &v["capabilities"];
+            assert!(
+                caps.get("compile_path").is_some(),
+                "capabilities must have compile_path: {caps}"
+            );
+            assert!(
+                caps.get("atelier_rest").is_some(),
+                "capabilities must have atelier_rest: {caps}"
+            );
+            assert!(
+                caps.get("private_web_server").is_some(),
+                "capabilities must have private_web_server: {caps}"
+            );
+        }
+        Err(e) => {
+            eprintln!("check_config returned Err (acceptable without IRIS): {e}");
+        }
+    }
+}

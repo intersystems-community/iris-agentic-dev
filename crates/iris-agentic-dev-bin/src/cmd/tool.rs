@@ -24,6 +24,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "iris_credential_manage",
     "iris_debug",
     "iris_doc",
+    "iris_doc_search",
     "iris_execute",
     "iris_execute_method",
     "iris_generate",

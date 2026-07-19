@@ -8,7 +8,14 @@ and `iris-agentic-dev-bin` (CLI entry point).
 
 ## Local dev container
 
-`iris-dev-iris` on port 52780. Verify it's running before any IRIS-dependent work:
+| Container       | TCP port | Web port | Image                   | Atelier REST | WebGateway      |
+| --------------- | -------- | -------- | ----------------------- | ------------ | --------------- |
+| `iris-dev-iris` | 11975    | 52780    | `iris-community:2026.2` | yes (52780)  | none — PWS only |
+
+**NoPWS note:** Community 2026.2 has PWS on 52780. Enterprise 2026.2.0AI builds do NOT
+(DPP-1192) — `atelier_rest=false`, use `docker_only=true` for those.
+
+Verify running before any IRIS-dependent work:
 
 ```bash
 docker ps --filter name=iris-dev-iris

@@ -1,0 +1,6 @@
+id: DOC-02
+category: DOC
+path: both
+description: "What base classes should a custom IRIS Interoperability Business Operation and its Outbound Adapter extend? Give the exact class names."
+expected_behavior: "Correctly names Ens.BusinessOperation (or a concrete subclass like EnsLib.HTTP.OutboundAdapter's paired operation) for the operation, and Ens.OutboundAdapter (or a specific subclass like EnsLib.HTTP.OutboundAdapter) for the adapter. Does NOT hallucinate class names like Ens.Adapter or Ens.BusinessAdapter. Answer is grounded in documentation."
+tags: [docs, interoperability, ensemble]

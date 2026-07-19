@@ -61,7 +61,11 @@
         "iris-embedded-python",
         "iris-agentic-dev",
         "iris-devtester",
-        "iris-docs"
+        "iris-docs",
+        "iris-vector-graph",
+        "iris-vector-rag",
+        "iris-pgwire",
+        "iris-ai-examples"
       ]
     },
     {

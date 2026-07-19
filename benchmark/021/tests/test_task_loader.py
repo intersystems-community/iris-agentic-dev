@@ -77,3 +77,26 @@ def test_filter_by_task_id():
         result = load_tasks(tasks_dir=d, task_id="GEN-01")
     assert len(result) == 1
     assert result[0]["id"] == "GEN-01"
+
+
+def test_doc_category_is_valid():
+    task = {**VALID_TASK, "id": "DOC-01", "category": "DOC"}
+    with tempfile.TemporaryDirectory() as d:
+        _write_tasks(d, [task])
+        from task_loader import load_tasks
+        result = load_tasks(tasks_dir=d)
+    assert len(result) == 1
+    assert result[0]["category"] == "DOC"
+
+
+def test_doc_category_filter_works():
+    tasks = [
+        {**VALID_TASK, "id": "DOC-01", "category": "DOC"},
+        {**VALID_TASK, "id": "GEN-01", "category": "GEN"},
+    ]
+    with tempfile.TemporaryDirectory() as d:
+        _write_tasks(d, tasks)
+        from task_loader import load_tasks
+        result = load_tasks(tasks_dir=d, category_filter=["DOC"])
+    assert len(result) == 1
+    assert result[0]["id"] == "DOC-01"
