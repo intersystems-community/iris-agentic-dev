@@ -1,0 +1,6 @@
+id: DOC-05
+category: DOC
+path: both
+description: "What are the two IRIS SQL functions for measuring similarity between vectors? Give the exact function names and their return types."
+expected_behavior: "Correctly identifies VECTOR_COSINE(vec1, vec2) and VECTOR_DOT_PRODUCT(vec1, vec2) as the two vector similarity functions. VECTOR_COSINE returns a double between -1 and 1 (cosine similarity). VECTOR_DOT_PRODUCT returns a double (dot product). Both function names must be exact. Does NOT hallucinate VECTOR_SIMILARITY() or other non-existent functions. Answer grounded in docs."
+tags: [docs, sql, vector, 2026.1]

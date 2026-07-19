@@ -1,0 +1,6 @@
+id: DOC-03
+category: DOC
+path: both
+description: "In ObjectScript, what is the correct way to check whether the current user has a specific resource:permission at runtime? Give the exact class method call with example arguments."
+expected_behavior: "Correctly identifies $SYSTEM.Security.Check(resource, permission) or ##class(%SYSTEM.Security).Check(resource, permission) as the method. Does NOT hallucinate CheckPermission(), HasPermission(), or CheckUserPermission() as the method for the current user. Includes an example resource format like %Admin_Secure:USE. Answer sourced from docs."
+tags: [docs, security, permissions]

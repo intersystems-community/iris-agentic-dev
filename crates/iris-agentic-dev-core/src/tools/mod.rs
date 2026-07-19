@@ -47,6 +47,7 @@ pub mod admin;
 pub mod coverage;
 pub mod dict;
 pub mod doc;
+pub mod doc_search;
 pub mod gate_macro;
 pub mod global;
 pub mod info;
@@ -2053,6 +2054,8 @@ impl IrisTools {
             "iris_production_diff",
             // 064-objectscript-coverage
             "iris_coverage",
+            // 065-iris-doc-search
+            "iris_doc_search",
         ];
 
         let mut names: std::collections::HashSet<String> =
@@ -5306,6 +5309,20 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let iris = self.get_iris_reloaded().await?;
         let result = coverage::handle_iris_coverage(&iris, &self.client, &p).await;
+        ok_json(result)
+    }
+
+    // ── 065: iris_doc_search ──────────────────────────────────────────────────
+
+    #[tool(
+        description = "Search the InterSystems documentation site (docs.intersystems.com) via its Algolia index. Returns ranked hits with title, URL, content excerpt, and breadcrumbs. Use for discovery questions ('what are all the ways to run SQL in IRIS?'), API lookups ('what does SQLCODE -30 mean?'), and any question where the answer lives in official docs. Optionally filter by version (e.g. '2025.1') and product (e.g. 'InterSystems IRIS'). Returns {query, total_hits, hits:[{title, url, excerpt, breadcrumbs, version, product}]}. Note: docs.intersystems.com is a JS SPA — do NOT use WebFetch or curl on DocBook URLs; they return only nav shell. This tool uses the real Algolia search index and returns actual documentation content."
+    )]
+    async fn iris_doc_search(
+        &self,
+        Parameters(p): Parameters<doc_search::IrisDocSearchParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = doc_search::handle_iris_doc_search(&self.client, &p).await;
+        self.record_call("iris_doc_search", result.get("error").is_none());
         ok_json(result)
     }
 
