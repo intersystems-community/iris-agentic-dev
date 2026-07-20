@@ -39,6 +39,7 @@ jobs:
             openai \
             litellm \
             boto3 \
+            pytest \
             iris-devtester
 
       - name: Start IRIS community container
