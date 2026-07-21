@@ -4,6 +4,25 @@ description: Manage and observe IRIS Interoperability productions — lifecycle,
 trigger: When asked about a production status, to start/stop/restart a production, investigate message failures, check queue backlogs, or define a production declaratively in Python
 ---
 
+## When to use productions — scenario mapping
+
+| Scenario                                                | Pattern                                |
+| ------------------------------------------------------- | -------------------------------------- |
+| Receive files/messages, validate, route to destinations | Production                             |
+| Transform between formats (HL7 ↔ JSON ↔ XML)            | Production + Business Process          |
+| Call external API or write to DB as part of a workflow  | Production + Business Operation        |
+| Simple scheduled script                                 | Task Scheduler (not productions)       |
+| Real-time REST endpoint                                 | CSP/REST application (not productions) |
+
+**Four components at a glance:**
+
+- **Service** — data in; receives/polls external input and injects messages into the production
+- **Process** — routing/transform; contains business logic, orchestrates multi-step workflows
+- **Operation** — data out; sends messages to external systems (APIs, files, databases)
+- **Message** — the carrier; extend `Ens.Request` / `Ens.Response` for typed payloads
+
+---
+
 ## Context Detection
 
 **If you have `iris_production` MCP tool available** → use the MCP Process Flow below.
@@ -20,10 +39,10 @@ trigger: When asked about a production status, to start/stop/restart a productio
 
 There are **two distinct execution contexts** for pyprod. Using the wrong one will fail:
 
-| What you're doing | Context | How to run |
-|---|---|---|
-| `director` lifecycle calls | **Embedded Python** — `import iris` must be in scope | Use `iris_execute` tool, or a `.py` file run inside `iris session` |
-| Declarative `Production` class definition | **External CLI** — `import iris` must NOT be in scope | `intersystems_pyprod /path/to/script.py` from a terminal |
+| What you're doing                         | Context                                               | How to run                                                         |
+| ----------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------ |
+| `director` lifecycle calls                | **Embedded Python** — `import iris` must be in scope  | Use `iris_execute` tool, or a `.py` file run inside `iris session` |
+| Declarative `Production` class definition | **External CLI** — `import iris` must NOT be in scope | `intersystems_pyprod /path/to/script.py` from a terminal           |
 
 **Never pass a `director` script to `intersystems_pyprod` CLI** — it will fail because `iris` is not bound.
 **Never call `iris_execute` with a declarative Production script** — it cannot load production XML from inside an embedded session.
@@ -91,12 +110,12 @@ status, response = svc.process_input(my_message)
 
 ### State values — get_production_status()
 
-| state value | meaning | production_name |
-|---|---|---|
-| `"1"` | running | set to production class name |
-| `"2"` | stopped | `None` |
-| `"3"` | suspended | set to production class name |
-| `"4"` | troubled | set to production class name |
+| state value | meaning   | production_name              |
+| ----------- | --------- | ---------------------------- |
+| `"1"`       | running   | set to production class name |
+| `"2"`       | stopped   | `None`                       |
+| `"3"`       | suspended | set to production class name |
+| `"4"`       | troubled  | set to production class name |
 
 State is always a **string** — compare with `== "1"`, not `== 1`.
 
@@ -138,6 +157,7 @@ intersystems_pyprod /path/to/my_production.py
 ```
 
 **Rules for declarative definitions:**
+
 - `iris_package_name` must be a module-level variable defined **before** the `Production` subclass
 - `host_settings` = business logic settings (`Target="Host"` in XML)
 - `adapter_settings` = adapter settings (`Target="Adapter"` in XML)
@@ -218,7 +238,7 @@ Set state = ##class(Ens.Director).GetProductionState(.sc)
 
 Only restart if status shows the production is stopped or stuck:
 
-```
+```text
 # Graceful stop (waits for in-flight messages)
 interop_production_stop(timeout=30, force=false)
 
@@ -236,17 +256,17 @@ This performs the equivalent of the Management Portal "Recover" button.
 
 ## Tool Reference
 
-| Tool | When to use |
-|------|------------|
-| `interop_production_status` | Always first — baseline state before any action |
-| `interop_production_start` | Start a stopped production |
-| `interop_production_stop` | Graceful or forced stop |
-| `interop_production_update` | Hot-apply config changes (no restart needed) |
-| `interop_production_needs_update` | Check before deciding whether to update |
-| `interop_production_recover` | Un-stick a faulted/partially-started production |
-| `interop_logs` | Component-level log entries (filter by component + severity) |
-| `interop_queues` | Queue depth per component — spot bottlenecks |
-| `interop_message_search` | Trace specific messages by content, session, or time |
+| Tool                              | When to use                                                  |
+| --------------------------------- | ------------------------------------------------------------ |
+| `interop_production_status`       | Always first — baseline state before any action              |
+| `interop_production_start`        | Start a stopped production                                   |
+| `interop_production_stop`         | Graceful or forced stop                                      |
+| `interop_production_update`       | Hot-apply config changes (no restart needed)                 |
+| `interop_production_needs_update` | Check before deciding whether to update                      |
+| `interop_production_recover`      | Un-stick a faulted/partially-started production              |
+| `interop_logs`                    | Component-level log entries (filter by component + severity) |
+| `interop_queues`                  | Queue depth per component — spot bottlenecks                 |
+| `interop_message_search`          | Trace specific messages by content, session, or time         |
 
 ## Safety Rules
 
@@ -258,13 +278,161 @@ This performs the equivalent of the Management Portal "Recover" button.
   Productions in `HSCUSTOM` or application-specific namespaces require the correct namespace.
 - **Do not restart to fix a config change** — use `update` instead. Restart loses in-flight messages.
 
+## Common gotchas
+
+### OnRequest signature — must use `%Library.Persistent`
+
+IRIS validates method override signatures against the base class. The base
+`OnRequest` in `Ens.BusinessProcess` declares the request as `%Library.Persistent`,
+so your override must match exactly.
+
+```objectscript
+// Wrong — IRIS rejects the override at compile time
+Method OnRequest(req As MyPkg.MyMsg, output response As %Library.Persistent) As %Status
+{
+    // ...
+}
+
+// Right — match the base signature, then coerce inside
+Method OnRequest(req As %Library.Persistent, output response As %Library.Persistent) As %Status
+{
+    Set typedReq = req  ; IRIS coerces automatically — full typed access works
+    // ...
+}
+```
+
+### Ens.Request storage — never set DataLocation
+
+When subclassing `Ens.Request` or `Ens.Response`, do **not** add a `<DataLocation>`
+tag in your `XData Storage` block. IRIS manages all message body storage in
+`^Ens.MessageBodyD` automatically. Setting a custom `DataLocation` causes `#5477`
+errors at runtime.
+
+```objectscript
+// Wrong — triggers #5477 "DataLocation mismatch" at runtime
+XData Storage [XMLNamespace = "http://www.intersystems.com/storage"]
+{
+<Storage defaultsavemode="objectglobals">
+<DataLocation>^MyPkg.MyMsgD</DataLocation>  // Remove this line
+...
+</Storage>
+}
+
+// Right — omit <DataLocation> entirely; IRIS uses ^Ens.MessageBodyD
+XData Storage [XMLNamespace = "http://www.intersystems.com/storage"]
+{
+<Storage defaultsavemode="objectglobals">
+<Data name="MyMsgDefaultData">
+  <Value name="1"><Value>%%CLASSNAME</Value></Value>
+  <Value name="2"><Value>MyField</Value></Value>
+</Data>
+<IdLocation>^Ens.MessageBodyD</IdLocation>
+<IndexLocation>^MyPkg.MyMsgI</IndexLocation>
+<StreamLocation>^MyPkg.MyMsgS</StreamLocation>
+<Type>%Storage.Persistent</Type>
+</Storage>
+}
+```
+
+### Global name 31-character limit
+
+IRIS appends `"D"` (data) and `"I"` (index) suffixes to the class name to derive
+global names. The combined result must be ≤ 31 characters, or the class fails to
+compile with a cryptic error.
+
+```text
+// Class name too long
+MyLongPackage.Data.PatientRecord        → global ^MyLongPackage.Data.PatientRecordD  (34 chars) ✗
+
+// Shorten the class name to fit
+MyPkg.PatientRecord                     → global ^MyPkg.PatientRecordD               (20 chars) ✓
+```
+
+If you hit this limit on an existing class, rename it and update all references.
+
+### OnResponse required in BusinessProcess
+
+Even if your Business Process only sends fire-and-forget requests, IRIS invokes
+`OnResponse` whenever an async response arrives. Omitting the method causes a
+`"Not implemented"` log entry for every response — fill it with a stub if you
+don't need it.
+
+```objectscript
+// Wrong — omit OnResponse entirely → "Not implemented" noise in logs
+
+// Right — stub it out if unused
+Method OnResponse(
+    request As %Library.Persistent,
+    ByRef response As %Library.Persistent,
+    callrequest As %Library.Persistent,
+    callresponse As %Library.Persistent,
+    completionkey As %String) As %Status
+{
+    Return $$$OK
+}
+```
+
+### iris_production start returning "Invalid Production"
+
+The `iris_production` MCP tool can return `"Invalid Production"` even for a
+correctly-defined class (a known tool-layer issue). Use `iris_execute` as the
+reliable workaround:
+
+```objectscript
+// Via iris_execute — always works when the class itself is valid
+do ##class(Ens.Director).StartProduction("YourPkg.Production")
+```
+
+Verify the class compiles first (`iris_compile`) and that the namespace is correct
+before blaming the production definition.
+
+---
+
+## Testing without the Management Portal
+
+Use `iris_execute` to programmatically send a test message to a running production.
+This replaces the Portal "Test" UI and works in automated scripts.
+
+```objectscript
+// 1. Instantiate your request message
+Set req = ##class(MyPkg.MyRequest).%New()
+Set req.SomeField = "test value"
+
+// 2. Get a handle to the adapterless service (or use SendRequestSync on a BP)
+Set sc = ##class(Ens.Director).CreateBusinessService("MyPkg.MyService", .svc)
+If $$$ISERR(sc) { Write $System.Status.GetErrorText(sc) Quit }
+
+// 3. Send the message — response populated synchronously
+Set sc = svc.ProcessInput(req, .resp)
+If $$$ISERR(sc) { Write $System.Status.GetErrorText(sc) Quit }
+
+Write "Response: ", resp.SomeResponseField
+```
+
+For services that use an adapter (file, HTTP, etc.) you cannot call `ProcessInput`
+directly — inject via a Business Process instead:
+
+```objectscript
+// Send directly to a Business Process by config item name
+Set req = ##class(MyPkg.MyRequest).%New()
+Set req.SomeField = "test value"
+
+Set sc = ##class(Ens.Director).SendRequestSync("MyProcessConfigName", req, .resp, 30)
+If $$$ISERR(sc) { Write $System.Status.GetErrorText(sc) Quit }
+Write "Done: ", resp.SomeResponseField
+```
+
+---
+
 ## Output Format
 
 When reporting production state:
+
 > **Production**: `MyApp.Productions.Main` — RUNNING
 > **Components**: 12 running, 0 faulted, 2 disabled
 > **Queue depth**: BusinessProcess.OrderHandler: 0, BusinessOperation.SendHL7: 3
 
 When tracing a message failure:
+
 > **Session** `12345`: Failed at `BusinessOperation.SendHL7` — ERROR: Connection refused
 > **Fix**: Check the outbound adapter host/port configuration for SendHL7

@@ -59,6 +59,7 @@
       "title": "Ecosystem Projects",
       "skills": [
         "iris-embedded-python",
+        "irispython-connector",
         "iris-agentic-dev",
         "iris-devtester",
         "iris-docs",
