@@ -4,6 +4,7 @@
   "description": "Wires iris-agentic-dev MCP tools into VS Code Copilot agent mode — automatically picks up your objectscript.conn connection. Requires the iris-agentic-dev binary on PATH or in `iris-agentic-dev.serverPath` setting.",
   "version": "0.4.23",
   "publisher": "intersystems-community",
+  "icon": "icon.png",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -95,8 +96,14 @@
     "@types/node": "^20",
     "@types/vscode": "^1.99.0",
     "@types/which": "^3.0.4",
-    "@vscode/vsce": "^3",
+    "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.0",
     "typescript": "^5"
+  },
+  "overrides": {
+    "brace-expansion": ">=5.0.7",
+    "linkify-it": ">=6.0.0",
+    "fast-uri": ">=4.1.1",
+    "js-yaml": ">=5.2.1"
   }
 }
