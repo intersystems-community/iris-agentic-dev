@@ -4,15 +4,17 @@ Connect GitHub Copilot, Claude Code, and other AI coding assistants directly to 
 
 Works with IRIS installed natively on Windows or Linux, and with Docker. Requires IRIS 2023.1 or later.
 
+**The core of iris-agentic-dev is a binary** — install it and wire it into any MCP-compatible AI tool. The VS Code extension is optional convenience that auto-configures the binary for GitHub Copilot using your existing `objectscript.conn` connection.
+
 ---
 
 ## Quick start: VS Code + GitHub Copilot
 
-This is the fastest path if you already use VS Code with the InterSystems ObjectScript extension.
+The VS Code extension handles binary discovery and connection config automatically — no manual setup needed.
 
 **Prerequisites**: VS Code, GitHub Copilot, [InterSystems ObjectScript extension](https://marketplace.visualstudio.com/items?itemName=intersystems-community.vscode-objectscript)
 
-1. Install **[iris-agentic-dev for IRIS](https://marketplace.visualstudio.com/items?itemName=intersystems-community.vscode-iris-agentic-dev)** from the VS Code Marketplace
+1. Install the **[iris-agentic-dev for IRIS](https://marketplace.visualstudio.com/items?itemName=intersystems-community.vscode-iris-agentic-dev)** VS Code extension from the Marketplace
 2. Reload VS Code
 
 **iris-agentic-dev (IRIS)** now appears in **Copilot Chat → Agent mode → tools**. It reads your existing `objectscript.conn` or `intersystems.servers` configuration — no additional setup needed.
