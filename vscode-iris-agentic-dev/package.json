@@ -2,7 +2,7 @@
   "name": "vscode-iris-agentic-dev",
   "displayName": "iris-agentic-dev for IRIS",
   "description": "Wires iris-agentic-dev MCP tools into VS Code Copilot agent mode — automatically picks up your objectscript.conn connection. Requires the iris-agentic-dev binary on PATH or in `iris-agentic-dev.serverPath` setting.",
-  "version": "0.4.23",
+  "version": "0.4.24",
   "publisher": "intersystems-community",
   "icon": "icon.png",
   "license": "MIT",
