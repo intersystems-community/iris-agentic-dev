@@ -41,6 +41,8 @@ username = "_SYSTEM"
 password = "SYS"
 ```
 
+`port` is accepted as an alias for `web_port` — both are equivalent in the toml file.
+
 ### Port reference
 
 | IRIS version        | Web server               | Default port |

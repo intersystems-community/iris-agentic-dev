@@ -12,6 +12,7 @@ pub struct WorkspaceConfig {
     pub container: Option<String>,
     pub namespace: Option<String>,
     pub host: Option<String>,
+    #[serde(alias = "port")]
     pub web_port: Option<u16>,
     /// URL path prefix for the IRIS web gateway, e.g. "irisaicore" when the
     /// Atelier API is served at http://host:port/irisaicore/api/atelier/...
@@ -793,6 +794,27 @@ mod tests {
         let cfg = result.expect("should load config");
         assert_eq!(cfg.host.as_deref(), Some("localhost"));
         assert_eq!(cfg.web_port, Some(52773));
+    }
+
+    #[test]
+    fn load_config_port_alias_for_web_port() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
+        writeln!(
+            f,
+            "host = \"localhost\"\nport = 52774\nnamespace = \"USER\""
+        )
+        .unwrap();
+        std::env::set_var("OBJECTSCRIPT_WORKSPACE", dir.path().to_str().unwrap());
+        let result = load_workspace_config(None);
+        std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+        let cfg = result.expect("should load config");
+        assert_eq!(
+            cfg.web_port,
+            Some(52774),
+            "`port` should alias to `web_port`"
+        );
     }
 
     #[test]
