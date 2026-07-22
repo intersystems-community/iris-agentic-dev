@@ -12,9 +12,8 @@ This is the fastest path if you already use VS Code with the InterSystems Object
 
 **Prerequisites**: VS Code, GitHub Copilot, [InterSystems ObjectScript extension](https://marketplace.visualstudio.com/items?itemName=intersystems-community.vscode-objectscript)
 
-1. Download `vscode-iris-agentic-dev-*.vsix` from the [releases page](https://github.com/intersystems-community/iris-agentic-dev/releases/latest)
-2. In VS Code: Extensions (`Ctrl+Shift+X`) → `...` → **Install from VSIX**
-3. Reload VS Code
+1. Install **[iris-agentic-dev for IRIS](https://marketplace.visualstudio.com/items?itemName=intersystems-community.vscode-iris-agentic-dev)** from the VS Code Marketplace
+2. Reload VS Code
 
 **iris-agentic-dev (IRIS)** now appears in **Copilot Chat → Agent mode → tools**. It reads your existing `objectscript.conn` or `intersystems.servers` configuration — no additional setup needed.
 
