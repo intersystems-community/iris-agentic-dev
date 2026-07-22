@@ -8,7 +8,7 @@
 /// 5. Audit "allowed" if both checks pass
 ///
 /// # Example
-/// ```ignore
+/// ```text
 /// tool_gate!(self, "iris_compile", serde_json::json!({
 ///     "target": p.target,
 ///     "namespace": p.namespace
