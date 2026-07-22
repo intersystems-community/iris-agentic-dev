@@ -128,6 +128,11 @@ Every response includes `testcoverage_available`. When the
 [TestCoverage](https://github.com/intersystems/TestCoverage) IPM package is installed,
 `cobertura_path` writes Cobertura XML output.
 
+**VS Code:** The [InterSystems Testing Manager](https://marketplace.visualstudio.com/items?itemName=intersystems-community.intersystems-testingmanager)
+extension surfaces the same `%UnitTest` classes in the Test Explorer view. Use `iris_test`
+to run and fix tests from Copilot or Claude; use Testing Manager to browse results and
+coverage in the IDE. They share the same server connection — no extra configuration needed.
+
 ---
 
 ## Common error codes

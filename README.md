@@ -27,6 +27,8 @@ To verify the connection, ask Copilot: *"Call check_config and show me the resul
 
 If the [InterSystems Server Manager](https://marketplace.visualstudio.com/items?itemName=intersystems-community.servermanager) extension is installed, iris-agentic-dev reads your server list and retrieves credentials from the OS keychain automatically — no additional config needed. Set `IRIS_SERVER_NAME` if you have multiple servers configured.
 
+If the [InterSystems Testing Manager](https://marketplace.visualstudio.com/items?itemName=intersystems-community.intersystems-testingmanager) extension is installed, it shows the same `%UnitTest` tests in VS Code's Test Explorer that `iris_test` runs via Copilot — they share the same server connection and results. Use Copilot to write and fix tests; use Testing Manager to browse, run, and view coverage in the IDE.
+
 > **Windows users**: iris-agentic-dev works with native IRIS on Windows — Docker is not required. If you hit a 404 on `/api/atelier`, see [Windows IIS setup](#windows-iis-api-web-application-required) below.
 
 ---
