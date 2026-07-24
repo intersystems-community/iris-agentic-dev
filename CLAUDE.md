@@ -50,6 +50,15 @@ IRIS is the only valid test object.
 - **`--test-threads=1`** is required for all IRIS integration/e2e test runs to prevent
   env-var race conditions across test binaries.
 
+## Release Notes & Changelog — NON-NEGOTIABLE
+
+Before closing any release (tagging, publishing, merging release branch):
+
+1. Run `/no-ai-slop` on all release notes and changelog entries.
+2. Address every flagged item before publishing.
+3. Release notes must read like a human wrote them for other humans — no filler phrases,
+   no hedging, no passive voice, no "This release includes…" boilerplate.
+
 ## Docs
 
 - `docs/connecting.md` — connection config (toml file, env vars)
@@ -58,10 +67,12 @@ IRIS is the only valid test object.
 - `docs/troubleshooting.md` — common issues
 
 ## Active Technologies
+
 - Dockerfile (no specific version), Bash (GHA steps), Markdown + `gcr.io/distroless/static-debian12` (base image), `docker/build-push-action@v6`, `docker/metadata-action@v5` (068-windows-docker)
 - GHCR (`ghcr.io/intersystems-community/iris-agentic-dev`) (068-windows-docker)
 - TypeScript 5, Node.js (VS Code extension host runtime) + VS Code API (`vscode`), Node built-ins (`https`, `fs`, (069-vscode-binary-install)
 - Two files in `context.globalStorageUri` (VersionMarker + ManagedBinary) (069-vscode-binary-install)
 
 ## Recent Changes
+
 - 068-windows-docker: Added Dockerfile (no specific version), Bash (GHA steps), Markdown + `gcr.io/distroless/static-debian12` (base image), `docker/build-push-action@v6`, `docker/metadata-action@v5`
