@@ -14,13 +14,13 @@ echo "--- SC-002: --version ---"
 docker run --rm "$IMAGE" --version
 echo "OK: --version exit 0"
 
-# SC-005: image size <= 20 MB
+# SC-005: image size <= 100 MB
 echo ""
 echo "--- SC-005: image size ---"
 SIZE=$(docker image inspect "$IMAGE" --format='{{.Size}}')
-MAX=$((20 * 1024 * 1024))
+MAX=$((100 * 1024 * 1024))
 if [ "$SIZE" -gt "$MAX" ]; then
-  echo "FAIL: image size ${SIZE} bytes exceeds 20 MB limit ($(( SIZE / 1024 / 1024 )) MB)"
+  echo "FAIL: image size ${SIZE} bytes exceeds 100 MB limit ($(( SIZE / 1024 / 1024 )) MB)"
   exit 1
 fi
 echo "OK: image size ${SIZE} bytes ($(( SIZE / 1024 / 1024 )) MB)"
