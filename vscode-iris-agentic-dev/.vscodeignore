@@ -2,3 +2,5 @@ src/
 tsconfig.json
 node_modules/
 .gitignore
+test/
+.test-out/
