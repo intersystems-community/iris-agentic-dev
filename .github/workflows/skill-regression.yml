@@ -32,6 +32,13 @@ jobs:
         with:
           python-version: '3.11'
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install opencode
+        run: npm install -g opencode
+
       - name: Install Python dependencies
         run: |
           pip install \
