@@ -2,20 +2,9 @@ import * as vscode from 'vscode';
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
-import which from 'which';
 import * as serverManager from '@intersystems-community/intersystems-servermanager';
 import { stringifyForLog } from './redact';
-
-function findIrisDev(): string | null {
-  const cfg = vscode.workspace.getConfiguration('iris-agentic-dev');
-  const override = cfg.get<string>('serverPath');
-  if (override) { return override; }
-  // Try plain name first, then .exe for Windows
-  for (const name of ['iris-agentic-dev', 'iris-agentic-dev.exe']) {
-    try { return which.sync(name); } catch { /* try next */ }
-  }
-  return null;
-}
+import { resolveServerBinary } from './managedInstall';
 
 interface ObjectScriptConn {
   active: boolean;
@@ -49,7 +38,7 @@ export class IrisDevMcpProvider
 
   public readonly onDidChangeMcpServerDefinitions = this.emitter.event;
 
-  constructor() {
+  constructor(private readonly context: vscode.ExtensionContext) {
     this.watcher = vscode.workspace.onDidChangeConfiguration(e => {
       if (
         e.affectsConfiguration('objectscript.conn') ||
@@ -75,9 +64,9 @@ export class IrisDevMcpProvider
 
   refresh() { this.emitter.fire(); }
 
-  public provideMcpServerDefinitions(
+  public async provideMcpServerDefinitions(
     _token: vscode.CancellationToken
-  ): vscode.ProviderResult<vscode.McpStdioServerDefinition[]> {
+  ): Promise<vscode.McpStdioServerDefinition[]> {
     this.log.show(true);   // reveal without stealing focus
     this.log.info('iris-agentic-dev: provideMcpServerDefinitions called');
 
@@ -98,13 +87,14 @@ export class IrisDevMcpProvider
       return [];
     }
 
-    const command = findIrisDev();
+    const command = await resolveServerBinary(this.context);
     this.log.info(`iris-agentic-dev: binary path = ${command ?? '(not found)'}`);
     if (!command) {
       vscode.window.showErrorMessage(
-        'iris-agentic-dev: binary not found. ' +
-        'Download from https://github.com/intersystems-community/iris-agentic-dev/releases ' +
-        'or set iris-agentic-dev.serverPath in VS Code settings.'
+        'iris-agentic-dev: could not find or download the MCP server binary. ' +
+        'Check the iris-agentic-dev Output channel for details. ' +
+        'You can download manually from https://github.com/intersystems-community/iris-agentic-dev/releases ' +
+        'and set iris-agentic-dev.serverPath.'
       );
       return [];
     }
@@ -309,7 +299,7 @@ function setupOpenHintWatcher(context: vscode.ExtensionContext): void {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
-  const provider = new IrisDevMcpProvider();
+  const provider = new IrisDevMcpProvider(context);
   context.subscriptions.push(provider);
 
   setupOpenHintWatcher(context);

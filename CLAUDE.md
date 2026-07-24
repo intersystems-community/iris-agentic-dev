@@ -60,6 +60,8 @@ IRIS is the only valid test object.
 ## Active Technologies
 - Dockerfile (no specific version), Bash (GHA steps), Markdown + `gcr.io/distroless/static-debian12` (base image), `docker/build-push-action@v6`, `docker/metadata-action@v5` (068-windows-docker)
 - GHCR (`ghcr.io/intersystems-community/iris-agentic-dev`) (068-windows-docker)
+- TypeScript 5, Node.js (VS Code extension host runtime) + VS Code API (`vscode`), Node built-ins (`https`, `fs`, (069-vscode-binary-install)
+- Two files in `context.globalStorageUri` (VersionMarker + ManagedBinary) (069-vscode-binary-install)
 
 ## Recent Changes
 - 068-windows-docker: Added Dockerfile (no specific version), Bash (GHA steps), Markdown + `gcr.io/distroless/static-debian12` (base image), `docker/build-push-action@v6`, `docker/metadata-action@v5`
