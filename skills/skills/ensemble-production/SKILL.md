@@ -268,6 +268,62 @@ This performs the equivalent of the Management Portal "Recover" button.
 | `interop_queues`                  | Queue depth per component — spot bottlenecks                 |
 | `interop_message_search`          | Trace specific messages by content, session, or time         |
 
+## Interop depth tools
+
+> **Toolset note:** `iris_message_body`, `iris_business_rule_info`, and `iris_production_diff`
+> are available in the **merged toolset only**. `iris_lookup_manage`, `iris_lookup_transfer`,
+> `iris_credential_list`, and `iris_credential_manage` are available in all toolsets.
+
+| Tool                      | What it does                                                              |
+| ------------------------- | ------------------------------------------------------------------------- |
+| `iris_message_body`       | Read a message body by ID                                                 |
+| `iris_business_rule_info` | List or inspect business rules                                            |
+| `iris_production_diff`    | Diff running production config against last source-controlled version     |
+| `iris_lookup_manage`      | Read/write/delete/list Ensemble lookup table entries                      |
+| `iris_lookup_transfer`    | Export/import a lookup table as XML                                       |
+| `iris_credential_list`    | List all Ensemble credential IDs and usernames (passwords never returned) |
+| `iris_credential_manage`  | Create/update/delete credentials                                          |
+
+### `iris_message_body(message_id)`
+
+Read a message body by ID. PHI-gated: pass `acknowledgePhi=true` if the body contains
+protected health information. Handles both plain-text and stream-backed bodies.
+
+### `iris_business_rule_info(action, rule_name?)`
+
+- `action="list"` — list all `Ens.Rule.RuleSet` business rules in the namespace
+- `action="get"` with `rule_name` — return the conditions and actions for that rule
+
+### `iris_production_diff`
+
+Diff the running production config against the last source-controlled version. Returns
+`changes: [{item_name, item_type, status}]` where `status` is `added`, `removed`, or
+`modified`. Returns `NO_SCM` if no source control adapter is configured.
+
+### `iris_lookup_manage(action, table, key?)`
+
+Read, write, delete, or list Ensemble lookup table entries.
+
+- `get` and `list` are always available
+- `set` and `delete` are write-gated (requires write permissions on the connection)
+
+### `iris_lookup_transfer(action, table)`
+
+Export or import a lookup table as XML.
+
+- `export` is always available
+- `import` is write-gated
+
+### `iris_credential_list`
+
+List all Ensemble credential IDs and usernames. Passwords are never returned.
+
+### `iris_credential_manage(action, id)`
+
+Create, update, or delete Ensemble credentials. Write-gated.
+
+---
+
 ## Safety Rules
 
 - **Never force-stop** (`force=true`) unless graceful stop has timed out. Force-stop drops
@@ -436,3 +492,12 @@ When tracing a message failure:
 
 > **Session** `12345`: Failed at `BusinessOperation.SendHL7` — ERROR: Connection refused
 > **Fix**: Check the outbound adapter host/port configuration for SendHL7
+
+---
+
+## Related skills
+
+- **iris-agentic-dev** — connection setup and toolset configuration
+- **objectscript-navigation** — when you need to find and read the production's class implementations
+- **objectscript-debugging** — when a business operation or process is failing with a runtime error
+- **irispython-connector** — when the production uses Python business operations

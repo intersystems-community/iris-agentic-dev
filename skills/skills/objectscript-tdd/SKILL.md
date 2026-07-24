@@ -9,6 +9,7 @@ metadata:
 ---
 
 ## Purpose
+
 Close the feedback loop: write → compile → fix errors → run tests → fix failures → done.
 
 ## Process Flow
@@ -24,26 +25,36 @@ Close the feedback loop: write → compile → fix errors → run tests → fix 
 ## Compile Command
 
 Use the objectscript MCP tool when available (check `/mcp`):
-```
+
+```text
 iris_compile(target="MyPackage/MyClass.cls", namespace="USER")
 ```
 
 Fallback when MCP is unavailable:
-```
+
+```bash
 iris session IRIS -U USER "Do $System.OBJ.Load(\"<ClassName>.cls\",\"ck\")"
 ```
 
 ## Key Principle
 
 Never present code to the user that hasn't compiled. If you can't compile (no IRIS access), flag this explicitly:
+
 > ⚠️ No IRIS connection available — code is unverified. Recommend compiling before use.
 
 ## Common Compile Errors and Fixes
 
-| Error | Cause | Fix |
-|-------|-------|-----|
-| `QUIT argument not allowed` | `Quit <val>` inside TRY/CATCH or loop | Change to `Return <val>` |
-| `Expected a compilable class` | Missing `Class` keyword or malformed header | Check class declaration line |
-| `Method does not exist` | Intra-class call without `..` | Add `..` prefix |
-| `<UNDEFINED>` at runtime | Variable used before SET | Initialize variable before use |
-| `Expected white space` | Missing space after command keyword | Add space: `Set x=1` not `Setx=1` |
+| Error                         | Cause                                       | Fix                               |
+| ----------------------------- | ------------------------------------------- | --------------------------------- |
+| `QUIT argument not allowed`   | `Quit <val>` inside TRY/CATCH or loop       | Change to `Return <val>`          |
+| `Expected a compilable class` | Missing `Class` keyword or malformed header | Check class declaration line      |
+| `Method does not exist`       | Intra-class call without `..`               | Add `..` prefix                   |
+| `<UNDEFINED>` at runtime      | Variable used before SET                    | Initialize variable before use    |
+| `Expected white space`        | Missing space after command keyword         | Add space: `Set x=1` not `Setx=1` |
+
+## Related skills
+
+- **objectscript-review** — run before compiling to catch common mistakes early
+- **objectscript-unit-test** — writing %UnitTest scaffolding
+- **objectscript-coverage** — measuring whether your test suite exercises the code (requires merged toolset)
+- **objectscript-debugging** — when a test fails with a runtime error

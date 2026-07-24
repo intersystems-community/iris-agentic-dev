@@ -13,6 +13,30 @@ exposing IRIS dev tools — `iris_execute`, `iris_query`, `iris_doc`, `docs_intr
 under `mcpServers`, each with an `env: { IRIS_CONTAINER: "<name>" }`. It talks to IRIS
 over the **Atelier REST API** (needs the web server / web gateway — port 52773-family).
 
+## Task → skill map
+
+Load the skill(s) for what you're about to do. You don't need them all — just the ones for your task.
+
+| Task                              | Load skill                                        |
+| --------------------------------- | ------------------------------------------------- |
+| Write or review ObjectScript      | `objectscript-review` + `objectscript-guardrails` |
+| Fix a bug or runtime error        | `objectscript-debugging`                          |
+| Navigate an unfamiliar codebase   | `objectscript-navigation`                         |
+| Write or run %UnitTest tests      | `objectscript-unit-test`                          |
+| TDD loop (write → compile → test) | `objectscript-tdd`                                |
+| Measure test coverage             | `objectscript-coverage`                           |
+| Write SQL or fix SQLCODE errors   | `objectscript-sql-patterns`                       |
+| Work with `$LIST` / `$LISTBUILD`  | `objectscript-list-patterns`                      |
+| Interoperability production       | `ensemble-production`                             |
+| Python in IRIS                    | `iris-embedded-python` + `irispython-connector`   |
+| Vector search                     | `iris-vector-ai`                                  |
+| Connect from Python/Java/ODBC     | `iris-connectivity`                               |
+| Fix / debug multi-class failures  | `objectscript-repair`                             |
+| Look up IRIS docs                 | `iris-docs`                                       |
+| Set up VS Code + ObjectScript ext | `iris-vscode-objectscript`                        |
+| Docker / container setup          | `iris-linux-docker`                               |
+| IIS / Windows setup               | `iris-windows-iis-setup`                          |
+
 ## The two facts that trip people up
 
 1. **Connection config lives in `.iris-agentic-dev.toml`, NOT the MCP `env` block.**
@@ -132,3 +156,11 @@ For a **private or not-yet-public** package, keep the skill local instead:
 Anyone who clones iad gets the skill immediately — no github fetch, no auth.
 When the repo goes public, flip `sourceType` to `"github"`, add `source` and
 `skillPath`, and delete the local `SKILL.md`.
+
+## Related skills
+
+- **objectscript-review** — load when writing any ObjectScript; catches the 10 most common AI mistakes
+- **objectscript-debugging** — when you hit a runtime error or need to map a .INT offset to source
+- **objectscript-navigation** — when exploring an unfamiliar codebase
+- **ensemble-production** — when working with Interoperability productions
+- **objectscript-coverage** — when measuring test coverage with `iris_coverage`

@@ -1,41 +1,41 @@
 ---
 author: tdyar
-benchmark_date: '2026-04-02'
-benchmark_iris_version: '2025.1'
+benchmark_date: "2026-04-02"
+benchmark_iris_version: "2025.1"
 benchmark_tasks:
-- jira-001
-- jira-002
-- jira-003
-- jira-004
-- jira-005
-- jira-006
-- jira-007
-- jira-008
-- jira-009
-- jira-010
-- jira-011
-- jira-012
-- jira-013
-- jira-014
-- jira-015
-- jira-016
-- jira-017
-- jira-018
-- jira-019
-- jira-020
-- jira-021
-- jira-056
+  - jira-001
+  - jira-002
+  - jira-003
+  - jira-004
+  - jira-005
+  - jira-006
+  - jira-007
+  - jira-008
+  - jira-009
+  - jira-010
+  - jira-011
+  - jira-012
+  - jira-013
+  - jira-014
+  - jira-015
+  - jira-016
+  - jira-017
+  - jira-018
+  - jira-019
+  - jira-020
+  - jira-021
+  - jira-056
 description: Use when writing or reviewing any ObjectScript code. Hard gate — 10-item
   checklist catches the most common AI mistakes before showing code to the user.
-iris_version: '>=2024.1'
+iris_version: ">=2024.1"
 name: objectscript-guardrails
 pass_rate: 0.8636363636363636
 state: reviewed
 tags:
-- objectscript
-- review
-- repair
-- core
+  - objectscript
+  - review
+  - repair
+  - core
 trigger: Use for tdyar/iris-light-slim
 ---
 
@@ -62,12 +62,15 @@ trigger: Use for tdyar/iris-light-slim
 ## Output Format
 
 If violations found:
+
 > ⚠️ ObjectScript review flagged [N] issues — correcting:
+>
 > - [rule]: [wrong] → [correct]
 
 Then show corrected code.
 
 If clean:
+
 > ✅ ObjectScript review passed.
 
 Then show code.
@@ -89,3 +92,9 @@ Storage Default { <Type>...</Type> }   →  (omit entirely — IRIS auto-generat
 Return (tag %INLIST myList)            →  Return ($ListFind(myList, tag) > 0)
 "WHERE Tags '= ''"                     →  "WHERE Tags <> ''"
 ```
+
+## Related skills
+
+- **objectscript-review** — more targeted checklist; use when MCP tools are available
+- **objectscript-sql-patterns** — SQL-specific guardrails for IRIS SQL quirks
+- **objectscript-tdd** — compile-test-fix loop to apply after guardrails pass

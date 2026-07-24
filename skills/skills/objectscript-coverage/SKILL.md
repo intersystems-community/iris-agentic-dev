@@ -16,6 +16,10 @@ your test suite exercises production code.
 
 ## Quick Start
 
+> **Toolset note:** `iris_coverage` is only available in the **merged toolset**. If it
+> returns `NOT_IMPLEMENTED` or is absent from the tool list, add `toolset = "merged"` to
+> `.iris-agentic-dev.toml` or set `IRIS_TOOLSET=merged`.
+
 Most tasks need `mode=run` — it starts the monitor, runs tests, stops, and returns results:
 
 ```text
@@ -93,9 +97,10 @@ If you get `BBSIZ_NOT_CONFIGURED`:
 }
 ```
 
-## Coverage via iris_test Shorthand
+## Inline coverage with iris_test
 
-Set `coverage=true` on `iris_test` to run tests and measure coverage in one call:
+`iris_test(coverage=true)` runs tests and returns line coverage inline in a single call —
+no separate `iris_coverage` invocation needed:
 
 ```text
 iris_test(
@@ -106,7 +111,11 @@ iris_test(
 )
 ```
 
-Response includes a `coverage` field with the same structure as `iris_coverage` output.
+The response includes a `coverage` field with the same structure as `iris_coverage` output.
+
+Use this for quick coverage checks during development. Use `iris_coverage(mode=run)` when
+you need a detailed per-class breakdown, Cobertura XML output, or want to instrument
+specific classes that differ from the test path.
 
 ## TestCoverage IPM Package
 
@@ -139,3 +148,9 @@ When it's `false`, a `testcoverage_hint` with install instructions is also retur
 | `NO_CLASSES`           | Package expansion found nothing | Check package name; verify classes are compiled                             |
 | `MISSING_PARAM`        | Required param absent           | Add `test_path` for `mode=run`; add `classes` or `package` for start/report |
 | `INVALID_ACTION`       | Unknown mode string             | Use: `run`, `check`, `start`, `stop`, `report`                              |
+
+## Related skills
+
+- **objectscript-tdd** — TDD loop that naturally leads to coverage measurement
+- **objectscript-unit-test** — writing the test suite that iris_coverage measures
+- **iris-agentic-dev** — if iris_coverage returns NOT_IMPLEMENTED, check your toolset setting

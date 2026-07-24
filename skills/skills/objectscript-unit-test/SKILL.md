@@ -10,9 +10,11 @@ metadata:
 ---
 
 ## Purpose
+
 Generate idiomatic IRIS `%UnitTest.TestCase` test scaffolds grounded in live class introspection — not guessed from code. Each generated test compiles and runs against a real IRIS instance.
 
 ## When to Use
+
 - Writing tests for a new or existing ObjectScript class
 - Adding coverage for a specific method before refactoring
 - Validating that a bug fix doesn't regress
@@ -20,7 +22,8 @@ Generate idiomatic IRIS `%UnitTest.TestCase` test scaffolds grounded in live cla
 ## Workflow
 
 ### Step 1 — Generate Test Class
-```
+
+```text
 Tool: objectscript_iris_generate_test
 Inputs: class_name (e.g. "MyApp.Utils"), method_name (optional, generates all if omitted), test_directory (default "tests")
 Returns: test class code + suggested output path
@@ -29,7 +32,9 @@ Returns: test class code + suggested output path
 The tool uses `objectscript_docs_introspect` to read the live class definition — method signatures, return types, class vs instance methods — and generates appropriate test scaffolds.
 
 ### Step 2 — Review Generated Scaffold
+
 Each generated test method follows this pattern:
+
 ```objectscript
 Method TestMyMethod()
 {
@@ -45,16 +50,19 @@ Method TestMyMethod()
 ```
 
 For `%Status`-returning methods, assertions use `$$$AssertStatusOK`:
+
 ```objectscript
 Do $$$AssertStatusOK(tSC, "MyMethod should succeed")
 ```
 
 ### Step 3 — Compile and Run
-```
+
+```text
 Tool: objectscript_iris_compile
 Inputs: target (path to generated .cls file)
 ```
-```
+
+```text
 Tool: objectscript_iris_test
 Inputs: pattern (e.g. "Test.MyApp.*")
 ```
@@ -62,14 +70,15 @@ Inputs: pattern (e.g. "Test.MyApp.*")
 Fix any compile errors, then confirm all generated tests pass before adding assertions.
 
 ### Step 4 — Add Real Assertions
+
 The scaffold generates placeholder assertions. Replace them with meaningful expected values based on the method's documented behavior or known inputs/outputs.
 
 ## Naming Conventions
 
-| Element | Convention |
-|---|---|
-| Test class | `Test.<OriginalPackage>.<ClassName>` |
-| Test method | `Test<OriginalMethodName>` |
+| Element     | Convention                             |
+| ----------- | -------------------------------------- |
+| Test class  | `Test.<OriginalPackage>.<ClassName>`   |
+| Test method | `Test<OriginalMethodName>`             |
 | Output file | `tests/Test/<Package>/<ClassName>.cls` |
 
 ## What Gets Generated
@@ -86,3 +95,9 @@ The scaffold generates placeholder assertions. Replace them with meaningful expe
 > ✅ Generated test class `Test.MyApp.Utils` — `N` test methods
 > Output path: `tests/Test/MyApp/Utils.cls`
 > Next: compile and run with `objectscript_iris_test("Test.MyApp.*")`
+
+## Related skills
+
+- **objectscript-tdd** — the compile-test-fix loop that uses the tests you write here
+- **objectscript-coverage** — measure how well your test suite exercises the code
+- **objectscript-debugging** — when a test fails with a runtime error and you need to trace it
