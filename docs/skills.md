@@ -19,8 +19,8 @@ common ObjectScript mistakes before the AI writes any code.
 The multi-file and SQL-quirks suites referenced in earlier versions of this table are not
 yet ported to the current native benchmark harness (`iris-agentic-dev benchmark`) — only
 the repair suite above is runnable today. See
-[BENCHMARKING.md](../light-skills/BENCHMARKING.md) to run it yourself, including a
-[Limitations](../light-skills/BENCHMARKING.md#limitations) section covering contamination
+[skills/BENCHMARKING.md](../skills/BENCHMARKING.md) to run it yourself, including a
+[Limitations](../skills/BENCHMARKING.md#limitations) section covering contamination
 risk, single-run variance, and single-model validation caveats.
 
 ---
@@ -35,7 +35,7 @@ risk, single-run variance, and single-model validation caveats.
 mkdir -p ~/.claude/skills
 for skill in objectscript-review objectscript-guardrails objectscript-sql-patterns; do
   mkdir -p ~/.claude/skills/$skill
-  curl -sL https://raw.githubusercontent.com/intersystems-community/iris-agentic-dev/master/light-skills/skills/$skill/SKILL.md \
+  curl -sL https://raw.githubusercontent.com/intersystems-community/iris-agentic-dev/master/skills/skills/$skill/SKILL.md \
     > ~/.claude/skills/$skill/SKILL.md
 done
 ```
@@ -46,7 +46,7 @@ done
 mkdir -p ~/.config/opencode/skills
 for skill in objectscript-review objectscript-guardrails objectscript-sql-patterns; do
   mkdir -p ~/.config/opencode/skills/$skill
-  curl -sL https://raw.githubusercontent.com/intersystems-community/iris-agentic-dev/master/light-skills/skills/$skill/SKILL.md \
+  curl -sL https://raw.githubusercontent.com/intersystems-community/iris-agentic-dev/master/skills/skills/$skill/SKILL.md \
     > ~/.config/opencode/skills/$skill/SKILL.md
 done
 ```
@@ -74,7 +74,7 @@ done
 
 "repair" scores are reproducible today via `iris-agentic-dev benchmark --suite jira`.
 "SQL" and "domain" scores predate the current native harness and are not yet
-re-verifiable — see [BENCHMARKING.md](../light-skills/BENCHMARKING.md#additional-suites-not-yet-ported).
+re-verifiable — see [BENCHMARKING.md](../skills/BENCHMARKING.md#additional-suites-not-yet-ported).
 
 ---
 
@@ -87,7 +87,7 @@ Some skills hurt if loaded globally:
   be loaded when working in those areas — loading them for general ObjectScript work adds
   noise without benefit.
 
-See [BENCHMARKING.md](../light-skills/BENCHMARKING.md) for detailed per-skill results.
+See [BENCHMARKING.md](../skills/BENCHMARKING.md) for detailed per-skill results.
 
 ---
 
@@ -110,5 +110,5 @@ new skills and optimize existing ones. Use the `skill` tool:
 
 Write a `SKILL.md`, run the benchmark, submit a PR with your results.
 
-See [`light-skills/`](../light-skills/) for the full skill list, benchmark results, and
+See [`skills/`](../skills/) for the full skill list, benchmark results, and
 contribution guide.

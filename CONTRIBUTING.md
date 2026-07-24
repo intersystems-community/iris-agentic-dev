@@ -33,8 +33,7 @@ comment before starting so we can align on approach.
 
 ## Contributing a skill
 
-Skills live in `skills/` (full) and `light-skills/skills/` (trimmed for token budget).
-Each skill is a directory with a `SKILL.md` and optional `references/` subdirectory.
+Skills live in `skills/skills/`. Each skill is a directory with a `SKILL.md` and optional `references/` subdirectory.
 
 **Ideal acceptance bar:** demonstrate measurable lift — ideally **+20% pass-rate improvement**
 on the benchmark suite compared to the no-skill baseline. This is a best-effort guideline,
@@ -62,7 +61,7 @@ python -m benchmark.021.runner
 ```
 
 See [`benchmark/021/README.md`](benchmark/021/README.md) for full instructions and
-[`light-skills/skills/objectscript-review/`](light-skills/skills/objectscript-review/)
+[`skills/skills/objectscript-review/`](skills/skills/objectscript-review/)
 for a reference skill example.
 
 ## Bug reports
