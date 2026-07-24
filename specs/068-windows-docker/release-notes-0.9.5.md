@@ -6,8 +6,8 @@
 
 iris-agentic-dev is now published as a Docker image
 (`ghcr.io/intersystems-community/iris-agentic-dev`). The primary motivation is
-Windows: the Windows `.exe` is not yet code-signed (signing is blocked on an
-internal approval process), so Windows Defender flags it as untrusted. Running
+Windows: the Windows `.exe` is not yet code-signed (signing options are being
+evaluated), so Windows Defender flags it as untrusted. Running
 the MCP server via Docker sidesteps the signing requirement entirely — Docker
 Desktop on Windows is already trusted.
 
