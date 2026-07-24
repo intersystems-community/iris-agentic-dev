@@ -46,6 +46,7 @@ jobs:
             openai \
             litellm \
             pytest \
+            anthropic \
             iris-devtester
 
       - name: Start IRIS community container
