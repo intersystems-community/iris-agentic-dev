@@ -75,38 +75,10 @@ jobs:
           merge-multiple: true
       - name: Write release body
         run: |
-          VER="${GITHUB_REF_NAME#vscode-v}"
-          TAG="${GITHUB_REF_NAME}"
-          cat > release-body.md << EOF
-          ## Installation
+          cat > release-body.md << 'EOF'
+          See [README](https://github.com/intersystems-community/iris-agentic-dev#installation) for installation instructions (binary, Homebrew, VS Code extension).
 
-          ### macOS / Linux — one-liner
-          \`\`\`bash
-          curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-\$(uname -s | tr '[:upper:]' '[:lower:]')-\$(uname -m | sed 's/x86_64/x86_64/;s/arm64/arm64/;s/aarch64/arm64/') -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
-          \`\`\`
-
-          ### Windows
-          Download [\`iris-agentic-dev-windows-x86_64.exe\`](https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-windows-x86_64.exe), rename to \`iris-agentic-dev.exe\`, place on your PATH.
-          Or set \`iris-agentic-dev.serverPath\` in VS Code settings to the full path — no PATH required.
-
-          ### VS Code Extension
-          Download [\`vscode-iris-agentic-dev-${VER}.vsix\`](https://github.com/intersystems-community/iris-agentic-dev/releases/download/${TAG}/vscode-iris-agentic-dev-${VER}.vsix) from the assets below, then install via **Extensions: Install from VSIX...** in VS Code 1.99+.
-
-          ### Quick start
-          \`\`\`bash
-          # Set your IRIS connection (or use objectscript.conn in VS Code)
-          export IRIS_HOST=localhost
-          export IRIS_WEB_PORT=52773
-          iris-agentic-dev mcp   # start MCP server
-          \`\`\`
-
-          See the [README](https://github.com/intersystems-community/iris-agentic-dev#readme) for full setup instructions.
-
-          ### Homebrew (macOS / Linux)
-          \`\`\`bash
-          brew tap intersystems-community/tap
-          brew install iris-agentic-dev
-          \`\`\`
+          > The VS Code extension is on the [Marketplace](https://marketplace.visualstudio.com/items?itemName=intersystems-community.vscode-iris-agentic-dev). The `.vsix` in the assets below is a fallback for air-gapped or pinned-version installs.
           EOF
       - uses: softprops/action-gh-release@v2
         with:
