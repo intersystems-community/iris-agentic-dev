@@ -56,3 +56,10 @@ IRIS is the only valid test object.
 - `docs/tools.md` — tool reference
 - `docs/skills.md` — skill system
 - `docs/troubleshooting.md` — common issues
+
+## Active Technologies
+- Dockerfile (no specific version), Bash (GHA steps), Markdown + `gcr.io/distroless/static-debian12` (base image), `docker/build-push-action@v6`, `docker/metadata-action@v5` (068-windows-docker)
+- GHCR (`ghcr.io/intersystems-community/iris-agentic-dev`) (068-windows-docker)
+
+## Recent Changes
+- 068-windows-docker: Added Dockerfile (no specific version), Bash (GHA steps), Markdown + `gcr.io/distroless/static-debian12` (base image), `docker/build-push-action@v6`, `docker/metadata-action@v5`

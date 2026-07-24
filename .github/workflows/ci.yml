@@ -413,3 +413,22 @@ jobs:
       - run: file target/x86_64-unknown-linux-musl/release/iris-agentic-dev
       - run: |
           ldd target/x86_64-unknown-linux-musl/release/iris-agentic-dev 2>&1 | grep -q "not a dynamic executable" && echo "SC-002 PASS: static binary confirmed" || echo "NOTE: may have dynamic deps on musl"
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: mlugg/setup-zig@v2
+      - uses: Swatinem/rust-cache@v2
+      - name: Build static musl binary
+        run: |
+          cargo install cargo-zigbuild
+          cargo zigbuild --release --target x86_64-unknown-linux-musl -p iris-agentic-dev
+          cp target/x86_64-unknown-linux-musl/release/iris-agentic-dev iris-agentic-dev
+      - name: Build Docker image
+        run: docker build -t iris-agentic-dev-smoke .
+      - name: Run smoke tests
+        run: IMAGE=iris-agentic-dev-smoke bash tests/docker/smoke.sh

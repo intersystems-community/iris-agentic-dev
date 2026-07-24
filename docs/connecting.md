@@ -250,3 +250,9 @@ write_tools_enabled = false
 
 This is the recommended default for any server that more than one person connects
 to, or any server that isn't purely local.
+
+## Windows (Docker)
+
+The native Windows binary is not yet signed. Windows users can run iris-agentic-dev
+as a Docker container instead — see [docs/windows-docker.md](windows-docker.md) for
+the full setup guide and Claude Code MCP config.

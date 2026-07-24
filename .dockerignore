@@ -1,0 +1,14 @@
+target/
+.git/
+crates/
+benchmark/
+tests/
+docs/
+specs/
+skills/
+*.toml
+*.lock
+*.md
+*.yml
+*.yaml
+Cargo.*
