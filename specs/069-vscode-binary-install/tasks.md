@@ -99,15 +99,16 @@ All US phases depend on these being correct and tested.
 
 **Independent Test**: Write `"0.0.0"` to the version marker file, activate extension — confirm re-download triggered and version marker updated to current extension version.
 
-### Tests for US3 (write first — must FAIL before T027)
+### Tests for US3 (write first — must FAIL before T027a)
 
 - [ ] T024 [US3] Write unit test: version marker contains old version string → `resolveServerBinary` calls `downloadBinary` and updates version marker in `vscode-iris-agentic-dev/test/managedInstall.test.cjs`
 - [ ] T025 [P] [US3] Write unit test: download fails (mock `downloadBinary` to reject) and stale binary exists → `resolveServerBinary` returns stale binary path and logs a warning (does not throw) in `vscode-iris-agentic-dev/test/managedInstall.test.cjs`
 - [ ] T026 [P] [US3] Write unit test: download fails and no cached binary exists → `resolveServerBinary` returns `null` in `vscode-iris-agentic-dev/test/managedInstall.test.cjs`
+- [ ] T027 [US3] Write unit test: on `win32`, when a stale binary exists and a re-download is triggered, `fs.promises.rename` is called with the old binary path before `downloadBinary` writes the new file in `vscode-iris-agentic-dev/test/managedInstall.test.cjs`
 
 ### Implementation for US3
 
-- [ ] T027 [US3] Add Windows rename-before-replace logic to the managed download path in `vscode-iris-agentic-dev/src/managedInstall.ts`: before writing new binary on `win32`, attempt `fs.promises.rename(binaryPath, binaryPath + '.old')` (ignore `ENOENT`); attempt to delete `.old` file on cache-hit activation (ignore all errors)
+- [ ] T027a [US3] Add Windows rename-before-replace logic to the managed download path in `vscode-iris-agentic-dev/src/managedInstall.ts`: before writing new binary on `win32`, attempt `fs.promises.rename(binaryPath, binaryPath + '.old')` (ignore `ENOENT`); attempt to delete `.old` file on cache-hit activation (ignore all errors)
 - [ ] T028 [US3] Add download-failure fallback logic in `vscode-iris-agentic-dev/src/managedInstall.ts`: on `downloadBinary` rejection, if stale binary path exists return it with `this.log.warn(...)`, else return `null`
 - [ ] T029 [US3] Run `npm test` and confirm all US3 unit tests pass in `vscode-iris-agentic-dev/`
 
@@ -117,12 +118,12 @@ All US phases depend on these being correct and tested.
 
 ## Phase 6: Polish & Cross-Cutting Concerns
 
-- [ ] T030 Update `package.json` test script in `vscode-iris-agentic-dev/package.json` to run all three test files: `"test": "esbuild src/redact.ts ... && node --test test/redact.test.cjs test/platform.test.cjs test/managedInstall.test.cjs"`
+- [ ] T030 Update `package.json` test script in `vscode-iris-agentic-dev/package.json` to run all three test files: `"test": "esbuild src/redact.ts --bundle --outfile=.test-out/redact.cjs --format=cjs --platform=node && node --test test/redact.test.cjs test/platform.test.cjs test/managedInstall.test.cjs"`
 - [ ] T031 [P] Update `vscode-iris-agentic-dev/README.md` — remove "binary must be on PATH" prerequisite; add auto-install note; keep `serverPath` setting documented as an override
 - [ ] T032 [P] Update error message in `vscode-iris-agentic-dev/src/extension.ts` for the `null` binary case to explain that auto-install failed and link to manual install docs (replaces the existing "Download from github…" message at line 104-109)
 - [ ] T033 Run full `npm test` in `vscode-iris-agentic-dev/` and confirm all tests pass (redact + platform + managedInstall)
 - [ ] T034 Run `npm run compile` in `vscode-iris-agentic-dev/` and confirm zero TypeScript errors
-- [ ] T035 Run quickstart.md manual smoke test: clean cache on macOS, activate in Extension Development Host, confirm download progress notification, binary cached, MCP server starts
+- [ ] T035 Manual smoke test: (1) delete `~/Library/Application Support/Code/User/globalStorage/intersystems-community.vscode-iris-agentic-dev/` on macOS, (2) open extension in Development Host (F5), (3) confirm progress notification appears before download completes, (4) confirm binary exists in globalStorage after activation, (5) confirm MCP provider registers and tools respond in `vscode-iris-agentic-dev/`
 - [ ] T036 Write release notes entry for 069 feature in `specs/069-vscode-binary-install/release-notes-0.9.5.md` — "VS Code extension now auto-installs the binary on first activation" with Windows context
 
 ---
@@ -135,7 +136,7 @@ All US phases depend on these being correct and tested.
 - **Phase 2 (Foundational)**: Depends on Phase 1 — blocks all user stories
 - **Phase 3 (US1)**: Depends on Phase 2 — MVP deliverable
 - **Phase 4 (US2)**: Depends on Phase 2 — can run after Phase 2, independent of Phase 3
-- **Phase 5 (US3)**: Depends on Phase 3 (reuses managed-download logic from T014/T028) — run after Phase 3
+- **Phase 5 (US3)**: Depends on Phase 3 (reuses managed-download logic from T014/T028) — run after Phase 3 (T027a is the Windows impl task in this phase)
 - **Phase 6 (Polish)**: Depends on all story phases complete
 
 ### Parallel Opportunities
