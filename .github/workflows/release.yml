@@ -73,6 +73,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
+          pattern: '{iris-agentic-dev-*,vsix}'
       - name: Write release body
         run: |
           cat > release-body.md << 'EOF'
@@ -138,6 +139,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
+          pattern: 'iris-agentic-dev-*'
       - name: Compute SHA256s
         id: sha
         run: |
