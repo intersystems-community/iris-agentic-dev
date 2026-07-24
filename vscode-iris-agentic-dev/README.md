@@ -94,6 +94,10 @@ platforms, download manually from
 [GitHub Releases](https://github.com/intersystems-community/iris-agentic-dev/releases)
 and set `iris-agentic-dev.serverPath`.
 
+**Windows note:** The binary downloads correctly but is unsigned, so Windows SmartScreen
+may block it from running. If that happens, you may be able to work around it using Docker —
+see [docs/windows-docker.md](https://github.com/intersystems-community/iris-agentic-dev/blob/master/docs/windows-docker.md).
+
 ---
 
 ## Settings

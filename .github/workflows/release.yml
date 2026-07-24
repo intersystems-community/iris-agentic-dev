@@ -77,11 +77,11 @@ jobs:
       - name: Write release body
         run: |
           cat > release-body.md << 'EOF'
-          See [README](https://github.com/intersystems-community/iris-agentic-dev#installation) for installation instructions (binary, Homebrew, VS Code extension).
+          The VS Code extension auto-installs the binary on first activation — no separate install needed. Install from the [Marketplace](https://marketplace.visualstudio.com/items?itemName=intersystems-community.vscode-iris-agentic-dev) and go.
 
-          > The VS Code extension is on the [Marketplace](https://marketplace.visualstudio.com/items?itemName=intersystems-community.vscode-iris-agentic-dev). The `.vsix` in the assets below is a fallback for air-gapped or pinned-version installs.
+          **Windows:** The binary downloads correctly but is unsigned, so SmartScreen may block it from running. If that happens, you may be able to work around it using the Docker image — `ghcr.io/intersystems-community/iris-agentic-dev:${{ github.ref_name }}` — see [docs/windows-docker.md](https://github.com/intersystems-community/iris-agentic-dev/blob/master/docs/windows-docker.md).
 
-          **Docker image** (Windows users without a signed binary): `ghcr.io/intersystems-community/iris-agentic-dev:${{ github.ref_name }}` — see [docs/windows-docker.md](https://github.com/intersystems-community/iris-agentic-dev/blob/master/docs/windows-docker.md) for setup.
+          > The `.vsix` below is a fallback for air-gapped or pinned-version installs. Homebrew and manual binary install still work as before.
           EOF
       - uses: softprops/action-gh-release@v2
         with:
