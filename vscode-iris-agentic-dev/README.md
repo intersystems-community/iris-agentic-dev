@@ -32,24 +32,19 @@ Server Manager) so there's nothing extra to configure.
 
 ## Getting started
 
-### 1. Install the binary
-
-```bash
-# macOS (Homebrew)
-brew install intersystems-community/tap/iris-agentic-dev
-
-# Or download from GitHub Releases
-# https://github.com/intersystems-community/iris-agentic-dev/releases
-```
-
-Place it on your PATH, or set `iris-agentic-dev.serverPath` to the full path.
-
-### 2. Install this extension
+### 1. Install this extension
 
 Search for **iris-agentic-dev** in the VS Code Extensions panel, or install from the
 [Marketplace page](https://marketplace.visualstudio.com/items?itemName=intersystems-community.vscode-iris-agentic-dev).
 
-### 3. Open Copilot Chat in agent mode
+The extension automatically downloads the `iris-agentic-dev` binary on first activation —
+no separate install required. The binary is cached in VS Code's global storage and updated
+automatically when you update the extension.
+
+**Already have the binary?** If `iris-agentic-dev` is on your PATH (e.g. via Homebrew), or you
+have set `iris-agentic-dev.serverPath`, that path takes priority — no download occurs.
+
+### 2. Open Copilot Chat in agent mode
 
 Press `Ctrl+Shift+I` (or `Cmd+Shift+I` on Mac), switch to **Agent** mode, and ask:
 
@@ -90,35 +85,44 @@ Find the InterSystems docs for $ZDateTimeH and show me the format codes.
 ## Requirements
 
 - **VS Code 1.99+** with GitHub Copilot (agent mode)
-- **iris-agentic-dev binary** — [download from GitHub Releases](https://github.com/intersystems-community/iris-agentic-dev/releases) or install via Homebrew
 - **InterSystems ObjectScript extension** with an active server connection
   (`intersystems-community.vscode-objectscript`)
+
+The `iris-agentic-dev` binary is downloaded automatically on first activation. Supported
+platforms: macOS (Apple Silicon and Intel), Linux x64, Windows x64. For unsupported
+platforms, download manually from
+[GitHub Releases](https://github.com/intersystems-community/iris-agentic-dev/releases)
+and set `iris-agentic-dev.serverPath`.
 
 ---
 
 ## Settings
 
-| Setting                          | Default     | Description                                                               |
-| -------------------------------- | ----------- | ------------------------------------------------------------------------- |
-| `iris-agentic-dev.serverPath`    | _(auto)_    | Full path to the iris-agentic-dev binary. Leave empty to use PATH.        |
-| `iris-agentic-dev.containerName` | _(empty)_   | Docker container name for tools that need direct container access.        |
-| `iris-agentic-dev.namespace`     | _(conn ns)_ | Namespace override. Leave empty to use the objectscript.conn namespace.   |
-| `iris-agentic-dev.toolset`       | `baseline`  | `baseline` — standard tools. `merged` — adds interop and container tools. |
-| `iris-agentic-dev.tlsVerify`     | `true`      | Set `false` for self-signed TLS certificates.                             |
-| `iris-agentic-dev.scheme`        | _(auto)_    | Force `http` or `https`. Leave empty to auto-detect.                      |
+| Setting                          | Default     | Description                                                                        |
+| -------------------------------- | ----------- | ---------------------------------------------------------------------------------- |
+| `iris-agentic-dev.serverPath`    | _(auto)_    | Full path to the iris-agentic-dev binary. Leave empty to use PATH or auto-install. |
+| `iris-agentic-dev.containerName` | _(empty)_   | Docker container name for tools that need direct container access.                 |
+| `iris-agentic-dev.namespace`     | _(conn ns)_ | Namespace override. Leave empty to use the objectscript.conn namespace.            |
+| `iris-agentic-dev.toolset`       | `baseline`  | `baseline` — standard tools. `merged` — adds interop and container tools.          |
+| `iris-agentic-dev.tlsVerify`     | `true`      | Set `false` for self-signed TLS certificates.                                      |
+| `iris-agentic-dev.scheme`        | _(auto)_    | Force `http` or `https`. Leave empty to auto-detect.                               |
 
 ---
 
 ## Troubleshooting
 
 **Tools don't appear in Copilot**
-Run `check_config` from a terminal to verify the binary is reachable:
+Check the **iris-agentic-dev** Output channel (View → Output → iris-agentic-dev) for
+download or launch errors. If the auto-install failed (e.g. network error or unsupported
+platform), download manually from
+[GitHub Releases](https://github.com/intersystems-community/iris-agentic-dev/releases)
+and set `iris-agentic-dev.serverPath` in VS Code settings.
+
+You can also verify the binary from a terminal:
 
 ```bash
 iris-agentic-dev tool check_config --args '{}'
 ```
-
-If the binary isn't found, set `iris-agentic-dev.serverPath` in VS Code settings.
 
 **Connection not detected**
 Make sure the ObjectScript extension has an active connection (green status bar icon).
