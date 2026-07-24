@@ -145,3 +145,19 @@ Confirm a fresh download replaces the old binary on next activation.
 - Linux arm64 is out of scope for now — no binary is published for that platform.
 - The extension already manages the MCP server process lifecycle (start/stop/restart); this
   spec covers only binary resolution, not server process management.
+- The extension lives in `vscode-iris-agentic-dev/` within this repository. All changes are
+  made to that directory; no new repo is required.
+
+## Clarifications
+
+### Session 2026-07-24
+
+- Q: How does the extension determine which binary version to download? → A: The extension
+  downloads the binary matching its own `package.json` version — no GitHub API call required
+  at runtime. FR-004 version check compares the cached version marker against
+  `context.extension.packageJSON.version`.
+- Q: When a binary update is needed, should the download be silent or user-prompted? → A:
+  Silent download with a progress notification on activation. No user prompt required. FR-002
+  covers the notification; there is no confirmation step.
+- Q: Does the VS Code extension already exist in this repo? → A: Yes — `vscode-iris-agentic-dev/`
+  in this repository. Implementation targets that directory.
