@@ -1,6 +1,6 @@
 # iris-agentic-dev
 
-MCP server that gives Codex tools for IRIS development — execute ObjectScript,
+MCP server that gives Claude Code tools for IRIS development — execute ObjectScript,
 query globals, inspect productions, run tests, search code, manage skills, and more.
 
 Written in Rust (2021 edition), two crates: `iris-agentic-dev-core` (tools + MCP server)

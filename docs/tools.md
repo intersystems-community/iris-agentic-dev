@@ -102,7 +102,7 @@ write-gated (suppressed on Live instances unless `IRIS_ALLOW_PROD=1`).
 ## Coverage
 
 `iris_coverage` measures which executable lines of your ObjectScript classes were hit
-during a `%UnitTest` test run, powered by `%Monitor.System.LineByLine`.
+during a `%UnitTest` test run, using `%Monitor.System.LineByLine`.
 
 **Requires** `gmheap ≥ 256 MB` — run `mode=check` first to verify. If `BBSIZ_NOT_CONFIGURED`
 is returned, increase `gmheap` in Management Portal → System Administration →
