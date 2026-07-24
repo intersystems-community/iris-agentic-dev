@@ -59,6 +59,10 @@ jobs:
         with:
           node-version: '20'
       - run: cd vscode-iris-agentic-dev && npm ci && npm run package
+      - name: Publish to VS Code Marketplace
+        run: cd vscode-iris-agentic-dev && npx vsce publish --pat "$VSCE_PAT" --no-dependencies
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
       - uses: actions/upload-artifact@v4
         with:
           name: vsix
