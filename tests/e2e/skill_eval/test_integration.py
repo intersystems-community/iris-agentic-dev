@@ -9,7 +9,7 @@ from tests.e2e.skill_eval.evaluator import SkillEvalConfig, SkillResult, compare
 from tests.e2e.skill_eval.baseline import save_baseline, load_baseline
 
 
-MODEL = "amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+MODEL = "openai/gpt-4.1"
 TASKS_SKILLS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "tasks", "skills")
 )

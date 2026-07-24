@@ -8,7 +8,7 @@ def test_tovector_arg_count():
     from tests.e2e.opencode_runner import collect_events
 
     key = os.environ["OPENAI_API_KEY"]
-    model = "amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    model = "openai/gpt-4.1"
     prompt = (
         "Write Python code using iris.dbapi to search a RAG.Documents table "
         "for the 5 nearest neighbors to a 384-dim query vector. "

@@ -25,7 +25,7 @@ def test_debug_ensemble_one_run():
     lift_mod.score_result = patched
 
     key = os.environ["OPENAI_API_KEY"]
-    model = "amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+    model = "openai/gpt-4.1"
     r = lift_mod.run_task_and_score(
         "ENSEMBLE-OBJECTSCRIPT", None, key, model,
         iris_host="localhost", iris_web_port="52780", iris_container="iris-dev-iris",

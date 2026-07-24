@@ -26,7 +26,7 @@ _DEFAULT_RESULTS_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "results")
 )
 _DEFAULT_BASELINE = os.path.join(_DEFAULT_RESULTS_DIR, "skill-baseline.json")
-_DEFAULT_MODEL = "amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0"
+_DEFAULT_MODEL = "openai/gpt-4.1"
 
 
 def _make_uncovered_result(skill_name: str) -> SkillResult:
@@ -184,7 +184,7 @@ def main():
     run = EvalRun(
         run_id=datetime.datetime.utcnow().strftime("%Y-%m-%dT%H%M%S"),
         model=args.model,
-        judge_model="amazon-bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        judge_model="openai/gpt-4.1",
         timestamp=datetime.datetime.utcnow().isoformat() + "Z",
         regression_threshold=args.regression_threshold,
         skills=results,
