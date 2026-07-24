@@ -37,7 +37,7 @@ jobs:
           node-version: '22'
 
       - name: Install opencode
-        run: npm install -g opencode
+        run: npm install -g opencode-ai
 
       - name: Install Python dependencies
         run: |
