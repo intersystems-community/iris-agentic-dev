@@ -88,6 +88,91 @@ pub fn check_objectscript_code_edit(code: &str, server_name: &str) -> Option<ser
     None
 }
 
+/// Gate: block UDL class source that uses compile-time code execution keywords.
+///
+/// `CodeMode = objectgenerator` / `expression` / `call` cause IRIS to run arbitrary code
+/// at compile time, bypassing runtime privilege restrictions (e.g. a read-only service
+/// account). This gate fires on the **assembled document content** (not individual edits),
+/// so multi-call assembly tricks (split across insert_lines calls) are irrelevant — the
+/// full content is always scanned before it reaches IRIS.
+///
+/// Only `.cls` documents are scanned; routines (`.mac`/`.inc`) don't support CodeMode.
+///
+/// Returns `Some(error_json)` when blocked, `None` when safe.
+pub fn check_compile_time_code_mode(
+    content: &str,
+    doc_name: &str,
+) -> Option<serde_json::Value> {
+    // Only applies to class definitions.
+    if !doc_name.to_lowercase().ends_with(".cls") {
+        return None;
+    }
+
+    // Normalize: strip spaces/tabs within square-bracket annotations so that
+    // `[ CodeMode = objectgenerator ]` and `[CodeMode=objectgenerator]` both match.
+    // We don't strip ALL whitespace (unlike the execute gate) because class source
+    // is line-oriented — we just need to normalize within `[...]` annotation blocks.
+    //
+    // Strategy: scan for `CODEMODE` followed (ignoring whitespace and `=`) by one of
+    // the dangerous values. This catches all UDL forms:
+    //   Method Foo() [ CodeMode = objectgenerator ]
+    //   Method Foo() [CodeMode=objectgenerator]
+    //   Method Foo() [ CodeMode = objectgenerator, ...]
+    // The keyword MUST appear literally in UDL — there's no way to construct it
+    // dynamically because UDL is declarative text, not executable code.
+
+    let upper: String = content.to_uppercase();
+
+    // Find all occurrences of CODEMODE in the uppercased content.
+    let mut search = 0;
+    while let Some(pos) = upper[search..].find("CODEMODE") {
+        let after_keyword = search + pos + "CODEMODE".len();
+        // Skip whitespace and `=` after CODEMODE
+        let rest = &upper[after_keyword..];
+        let trimmed = rest.trim_start();
+        let trimmed = if trimmed.starts_with('=') {
+            trimmed[1..].trim_start()
+        } else {
+            search = after_keyword;
+            continue;
+        };
+
+        // Check if the value is one of the dangerous modes.
+        const DANGEROUS_MODES: &[&str] = &["OBJECTGENERATOR", "EXPRESSION", "CALL"];
+        for mode in DANGEROUS_MODES {
+            if trimmed.starts_with(mode) {
+                // Verify it's a whole token (followed by non-alphanumeric or EOF)
+                let after_mode = &trimmed[mode.len()..];
+                if after_mode.is_empty()
+                    || !after_mode.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+                {
+                    return Some(serde_json::json!({
+                        "error_code": "COMPILE_TIME_EXEC_BLOCKED",
+                        "code_edit_blocked": true,
+                        "document": doc_name,
+                        "matched": format!("CodeMode = {}", mode.to_lowercase()),
+                        "message": format!(
+                            "Document '{}' contains a compile-time code execution keyword \
+                             (CodeMode = {}). This allows arbitrary code to run during \
+                             compilation, bypassing runtime privilege restrictions. \
+                             Only CodeMode = code (the default) is permitted.",
+                            doc_name, mode.to_lowercase()
+                        ),
+                        "remediation": "Remove the CodeMode keyword or use CodeMode = code \
+                                        (which is the default and can simply be omitted). \
+                                        If you need generator logic, implement it as a \
+                                        regular ClassMethod that is called explicitly.",
+                    }));
+                }
+            }
+        }
+
+        search = after_keyword;
+    }
+
+    None
+}
+
 /// Gate: block write-mode SQL that edits the code dictionary.
 ///
 /// Only meaningful for `iris_query` mode="write" (DML); read/SELECT introspection against
@@ -321,5 +406,105 @@ mod tests {
         assert_eq!(e["error_code"], "CODE_EDIT_BLOCKED");
         assert_eq!(e["code_edit_blocked"], true);
         assert!(e["remediation"].as_str().unwrap().contains("iris_document"));
+    }
+
+    // ── Compile-time code mode gate ──────────────────────────────────────────
+
+    #[test]
+    fn blocks_objectgenerator() {
+        let cls = r#"Class My.Evil {
+Method Hack() [ CodeMode = objectgenerator ]
+{
+  do ##class(%Dictionary.MethodDefinition).stuff()
+}
+}"#;
+        let r = check_compile_time_code_mode(cls, "My.Evil.cls");
+        assert!(r.is_some());
+        assert_eq!(r.unwrap()["error_code"], "COMPILE_TIME_EXEC_BLOCKED");
+    }
+
+    #[test]
+    fn blocks_expression_mode() {
+        let cls = "Class My.Trick {\nMethod X() As %String [ CodeMode = expression ]\n{\n1+1\n}\n}";
+        assert!(check_compile_time_code_mode(cls, "My.Trick.cls").is_some());
+    }
+
+    #[test]
+    fn blocks_call_mode() {
+        let cls = "Class My.Trick {\nMethod X() [ CodeMode = call ]\n{\nSomeRoutine\n}\n}";
+        assert!(check_compile_time_code_mode(cls, "My.Trick.cls").is_some());
+    }
+
+    #[test]
+    fn blocks_case_insensitive() {
+        let cls = "Class My.X {\nMethod G() [ codemode = OBJECTGENERATOR ]\n{\n}\n}";
+        assert!(check_compile_time_code_mode(cls, "My.X.cls").is_some());
+    }
+
+    #[test]
+    fn blocks_no_spaces_around_equals() {
+        let cls = "Class My.X {\nMethod G() [CodeMode=objectgenerator]\n{\n}\n}";
+        assert!(check_compile_time_code_mode(cls, "My.X.cls").is_some());
+    }
+
+    #[test]
+    fn blocks_extra_spaces() {
+        let cls = "Class My.X {\nMethod G() [ CodeMode   =   objectgenerator , Final ]\n{\n}\n}";
+        assert!(check_compile_time_code_mode(cls, "My.X.cls").is_some());
+    }
+
+    #[test]
+    fn allows_normal_class() {
+        let cls = "Class My.Normal {\nMethod Hello() As %String\n{\n  Quit \"hi\"\n}\n}";
+        assert!(check_compile_time_code_mode(cls, "My.Normal.cls").is_none());
+    }
+
+    #[test]
+    fn allows_codemode_code_explicit() {
+        let cls = "Class My.X {\nMethod G() [ CodeMode = code ]\n{\n  Write 1\n}\n}";
+        assert!(check_compile_time_code_mode(cls, "My.X.cls").is_none());
+    }
+
+    #[test]
+    fn skips_non_cls_documents() {
+        let content = "CodeMode = objectgenerator";
+        assert!(check_compile_time_code_mode(content, "My.Routine.mac").is_none());
+        assert!(check_compile_time_code_mode(content, "include.inc").is_none());
+    }
+
+    #[test]
+    fn does_not_false_positive_on_codemode_in_comment() {
+        // A comment mentioning "CodeMode" without `= objectgenerator` following it
+        let cls = "Class My.X {\n/// This uses CodeMode but is safe\nMethod G()\n{\n}\n}";
+        assert!(check_compile_time_code_mode(cls, "My.X.cls").is_none());
+    }
+
+    #[test]
+    fn does_not_match_partial_word() {
+        // "OBJECTGENERATORS" (with trailing S) should not match
+        let cls = "Class My.X {\n/// CodeMode = objectgenerators is not a thing\nMethod G()\n{\n}\n}";
+        assert!(check_compile_time_code_mode(cls, "My.X.cls").is_none());
+    }
+
+    #[test]
+    fn blocks_assembled_from_inserts() {
+        // Simulates what the agent might achieve across multiple insert_lines calls:
+        // the final assembled content has the full keyword.
+        let cls = "Class My.Sneaky {\nMethod Pwn() [ CodeMode = objectgenerator ]\n{\n  do badstuff\n}\n}";
+        assert!(check_compile_time_code_mode(cls, "My.Sneaky.cls").is_some());
+    }
+
+    #[test]
+    fn blocks_keyword_split_across_lines() {
+        // Agent inserts "CodeMode =" on one line and "objectgenerator" on the next.
+        // trim_start() handles the newline.
+        let cls = "Class My.X {\nMethod G() [ CodeMode =\nobjectgenerator ]\n{\n}\n}";
+        assert!(check_compile_time_code_mode(cls, "My.X.cls").is_some());
+    }
+
+    #[test]
+    fn blocks_keyword_with_tabs_and_newlines() {
+        let cls = "Class My.X {\nMethod G() [ CodeMode\t=\t\n\tobjectgenerator ]\n{\n}\n}";
+        assert!(check_compile_time_code_mode(cls, "My.X.cls").is_some());
     }
 }
