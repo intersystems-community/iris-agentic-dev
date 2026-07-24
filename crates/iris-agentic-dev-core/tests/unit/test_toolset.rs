@@ -30,6 +30,7 @@ fn test_toolset_from_str_merged() {
 /// iris_symbols_local is now a real tool (025-symbols-local-ts) — must be present in nostub.
 #[test]
 fn test_nostub_excludes_iris_symbols_local() {
+    let _lock = ENV_LOCK.lock().unwrap();
     let tools = IrisTools::new_with_toolset(None, Toolset::Nostub).expect("IrisTools::new");
     let names = tools.registered_tool_names();
     assert!(
@@ -45,6 +46,7 @@ fn test_nostub_excludes_iris_symbols_local() {
 /// skill tool must not expose propose/optimize/share actions in nostub (FR-005).
 #[test]
 fn test_nostub_skill_excludes_stub_actions() {
+    let _lock = ENV_LOCK.lock().unwrap();
     let tools = IrisTools::new_with_toolset(None, Toolset::Nostub).expect("IrisTools::new");
     let names = tools.registered_tool_names();
     for stub_action in &["skill_propose", "skill_optimize", "skill_share"] {
@@ -59,6 +61,7 @@ fn test_nostub_skill_excludes_stub_actions() {
 /// skill_community must not expose install action in nostub (FR-006).
 #[test]
 fn test_nostub_skill_community_excludes_install() {
+    let _lock = ENV_LOCK.lock().unwrap();
     let tools = IrisTools::new_with_toolset(None, Toolset::Nostub).expect("IrisTools::new");
     let names = tools.registered_tool_names();
     assert!(
@@ -70,6 +73,7 @@ fn test_nostub_skill_community_excludes_install() {
 /// Nostub must preserve all non-stub tools (not accidentally remove real ones).
 #[test]
 fn test_nostub_preserves_core_tools() {
+    let _lock = ENV_LOCK.lock().unwrap();
     let tools = IrisTools::new_with_toolset(None, Toolset::Nostub).expect("IrisTools::new");
     let names = tools.registered_tool_names();
     for required in &[
@@ -95,6 +99,7 @@ fn test_nostub_preserves_core_tools() {
 /// iris_symbols_local is no longer a stub (025-symbols-local-ts).
 #[test]
 fn test_nostub_tool_count() {
+    let _lock = ENV_LOCK.lock().unwrap();
     let baseline = IrisTools::new_with_toolset(None, Toolset::Baseline)
         .expect("baseline IrisTools")
         .registered_tool_names()
@@ -117,6 +122,7 @@ fn test_nostub_tool_count() {
 /// iris_debug must be registered in merged toolset (FR-007).
 #[test]
 fn test_merged_registers_iris_debug() {
+    let _lock = ENV_LOCK.lock().unwrap();
     let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
     let names = tools.registered_tool_names();
     assert!(
@@ -132,6 +138,7 @@ fn test_merged_registers_iris_debug() {
 /// iris_production must be registered in merged toolset (FR-008).
 #[test]
 fn test_merged_registers_iris_production() {
+    let _lock = ENV_LOCK.lock().unwrap();
     let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
     let names = tools.registered_tool_names();
     assert!(
@@ -143,6 +150,7 @@ fn test_merged_registers_iris_production() {
 /// iris_interop_query must be registered in merged toolset (FR-009).
 #[test]
 fn test_merged_registers_iris_interop_query() {
+    let _lock = ENV_LOCK.lock().unwrap();
     let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
     let names = tools.registered_tool_names();
     assert!(
@@ -154,6 +162,7 @@ fn test_merged_registers_iris_interop_query() {
 /// iris_containers must be registered in merged toolset (FR-010).
 #[test]
 fn test_merged_registers_iris_containers() {
+    let _lock = ENV_LOCK.lock().unwrap();
     let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
     let names = tools.registered_tool_names();
     assert!(
@@ -165,6 +174,7 @@ fn test_merged_registers_iris_containers() {
 /// agent_info must NOT be registered in merged toolset (FR-011).
 #[test]
 fn test_merged_excludes_agent_info() {
+    let _lock = ENV_LOCK.lock().unwrap();
     let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
     let names = tools.registered_tool_names();
     assert!(
@@ -176,6 +186,7 @@ fn test_merged_excludes_agent_info() {
 /// Merged must exclude all original debug tools (replaced by iris_debug).
 #[test]
 fn test_merged_excludes_original_debug_tools() {
+    let _lock = ENV_LOCK.lock().unwrap();
     let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
     let names = tools.registered_tool_names();
     for replaced in &[
@@ -195,6 +206,7 @@ fn test_merged_excludes_original_debug_tools() {
 /// Merged must exclude all original interop production tools (replaced by iris_production).
 #[test]
 fn test_merged_excludes_original_interop_production_tools() {
+    let _lock = ENV_LOCK.lock().unwrap();
     let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
     let names = tools.registered_tool_names();
     for replaced in &[
@@ -217,6 +229,7 @@ fn test_merged_excludes_original_interop_production_tools() {
 /// + iris_coverage from 064, + iris_doc_search from 065).
 #[test]
 fn test_merged_tool_count_is_23() {
+    let _lock = ENV_LOCK.lock().unwrap();
     let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
     let count = tools.registered_tool_names().len();
     assert_eq!(
@@ -241,6 +254,7 @@ fn test_merged_tool_count_is_23() {
 /// iris_get_log must NOT be registered in Baseline or Nostub (027-progressive-disclosure).
 #[test]
 fn test_iris_get_log_absent_from_baseline_and_nostub() {
+    let _lock = ENV_LOCK.lock().unwrap();
     let baseline = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
     assert!(
         !baseline.registered_tool_names().contains("iris_get_log"),

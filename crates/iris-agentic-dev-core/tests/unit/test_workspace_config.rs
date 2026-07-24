@@ -78,8 +78,7 @@ fn test_load_uses_cwd_when_workspace_none() {
 
 #[test]
 fn test_workspace_root_uses_env_var() {
-    // Note: env var tests can be flaky if run in parallel; use a unique key.
-    // We only test the logic — the env var takes precedence over the path arg.
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let tmp = tempfile::TempDir::new().unwrap();
     let tmp_str = tmp.path().to_str().unwrap().to_string();
     std::env::set_var("OBJECTSCRIPT_WORKSPACE", &tmp_str);
@@ -94,6 +93,7 @@ fn test_workspace_root_uses_env_var() {
 
 #[test]
 fn test_workspace_root_uses_path_when_no_env_var() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
     let root = workspace_root(Some("/explicit/path"));
     assert_eq!(root.to_str().unwrap(), "/explicit/path");
@@ -131,7 +131,7 @@ fn test_workspace_config_host_returns_connection() {
 
 #[test]
 fn test_workspace_config_namespace_applied() {
-    // Container config sets IRIS_NAMESPACE env var
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     std::env::remove_var("IRIS_NAMESPACE");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         container: Some("mytest-iris".to_string()),
@@ -311,6 +311,7 @@ fn test_web_prefix_strips_leading_trailing_slashes() {
 
 #[test]
 fn test_no_web_prefix_gives_clean_base_url() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     std::env::remove_var("IRIS_WEB_PREFIX");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("localhost".to_string()),
@@ -328,6 +329,7 @@ fn test_no_web_prefix_gives_clean_base_url() {
 
 #[test]
 fn test_iris_web_prefix_env_var_used_when_no_toml_prefix() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     std::env::set_var("IRIS_WEB_PREFIX", "myprefix");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("localhost".to_string()),
@@ -346,6 +348,7 @@ fn test_iris_web_prefix_env_var_used_when_no_toml_prefix() {
 
 #[test]
 fn test_toml_web_prefix_overrides_env_var() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     std::env::set_var("IRIS_WEB_PREFIX", "envprefix");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("localhost".to_string()),
@@ -1076,6 +1079,7 @@ fn test_generate_develop_toml_content_has_no_mode_field() {
 // workspace_root walk-up: called with "." triggers cwd walk-up path
 #[test]
 fn test_workspace_root_dot_path_falls_through_to_walkup() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
     // "." triggers the walk-up branch — just verify it returns a valid path without panic
     let root = workspace_root(Some("."));
@@ -1088,6 +1092,7 @@ fn test_workspace_root_dot_path_falls_through_to_walkup() {
 // workspace_root: None workspace_path also triggers walk-up
 #[test]
 fn test_workspace_root_none_triggers_walkup() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
     let root = workspace_root(None);
     assert!(

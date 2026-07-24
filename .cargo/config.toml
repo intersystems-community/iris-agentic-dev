@@ -1,4 +1,4 @@
 [test]
-# Run tests sequentially by default to avoid port conflicts during IRIS discovery
-# Override: cargo test -- --test-threads=4
+# Sequential tests — avoids env-var races across test binaries and port conflicts.
+# Override with: cargo test -j4 -- --test-threads=4
 test-threads = 1

@@ -37,12 +37,11 @@ jobs:
       #
       # --test-threads=1: several test files mutate process-global env vars (e.g.
       # IRIS_WEB_PREFIX) under their own in-file mutex, which only serializes tests
-      # within that one binary — cargo runs each test binary as a separate process, but
-      # --workspace --all-targets can still schedule multiple *binaries* concurrently,
-      # and process env vars are inherited, not isolated, so two binaries' tests can
-      # race on the same var. Verified: flakes under default parallelism, 100% stable
-      # at --test-threads=1 (whole run: ~20s, negligible cost for correctness here).
-      - run: cargo test --workspace --all-targets --features testing --no-fail-fast -- --test-threads=1
+      # -j1 runs test binaries sequentially (cargo-level); --test-threads=1 runs tests
+      # within each binary sequentially. Both are needed: cargo spawns each binary as a
+      # separate OS process, and process env vars are inherited/shared, so concurrent
+      # binaries race on the same vars. -j1 is the only reliable cross-binary guard.
+      - run: cargo test -j1 --workspace --all-targets --features testing --no-fail-fast -- --test-threads=1
         env:
           RUST_LOG: warn
           RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
@@ -279,7 +278,7 @@ jobs:
           curl -s -u "$USER:$PASS" "http://$HOST:52773/api/atelier/" | head -c 500
       - name: Run full test suite against live IRIS (Rust)
         run: |
-          cargo test --workspace --all-targets --features testing --no-fail-fast -- \
+          cargo test -j1 --workspace --all-targets --features testing --no-fail-fast -- \
             --include-ignored --nocapture --test-threads=1 \
             --skip discover_iris_reads_env_vars \
             --skip discover_iris_returns_none_when_nothing_found \
