@@ -9706,6 +9706,7 @@ async fn test_config_hot_reload_on_change() {
         registry,
         iris_agentic_dev_core::tools::Toolset::Merged,
         Some(watcher),
+        None,
     )
     .expect("IrisTools created");
 
@@ -17690,6 +17691,7 @@ allow = ["query"]
         iris_agentic_dev_core::skills::SkillRegistry::new(),
         Toolset::Merged,
         Some(watcher),
+        None,
     )
     .expect("IrisTools::with_registry_and_toolset")
 }

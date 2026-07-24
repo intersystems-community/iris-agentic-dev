@@ -119,11 +119,14 @@ impl McpCommand {
                 ws_root.display()
             );
         }
-        let explicit = iris_agentic_dev_core::iris::workspace_config::apply_workspace_config(
-            explicit,
-            Some(&self.workspace),
-            &self.namespace,
-        );
+        // apply_workspace_config_with_path returns the loaded config path so we can record it
+        // in ConnectionState at startup (not just after hot-reload). Fixes issue #82.
+        let (explicit, startup_config_path) =
+            iris_agentic_dev_core::iris::workspace_config::apply_workspace_config_with_path(
+                explicit,
+                Some(&self.workspace),
+                &self.namespace,
+            );
 
         tokio::spawn(async move {
             let conn = match discover_iris(explicit).await {
@@ -192,7 +195,13 @@ impl McpCommand {
             ws_root
         };
         let config_watcher = ConfigWatcher::new(config_root.join(".iris-agentic-dev.toml"));
-        let tools = IrisTools::with_registry_and_toolset(iris, registry, toolset, config_watcher)?;
+        let tools = IrisTools::with_registry_and_toolset(
+            iris,
+            registry,
+            toolset,
+            config_watcher,
+            startup_config_path,
+        )?;
 
         // FR-007: periodically sweep expired elicitation entries.
         {

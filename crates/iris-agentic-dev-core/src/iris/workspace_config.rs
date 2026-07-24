@@ -300,6 +300,67 @@ pub fn load_workspace_config(workspace_path: Option<&str>) -> Option<WorkspaceCo
     }
 }
 
+/// Like [`load_workspace_config`] but also returns the path of the file that was loaded.
+pub fn load_workspace_config_with_path(
+    workspace_path: Option<&str>,
+) -> Option<(WorkspaceConfig, std::path::PathBuf)> {
+    let root = workspace_root(workspace_path);
+    let config_path = if root.join(".iris-agentic-dev.toml").exists() {
+        root.join(".iris-agentic-dev.toml")
+    } else if root.join(".iris-dev.toml").exists() {
+        tracing::debug!(
+            "Using legacy .iris-dev.toml (consider renaming to .iris-agentic-dev.toml)"
+        );
+        root.join(".iris-dev.toml")
+    } else {
+        return None;
+    };
+
+    match std::fs::read_to_string(&config_path) {
+        Err(e) => {
+            tracing::warn!(
+                "Could not read .iris-agentic-dev.toml at {}: {}",
+                config_path.display(),
+                e
+            );
+            None
+        }
+        Ok(contents) => match toml::from_str::<WorkspaceConfig>(&contents) {
+            Ok(cfg) => {
+                tracing::debug!(
+                    "Loaded .iris-agentic-dev.toml from {}",
+                    config_path.display()
+                );
+                Some((cfg, config_path))
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Could not parse .iris-agentic-dev.toml at {}: {}",
+                    config_path.display(),
+                    e
+                );
+                None
+            }
+        },
+    }
+}
+
+/// Like [`apply_workspace_config`] but also returns the path of the config file that was loaded,
+/// so callers can record it in [`ConnectionState`] at startup (not just after hot-reload).
+pub fn apply_workspace_config_with_path(
+    explicit: Option<IrisConnection>,
+    workspace_path: Option<&str>,
+    namespace: &str,
+) -> (Option<IrisConnection>, Option<std::path::PathBuf>) {
+    if explicit.is_some() {
+        return (explicit, None);
+    }
+    match load_workspace_config_with_path(workspace_path) {
+        Some((cfg, path)) => (workspace_config_to_connection(&cfg, namespace), Some(path)),
+        None => (None, None),
+    }
+}
+
 /// Load `.iris-agentic-dev.toml` as a `FleetConfig` (Amendment 001).
 /// Returns `None` if the file does not exist or fails to parse (with a warning).
 pub fn load_fleet_config(workspace_path: Option<&str>) -> Option<FleetConfig> {
@@ -1069,6 +1130,45 @@ mod tests {
     }
 
     // ── generate_toml_content tests ──────────────────────────────────────────
+
+    #[test]
+    fn apply_workspace_config_with_path_returns_path() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
+        use std::io::Write;
+        writeln!(f, "host = \"path-host\"\nweb_port = 52773").unwrap();
+        std::env::set_var("OBJECTSCRIPT_WORKSPACE", dir.path().to_str().unwrap());
+        let (conn, path) = apply_workspace_config_with_path(None, None, "USER");
+        std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+        assert!(conn.is_some(), "should build connection from config");
+        assert!(conn.unwrap().base_url.contains("path-host"));
+        let path = path.expect("should return config path");
+        assert!(
+            path.ends_with(".iris-agentic-dev.toml"),
+            "returned path should point at the config file"
+        );
+    }
+
+    #[test]
+    fn apply_workspace_config_with_path_returns_none_path_when_explicit() {
+        use crate::iris::connection::DiscoverySource;
+        let explicit = IrisConnection::new(
+            "http://explicit:52773",
+            "EXPLICIT",
+            "_SYSTEM",
+            "SYS",
+            DiscoverySource::EnvVar,
+        );
+        let (conn, path) = apply_workspace_config_with_path(Some(explicit.clone()), None, "USER");
+        assert!(conn.is_some());
+        assert_eq!(conn.unwrap().base_url, explicit.base_url);
+        assert!(
+            path.is_none(),
+            "explicit connection should not return a config path"
+        );
+    }
 
     #[test]
     fn toml_template_native_section_before_container() {

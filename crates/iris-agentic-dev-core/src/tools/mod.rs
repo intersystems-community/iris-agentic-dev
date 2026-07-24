@@ -2034,7 +2034,13 @@ impl IrisTools {
         iris: Option<IrisConnection>,
         toolset: Toolset,
     ) -> anyhow::Result<Self> {
-        Self::with_registry_and_toolset(iris, crate::skills::SkillRegistry::new(), toolset, None)
+        Self::with_registry_and_toolset(
+            iris,
+            crate::skills::SkillRegistry::new(),
+            toolset,
+            None,
+            None,
+        )
     }
 
     /// Returns the set of tool names registered for the current toolset.
@@ -2185,13 +2191,14 @@ impl IrisTools {
         iris: Option<IrisConnection>,
         registry: crate::skills::SkillRegistry,
     ) -> anyhow::Result<Self> {
-        Self::with_registry_and_toolset(iris, registry, Toolset::Baseline, None)
+        Self::with_registry_and_toolset(iris, registry, Toolset::Baseline, None, None)
     }
     pub fn with_registry_and_toolset(
         iris: Option<IrisConnection>,
         registry: crate::skills::SkillRegistry,
         toolset: Toolset,
         config_watcher: Option<ConfigWatcher>,
+        config_path: Option<std::path::PathBuf>,
     ) -> anyhow::Result<Self> {
         let client = Arc::new(IrisConnection::http_client()?);
         let exec_client = Arc::new(IrisConnection::http_client()?);
@@ -2290,7 +2297,15 @@ impl IrisTools {
                         router.remove_route(name);
                     }
                 }
-                ConnectionState::from_iris(c, ConnectionSource::AutoDiscovered, None)
+                // Use ConfigFile source (and record the path) when the connection came from
+                // a .iris-agentic-dev.toml — so check_config can show config_file at startup,
+                // not just after the first hot-reload cycle (issue #82).
+                let (source, file) = if config_path.is_some() {
+                    (ConnectionSource::ConfigFile, config_path)
+                } else {
+                    (ConnectionSource::AutoDiscovered, None)
+                };
+                ConnectionState::from_iris(c, source, file)
             }
             None => ConnectionState::new_disconnected(ConnectionSource::EnvVars),
         };
@@ -6764,7 +6779,8 @@ mod tests {
     fn toolset_nostub_removes_stub_tools() {
         // Line 1551-1558: Nostub/Merged removes skill_propose etc from router
         let registry = crate::skills::SkillRegistry::default();
-        let result = IrisTools::with_registry_and_toolset(None, registry, Toolset::Nostub, None);
+        let result =
+            IrisTools::with_registry_and_toolset(None, registry, Toolset::Nostub, None, None);
         assert!(result.is_ok());
     }
 
