@@ -21,6 +21,14 @@ pub struct ConnectionArgs {
     #[arg(long, env = "IRIS_WEB_PORT", default_value = "52773")]
     pub web_port: u16,
 
+    /// URL path prefix for IIS-fronted instances (e.g. healthshareucr)
+    #[arg(long, env = "IRIS_WEB_PREFIX", default_value = "")]
+    pub web_prefix: String,
+
+    /// URL scheme: http or https
+    #[arg(long, env = "IRIS_SCHEME", default_value = "http")]
+    pub scheme: String,
+
     /// IRIS namespace
     #[arg(long, short = 'n', env = "IRIS_NAMESPACE", default_value = "USER")]
     pub namespace: String,
@@ -44,7 +52,13 @@ impl ConnectionArgs {
     /// Exits the process (printing to stderr) on connection failure.
     pub async fn resolve(self) -> anyhow::Result<IrisConnection> {
         let explicit = self.host.as_ref().map(|host| {
-            let base_url = format!("http://{}:{}", host, self.web_port);
+            let scheme = self.scheme.trim_matches('/');
+            let prefix = self.web_prefix.trim_matches('/');
+            let base_url = if prefix.is_empty() {
+                format!("{}://{}:{}", scheme, host, self.web_port)
+            } else {
+                format!("{}://{}:{}/{}", scheme, host, self.web_port, prefix)
+            };
             let username = self.username.as_deref().unwrap_or("_SYSTEM");
             let password = self.password.as_deref().unwrap_or("SYS");
             IrisConnection::new(
@@ -71,5 +85,88 @@ impl ConnectionArgs {
                 std::process::exit(1);
             }
         }
+    }
+
+    /// Build the explicit base_url without running discovery (for testing).
+    #[cfg(test)]
+    fn explicit_base_url(&self) -> Option<String> {
+        self.host.as_ref().map(|host| {
+            let scheme = self.scheme.trim_matches('/');
+            let prefix = self.web_prefix.trim_matches('/');
+            if prefix.is_empty() {
+                format!("{}://{}:{}", scheme, host, self.web_port)
+            } else {
+                format!("{}://{}:{}/{}", scheme, host, self.web_port, prefix)
+            }
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(host: &str, port: u16, scheme: &str, prefix: &str) -> ConnectionArgs {
+        ConnectionArgs {
+            host: Some(host.to_string()),
+            web_port: port,
+            web_prefix: prefix.to_string(),
+            scheme: scheme.to_string(),
+            namespace: "USER".to_string(),
+            username: None,
+            password: None,
+            container: None,
+        }
+    }
+
+    #[test]
+    fn no_prefix_builds_plain_url() {
+        let a = args("myhost", 52773, "http", "");
+        assert_eq!(
+            a.explicit_base_url(),
+            Some("http://myhost:52773".to_string())
+        );
+    }
+
+    #[test]
+    fn prefix_appended_to_url() {
+        let a = args("myhost", 80, "http", "healthshareucr");
+        assert_eq!(
+            a.explicit_base_url(),
+            Some("http://myhost:80/healthshareucr".to_string())
+        );
+    }
+
+    #[test]
+    fn prefix_with_slashes_stripped() {
+        let a = args("myhost", 80, "http", "/healthshareucr/");
+        assert_eq!(
+            a.explicit_base_url(),
+            Some("http://myhost:80/healthshareucr".to_string())
+        );
+    }
+
+    #[test]
+    fn https_scheme_applied() {
+        let a = args("myhost", 443, "https", "");
+        assert_eq!(
+            a.explicit_base_url(),
+            Some("https://myhost:443".to_string())
+        );
+    }
+
+    #[test]
+    fn no_host_returns_none() {
+        let a = ConnectionArgs {
+            host: None,
+            web_port: 52773,
+            web_prefix: String::new(),
+            scheme: "http".to_string(),
+            namespace: "USER".to_string(),
+            username: None,
+            password: None,
+            container: None,
+        };
+        assert_eq!(a.explicit_base_url(), None);
     }
 }

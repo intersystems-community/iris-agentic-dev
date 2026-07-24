@@ -179,7 +179,7 @@ impl IrisConnection {
 
     /// Probe this connection: fetch IRIS version, Atelier API level, and SystemMode.
     pub async fn probe(&mut self) {
-        let client = match Self::http_client() {
+        let client = match Self::probe_client() {
             Ok(c) => c,
             Err(_) => return,
         };
@@ -607,6 +607,25 @@ impl IrisConnection {
 
     /// Build a reqwest Client suitable for Atelier REST calls.
     /// TLS certificate validation is enabled by default; set `IRIS_INSECURE=true` to disable.
+    /// Short-timeout client used only for the startup probe — fail fast rather than hanging.
+    pub fn probe_client() -> anyhow::Result<reqwest::Client> {
+        let insecure = std::env::var("IRIS_INSECURE")
+            .ok()
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or_else(|| {
+                std::env::var("IRIS_TLS_VERIFY")
+                    .map(|v| v == "false" || v == "0")
+                    .unwrap_or(false)
+            });
+        Ok(reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(10))
+            .danger_accept_invalid_certs(insecure)
+            .cookie_store(true)
+            .tcp_keepalive(std::time::Duration::from_secs(20))
+            .build()?)
+    }
+
     pub fn http_client() -> anyhow::Result<reqwest::Client> {
         // IRIS_INSECURE=true or IRIS_TLS_VERIFY=false both disable TLS cert validation.
         let insecure = std::env::var("IRIS_INSECURE")
