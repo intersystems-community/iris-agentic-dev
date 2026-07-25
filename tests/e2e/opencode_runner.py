@@ -1,9 +1,11 @@
 """OpenCode subprocess runner and event stream parser."""
+import contextlib
 import json
 import os
 import signal
 import sqlite3
 import subprocess
+import tempfile
 import threading
 from typing import Generator
 
@@ -50,6 +52,23 @@ def parse_events_from_lines(lines: list[str]) -> Generator[dict, None, None]:
             continue
 
 
+@contextlib.contextmanager
+def _sandbox_dir(working_dir: str | None) -> Generator[str, None, None]:
+    """Yield the cwd to run the agent in, never the caller's cwd.
+
+    The agent runs with --dangerously-skip-permissions, so its cwd is a
+    directory it can rewrite at will. Inheriting os.getcwd() pointed that at
+    the repo checkout, which let a fire-rate run edit the very benchmark
+    fixture it was about to be scored on. Callers that need to read files the
+    agent wrote pass an explicit working_dir; everyone else gets a throwaway.
+    """
+    if working_dir is not None:
+        yield working_dir
+        return
+    with tempfile.TemporaryDirectory(prefix="opencode-scratch-") as scratch:
+        yield scratch
+
+
 def run_opencode(
     prompt: str,
     env_vars: dict,
@@ -70,42 +89,43 @@ def run_opencode(
         "--model", model,
         "--dangerously-skip-permissions",
     ]
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-        env=env,
-        cwd=working_dir or os.getcwd(),
-    )
-
-    # Kill the process after timeout regardless
-    timer = threading.Timer(timeout, lambda: proc.kill())
-    timer.start()
-
     collected: list[dict] = []
-    try:
-        for line in proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                event = json.loads(line)
-                collected.append(event)
-                # Stop reading once the session reports idle — opencode has finished
-                if (event.get("type") == "session.status"
-                        and event.get("properties", {}).get("status", {}).get("type") == "idle"):
-                    break
-                # Also stop on step_finish with no more steps pending (heuristic)
-            except json.JSONDecodeError:
-                continue
-    finally:
-        timer.cancel()
+    with _sandbox_dir(working_dir) as cwd:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            env=env,
+            cwd=cwd,
+        )
+
+        # Kill the process after timeout regardless
+        timer = threading.Timer(timeout, lambda: proc.kill())
+        timer.start()
+
         try:
-            proc.kill()
-            proc.wait(timeout=5)
-        except Exception:
-            pass
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                    collected.append(event)
+                    # Stop reading once the session reports idle — opencode has finished
+                    if (event.get("type") == "session.status"
+                            and event.get("properties", {}).get("status", {}).get("type") == "idle"):
+                        break
+                    # Also stop on step_finish with no more steps pending (heuristic)
+                except json.JSONDecodeError:
+                    continue
+        finally:
+            timer.cancel()
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
 
     yield from collected
 
