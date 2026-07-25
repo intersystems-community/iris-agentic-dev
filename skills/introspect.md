@@ -15,7 +15,7 @@ Works against any IRIS instance with the web server running. No Python, no MCP s
 
 - You are about to call, extend, or modify a class you did not write.
 - You need to know method signatures, parameter names, return types, or property definitions.
-- The class might be private (custom app code, TrakCare, EnsLib, HS*) and not in public docs.
+- The class might be private (custom app code, TrakCare, EnsLib, HS\*) and not in public docs.
 - You see a compile error about a method or property and need to verify the real signature.
 
 ## Step 1 — Fetch the class source
@@ -24,13 +24,15 @@ Works against any IRIS instance with the web server running. No Python, no MCP s
 CLASS="${1:-MyPackage.MyClass}"
 HOST="${IRIS_HOST:-localhost}"
 PORT="${IRIS_WEB_PORT:-52773}"
-USER="${IRIS_USER:-_SYSTEM}"
-PASS="${IRIS_PASS:-SYS}"
-NS="${IRIS_NS:-USER}"
+USER="${IRIS_USERNAME:-_SYSTEM}"
+PASS="${IRIS_PASSWORD:-SYS}"
+NS="${IRIS_NAMESPACE:-USER}"
+PREFIX="${IRIS_WEB_PREFIX:-}"
+BASE_URL="http://${HOST}:${PORT}${PREFIX:+/${PREFIX}}/api/atelier/v1"
 
 curl -s \
   -u "${USER}:${PASS}" \
-  "http://${HOST}:${PORT}/api/atelier/v1/${NS}/doc/${CLASS}.cls" \
+  "${BASE_URL}/${NS}/doc/${CLASS}.cls" \
   | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -45,7 +47,7 @@ print('\n'.join(content))
 or check the class name spelling. IRIS class names are case-sensitive at the filesystem level
 but case-insensitive at runtime — use exact case from the source.
 
-**If you get a 401**: wrong credentials. Check `IRIS_USER` / `IRIS_PASS`.
+**If you get a 401**: wrong credentials. Check `IRIS_USERNAME` / `IRIS_PASSWORD`.
 
 ## Step 2 — Summarize the API for the coding task
 
@@ -63,6 +65,7 @@ Do NOT include the full implementation body in the summary — signatures and ty
 ## Step 3 — Apply what you learned
 
 Before writing code that calls this class:
+
 - Use exact method names (case matters at compile time in some contexts)
 - Pass arguments in the correct order
 - Respect `%Status` return types — check with `$$$ISOK` / `$$$ISERR`
@@ -70,7 +73,7 @@ Before writing code that calls this class:
 
 ## Example output format
 
-```
+```text
 Class: EnsLib.HTTP.OutboundAdapter
 Extends: Ens.OutboundAdapter
 
@@ -103,8 +106,8 @@ Methods:
 ```bash
 for cls in MyPackage.ClassA MyPackage.ClassB Ens.BusinessOperation; do
   echo "=== $cls ==="
-  curl -s -u "${IRIS_USER:-_SYSTEM}:${IRIS_PASS:-SYS}" \
-    "http://${IRIS_HOST:-localhost}:${IRIS_WEB_PORT:-52773}/api/atelier/v1/${IRIS_NS:-USER}/doc/${cls}.cls" \
+  curl -s -u "${IRIS_USERNAME:-_SYSTEM}:${IRIS_PASSWORD:-SYS}" \
+    "${BASE_URL}/${NS}/doc/${cls}.cls" \
     | python3 -c "import json,sys; d=json.load(sys.stdin); print('\n'.join(d.get('result',{}).get('content',[])))"
   echo ""
 done

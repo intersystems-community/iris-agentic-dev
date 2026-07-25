@@ -47,6 +47,22 @@ Load the skill(s) for what you're about to do. You don't need them all — just 
    `ConfigWatcher`). A config edit takes effect the next time any MCP tool is called —
    **no restart, no reconnect needed**. Do not tell the user "restart to apply."
 
+## Start with `check_config` — do not guess
+
+Before writing any config, call `check_config` and read what it reports.
+
+| What you see                                           | What it means                                                |
+| ------------------------------------------------------ | ------------------------------------------------------------ |
+| `connected: true, connection_source: "env_var"`        | Connected via env vars — a config file is optional           |
+| `connected: true, connection_source: "docker"`         | Connected via Docker discovery — a config file is optional   |
+| `connected: true, connection_source: "server_manager"` | VS Code Server Manager is working — no config needed         |
+| `connected: false`                                     | No connection found — you need a config file                 |
+| `config_parse_error` present                           | The existing config has a TOML syntax error — fix that first |
+| `server_manager.available: true`                       | Set `IRIS_SERVER_NAME` instead of writing a manual config    |
+| `atelier_rest: false`                                  | No Atelier REST — use the `docker exec` path (see below)     |
+
+Write the config to the path reported as `config_watch_path`. Hot-reload is automatic.
+
 ## `IRIS_UNREACHABLE` — cause and fix
 
 ```text
@@ -99,6 +115,80 @@ Generate a documented sample: `iris-agentic-dev init`
 
 Same names as CLI flags: `--host` (`IRIS_HOST`), `--web-port` (`IRIS_WEB_PORT`),
 `--namespace`, `--username`, `--password`, `--toolset` (`baseline`/`nostub`/`merged`).
+
+Precedence: config file > env vars > auto-discovery. `OBJECTSCRIPT_WORKSPACE` overrides
+where the config file is looked for (defaults to `$PWD`).
+
+### HTTPS behind an enterprise web gateway
+
+```toml
+host       = "iris.corp.example.com"
+web_port   = 443
+scheme     = "https"
+web_prefix = "irisaicore"
+namespace  = "APP"
+```
+
+Atelier must then be reachable at `https://host:443/irisaicore/api/atelier/`.
+
+### `docker_only` — skip HTTP entirely
+
+```toml
+container   = "my-iris"
+namespace   = "USER"
+docker_only = true
+```
+
+Every tool call goes through `docker exec`; no web port needed. Set this when the
+container has no 52773 mapping, or when the build genuinely has no private web server
+(Enterprise `2026.2.0AI`, DPP-1192). You usually do not need it — iad detects the NoPWS
+case itself and reports `atelier_rest: false`. Community images do have PWS on 52773.
+
+### Fleet / operate mode (multi-instance)
+
+```toml
+mode = "operate"
+
+[instance.prod]
+host      = "prod.example.com"
+web_port  = 52773
+namespace = "PROD"
+username  = "svc"
+password  = "secret"
+role      = "subject"
+
+[instance.dev]
+container = "dev-iris"
+namespace = "DEV"
+role      = "workspace"
+```
+
+Roles: `workspace` (writes allowed), `subject` (read-only by default), `control-plane`.
+
+### Per-connection policy
+
+```toml
+[policy.prod]
+allow = ["query", "search", "docs"]
+```
+
+That blocks `compile`, `execute`, `source_control`, `debug`, `admin`, `skill`, and `kb`
+on the `prod` Server Manager connection. Categories: `compile`, `execute`, `query`,
+`search`, `docs`, `source_control`, `debug`, `admin`, `skill`, `kb`. Omit the
+`[policy.*]` block (or the `allow` key) to permit everything.
+
+### Config troubleshooting
+
+- **`config_parse_error`** — TOML syntax. Usually an unquoted string (`host = iris.com`
+  → `host = "iris.com"`) or a key promoted to a table (`[instance.prod.role]` → put
+  `role = "subject"` inside `[instance.prod]`).
+- **Connected to the wrong instance** — discovery found some other IRIS first. Set
+  `IRIS_CONTAINER`, or write an explicit `host`/`container`.
+- **`credential_status: "not_configured"`** — the credential is not in the OS keychain.
+  VS Code → Server Manager → right-click the server → Reconnect, then re-run
+  `check_config` and expect `credential_status: "resolved"`.
+- **Several Server Manager servers and none selected** — set `IRIS_SERVER_NAME` to the
+  map key from `intersystems.servers`.
 
 ## Atelier REST requirement
 

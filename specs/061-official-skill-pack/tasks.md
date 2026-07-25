@@ -92,7 +92,14 @@
 - [x] T029 [P] [US2] Write/update `skills/skills/iris-vector-graph/SKILL.md` — what it does, how to install (`zpm "install iris-vector-graph"`), key usage pattern; add `managed_by: iris-agentic-dev` frontmatter
 - [x] T030 [P] [US2] Write/update `skills/skills/iris-embedded-python/SKILL.md` — same structure for embedded Python wrapper
 - [x] T031 [P] [US2] Write/update `skills/skills/iris-vector-rag/SKILL.md` — same structure for vector RAG
-- [x] T032 [US2] Sync ecosystem skill files to `mcp-skills/` mirror directory (same SKILL.md content as `skills/skills/` — `mcp-skills/` is the MCP `^SKILLS` mirror; `skills/` is the public pack root)
+- [ ] T032 [US2] ~~Sync ecosystem skill files to `mcp-skills/` mirror directory~~ **ABANDONED.** This was marked
+      done but never happened: 13 of 23 shared skills already differed at the commit that claimed it, and the
+      two trees have since diverged bidirectionally (15 of 21 differ as of 2026-07-25). `mcp-skills/` was a
+      rename artifact from the old flat `skills/` import, not a mirror — it has zero consumers in Rust, CI,
+      Docker, or packaging, and zero commits since 061. The `^SKILLS` mirror it was meant to feed is a stub
+      (`mirror_to_iris` bails with `IRIS_UNREACHABLE: not yet implemented`) and when implemented will mirror
+      from _installed_ skills, not a repo directory. `skills/skills/` is the single authoritative tree.
+      `mcp-skills/` is to be harvested for orphaned content, then deleted.
 - [x] T033 [US2] Run T027 frontmatter validation tests — all ecosystem skills pass
 - [ ] T034 [US2] Run benchmark task T028 A/B (baseline vs skill installed) — record lift in `specs/061-official-skill-pack/lift-results.md`
 

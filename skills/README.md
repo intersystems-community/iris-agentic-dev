@@ -26,23 +26,29 @@ The top-scoring skill on the repair benchmark is **`objectscript-review`** by [T
 
 _Ranked by pass rate on the 22-task ObjectScript repair benchmark. Baseline (no skill) = 73%._
 
-| Rank | Skill                                                            | Author              | Words | Score    | Lift     | Suite                       |
-| ---- | ---------------------------------------------------------------- | ------------------- | ----- | -------- | -------- | --------------------------- |
-| 🥇 1 | **[objectscript-review](skills/objectscript-review/)**           | **Timothy Leavitt** | 205   | **100%** | **+29%** | Repair                      |
-| 🥈 2 | [objectscript-list-patterns](skills/objectscript-list-patterns/) | Tom Dyar            | 472   | 91%      | —        | Repair                      |
-| 🥈 2 | [objectscript-unit-test](skills/objectscript-unit-test/)         | Timothy Leavitt     | 340   | 86%      | —        | Repair                      |
-| 🥈 2 | [objectscript-guardrails](skills/objectscript-guardrails/)       | Tom Dyar            | 268   | 86%      | +14%     | Repair (no MCP)             |
-| 4    | [objectscript-navigation](skills/objectscript-navigation/)       | Timothy Leavitt     | 231   | 82%      | —        | Repair                      |
-| 5    | [objectscript-tdd](skills/objectscript-tdd/)                     | Timothy Leavitt     | 256   | 55%      | —        | Repair                      |
-| —    | [iris-sql](skills/iris-sql/)                                     | Tom Dyar            | 2445  | 100%     | +7%      | **SQL**                     |
-| —    | [iris-light](skills/iris-light/)                                 | Tom Dyar            | 5170  | 21%      | —        | Repair                      |
-| —    | [iris-vector-ai](skills/iris-vector-ai/) ⚡                      | Tom Dyar            | 434   | —        | domain   | **Vector/AI**               |
-| —    | [iris-connectivity](skills/iris-connectivity/) ⚡                | Tom Dyar            | 490   | —        | domain   | **Connectivity**            |
-| —    | [iris-product-features](skills/iris-product-features/) ⚡        | Tom Dyar            | 679   | —        | domain   | **Product caps**            |
-| —    | [iris-agentic-dev](skills/iris-agentic-dev/) ⚡                  | Tom Dyar            | —     | —        | domain   | **MCP config/troubleshoot** |
-| —    | [iris-vector-graph](skills/iris-vector-graph/) ⚡                | Tom Dyar            | —     | —        | domain   | **Vector/graph ecosystem**  |
-| —    | [iris-embedded-python](skills/iris-embedded-python/) ⚡          | Tom Dyar            | —     | —        | domain   | **Embedded Python**         |
-| —    | [iris-vector-rag](skills/iris-vector-rag/) ⚡                    | Tom Dyar            | —     | —        | domain   | **RAG pipeline**            |
+| Rank | Skill                                                             | Author              | Words | Score    | Lift     | Suite                       |
+| ---- | ----------------------------------------------------------------- | ------------------- | ----- | -------- | -------- | --------------------------- |
+| 🥇 1 | **[objectscript-review](skills/objectscript-review/)**            | **Timothy Leavitt** | 205   | **100%** | **+29%** | Repair                      |
+| 🥈 2 | [objectscript-list-patterns](skills/objectscript-list-patterns/)  | Tom Dyar            | 472   | 91%      | —        | Repair                      |
+| 🥈 2 | [objectscript-unit-test](skills/objectscript-unit-test/)          | Timothy Leavitt     | 340   | 86%      | —        | Repair                      |
+| 🥈 2 | [objectscript-guardrails](skills/objectscript-guardrails/)        | Tom Dyar            | 268   | 86%      | +14%     | Repair (no MCP)             |
+| 4    | [objectscript-navigation](skills/objectscript-navigation/)        | Timothy Leavitt     | 231   | 82%      | —        | Repair                      |
+| 5    | [objectscript-tdd](skills/objectscript-tdd/)                      | Timothy Leavitt     | 256   | 55%      | —        | Repair                      |
+| —    | [iris-sql](skills/iris-sql/)                                      | Tom Dyar            | 2445  | 100%     | +7%      | **SQL**                     |
+| —    | iris-light (retired)                                              | Tom Dyar            | 5170  | 21%      | —        | Repair                      |
+| —    | [iris-vector-ai](skills/iris-vector-ai/) ⚡                       | Tom Dyar            | 434   | —        | domain   | **Vector/AI**               |
+| —    | [iris-connectivity](skills/iris-connectivity/) ⚡                 | Tom Dyar            | 490   | —        | domain   | **Connectivity**            |
+| —    | [iris-product-features](skills/iris-product-features/) ⚡         | Tom Dyar            | 679   | —        | domain   | **Product caps**            |
+| —    | [iris-agentic-dev](skills/iris-agentic-dev/) ⚡                   | Tom Dyar            | —     | —        | domain   | **MCP config/troubleshoot** |
+| —    | [iris-embedded-python](skills/iris-embedded-python/) ⚡           | Tom Dyar            | —     | —        | domain   | **Embedded Python**         |
+| —    | [objectscript-mac-routines](skills/objectscript-mac-routines/) ⚡ | Tom Dyar            | —     | —        | domain   | **MAC routines / CHUI**     |
+| —    | [objectscript-fewshot-fixes](skills/objectscript-fewshot-fixes/)  | Tom Dyar            | —     | —        | —        | not on this suite           |
+
+`iris-vector-graph` and `iris-vector-rag` now live in their own repos and are no longer part of
+this pack.
+
+`objectscript-fewshot-fixes` scored 53% on a separate 17-task suite, not the 22-task repair
+benchmark the ranking above uses, so the two numbers are not comparable and it is left unranked.
 
 > **Note**: Negative results matter too. `objectscript-loop-patterns` (572 words) measured **-19% lift** when loaded globally. The ⚡ product knowledge skills (`iris-vector-ai`, `iris-connectivity`, `iris-product-features`) are **load-on-demand** only — they correct specific failure modes when you're working in those domains but hurt if loaded globally. See [BENCHMARKING.md](BENCHMARKING.md).
 

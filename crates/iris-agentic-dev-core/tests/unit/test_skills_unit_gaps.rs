@@ -7,10 +7,18 @@ mod tests {
         skills_namespace, AgentInfoParams, KbParams, SkillCommunityParams, SkillParams,
     };
 
+    /// `OBJECTSCRIPT_SKILLMCP_NAMESPACE` is process-global while `cargo test` runs this
+    /// binary's tests on parallel threads, so concurrent set/remove calls clobber each other.
+    /// Every test below reads the var through `skills_namespace()` and must hold this lock for
+    /// the whole set → read → restore sequence. Poison is recovered so one panicking test does
+    /// not fail every other test in the file.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     // ── skills_namespace() - public function ──────────────────────────────────
 
     #[test]
     fn test_skills_namespace_absent_default() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
         let ns = skills_namespace();
         assert_eq!(ns, "USER", "Missing env var should default to USER");
@@ -18,54 +26,64 @@ mod tests {
 
     #[test]
     fn test_skills_namespace_custom_value() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "MYAPP");
         let ns = skills_namespace();
-        assert_eq!(ns, "MYAPP");
         std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+        assert_eq!(ns, "MYAPP");
     }
 
     #[test]
     fn test_skills_namespace_empty_string() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "");
         let ns = skills_namespace();
-        assert_eq!(ns, "", "Empty string should be preserved");
         std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+        assert_eq!(ns, "", "Empty string should be preserved");
     }
 
     #[test]
     fn test_skills_namespace_with_special_chars() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "PROD-ENV_1");
         let ns = skills_namespace();
-        assert_eq!(ns, "PROD-ENV_1");
         std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+        assert_eq!(ns, "PROD-ENV_1");
     }
 
     #[test]
     fn test_skills_namespace_case_preserved() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "MixedCase");
         let ns = skills_namespace();
-        assert_eq!(ns, "MixedCase", "Case should be preserved");
         std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+        assert_eq!(ns, "MixedCase", "Case should be preserved");
     }
 
     // ── Namespace reset cycle ────────────────────────────────────────────────
 
     #[test]
     fn test_skills_namespace_reset_cycle() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "TEMP");
-        assert_eq!(skills_namespace(), "TEMP");
+        let set = skills_namespace();
         std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
-        assert_eq!(skills_namespace(), "USER");
+        let cleared = skills_namespace();
+        assert_eq!(set, "TEMP");
+        assert_eq!(cleared, "USER");
     }
 
     #[test]
     fn test_skills_namespace_multiple_values() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let values = vec!["NS1", "NS2", "NS3"];
-        for val in values {
+        let mut seen = Vec::new();
+        for val in &values {
             std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", val);
-            assert_eq!(skills_namespace(), val);
+            seen.push(skills_namespace());
         }
         std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+        assert_eq!(seen, values);
     }
 
     // ── Serde deserialization - default_top_k via KbParams ────────────────────

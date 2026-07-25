@@ -1,6 +1,6 @@
 ---
 name: iris-coverage-run
-description: Measure ObjectScript line coverage using %Monitor.System.LineByLine. Wraps a %UnitTest.Manager.RunTest() call, collects per-class hit/total counts, prints a coverage table. Prerequisite: iris-coverage-setup (bbsiz=4096, IRIS restarted).
+description: "Measure ObjectScript line coverage using %Monitor.System.LineByLine. Wraps a %UnitTest.Manager.RunTest() call, collects per-class hit/total counts, prints a coverage table. Prerequisite: iris-coverage-setup (bbsiz=4096, IRIS restarted)."
 ---
 
 # /iris-coverage-run — Measure ObjectScript Line Coverage

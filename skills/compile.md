@@ -27,9 +27,11 @@ CLASS="${1:-MyPackage.MyClass}"
 FILE="${2:-${CLASS//./\/}.cls}"   # MyPackage.MyClass → MyPackage/MyClass.cls
 HOST="${IRIS_HOST:-localhost}"
 PORT="${IRIS_WEB_PORT:-52773}"
-USER="${IRIS_USER:-_SYSTEM}"
-PASS="${IRIS_PASS:-SYS}"
-NS="${IRIS_NS:-USER}"
+USER="${IRIS_USERNAME:-_SYSTEM}"
+PASS="${IRIS_PASSWORD:-SYS}"
+NS="${IRIS_NAMESPACE:-USER}"
+PREFIX="${IRIS_WEB_PREFIX:-}"
+BASE_URL="http://${HOST}:${PORT}${PREFIX:+/${PREFIX}}/api/atelier/v1"
 
 # Read file content as a JSON array of lines
 CONTENT=$(python3 -c "
@@ -39,53 +41,60 @@ with open('${FILE}') as f:
 print(json.dumps(lines))
 ")
 
-# Upload (PUT) the class source
-UPLOAD=$(curl -s -X PUT \
+# Upload (PUT) the class source — use ignoreConflict=1 to bypass timestamp conflicts
+HTTP_CODE=$(curl -s -o /tmp/atelier_put.json -w "%{http_code}" -X PUT \
   -u "${USER}:${PASS}" \
   -H "Content-Type: application/json" \
-  "http://${HOST}:${PORT}/api/atelier/v1/${NS}/doc/${CLASS}.cls" \
+  "${BASE_URL}/${NS}/doc/${CLASS}.cls?ignoreConflict=1" \
   -d "{\"enc\": false, \"content\": ${CONTENT}}")
 
-echo "Upload status: $(echo $UPLOAD | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('status',{}))")"
+echo "HTTP: $HTTP_CODE"
+
+# **Always re-read after writing to confirm the content landed**
+VERIFY=$(curl -s -u "${USER}:${PASS}" \
+  "${BASE_URL}/${NS}/doc/${CLASS}.cls" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d['result']['content']), 'lines stored')")
+echo "Stored: ${VERIFY}"
 
 # Compile
 RESULT=$(curl -s -X POST \
   -u "${USER}:${PASS}" \
   -H "Content-Type: application/json" \
-  "http://${HOST}:${PORT}/api/atelier/v1/${NS}/action/compile" \
+  "${BASE_URL}/${NS}/action/compile" \
   -d "[\"${CLASS}.cls\"]")
 
-# Parse and display errors
+# Parse and display errors — IRIS 2025.1 compile response shape:
+# - status.errors[] = top-level errors (parse failures, class-not-found)
+# - console[] = human-readable lines including per-line error messages
+# - result.content[] = always empty for compile (NOT a list of message objects)
 echo "$RESULT" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
-result = data.get('result', [])
+status_errors = data.get('status', {}).get('errors', [])
 console = data.get('console', [])
-errors = []
-warnings = []
-for item in result:
-    for msg in item.get('messages', []):
-        severity = msg.get('severity', 0)
-        text = msg.get('text', '')
-        line = msg.get('line', '?')
-        col  = msg.get('col', '?')
-        entry = f'  line {line}: {text}'
-        if severity >= 3:
-            errors.append(entry)
-        elif severity == 2:
-            warnings.append(entry)
-if errors:
+
+# Top-level errors (e.g. #5559 parse error, #5351 class not found)
+if status_errors:
     print('ERRORS:')
-    for e in errors: print(e)
-elif warnings:
+    for e in status_errors:
+        print(' ', e.get('error', str(e)))
+    sys.exit(0)
+
+# Per-line errors and warnings appear in the console array
+error_lines = [l for l in console if 'ERROR' in l or 'error' in l.lower()]
+warn_lines  = [l for l in console if 'WARNING' in l or 'warning' in l.lower()]
+if error_lines:
+    print('ERRORS:')
+    for l in error_lines: print(' ', l.strip())
+elif warn_lines:
     print('WARNINGS:')
-    for w in warnings: print(w)
-else:
+    for l in warn_lines: print(' ', l.strip())
+elif any('successfully' in l for l in console):
     print('Compiled successfully — no errors.')
-# Print console output (includes %Status messages)
-for line in console:
-    if line.strip():
-        print('CONSOLE:', line)
+else:
+    # Print full console for diagnosis
+    for l in console:
+        if l.strip(): print('CONSOLE:', l.strip())
 "
 ```
 
@@ -93,18 +102,19 @@ for line in console:
 
 Common error patterns and what they mean:
 
-| Error | Meaning | Fix |
-|---|---|---|
-| `ERROR #5659: 'Return' does not match return type` | Method declared `As %Status` but returns a non-status value | Return `$$$OK` or an error status |
-| `ERROR #5002: <UNDEFINED>varname+N^Class.1` | Variable `varname` used before being set at line N of INT | Add `Set varname = ""` or check logic flow |
-| `ERROR #5002: <NOLINE>` | Syntax error above the reported line | Check for missing braces, unbalanced quotes |
-| `ERROR #5001: Class 'Foo.Bar' does not exist` | Missing class — wrong namespace or typo | Run `/introspect` to verify the class name |
-| `ERROR #6301: SAX XML error... expected '>'` | Malformed class definition header | Check `Class ... Extends ...` line for typos |
-| `ERROR #5563: Illegal use of QUIT` | `Quit value` inside TRY/CATCH or loop | Replace with `Return value` |
+| Error                                              | Meaning                                                     | Fix                                          |
+| -------------------------------------------------- | ----------------------------------------------------------- | -------------------------------------------- |
+| `ERROR #5659: 'Return' does not match return type` | Method declared `As %Status` but returns a non-status value | Return `$$$OK` or an error status            |
+| `ERROR #5002: <UNDEFINED>varname+N^Class.1`        | Variable `varname` used before being set at line N of INT   | Add `Set varname = ""` or check logic flow   |
+| `ERROR #5002: <NOLINE>`                            | Syntax error above the reported line                        | Check for missing braces, unbalanced quotes  |
+| `ERROR #5001: Class 'Foo.Bar' does not exist`      | Missing class — wrong namespace or typo                     | Run `/introspect` to verify the class name   |
+| `ERROR #6301: SAX XML error... expected '>'`       | Malformed class definition header                           | Check `Class ... Extends ...` line for typos |
+| `ERROR #5563: Illegal use of QUIT`                 | `Quit value` inside TRY/CATCH or loop                       | Replace with `Return value`                  |
 
 ## Step 3 — Fix and re-compile loop
 
 After fixing an error:
+
 1. Edit the `.cls` file
 2. Re-run this skill (`/compile MyPackage.MyClass path/to/MyClass.cls`)
 3. Repeat until output is `Compiled successfully — no errors.`
@@ -116,9 +126,9 @@ After fixing an error:
 
 ```bash
 curl -s -X POST \
-  -u "${IRIS_USER:-_SYSTEM}:${IRIS_PASS:-SYS}" \
+  -u "${IRIS_USERNAME:-_SYSTEM}:${IRIS_PASSWORD:-SYS}" \
   -H "Content-Type: application/json" \
-  "http://${IRIS_HOST:-localhost}:${IRIS_WEB_PORT:-52773}/api/atelier/v1/${IRIS_NS:-USER}/action/compile" \
+  "${BASE_URL}/${NS}/action/compile" \
   -d '["MyPackage.MyClass.cls"]'
 ```
 
@@ -126,27 +136,20 @@ curl -s -X POST \
 
 ```bash
 # Via iris session (most reliable)
-iris session IRIS -U "${IRIS_NS:-USER}" \
+iris session IRIS -U "${IRIS_NAMESPACE:-USER}" \
   "Do ##class(%UnitTest.Manager).RunTest(\"MyPackage.Tests\",,\"/nodelete\")"
 ```
 
-Or via Atelier action:
-```bash
-curl -s -X POST \
-  -u "${IRIS_USER:-_SYSTEM}:${IRIS_PASS:-SYS}" \
-  -H "Content-Type: application/json" \
-  "http://${IRIS_HOST:-localhost}:${IRIS_WEB_PORT:-52773}/api/atelier/v1/${IRIS_NS:-USER}/action/query" \
-  -d '{"query": "Do ##class(%UnitTest.Manager).RunTest(\"MyPackage.Tests\",,\"/nodelete\")"}'
-```
+> **Note**: Use `iris session` above — the Atelier `/action/query` endpoint executes SQL only and cannot run ObjectScript `Do` commands. If you have the full MCP server, use the `iris_test` tool instead.
 
 ## Compile a whole package
 
 ```bash
 # Compile all classes in MyPackage.*
 curl -s -X POST \
-  -u "${IRIS_USER:-_SYSTEM}:${IRIS_PASS:-SYS}" \
+  -u "${IRIS_USERNAME:-_SYSTEM}:${IRIS_PASSWORD:-SYS}" \
   -H "Content-Type: application/json" \
-  "http://${IRIS_HOST:-localhost}:${IRIS_WEB_PORT:-52773}/api/atelier/v1/${IRIS_NS:-USER}/action/compile" \
+  "${BASE_URL}/${NS}/action/compile" \
   -d '["MyPackage.*.cls"]'
 ```
 
@@ -156,3 +159,22 @@ curl -s -X POST \
 - In Docker, the web port is often mapped to a random host port. Use `docker port <container> 52773` to find it.
 - Severity levels: `1` = informational, `2` = warning, `3+` = error (blocks compilation).
 - The `console` field in the response may contain additional `%Status` text from class generators or macros.
+
+## Critical: HTTP 409 Conflict
+
+Atelier returns **HTTP 409** when the server has a newer copy of the document than the timestamp you sent (a standard optimistic concurrency check). It is NOT a permanent `upd` flag — it means "your copy is stale."
+
+**The correct fix is `?ignoreConflict=1`**, not delete+PUT:
+
+```bash
+curl -s -X PUT -u _SYSTEM:SYS \
+  -H "Content-Type: application/json" \
+  "http://localhost:52773/api/atelier/v1/USER/doc/MyDoc.mac?ignoreConflict=1" \
+  -d '{"enc":false,"content":[...]}'
+```
+
+This tells the server to overwrite regardless of timestamp. Use it when you know your version is the one you want to keep (i.e. you just generated or edited the content).
+
+**Always re-read after writing** to confirm the content landed — the PUT response body is unreliable. A subsequent GET is the only reliable confirmation.
+
+Note: the `upd` field in `docnames` listings is a VS Code workspace-dirty flag, not a write-success indicator. Ignore it.

@@ -1,43 +1,8 @@
 ---
-author: tdyar
-benchmark_date: '2026-04-02'
-benchmark_iris_version: '2025.1'
-benchmark_tasks:
-- jira-001
-- jira-002
-- jira-003
-- jira-004
-- jira-005
-- jira-006
-- jira-007
-- jira-008
-- jira-009
-- jira-010
-- jira-011
-- jira-012
-- jira-013
-- jira-014
-- jira-015
-- jira-016
-- jira-017
-description: 'Worked fix examples for the 6 most common ObjectScript LLM mistakes.
-  Uses "Bug Pattern → Root Cause → Fix" structure per SOTA code repair research. Use
-  when fixing ObjectScript bugs involving: Return vs Quit in loops, HTML escaping
-  order, SQL date filters, list operations, or postfix conditions.
-
-  '
-iris_version: '>=2024.1'
 name: objectscript-fewshot-fixes
-pass_rate: 0.5294117647058824
-state: reviewed
-tags:
-- objectscript
-- fewshot
-- repair
-trigger: 'Use when fixing any ObjectScript bug. These examples demonstrate the exact
-  reasoning + fix pattern for the most common failure modes.
-
-  '
+description: Worked fix examples for the seven most common ObjectScript mistakes AI models make, each as Bug Pattern -> Root Cause -> Fix. Use when fixing an ObjectScript bug involving Quit inside a loop, HTML escaping order, a missing SQL date filter, forward iteration with removal, a missing $IsObject check, postfix Quit syntax, or O(n^2) string concatenation.
+author: tdyar
+managed_by: iris-agentic-dev
 ---
 
 # ObjectScript Fix Examples
@@ -51,6 +16,7 @@ the bug, state the root cause explicitly, THEN generate the fix. Research shows 
 ## EXAMPLE 1: Quit-in-Loop Returns Wrong Value
 
 BUGGY CODE:
+
 ```objectscript
 ClassMethod IsNameUnique(name As %String, existingNames As %ListOfDataTypes) As %Boolean
 {
@@ -69,6 +35,7 @@ the value of `Quit 0` at the bottom, or empty string if Quit had a value (IRIS-s
 The return values are also logically swapped (found = not unique = should return 0).
 
 FIXED CODE:
+
 ```objectscript
 ClassMethod IsNameUnique(name As %String, existingNames As %ListOfDataTypes) As %Boolean
 {
@@ -88,6 +55,7 @@ KEY RULE: `Return value` always exits the method. `Quit value` inside a loop onl
 ## EXAMPLE 2: HTML Escaping Order
 
 BUGGY CODE:
+
 ```objectscript
 ClassMethod DisplayMessage(message As %String) As %String
 {
@@ -103,6 +71,7 @@ ROOT CAUSE: Escaping `<` first produces `&lt;`. Then escaping `&` turns `&lt;` i
 `&amp;lt;` — the ampersand in the entity gets escaped again.
 
 FIXED CODE:
+
 ```objectscript
 ClassMethod DisplayMessage(message As %String) As %String
 {
@@ -120,6 +89,7 @@ KEY RULE: Always escape `&` FIRST, then `<`, then `>`.
 ## EXAMPLE 3: SQL Missing Date Filter
 
 BUGGY CODE:
+
 ```objectscript
 ClassMethod SearchItems(category As %String) As %ListOfDataTypes
 {
@@ -137,6 +107,7 @@ ROOT CAUSE: No `ActiveUntil` date check — returns both active and expired item
 `ActiveUntil = ""` (NULL) means never expires; `ActiveUntil < today` means expired.
 
 FIXED CODE:
+
 ```objectscript
 ClassMethod SearchItems(category As %String) As %ListOfDataTypes
 {
@@ -156,6 +127,7 @@ KEY RULE: `+$HOROLOG` = today as integer. Pattern: `AND (field IS NULL OR field 
 ## EXAMPLE 4: Forward Iteration With Removal Skips Items
 
 BUGGY CODE:
+
 ```objectscript
 ClassMethod ProcessItems(items As %ListOfDataTypes) As %Integer
 {
@@ -171,6 +143,7 @@ ROOT CAUSE: After `RemoveAt(2)`, the old item 3 becomes item 2 — but `i` advan
 skipping the newly-shifted item.
 
 FIXED CODE:
+
 ```objectscript
 ClassMethod ProcessItems(items As %ListOfDataTypes) As %Integer
 {
@@ -188,6 +161,7 @@ KEY RULE: Iterate backwards (`Count():-1:1`) when removing items in-place.
 ## EXAMPLE 5: Missing $IsObject Check After %OpenId
 
 BUGGY CODE:
+
 ```objectscript
 ClassMethod GetPatientAge(id As %String) As %Integer
 {
@@ -202,6 +176,7 @@ ROOT CAUSE: `%OpenId` returns `""` when ID doesn't exist. Accessing `.DOB` on `"
 causes `<INVALID OREF>` runtime error.
 
 FIXED CODE:
+
 ```objectscript
 ClassMethod GetPatientAge(id As %String) As %Integer
 {
@@ -219,6 +194,7 @@ KEY RULE: Always `If '$IsObject(obj) { Return <default> }` immediately after `%O
 ## EXAMPLE 6: Postfix Quit Syntax Error
 
 BUGGY CODE (causes #5559 parse error):
+
 ```objectscript
 For {
     Set key = $ORDER(users(key))
@@ -232,6 +208,7 @@ ROOT CAUSE: `Quit:key = ""` — the space before `=` causes IRIS UDL parser erro
 Postfix conditions must be written without any spaces.
 
 FIXED CODE:
+
 ```objectscript
 For {
     Set key = $ORDER(users(key))
@@ -248,6 +225,7 @@ KEY RULE: Postfix conditions: `Quit:condition` — NO spaces anywhere in the con
 ## EXAMPLE 7: CSV Building — O(n²) String Concat
 
 BUGGY CODE:
+
 ```objectscript
 ClassMethod BuildCSV(values As %ListOfDataTypes) As %String
 {
@@ -265,6 +243,7 @@ ROOT CAUSE: Each `result _ value` creates a new string copying all previous data
 For 1000 items this copies ~500,000 total characters.
 
 FIXED CODE:
+
 ```objectscript
 ClassMethod BuildCSV(values As %ListOfDataTypes) As %String
 {
@@ -283,6 +262,7 @@ KEY RULE: Accumulate into `$LIST` then convert once with `$LISTTOSTRING(lst, ","
 ## HOW TO APPLY: Structured Fix Protocol
 
 For every bug fix request:
+
 1. **State the bug pattern** from the examples above (or identify a new one)
 2. **State the root cause** in one sentence
 3. **Generate the fix** based on the pattern

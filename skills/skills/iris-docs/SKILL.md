@@ -52,6 +52,50 @@ Returns `{query, total_hits, hits: [{title, url, excerpt, breadcrumbs, version, 
 **DO NOT use WebFetch or curl on DocBook URLs.** `docs.intersystems.com` is a JavaScript
 SPA. Naive fetching returns only a navigation shell, not the documentation content. The
 `iris_doc_search` tool uses the real Algolia search index and returns actual body text.
+`Doc.View.cls` and `DocBook.UI.Page.cls` give you a JS nav shell and often a 504.
+Documatic URLs (below) are the exception — they render server-side and WebFetch works.
+
+---
+
+## Query formulation — bare tokens win
+
+The index behaves as if terms are AND-ed. Every word you add shrinks the result set
+toward zero. Measured against the live tool:
+
+| Query                                                                   | Hits                          |
+| ----------------------------------------------------------------------- | ----------------------------- |
+| `CREATE INDEX AS HNSW parameters M efConstruct Distance`                | 0                             |
+| `CREATE INDEX AS HNSW syntax vector index`                              | 0                             |
+| `efConstruction`                                                        | 133, correct page is top hit  |
+| `efConstruct`                                                           | 1492, same top hit            |
+| `vector search index efSearch tune table selectivity optimizer use ANN` | Caché 2011/2017 upgrade notes |
+
+Rules:
+
+1. Start with ONE distinctive token — a class name, a parameter name, an error code.
+   Exact identifiers are the strongest signal the index has.
+2. Add terms only to narrow a result set that is already non-empty.
+3. Never put a hypothesis in the query. Speculative terms ("tune", "selectivity",
+   "optimizer") drag results toward unrelated decade-old pages.
+4. **Zero hits means your query was over-specified, not that the feature is
+   undocumented.** Reformulate down to a bare token before you conclude the docs
+   don't cover it. One session read 0 hits as "not documented" and burned ~9.5 hours
+   guessing at parameters that were on a Class Reference page the whole time.
+
+`iris_doc_search` returns parameter and member NAMES but not their default VALUES.
+For defaults you have to fetch the page.
+
+---
+
+## Recipe: "what parameters does class X accept?"
+
+1. `iris_doc_search` on the bare class name or bare parameter name → find the Class
+   Reference hit.
+2. WebFetch the Documatic URL for that class → parameters with their defaults.
+3. If a live container is up, prefer it. `iris_doc mode=get name=<Class>.cls` plus
+   `%Dictionary.CompiledIndex` and `%Dictionary.CompiledParameter` are the most
+   authoritative sources available — the compiled dictionary is ground truth, and
+   it is what finally settled the HNSW parameter question above.
 
 ---
 
@@ -104,8 +148,12 @@ Version codes: `iris20261`, `iris20251`, `iris20241`, `irislatest`
 
 Library codes: `%25SYS` (system classes), `USER` (app classes), `ENSLIB` (Ensemble/Interop)
 
-**Important**: Documatic pages are also SPA content — use a browser UA with curl, but
-prefer `iris_doc_search` unless you know the exact class name.
+Add `&PRIVATE=1` to include private/internal members.
+
+**Documatic renders server-side — WebFetch works on it.** This is the one docs.intersystems.com
+path that does. It carries parameters with their default values, which `iris_doc_search`
+does not return. Use `iris_doc_search` first to find the class name, then Documatic for
+the details.
 
 ---
 

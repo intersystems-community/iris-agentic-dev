@@ -9,7 +9,9 @@
         "objectscript-tdd",
         "objectscript-unit-test",
         "objectscript-repair",
-        "objectscript-debugging"
+        "objectscript-debugging",
+        "objectscript-coverage",
+        "objectscript-fewshot-fixes"
       ]
     },
     {
@@ -18,29 +20,21 @@
         "objectscript-list-patterns",
         "objectscript-loop-patterns",
         "objectscript-sql-patterns",
-        "objectscript-navigation"
+        "objectscript-navigation",
+        "objectscript-mac-routines"
       ]
     },
     {
       "title": "IRIS SQL",
-      "skills": [
-        "iris-sql"
-      ]
+      "skills": ["iris-sql"]
     },
     {
       "title": "IRIS Vector & AI",
-      "skills": [
-        "iris-vector-ai",
-        "iris-vector-graph",
-        "iris-vector-rag"
-      ]
+      "skills": ["iris-vector-ai"]
     },
     {
       "title": "Interoperability & Productions",
-      "skills": [
-        "ensemble-production",
-        "iris-objectscript-eval"
-      ]
+      "skills": ["ensemble-production", "iris-objectscript-eval"]
     },
     {
       "title": "IRIS Connectivity & Setup",
@@ -63,19 +57,12 @@
         "iris-agentic-dev",
         "iris-devtester",
         "iris-docs",
-        "iris-vector-graph",
-        "iris-vector-rag",
-        "iris-pgwire",
-        "iris-ai-examples"
+        "iris-pgwire"
       ]
     },
     {
       "title": "MCP & Tools",
-      "skills": [
-        "opencode-introspect",
-        "introspect",
-        "aihub-eap"
-      ]
+      "skills": ["opencode-introspect", "aihub-eap"]
     }
   ]
 }

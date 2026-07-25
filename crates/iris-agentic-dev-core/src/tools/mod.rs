@@ -4773,77 +4773,171 @@ Methods:
         )
     }
 
-    #[tool(description = "List all synthesized skills in the registry.")]
-    async fn skill_list(&self, _: Parameters<NoParams>) -> Result<CallToolResult, McpError> {
-        if let Some(iris) = self.iris_arc().as_deref() {
-            let code = "Set key=\"\" Set result=\"[\" Set sep=\"\" For { Set key=$Order(^SKILLS(key)) Quit:key=\"\" Set skill=$Get(^SKILLS(key)) Set result=result_sep_skill Set sep=\",\" } Set result=result_\"]\" Write result";
-            if let Ok(output) = iris
-                .execute(code, &crate::tools::skills_tools::skills_namespace())
-                .await
-            {
-                if let Ok(skills) = serde_json::from_str::<serde_json::Value>(output.trim()) {
-                    let count = skills.as_array().map(|a| a.len()).unwrap_or(0);
-                    return ok_json(serde_json::json!({"skills": skills, "count": count}));
-                }
-            }
+    /// Read every `^SKILLS` entry. Returns `(entries, searched)` — `searched` is
+    /// false when there is no IRIS connection or the global could not be read, so
+    /// callers can say "I did not look there" instead of implying "nothing there".
+    async fn synthesized_skills(&self) -> (Vec<serde_json::Value>, bool) {
+        let Some(iris) = self.iris_arc() else {
+            return (Vec::new(), false);
+        };
+        let code = "Set key=\"\" Set result=\"[\" Set sep=\"\" For { Set key=$Order(^SKILLS(key)) Quit:key=\"\" Set skill=$Get(^SKILLS(key)) Set result=result_sep_skill Set sep=\",\" } Set result=result_\"]\" Write result";
+        match iris
+            .execute(code, &crate::tools::skills_tools::skills_namespace())
+            .await
+        {
+            Ok(output) => match serde_json::from_str::<Vec<serde_json::Value>>(output.trim()) {
+                Ok(entries) => (entries, true),
+                Err(_) => (Vec::new(), false),
+            },
+            Err(_) => (Vec::new(), false),
         }
-        ok_json(serde_json::json!({"skills": [], "count": 0}))
     }
 
-    #[tool(description = "Describe a skill by name.")]
+    #[tool(
+        description = "List every available skill — both the skills bundled with this server (on disk, no IRIS needed) and any synthesized skills in the IRIS ^SKILLS global. Each result carries a `source` field: `bundled` or `synthesized`."
+    )]
+    async fn skill_list(&self, _: Parameters<NoParams>) -> Result<CallToolResult, McpError> {
+        use crate::skills::bundled;
+
+        let bundled_skills = bundled::load_bundled_skills();
+        let (synth, synth_searched) = self.synthesized_skills().await;
+        let merged = bundled::merge_sources(&bundled_skills, &synth);
+        let skills: Vec<serde_json::Value> = merged.iter().map(|m| m.to_json()).collect();
+
+        ok_json(serde_json::json!({
+            "skills": skills,
+            "count": skills.len(),
+            "sources": bundled::sources_json(bundled_skills.len(), synth.len(), synth_searched),
+            "note": bundled::searched_note(bundled_skills.len(), synth.len(), synth_searched),
+        }))
+    }
+
+    #[tool(
+        description = "Describe a skill by name. Looks in the bundled skills shipped with this server (no IRIS needed) and in the IRIS ^SKILLS global."
+    )]
     async fn skill_describe(
         &self,
         Parameters(p): Parameters<SkillNameParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Some(iris) = self.iris_arc().as_deref() {
+        use crate::skills::bundled;
+
+        let bundled_skills = bundled::load_bundled_skills();
+        if let Some(s) = bundled_skills.iter().find(|s| s.name == p.name) {
+            let mut skill = s.to_json();
+            skill["body"] = serde_json::Value::String(s.content().unwrap_or_default());
+            return ok_json(serde_json::json!({"success": true, "skill": skill}));
+        }
+
+        let (synth, synth_searched) = self.synthesized_skills().await;
+        if synth_searched {
             let code = format!("Write $Get(^SKILLS(\"{}\"))", p.name.replace('"', "\\\""));
-            if let Ok(output) = iris
-                .execute(&code, &crate::tools::skills_tools::skills_namespace())
-                .await
-            {
-                if let Ok(skill) = serde_json::from_str::<serde_json::Value>(output.trim()) {
-                    return ok_json(serde_json::json!({"success": true, "skill": skill}));
+            if let Some(iris) = self.iris_arc() {
+                if let Ok(output) = iris
+                    .execute(&code, &crate::tools::skills_tools::skills_namespace())
+                    .await
+                {
+                    if let Ok(mut skill) = serde_json::from_str::<serde_json::Value>(output.trim())
+                    {
+                        if let Some(obj) = skill.as_object_mut() {
+                            obj.insert(
+                                "source".to_string(),
+                                serde_json::Value::String(
+                                    bundled::SkillSource::Synthesized.as_str().to_string(),
+                                ),
+                            );
+                        }
+                        return ok_json(serde_json::json!({"success": true, "skill": skill}));
+                    }
                 }
             }
         }
-        err_json("NOT_FOUND", &format!("Skill '{}' not found", p.name))
+
+        // FR-004: never a bare miss — say where we looked.
+        ok_json(serde_json::json!({
+            "success": false,
+            "error_code": "NOT_FOUND",
+            "error": format!("Skill '{}' not found", p.name),
+            "sources": bundled::sources_json(bundled_skills.len(), synth.len(), synth_searched),
+            "note": bundled::searched_note(bundled_skills.len(), synth.len(), synth_searched),
+        }))
     }
 
     #[tool(
-        description = "Search synthesized skills by name and description. Returns skills whose name or description contains the query terms."
+        description = "Search all skills by name, description AND frontmatter tags. Covers both the skills bundled with this server (on disk, works with no IRIS connection) and synthesized skills in the IRIS ^SKILLS global. Each result carries a `source` field (`bundled`/`synthesized`); the response always reports how many skills were available in each source, so a zero result never means 'only one place was checked'."
     )]
     async fn skill_search(
         &self,
         Parameters(p): Parameters<SkillSearchParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Some(iris) = self.iris_arc().as_deref() {
-            let query_lower = p.query.to_lowercase();
-            let q = query_lower.replace('"', "");
-            let code = format!(
-                concat!(
-                    r#"Set key="",results="[",sep="" "#,
-                    r#"For {{ Set key=$Order(^SKILLS(key)) Quit:key="" "#,
-                    r#"Set skill=$Get(^SKILLS(key)) "#,
-                    r#"If ($ZConvert(skill,"L")["{0}")||($ZConvert(key,"L")["{0}") "#,
-                    r#"{{ Set results=results_sep_skill Set sep="," }} }} "#,
-                    r#"Set results=results_"]" Write results"#
-                ),
-                q
-            );
-            if let Ok(output) = iris
-                .execute(&code, &crate::tools::skills_tools::skills_namespace())
-                .await
-            {
-                if let Ok(skills) = serde_json::from_str::<Vec<serde_json::Value>>(output.trim()) {
-                    let limited: Vec<_> = skills.into_iter().take(p.top_k).collect();
-                    let count = limited.len();
-                    return ok_json(
-                        serde_json::json!({"query": p.query, "results": limited, "count": count}),
+        use crate::skills::bundled;
+
+        let bundled_skills = bundled::load_bundled_skills();
+        let (synth, synth_searched) = self.synthesized_skills().await;
+
+        let terms = bundled::query_terms(&p.query);
+        let mut scored: Vec<(serde_json::Value, u32)> = Vec::new();
+
+        for (s, score) in bundled::search_bundled(&bundled_skills, &p.query, usize::MAX) {
+            scored.push((s.to_json(), score));
+        }
+
+        // Synthesized entries carry no tags; match name + description.
+        let bundled_names: std::collections::HashSet<&str> =
+            bundled_skills.iter().map(|s| s.name.as_str()).collect();
+        for v in &synth {
+            let name = v
+                .as_str()
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    v.get("name")
+                        .and_then(|n| n.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_default();
+            if name.is_empty() || bundled_names.contains(name.as_str()) {
+                continue;
+            }
+            let synth_skill = bundled::BundledSkill {
+                name: name.clone(),
+                description: v
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or_default()
+                    .to_string(),
+                tags: Vec::new(),
+                path: None,
+            };
+            let score = bundled::score_skill(&synth_skill, &terms);
+            if score > 0 {
+                let mut entry = v.clone();
+                if let Some(obj) = entry.as_object_mut() {
+                    obj.insert(
+                        "source".to_string(),
+                        serde_json::Value::String(
+                            bundled::SkillSource::Synthesized.as_str().to_string(),
+                        ),
                     );
+                } else {
+                    entry = serde_json::json!({
+                        "name": name,
+                        "source": bundled::SkillSource::Synthesized.as_str(),
+                    });
                 }
+                scored.push((entry, score));
             }
         }
-        ok_json(serde_json::json!({"query": p.query, "results": [], "count": 0}))
+
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.truncate(p.top_k);
+        let results: Vec<serde_json::Value> = scored.into_iter().map(|(v, _)| v).collect();
+
+        ok_json(serde_json::json!({
+            "query": p.query,
+            "results": results,
+            "count": results.len(),
+            "sources": bundled::sources_json(bundled_skills.len(), synth.len(), synth_searched),
+            "note": bundled::searched_note(bundled_skills.len(), synth.len(), synth_searched),
+        }))
     }
 
     #[tool(description = "Remove a skill from the registry by name.")]

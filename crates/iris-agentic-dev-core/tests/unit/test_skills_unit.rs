@@ -5,6 +5,13 @@ use iris_agentic_dev_core::tools::skills_tools::{
     AgentInfoParams, KbParams, SkillCommunityParams, SkillParams,
 };
 
+/// `OBJECTSCRIPT_SKILLMCP_NAMESPACE` is process-global, but `cargo test` runs the tests in a
+/// binary on parallel threads. Two tests mutating it concurrently means one reads the other's
+/// value and fails — which is why this file only ever passed under `--test-threads=1`.
+/// Serialize every test that touches the var. Poison is recovered because a panicking test
+/// holding the guard must not cascade into unrelated failures.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 // ── SkillParams ───────────────────────────────────────────────────────────────
 
 #[test]
@@ -113,6 +120,7 @@ fn test_agent_info_params_missing_what_fails() {
 
 #[test]
 fn test_skills_namespace_default() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // Remove env var if set, verify fallback
     std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
     let ns = iris_agentic_dev_core::tools::skills_tools::skills_namespace();
@@ -121,8 +129,10 @@ fn test_skills_namespace_default() {
 
 #[test]
 fn test_skills_namespace_env_override() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "SKILLS");
     let ns = iris_agentic_dev_core::tools::skills_tools::skills_namespace();
-    assert_eq!(ns, "SKILLS");
+    // Read before restoring so a failure here cannot leak the var to other tests.
     std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+    assert_eq!(ns, "SKILLS");
 }

@@ -16,22 +16,26 @@ skills = [
     "skills/skills/objectscript-coverage",
     "skills/skills/objectscript-repair",
     "skills/skills/objectscript-debugging",
+    "skills/skills/objectscript-fewshot-fixes",
     # ObjectScript pattern reference
     "skills/skills/objectscript-list-patterns",
     "skills/skills/objectscript-loop-patterns",
     "skills/skills/objectscript-sql-patterns",
     "skills/skills/objectscript-navigation",
+    "skills/skills/objectscript-mac-routines",
     # IRIS SQL
     "skills/skills/iris-sql",
     # IRIS Vector & AI
+    # iris-vector-graph and iris-vector-rag moved to their own repos (commit 1fb7a8c) —
+    # do not re-add here, the paths 404 on install.
     "skills/skills/iris-vector-ai",
-    "skills/skills/iris-vector-graph",
-    "skills/skills/iris-vector-rag",
     # Interoperability
     "skills/skills/ensemble-production",
     "skills/skills/iris-objectscript-eval",
     # Connectivity & setup
     "skills/skills/iris-connectivity",
+    "skills/skills/irispython-connector",
+    "skills/skills/iris-pgwire",
     "skills/skills/iris-product-features",
     "skills/skills/iris-linux-docker",
     "skills/skills/iris-windows-iis-setup",
@@ -44,6 +48,7 @@ skills = [
     "skills/skills/iris-agentic-dev",
     "skills/skills/iris-devtester",
     "skills/skills/iris-docs",
+    "skills/skills/aihub-eap",
     # MCP & Tools
     "skills/skills/opencode-introspect",
 ]

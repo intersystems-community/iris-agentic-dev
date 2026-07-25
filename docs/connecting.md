@@ -65,7 +65,7 @@ the Management Portal loads correctly.
 3. Add a wildcard script handler mapping: executable = `CSPms.dll`, no verb restriction
 4. Verify `CSP.ini` contains an `[APP_PATH:/api]` section
 
-See the [`iris-windows-iis-setup` skill](../light-skills/skills/iris-windows-iis-setup/SKILL.md)
+See the [`iris-windows-iis-setup` skill](../skills/skills/iris-windows-iis-setup/SKILL.md)
 for full step-by-step instructions with verification commands.
 
 **`localhost` vs `127.0.0.1`**: On some older Web Gateway builds, using `localhost` causes
@@ -109,7 +109,7 @@ services:
     volumes: ["./webgateway-init.sh:/init.sh:ro"]
 ```
 
-See the [`iris-vscode-objectscript` skill](../light-skills/skills/iris-vscode-objectscript/SKILL.md)
+See the [`iris-vscode-objectscript` skill](../skills/skills/iris-vscode-objectscript/SKILL.md)
 for a working `webgateway-init.sh`.
 
 ---

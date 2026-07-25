@@ -398,6 +398,14 @@ pub async fn handle_agent_info(
 mod tests {
     use super::*;
 
+    /// `OBJECTSCRIPT_LEARNING` and `OBJECTSCRIPT_SKILLMCP_NAMESPACE` are process-global, and
+    /// `cargo test` runs this module's tests on parallel threads. Without serialization, one
+    /// test's `set_var` is visible to another mid-assertion — the file passed only under
+    /// `--test-threads=1`. One lock covers both vars: they are read by different functions but
+    /// mutated by tests in this same module, so a single guard is simpler and strictly safe.
+    /// Poison is recovered so a panicking test does not cascade.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_skill_params_action_required() {
         let p: SkillParams = serde_json::from_str(r#"{"action": "list"}"#).unwrap();
@@ -662,12 +670,14 @@ mod tests {
 
     #[test]
     fn test_learning_enabled_default_true() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("OBJECTSCRIPT_LEARNING");
         assert!(learning_enabled());
     }
 
     #[test]
     fn test_learning_enabled_when_true() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OBJECTSCRIPT_LEARNING", "true");
         assert!(learning_enabled());
         std::env::remove_var("OBJECTSCRIPT_LEARNING");
@@ -675,6 +685,7 @@ mod tests {
 
     #[test]
     fn test_learning_enabled_when_false() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OBJECTSCRIPT_LEARNING", "false");
         assert!(!learning_enabled());
         std::env::remove_var("OBJECTSCRIPT_LEARNING");
@@ -682,6 +693,7 @@ mod tests {
 
     #[test]
     fn test_learning_enabled_various_true_values() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let true_values = vec!["1", "yes", "anything-not-false"];
         for val in true_values {
             std::env::set_var("OBJECTSCRIPT_LEARNING", val);
@@ -692,6 +704,7 @@ mod tests {
 
     #[test]
     fn test_learning_enabled_only_false_disables() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OBJECTSCRIPT_LEARNING", "false");
         assert!(!learning_enabled());
         std::env::set_var("OBJECTSCRIPT_LEARNING", "False");
@@ -701,6 +714,7 @@ mod tests {
 
     #[test]
     fn test_skills_namespace_custom() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "CUSTOM");
         let ns = skills_namespace();
         assert_eq!(ns, "CUSTOM");
@@ -709,6 +723,7 @@ mod tests {
 
     #[test]
     fn test_skills_namespace_empty_string() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "");
         let ns = skills_namespace();
         assert_eq!(ns, "");
@@ -717,6 +732,7 @@ mod tests {
 
     #[test]
     fn test_skills_namespace_special_chars() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "SKILLS-TEST_1");
         let ns = skills_namespace();
         assert_eq!(ns, "SKILLS-TEST_1");
@@ -843,6 +859,7 @@ mod tests {
 
     #[test]
     fn test_skills_namespace_reset_cycle() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "TEMP");
         assert_eq!(skills_namespace(), "TEMP");
         std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");

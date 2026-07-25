@@ -1,3 +1,5 @@
+pub mod bundled;
+
 use anyhow::{Context, Result};
 use reqwest::Client;
 

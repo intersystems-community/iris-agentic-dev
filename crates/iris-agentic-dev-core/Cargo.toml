@@ -395,6 +395,19 @@ name = "test_skill_frontmatter"
 path = "tests/unit/test_skill_frontmatter.rs"
 
 [[test]]
+name = "test_bundled_skills"
+path = "tests/unit/test_bundled_skills.rs"
+
+[[test]]
+name = "test_skill_manifest_sync"
+path = "tests/unit/test_skill_manifest_sync.rs"
+
+[[test]]
+name = "test_skill_discovery_tools"
+path = "tests/unit/test_skill_discovery_tools.rs"
+required-features = ["testing"]
+
+[[test]]
 name = "test_skill_install_e2e"
 path = "tests/integration/test_skill_install_e2e.rs"
 
