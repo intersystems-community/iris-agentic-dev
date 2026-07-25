@@ -53,7 +53,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install pyyaml
+      - run: pip install pyyaml pytest
       - name: Verify benchmark task YAML parses clean
         run: |
           python -c "
@@ -63,6 +63,10 @@ jobs:
           tasks = load_tasks()
           print(f'OK: {len(tasks)} tasks loaded and validated')
           "
+      - name: Verify release workflow ordering
+        # A broken release.yml is otherwise only discoverable by cutting a tag,
+        # and a Marketplace publish cannot be undone.
+        run: python -m pytest tests/e2e/test_release_workflow.py -q
 
   windows-handshake:
     runs-on: windows-latest

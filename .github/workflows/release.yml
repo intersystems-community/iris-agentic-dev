@@ -62,13 +62,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: cd vscode-iris-agentic-dev && npm ci && npm test && npm run package
-
       - name: Check the extension ships this release's binary version
         run: |
           # The extension downloads irisAgenticDev.serverVersion from the
           # release tagged v<that version>. If it does not match the tag being
-          # released, every auto-install 404s.
+          # released, every auto-install 404s. Checked before the build so a
+          # mismatch fails in seconds rather than after npm ci and packaging.
           declared=$(node -p "require('./vscode-iris-agentic-dev/package.json').irisAgenticDev.serverVersion")
           tag="${GITHUB_REF_NAME#v}"
           if [ "$declared" != "$tag" ]; then
@@ -78,21 +77,7 @@ jobs:
           fi
           echo "serverVersion $declared matches tag $tag"
 
-      - name: Publish to VS Code Marketplace
-        # Not allowed to sink the release. The most common failure is
-        # "version already published" — the extension ships on its own cadence,
-        # so a binary release often carries an unchanged extension version. The
-        # .vsix is still attached to the release below either way.
-        continue-on-error: true
-        run: |
-          cd vscode-iris-agentic-dev
-          if [ -z "$VSCE_PAT" ]; then
-            echo "::warning::VSCE_PAT is not set — skipping Marketplace publish."
-            exit 0
-          fi
-          npx vsce publish --pat "$VSCE_PAT" --no-dependencies
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      - run: cd vscode-iris-agentic-dev && npm ci && npm test && npm run package
       - uses: actions/upload-artifact@v4
         with:
           name: vsix
@@ -127,6 +112,42 @@ jobs:
             vscode-iris-agentic-dev-*.vsix
           generate_release_notes: true
           body_path: release-body.md
+
+  publish-marketplace:
+    # Must come after `release`, not alongside it. vsce publish is
+    # irreversible — a version, once accepted, can never be re-pushed, and
+    # installed clients auto-update within hours. The extension it publishes
+    # downloads binaries from the release this workflow is still creating, so
+    # publishing in parallel ships an extension that 404s for the length of
+    # the gap. rust-analyzer and vscode-objectscript both order it this way.
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsix
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Publish to VS Code Marketplace
+        # Not allowed to sink the release, which has already succeeded by now.
+        # The most common failure is "version already published" — the
+        # extension ships on its own cadence, so a binary release often carries
+        # an unchanged extension version. The .vsix is attached to the release
+        # either way.
+        continue-on-error: true
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::warning::VSCE_PAT is not set — skipping Marketplace publish."
+            exit 0
+          fi
+          # Publish the exact .vsix that was built and attached to the release,
+          # rather than rebuilding one that could differ.
+          vsix=$(ls vscode-iris-agentic-dev-*.vsix | head -1)
+          echo "Publishing $vsix"
+          npx vsce publish --pat "$VSCE_PAT" --packagePath "$vsix"
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
   docker-publish:
     needs: build
