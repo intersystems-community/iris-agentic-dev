@@ -69,17 +69,29 @@ jobs:
 
       - name: Wait for Atelier API
         run: |
+          # Only 200 counts as ready. A 401 means the port is answering but auth is
+          # refused — usually the first-login password expiry on community images —
+          # and treating it as success just defers the failure to fixture load, where
+          # it shows up as an unexplained 401 PUT.
           for i in $(seq 1 60); do
             status=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 \
               -u _SYSTEM:SYS "http://localhost:52773/api/atelier/" 2>/dev/null || echo "000")
-            if [ "$status" = "200" ] || [ "$status" = "401" ]; then
-              echo "Atelier ready (HTTP $status)"
+            if [ "$status" = "200" ]; then
+              echo "Atelier ready (HTTP 200)"
               exit 0
             fi
-            echo "  attempt $i/60: HTTP $status"
+            if [ "$status" = "401" ]; then
+              echo "  attempt $i/60: HTTP 401 — port up, auth refused; unexpiring password"
+              # Community images ship _SYSTEM with an expired password. Clear the
+              # expiry so REST auth works; idempotent, so it is safe to retry.
+              docker exec iris-skill-eval iris session IRIS -U %SYS \
+                '##class(Security.Users).UnExpireUserPasswords("*")' 2>&1 | tail -3 || true
+            else
+              echo "  attempt $i/60: HTTP $status"
+            fi
             sleep 5
           done
-          echo "IRIS did not become ready in 7 minutes"
+          echo "IRIS did not become ready in 7 minutes (last status: $status)"
           docker logs iris-skill-eval 2>&1 | tail -80
           exit 1
 
@@ -95,9 +107,14 @@ jobs:
               echo "Credentials: $user"
               exit 0
             fi
+            echo "  $user: HTTP $status"
           done
-          echo "IRIS_USERNAME=_SYSTEM" >> $GITHUB_ENV
-          echo "IRIS_PASSWORD=SYS" >> $GITHUB_ENV
+          # Do not fall through to a guess. Every candidate failing means the eval
+          # cannot authenticate, and pretending otherwise produces a 401 several
+          # steps later that looks like a harness bug rather than an auth problem.
+          echo "No working credentials for Atelier REST — cannot run the eval."
+          docker logs iris-skill-eval 2>&1 | tail -40
+          exit 1
 
       - name: Run unit tests for skill_eval harness
         run: |
