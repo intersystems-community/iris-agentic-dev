@@ -52,6 +52,48 @@ def parse_events_from_lines(lines: list[str]) -> Generator[dict, None, None]:
             continue
 
 
+# Env vars that hand the agent a path back to the repo checkout. A sandboxed
+# cwd is not enough on its own: the agent inherits os.environ, and under CI
+# PYTHONPATH and GITHUB_WORKSPACE are the repo root. With a bash tool and no
+# file to work on, it follows them there and edits the benchmark fixture it is
+# about to be scored against.
+_REPO_PATH_VARS = (
+    "PYTHONPATH",
+    "GITHUB_WORKSPACE",
+    "GITHUB_ACTION_PATH",
+    "INIT_CWD",
+    "OLDPWD",
+    "PWD",
+)
+
+
+def _sandbox_env(env_vars: dict, cwd: str) -> dict:
+    """Build the agent's environment with every path back to the repo removed.
+
+    Explicit env_vars from the caller always win — they carry the opencode
+    config, DB path and IRIS connection details the run depends on.
+    """
+    env = {k: v for k, v in os.environ.items() if k not in _REPO_PATH_VARS}
+
+    # Anything else still naming the repo (or wherever the harness was
+    # launched from) is dropped too. Belt and braces: the tuple above covers
+    # what CI sets today, this covers what it sets tomorrow.
+    #
+    # PATH and HOME are exempt — opencode cannot start without them, and CI
+    # runners do sometimes prepend workspace-relative bin dirs to PATH.
+    launched_from = os.path.abspath(os.getcwd())
+    env = {
+        k: v for k, v in env.items()
+        if k in ("PATH", "HOME") or not (isinstance(v, str) and launched_from in v)
+    }
+
+    # PWD must agree with cwd or shells started by the agent disagree with the
+    # process about where they are.
+    env["PWD"] = cwd
+    env.update(env_vars)
+    return env
+
+
 @contextlib.contextmanager
 def _sandbox_dir(working_dir: str | None) -> Generator[str, None, None]:
     """Yield the cwd to run the agent in, never the caller's cwd.
@@ -82,7 +124,6 @@ def run_opencode(
     session goes idle rather than waiting for opencode to exit on its own
     (opencode run can hang on teardown after the LLM response completes).
     """
-    env = {**os.environ, **env_vars}
     cmd = [
         "opencode", "run", prompt,
         "--format", "json",
@@ -91,6 +132,7 @@ def run_opencode(
     ]
     collected: list[dict] = []
     with _sandbox_dir(working_dir) as cwd:
+        env = _sandbox_env(env_vars, cwd)
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,

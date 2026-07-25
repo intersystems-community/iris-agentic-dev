@@ -184,6 +184,7 @@ def popen_spy(monkeypatch):
         cwd = kwargs.get("cwd")
         seen["cwd"] = cwd
         seen["cmd"] = cmd
+        seen["env"] = kwargs.get("env")
         # Sampled while the process is "running" — a scratch dir is cleaned up
         # by the time collect_events returns, so it can't be checked after.
         seen["cwd_existed"] = cwd is not None and os.path.isdir(cwd)
@@ -230,3 +231,54 @@ def test_each_omitted_run_gets_its_own_directory(popen_spy):
     collect_events("second", {})
     second = popen_spy["cwd"]
     assert first != second, "runs must not share a scratch workdir"
+
+
+# --- Environment scrubbing --------------------------------------------------
+#
+# A sandboxed cwd is not enough. The agent inherits os.environ wholesale, and
+# under CI that includes PYTHONPATH and GITHUB_WORKSPACE pointing at the repo
+# checkout. Given a bash tool and no file to work on, the agent follows those
+# to the repo and edits the benchmark fixture anyway — the same corruption,
+# reached by a different route.
+
+_REPO_LEAKING_VARS = [
+    "PYTHONPATH",
+    "GITHUB_WORKSPACE",
+    "GITHUB_ACTION_PATH",
+    "PWD",
+    "OLDPWD",
+    "INIT_CWD",
+]
+
+
+@pytest.mark.parametrize("var", _REPO_LEAKING_VARS)
+def test_repo_pointing_env_vars_are_not_handed_to_the_agent(monkeypatch, popen_spy, var):
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    monkeypatch.setenv(var, repo_root)
+    collect_events("do something", {})
+    assert popen_spy["env"].get(var) != repo_root, (
+        f"{var} still points the agent at the repo checkout"
+    )
+
+
+def test_no_inherited_env_value_points_at_the_repo(monkeypatch, popen_spy):
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    monkeypatch.setenv("PYTHONPATH", repo_root)
+    monkeypatch.setenv("GITHUB_WORKSPACE", repo_root)
+    collect_events("do something", {})
+    leaks = {k: v for k, v in popen_spy["env"].items()
+             if isinstance(v, str) and repo_root in v}
+    assert not leaks, f"env leaks the repo path to the agent: {leaks}"
+
+
+def test_explicit_env_vars_still_win(popen_spy):
+    collect_events("do something", {"IRIS_HOST": "localhost", "OPENCODE_DB": "/tmp/x.db"})
+    assert popen_spy["env"]["IRIS_HOST"] == "localhost"
+    assert popen_spy["env"]["OPENCODE_DB"] == "/tmp/x.db"
+
+
+def test_essential_env_is_preserved(popen_spy):
+    """Scrubbing must not break opencode itself — PATH and HOME are required."""
+    collect_events("do something", {})
+    assert popen_spy["env"].get("PATH"), "PATH must survive scrubbing"
+    assert popen_spy["env"].get("HOME"), "HOME must survive scrubbing"

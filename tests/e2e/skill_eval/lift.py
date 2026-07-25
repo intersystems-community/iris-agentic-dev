@@ -95,7 +95,20 @@ def run_task_and_score(
     targeted_path = os.path.join(_TARGETED_DIR, f"{task_id}.yaml")
     task_path = targeted_path if os.path.exists(targeted_path) else os.path.join(_BENCHMARK_TASKS_DIR, f"{task_id}.yaml")
     with open(task_path) as f:
-        task_dict = yaml.safe_load(f)
+        try:
+            task_dict = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            # test_task_corpus.py parses every task file before the eval starts,
+            # so a parse error here means the file was valid at startup and is
+            # not any more: something in this run rewrote its own benchmark.
+            # Say so, rather than surfacing a bare ScannerError that reads like
+            # a corrupt checkout.
+            raise RuntimeError(
+                f"{task_path} parsed at startup but not now — it was modified "
+                f"during this run, most likely by the agent under test. "
+                f"Check working_dir and env sandboxing in opencode_runner.py. "
+                f"Underlying error: {e}"
+            ) from e
 
     # Load cls fixtures into IRIS (global/routine fixtures use docker exec via benchmark harness)
     cls_fixtures = [
