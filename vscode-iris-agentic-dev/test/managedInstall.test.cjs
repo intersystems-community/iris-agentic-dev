@@ -7,10 +7,33 @@ const os = require("node:os");
 const fs = require("node:fs");
 
 // ---------------------------------------------------------------------------
-// vscode stub lives in node_modules/vscode/index.js (created for test use).
-// Require it now so we can mutate its exported object in individual tests.
+// managedInstall.cjs is bundled with --external:vscode, so it does a bare
+// require("vscode") at runtime. Redirect that to the checked-in stub before
+// loading the bundle. Resolution has to be rewritten rather than the module
+// aliased at bundle time: tests mutate this object to simulate settings and
+// download failures, and an inlined copy would be a different instance.
+//
+// The stub previously lived in node_modules/vscode/, created by hand. npm ci
+// wipes it, so on CI the require failed and this whole file was skipped — it
+// only ever passed on machines where someone had made the stub locally.
 // ---------------------------------------------------------------------------
+const Module = require("node:module");
+const STUB_PATH = require.resolve("./stubs/vscode.cjs");
+const WHICH_STUB_PATH = require.resolve("./stubs/which.cjs");
+const _origResolve = Module._resolveFilename;
+Module._resolveFilename = function (request, ...rest) {
+  if (request === "vscode") return STUB_PATH;
+  // `which` is also --external. Tier 2 of resolveServerBinary is a PATH
+  // lookup, so with the real module these tests pass or fail depending on
+  // whether the developer happens to have iris-agentic-dev installed — an
+  // early return from tier 2 never reaches the cache and download logic
+  // tiers 3+ exercise. Stubbed so PATH state is explicit per test.
+  if (request === "which") return WHICH_STUB_PATH;
+  return _origResolve.call(this, request, ...rest);
+};
+
 const vscodeStub = require("vscode");
+const whichStub = require("which");
 
 // Build managedInstall.ts → .test-out/managedInstall.cjs before running tests
 // (done in package.json test script)
@@ -214,4 +237,49 @@ test("US3: on win32, getBinaryName returns .exe extension", () => {
   const { getBinaryName } = require("../.test-out/platform.cjs");
   const name = getBinaryName("win32", "x64");
   assert.ok(name !== null && name.endsWith(".exe"));
+});
+
+// --- Tier 2: PATH lookup ----------------------------------------------------
+
+test("tier 2: a binary on PATH is used as-is, without downloading", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
+  const onPath = path.join(tmp, "iris-agentic-dev");
+  fs.writeFileSync(onPath, "#!/bin/sh\necho ok", { mode: 0o755 });
+  whichStub.__setFound(onPath);
+
+  // Fail loudly if tier 2 falls through to a download.
+  const origWithProgress = vscodeStub.window.withProgress;
+  vscodeStub.window.withProgress = async () => {
+    throw new Error("must not download when a binary is on PATH");
+  };
+
+  try {
+    const result = await resolveServerBinary(makeContext("0.9.5", tmp));
+    assert.equal(result, onPath);
+  } finally {
+    vscodeStub.window.withProgress = origWithProgress;
+    whichStub.__reset();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("tier 2: a PATH binary is used whatever its version — no version check", async () => {
+  // Documents current behaviour rather than endorsing it: a stale Homebrew or
+  // ~/.local/bin install silently wins over the version the extension expects,
+  // with nothing logged. Worth revisiting; capturing it so a change is
+  // deliberate.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
+  const stale = path.join(tmp, "iris-agentic-dev");
+  fs.writeFileSync(stale, "#!/bin/sh\necho 'iris-agentic-dev 0.0.1'", {
+    mode: 0o755,
+  });
+  whichStub.__setFound(stale);
+
+  try {
+    const result = await resolveServerBinary(makeContext("0.9.5", tmp));
+    assert.equal(result, stale);
+  } finally {
+    whichStub.__reset();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
