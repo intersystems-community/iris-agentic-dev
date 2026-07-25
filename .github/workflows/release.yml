@@ -2,7 +2,11 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    # Binary releases only. 'v*' also matched 'vscode-v0.4.24', which cut a
+    # full binary + Docker + Homebrew release from an extension-only version
+    # bump, publishing binaries under a tag in neither version sequence.
+    # Glob, not regex: [0-9] is a character class but + is literal.
+    tags: ['v[0-9]*']
 
 env:
   CARGO_TERM_COLOR: always
@@ -58,9 +62,35 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: cd vscode-iris-agentic-dev && npm ci && npm run package
+      - run: cd vscode-iris-agentic-dev && npm ci && npm test && npm run package
+
+      - name: Check the extension ships this release's binary version
+        run: |
+          # The extension downloads irisAgenticDev.serverVersion from the
+          # release tagged v<that version>. If it does not match the tag being
+          # released, every auto-install 404s.
+          declared=$(node -p "require('./vscode-iris-agentic-dev/package.json').irisAgenticDev.serverVersion")
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$declared" != "$tag" ]; then
+            echo "::error::vscode-iris-agentic-dev/package.json declares serverVersion=$declared but this release is $tag."
+            echo "Bump irisAgenticDev.serverVersion to $tag so auto-install resolves."
+            exit 1
+          fi
+          echo "serverVersion $declared matches tag $tag"
+
       - name: Publish to VS Code Marketplace
-        run: cd vscode-iris-agentic-dev && npx vsce publish --pat "$VSCE_PAT" --no-dependencies
+        # Not allowed to sink the release. The most common failure is
+        # "version already published" — the extension ships on its own cadence,
+        # so a binary release often carries an unchanged extension version. The
+        # .vsix is still attached to the release below either way.
+        continue-on-error: true
+        run: |
+          cd vscode-iris-agentic-dev
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::warning::VSCE_PAT is not set — skipping Marketplace publish."
+            exit 0
+          fi
+          npx vsce publish --pat "$VSCE_PAT" --no-dependencies
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
       - uses: actions/upload-artifact@v4

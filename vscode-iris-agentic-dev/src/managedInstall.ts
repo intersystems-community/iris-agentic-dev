@@ -3,7 +3,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import which from "which";
 import { downloadBinary } from "./download";
-import { getBinaryName, getDownloadUrl } from "./platform";
+import { getBinaryName, getDownloadUrl, getServerVersion } from "./platform";
 
 // Prevents duplicate downloads when multiple VS Code windows activate simultaneously.
 let activeResolve: Promise<string | null> | undefined;
@@ -63,7 +63,18 @@ async function _resolve(
     return null;
   }
 
-  const version: string = context.extension.packageJSON.version;
+  // The server binary version, NOT the extension version — the two sequences
+  // are independent and only the former matches a GitHub release tag.
+  let version: string;
+  try {
+    version = getServerVersion(context.extension.packageJSON);
+  } catch (err) {
+    log.error(
+      `iris-agentic-dev: ${err instanceof Error ? err.message : String(err)} ` +
+        "Set iris-agentic-dev.serverPath to a binary location as a workaround."
+    );
+    return null;
+  }
   const storageDir = context.globalStorageUri.fsPath;
   const versionFile = path.join(storageDir, "iris-agentic-dev.version");
   const binaryDir = path.join(storageDir, `iris-agentic-dev-${version}`);

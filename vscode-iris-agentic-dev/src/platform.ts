@@ -1,6 +1,25 @@
 const GITHUB_BASE =
   "https://github.com/intersystems-community/iris-agentic-dev/releases/download";
 
+// The extension version (0.4.x) and the MCP server binary version (0.9.x) are
+// separate sequences: the extension ships on its own cadence, the binary is
+// tagged v0.9.x by the Rust release. Deriving the download URL from the
+// extension's own version asks for a release tag that does not exist.
+export function getServerVersion(packageJSON: {
+  irisAgenticDev?: { serverVersion?: string };
+}): string {
+  const version = packageJSON.irisAgenticDev?.serverVersion;
+  if (!version) {
+    // Deliberately fatal rather than falling back to the extension version —
+    // that fallback is what produced 404s on every auto-install.
+    throw new Error(
+      "package.json is missing irisAgenticDev.serverVersion — cannot determine " +
+        "which MCP server binary to download."
+    );
+  }
+  return version;
+}
+
 // Maps process.platform + process.arch to the binary name segment used in GitHub releases.
 // Returns null for unsupported combinations (e.g. linux/arm64).
 export function getBinaryName(platform: string, arch: string): string | null {

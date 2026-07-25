@@ -19,9 +19,18 @@ const { resolveServerBinary } = require("../.test-out/managedInstall.cjs");
 // ---------------------------------------------------------------------------
 // Helper: build a fake ExtensionContext pointing at a temp dir
 // ---------------------------------------------------------------------------
+// `version` is the MCP server binary version — the thing managedInstall
+// downloads. The extension's own version is deliberately different here so a
+// regression back to packageJSON.version fails these tests instead of quietly
+// building a 404 URL.
 function makeContext(version, tmpDir) {
   return {
-    extension: { packageJSON: { version } },
+    extension: {
+      packageJSON: {
+        version: "0.4.26",
+        irisAgenticDev: { serverVersion: version },
+      },
+    },
     globalStorageUri: { fsPath: tmpDir },
   };
 }

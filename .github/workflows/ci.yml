@@ -310,6 +310,23 @@ jobs:
           # Exposed so tests can skip/adjust for known version-specific behavior
           IRIS_MATRIX_VERSION: ${{ matrix.iris_version }}
 
+  vscode-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: cd vscode-iris-agentic-dev && npm ci
+      - name: Typecheck
+        run: cd vscode-iris-agentic-dev && npx tsc --noEmit
+      - name: Unit tests
+        # These were previously release-only, so a bad download URL could not
+        # be caught on a PR — and one was not: the extension asked GitHub for
+        # a release tagged with its own version (v0.4.x) instead of the
+        # binary's (v0.9.x), 404ing every auto-install.
+        run: cd vscode-iris-agentic-dev && npm test
+
   doc-lint:
     runs-on: ubuntu-latest
     steps:
