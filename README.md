@@ -275,10 +275,13 @@ The top skill is **`objectscript-review`** — a 205-word checklist that catches
 
 The multi-file and SQL-quirks suites referenced in earlier versions of this table are not
 yet ported to the current native benchmark harness (`iris-agentic-dev benchmark`) — only
-the repair suite above is runnable today. See
-[BENCHMARKING.md](./skills/BENCHMARKING.md) to run it yourself, including a
-[Limitations](./skills/BENCHMARKING.md#limitations) section covering contamination
-risk, single-run variance, and single-model validation caveats on these numbers.
+the repair suite above is runnable today.
+
+Read the +27% as a rough signal. It comes from one run against one model, on 22 tasks that
+live in this public repo and may well be in the model's training data. Each of those
+inflates or blurs the number. [BENCHMARKING.md](./skills/BENCHMARKING.md) shows you how to
+run the suite yourself, and its [Limitations](./skills/BENCHMARKING.md#limitations) section
+works through every caveat.
 
 **VS Code Copilot:** Skills are included automatically when you install the extension.
 
@@ -339,6 +342,10 @@ Most tools work over the Atelier REST API and connect to any IRIS instance — n
 required unless noted. Tools marked ✦ require `IRIS_CONTAINER`. Tools marked 🔒 are
 write-gated (suppressed on Live instances unless `IRIS_ALLOW_PROD=1`).
 
+Tools that can reach patient data or IRIS internals are blocked before they run unless
+you opt in. See [Data safety gates](./docs/tools.md#data-safety-gates) for what is
+blocked and how to permit it.
+
 ### Code
 
 | Tool | What it does |
@@ -349,7 +356,7 @@ write-gated (suppressed on Live instances unless `IRIS_ALLOW_PROD=1`).
 | `iris_execute_method` | Invoke a `ClassMethod` directly by class+method+args, no boilerplate. String-returning methods only (v1). |
 | `iris_query` | Execute SQL, return rows as JSON. `mode=explain\|count\|write` for query plans, row-count estimates, and gated DML. |
 | `iris_test` | Run `%UnitTest` tests, return structured pass/fail results. |
-| `iris_global` | Read, write, kill, or list IRIS global nodes. PHI and system-blocklist gates enforced. |
+| `iris_global` | Read, write, kill, or list IRIS global nodes. Patient-data and system globals are gated — see [Data safety gates](./docs/tools.md#data-safety-gates). |
 | `iris_coverage` | Measure ObjectScript line coverage via `%Monitor.System.LineByLine`. `mode=run`: start+RunTest+stop+report in one call. `mode=check`: verify monitor is available. Returns per-class and total coverage percentages. Requires `gmheap ≥ 256` (Management Portal > Configuration > Advanced Memory) and IRIS restart. |
 | `iris_source_control` ✦ | Check lock status, checkout, execute SCM actions. |
 
@@ -392,7 +399,7 @@ write-gated (suppressed on Live instances unless `IRIS_ALLOW_PROD=1`).
 | `iris_interop_query` ✦ | Query production logs, queue depths, or message archive. |
 | `iris_production_item` 🔒 | Enable, disable, or get/set settings on an individual production config item. Works via HTTP, no Docker required. |
 | `iris_production_diff` | Diff the running production config against the last source-controlled version. |
-| `iris_message_body` | Read a message body by ID (plain-text or stream-backed). PHI-gated. |
+| `iris_message_body` | Read a message body by ID (plain-text or stream-backed). Blocked unless the connection permits patient data — see [Data safety gates](./docs/tools.md#data-safety-gates). |
 | `iris_business_rule_info` | List or inspect Ensemble business rules (`Ens.Rule.RuleSet`). |
 | `iris_credential_list` | List Ensemble credentials (IDs/usernames only — passwords never returned). |
 | `iris_credential_manage` 🔒 | Create, update, or delete an Ensemble credential. |

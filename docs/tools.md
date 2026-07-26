@@ -17,7 +17,7 @@ write-gated (suppressed on Live instances unless `IRIS_ALLOW_PROD=1`).
 | `iris_query`            | Execute SQL, return rows as JSON. `mode=explain\|count\|write` for query plans, row-count estimates, and gated DML.       |
 | `iris_test`             | Run `%UnitTest` tests, return structured pass/fail results. Set `coverage=true` to also measure line coverage inline.     |
 | `iris_coverage`         | Measure ObjectScript line coverage via `%Monitor.System.LineByLine`. `mode=run` is all-in-one. See [Coverage](#coverage). |
-| `iris_global`           | Read, write, kill, or list IRIS global nodes. PHI and system-blocklist gates enforced.                                    |
+| `iris_global`           | Read, write, kill, or list IRIS global nodes. Gated — see [Data safety gates](#data-safety-gates).                        |
 | `iris_source_control` ✦ | Check lock status, checkout, execute SCM actions. CheckIn is opt-in via `IRIS_SCM_ALLOW_CHECKIN=1`.                       |
 
 ---
@@ -67,7 +67,7 @@ write-gated (suppressed on Live instances unless `IRIS_ALLOW_PROD=1`).
 | `iris_interop_query` ✦      | Query production logs, queue depths, or message archive.                                                          |
 | `iris_production_item` 🔒   | Enable, disable, or get/set settings on an individual production config item. Works via HTTP, no Docker required. |
 | `iris_production_diff`      | Diff the running production config against the last source-controlled version.                                    |
-| `iris_message_body`         | Read a message body by ID (plain-text or stream-backed). PHI-gated.                                               |
+| `iris_message_body`         | Read a message body by ID (plain-text or stream-backed). Gated — see [Data safety gates](#data-safety-gates).     |
 | `iris_business_rule_info`   | List or inspect Ensemble business rules (`Ens.Rule.RuleSet`).                                                     |
 | `iris_credential_list`      | List Ensemble credentials (IDs/usernames only — passwords never returned).                                        |
 | `iris_credential_manage` 🔒 | Create, update, or delete an Ensemble credential.                                                                 |
@@ -135,14 +135,63 @@ coverage in the IDE. They share the same server connection — no extra configur
 
 ---
 
+## Data safety gates
+
+PHI is Protected Health Information — the patient-identifying data HIPAA governs.
+
+Some tools can reach PHI, and some can reach the globals IRIS uses to store its own code
+and configuration. Those calls are checked before they run and refused by default. Four
+checks run in order; the first one that refuses wins.
+
+**1. Environment template.** A connection declares what kind of instance it points at via
+`mcpTemplate` in `.iris-agentic-dev.toml` — `dev` (the default) permits everything, `test`
+blocks code execution and compiles, and `live` blocks those plus source control. Writes
+count as execution here: `iris_global` with `action=set` or `kill`, and `iris_query` with
+`mode=write`, are treated as execution even though reads from the same tools are not.
+Error code: `ENV_GATE_BLOCKED`.
+
+**2. Bulk-PHI tools.** `journal_search` and `view_message_body` return whole records, so
+there is no field to inspect and no safe subset to return. They are refused outright
+unless the connection sets `dataPolicy = "allow"`, with no per-call override. Error code:
+`DATA_POLICY_BLOCKED`.
+
+**3. System globals.** IRIS keeps compiled classes, routines, roles, users, and
+interoperability config in globals such as `^oddDEF`, `^ROUTINE`, `^%Dictionary*`,
+`^ROLE`, and `^Ens.Config*`. Writing to them can leave the instance unable to compile or
+start. This blocklist is hardcoded and cannot be switched off — `globalBlocklist` in your
+config adds to it, never replaces it. The one exception is `dataPolicyKillAllowlist`,
+which exempts the patterns you name from this check on kill operations only. Error code:
+`SYSTEM_BLOCKLIST`.
+
+**4. Globals whose names suggest PHI.** Reading `^PAPMI*`, `^PAADM*`, `^MRADM*`,
+`^ORDER*`, and similar requires `acknowledgePhi: true` on the call. This is a speed bump,
+not a lock — it exists so nobody pulls a patient record into a chat transcript by
+accident. Error code: `PHI_GATE_BLOCKED`.
+
+`iris_message_body` is gated separately, by `dataPolicy` alone: `block` refuses the call
+(`PHI_POLICY_BLOCKED`), `allow` requires `acknowledgePhi: true` (`PHI_ACK_REQUIRED`), and
+`redact` returns the body with the standard HL7 v2 patient fields replaced by
+`[REDACTED]` (PID-3, 5, 7, 8, 11, 18 and MSH-3). Redaction only recognizes HL7 v2 —
+anything else comes back as-is, so `redact` is not a safe default for XML or custom
+message bodies.
+
+Both the name patterns and the system blocklist are taken from InterSystems Server
+Manager, so they match the lists that already shipped there.
+
+---
+
 ## Common error codes
 
-| Code                    | Meaning                                                                          |
-| ----------------------- | -------------------------------------------------------------------------------- |
-| `POLICY_GATE`           | Call blocked by per-connection policy — see `allow` in `.iris-agentic-dev.toml`  |
-| `SCOPE_REQUIRED`        | `iris_search` called without a document scope — pass a `documents` wildcard list |
-| `STALE_CONTENT`         | `iris_doc` insert/delete_lines `expected` field didn't match stored content      |
-| `CODE_EDIT_BLOCKED`     | Write to a `%` system class blocked by the code-edit gate                        |
-| `CHECKIN_BLOCKED`       | SCM CheckIn called without `IRIS_SCM_ALLOW_CHECKIN=1`                            |
-| `HTTP_EXECUTION_FAILED` | Atelier HTTP call failed — check host, port, credentials                         |
-| `IRIS_UNREACHABLE`      | No IRIS connection discoverable — run `check_config`                             |
+| Code                    | Meaning                                                                                 |
+| ----------------------- | --------------------------------------------------------------------------------------- |
+| `POLICY_GATE`           | Call blocked by per-connection policy — see `allow` in `.iris-agentic-dev.toml`         |
+| `ENV_GATE_BLOCKED`      | Tool not permitted by this connection's `mcpTemplate` — see [gates](#data-safety-gates) |
+| `DATA_POLICY_BLOCKED`   | Bulk-PHI tool called without `dataPolicy = "allow"`                                     |
+| `SYSTEM_BLOCKLIST`      | Global is on the system blocklist — not bypassable                                      |
+| `PHI_GATE_BLOCKED`      | Global name matches a PHI pattern — pass `acknowledgePhi: true`                         |
+| `SCOPE_REQUIRED`        | `iris_search` called without a document scope — pass a `documents` wildcard list        |
+| `STALE_CONTENT`         | `iris_doc` insert/delete_lines `expected` field didn't match stored content             |
+| `CODE_EDIT_BLOCKED`     | Write to a `%` system class blocked by the code-edit gate                               |
+| `CHECKIN_BLOCKED`       | SCM CheckIn called without `IRIS_SCM_ALLOW_CHECKIN=1`                                   |
+| `HTTP_EXECUTION_FAILED` | Atelier HTTP call failed — check host, port, credentials                                |
+| `IRIS_UNREACHABLE`      | No IRIS connection discoverable — run `check_config`                                    |
