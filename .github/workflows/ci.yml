@@ -12,7 +12,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           components: clippy, rustfmt
@@ -49,8 +49,8 @@ jobs:
   benchmark-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       - run: pip install pyyaml pytest
@@ -71,7 +71,7 @@ jobs:
   windows-handshake:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.92.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo build -p iris-agentic-dev
@@ -103,7 +103,7 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.92.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p iris-agentic-dev
@@ -122,7 +122,7 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
       - name: Upload signed Windows binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: iris-agentic-dev-windows-signed
           path: target\release\iris-agentic-dev.exe
@@ -148,7 +148,7 @@ jobs:
             initial_wait_secs: 90
     name: "e2e-tests (IRIS ${{ matrix.iris_version }})"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.92.0
       - uses: Swatinem/rust-cache@v2
         with:
@@ -317,10 +317,10 @@ jobs:
   vscode-extension:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
       - run: cd vscode-iris-agentic-dev && npm ci
       - name: Typecheck
         run: cd vscode-iris-agentic-dev && npx tsc --noEmit
@@ -334,7 +334,7 @@ jobs:
   doc-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: README config path sanity check
         run: |
           # Wrong path: Claude Code MCP config is ~/.claude.json, not ~/.claude/settings.json
@@ -423,7 +423,7 @@ jobs:
   cross-compile-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
@@ -438,7 +438,7 @@ jobs:
   docker-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           targets: x86_64-unknown-linux-musl

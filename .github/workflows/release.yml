@@ -31,7 +31,7 @@ jobs:
             artifact: iris-agentic-dev-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.92.0
         with:
           targets: ${{ matrix.target }}
@@ -50,7 +50,7 @@ jobs:
       - name: Ad-hoc codesign (macOS only — removes Gatekeeper quarantine hang)
         if: runner.os == 'macOS'
         run: codesign --force --deep --sign - "${{ matrix.artifact }}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
@@ -58,10 +58,10 @@ jobs:
   build-vsix:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Check the extension ships this release's binary version
         run: |
           # The extension downloads irisAgenticDev.serverVersion from the
@@ -78,7 +78,7 @@ jobs:
           echo "serverVersion $declared matches tag $tag"
 
       - run: cd vscode-iris-agentic-dev && npm ci && npm test && npm run package
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: vsix
           path: vscode-iris-agentic-dev/vscode-iris-agentic-dev-*.vsix
@@ -89,7 +89,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
           pattern: '{iris-agentic-dev-*,vsix}'
@@ -102,7 +102,7 @@ jobs:
 
           > The `.vsix` below is a fallback for air-gapped or pinned-version installs. Homebrew and manual binary install still work as before.
           EOF
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: |
             iris-agentic-dev-linux-x86_64
@@ -123,12 +123,12 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: vsix
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Publish to VS Code Marketplace
         # Not allowed to sink the release, which has already succeeded by now.
         # The most common failure is "version already published" — the
@@ -156,8 +156,8 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: iris-agentic-dev-linux-x86_64
       - name: Prepare binary for Docker context
@@ -191,7 +191,7 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
           pattern: 'iris-agentic-dev-*'
