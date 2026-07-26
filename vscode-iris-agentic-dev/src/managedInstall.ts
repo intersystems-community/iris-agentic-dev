@@ -1,9 +1,57 @@
+import { execFile } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import which from "which";
 import { downloadBinary } from "./download";
 import { getBinaryName, getDownloadUrl, getServerVersion } from "./platform";
+
+// `iris-agentic-dev --version` prints "iris-agentic-dev 0.9.6".
+const VERSION_OUTPUT = /(\d+\.\d+\.\d+)/;
+
+// Diagnostic only, so it must never delay activation for long. A binary that
+// hangs on --version (or is not our binary at all) gets given up on.
+const VERSION_TIMEOUT_MS = 3000;
+
+/**
+ * Reads the version a binary reports, or null if it cannot be determined.
+ *
+ * Never throws and never rejects: old builds predate --version, wrappers may
+ * exit non-zero, and none of that should stop a binary from being used.
+ */
+function readBinaryVersion(binaryPath: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile(
+      binaryPath,
+      ["--version"],
+      { timeout: VERSION_TIMEOUT_MS, windowsHide: true },
+      (err, stdout, stderr) => {
+        if (err && !stdout && !stderr) {
+          resolve(null);
+          return;
+        }
+        const match = VERSION_OUTPUT.exec(`${stdout}\n${stderr}`);
+        resolve(match ? match[1] : null);
+      }
+    );
+  });
+}
+
+/**
+ * The server version this extension expects, or null if it cannot be read.
+ *
+ * Tier 2 only uses this to decide whether to warn, so a missing declaration
+ * must not stop a PATH binary from being used — tier 3 is where that is fatal.
+ */
+function expectedServerVersion(
+  context: vscode.ExtensionContext
+): string | null {
+  try {
+    return getServerVersion(context.extension.packageJSON);
+  } catch {
+    return null;
+  }
+}
 
 // Prevents duplicate downloads when multiple VS Code windows activate simultaneously.
 let activeResolve: Promise<string | null> | undefined;
@@ -44,13 +92,33 @@ async function _resolve(
 
   // Tier 2: PATH lookup
   for (const name of ["iris-agentic-dev", "iris-agentic-dev.exe"]) {
+    let found: string;
     try {
-      const found = which.sync(name);
-      log.info(`iris-agentic-dev: using PATH binary: ${found}`);
-      return found;
+      found = which.sync(name);
     } catch {
-      /* try next */
+      continue;
     }
+    log.info(`iris-agentic-dev: using PATH binary: ${found}`);
+
+    // A PATH binary always wins — overriding what someone deliberately
+    // installed would be worse than running a stale version. But say so when
+    // it is stale: a Homebrew or ~/.local/bin copy left behind while the
+    // extension moved on shows up as tools missing or misbehaving, with
+    // nothing connecting that to the version.
+    const expected = expectedServerVersion(context);
+    if (expected) {
+      const actual = await readBinaryVersion(found);
+      if (actual && actual !== expected) {
+        log.warn(
+          `iris-agentic-dev: PATH binary at ${found} reports v${actual}, but this ` +
+            `extension expects v${expected}. Tools added or changed since v${actual} ` +
+            "will be missing or behave differently. Upgrade it (`brew upgrade " +
+            "iris-agentic-dev`), or clear it from PATH and unset " +
+            "iris-agentic-dev.serverPath to let the extension manage the binary."
+        );
+      }
+    }
+    return found;
   }
 
   // Tier 3: managed download

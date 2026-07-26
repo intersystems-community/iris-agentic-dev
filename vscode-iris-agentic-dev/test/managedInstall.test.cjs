@@ -263,21 +263,114 @@ test("tier 2: a binary on PATH is used as-is, without downloading", async () => 
   }
 });
 
-test("tier 2: a PATH binary is used whatever its version — no version check", async () => {
-  // Documents current behaviour rather than endorsing it: a stale Homebrew or
-  // ~/.local/bin install silently wins over the version the extension expects,
-  // with nothing logged. Worth revisiting; capturing it so a change is
-  // deliberate.
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
-  const stale = path.join(tmp, "iris-agentic-dev");
-  fs.writeFileSync(stale, "#!/bin/sh\necho 'iris-agentic-dev 0.0.1'", {
+// A PATH binary still wins — overriding what a developer deliberately put on
+// PATH would be worse than a stale version. But a version mismatch is now
+// visible instead of silent: a Homebrew install left at 0.9.4 while the
+// extension expects 0.9.6 produced tool-not-found errors with nothing in the
+// log to explain them.
+
+/** Writes a fake binary whose `--version` prints the given version. */
+function writeFakeBinary(dir, version) {
+  const p = path.join(dir, "iris-agentic-dev");
+  fs.writeFileSync(p, `#!/bin/sh\necho "iris-agentic-dev ${version}"\n`, {
     mode: 0o755,
   });
+  return p;
+}
+
+test("tier 2: a PATH binary is used even when its version is stale", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
+  const stale = writeFakeBinary(tmp, "0.0.1");
   whichStub.__setFound(stale);
+  vscodeStub.__resetLog();
 
   try {
     const result = await resolveServerBinary(makeContext("0.9.5", tmp));
-    assert.equal(result, stale);
+    assert.equal(result, stale, "must not override an explicit PATH install");
+  } finally {
+    whichStub.__reset();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("tier 2: a stale PATH binary warns, naming both versions", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
+  const stale = writeFakeBinary(tmp, "0.0.1");
+  whichStub.__setFound(stale);
+  vscodeStub.__resetLog();
+
+  try {
+    await resolveServerBinary(makeContext("0.9.5", tmp));
+    const warnings = vscodeStub.__log.warn.join("\n");
+    assert.match(
+      warnings,
+      /0\.0\.1/,
+      `the warning must name the version found; got: ${warnings}`
+    );
+    assert.match(
+      warnings,
+      /0\.9\.5/,
+      `the warning must name the version expected; got: ${warnings}`
+    );
+  } finally {
+    whichStub.__reset();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("tier 2: a matching PATH binary does not warn", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
+  const current = writeFakeBinary(tmp, "0.9.5");
+  whichStub.__setFound(current);
+  vscodeStub.__resetLog();
+
+  try {
+    const result = await resolveServerBinary(makeContext("0.9.5", tmp));
+    assert.equal(result, current);
+    assert.deepEqual(
+      vscodeStub.__log.warn,
+      [],
+      "an up-to-date PATH binary must not produce warning noise"
+    );
+  } finally {
+    whichStub.__reset();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("tier 2: an unreadable --version does not break resolution", async () => {
+  // Old builds without --version, wrapper scripts, and binaries that exit
+  // non-zero must all still resolve. The version check is diagnostic only.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
+  const broken = path.join(tmp, "iris-agentic-dev");
+  fs.writeFileSync(broken, "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+  whichStub.__setFound(broken);
+  vscodeStub.__resetLog();
+
+  try {
+    const result = await resolveServerBinary(makeContext("0.9.5", tmp));
+    assert.equal(result, broken, "must still use the binary it found");
+  } finally {
+    whichStub.__reset();
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("tier 2: version check cannot hang on a binary that never exits", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
+  const hangs = path.join(tmp, "iris-agentic-dev");
+  fs.writeFileSync(hangs, "#!/bin/sh\nsleep 30\n", { mode: 0o755 });
+  whichStub.__setFound(hangs);
+
+  const started = Date.now();
+  try {
+    const result = await resolveServerBinary(makeContext("0.9.5", tmp));
+    assert.equal(result, hangs);
+    const elapsed = Date.now() - started;
+    assert.ok(
+      elapsed < 10_000,
+      `resolution took ${elapsed}ms — a hung binary must not block activation`
+    );
   } finally {
     whichStub.__reset();
     fs.rmSync(tmp, { recursive: true, force: true });
