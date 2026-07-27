@@ -201,6 +201,31 @@ not in the list.
 
 ---
 
+### US11 — Structured FormalSpec in `docs_introspect`
+
+`docs_introspect` returns `FormalSpec` as a raw string from `%Dictionary.CompiledMethod`
+(e.g. `pName:%String="hello",ByRef pRef:%Integer`). After this change, `docs_introspect`
+parses that string using the same `ArgSpec` struct defined in US4, so callers get identical
+structured output regardless of whether they used `iris_symbols_local` (AST path) or
+`docs_introspect` (compiled dictionary path).
+
+The parser lives in `symbols_local.rs` as `pub fn parse_formalspec_string(s: &str) ->
+Vec<ArgSpec>` and handles the `%Dictionary` wire format: comma-separated args,
+`ByRef`/`Output` prefixes, `type` after `:`, default after `=`.
+
+**Acceptance Scenarios**:
+
+1. **Given** `FormalSpec = "pName:%String=\"hello\",ByRef pRef:%Integer"`, **When** parsed,
+   **Then** result matches the US4 scenario 1 `ArgSpec` array exactly.
+2. **Given** `FormalSpec = ""` (no args), **When** parsed, **Then** result is an empty array.
+3. **Given** `docs_introspect` called on a class with typed methods, **When** response
+   returned, **Then** `FormalSpec` field is a JSON array of `ArgSpec` objects, not a raw
+   string.
+4. **Given** a `FormalSpec` string with an `Output` prefix, **When** parsed, **Then**
+   `output: true` appears on that arg.
+
+---
+
 ### US10 — Remove dead `tag_with_params` arm
 
 The `"tag_with_params"` match arm in `extract_routine_nodes` (~lines 469–486) can never fire:
@@ -393,6 +418,15 @@ Add `kinds: Option<Vec<String>>` to `SymbolsLocalParams` (with `#[serde(default)
 `scan_workspace` signature to accept `kinds: Option<&[String]>`. Filter after each symbol
 construction. Update all call-sites to pass `None` or the new field.
 
+### US11 — Structured FormalSpec in `docs_introspect`
+
+Add `pub fn parse_formalspec_string(s: &str) -> Vec<ArgSpec>` to `symbols_local.rs`. The
+`%Dictionary` wire format is comma-separated args of the form
+`[ByRef|Output ]name[:type][=default]`. Handle quoted defaults (`"hello"`) and empty
+strings. Call from `docs_introspect` in `mod.rs` after fetching `FormalSpec` from
+`%Dictionary.CompiledMethod`: replace the raw string value with the parsed array in the
+JSON response.
+
 ### US10 — Remove dead arm
 
 Delete the `"tag_with_params"` match arm (~lines 469–486 in `symbols_local.rs`) and any
@@ -410,7 +444,7 @@ corresponding implementation begins and **pass** after.
 - `crates/iris-agentic-dev-core/tests/symbols_local_tests.rs` — integration tests against
   fixtures
 - Inline `#[cfg(test)]` in `symbols_local.rs` — unit tests for `glob_match`,
-  `parse_arguments`, `split_member_query`
+  `parse_arguments`, `split_member_query`, `parse_formalspec_string`
 
 **Required new fixtures** (`tests/fixtures/`):
 
@@ -420,16 +454,19 @@ corresponding implementation begins and **pass** after.
 - `MyApp/AllMembers.cls` — one definition of each of the eight new member kinds (US5)
 - `NamedRoutine.mac` — `ROUTINE NamedRoutine` header for stem-mismatch test (US6)
 
-**Test coverage target**: all 35 new tests (T070-01 through T070-35) plus zero regressions
-on the existing 65 tests.
+**Test coverage target**: all new tests (T070-01 through T070-39) plus zero regressions on
+the existing 65 tests. T070-36 through T070-39 cover `parse_formalspec_string` (US11) and
+require a live IRIS container for the `docs_introspect` integration scenario.
 
 ---
 
 ## Non-Goals
 
 - No CBM integration — this spec does not implement any graph writes or CBM tool calls.
-- No new MCP tools — `iris_symbols_local` tool name and transport are unchanged.
-- No live IRIS required — all tests run against files on disk.
+- No new MCP tools — `iris_symbols_local` and `docs_introspect` tool names and transport
+  are unchanged; only the `FormalSpec` field shape changes in `docs_introspect` output.
+- Live IRIS required only for US11 integration test — all other tests run against files on
+  disk.
 - No `.int` file support — compiled intermediate files remain excluded.
 - No cross-file type resolution — `Type` is verbatim text from source, not a catalog lookup.
 - No streaming output — tool continues to return a single JSON response.

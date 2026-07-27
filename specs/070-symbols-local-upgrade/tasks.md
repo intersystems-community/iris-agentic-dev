@@ -148,14 +148,33 @@ name.to_uppercase();`; confirm T070-25 through T070-27 **pass**; confirm existin
 
 ---
 
-## Phase 11: Final validation
+## Phase 11: Structured FormalSpec in `docs_introspect` (US11)
 
-- [ ] T026 Run full test suite: `cargo test -p iris-agentic-dev-core`; confirm all tests
+- [ ] T029 [US11] Write unit tests T070-36 through T070-38 for `parse_formalspec_string`
+      in `symbols_local.rs` `#[cfg(test)]`: standard args, empty string, Output prefix;
+      confirm they **fail** (function does not exist yet)
+- [ ] T030 [US11] Implement `pub fn parse_formalspec_string(s: &str) -> Vec<ArgSpec>` in
+      `symbols_local.rs`; handle comma split, `ByRef`/`Output` prefixes, `:type`, `=default`
+      with quoted strings; confirm T070-36 through T070-38 **pass**
+- [ ] T031 [US11] Write `#[ignore]` integration test T070-39: call `docs_introspect` on a
+      known class in the live container; assert `FormalSpec` field in response is a JSON array
+      (not a string); confirm test **fails** (raw string still returned)
+- [ ] T032 [US11] In `mod.rs` `docs_introspect` handler (~line 4471), after fetching
+      `FormalSpec` string from `%Dictionary.CompiledMethod`, call `parse_formalspec_string`
+      and replace the string value with the parsed array in the JSON response; confirm T070-39
+      **passes** against live container
+
+---
+
+## Phase 12: Final validation
+
+- [ ] T033 Run full test suite: `cargo test -p iris-agentic-dev-core`; confirm all tests
       pass including pre-existing `symbols_local_tests.rs` tests
-- [ ] T027 Run `cargo clippy -p iris-agentic-dev-core -- -D warnings`; confirm zero warnings
+- [ ] T034 Run `cargo clippy -p iris-agentic-dev-core -- -D warnings`; confirm zero warnings
       in `symbols_local.rs` and `mod.rs`
-- [ ] T028 Update tool description string in `mod.rs` to mention `kinds` filter and `line`
-      field
+- [ ] T035 Update tool description string in `mod.rs` for `iris_symbols_local` to mention
+      `kinds` filter and `line` field; update `docs_introspect` description to note
+      structured `FormalSpec`
 
 ---
 
@@ -171,12 +190,14 @@ T006, T007 (write US2/US4 tests)
   └─ T008, T009 (struct evolution) ← requires T005
     ├─ T010, T011 (US2 line numbers)
     ├─ T012, T013 (US3 return types)
-    ├─ T014     (US4 formal spec)
+    ├─ T014     (US4 formal spec) ← also enables T029–T032
     ├─ T015–T017 (US5 new kinds)
     ├─ T018, T019 (US6 routine name)
     ├─ T020, T021 (US7 case-insensitive)
     ├─ T022, T023 (US8 member glob)
     └─ T024, T025 (US9 kinds filter)
 
-T026, T027, T028 (final validation) ← all of above
+T029–T032 (US11 docs_introspect) ← requires T014 (ArgSpec struct)
+
+T033, T034, T035 (final validation) ← all of above
 ```
