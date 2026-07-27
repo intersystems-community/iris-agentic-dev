@@ -150,16 +150,22 @@ name.to_uppercase();`; confirm T070-25 through T070-27 **pass**; confirm existin
 
 ## Phase 11: Structured FormalSpec in `docs_introspect` (US11)
 
-- [ ] T029 [US11] Write unit tests T070-36 through T070-38 for `parse_formalspec_string`
+- [ ] T029 [US11] Research `hkimura-intersys/objectscript-lsp` — find the FormalSpec
+      parsing code (search for `ByRef`, `FormalSpec`, `formal_spec` in the Rust source);
+      determine whether its format is compatible with `ArgSpec` from US4; document findings
+      in a comment at the top of the implementation task; if a port or alignment is
+      possible, note the source file and function name
+- [ ] T030 [US11] Write unit tests T070-36 through T070-38 for `parse_formalspec_string`
       in `symbols_local.rs` `#[cfg(test)]`: standard args, empty string, Output prefix;
       confirm they **fail** (function does not exist yet)
-- [ ] T030 [US11] Implement `pub fn parse_formalspec_string(s: &str) -> Vec<ArgSpec>` in
+- [ ] T031 [US11] Implement `pub fn parse_formalspec_string(s: &str) -> Vec<ArgSpec>` in
       `symbols_local.rs`; handle comma split, `ByRef`/`Output` prefixes, `:type`, `=default`
-      with quoted strings; confirm T070-36 through T070-38 **pass**
-- [ ] T031 [US11] Write `#[ignore]` integration test T070-39: call `docs_introspect` on a
+      with quoted strings; align with findings from T029; confirm T070-36 through T070-38
+      **pass**
+- [ ] T032 [US11] Write `#[ignore]` integration test T070-39: call `docs_introspect` on a
       known class in the live container; assert `FormalSpec` field in response is a JSON array
       (not a string); confirm test **fails** (raw string still returned)
-- [ ] T032 [US11] In `mod.rs` `docs_introspect` handler (~line 4471), after fetching
+- [ ] T033 [US11] In `mod.rs` `docs_introspect` handler (~line 4471), after fetching
       `FormalSpec` string from `%Dictionary.CompiledMethod`, call `parse_formalspec_string`
       and replace the string value with the parsed array in the JSON response; confirm T070-39
       **passes** against live container
@@ -168,11 +174,11 @@ name.to_uppercase();`; confirm T070-25 through T070-27 **pass**; confirm existin
 
 ## Phase 12: Final validation
 
-- [ ] T033 Run full test suite: `cargo test -p iris-agentic-dev-core`; confirm all tests
+- [ ] T034 Run full test suite: `cargo test -p iris-agentic-dev-core`; confirm all tests
       pass including pre-existing `symbols_local_tests.rs` tests
-- [ ] T034 Run `cargo clippy -p iris-agentic-dev-core -- -D warnings`; confirm zero warnings
+- [ ] T035 Run `cargo clippy -p iris-agentic-dev-core -- -D warnings`; confirm zero warnings
       in `symbols_local.rs` and `mod.rs`
-- [ ] T035 Update tool description string in `mod.rs` for `iris_symbols_local` to mention
+- [ ] T036 Update tool description string in `mod.rs` for `iris_symbols_local` to mention
       `kinds` filter and `line` field; update `docs_introspect` description to note
       structured `FormalSpec`
 
@@ -197,7 +203,8 @@ T006, T007 (write US2/US4 tests)
     ├─ T022, T023 (US8 member glob)
     └─ T024, T025 (US9 kinds filter)
 
-T029–T032 (US11 docs_introspect) ← requires T014 (ArgSpec struct)
+T029 (US11 research) ← independent, do before T031
+T030–T033 (US11 impl) ← requires T014 (ArgSpec struct) + T029
 
-T033, T034, T035 (final validation) ← all of above
+T034, T035, T036 (final validation) ← all of above
 ```

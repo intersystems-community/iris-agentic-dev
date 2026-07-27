@@ -213,6 +213,12 @@ The parser lives in `symbols_local.rs` as `pub fn parse_formalspec_string(s: &st
 Vec<ArgSpec>` and handles the `%Dictionary` wire format: comma-separated args,
 `ByRef`/`Output` prefixes, `type` after `:`, default after `=`.
 
+**Before implementing**: check `hkimura-intersys/objectscript-lsp` (Rust, `tower-lsp` +
+tree-sitter) — it indexes `.cls`/`.mac`/`.inc` and almost certainly parses FormalSpec
+strings already. If a compatible parser exists there, align on the same format or extract
+shared logic rather than reimplementing. The `ArgSpec` field names and serde shape defined
+in US4 are the target contract; the implementation may come from upstream.
+
 **Acceptance Scenarios**:
 
 1. **Given** `FormalSpec = "pName:%String=\"hello\",ByRef pRef:%Integer"`, **When** parsed,
