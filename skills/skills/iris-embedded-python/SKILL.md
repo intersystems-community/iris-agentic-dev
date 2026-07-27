@@ -59,6 +59,25 @@ Method ProcessData(data As %String) As %String [ Language = python ]
 }
 ```
 
+## SQL from embedded Python — known traps
+
+`iris.sql.exec()` runs inside the IRIS process, but several SQL patterns that work fine
+via external tools fail or crash here:
+
+| Pattern                                                   | Problem                                        | Fix                                             |
+| --------------------------------------------------------- | ---------------------------------------------- | ----------------------------------------------- |
+| `SELECT ... FETCH FIRST n ROWS ONLY`                      | SIGSEGV / exit 139                             | Use `SELECT TOP n ...` instead                  |
+| `COUNT`, `HOUR`, `YEAR`, `DATE`, `TIME` as column aliases | SQL error                                      | Rename the alias                                |
+| `iris.sql.exec(query, args...)` with keyword args         | SIGSEGV on some builds                         | Use positional args only                        |
+| Aggregate return types (`COUNT`, `AVG`, `SUM`)            | Returns `Decimal`/`str`/`float` inconsistently | Cast explicitly: `int(row[0])`, `float(row[1])` |
+
+These are not edge cases — the SIGSEGV ones produce no Python traceback, just a hard
+crash. Always use `SELECT TOP n` in embedded Python code, never `FETCH FIRST`.
+
+Queries that work in `iris_query` (external Atelier REST) are not guaranteed to work in
+`iris.sql.exec()`. If a query behaves differently in embedded context, check this table
+first.
+
 ## Install
 
 ```bash
