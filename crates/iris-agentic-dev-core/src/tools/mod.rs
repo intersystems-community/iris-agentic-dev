@@ -4489,8 +4489,22 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             )
             .await
             .unwrap_or_default();
+        // Parse FormalSpec strings into structured ArgSpec arrays.
+        let methods_arr = methods["result"]["content"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|mut m| {
+                if let Some(raw) = m.get("FormalSpec").and_then(|v| v.as_str()) {
+                    let parsed = symbols_local::parse_formalspec_string(raw);
+                    m["FormalSpec"] = serde_json::to_value(parsed).unwrap_or_default();
+                }
+                m
+            })
+            .collect::<Vec<_>>();
         ok_json(
-            serde_json::json!({"success": true, "class_name": p.class_name, "methods": methods["result"]["content"], "properties": props["result"]["content"]}),
+            serde_json::json!({"success": true, "class_name": p.class_name, "methods": methods_arr, "properties": props["result"]["content"]}),
         )
     }
 

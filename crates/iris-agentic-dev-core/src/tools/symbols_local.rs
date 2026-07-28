@@ -729,6 +729,113 @@ fn extract_tag_name(node: tree_sitter::Node, source: &[u8]) -> String {
     clean.to_string()
 }
 
+// ── FormalSpec string parser ─────────────────────────────────────────────────
+
+/// Parses an ObjectScript FormalSpec string into a `Vec<ArgSpec>`.
+///
+/// Format: comma-separated entries, each:
+///   `[ByRef|Output] name[:type][=default]`
+///
+/// Commas inside double-quoted defaults are treated as part of the value.
+pub fn parse_formalspec_string(s: &str) -> Vec<ArgSpec> {
+    if s.trim().is_empty() {
+        return Vec::new();
+    }
+
+    // Split on commas that are not inside double-quoted strings.
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+
+    for ch in s.chars() {
+        match ch {
+            '"' => {
+                in_quotes = !in_quotes;
+                current.push(ch);
+            }
+            ',' if !in_quotes => {
+                let token = current.trim().to_string();
+                if !token.is_empty() {
+                    if let Some(arg) = parse_one_arg(&token) {
+                        args.push(arg);
+                    }
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    let token = current.trim().to_string();
+    if !token.is_empty() {
+        if let Some(arg) = parse_one_arg(&token) {
+            args.push(arg);
+        }
+    }
+    args
+}
+
+/// Parses a single FormalSpec argument token into an `ArgSpec`.
+fn parse_one_arg(token: &str) -> Option<ArgSpec> {
+    let mut rest = token.trim();
+    let mut byref = false;
+    let mut output = false;
+
+    // Strip leading ByRef / Output (case-insensitive)
+    loop {
+        if rest.to_lowercase().starts_with("byref ") {
+            byref = true;
+            rest = rest[6..].trim_start();
+        } else if rest.to_lowercase().starts_with("output ") {
+            output = true;
+            rest = rest[7..].trim_start();
+        } else {
+            break;
+        }
+    }
+
+    if rest.is_empty() {
+        return None;
+    }
+
+    // Split on '=' (first occurrence, respecting quotes).
+    let (name_type, default) = split_on_first_unquoted(rest, '=');
+    let default = default.map(|d| d.trim().to_string());
+
+    // Split name_type on ':'.
+    let (name_part, type_part) = split_on_first_unquoted(name_type.trim(), ':');
+    let name = name_part.trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let type_name = type_part
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+
+    Some(ArgSpec {
+        name,
+        type_name,
+        byref,
+        output,
+        default,
+    })
+}
+
+/// Splits `s` on the first occurrence of `delimiter` that is not inside double quotes.
+/// Returns `(before, Some(after))` or `(s, None)` if delimiter not found.
+fn split_on_first_unquoted(s: &str, delimiter: char) -> (&str, Option<&str>) {
+    let mut in_quotes = false;
+    for (i, ch) in s.char_indices() {
+        match ch {
+            '"' => in_quotes = !in_quotes,
+            c if c == delimiter && !in_quotes => {
+                return (&s[..i], Some(&s[i + delimiter.len_utf8()..]));
+            }
+            _ => {}
+        }
+    }
+    (s, None)
+}
+
 // ── Workspace scan ───────────────────────────────────────────────────────────
 
 pub fn scan_workspace(workspace: &Path, query: &str, limit: usize) -> SymbolsLocalResult {

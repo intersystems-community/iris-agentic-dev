@@ -6768,6 +6768,49 @@ async fn test_dispatch_docs_introspect_v2() {
     );
 }
 
+// ── T070-39: docs_introspect FormalSpec is a JSON array (US11) ───────────────
+
+#[tokio::test]
+#[ignore]
+async fn t070_39_docs_introspect_formalspec_is_array() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    // %Library.Persistent.%OpenId(id, concurrency, sc) has a non-trivial FormalSpec.
+    let result = tools
+        .call_for_test(
+            "docs_introspect",
+            serde_json::json!({ "class_name": "%Library.Persistent", "namespace": "USER" }),
+        )
+        .await;
+    let v = parse_result(result);
+    if let Some(error_code) = v.get("error_code") {
+        // Skip if the class isn't available in this container build.
+        eprintln!("t070_39: skipped — {error_code}");
+        return;
+    }
+    let methods = v.get("methods").expect("docs_introspect: no 'methods' key");
+    // Find any method that has a FormalSpec entry.
+    let method_with_fspec = methods
+        .as_array()
+        .expect("methods not an array")
+        .iter()
+        .find(|m| m.get("FormalSpec").is_some());
+    let method = match method_with_fspec {
+        Some(m) => m,
+        None => {
+            eprintln!("t070_39: no method with FormalSpec found — skipping");
+            return;
+        }
+    };
+    let fspec = method.get("FormalSpec").unwrap();
+    assert!(
+        fspec.is_array(),
+        "FormalSpec should be a JSON array, got: {fspec}"
+    );
+}
+
 // ── agent_history (covers lines 4011-4020 mod.rs) ────────────────────────────
 
 #[tokio::test]

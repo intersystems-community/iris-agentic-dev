@@ -481,7 +481,7 @@ fn test_extract_method_symbol_formal_spec_field() {
         // or as simple as the raw content depending on how tree-sitter parses it)
         assert!(
             !spec.is_empty(),
-            "formal_spec should not be empty: {}",
+            "formal_spec should not be empty: {:?}",
             spec
         );
     }

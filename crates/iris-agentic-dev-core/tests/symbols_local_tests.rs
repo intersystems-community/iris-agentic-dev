@@ -1226,3 +1226,40 @@ fn t070_33_kinds_no_match_returns_empty() {
         non_class
     );
 }
+
+// ── T070-36/37/38: parse_formalspec_string (US11) ────────────────────────────
+
+#[test]
+fn t070_36_parse_formalspec_standard_args() {
+    // pName:%String="hello",ByRef pRef:%Integer
+    let args = parse_formalspec_string(r#"pName:%String="hello",ByRef pRef:%Integer"#);
+    assert_eq!(args.len(), 2, "expected 2 args, got: {:?}", args);
+
+    assert_eq!(args[0].name, "pName");
+    assert_eq!(args[0].type_name.as_deref(), Some("%String"));
+    assert_eq!(args[0].default.as_deref(), Some("\"hello\""));
+    assert!(!args[0].byref);
+    assert!(!args[0].output);
+
+    assert_eq!(args[1].name, "pRef");
+    assert_eq!(args[1].type_name.as_deref(), Some("%Integer"));
+    assert!(args[1].byref, "pRef should be ByRef");
+    assert!(!args[1].output);
+    assert!(args[1].default.is_none());
+}
+
+#[test]
+fn t070_37_parse_formalspec_empty() {
+    let args = parse_formalspec_string("");
+    assert!(args.is_empty(), "empty string should give 0 args");
+}
+
+#[test]
+fn t070_38_parse_formalspec_output_prefix() {
+    let args = parse_formalspec_string("Output pResult:%String");
+    assert_eq!(args.len(), 1, "expected 1 arg, got: {:?}", args);
+    assert_eq!(args[0].name, "pResult");
+    assert!(args[0].output, "pResult should be Output");
+    assert!(!args[0].byref);
+    assert_eq!(args[0].type_name.as_deref(), Some("%String"));
+}
