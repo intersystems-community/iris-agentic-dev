@@ -1,0 +1,8 @@
+ROUTINE NamedRoutine
+
+Main
+    Write "hello",!
+    Quit
+
+Helper(x)
+    Quit x * 2

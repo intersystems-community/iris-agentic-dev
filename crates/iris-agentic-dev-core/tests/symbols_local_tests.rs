@@ -1025,3 +1025,47 @@ fn t070_21_storage_kind() {
             .collect::<Vec<_>>()
     );
 }
+
+// ── T070-22/23/24: routine name from ROUTINE header (US6) ────────────────────
+
+#[test]
+fn t070_22_named_routine_labels_present() {
+    let path = fixtures_dir().join("NamedRoutine.mac");
+    let source = std::fs::read(&path).expect("read NamedRoutine.mac");
+    let (symbols, _) = extract_routine_symbols(&source, "src/NamedRoutine.mac", "*");
+    let labels: Vec<&str> = symbols
+        .iter()
+        .filter(|s| s.kind == "label")
+        .map(|s| s.name.as_str())
+        .collect();
+    assert!(!labels.is_empty(), "expected labels, got none");
+}
+
+#[test]
+fn t070_23_named_routine_uses_header_not_path_stem() {
+    let path = fixtures_dir().join("NamedRoutine.mac");
+    let source = std::fs::read(&path).expect("read NamedRoutine.mac");
+    // Pass a path whose stem differs from the ROUTINE header to verify the
+    // header wins.
+    let (symbols, _) = extract_routine_symbols(&source, "src/differentpath.mac", "*");
+    let has_main = symbols
+        .iter()
+        .any(|s| s.kind == "label" && s.name == "NamedRoutine:Main");
+    assert!(
+        has_main,
+        "expected NamedRoutine:Main (from ROUTINE header), got: {:?}",
+        symbols.iter().map(|s| &s.name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn t070_24_named_routine_glob_matches_header_name() {
+    let path = fixtures_dir().join("NamedRoutine.mac");
+    let source = std::fs::read(&path).expect("read NamedRoutine.mac");
+    // Query against ROUTINE header name; path stem is different.
+    let (symbols, _) = extract_routine_symbols(&source, "src/differentpath.mac", "NamedRoutine");
+    assert!(
+        !symbols.is_empty(),
+        "glob 'NamedRoutine' should match when ROUTINE header is NamedRoutine"
+    );
+}

@@ -563,21 +563,45 @@ pub fn extract_routine_symbols(
         });
     }
 
-    // Extract routine name from the file path (stem of filename).
-    let routine_name = Path::new(rel_path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_string();
+    let root = tree.root_node();
+
+    // Prefer the name from the ROUTINE header (`routine_definition → routine_name`);
+    // fall back to the file stem when the header is absent.
+    let routine_name = routine_name_from_tree(root, source).unwrap_or_else(|| {
+        Path::new(rel_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string()
+    });
 
     if !glob_match(query, &routine_name) {
         return (symbols, warnings);
     }
 
-    let root = tree.root_node();
     extract_routine_nodes(root, source, &routine_name, rel_path, &mut symbols);
 
     (symbols, warnings)
+}
+
+/// Extracts the routine name from the `routine_definition` header node.
+/// Returns `None` when no `ROUTINE Name` header is present.
+fn routine_name_from_tree(root: tree_sitter::Node, source: &[u8]) -> Option<String> {
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() == "routine_definition" {
+            let mut c2 = child.walk();
+            for sub in child.children(&mut c2) {
+                if sub.kind() == "routine_name" {
+                    let name = node_text(sub, source);
+                    if !name.is_empty() {
+                        return Some(name);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Walk routine source_file recursively to find tag_statement and pound_define nodes.
