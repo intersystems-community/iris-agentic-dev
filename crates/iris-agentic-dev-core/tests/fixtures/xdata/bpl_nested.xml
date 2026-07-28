@@ -1,0 +1,14 @@
+<process language='objectscript' request='Demo.Request' response='Demo.Response' >
+<sequence>
+<if name='CheckType' condition='request.Type="A"' >
+<true>
+<call name='ProcessA' target='ServiceA' async='0' >
+<request type='Demo.Request' />
+<response type='Demo.Response' />
+</call>
+</true>
+<false>
+</false>
+</if>
+</sequence>
+</process>

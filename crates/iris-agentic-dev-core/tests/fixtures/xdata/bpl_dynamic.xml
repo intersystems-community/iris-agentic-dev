@@ -1,0 +1,10 @@
+<process language='objectscript' request='Demo.Request' response='Demo.Response' >
+<sequence>
+<code name='DynamicDispatch' >
+<![CDATA[
+Set cls = "Demo.Processor"
+Do $classmethod(cls, "Process", request)
+]]>
+</code>
+</sequence>
+</process>

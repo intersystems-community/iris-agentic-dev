@@ -1,6 +1,7 @@
 //! %Dictionary introspection tools for dynamic dispatch resolution.
 
 use crate::iris::connection::IrisConnection;
+use crate::tools::xdata_flow;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -202,6 +203,12 @@ pub async fn handle_extract_message_map_routing(
         return ok_json(cached);
     }
 
+    // Check BPL/DTL first — these classes can't use the MessageMap generator path.
+    if let Some(flow) = detect_bpl_dtl_routing(iris, &p.class_name, &p.namespace, client).await {
+        metadata_cache_set(cache, cache_key, flow.clone());
+        return ok_json(flow);
+    }
+
     let code = build_message_map_code(&p.class_name);
     let output = iris
         .execute_via_generator(&code, &p.namespace, client)
@@ -213,6 +220,16 @@ pub async fn handle_extract_message_map_routing(
         return err_json("NOT_FOUND", &format!("Class '{}' not found", p.class_name));
     }
 
+    if trimmed.is_empty() {
+        return err_json(
+            "NOT_FOUND",
+            &format!(
+                "Class '{}' has no routing (not a MessageMap, BPL, or DTL class)",
+                p.class_name
+            ),
+        );
+    }
+
     let inner: serde_json::Value = serde_json::from_str(trimmed).map_err(|e| {
         rmcp::ErrorData::internal_error(format!("parse failed: {e} raw={trimmed}"), None)
     })?;
@@ -221,11 +238,112 @@ pub async fn handle_extract_message_map_routing(
     }
 
     let has_mm = inner["has_message_map"].as_bool().unwrap_or(false);
+
+    if !has_mm {
+        return err_json(
+            "NOT_FOUND",
+            &format!(
+                "Class '{}' has no routing (not a MessageMap, BPL, or DTL class)",
+                p.class_name
+            ),
+        );
+    }
+
     let routes = inner["routes"].as_array().cloned().unwrap_or_default();
     let route_count = routes.len();
     let r = serde_json::json!({"success":true,"class_name":p.class_name,"namespace":p.namespace,"has_message_map":has_mm,"routes":routes,"route_count":route_count});
     metadata_cache_set(cache, cache_key, r.clone());
     ok_json(r)
+}
+
+async fn detect_bpl_dtl_routing(
+    iris: &IrisConnection,
+    class_name: &str,
+    namespace: &str,
+    client: &reqwest::Client,
+) -> Option<serde_json::Value> {
+    let super_result = iris
+        .query(
+            "SELECT Super FROM %Dictionary.CompiledClass WHERE Name=?",
+            vec![serde_json::Value::String(class_name.to_string())],
+            namespace,
+            client,
+        )
+        .await
+        .ok()?;
+
+    let super_class = super_result["result"]["content"]
+        .as_array()?
+        .first()?
+        .get("Super")?
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    let is_bpl = xdata_flow::is_bpl_class(&super_class);
+    let is_dtl = xdata_flow::is_dtl_class(&super_class);
+    if !is_bpl && !is_dtl {
+        return None;
+    }
+
+    let xdata_block = if is_bpl { "BPL" } else { "DTL" };
+    let ext = if is_bpl { "bpl" } else { "dtl" };
+    let export_item = format!("{}.{}", class_name.replace('"', "\\\""), ext);
+    let export_code = format!(
+        "Set stream = ##class(%Stream.GlobalCharacter).%New() \
+         Do $system.OBJ.ExportToStream(\"{}\",stream,,\"c\") \
+         Do stream.Rewind() \
+         Write stream.Read(1000000)",
+        export_item
+    );
+    let class_xml = iris.execute(&export_code, namespace).await.ok()?;
+    let xdata_content = xdata_flow::extract_xdata_content(&class_xml, xdata_block)?;
+
+    if is_bpl {
+        let flow = xdata_flow::parse_bpl(&xdata_content).ok()?;
+        let routes: Vec<serde_json::Value> = flow
+            .steps
+            .iter()
+            .filter_map(|s| {
+                if let xdata_flow::BplStep::Call { name, target, .. } = s {
+                    Some(serde_json::json!({
+                        "message_type": name,
+                        "method": target,
+                        "confidence": 0.8
+                    }))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let route_count = routes.len();
+        let mut r = serde_json::json!({
+            "success": true,
+            "class_name": class_name,
+            "namespace": namespace,
+            "kind": "bpl",
+            "routes": routes,
+            "route_count": route_count
+        });
+        if flow.has_dynamic_dispatch {
+            r["note"] = serde_json::Value::String(
+                "Dynamic dispatch detected ($classmethod usage); routing may be incomplete".into(),
+            );
+        }
+        Some(r)
+    } else {
+        let flow = xdata_flow::parse_dtl(&xdata_content).ok()?;
+        Some(serde_json::json!({
+            "success": true,
+            "class_name": class_name,
+            "namespace": namespace,
+            "kind": "dtl",
+            "source_class": flow.source_class,
+            "target_class": flow.target_class,
+            "routes": [],
+            "route_count": 0
+        }))
+    }
 }
 
 // ── Tool 3: find_subclass_implementations ────────────────────────────────────

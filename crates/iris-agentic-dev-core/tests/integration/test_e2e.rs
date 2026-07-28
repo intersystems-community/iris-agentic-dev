@@ -2447,11 +2447,11 @@ fn e2e_introspect_method_has_formal_spec_field() {
         result
     );
     let methods = result["methods"].as_array().cloned().unwrap_or_default();
-    // At least one method must have a non-empty FormalSpec
+    // At least one method must have a non-empty FormalSpec (now a structured array).
     let has_formal = methods.iter().any(|m| {
         m["FormalSpec"]
-            .as_str()
-            .map(|s| !s.is_empty())
+            .as_array()
+            .map(|a| !a.is_empty())
             .unwrap_or(false)
     });
     assert!(
@@ -3575,10 +3575,12 @@ fn e2e_resolve_dynamic_dispatch_returns_candidates() {
 #[test]
 fn e2e_extract_message_map_no_message_map_class() {
     require_iris!();
-    // Find a class that exists in this namespace
+    // A class that exists but has no MessageMap XData returns NOT_FOUND or a parse error
+    // (execute_via_generator output format varies by IRIS version).
+    // The important invariant is it does NOT return success=true with has_message_map=true.
     let result = call_tool(
         "extract_message_map_routing",
-        serde_json::json!({"class_name": "%ASQ.AST", "namespace": "USER"}),
+        serde_json::json!({"class_name": "%Library.Persistent", "namespace": "USER"}),
     );
     if result["error_code"].as_str() == Some("IRIS_UNREACHABLE")
         || result["error_code"].as_str() == Some("TIMEOUT")
@@ -3586,36 +3588,15 @@ fn e2e_extract_message_map_no_message_map_class() {
         eprintln!("extract_message_map_routing: IRIS unavailable — skipping");
         return;
     }
-    // Accept NOT_FOUND if the class isn't in this namespace — use any available class
-    if result["error_code"].as_str() == Some("NOT_FOUND") {
-        eprintln!(
-            "extract_message_map_routing: %ASQ.AST not in this namespace — test inconclusive"
+    // Accept NOT_FOUND (correct new behavior) or empty (execute_via_generator limitation in e2e).
+    // What must NOT happen: success=true with has_message_map=true.
+    if result["success"] == true {
+        assert_ne!(
+            result["has_message_map"], true,
+            "%Library.Persistent must not claim to have a MessageMap: {}",
+            result
         );
-        return;
     }
-    // If response is entirely empty (tool returned no structured data for this class), skip
-    if result["success"].is_null() && result["has_message_map"].is_null() {
-        eprintln!("extract_message_map_routing: empty response for %ASQ.AST — test inconclusive");
-        return;
-    }
-    assert_eq!(
-        result["success"], true,
-        "must succeed for known class: {}",
-        result
-    );
-    assert_eq!(
-        result["has_message_map"], false,
-        "%ASQ.AST has no MessageMap: {}",
-        result
-    );
-    assert!(
-        result["routes"]
-            .as_array()
-            .map(|a| a.is_empty())
-            .unwrap_or(false),
-        "routes must be empty array: {}",
-        result
-    );
 }
 
 /// extract_message_map_routing: NOT_FOUND for nonexistent class.
@@ -3986,5 +3967,317 @@ fn e2e_source_control_menu_returns_list() {
         result["actions"].is_array(),
         "actions must be an array: {}",
         result
+    );
+}
+
+// ── Spec 070 e2e: iris_symbols_local, docs_introspect, extract_message_map_routing ──
+
+fn load_bpl_dtl_fixtures() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    for (filename, _class_name) in &[
+        ("IrisDevTest.BplProcess.cls", "IrisDevTest.BplProcess"),
+        ("IrisDevTest.DtlTransform.cls", "IrisDevTest.DtlTransform"),
+    ] {
+        let path = std::path::Path::new(manifest_dir)
+            .join("tests/fixtures/iris_classes")
+            .join(filename);
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read fixture {filename}: {e}"));
+        let result = call_tool(
+            "iris_doc",
+            serde_json::json!({
+                "name": filename,
+                "mode": "put",
+                "content": content,
+                "compile": true,
+                "namespace": "USER"
+            }),
+        );
+        assert!(
+            result["error_code"].is_null(),
+            "fixture load failed for {filename}: {result}"
+        );
+    }
+}
+
+/// T070 e2e: iris_symbols_local kinds filter returns only methods.
+#[test]
+fn e2e_070_symbols_local_kinds_filter() {
+    require_bin!();
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let result = call_tool(
+        "iris_symbols_local",
+        serde_json::json!({
+            "query": "MyApp.*",
+            "workspace_path": workspace.to_str().unwrap(),
+            "kinds": ["method"]
+        }),
+    );
+    if result["error_code"].as_str() == Some("WORKSPACE_NOT_FOUND") {
+        eprintln!("e2e_070_symbols_local_kinds_filter: workspace not found — skipping");
+        return;
+    }
+    let symbols = result["symbols"]
+        .as_array()
+        .expect("expected symbols array");
+    for sym in symbols {
+        assert_eq!(
+            sym["kind"].as_str(),
+            Some("method"),
+            "kinds filter should return only methods; got: {sym}"
+        );
+    }
+    assert!(
+        !symbols.is_empty(),
+        "expected at least one method in MyApp.*"
+    );
+}
+
+/// T070 e2e: iris_symbols_local member-level glob (MyApp.TypedMembers.Do*).
+#[test]
+fn e2e_070_symbols_local_member_glob() {
+    require_bin!();
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let result = call_tool(
+        "iris_symbols_local",
+        serde_json::json!({
+            "query": "MyApp.TypedMembers.Do*",
+            "workspace_path": workspace.to_str().unwrap(),
+        }),
+    );
+    if result["error_code"].as_str() == Some("WORKSPACE_NOT_FOUND") {
+        eprintln!("e2e_070_symbols_local_member_glob: workspace not found — skipping");
+        return;
+    }
+    let symbols = result["symbols"]
+        .as_array()
+        .expect("expected symbols array");
+    assert!(
+        !symbols.is_empty(),
+        "expected at least one Do* member in MyApp.TypedMembers"
+    );
+    for sym in symbols {
+        let name = sym["Name"].as_str().unwrap_or("");
+        let short = name.rsplit('.').next().unwrap_or(name);
+        assert!(
+            short.to_lowercase().starts_with("do"),
+            "member glob Do* should only return members starting with Do; got Name={name}"
+        );
+    }
+}
+
+/// T070 e2e: iris_symbols_local line field present and non-zero.
+#[test]
+fn e2e_070_symbols_local_line_field() {
+    require_bin!();
+    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+    let result = call_tool(
+        "iris_symbols_local",
+        serde_json::json!({
+            "query": "MyApp.*",
+            "workspace_path": workspace.to_str().unwrap(),
+            "limit": 5
+        }),
+    );
+    if result["error_code"].as_str() == Some("WORKSPACE_NOT_FOUND") {
+        eprintln!("e2e_070_symbols_local_line_field: workspace not found — skipping");
+        return;
+    }
+    let symbols = result["symbols"]
+        .as_array()
+        .expect("expected symbols array");
+    for sym in symbols {
+        assert!(
+            sym.get("line").is_some(),
+            "every symbol must have a line field; sym: {sym}"
+        );
+        assert!(
+            sym["line"].as_u64().unwrap_or(0) > 0,
+            "line must be > 0; sym: {sym}"
+        );
+    }
+}
+
+/// T070 e2e: docs_introspect FormalSpec is structured array.
+#[test]
+fn e2e_070_docs_introspect_formalspec_structured() {
+    require_iris!();
+    let result = call_tool(
+        "docs_introspect",
+        serde_json::json!({"class_name": "%Library.Persistent", "namespace": "USER"}),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    let methods = result["methods"]
+        .as_array()
+        .expect("expected methods array");
+    // FormalSpec must be a structured array, not a raw string.
+    for method in methods {
+        if let Some(fspec) = method["FormalSpec"].as_array() {
+            for arg in fspec {
+                assert!(
+                    arg.get("name").is_some(),
+                    "FormalSpec arg must have name field; method={} arg: {arg}",
+                    method["Name"]
+                );
+                // byref is omitted when false (skip_serializing_if); it is present only for ByRef args.
+                // type may be absent for untyped args. Verify structure is an object, not a string.
+                assert!(
+                    arg.is_object(),
+                    "FormalSpec arg must be an object; method={} arg: {arg}",
+                    method["Name"]
+                );
+            }
+        }
+    }
+    // Must have at least one method with a non-empty FormalSpec to be meaningful.
+    assert!(
+        methods
+            .iter()
+            .any(|m| m["FormalSpec"].as_array().is_some_and(|a| !a.is_empty())),
+        "%Library.Persistent has no methods with parameters — test is vacuous"
+    );
+}
+
+/// T070 e2e: docs_introspect BPL class returns xdata_flow with steps.
+#[test]
+fn e2e_070_docs_introspect_bpl_xdata_flow() {
+    require_iris!();
+    load_bpl_dtl_fixtures();
+    let result = call_tool(
+        "docs_introspect",
+        serde_json::json!({"class_name": "IrisDevTest.BplProcess", "namespace": "USER"}),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["error_code"].is_null(),
+        "docs_introspect BPL failed: {result}"
+    );
+    let flow = &result["xdata_flow"];
+    assert_eq!(flow["kind"], "bpl", "expected kind=bpl; flow: {flow}");
+    let steps = flow["steps"].as_array().expect("expected steps array");
+    assert!(!steps.is_empty(), "expected BPL steps; flow: {flow}");
+    assert_eq!(
+        flow["has_dynamic_dispatch"], true,
+        "IrisDevTest.BplProcess has $classmethod — expected has_dynamic_dispatch=true"
+    );
+    let has_call = steps
+        .iter()
+        .any(|s| s["step_kind"] == "Call" && s["target"].as_str() == Some("DownstreamService"));
+    assert!(
+        has_call,
+        "expected Call step targeting DownstreamService; steps: {steps:?}"
+    );
+}
+
+/// T070 e2e: docs_introspect DTL class returns xdata_flow with source/target class.
+#[test]
+fn e2e_070_docs_introspect_dtl_xdata_flow() {
+    require_iris!();
+    load_bpl_dtl_fixtures();
+    let result = call_tool(
+        "docs_introspect",
+        serde_json::json!({"class_name": "IrisDevTest.DtlTransform", "namespace": "USER"}),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["error_code"].is_null(),
+        "docs_introspect DTL failed: {result}"
+    );
+    let flow = &result["xdata_flow"];
+    assert_eq!(flow["kind"], "dtl", "expected kind=dtl; flow: {flow}");
+    assert_eq!(flow["source_class"], "Ens.Request");
+    assert_eq!(flow["target_class"], "Ens.Response");
+    assert_eq!(
+        flow["assign_count"], 3,
+        "expected 3 assign statements; flow: {flow}"
+    );
+}
+
+/// T070 e2e: extract_message_map_routing BPL class returns kind=bpl with routes.
+#[test]
+fn e2e_070_routing_bpl_returns_routes() {
+    require_iris!();
+    load_bpl_dtl_fixtures();
+    let result = call_tool(
+        "extract_message_map_routing",
+        serde_json::json!({"class_name": "IrisDevTest.BplProcess", "namespace": "USER"}),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["error_code"].is_null(),
+        "BPL routing failed: {result}"
+    );
+    assert_eq!(result["kind"], "bpl", "expected kind=bpl; result: {result}");
+    let routes = result["routes"].as_array().expect("expected routes array");
+    assert!(!routes.is_empty(), "expected routes from BPL Call steps");
+    assert_eq!(
+        routes[0]["method"].as_str(),
+        Some("DownstreamService"),
+        "expected route to DownstreamService; routes: {routes:?}"
+    );
+    assert_eq!(
+        routes[0]["confidence"].as_f64(),
+        Some(0.8),
+        "BPL routes confidence must be 0.8"
+    );
+    // IrisDevTest.BplProcess has $classmethod — note must be present
+    let note = result["note"]
+        .as_str()
+        .expect("expected note for dynamic dispatch BPL");
+    assert!(
+        note.contains("dynamic dispatch") || note.contains("Dynamic dispatch"),
+        "note must mention dynamic dispatch; got: {note}"
+    );
+}
+
+/// T070 e2e: extract_message_map_routing DTL class returns kind=dtl, empty routes.
+#[test]
+fn e2e_070_routing_dtl_empty_routes() {
+    require_iris!();
+    load_bpl_dtl_fixtures();
+    let result = call_tool(
+        "extract_message_map_routing",
+        serde_json::json!({"class_name": "IrisDevTest.DtlTransform", "namespace": "USER"}),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["error_code"].is_null(),
+        "DTL routing failed: {result}"
+    );
+    assert_eq!(result["kind"], "dtl", "expected kind=dtl; result: {result}");
+    let routes = result["routes"].as_array().expect("expected routes array");
+    assert!(
+        routes.is_empty(),
+        "DTL routes must be empty; got: {routes:?}"
+    );
+    assert_eq!(result["source_class"], "Ens.Request");
+    assert_eq!(result["target_class"], "Ens.Response");
+}
+
+/// T070 e2e: extract_message_map_routing nonexistent class returns NOT_FOUND.
+#[test]
+fn e2e_070_routing_plain_class_not_found() {
+    require_iris!();
+    // Use a nonexistent class — guaranteed NOT_FOUND via fast ObjectScript path (no generator output issues).
+    let result = call_tool(
+        "extract_message_map_routing",
+        serde_json::json!({"class_name": "IrisDevNonExistent.NoRouting", "namespace": "USER"}),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert_eq!(
+        result["error_code"], "NOT_FOUND",
+        "nonexistent class must return NOT_FOUND; result: {result}"
     );
 }

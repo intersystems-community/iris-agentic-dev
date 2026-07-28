@@ -5682,12 +5682,7 @@ async fn test_dispatch_extract_message_map_cache_hit() {
 
 // ── find_subclass_implementations cache hit ───────────────────────────────────
 
-// TODO(fix/json-escaping-helper): hierarchy expansion calls
-// /action/compile?flags=cuk and fails against a real container
-// ("error sending request for url ...action/compile?flags=cuk"). Re-enable
-// once that fix lands.
 #[tokio::test]
-#[ignore]
 async fn test_dispatch_find_subclass_implementations_cache_hit() {
     let tools = match make_iris_tools() {
         Some(t) => t,
@@ -6771,7 +6766,6 @@ async fn test_dispatch_docs_introspect_v2() {
 // ── T070-39: docs_introspect FormalSpec is a JSON array (US11) ───────────────
 
 #[tokio::test]
-#[ignore]
 async fn t070_39_docs_introspect_formalspec_is_array() {
     let tools = match make_iris_tools() {
         Some(t) => t,
@@ -6808,6 +6802,315 @@ async fn t070_39_docs_introspect_formalspec_is_array() {
     assert!(
         fspec.is_array(),
         "FormalSpec should be a JSON array, got: {fspec}"
+    );
+}
+
+// ── T070-44b: fixture setup — compile IrisDevTest.BplProcess + IrisDevTest.DtlTransform ──
+//
+// Run this before the BPL/DTL tests to load fixture classes into USER.
+// Fixtures are in tests/fixtures/iris_classes/ (MIT-licensed, derived from
+// IRISDemo open-source demo project, stripped to compile on bare Interop IRIS).
+
+async fn setup_bpl_dtl_fixtures(tools: &iris_agentic_dev_core::tools::IrisTools) {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    for (filename, class_name) in &[
+        ("IrisDevTest.BplProcess.cls", "IrisDevTest.BplProcess"),
+        ("IrisDevTest.DtlTransform.cls", "IrisDevTest.DtlTransform"),
+    ] {
+        let path = std::path::Path::new(manifest_dir)
+            .join("tests/fixtures/iris_classes")
+            .join(filename);
+        let content = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read fixture {filename}: {e}"));
+        let put = tools
+            .call_for_test(
+                "iris_doc",
+                serde_json::json!({
+                    "name": filename,
+                    "mode": "put",
+                    "content": content,
+                    "compile": true,
+                    "namespace": "USER"
+                }),
+            )
+            .await;
+        let pv = parse_result(put);
+        assert!(
+            pv.get("error_code").is_none(),
+            "setup: failed to load {class_name}: {pv}"
+        );
+    }
+}
+
+// ── T070-45/46/47: docs_introspect xdata_flow (US12) ─────────────────────────
+
+#[tokio::test]
+async fn t070_45_docs_introspect_bpl_has_xdata_flow() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    setup_bpl_dtl_fixtures(&tools).await;
+    let result = tools
+        .call_for_test(
+            "docs_introspect",
+            serde_json::json!({ "class_name": "IrisDevTest.BplProcess", "namespace": "USER" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("error_code").is_none(),
+        "t070_45: docs_introspect failed: {v}"
+    );
+    let flow = v
+        .get("xdata_flow")
+        .expect("expected xdata_flow for BPL class");
+    assert_eq!(
+        flow.get("kind").and_then(|k| k.as_str()),
+        Some("bpl"),
+        "xdata_flow.kind should be 'bpl'; got: {flow}"
+    );
+    let steps = flow
+        .get("steps")
+        .and_then(|s| s.as_array())
+        .expect("expected steps array");
+    assert!(!steps.is_empty(), "expected at least one BPL step");
+    // IrisDevTest.BplProcess has a Call step named 'CallDownstream'
+    let has_call = steps.iter().any(|s| {
+        s.get("step_kind").and_then(|k| k.as_str()) == Some("Call")
+            && s.get("target").and_then(|t| t.as_str()) == Some("DownstreamService")
+    });
+    assert!(
+        has_call,
+        "expected Call step targeting DownstreamService; steps: {steps:?}"
+    );
+    // IrisDevTest.BplProcess has $classmethod — dynamic dispatch should be flagged
+    assert_eq!(
+        flow.get("has_dynamic_dispatch").and_then(|b| b.as_bool()),
+        Some(true),
+        "expected has_dynamic_dispatch=true for $classmethod usage; flow: {flow}"
+    );
+}
+
+#[tokio::test]
+async fn t070_46_docs_introspect_dtl_has_xdata_flow() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    setup_bpl_dtl_fixtures(&tools).await;
+    let result = tools
+        .call_for_test(
+            "docs_introspect",
+            serde_json::json!({ "class_name": "IrisDevTest.DtlTransform", "namespace": "USER" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("error_code").is_none(),
+        "t070_46: docs_introspect failed: {v}"
+    );
+    let flow = v
+        .get("xdata_flow")
+        .expect("expected xdata_flow for DTL class");
+    assert_eq!(
+        flow.get("kind").and_then(|k| k.as_str()),
+        Some("dtl"),
+        "xdata_flow.kind should be 'dtl'; got: {flow}"
+    );
+    assert_eq!(
+        flow.get("source_class").and_then(|s| s.as_str()),
+        Some("Ens.Request"),
+        "expected source_class=Ens.Request; flow: {flow}"
+    );
+    assert_eq!(
+        flow.get("target_class").and_then(|s| s.as_str()),
+        Some("Ens.Response"),
+        "expected target_class=Ens.Response; flow: {flow}"
+    );
+    assert_eq!(
+        flow.get("assign_count").and_then(|n| n.as_u64()),
+        Some(3),
+        "expected 3 assign statements; flow: {flow}"
+    );
+}
+
+#[tokio::test]
+async fn t070_47_docs_introspect_plain_class_no_xdata_flow() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "docs_introspect",
+            serde_json::json!({ "class_name": "%Library.Persistent", "namespace": "USER" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("xdata_flow").is_none(),
+        "plain class should not have xdata_flow; got: {:?}",
+        v.get("xdata_flow")
+    );
+}
+
+// ── T070-48/49/50/51/52: extract_message_map_routing BPL/DTL (US13) ──────────
+
+#[tokio::test]
+async fn t070_48_routing_bpl_class_returns_routes() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    setup_bpl_dtl_fixtures(&tools).await;
+    let result = tools
+        .call_for_test(
+            "extract_message_map_routing",
+            serde_json::json!({ "class_name": "IrisDevTest.BplProcess", "namespace": "USER" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("error_code").is_none(),
+        "t070_48: routing failed: {v}"
+    );
+    assert_eq!(
+        v.get("kind").and_then(|k| k.as_str()),
+        Some("bpl"),
+        "expected kind=bpl; got: {v}"
+    );
+    let routes = v
+        .get("routes")
+        .and_then(|r| r.as_array())
+        .expect("expected routes array");
+    assert!(
+        !routes.is_empty(),
+        "expected at least one route from BPL Call steps"
+    );
+    let route = &routes[0];
+    assert_eq!(
+        route.get("method").and_then(|m| m.as_str()),
+        Some("DownstreamService"),
+        "expected route method=DownstreamService; route: {route}"
+    );
+    assert_eq!(
+        route.get("confidence").and_then(|c| c.as_f64()),
+        Some(0.8),
+        "BPL routes should have confidence=0.8"
+    );
+}
+
+#[tokio::test]
+async fn t070_49_routing_bpl_dynamic_dispatch_note() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    setup_bpl_dtl_fixtures(&tools).await;
+    // IrisDevTest.BplProcess has $classmethod — note must be present.
+    let result = tools
+        .call_for_test(
+            "extract_message_map_routing",
+            serde_json::json!({ "class_name": "IrisDevTest.BplProcess", "namespace": "USER" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("error_code").is_none(),
+        "t070_49: routing failed: {v}"
+    );
+    let note = v
+        .get("note")
+        .and_then(|n| n.as_str())
+        .expect("expected note field for class with $classmethod usage");
+    assert!(
+        note.contains("dynamic dispatch") || note.contains("Dynamic dispatch"),
+        "note should mention dynamic dispatch; got: {note}"
+    );
+}
+
+#[tokio::test]
+async fn t070_50_routing_dtl_class_returns_empty_routes() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    setup_bpl_dtl_fixtures(&tools).await;
+    let result = tools
+        .call_for_test(
+            "extract_message_map_routing",
+            serde_json::json!({ "class_name": "IrisDevTest.DtlTransform", "namespace": "USER" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert!(
+        v.get("error_code").is_none(),
+        "t070_50: routing failed: {v}"
+    );
+    assert_eq!(
+        v.get("kind").and_then(|k| k.as_str()),
+        Some("dtl"),
+        "expected kind=dtl; got: {v}"
+    );
+    let routes = v
+        .get("routes")
+        .and_then(|r| r.as_array())
+        .expect("expected routes array");
+    assert!(
+        routes.is_empty(),
+        "DTL has no message routing, routes should be empty; got: {routes:?}"
+    );
+    assert_eq!(
+        v.get("source_class").and_then(|s| s.as_str()),
+        Some("Ens.Request"),
+        "expected source_class in DTL routing result; got: {v}"
+    );
+    assert_eq!(
+        v.get("target_class").and_then(|s| s.as_str()),
+        Some("Ens.Response"),
+        "expected target_class in DTL routing result; got: {v}"
+    );
+}
+
+#[tokio::test]
+async fn t070_51_routing_existing_router_unchanged() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    // Use any class that has a MessageMap — should behave exactly as before.
+    let result = tools
+        .call_for_test(
+            "extract_message_map_routing",
+            serde_json::json!({ "class_name": "EnsLib.HL7.MsgRouter.RoutingEngine", "namespace": "USER" }),
+        )
+        .await;
+    let v = parse_result(result);
+    // Should succeed or return NOT_FOUND — either is acceptable (no regression).
+    assert!(
+        v.get("routes").is_some() || v.get("error_code").is_some(),
+        "expected routes or error_code; got: {v}"
+    );
+}
+
+#[tokio::test]
+async fn t070_52_routing_plain_class_not_found() {
+    let tools = match make_iris_tools() {
+        Some(t) => t,
+        None => return,
+    };
+    let result = tools
+        .call_for_test(
+            "extract_message_map_routing",
+            serde_json::json!({ "class_name": "%Library.Persistent", "namespace": "USER" }),
+        )
+        .await;
+    let v = parse_result(result);
+    assert_eq!(
+        v.get("error_code").and_then(|e| e.as_str()),
+        Some("NOT_FOUND"),
+        "plain class should return NOT_FOUND; got: {v}"
     );
 }
 
@@ -7067,7 +7370,6 @@ async fn test_dispatch_resolve_dynamic_dispatch_v2() {
 // test_dispatch_find_subclass_implementations_cache_hit above. Re-enable
 // once that fix lands.
 #[tokio::test]
-#[ignore]
 async fn test_dispatch_find_subclass_implementations_v2() {
     let tools = match make_iris_tools() {
         Some(t) => t,

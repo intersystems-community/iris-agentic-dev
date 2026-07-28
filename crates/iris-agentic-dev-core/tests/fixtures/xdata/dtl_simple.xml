@@ -1,0 +1,7 @@
+<transform sourceClass='Demo.Source' targetClass='Demo.Target' create='new' language='objectscript' >
+<subtransform class='Demo.SubTransformA' targetObj='target' sourceObj='source' />
+<subtransform class='Demo.SubTransformB' targetObj='target' sourceObj='source' />
+<assign value='source.Name' property='target.FullName' action='set' />
+<assign value='source.DOB' property='target.DateOfBirth' action='set' />
+<assign value='"Active"' property='target.Status' action='set' />
+</transform>

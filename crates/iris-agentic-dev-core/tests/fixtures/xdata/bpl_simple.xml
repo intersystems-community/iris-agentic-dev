@@ -1,0 +1,11 @@
+<process language='objectscript' request='Demo.Request' response='Demo.Response' height='2000' width='2000' >
+<sequence>
+<code name='LogRequest' >
+<![CDATA[ Do ##class(%SYS.System).WriteToConsoleLog("request received") ]]>
+</code>
+<call name='CallRiskService' target='RiskService' async='1' >
+<request type='Demo.Request' />
+<response type='Demo.Response' />
+</call>
+</sequence>
+</process>

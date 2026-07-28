@@ -58,6 +58,7 @@ pub mod scm;
 pub mod search;
 pub mod skills_tools;
 pub mod symbols_local;
+pub mod xdata_flow;
 
 pub use doc::{DocMode, IrisDocParams};
 pub use scm::{ScmAction, ScmParams};
@@ -4409,7 +4410,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Search for ObjectScript symbols in local .cls/.mac/.inc files on disk — no IRIS connection required. query: glob pattern (MyApp.*, *Service, MyApp.Foo). workspace_path: optional path (defaults to OBJECTSCRIPT_WORKSPACE or cwd). limit: max symbols to return (default 50). Skill: objectscript-navigation."
+        description = "Search for ObjectScript symbols in local .cls/.mac/.inc files on disk — no IRIS connection required. query: glob pattern (MyApp.*, *Service, MyApp.Foo.Do*). workspace_path: optional path (defaults to OBJECTSCRIPT_WORKSPACE or cwd). limit: max symbols to return (default 50). kinds: optional filter on symbol kind (class, method, property, parameter, index, xdata, query, trigger, relationship, foreignkey, projection, storage, routine, label). Each symbol includes a line field (1-based source line). Skill: objectscript-navigation."
     )]
     async fn iris_symbols_local(
         &self,
@@ -4465,7 +4466,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Introspect an ObjectScript class — returns methods, properties, and type information. Skill: objectscript-navigation."
+        description = "Introspect an ObjectScript class — returns methods, properties, and type information. Methods include FormalSpec as a structured array of {name, type, byref, output, default} objects and a ReturnType field. For BPL and DTL classes, an xdata_flow field describes the process steps (BPL: kind=bpl, steps array with Call/Code/If/Other entries, has_dynamic_dispatch flag; DTL: kind=dtl, source_class, target_class, subtransforms, assign_count). Skill: objectscript-navigation."
     )]
     async fn docs_introspect(
         &self,
@@ -4503,9 +4504,20 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 m
             })
             .collect::<Vec<_>>();
-        ok_json(
-            serde_json::json!({"success": true, "class_name": p.class_name, "methods": methods_arr, "properties": props["result"]["content"]}),
-        )
+
+        // Detect BPL/DTL and add structured xdata_flow if present.
+        let xdata_flow = detect_xdata_flow(&iris, &p.class_name, &p.namespace, client).await;
+
+        let mut resp = serde_json::json!({
+            "success": true,
+            "class_name": p.class_name,
+            "methods": methods_arr,
+            "properties": props["result"]["content"]
+        });
+        if let Some(flow) = xdata_flow {
+            resp["xdata_flow"] = flow;
+        }
+        ok_json(resp)
     }
 
     #[tool(
@@ -5319,7 +5331,7 @@ Methods:
     }
 
     #[tool(
-        description = "Extract Ensemble MessageMap routing table from a compiled BusinessProcess or Router class. Returns the MessageType → Method dispatch table with confidence 0.9 (compiled routing = near ground truth). Use to find CALLS edges that static analysis cannot see. Returns has_message_map:false for classes without a MessageMap. Results cached 60s per session. Skill: ensemble-production."
+        description = "Extract routing from a compiled Ensemble class. For MessageMap routers: returns message_type → method dispatch table (confidence 0.9). For BPL classes (Ens.BusinessProcessBPL): returns kind=bpl with routes derived from Call steps (confidence 0.8); includes note when dynamic dispatch ($classmethod) is detected. For DTL classes (Ens.DataTransformDTL): returns kind=dtl with source_class, target_class, and empty routes. Returns NOT_FOUND for plain classes with no routing. Results cached 60s per session. Skill: ensemble-production."
     )]
     async fn extract_message_map_routing(
         &self,
@@ -6678,6 +6690,74 @@ fn parse_source_line(raw: &str) -> (Option<String>, Option<i64>) {
         );
     }
     (None, None)
+}
+
+/// Detects whether a class is BPL or DTL and parses its XData flow.
+/// Returns `None` for plain classes.
+async fn detect_xdata_flow(
+    iris: &IrisConnection,
+    class_name: &str,
+    namespace: &str,
+    client: &reqwest::Client,
+) -> Option<serde_json::Value> {
+    let super_result = iris
+        .query(
+            "SELECT Super FROM %Dictionary.CompiledClass WHERE Name=?",
+            vec![serde_json::Value::String(class_name.to_string())],
+            namespace,
+            client,
+        )
+        .await
+        .ok()?;
+
+    let super_class = super_result["result"]["content"]
+        .as_array()?
+        .first()?
+        .get("Super")?
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    let is_bpl = xdata_flow::is_bpl_class(&super_class);
+    let is_dtl = xdata_flow::is_dtl_class(&super_class);
+    if !is_bpl && !is_dtl {
+        return None;
+    }
+
+    let xdata_block = if is_bpl { "BPL" } else { "DTL" };
+    // BPL/DTL classes must be exported with their type suffix (.bpl/.dtl), not as .cls
+    let ext = if is_bpl { "bpl" } else { "dtl" };
+    let export_item = format!("{}.{}", class_name.replace('"', "\\\""), ext);
+    let export_code = format!(
+        "Set stream = ##class(%Stream.GlobalCharacter).%New() \
+         Do $system.OBJ.ExportToStream(\"{}\",stream,,\"c\") \
+         Do stream.Rewind() \
+         Write stream.Read(1000000)",
+        export_item
+    );
+    let class_xml = iris.execute(&export_code, namespace).await.ok()?;
+
+    let xdata_content = xdata_flow::extract_xdata_content(&class_xml, xdata_block)?;
+
+    if is_bpl {
+        let flow = xdata_flow::parse_bpl(&xdata_content).ok()?;
+        serde_json::to_value(serde_json::json!({
+            "kind": "bpl",
+            "steps": flow.steps,
+            "has_dynamic_dispatch": flow.has_dynamic_dispatch
+        }))
+        .ok()
+    } else {
+        let flow = xdata_flow::parse_dtl(&xdata_content).ok()?;
+        serde_json::to_value(serde_json::json!({
+            "kind": "dtl",
+            "source_class": flow.source_class,
+            "target_class": flow.target_class,
+            "subtransforms": flow.subtransforms,
+            "assign_count": flow.assign_count
+        }))
+        .ok()
+    }
 }
 
 #[cfg(test)]

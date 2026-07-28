@@ -192,7 +192,7 @@ pub fn extract_cls_symbols(
 
     // With a specific member filter (not "*"), suppress the class symbol.
     // "*" (fetch all members) and no filter both include the class symbol.
-    let emit_class = member_glob.as_deref().map_or(true, |g| g == "*");
+    let emit_class = member_glob.as_deref().is_none_or(|g| g == "*");
     if emit_class {
         symbols.push(Symbol {
             name: class_name.clone(),
