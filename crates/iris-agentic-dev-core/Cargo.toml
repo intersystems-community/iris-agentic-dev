@@ -29,8 +29,9 @@ dirs = "5"
 keyring = { version = "4", features = ["v1"] }
 keyring-core = { version = "1" }
 tree-sitter = "0.26"
-tree-sitter-objectscript = "1.7"
-tree-sitter-objectscript-routine = "1.7"
+tree-sitter-objectscript = "1.9"
+tree-sitter-objectscript-routine = "1.9"
+quick-xml = "0.37"
 
 # Test dependencies
 [dev-dependencies]

@@ -8,13 +8,27 @@ use std::path::Path;
 // ── Public types ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
+pub struct ArgSpec {
+    pub name: String,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub type_name: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub byref: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub output: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct Symbol {
     #[serde(rename = "Name")]
     pub name: String,
     pub kind: String,
     pub file: String,
+    pub line: u32,
     #[serde(rename = "FormalSpec", skip_serializing_if = "Option::is_none")]
-    pub formal_spec: Option<String>,
+    pub formal_spec: Option<Vec<ArgSpec>>,
     #[serde(rename = "Type", skip_serializing_if = "Option::is_none")]
     pub type_name: Option<String>,
 }
@@ -140,9 +154,9 @@ pub fn extract_cls_symbols(
         // Continue — extract what we can from the partial parse.
     }
 
-    let class_name = extract_class_name(&tree, source);
-    let class_name = match class_name {
-        Some(n) => n,
+    let class_info = extract_class_name(&tree, source);
+    let (class_name, class_line) = match class_info {
+        Some(pair) => pair,
         None => return (symbols, warnings),
     };
 
@@ -155,6 +169,7 @@ pub fn extract_cls_symbols(
         name: class_name.clone(),
         kind: "class".into(),
         file: rel_path.into(),
+        line: class_line,
         formal_spec: None,
         type_name: None,
     });
@@ -165,16 +180,16 @@ pub fn extract_cls_symbols(
     (symbols, warnings)
 }
 
-fn extract_class_name(tree: &tree_sitter::Tree, source: &[u8]) -> Option<String> {
+fn extract_class_name(tree: &tree_sitter::Tree, source: &[u8]) -> Option<(String, u32)> {
     let root = tree.root_node();
     let mut cursor = root.walk();
-    // Find class_definition
     for child in root.children(&mut cursor) {
         if child.kind() == "class_definition" {
+            let line = child.start_position().row as u32 + 1;
             let mut c2 = child.walk();
             for sub in child.children(&mut c2) {
                 if sub.kind() == "class_name" {
-                    return Some(node_text(sub, source));
+                    return Some((node_text(sub, source), line));
                 }
             }
         }
@@ -253,7 +268,7 @@ fn extract_method_symbol(
         if child.kind() == "method_definition" {
             let mut c2 = child.walk();
             let mut method_name = None;
-            let mut formal_spec = None;
+            let mut formal_spec_args: Vec<ArgSpec> = Vec::new();
             for sub in child.children(&mut c2) {
                 if sub.kind() == "method_name" {
                     let n = first_identifier_text(sub, source);
@@ -261,24 +276,24 @@ fn extract_method_symbol(
                         method_name = Some(n);
                     }
                 } else if sub.kind() == "arguments" {
-                    // Slice the byte range and strip surrounding parens.
-                    let raw = node_text(sub, source);
-                    let trimmed = raw.trim();
-                    let inner = if trimmed.starts_with('(') && trimmed.ends_with(')') {
-                        trimmed[1..trimmed.len() - 1].trim().to_string()
-                    } else {
-                        trimmed.to_string()
-                    };
-                    formal_spec = Some(inner);
+                    formal_spec_args = parse_arguments(sub, source);
                 }
             }
             if let Some(name) = method_name {
+                let line = child.start_position().row as u32 + 1;
+                let type_name = extract_typename(child, source);
+                let formal_spec = if formal_spec_args.is_empty() {
+                    None
+                } else {
+                    Some(formal_spec_args)
+                };
                 return Some(Symbol {
                     name: format!("{}.{}", class_name, name),
                     kind: "method".into(),
                     file: rel_path.into(),
+                    line,
                     formal_spec,
-                    type_name: None,
+                    type_name,
                 });
             }
         }
@@ -298,12 +313,15 @@ fn extract_property_symbol(
             // property_name contains an identifier child
             let name = first_identifier_text(child, source);
             if !name.is_empty() {
+                let line = node.start_position().row as u32 + 1;
+                let type_name = extract_typename(node, source);
                 return Some(Symbol {
                     name: format!("{}.{}", class_name, name),
                     kind: "property".into(),
                     file: rel_path.into(),
+                    line,
                     formal_spec: None,
-                    type_name: None,
+                    type_name,
                 });
             }
         }
@@ -322,10 +340,12 @@ fn extract_parameter_symbol(
         if child.kind() == "parameter_name" {
             let name = first_identifier_text(child, source);
             if !name.is_empty() {
+                let line = node.start_position().row as u32 + 1;
                 return Some(Symbol {
                     name: format!("{}.{}", class_name, name),
                     kind: "parameter".into(),
                     file: rel_path.into(),
+                    line,
                     formal_spec: None,
                     type_name: None,
                 });
@@ -348,6 +368,75 @@ fn first_identifier_text(node: tree_sitter::Node, source: &[u8]) -> String {
     }
     // fallback: return full node text
     node_text(node, source)
+}
+
+/// Extracts the typename text from a `return_type` node (As %String → "%String").
+fn extract_typename(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "return_type" {
+            let mut c2 = child.walk();
+            for sub in child.children(&mut c2) {
+                if sub.kind() == "typename" {
+                    return Some(node_text(sub, source));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Parses an `arguments` node into a Vec of ArgSpec.
+fn parse_arguments(node: tree_sitter::Node, source: &[u8]) -> Vec<ArgSpec> {
+    let mut args = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() != "argument" {
+            continue;
+        }
+        let mut byref = false;
+        let mut output = false;
+        let mut arg_name = String::new();
+        let mut type_name: Option<String> = None;
+        let mut default: Option<String> = None;
+        let mut c2 = child.walk();
+        for sub in child.children(&mut c2) {
+            match sub.kind() {
+                "keyword_byref" => byref = true,
+                "keyword_output" => output = true,
+                "method_arg" => {
+                    // method_arg contains the identifier (parameter name)
+                    let name = first_identifier_text(sub, source);
+                    if !name.is_empty() {
+                        arg_name = name;
+                    }
+                }
+                "return_type" => {
+                    // return_type → typename gives the type
+                    let mut c3 = sub.walk();
+                    for t in sub.children(&mut c3) {
+                        if t.kind() == "typename" {
+                            type_name = Some(node_text(t, source));
+                        }
+                    }
+                }
+                "default_argument_value" => {
+                    default = Some(node_text(sub, source).trim().to_string());
+                }
+                _ => {}
+            }
+        }
+        if !arg_name.is_empty() {
+            args.push(ArgSpec {
+                name: arg_name,
+                type_name,
+                byref,
+                output,
+                default,
+            });
+        }
+    }
+    args
 }
 
 // ── Routine (.mac/.inc) extraction ──────────────────────────────────────────
@@ -435,10 +524,12 @@ fn extract_routine_nodes(
                     if sub.kind() == "tag" || sub.kind() == "tag_with_params" {
                         let tag_name = extract_tag_name(sub, source);
                         if !tag_name.is_empty() {
+                            let line = child.start_position().row as u32 + 1;
                             symbols.push(Symbol {
                                 name: format!("{}:{}", routine_name, tag_name),
                                 kind: "label".into(),
                                 file: rel_path.into(),
+                                line,
                                 formal_spec: None,
                                 type_name: None,
                             });
@@ -453,29 +544,12 @@ fn extract_routine_nodes(
                     if sub.kind() == "macro_def" {
                         let macro_name = node_text(sub, source);
                         if !macro_name.is_empty() {
+                            let line = child.start_position().row as u32 + 1;
                             symbols.push(Symbol {
                                 name: macro_name,
                                 kind: "macro".into(),
                                 file: rel_path.into(),
-                                formal_spec: None,
-                                type_name: None,
-                            });
-                        }
-                        break;
-                    }
-                }
-            }
-            // tag_with_params can appear directly as a statement child
-            "tag_with_params" => {
-                let mut c2 = child.walk();
-                for sub in child.children(&mut c2) {
-                    if sub.kind() == "tag" {
-                        let tag_name = extract_tag_name(sub, source);
-                        if !tag_name.is_empty() {
-                            symbols.push(Symbol {
-                                name: format!("{}:{}", routine_name, tag_name),
-                                kind: "label".into(),
-                                file: rel_path.into(),
+                                line,
                                 formal_spec: None,
                                 type_name: None,
                             });
@@ -896,7 +970,6 @@ mod tests {
 
     #[test]
     fn extract_routine_mac_labels_with_params() {
-        // .mac file with tagged labels — exercises tag_with_params branch (lines 470-484)
         let src = b"ROUTINE Utils\nStart\n  Write \"start\",!\n  Quit\nHelper(arg)\n  Write arg,!\n  Quit\n";
         let (symbols, _) = extract_routine_symbols(src, "src/Utils.mac", "*");
         let label_syms: Vec<_> = symbols.iter().filter(|s| s.kind == "label").collect();

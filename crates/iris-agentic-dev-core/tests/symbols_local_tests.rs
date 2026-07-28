@@ -173,6 +173,235 @@ fn scan_workspace_wildcard_detects_duplicate() {
     );
 }
 
+// ── T070-03/04: line field present and correct (US2) ─────────────────────────
+
+#[test]
+fn t070_03_line_field_present() {
+    let path = fixtures_dir().join("MyApp/Foo.cls");
+    let source = std::fs::read(&path).expect("read Foo.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/Foo.cls", "MyApp.Foo");
+
+    for sym in &symbols {
+        assert!(
+            sym.line >= 1,
+            "symbol {} has line={}, expected >= 1",
+            sym.name,
+            sym.line
+        );
+    }
+}
+
+#[test]
+fn t070_04_line_field_correct_for_do_something() {
+    let path = fixtures_dir().join("MyApp/Foo.cls");
+    let source = std::fs::read(&path).expect("read Foo.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/Foo.cls", "MyApp.Foo");
+
+    let method = symbols
+        .iter()
+        .find(|s| s.name == "MyApp.Foo.DoSomething")
+        .expect("DoSomething not found");
+
+    // DoSomething is on line 8 in Foo.cls
+    assert_eq!(
+        method.line, 8,
+        "DoSomething expected at line 8, got {}",
+        method.line
+    );
+}
+
+// ── T070-05: line numbers on routine labels (US2) ─────────────────────────────
+
+#[test]
+fn t070_05_routine_label_line_numbers() {
+    let path = fixtures_dir().join("Utils.mac");
+    let source = std::fs::read(&path).expect("read Utils.mac");
+    let (symbols, _) = extract_routine_symbols(&source, "Utils.mac", "Utils");
+
+    for sym in symbols.iter().filter(|s| s.kind == "label") {
+        assert!(
+            sym.line >= 1,
+            "label {} has line={}, expected >= 1",
+            sym.name,
+            sym.line
+        );
+    }
+}
+
+// ── T070-06/07/08: return types extracted from AST (US3) ─────────────────────
+
+#[test]
+fn t070_06_property_type() {
+    let path = fixtures_dir().join("MyApp/TypedMembers.cls");
+    let source = std::fs::read(&path).expect("read TypedMembers.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/TypedMembers.cls", "MyApp.TypedMembers");
+
+    let prop = symbols
+        .iter()
+        .find(|s| s.name == "MyApp.TypedMembers.Value")
+        .expect("Value property not found");
+
+    assert_eq!(
+        prop.type_name.as_deref(),
+        Some("%String"),
+        "Value.Type expected %String, got {:?}",
+        prop.type_name
+    );
+}
+
+#[test]
+fn t070_07_method_return_type() {
+    let path = fixtures_dir().join("MyApp/TypedMembers.cls");
+    let source = std::fs::read(&path).expect("read TypedMembers.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/TypedMembers.cls", "MyApp.TypedMembers");
+
+    let method = symbols
+        .iter()
+        .find(|s| s.name == "MyApp.TypedMembers.DoSomething")
+        .expect("DoSomething not found");
+
+    assert_eq!(
+        method.type_name.as_deref(),
+        Some("%Boolean"),
+        "DoSomething.Type expected %Boolean, got {:?}",
+        method.type_name
+    );
+}
+
+#[test]
+fn t070_08_no_type_for_untyped_param() {
+    let path = fixtures_dir().join("MyApp/TypedMembers.cls");
+    let source = std::fs::read(&path).expect("read TypedMembers.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/TypedMembers.cls", "MyApp.TypedMembers");
+
+    let param = symbols
+        .iter()
+        .find(|s| s.name == "MyApp.TypedMembers.VERSION")
+        .expect("VERSION not found");
+
+    assert!(
+        param.type_name.is_none(),
+        "VERSION should have no Type, got {:?}",
+        param.type_name
+    );
+}
+
+// ── T070-09..13: structured FormalSpec (US4) — write fixture first ───────────
+
+// NOTE: FormalSpec.cls fixture created in T009; tests written here to fail first.
+
+#[test]
+fn t070_09_formal_spec_is_vec() {
+    let path = fixtures_dir().join("MyApp/FormalSpec.cls");
+    // Fixture not yet created — this test will fail with file not found or compile error
+    // until T009 creates the fixture and struct changes land.
+    let source = std::fs::read(&path).expect("read FormalSpec.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/FormalSpec.cls", "MyApp.FormalSpec");
+
+    let method = symbols
+        .iter()
+        .find(|s| s.name == "MyApp.FormalSpec.WithArgs")
+        .expect("WithArgs method not found");
+
+    let spec = method
+        .formal_spec
+        .as_ref()
+        .expect("FormalSpec should be Some");
+    assert!(!spec.is_empty(), "FormalSpec vec should not be empty");
+}
+
+#[test]
+fn t070_10_formal_spec_name() {
+    let path = fixtures_dir().join("MyApp/FormalSpec.cls");
+    let source = std::fs::read(&path).expect("read FormalSpec.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/FormalSpec.cls", "MyApp.FormalSpec");
+
+    let method = symbols
+        .iter()
+        .find(|s| s.name == "MyApp.FormalSpec.WithArgs")
+        .expect("WithArgs not found");
+    let spec = method.formal_spec.as_ref().expect("FormalSpec missing");
+    assert_eq!(spec[0].name, "pName", "first arg name wrong");
+}
+
+#[test]
+fn t070_11_formal_spec_type() {
+    let path = fixtures_dir().join("MyApp/FormalSpec.cls");
+    let source = std::fs::read(&path).expect("read FormalSpec.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/FormalSpec.cls", "MyApp.FormalSpec");
+
+    let method = symbols
+        .iter()
+        .find(|s| s.name == "MyApp.FormalSpec.WithArgs")
+        .expect("WithArgs not found");
+    let spec = method.formal_spec.as_ref().expect("FormalSpec missing");
+    assert_eq!(
+        spec[0].type_name.as_deref(),
+        Some("%String"),
+        "first arg type wrong"
+    );
+}
+
+#[test]
+fn t070_12_formal_spec_byref() {
+    let path = fixtures_dir().join("MyApp/FormalSpec.cls");
+    let source = std::fs::read(&path).expect("read FormalSpec.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/FormalSpec.cls", "MyApp.FormalSpec");
+
+    let method = symbols
+        .iter()
+        .find(|s| s.name == "MyApp.FormalSpec.WithArgs")
+        .expect("WithArgs not found");
+    let spec = method.formal_spec.as_ref().expect("FormalSpec missing");
+    // second arg is ByRef pRef As %Integer
+    assert!(spec[1].byref, "second arg should have byref=true");
+}
+
+#[test]
+fn t070_13_formal_spec_default() {
+    let path = fixtures_dir().join("MyApp/FormalSpec.cls");
+    let source = std::fs::read(&path).expect("read FormalSpec.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/FormalSpec.cls", "MyApp.FormalSpec");
+
+    let method = symbols
+        .iter()
+        .find(|s| s.name == "MyApp.FormalSpec.WithArgs")
+        .expect("WithArgs not found");
+    let spec = method.formal_spec.as_ref().expect("FormalSpec missing");
+    // first arg has default "hello"
+    assert!(spec[0].default.is_some(), "first arg should have a default");
+}
+
+// ── T070-02: PythonBody.cls parses without PARSE_ERROR (US1 / grammar 1.9) ───
+
+#[test]
+fn t070_02_python_body_no_parse_error() {
+    let path = fixtures_dir().join("MyApp/PythonBody.cls");
+    let source = std::fs::read(&path).expect("read PythonBody.cls");
+    let (symbols, warnings) =
+        extract_cls_symbols(&source, "MyApp/PythonBody.cls", "MyApp.PythonBody");
+
+    let parse_errors: Vec<_> = warnings
+        .iter()
+        .filter(|w| w.warning_type == "PARSE_ERROR")
+        .collect();
+    assert!(
+        parse_errors.is_empty(),
+        "PARSE_ERROR on python body class: {:?}",
+        parse_errors
+    );
+
+    let has_greet = symbols.iter().any(|s| s.name == "MyApp.PythonBody.Greet");
+    assert!(has_greet, "Greet method missing; symbols: {:?}", symbols);
+
+    let has_compute = symbols.iter().any(|s| s.name == "MyApp.PythonBody.Compute");
+    assert!(
+        has_compute,
+        "Compute method missing; symbols: {:?}",
+        symbols
+    );
+}
+
 // ── T022 / SC-006: NOT_IMPLEMENTED never returned ────────────────────────────
 
 #[test]

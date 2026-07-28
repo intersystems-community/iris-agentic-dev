@@ -676,6 +676,27 @@ require a live IRIS container.
 
 ---
 
+## `iris_symbols_local` and BPL/DTL: intentional split
+
+`iris_symbols_local` (disk, tree-sitter) is a symbol index: name, kind, line. US5 adds
+`xdata` as a member kind so callers can see that an XData block exists and where it starts.
+It does **not** parse the XData content — that is intentionally left to `docs_introspect`
+(US12), which has a live IRIS connection and can use `$system.OBJ.ExportToStream` to get the
+full class XML. The split is:
+
+| Question                                  | Tool                                 |
+| ----------------------------------------- | ------------------------------------ |
+| Does this class have an XData block?      | `iris_symbols_local`                 |
+| What is its name and line?                | `iris_symbols_local`                 |
+| What BPL steps / DTL mappings are inside? | `docs_introspect` (US12)             |
+| What are the routing targets?             | `extract_message_map_routing` (US13) |
+
+This is the same split as for methods: `iris_symbols_local` gives the symbol; `docs_introspect`
+gives the full body. Callers who need the content of a BPL/DTL class use `docs_introspect`
+— no disk-side XML parsing is needed or planned.
+
+---
+
 ## Non-Goals
 
 - No CBM integration — this spec does not implement any graph writes or CBM tool calls.
