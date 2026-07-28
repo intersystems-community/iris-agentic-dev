@@ -9,8 +9,8 @@
 
 `iris_symbols_local` scans ObjectScript source files on disk (`.cls`, `.mac`, `.inc`) and
 extracts symbols using `tree-sitter-objectscript` grammars. It was introduced as a functional
-first pass, but investigation reveals ten gaps that reduce its usefulness for navigation, code
-intelligence, and future codebase-memory-mcp (CBM) graph indexing:
+first pass, but investigation reveals twelve gaps that reduce its usefulness for navigation,
+code intelligence, and future codebase-memory-mcp (CBM) graph indexing:
 
 1. The grammar crates are pinned to `1.7`, missing the python body fix from `1.9` (PR #52,
    merged 2026-07-27).
@@ -24,9 +24,16 @@ intelligence, and future codebase-memory-mcp (CBM) graph indexing:
 9. There is no `kinds` filter, so callers cannot request only methods or only properties.
 10. A dead `tag_with_params` arm in `extract_routine_nodes` can never fire; the correct node
     kind is `tag_statement`.
+11. `docs_introspect` returns `FormalSpec` as a raw string instead of structured `ArgSpec`
+    objects, giving callers inconsistent output compared with the tree-sitter path.
+12. BPL and DTL classes store all their logic in XData blocks — `docs_introspect` returns
+    empty methods/properties for them, and `extract_message_map_routing` returns NOT_FOUND.
+    The routing targets, transform mappings, and data-flow graph are invisible to every
+    current tool.
 
-These gaps must be closed to make `iris_symbols_local` a reliable source of structural
-information for both interactive queries and downstream CBM graph indexing.
+These gaps must be closed to make `iris_symbols_local` and its companion tools reliable
+sources of structural information for both interactive queries and downstream CBM graph
+indexing.
 
 ---
 
@@ -245,6 +252,132 @@ eliminates a misleading code path and any associated lint suppression.
 
 ---
 
+### US12 — XData content in `docs_introspect` for BPL and DTL classes
+
+`docs_introspect` currently returns empty `methods` and `properties` arrays for BPL and DTL
+classes because all logic lives in XData blocks, not compiled methods. After this change,
+`docs_introspect` detects BPL/DTL classes and returns a structured `xdata_flow` field
+alongside the existing output.
+
+**BPL output** — parsed from the `<process>` XML in the `BPL` XData block:
+
+```json
+{
+  "xdata_flow": {
+    "kind": "bpl",
+    "request": "IRISDemo.BS.AppTrigger.TriggerEventReq",
+    "response": "Ens.Response",
+    "context_properties": [{ "name": "HL7Message", "type": "EnsLib.HL7.Message" }],
+    "steps": [
+      { "step": "code", "name": "Transform Obj to HL7" },
+      {
+        "step": "call",
+        "name": "Send HL7 to Readmission Srv",
+        "target": "Readmission Risk HL7 Service",
+        "async": true,
+        "request_type": "EnsLib.HL7.Message",
+        "response_type": "Ens.Response"
+      }
+    ]
+  }
+}
+```
+
+**DTL output** — parsed from the `<transform>` XML in the `DTL` XData block:
+
+```json
+{
+  "xdata_flow": {
+    "kind": "dtl",
+    "source_class": "IRISDemo.Data.Encounter",
+    "target_class": "EnsLib.HL7.Message",
+    "target_doc_type": "2.5:ADT_A03",
+    "subtransforms": [
+      { "class": "IRISDemo.DTL.HL7AppTrigger.Sub.MSH", "target_segment": "MSH" },
+      { "class": "IRISDemo.DTL.HL7AppTrigger.Sub.PID", "target_segment": "PID" },
+      { "class": "IRISDemo.DTL.HL7AppTrigger.Sub.PV1", "target_segment": "PV1" }
+    ],
+    "assign_count": 4
+  }
+}
+```
+
+**Detection logic**: a class is BPL if its superclass chain includes `Ens.BusinessProcessBPL`
+(check `%Dictionary.CompiledClass.Super`); DTL if it includes `Ens.DataTransformDTL`. Both
+are detectable without reading source — the compiled superclass is available via the
+Dictionary API already used by `docs_introspect`.
+
+**XData retrieval**: use `$system.OBJ.ExportToStream` to get the full class XML export, then
+extract the XData CDATA block. Parse the XML in Rust using the `quick-xml` crate (already a
+transitive dep via other tooling; add directly if not present).
+
+**Acceptance Scenarios**:
+
+1. **Given** `docs_introspect` called on a BPL class, **When** response returned, **Then**
+   `xdata_flow.kind = "bpl"`, `xdata_flow.request` is the request class, and `xdata_flow.steps`
+   lists every `<call>` and `<code>` element in order, with `target` populated for `<call>`
+   steps.
+2. **Given** a BPL with a `<call>` that has `async='1'`, **When** parsed, **Then**
+   `xdata_flow.steps[n].async = true`.
+3. **Given** `docs_introspect` called on a DTL class, **When** response returned, **Then**
+   `xdata_flow.kind = "dtl"`, `source_class` and `target_class` are correct, and
+   `subtransforms` lists every `<subtransform>` with `class` and `target_segment`.
+4. **Given** a non-BPL, non-DTL class, **When** `docs_introspect` called, **Then** no
+   `xdata_flow` key appears in the response (backward-compatible).
+5. **Given** a BPL class with `<sequence>` containing nested `<if>` or `<foreach>` elements,
+   **When** parsed, **Then** steps includes those elements with `step` = `"if"` / `"foreach"`
+   and their children flattened one level (nested sequences are not recursed further in v1).
+
+---
+
+### US13 — BPL routing in `extract_message_map_routing`
+
+`extract_message_map_routing` currently returns `NOT_FOUND` for BPL classes because it only
+looks for a `MessageMap` XData block (present in router/service classes, absent in BPL).
+After this change, BPL classes return a routing summary derived from their `<call>` steps —
+consistent with what US12 puts in `docs_introspect`, but shaped as routing targets the way
+the tool already returns them for router classes.
+
+**Output shape** (mirrors existing routing output format):
+
+```json
+{
+  "class": "IRISDemo.BP.HL7AppTrigger.Process",
+  "kind": "bpl",
+  "routes": [
+    {
+      "target": "Readmission Risk HL7 Service",
+      "request_type": "EnsLib.HL7.Message",
+      "async": true,
+      "step_name": "Send HL7 to Readmission Srv"
+    }
+  ],
+  "note": "BPL routing is derived from <call> steps; dynamic $classmethod dispatch in <code> blocks is not statically resolvable."
+}
+```
+
+The `note` field is included whenever the BPL contains `<code>` blocks that invoke
+`$classmethod` or other dynamic dispatch — because those targets cannot be statically
+extracted. This prevents callers from assuming the routes list is exhaustive.
+
+**Acceptance Scenarios**:
+
+1. **Given** `extract_message_map_routing` called on a BPL class with one `<call>` step,
+   **When** response returned, **Then** `kind = "bpl"` and `routes` contains one entry with
+   the correct `target`.
+2. **Given** a BPL with multiple `<call>` steps (including async), **When** parsed, **Then**
+   `routes` has one entry per `<call>`, each with correct `target`, `request_type`, and
+   `async` flag.
+3. **Given** a BPL whose `<code>` blocks contain `$classmethod` calls, **When** parsed,
+   **Then** response includes a `note` field warning about dynamic dispatch.
+4. **Given** a non-BPL class that already has a `MessageMap`, **When** called, **Then**
+   existing behavior is unchanged.
+5. **Given** `extract_message_map_routing` called on a DTL class, **When** response returned,
+   **Then** `kind = "dtl"`, `source_class` and `target_class` populated, `routes` empty
+   (DTLs transform, they do not route).
+
+---
+
 ## Output Schema
 
 The upgraded `Symbol` struct serializes as follows. Optional fields are omitted when absent.
@@ -438,6 +571,69 @@ JSON response.
 Delete the `"tag_with_params"` match arm (~lines 469–486 in `symbols_local.rs`) and any
 associated `allow` annotation. Run `cargo clippy` to confirm clean.
 
+### US12 — XData content in `docs_introspect`
+
+**New module**: `crates/iris-agentic-dev-core/src/tools/xdata_flow.rs`
+
+```rust
+pub enum XDataFlow {
+    Bpl(BplFlow),
+    Dtl(DtlFlow),
+}
+
+pub struct BplFlow {
+    pub request: String,
+    pub response: String,
+    pub context_properties: Vec<ContextProperty>,
+    pub steps: Vec<BplStep>,
+}
+
+pub enum BplStep {
+    Code { name: String },
+    Call { name: String, target: String, async_: bool,
+           request_type: Option<String>, response_type: Option<String> },
+    If { name: String, condition: String, steps: Vec<BplStep> },
+    ForEach { name: String, property: String, steps: Vec<BplStep> },
+    Other { kind: String, name: String },
+}
+
+pub struct DtlFlow {
+    pub source_class: String,
+    pub target_class: String,
+    pub target_doc_type: Option<String>,
+    pub subtransforms: Vec<Subtransform>,
+    pub assign_count: usize,
+}
+```
+
+**Detection in `mod.rs`** (`docs_introspect` handler): after fetching the class from
+`%Dictionary.CompiledClass`, check `Super` for `Ens.BusinessProcessBPL` or
+`Ens.DataTransformDTL`. If detected, call
+`iris_execute("$system.OBJ.ExportToStream(...)")` to get the XML, extract the CDATA from
+the matching `<XData name="BPL">` or `<XData name="DTL">` block, parse with `quick-xml`,
+and serialize to `xdata_flow` in the JSON response.
+
+**XML parsing**: use `quick-xml` reader in pull-mode. BPL: start at `<process>`, walk
+`<sequence>` children recursively up to one level of nesting. DTL: start at `<transform>`,
+collect `<subtransform>` and count `<assign>` elements.
+
+**`$classmethod` detection**: after parsing `<code>` CDATA text, check for the string
+`$classmethod` — if found, set `has_dynamic_dispatch: true` on `BplFlow`.
+
+**Crate dependency**: add `quick-xml = "0.37"` to `Cargo.toml` if not already present.
+
+### US13 — BPL routing in `extract_message_map_routing`
+
+In `mod.rs`, in the `extract_message_map_routing` handler, after the existing
+`MessageMap`-not-found path: detect BPL/DTL via superclass (same check as US12). For BPL,
+call the same `XDataFlow::parse_bpl(...)` function from `xdata_flow.rs` (shared with US12),
+collect `BplStep::Call` entries into `routes`, set `kind = "bpl"`, and include `note` if
+`has_dynamic_dispatch`. For DTL, return `kind = "dtl"` with source/target classes and empty
+routes.
+
+All XML parsing logic lives in `xdata_flow.rs` — `docs_introspect` and
+`extract_message_map_routing` both call into it. No duplication.
+
 ---
 
 ## Test Strategy
@@ -460,19 +656,39 @@ corresponding implementation begins and **pass** after.
 - `MyApp/AllMembers.cls` — one definition of each of the eight new member kinds (US5)
 - `NamedRoutine.mac` — `ROUTINE NamedRoutine` header for stem-mismatch test (US6)
 
-**Test coverage target**: all new tests (T070-01 through T070-39) plus zero regressions on
+**Additional new test file**:
+
+- `crates/iris-agentic-dev-core/tests/xdata_flow_tests.rs` — unit tests for BPL/DTL XML
+  parsing against fixture XML strings; `#[ignore]` integration tests against live container
+
+**Required new fixtures for US12/US13** (`tests/fixtures/xdata/`):
+
+- `bpl_simple.xml` — minimal BPL `<process>` with one `<code>` and one `<call>` step
+- `bpl_dynamic.xml` — BPL `<code>` block containing `$classmethod` dispatch
+- `bpl_nested.xml` — BPL with `<if>` and `<foreach>` wrapping inner `<call>` steps
+- `dtl_simple.xml` — minimal DTL `<transform>` with two `<subtransform>` and three
+  `<assign>` elements
+
+**Test coverage target**: all new tests (T070-01 through T070-52) plus zero regressions on
 the existing 65 tests. T070-36 through T070-39 cover `parse_formalspec_string` (US11) and
-require a live IRIS container for the `docs_introspect` integration scenario.
+T070-43 through T070-52 cover US12/US13; the `#[ignore]` integration tests in those ranges
+require a live IRIS container.
 
 ---
 
 ## Non-Goals
 
 - No CBM integration — this spec does not implement any graph writes or CBM tool calls.
-- No new MCP tools — `iris_symbols_local` and `docs_introspect` tool names and transport
-  are unchanged; only the `FormalSpec` field shape changes in `docs_introspect` output.
-- Live IRIS required only for US11 integration test — all other tests run against files on
-  disk.
+- No new MCP tools — `iris_symbols_local`, `docs_introspect`, and
+  `extract_message_map_routing` tool names and transport are unchanged.
+- Live IRIS required only for US11/US12/US13 integration tests — all other tests run against
+  files on disk.
 - No `.int` file support — compiled intermediate files remain excluded.
 - No cross-file type resolution — `Type` is verbatim text from source, not a catalog lookup.
-- No streaming output — tool continues to return a single JSON response.
+- No streaming output — tools continue to return a single JSON response.
+- No deep `<code>` block analysis — ObjectScript inside `<code>` CDATA is not parsed for
+  dynamic dispatch targets beyond detecting that `$classmethod` is present.
+- No recursive BPL nesting beyond one level — deeply nested sequences (`<if>` inside
+  `<foreach>` inside `<sequence>`) are reported at the outer level with `kind = "other"`.
+- No `<rule>` or `<switch>` routing rule evaluation — BPL conditional routing that depends
+  on runtime values is not statically resolved; the `note` field covers this gap.

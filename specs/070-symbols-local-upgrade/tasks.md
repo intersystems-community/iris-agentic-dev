@@ -172,15 +172,90 @@ name.to_uppercase();`; confirm T070-25 through T070-27 **pass**; confirm existin
 
 ---
 
-## Phase 12: Final validation
+## Phase 12: XData flow parsing (US12 + US13)
+
+**Purpose**: Expose BPL and DTL logic that lives in XData blocks — invisible to all current
+tools — through `docs_introspect` and `extract_message_map_routing`.
+
+### Fixtures (write first)
+
+- [ ] T037 [US12] Create fixture directory `tests/fixtures/xdata/`; add `bpl_simple.xml` —
+      a minimal BPL `<process>` with one `<code>` and one `<call async='1'>` step; add
+      `bpl_dynamic.xml` — a `<code>` block whose CDATA contains `$classmethod`; add
+      `bpl_nested.xml` — a `<sequence>` with a `<if>` wrapping an inner `<call>` step; add
+      `dtl_simple.xml` — a `<transform>` with two `<subtransform>` elements and three
+      `<assign>` elements
+- [ ] T038 [US13] Add `#[cfg(test)]` fixture-loading helpers in `xdata_flow.rs` that read
+      the XML files above as `&str`
+
+### Unit tests for `xdata_flow.rs` (write first, must fail)
+
+- [ ] T039 [US12] Write tests T070-40 through T070-44 in
+      `tests/xdata_flow_tests.rs`:
+  - T070-40: `parse_bpl(bpl_simple.xml)` → one `Code` step + one `Call` step with correct
+    `target` and `async_ = true`
+  - T070-41: `parse_bpl(bpl_dynamic.xml)` → `has_dynamic_dispatch = true`
+  - T070-42: `parse_bpl(bpl_nested.xml)` → outer `If` step with inner `Call` in its
+    `steps` vec
+  - T070-43: `parse_dtl(dtl_simple.xml)` → two subtransforms, `assign_count = 3`
+  - T070-44: `parse_bpl` on empty `<process/>` → `steps` is empty, no panic
+    Confirm all **fail** (module does not exist yet)
+- [ ] T040 [US12] Write `#[ignore]` integration tests T070-45 through T070-47 in
+      `tests/xdata_flow_tests.rs`:
+  - T070-45: `docs_introspect` on a live BPL class → response contains `xdata_flow.kind =
+"bpl"` and at least one `Call` step
+  - T070-46: `docs_introspect` on a live DTL class → response contains `xdata_flow.kind =
+"dtl"`, `source_class` and `target_class` populated
+  - T070-47: `docs_introspect` on a plain class (non-BPL/DTL) → no `xdata_flow` key in
+    response
+    Confirm all **fail**
+- [ ] T041 [US13] Write `#[ignore]` integration tests T070-48 through T070-52 in
+      `tests/xdata_flow_tests.rs`:
+  - T070-48: `extract_message_map_routing` on a live BPL class → `kind = "bpl"`, `routes`
+    has one entry per `<call>` step
+  - T070-49: BPL with `$classmethod` in `<code>` → `note` field present
+  - T070-50: `extract_message_map_routing` on a live DTL class → `kind = "dtl"`, `routes`
+    empty
+  - T070-51: `extract_message_map_routing` on an existing router class → existing behaviour
+    unchanged
+  - T070-52: `extract_message_map_routing` on a plain class with no MessageMap and no
+    BPL/DTL → NOT_FOUND (existing behaviour unchanged)
+    Confirm all **fail**
+
+### Implementation
+
+- [ ] T042 [US12] Create `crates/iris-agentic-dev-core/src/tools/xdata_flow.rs`; add
+      `quick-xml = "0.37"` to `Cargo.toml`; implement `XDataFlow`, `BplFlow`, `BplStep`,
+      `DtlFlow`, `ContextProperty`, `Subtransform` structs with `Serialize`; implement
+      `pub fn parse_bpl(xml: &str) -> Result<BplFlow>` and
+      `pub fn parse_dtl(xml: &str) -> Result<DtlFlow>` using `quick-xml` pull reader;
+      confirm T070-40 through T070-44 all **pass**
+- [ ] T043 [US12] In `mod.rs` `docs_introspect` handler: after fetching class name and
+      superclass from `%Dictionary.CompiledClass`, check `Super` for `Ens.BusinessProcessBPL`
+      / `Ens.DataTransformDTL`; if detected, call `iris_execute` with
+      `$system.OBJ.ExportToStream` to get the class XML, extract the CDATA from the matching
+      `<XData name="BPL">` or `<XData name="DTL">` block, call `parse_bpl` or `parse_dtl`,
+      serialize result into `xdata_flow` key in response JSON; confirm T070-45 through
+      T070-47 **pass** against live container
+- [ ] T044 [US13] In `mod.rs` `extract_message_map_routing` handler: after the existing
+      NOT_FOUND path, add BPL/DTL detection (same superclass check); call
+      `xdata_flow::parse_bpl` / `parse_dtl` (shared with T042); map `BplStep::Call` entries
+      to `routes` vec; include `note` when `has_dynamic_dispatch`; for DTL return `kind =
+    "dtl"` with source/target and empty routes; confirm T070-48 through T070-52 **pass**
+      against live container
+
+---
+
+## Phase 13: Final validation
 
 - [ ] T034 Run full test suite: `cargo test -p iris-agentic-dev-core`; confirm all tests
       pass including pre-existing `symbols_local_tests.rs` tests
 - [ ] T035 Run `cargo clippy -p iris-agentic-dev-core -- -D warnings`; confirm zero warnings
-      in `symbols_local.rs` and `mod.rs`
+      in `symbols_local.rs`, `mod.rs`, and `xdata_flow.rs`
 - [ ] T036 Update tool description string in `mod.rs` for `iris_symbols_local` to mention
       `kinds` filter and `line` field; update `docs_introspect` description to note
-      structured `FormalSpec`
+      structured `FormalSpec` and `xdata_flow` for BPL/DTL classes; update
+      `extract_message_map_routing` description to note BPL/DTL support
 
 ---
 
@@ -205,6 +280,12 @@ T006, T007 (write US2/US4 tests)
 
 T029 (US11 research) ← independent, do before T031
 T030–T033 (US11 impl) ← requires T014 (ArgSpec struct) + T029
+
+T037, T038 (US12/US13 fixtures)  ← independent of all above
+T039, T040, T041 (US12/US13 tests, must fail)
+  └─ T042 (xdata_flow.rs + quick-xml, US12 unit tests pass)
+    ├─ T043 (docs_introspect BPL/DTL, US12 integration tests pass)
+    └─ T044 (extract_message_map_routing BPL/DTL, US13 integration tests pass)
 
 T034, T035, T036 (final validation) ← all of above
 ```
