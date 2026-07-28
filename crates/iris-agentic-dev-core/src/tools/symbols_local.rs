@@ -107,6 +107,26 @@ pub fn glob_match(query: &str, name: &str) -> bool {
     true
 }
 
+/// Splits a query with 2+ dots into `(class_pattern, Some(member_glob))`.
+/// Queries with fewer than 2 dots are returned unchanged with no member filter.
+///
+/// `"MyApp.Foo.Do*"` → `("MyApp.Foo", Some("Do*"))`
+/// `"MyApp.Foo.*"`   → `("MyApp.Foo", Some("*"))`
+/// `"MyApp.*"`       → `("MyApp.*", None)`
+pub fn split_member_query(query: &str) -> (String, Option<String>) {
+    let dot_count = query.chars().filter(|&c| c == '.').count();
+    if dot_count < 2 {
+        return (query.to_string(), None);
+    }
+    if let Some(last_dot) = query.rfind('.') {
+        let class_pat = query[..last_dot].to_string();
+        let member_glob = query[last_dot + 1..].to_string();
+        (class_pat, Some(member_glob))
+    } else {
+        (query.to_string(), None)
+    }
+}
+
 // ── UDL (.cls) extraction ────────────────────────────────────────────────────
 
 pub fn extract_cls_symbols(
@@ -164,22 +184,35 @@ pub fn extract_cls_symbols(
         None => return (symbols, warnings),
     };
 
-    if !glob_match(query, &class_name) {
+    let (class_query, member_glob) = split_member_query(query);
+
+    if !glob_match(&class_query, &class_name) {
         return (symbols, warnings);
     }
 
-    // Emit class symbol.
-    symbols.push(Symbol {
-        name: class_name.clone(),
-        kind: "class".into(),
-        file: rel_path.into(),
-        line: class_line,
-        formal_spec: None,
-        type_name: None,
-    });
+    // With a specific member filter (not "*"), suppress the class symbol.
+    // "*" (fetch all members) and no filter both include the class symbol.
+    let emit_class = member_glob.as_deref().map_or(true, |g| g == "*");
+    if emit_class {
+        symbols.push(Symbol {
+            name: class_name.clone(),
+            kind: "class".into(),
+            file: rel_path.into(),
+            line: class_line,
+            formal_spec: None,
+            type_name: None,
+        });
+    }
 
     // Walk the tree for members.
-    extract_cls_members(&tree, source, &class_name, rel_path, &mut symbols);
+    extract_cls_members(
+        &tree,
+        source,
+        &class_name,
+        rel_path,
+        member_glob.as_deref(),
+        &mut symbols,
+    );
 
     (symbols, warnings)
 }
@@ -206,6 +239,7 @@ fn extract_cls_members(
     source: &[u8],
     class_name: &str,
     rel_path: &str,
+    member_glob: Option<&str>,
     symbols: &mut Vec<Symbol>,
 ) {
     let root = tree.root_node();
@@ -232,26 +266,31 @@ fn extract_cls_members(
                     Some(m) => m,
                     None => continue,
                 };
+                let maybe_push = |sym: Symbol, syms: &mut Vec<Symbol>| {
+                    if member_matches(&sym.name, member_glob) {
+                        syms.push(sym);
+                    }
+                };
                 match member.kind() {
                     "method" | "classmethod" => {
                         if let Some(sym) =
                             extract_method_symbol(member, source, class_name, rel_path)
                         {
-                            symbols.push(sym);
+                            maybe_push(sym, symbols);
                         }
                     }
                     "property" => {
                         if let Some(sym) =
                             extract_property_symbol(member, source, class_name, rel_path)
                         {
-                            symbols.push(sym);
+                            maybe_push(sym, symbols);
                         }
                     }
                     "parameter" => {
                         if let Some(sym) =
                             extract_parameter_symbol(member, source, class_name, rel_path)
                         {
-                            symbols.push(sym);
+                            maybe_push(sym, symbols);
                         }
                     }
                     kind @ ("query" | "trigger" | "index" | "xdata" | "storage"
@@ -259,14 +298,15 @@ fn extract_cls_members(
                         let name_kind = format!("{}_name", kind);
                         let line = member.start_position().row as u32 + 1;
                         if let Some(name) = extract_member_name(member, source, &name_kind) {
-                            symbols.push(Symbol {
+                            let sym = Symbol {
                                 name: format!("{}.{}", class_name, name),
                                 kind: kind.into(),
                                 file: rel_path.into(),
                                 line,
                                 formal_spec: None,
                                 type_name: None,
-                            });
+                            };
+                            maybe_push(sym, symbols);
                         }
                     }
                     // Grammar parses `Trigger Name After|Before Event` as an ERROR
@@ -276,7 +316,7 @@ fn extract_cls_members(
                         if let Some(sym) =
                             extract_trigger_from_error(member, source, class_name, rel_path)
                         {
-                            symbols.push(sym);
+                            maybe_push(sym, symbols);
                         }
                     }
                     _ => {}
@@ -284,6 +324,17 @@ fn extract_cls_members(
             }
         }
     }
+}
+
+/// Returns true when `sym_name` passes the optional member glob filter.
+/// The filter is applied to the last dot-separated segment of the symbol name.
+/// When `member_glob` is `None`, all members pass.
+fn member_matches(sym_name: &str, member_glob: Option<&str>) -> bool {
+    let Some(glob) = member_glob else {
+        return true;
+    };
+    let short = sym_name.rsplit('.').next().unwrap_or(sym_name);
+    glob_match(glob, short)
 }
 
 /// Recovers a trigger symbol from an ERROR node.

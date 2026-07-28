@@ -1101,3 +1101,70 @@ fn t070_27_glob_case_insensitive_scan() {
         "scan with lowercase query 'myapp.foo' should match MyApp.Foo"
     );
 }
+
+// ── T070-28/29/30: member-level glob filter (US8) ────────────────────────────
+
+#[test]
+fn t070_28_member_glob_filters_by_prefix() {
+    // "MyApp.Foo.Do*" should return only DoSomething and DoOther, not Helper or class.
+    let result = scan_workspace(&fixtures_dir(), "MyApp.Foo.Do*", 50);
+    let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
+    assert!(
+        names.contains(&"MyApp.Foo.DoSomething"),
+        "DoSomething missing; got {:?}",
+        names
+    );
+    assert!(
+        names.contains(&"MyApp.Foo.DoOther"),
+        "DoOther missing; got {:?}",
+        names
+    );
+    assert!(
+        !names.contains(&"MyApp.Foo.Helper"),
+        "Helper should be filtered out; got {:?}",
+        names
+    );
+    assert!(
+        !names.contains(&"MyApp.Foo"),
+        "class symbol should be absent when member filter is active; got {:?}",
+        names
+    );
+}
+
+#[test]
+fn t070_29_member_glob_star_returns_all_members_and_class() {
+    // "MyApp.Foo.*" should return class + all members.
+    let result = scan_workspace(&fixtures_dir(), "MyApp.Foo.*", 50);
+    let names: Vec<&str> = result.symbols.iter().map(|s| s.name.as_str()).collect();
+    assert!(
+        names.contains(&"MyApp.Foo"),
+        "class symbol missing; got {:?}",
+        names
+    );
+    assert!(
+        names.contains(&"MyApp.Foo.DoSomething"),
+        "DoSomething missing; got {:?}",
+        names
+    );
+    assert!(
+        names.contains(&"MyApp.Foo.Helper"),
+        "Helper missing; got {:?}",
+        names
+    );
+}
+
+#[test]
+fn t070_30_package_glob_backward_compatible() {
+    // "MyApp.*" has no member segment — must still return everything.
+    let result = scan_workspace(&fixtures_dir(), "MyApp.*", 200);
+    let has_class = result
+        .symbols
+        .iter()
+        .any(|s| s.name == "MyApp.Foo" && s.kind == "class");
+    let has_method = result
+        .symbols
+        .iter()
+        .any(|s| s.name == "MyApp.Foo.DoSomething");
+    assert!(has_class, "MyApp.Foo class missing with 'MyApp.*'");
+    assert!(has_method, "MyApp.Foo.DoSomething missing with 'MyApp.*'");
+}
