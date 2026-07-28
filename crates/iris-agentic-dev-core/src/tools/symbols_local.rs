@@ -732,6 +732,15 @@ fn extract_tag_name(node: tree_sitter::Node, source: &[u8]) -> String {
 // ── Workspace scan ───────────────────────────────────────────────────────────
 
 pub fn scan_workspace(workspace: &Path, query: &str, limit: usize) -> SymbolsLocalResult {
+    scan_workspace_with_kinds(workspace, query, limit, None)
+}
+
+pub fn scan_workspace_with_kinds(
+    workspace: &Path,
+    query: &str,
+    limit: usize,
+    kinds: Option<&[String]>,
+) -> SymbolsLocalResult {
     let mut symbols = Vec::new();
     let mut warnings = Vec::new();
     // class_name → list of file paths that define it (for duplicate detection)
@@ -746,6 +755,13 @@ pub fn scan_workspace(workspace: &Path, query: &str, limit: usize) -> SymbolsLoc
         &mut warnings,
         &mut class_files,
     );
+
+    // Apply kinds filter.
+    if let Some(k) = kinds {
+        if !k.is_empty() {
+            symbols.retain(|s| k.iter().any(|f| f.eq_ignore_ascii_case(&s.kind)));
+        }
+    }
 
     // Emit DUPLICATE_CLASS warnings.
     for (class_name, paths) in &class_files {

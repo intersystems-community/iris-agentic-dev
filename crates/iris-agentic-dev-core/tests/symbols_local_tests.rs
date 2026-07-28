@@ -1168,3 +1168,61 @@ fn t070_30_package_glob_backward_compatible() {
     assert!(has_class, "MyApp.Foo class missing with 'MyApp.*'");
     assert!(has_method, "MyApp.Foo.DoSomething missing with 'MyApp.*'");
 }
+
+// ── T070-31/32/33: kinds filter (US9) ────────────────────────────────────────
+
+#[test]
+fn t070_31_kinds_filter_methods_only() {
+    let kinds = vec!["method".to_string(), "classmethod".to_string()];
+    let result = scan_workspace_with_kinds(&fixtures_dir(), "MyApp.Foo", 50, Some(&kinds));
+    let kinds_present: std::collections::HashSet<&str> =
+        result.symbols.iter().map(|s| s.kind.as_str()).collect();
+    assert!(
+        !kinds_present.contains("property"),
+        "property should be filtered out; got kinds: {:?}",
+        kinds_present
+    );
+    assert!(
+        !kinds_present.contains("parameter"),
+        "parameter should be filtered out; got kinds: {:?}",
+        kinds_present
+    );
+    let has_method = result
+        .symbols
+        .iter()
+        .any(|s| s.kind == "method" || s.kind == "classmethod");
+    assert!(
+        has_method,
+        "expected at least one method; got: {:?}",
+        result.symbols
+    );
+}
+
+#[test]
+fn t070_32_kinds_none_returns_all() {
+    let result = scan_workspace_with_kinds(&fixtures_dir(), "MyApp.Foo", 50, None);
+    let has_property = result.symbols.iter().any(|s| s.kind == "property");
+    let has_method = result
+        .symbols
+        .iter()
+        .any(|s| s.kind == "method" || s.kind == "classmethod");
+    assert!(has_property, "expected property with kinds=None");
+    assert!(has_method, "expected method with kinds=None");
+}
+
+#[test]
+fn t070_33_kinds_no_match_returns_empty() {
+    let kinds = vec!["index".to_string()];
+    let result = scan_workspace_with_kinds(&fixtures_dir(), "MyApp.Foo", 50, Some(&kinds));
+    // Foo.cls has no index members — result should be empty or only class.
+    let non_class: Vec<_> = result
+        .symbols
+        .iter()
+        .filter(|s| s.kind != "class" && s.kind != "index")
+        .collect();
+    assert!(
+        non_class.is_empty(),
+        "expected only index/class symbols; got: {:?}",
+        non_class
+    );
+}

@@ -784,6 +784,8 @@ pub struct SymbolsLocalParams {
     pub workspace_path: Option<String>,
     #[serde(default = "default_symbols_local_limit")]
     pub limit: usize,
+    #[serde(default)]
+    pub kinds: Option<Vec<String>>,
 }
 fn default_symbols_local_limit() -> usize {
     50
@@ -4434,7 +4436,12 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             );
         }
 
-        let result = symbols_local::scan_workspace(&workspace, &p.query, limit);
+        let result = symbols_local::scan_workspace_with_kinds(
+            &workspace,
+            &p.query,
+            limit,
+            p.kinds.as_deref(),
+        );
 
         let symbols_json: Vec<serde_json::Value> = result
             .symbols
