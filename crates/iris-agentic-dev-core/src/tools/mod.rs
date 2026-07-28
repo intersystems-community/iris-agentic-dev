@@ -6735,7 +6735,10 @@ async fn detect_xdata_flow(
          Write stream.Read(1000000)",
         export_item
     );
-    let class_xml = iris.execute(&export_code, namespace).await.ok()?;
+    let class_xml = iris
+        .execute_via_generator(&export_code, namespace, client)
+        .await
+        .ok()?;
 
     let xdata_content = xdata_flow::extract_xdata_content(&class_xml, xdata_block)?;
 
