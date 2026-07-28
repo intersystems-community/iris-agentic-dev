@@ -1069,3 +1069,35 @@ fn t070_24_named_routine_glob_matches_header_name() {
         "glob 'NamedRoutine' should match when ROUTINE header is NamedRoutine"
     );
 }
+
+// ── T070-25/26/27: case-insensitive glob (US7) ───────────────────────────────
+
+#[test]
+fn t070_25_glob_case_insensitive_exact() {
+    assert!(
+        glob_match("myapp.foo", "MyApp.Foo"),
+        "lowercase query vs mixed-case name"
+    );
+    assert!(
+        glob_match("MYAPP.FOO", "MyApp.Foo"),
+        "uppercase query vs mixed-case name"
+    );
+}
+
+#[test]
+fn t070_26_glob_case_insensitive_wildcard() {
+    assert!(glob_match("myapp.*", "MyApp.Foo"), "lowercase package glob");
+    assert!(glob_match("MYAPP.*", "MyApp.Bar"), "uppercase package glob");
+    assert!(!glob_match("myapp.*", "OtherApp.Foo"), "no false match");
+}
+
+#[test]
+fn t070_27_glob_case_insensitive_scan() {
+    // Scanning with lowercase query should return the (mixed-case named) class symbol.
+    let result = scan_workspace(&fixtures_dir(), "myapp.foo", 50);
+    let found = result.symbols.iter().any(|s| s.name == "MyApp.Foo");
+    assert!(
+        found,
+        "scan with lowercase query 'myapp.foo' should match MyApp.Foo"
+    );
+}

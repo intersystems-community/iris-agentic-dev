@@ -62,6 +62,10 @@ pub fn glob_match(query: &str, name: &str) -> bool {
     if query.is_empty() {
         return false;
     }
+    let query = query.to_uppercase();
+    let name = name.to_uppercase();
+    let query = query.as_str();
+    let name = name.as_str();
     // No wildcards → exact match.
     if !query.contains('*') {
         return query == name;
