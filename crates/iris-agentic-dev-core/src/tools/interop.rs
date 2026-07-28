@@ -136,6 +136,7 @@ pub fn parse_status_response(raw: &str) -> Result<(String, i64, String), String>
     Ok((name, code, state))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn docker_required_interop() -> Result<CallToolResult, McpError> {
     err_json(
         "DOCKER_REQUIRED",
@@ -152,8 +153,11 @@ pub async fn interop_production_status_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let code = r#"Set sc=##class(Ens.Director).GetProductionStatus(.n,.s) If $System.Status.IsError(sc) { Write "ERROR:"_$System.Status.GetErrorText(sc) } Else { Write n_":"_s }"#;
-    // Bug 7: use params.namespace, not iris.namespace.
-    match iris.execute(code, &params.namespace).await {
+    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    match iris
+        .execute_via_generator(code, &params.namespace, &client)
+        .await
+    {
         Ok(output) => {
             let raw = output.trim().to_string();
             match parse_status_response(&raw) {
@@ -164,7 +168,6 @@ pub async fn interop_production_status_impl(
                 Err(_) => err_json("NO_PRODUCTION", "No production is running"),
             }
         }
-        Err(e) if e.to_string() == "DOCKER_REQUIRED" => docker_required_interop(),
         Err(e) => err_json(
             if is_network_error(&e.to_string()) {
                 "IRIS_UNREACHABLE"
@@ -189,8 +192,11 @@ pub async fn interop_production_start_impl(
         r#"Set sc=##class(Ens.Director).StartProduction("{}") If $System.Status.IsError(sc) {{ Write "ERROR:"_$System.Status.GetErrorText(sc) }} Else {{ Write "OK" }}"#,
         prod
     );
-    // Bug 7: use params.namespace, not iris.namespace.
-    match iris.execute(&code, &params.namespace).await {
+    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    match iris
+        .execute_via_generator(&code, &params.namespace, &client)
+        .await
+    {
         Ok(output) => {
             let raw = output.trim();
             if raw == "OK" {
@@ -199,7 +205,6 @@ pub async fn interop_production_start_impl(
                 err_json("INTEROP_ERROR", raw)
             }
         }
-        Err(e) if e.to_string() == "DOCKER_REQUIRED" => docker_required_interop(),
         Err(e) => err_json(
             if is_network_error(&e.to_string()) {
                 "IRIS_UNREACHABLE"
@@ -224,8 +229,11 @@ pub async fn interop_production_stop_impl(
         params.timeout,
         if params.force { 1 } else { 0 }
     );
-    // Bug 7: use params.namespace, not iris.namespace.
-    match iris.execute(&code, &params.namespace).await {
+    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    match iris
+        .execute_via_generator(&code, &params.namespace, &client)
+        .await
+    {
         Ok(output) => {
             let raw = output.trim();
             if raw == "OK" {
@@ -234,7 +242,6 @@ pub async fn interop_production_stop_impl(
                 err_json("INTEROP_ERROR", raw)
             }
         }
-        Err(e) if e.to_string() == "DOCKER_REQUIRED" => docker_required_interop(),
         Err(e) => err_json(
             if is_network_error(&e.to_string()) {
                 "IRIS_UNREACHABLE"
@@ -259,8 +266,11 @@ pub async fn interop_production_update_impl(
         params.timeout,
         if params.force { 1 } else { 0 }
     );
-    // Bug 7: use params.namespace.
-    match iris.execute(&code, &params.namespace).await {
+    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    match iris
+        .execute_via_generator(&code, &params.namespace, &client)
+        .await
+    {
         Ok(output) => {
             let raw = output.trim();
             if raw == "OK" {
@@ -269,7 +279,6 @@ pub async fn interop_production_update_impl(
                 err_json("INTEROP_ERROR", raw)
             }
         }
-        Err(e) if e.to_string() == "DOCKER_REQUIRED" => docker_required_interop(),
         Err(e) => err_json(
             if is_network_error(&e.to_string()) {
                 "IRIS_UNREACHABLE"
@@ -290,12 +299,14 @@ pub async fn interop_production_needs_update_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let code = r#"Write ##class(Ens.Director).ProductionNeedsUpdate()"#;
-    // Bug 7: use params.namespace.
-    match iris.execute(code, &params.namespace).await {
+    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    match iris
+        .execute_via_generator(code, &params.namespace, &client)
+        .await
+    {
         Ok(output) => {
             ok_json(serde_json::json!({"success": true, "needs_update": output.trim() == "1"}))
         }
-        Err(e) if e.to_string() == "DOCKER_REQUIRED" => docker_required_interop(),
         Err(e) => err_json(
             if is_network_error(&e.to_string()) {
                 "IRIS_UNREACHABLE"
@@ -316,8 +327,11 @@ pub async fn interop_production_recover_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let code = r#"Set sc=##class(Ens.Director).RecoverProduction() If $System.Status.IsError(sc) { Write "ERROR:"_$System.Status.GetErrorText(sc) } Else { Write "OK" }"#;
-    // Bug 7: use params.namespace.
-    match iris.execute(code, &params.namespace).await {
+    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    match iris
+        .execute_via_generator(code, &params.namespace, &client)
+        .await
+    {
         Ok(output) => {
             let raw = output.trim();
             if raw == "OK" {
@@ -326,7 +340,6 @@ pub async fn interop_production_recover_impl(
                 err_json("INTEROP_ERROR", raw)
             }
         }
-        Err(e) if e.to_string() == "DOCKER_REQUIRED" => docker_required_interop(),
         Err(e) => err_json(
             if is_network_error(&e.to_string()) {
                 "IRIS_UNREACHABLE"

@@ -27,12 +27,11 @@ pub fn skills_namespace() -> String {
 
 async fn xecute(
     iris: &IrisConnection,
-    _client: &reqwest::Client,
+    client: &reqwest::Client,
     code: &str,
     namespace: &str,
 ) -> anyhow::Result<String> {
-    // /action/xecute does not exist in Atelier REST — use docker exec path
-    iris.execute(code, namespace).await
+    iris.execute_via_generator(code, namespace, client).await
 }
 
 // ── skill ─────────────────────────────────────────────────────────────────────

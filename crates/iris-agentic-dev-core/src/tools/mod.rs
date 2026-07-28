@@ -4534,23 +4534,22 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             }
         }
         let iris = self.get_iris_reloaded().await?;
-        let _client = self.http_client();
+        let client = self.http_client();
         let code = format!(
             "Write ##class(%Studio.Debugger).SourceLine(\"{}\",{})",
             p.routine.replace('"', "\\\""),
             p.offset
         );
-        match iris.execute(&code, &p.namespace).await {
+        match iris
+            .execute_via_generator(&code, &p.namespace, client)
+            .await
+        {
             Ok(raw) => {
                 let (cls_name, cls_line) = parse_source_line(raw.trim());
                 ok_json(
                     serde_json::json!({"success": true, "mapping_available": cls_name.is_some(), "cls_name": cls_name, "cls_line": cls_line, "routine": p.routine, "offset": p.offset, "raw_error": if p.error_string.is_empty() { serde_json::Value::Null } else { p.error_string.into() }}),
                 )
             }
-            Err(e) if e.to_string() == "DOCKER_REQUIRED" => ok_json(serde_json::json!({
-                "success": false, "error_code": "DOCKER_REQUIRED",
-                "error": format!("debug_map_int requires docker exec. Set IRIS_CONTAINER=<container_name>.{DOCKER_REQUIRED_HINT}"),
-            })),
             Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
         }
     }
@@ -4626,15 +4625,17 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         Parameters(p): Parameters<SourceMapParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.get_iris_reloaded().await?;
-        let _client = self.http_client();
+        let client = self.http_client();
         let cls_name = p.cls_name.trim_end_matches(".cls");
         // Build source map by querying %Studio.Debugger for each .INT method
         let code = format!(
             "set cls=\"{}\" set rtn=$translate(cls,\".\",\".\") set map=\"{{\" set first=1 set method=\"\" for {{ set method=$order(^rIndex(rtn,method)) quit:method=\"\"  set intline=$get(^rIndex(rtn,method)) if 'first {{ set map=map_\",\" }} set map=map_\"\\\"\"_method_\"\\\":\\\"\"_intline_\"\\\"\" set first=0 }} set map=map_\"}}\" write map",
             cls_name.replace('"', "\\\"")
         );
-        // Bug 23: use p.namespace, not the hardcoded "USER".
-        match iris.execute(&code, &p.namespace).await {
+        match iris
+            .execute_via_generator(&code, &p.namespace, client)
+            .await
+        {
             Ok(output) => {
                 let map: serde_json::Value =
                     serde_json::from_str(output.trim()).unwrap_or(serde_json::json!({}));
@@ -4642,10 +4643,6 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                     serde_json::json!({"success": true, "cls_name": cls_name, "source_map": map}),
                 )
             }
-            Err(e) if e.to_string() == "DOCKER_REQUIRED" => ok_json(serde_json::json!({
-                "success": false, "error_code": "DOCKER_REQUIRED",
-                "error": format!("debug_source_map requires docker exec. Set IRIS_CONTAINER=<container_name>.{DOCKER_REQUIRED_HINT}"),
-            })),
             Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
         }
     }
