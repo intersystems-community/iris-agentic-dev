@@ -879,3 +879,149 @@ fn extract_cls_property_extraction() {
     // Should extract property or at least not panic
     let _ = has_prop;
 }
+
+// ── T070-14..21: all member kinds extracted (US5) ────────────────────────────
+
+#[test]
+fn t070_14_index_kind() {
+    let path = fixtures_dir().join("MyApp/AllMembers.cls");
+    let source = std::fs::read(&path).expect("read AllMembers.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/AllMembers.cls", "MyApp.AllMembers");
+    let found = symbols
+        .iter()
+        .any(|s| s.kind == "index" && s.name.contains("ByName"));
+    assert!(
+        found,
+        "index symbol missing; kinds: {:?}",
+        symbols
+            .iter()
+            .map(|s| (&s.kind, &s.name))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn t070_15_xdata_kind() {
+    let path = fixtures_dir().join("MyApp/AllMembers.cls");
+    let source = std::fs::read(&path).expect("read AllMembers.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/AllMembers.cls", "MyApp.AllMembers");
+    let found = symbols
+        .iter()
+        .any(|s| s.kind == "xdata" && s.name.contains("DefaultData"));
+    assert!(
+        found,
+        "xdata symbol missing; got: {:?}",
+        symbols
+            .iter()
+            .map(|s| (&s.kind, &s.name))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn t070_16_query_kind() {
+    let path = fixtures_dir().join("MyApp/AllMembers.cls");
+    let source = std::fs::read(&path).expect("read AllMembers.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/AllMembers.cls", "MyApp.AllMembers");
+    let found = symbols
+        .iter()
+        .any(|s| s.kind == "query" && s.name.contains("AllItems"));
+    assert!(
+        found,
+        "query symbol missing; got: {:?}",
+        symbols
+            .iter()
+            .map(|s| (&s.kind, &s.name))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn t070_17_trigger_kind() {
+    let path = fixtures_dir().join("MyApp/AllMembers.cls");
+    let source = std::fs::read(&path).expect("read AllMembers.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/AllMembers.cls", "MyApp.AllMembers");
+    let found = symbols
+        .iter()
+        .any(|s| s.kind == "trigger" && s.name.contains("OnInsert"));
+    assert!(
+        found,
+        "trigger symbol missing; got: {:?}",
+        symbols
+            .iter()
+            .map(|s| (&s.kind, &s.name))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn t070_18_relationship_kind() {
+    let path = fixtures_dir().join("MyApp/AllMembers.cls");
+    let source = std::fs::read(&path).expect("read AllMembers.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/AllMembers.cls", "MyApp.AllMembers");
+    let found = symbols
+        .iter()
+        .any(|s| s.kind == "relationship" && s.name.contains("Parent"));
+    assert!(
+        found,
+        "relationship symbol missing; got: {:?}",
+        symbols
+            .iter()
+            .map(|s| (&s.kind, &s.name))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn t070_19_foreignkey_kind() {
+    let path = fixtures_dir().join("MyApp/AllMembers.cls");
+    let source = std::fs::read(&path).expect("read AllMembers.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/AllMembers.cls", "MyApp.AllMembers");
+    let found = symbols
+        .iter()
+        .any(|s| s.kind == "foreignkey" && s.name.contains("FKName"));
+    assert!(
+        found,
+        "foreignkey symbol missing; got: {:?}",
+        symbols
+            .iter()
+            .map(|s| (&s.kind, &s.name))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn t070_20_projection_kind() {
+    let path = fixtures_dir().join("MyApp/AllMembers.cls");
+    let source = std::fs::read(&path).expect("read AllMembers.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/AllMembers.cls", "MyApp.AllMembers");
+    let found = symbols
+        .iter()
+        .any(|s| s.kind == "projection" && s.name.contains("ProjectionDef"));
+    assert!(
+        found,
+        "projection symbol missing; got: {:?}",
+        symbols
+            .iter()
+            .map(|s| (&s.kind, &s.name))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn t070_21_storage_kind() {
+    let path = fixtures_dir().join("MyApp/AllMembers.cls");
+    let source = std::fs::read(&path).expect("read AllMembers.cls");
+    let (symbols, _) = extract_cls_symbols(&source, "MyApp/AllMembers.cls", "MyApp.AllMembers");
+    let found = symbols
+        .iter()
+        .any(|s| s.kind == "storage" && s.name.contains("Default"));
+    assert!(
+        found,
+        "storage symbol missing; got: {:?}",
+        symbols
+            .iter()
+            .map(|s| (&s.kind, &s.name))
+            .collect::<Vec<_>>()
+    );
+}

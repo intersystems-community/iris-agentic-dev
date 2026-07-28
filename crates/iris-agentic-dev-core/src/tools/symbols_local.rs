@@ -250,11 +250,85 @@ fn extract_cls_members(
                             symbols.push(sym);
                         }
                     }
+                    kind @ ("query" | "trigger" | "index" | "xdata" | "storage"
+                    | "relationship" | "foreignkey" | "projection") => {
+                        let name_kind = format!("{}_name", kind);
+                        let line = member.start_position().row as u32 + 1;
+                        if let Some(name) = extract_member_name(member, source, &name_kind) {
+                            symbols.push(Symbol {
+                                name: format!("{}.{}", class_name, name),
+                                kind: kind.into(),
+                                file: rel_path.into(),
+                                line,
+                                formal_spec: None,
+                                type_name: None,
+                            });
+                        }
+                    }
+                    // Grammar parses `Trigger Name After|Before Event` as an ERROR
+                    // node (the After/Before keywords trip the parser). Recover by
+                    // detecting an ERROR that starts with keyword_trigger.
+                    "ERROR" => {
+                        if let Some(sym) =
+                            extract_trigger_from_error(member, source, class_name, rel_path)
+                        {
+                            symbols.push(sym);
+                        }
+                    }
                     _ => {}
                 }
             }
         }
     }
+}
+
+/// Recovers a trigger symbol from an ERROR node.
+/// tree-sitter parses `Trigger Name After Insert { }` as ERROR because the
+/// `After`/`Before` event keywords trip the parser. We detect it by checking
+/// for a `keyword_trigger` first child and then taking the next identifier.
+fn extract_trigger_from_error(
+    node: tree_sitter::Node,
+    source: &[u8],
+    class_name: &str,
+    rel_path: &str,
+) -> Option<Symbol> {
+    let mut cursor = node.walk();
+    let mut saw_keyword = false;
+    for child in node.children(&mut cursor) {
+        if child.kind() == "keyword_trigger" {
+            saw_keyword = true;
+            continue;
+        }
+        if saw_keyword && child.kind() == "identifier" {
+            let name = child.utf8_text(source).unwrap_or("").to_string();
+            if !name.is_empty() {
+                return Some(Symbol {
+                    name: format!("{}.{}", class_name, name),
+                    kind: "trigger".into(),
+                    file: rel_path.into(),
+                    line: node.start_position().row as u32 + 1,
+                    formal_spec: None,
+                    type_name: None,
+                });
+            }
+        }
+    }
+    None
+}
+
+/// Finds a `{kind}_name` child node and returns its identifier text.
+/// Used for query, index, xdata, storage, relationship, foreignkey, projection.
+fn extract_member_name(node: tree_sitter::Node, source: &[u8], name_kind: &str) -> Option<String> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == name_kind {
+            let name = first_identifier_text(child, source);
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+    }
+    None
 }
 
 fn extract_method_symbol(
