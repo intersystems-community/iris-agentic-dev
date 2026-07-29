@@ -9,6 +9,56 @@ unless there is something non-obvious to say about it.
 
 ---
 
+## Quick reference
+
+| Tool                                                              | Section                   |
+| ----------------------------------------------------------------- | ------------------------- |
+| [`iris_doc`](#iris_doc)                                           | Code                      |
+| [`iris_compile`](#iris_compile)                                   | Code                      |
+| [`iris_execute`](#iris_execute)                                   | Code                      |
+| [`iris_execute_method`](#iris_execute_method)                     | Code                      |
+| [`iris_query`](#iris_query)                                       | Code                      |
+| [`iris_test`](#iris_test)                                         | Code                      |
+| [`iris_coverage`](#iris_coverage)                                 | Code                      |
+| [`iris_global`](#iris_global-) 🔒                                 | Code                      |
+| [`iris_source_control`](#iris_source_control-) ✦                  | Code                      |
+| [`iris_symbols`](#iris_symbols)                                   | Search and introspection  |
+| [`iris_symbols_local`](#iris_symbols_local)                       | Search and introspection  |
+| [`docs_introspect`](#docs_introspect)                             | Search and introspection  |
+| [`iris_search`](#iris_search)                                     | Search and introspection  |
+| [`iris_info`](#iris_info)                                         | Search and introspection  |
+| [`iris_macro`](#iris_macro)                                       | Search and introspection  |
+| [`iris_table_info`](#iris_table_info)                             | Search and introspection  |
+| [`resolve_dynamic_dispatch`](#resolve_dynamic_dispatch)           | Search and introspection  |
+| [`extract_message_map_routing`](#extract_message_map_routing)     | Search and introspection  |
+| [`find_subclass_implementations`](#find_subclass_implementations) | Search and introspection  |
+| [`iris_debug`](#iris_debug)                                       | Debugging                 |
+| [`iris_get_log`](#iris_get_log)                                   | Debugging                 |
+| [`check_config`](#check_config)                                   | Debugging                 |
+| [`iris_generate`](#iris_generate)                                 | Generation                |
+| [`iris_generate_class`](#iris_generate_class)                     | Generation                |
+| [`iris_generate_test`](#iris_generate_test)                       | Generation                |
+| [`iris_production`](#iris_production-) ✦                          | Interoperability          |
+| [`iris_interop_query`](#iris_interop_query-) ✦                    | Interoperability          |
+| [`iris_production_item`](#iris_production_item-) 🔒               | Interoperability          |
+| [`iris_production_diff`](#iris_production_diff)                   | Interoperability          |
+| [`iris_message_body`](#iris_message_body)                         | Interoperability          |
+| [`iris_business_rule_info`](#iris_business_rule_info)             | Interoperability          |
+| [`iris_credential_list`](#iris_credential_list)                   | Interoperability          |
+| [`iris_credential_manage`](#iris_credential_manage-) 🔒           | Interoperability          |
+| [`iris_lookup_manage`](#iris_lookup_manage)                       | Interoperability          |
+| [`iris_lookup_transfer`](#iris_lookup_transfer)                   | Interoperability          |
+| [`iris_admin`](#iris_admin)                                       | Administration            |
+| [`iris_containers`](#iris_containers-) ✦                          | Administration            |
+| [`skill`](#skill)                                                 | Skills and knowledge base |
+| [`skill_community`](#skill_community)                             | Skills and knowledge base |
+| [`kb` / `kb_index` / `kb_recall`](#kb--kb_index--kb_recall)       | Skills and knowledge base |
+| [`agent_history` / `agent_stats`](#agent_history--agent_stats)    | Skills and knowledge base |
+| [`telemetry_query`](#telemetry_query)                             | Skills and knowledge base |
+| [`telemetry_export_trace`](#telemetry_export_trace)               | Skills and knowledge base |
+
+---
+
 ## Code
 
 ### `iris_doc`
