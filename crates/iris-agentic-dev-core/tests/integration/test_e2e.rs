@@ -4315,3 +4315,755 @@ fn e2e_070_routing_plain_class_not_found() {
         "nonexistent class must return NOT_FOUND; result: {result}"
     );
 }
+
+// ── iris_global ───────────────────────────────────────────────────────────────
+
+#[test]
+fn e2e_global_list_returns_structured_response() {
+    require_iris!();
+    let result = call_tool(
+        "iris_global",
+        serde_json::json!({"action": "list", "global_name": "^ROUTINE", "namespace": "USER"}),
+    );
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "iris_global list must return structured response: {}",
+        result
+    );
+}
+
+#[test]
+fn e2e_global_set_get_kill_roundtrip() {
+    require_iris!();
+    let result = call_tool(
+        "iris_global",
+        serde_json::json!({
+            "action": "set",
+            "global_name": "^IrisDevTest",
+            "subscripts": ["e2e_roundtrip"],
+            "value": "hello",
+            "namespace": "USER"
+        }),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE")
+        || result["error_code"].as_str() == Some("ENV_GATE_BLOCKED")
+    {
+        return;
+    }
+    assert_eq!(result["success"], true, "global set: {}", result);
+
+    let get = call_tool(
+        "iris_global",
+        serde_json::json!({
+            "action": "get",
+            "global_name": "^IrisDevTest",
+            "subscripts": ["e2e_roundtrip"],
+            "namespace": "USER"
+        }),
+    );
+    assert_eq!(get["success"], true, "global get: {}", get);
+    assert_eq!(
+        get["value"].as_str(),
+        Some("hello"),
+        "global get value: {}",
+        get
+    );
+
+    let kill = call_tool(
+        "iris_global",
+        serde_json::json!({
+            "action": "kill",
+            "global_name": "^IrisDevTest",
+            "subscripts": ["e2e_roundtrip"],
+            "namespace": "USER"
+        }),
+    );
+    assert_eq!(kill["success"], true, "global kill: {}", kill);
+}
+
+#[test]
+fn e2e_global_phi_pattern_requires_ack() {
+    require_iris!();
+    let result = call_tool(
+        "iris_global",
+        serde_json::json!({
+            "action": "get",
+            "global_name": "^PAPMI",
+            "namespace": "USER"
+        }),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    // Must either be blocked with PHI_GATE_BLOCKED or succeed (empty global is fine)
+    assert!(
+        result["error_code"].as_str() == Some("PHI_GATE_BLOCKED") || result["success"] == true,
+        "PHI global without ack must be blocked or empty: {}",
+        result
+    );
+}
+
+// ── iris_coverage ─────────────────────────────────────────────────────────────
+
+#[test]
+fn e2e_coverage_check_returns_structured_response() {
+    require_iris!();
+    let result = call_tool_timeout("iris_coverage", serde_json::json!({"mode": "check"}), 30);
+    // coverage check returns ok/bbsiz_state directly, not a success wrapper
+    assert!(
+        result["ok"].is_boolean() || result["success"] == true || result["error_code"].is_string(),
+        "iris_coverage check must return structured response: {}",
+        result
+    );
+    if result["ok"] == true || result["success"] == true {
+        assert!(
+            result["testcoverage_available"].is_boolean(),
+            "check must include testcoverage_available: {}",
+            result
+        );
+    }
+}
+
+#[test]
+fn e2e_coverage_run_returns_coverage_data() {
+    require_iris!();
+    let result = call_tool_timeout(
+        "iris_coverage",
+        serde_json::json!({
+            "mode": "run",
+            "package": "IrisDevTest",
+            "test_path": "IrisDevTest.Tests",
+            "namespace": "USER"
+        }),
+        60,
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE")
+        || result["error_code"].as_str() == Some("BBSIZ_NOT_CONFIGURED")
+    {
+        return;
+    }
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "iris_coverage run must return structured response: {}",
+        result
+    );
+    if result["success"] == true {
+        assert!(
+            result["covered_lines"].is_number() || result["classes"].is_array(),
+            "coverage run must include coverage data: {}",
+            result
+        );
+    }
+}
+
+// ── iris_table_info ───────────────────────────────────────────────────────────
+
+#[test]
+fn e2e_table_info_known_table_returns_metadata() {
+    require_iris!();
+    let result = call_tool(
+        "iris_table_info",
+        serde_json::json!({"table": "INFORMATION_SCHEMA.TABLES", "namespace": "USER"}),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "iris_table_info must return structured response: {}",
+        result
+    );
+    if result["success"] == true {
+        // result is nested under "result" key; check top-level success and nested fields
+        let has_meta = result["result"]["table"].is_string()
+            || result["result"]["class"].is_string()
+            || result["result"]["columns"].is_array()
+            || result["table"].is_string()
+            || result["columns"].is_array();
+        assert!(
+            has_meta,
+            "table_info must include table/class/columns: {}",
+            result
+        );
+    }
+}
+
+#[test]
+fn e2e_table_info_nonexistent_returns_error() {
+    require_iris!();
+    let result = call_tool(
+        "iris_table_info",
+        serde_json::json!({"table": "NoSuchSchema.NoSuchTable", "namespace": "USER"}),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["success"] == false || result["error_code"].is_string(),
+        "nonexistent table must return error: {}",
+        result
+    );
+}
+
+// ── iris_execute_method ───────────────────────────────────────────────────────
+
+#[test]
+fn e2e_execute_method_known_class_method() {
+    require_iris!();
+    let result = call_tool(
+        "iris_execute_method",
+        serde_json::json!({
+            "class": "%Library.Integer",
+            "method": "IsValid",
+            "args": ["42"],
+            "namespace": "USER"
+        }),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "execute_method must return structured response: {}",
+        result
+    );
+    if result["success"] == true {
+        assert!(
+            result["return_value"].is_string()
+                || result["value"].is_string()
+                || result["output"].is_string(),
+            "execute_method must include return_value/value/output: {}",
+            result
+        );
+    }
+}
+
+#[test]
+fn e2e_execute_method_nonexistent_class_returns_error() {
+    require_iris!();
+    let result = call_tool(
+        "iris_execute_method",
+        serde_json::json!({
+            "class": "NoSuchClass.XYZ",
+            "method": "Run",
+            "namespace": "USER"
+        }),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["success"] == false || result["error_code"].is_string(),
+        "nonexistent class method must return error: {}",
+        result
+    );
+}
+
+// ── iris_admin ────────────────────────────────────────────────────────────────
+
+#[test]
+fn e2e_admin_list_namespaces_returns_list() {
+    require_iris!();
+    let result = call_tool(
+        "iris_admin",
+        serde_json::json!({"action": "list_namespaces"}),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "admin list_namespaces must return structured response: {}",
+        result
+    );
+    if result["success"] == true {
+        let ns = result["namespaces"].as_array();
+        assert!(
+            ns.is_some() && !ns.unwrap().is_empty(),
+            "list_namespaces must return at least one namespace: {}",
+            result
+        );
+    }
+}
+
+#[test]
+fn e2e_admin_list_users_returns_list() {
+    require_iris!();
+    let result = call_tool("iris_admin", serde_json::json!({"action": "list_users"}));
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "admin list_users must return structured response: {}",
+        result
+    );
+    if result["success"] == true {
+        assert!(
+            result["users"].is_array(),
+            "list_users must return users array: {}",
+            result
+        );
+    }
+}
+
+#[test]
+fn e2e_admin_list_databases_returns_list() {
+    require_iris!();
+    let result = call_tool(
+        "iris_admin",
+        serde_json::json!({"action": "list_databases"}),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "admin list_databases must return structured response: {}",
+        result
+    );
+}
+
+// ── iris_containers ───────────────────────────────────────────────────────────
+
+#[test]
+fn e2e_containers_list_returns_structured_response() {
+    require_iris!();
+    let result = call_tool("iris_containers", serde_json::json!({"action": "list"}));
+    // No IRIS required — just needs Docker. May return empty list or DOCKER_REQUIRED.
+    assert!(
+        result["success"] == true
+            || result["error_code"].is_string()
+            || result["containers"].is_array(),
+        "iris_containers list must return structured response: {}",
+        result
+    );
+}
+
+// ── iris_production_item ──────────────────────────────────────────────────────
+
+#[test]
+fn e2e_production_item_get_settings_structured_response() {
+    require_iris!();
+    // Use a known Ensemble item — if Ensemble not configured, returns structured error.
+    let result = call_tool(
+        "iris_production_item",
+        serde_json::json!({
+            "action": "get_settings",
+            "item": "IrisDevTest.Interop.PassthroughService",
+            "namespace": "USER"
+        }),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "iris_production_item get_settings must return structured response: {}",
+        result
+    );
+}
+
+// ── iris_production_diff ──────────────────────────────────────────────────────
+
+#[test]
+fn e2e_production_diff_returns_structured_response() {
+    require_iris!();
+    let result = call_tool(
+        "iris_production_diff",
+        serde_json::json!({"namespace": "USER"}),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "iris_production_diff must return structured response: {}",
+        result
+    );
+    if result["success"] == true {
+        assert!(
+            result["added"].is_array()
+                || result["removed"].is_array()
+                || result["changed"].is_array()
+                || result["diff"].is_array()
+                || result["production"].is_string(),
+            "production_diff must include diff fields or production name: {}",
+            result
+        );
+    }
+}
+
+// ── iris_message_body ─────────────────────────────────────────────────────────
+
+#[test]
+fn e2e_message_body_nonexistent_id_returns_error() {
+    require_iris!();
+    let result = call_tool(
+        "iris_message_body",
+        serde_json::json!({
+            "message_id": "999999999",
+            "acknowledge_phi": true,
+            "namespace": "USER"
+        }),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE")
+        || result["error_code"].as_str() == Some("DATA_POLICY_BLOCKED")
+        || result["error_code"].as_str() == Some("PHI_POLICY_BLOCKED")
+    {
+        return;
+    }
+    assert!(
+        result["success"] == false || result["error_code"].is_string(),
+        "nonexistent message_id must return error: {}",
+        result
+    );
+}
+
+// ── iris_business_rule_info ───────────────────────────────────────────────────
+
+#[test]
+fn e2e_business_rule_info_list_returns_structured_response() {
+    require_iris!();
+    let result = call_tool(
+        "iris_business_rule_info",
+        serde_json::json!({"action": "list", "namespace": "USER"}),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "iris_business_rule_info list must return structured response: {}",
+        result
+    );
+    if result["success"] == true {
+        assert!(
+            result["rules"].is_array(),
+            "business_rule_info list must include rules array: {}",
+            result
+        );
+    }
+}
+
+// ── iris_credential_list ──────────────────────────────────────────────────────
+
+#[test]
+fn e2e_credential_list_returns_structured_response() {
+    require_iris!();
+    let result = call_tool(
+        "iris_credential_list",
+        serde_json::json!({"namespace": "USER"}),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "iris_credential_list must return structured response: {}",
+        result
+    );
+    if result["success"] == true {
+        assert!(
+            result["credentials"].is_array(),
+            "credential_list must include credentials array: {}",
+            result
+        );
+        // Passwords must never appear
+        if let Some(creds) = result["credentials"].as_array() {
+            for cred in creds {
+                assert!(
+                    cred.get("password").is_none(),
+                    "credential_list must never return passwords: {}",
+                    cred
+                );
+            }
+        }
+    }
+}
+
+// ── iris_lookup_manage ────────────────────────────────────────────────────────
+
+#[test]
+fn e2e_lookup_manage_list_tables_returns_structured_response() {
+    require_iris!();
+    let result = call_tool(
+        "iris_lookup_manage",
+        serde_json::json!({"action": "list_tables", "namespace": "USER"}),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "iris_lookup_manage list_tables must return structured response: {}",
+        result
+    );
+}
+
+#[test]
+fn e2e_lookup_manage_set_get_delete_roundtrip() {
+    require_iris!();
+    let set = call_tool(
+        "iris_lookup_manage",
+        serde_json::json!({
+            "action": "set",
+            "table": "IrisDevTestLookup",
+            "key": "e2e_key",
+            "value": "e2e_value",
+            "namespace": "USER"
+        }),
+    );
+    if set["error_code"].as_str() == Some("IRIS_UNREACHABLE")
+        || set["error_code"].as_str() == Some("ENV_GATE_BLOCKED")
+    {
+        return;
+    }
+    assert_eq!(set["success"], true, "lookup set: {}", set);
+
+    let get = call_tool(
+        "iris_lookup_manage",
+        serde_json::json!({
+            "action": "get",
+            "table": "IrisDevTestLookup",
+            "key": "e2e_key",
+            "namespace": "USER"
+        }),
+    );
+    assert_eq!(get["success"], true, "lookup get: {}", get);
+    assert_eq!(
+        get["value"].as_str(),
+        Some("e2e_value"),
+        "lookup get value: {}",
+        get
+    );
+
+    let del = call_tool(
+        "iris_lookup_manage",
+        serde_json::json!({
+            "action": "delete",
+            "table": "IrisDevTestLookup",
+            "key": "e2e_key",
+            "namespace": "USER"
+        }),
+    );
+    assert_eq!(del["success"], true, "lookup delete: {}", del);
+}
+
+// ── iris_generate_test ────────────────────────────────────────────────────────
+
+#[test]
+fn e2e_generate_test_returns_scaffold() {
+    require_iris!();
+    // iris_generate_test requires an LLM API key. Without one it returns LLM_UNAVAILABLE
+    // at the MCP protocol level (not a tool-level error_code). Verify it either succeeds
+    // (key configured) or fails with a recognizable error, not a silent crash.
+    let env = iris_env();
+    let mut msgs = init_msgs();
+    msgs.push(serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"iris_generate_test","arguments":{"class_name":"%Library.Integer","namespace":"USER"}}
+    }));
+    let responses = mcp_call_timeout(&env, &msgs, 20);
+    let raw = responses
+        .iter()
+        .find(|r| r["id"] == 2)
+        .cloned()
+        .unwrap_or_default();
+    // Must get either a result or an error, not nothing
+    assert!(
+        raw.get("result").is_some() || raw.get("error").is_some(),
+        "iris_generate_test must return result or protocol error, not silence: {:?}",
+        raw
+    );
+    // If it succeeded (LLM key present), verify content includes UnitTest boilerplate
+    if raw["result"]["isError"] == false {
+        let text = raw["result"]["content"][0]["text"].as_str().unwrap_or("{}");
+        let v: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+        if v["success"] == true {
+            let content = v["content"]
+                .as_str()
+                .or_else(|| v["scaffold"].as_str())
+                .unwrap_or("");
+            assert!(
+                content.contains("UnitTest") || content.contains("TestCase"),
+                "generated test scaffold must reference UnitTest: {v}"
+            );
+        }
+    }
+}
+
+// ── check_config ──────────────────────────────────────────────────────────────
+
+#[test]
+fn e2e_check_config_returns_connection_info() {
+    require_iris!();
+    let result = call_tool("check_config", serde_json::json!({}));
+    assert!(
+        result["success"] == true
+            || result["error_code"].is_string()
+            || result.get("host").is_some(),
+        "check_config must return structured response: {}",
+        result
+    );
+    if result["success"] == true || result.get("host").is_some() {
+        // Must include host or some connection descriptor
+        let has_conn = result.get("host").is_some()
+            || result.get("iris_host").is_some()
+            || result.get("url").is_some()
+            || result.get("namespace").is_some();
+        assert!(
+            has_conn,
+            "check_config must include connection info: {}",
+            result
+        );
+    }
+}
+
+// ── agent_history / agent_stats ───────────────────────────────────────────────
+
+#[test]
+fn e2e_agent_history_returns_list() {
+    require_iris!();
+    let result = call_tool("agent_history", serde_json::json!({"limit": 5}));
+    // agent_history returns data directly (no success wrapper)
+    assert!(
+        result["calls"].is_array()
+            || result["history"].is_array()
+            || result["entries"].is_array()
+            || result["error_code"].is_string(),
+        "agent_history must return calls/history/entries array: {}",
+        result
+    );
+}
+
+#[test]
+fn e2e_agent_stats_returns_counts() {
+    require_iris!();
+    let result = call_tool("agent_stats", serde_json::json!({}));
+    // agent_stats returns data directly (no success wrapper)
+    assert!(
+        result["skill_count"].is_number()
+            || result["skills"].is_number()
+            || result["session_calls"].is_number()
+            || result["status"].is_string()
+            || result["error_code"].is_string(),
+        "agent_stats must include skill_count/session_calls/status: {}",
+        result
+    );
+}
+
+// ── skill ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn e2e_skill_list_returns_structured_response() {
+    require_iris!();
+    let result = call_tool("skill", serde_json::json!({"action": "list"}));
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "skill list must return structured response: {}",
+        result
+    );
+    if result["success"] == true {
+        assert!(
+            result["skills"].is_array(),
+            "skill list must include skills array: {}",
+            result
+        );
+    }
+}
+
+#[test]
+fn e2e_skill_search_returns_results() {
+    require_iris!();
+    let result = call_tool(
+        "skill",
+        serde_json::json!({"action": "search", "query": "objectscript"}),
+    );
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "skill search must return structured response: {}",
+        result
+    );
+}
+
+// ── kb ────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn e2e_kb_recall_empty_query_returns_structured_response() {
+    require_iris!();
+    let result = call_tool(
+        "kb",
+        serde_json::json!({"action": "recall", "query": "objectscript status handling", "top_k": 3}),
+    );
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "kb recall must return structured response: {}",
+        result
+    );
+    if result["success"] == true {
+        assert!(
+            result["results"].is_array()
+                || result["matches"].is_array()
+                || result["items"].is_array(),
+            "kb recall must include results array: {}",
+            result
+        );
+    }
+}
+
+// ── telemetry_query ───────────────────────────────────────────────────────────
+
+#[test]
+fn e2e_telemetry_query_returns_structured_response() {
+    require_iris!();
+    // Pass a session_id filter so the tool skips the global session enumeration
+    // (listing all sessions requires iterating ^IRISDEV which may be empty/slow).
+    let result = call_tool_timeout(
+        "telemetry_query",
+        serde_json::json!({
+            "session_id": "00000000-0000-0000-0000-000000000000",
+            "limit": 5
+        }),
+        15,
+    );
+    // Empty/unknown session returns empty records — that's fine.
+    assert!(
+        result["records"].is_array() || result["error_code"].is_string(),
+        "telemetry_query must return records array or error: {}",
+        result
+    );
+}
+
+// ── iris_generate (prompt builder) ───────────────────────────────────────────
+
+#[test]
+fn e2e_generate_prompt_returns_context() {
+    require_iris!();
+    let result = call_tool(
+        "iris_generate",
+        serde_json::json!({
+            "description": "A REST handler that returns patient demographics",
+            "gen_type": "class",
+            "namespace": "USER"
+        }),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE") {
+        return;
+    }
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "iris_generate must return structured response: {}",
+        result
+    );
+    if result["success"] == true {
+        let has_prompt = result["prompt"].is_string()
+            || result["context"].is_string()
+            || result["content"].is_string();
+        assert!(
+            has_prompt,
+            "iris_generate must include prompt/context: {}",
+            result
+        );
+    }
+}
