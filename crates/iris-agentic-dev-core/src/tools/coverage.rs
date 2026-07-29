@@ -97,7 +97,7 @@ pub fn build_coverage_run_code(routines: &[String], test_path: &str, namespace: 
             " Do ##class(%UnitTest.Manager).RunTest(\"{}\",\"/noload/nodelete\")",
             test_path
         ),
-        " Do ##class(%Monitor.System.LineByLine).Stop()".to_string(),
+        // Read coverage data BEFORE Stop() — Stop() clears the monitor data.
         r#" Write $C(10),"COVERAGE_DATA_START",$C(10)"#.to_string(),
         " Set totalHit=0  Set totalExec=0".to_string(),
     ];
@@ -131,6 +131,8 @@ pub fn build_coverage_run_code(routines: &[String], test_path: &str, namespace: 
     }
 
     lines.push(r#" Write "TOTAL|"_totalHit_"|"_totalExec,$C(10)"#.to_string());
+    // Stop after collecting — data must be read before Stop() clears the monitor.
+    lines.push(" Do ##class(%Monitor.System.LineByLine).Stop()".to_string());
     lines.join("\n")
 }
 

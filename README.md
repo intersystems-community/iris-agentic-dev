@@ -39,7 +39,7 @@ If the [InterSystems Testing Manager](https://marketplace.visualstudio.com/items
 
 ```bash
 # Mac (Homebrew)
-brew tap intersystems-community/iris-agentic-dev
+brew tap intersystems-community/tap
 brew install iris-agentic-dev
 
 # Mac direct download (Apple Silicon)

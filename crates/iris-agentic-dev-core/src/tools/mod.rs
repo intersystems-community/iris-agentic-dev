@@ -3164,6 +3164,32 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             )
         };
 
+        // coverage=true: start the monitor before the test run so it instruments execution.
+        // We start here (before run_output), then report+stop after parsing test results.
+        if p.coverage == Some(true) {
+            let pkg = p
+                .pattern
+                .rsplit_once('.')
+                .map(|(pkg, _)| pkg)
+                .unwrap_or(&p.pattern);
+            let start_params = coverage::IrisCoverageParams {
+                mode: "start".to_string(),
+                classes: p.coverage_classes.clone(),
+                package: if p.coverage_classes.is_none() {
+                    Some(pkg.to_string())
+                } else {
+                    None
+                },
+                test_path: None,
+                target_pct: None,
+                namespace: Some(p.namespace.clone()),
+                cobertura_path: None,
+            };
+            // Ignore start errors — if monitor fails, coverage will return zeros/error
+            // but the test run itself should still proceed.
+            let _ = coverage::handle_iris_coverage(&iris, client, &start_params).await;
+        }
+
         // Try HTTP (execute_via_generator) first. Fall back to docker exec if:
         // - IRIS_CONTAINER is set, AND
         // - HTTP returns empty output (RunTest couldn't create the pattern directory
@@ -3424,27 +3450,40 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
         self.record_call("iris_test", success);
 
-        // coverage=true: run iris_coverage mode=run after the test pass
+        // coverage=true: report from the monitor that was started before the test run.
+        // The start happened above (before run_output); now collect and stop.
         let coverage_result = if p.coverage == Some(true) {
             let pkg = p
                 .pattern
                 .rsplit_once('.')
                 .map(|(pkg, _)| pkg)
                 .unwrap_or(&p.pattern);
-            let cov_params = coverage::IrisCoverageParams {
-                mode: "run".to_string(),
+            let report_params = coverage::IrisCoverageParams {
+                mode: "report".to_string(),
                 classes: p.coverage_classes.clone(),
                 package: if p.coverage_classes.is_none() {
                     Some(pkg.to_string())
                 } else {
                     None
                 },
-                test_path: Some(p.pattern.clone()),
+                test_path: None,
                 target_pct: p.coverage_target_pct,
                 namespace: Some(p.namespace.clone()),
                 cobertura_path: None,
             };
-            Some(coverage::handle_iris_coverage(&iris, client, &cov_params).await)
+            let cov = coverage::handle_iris_coverage(&iris, client, &report_params).await;
+            // Stop the monitor now that data is collected.
+            let stop_params = coverage::IrisCoverageParams {
+                mode: "stop".to_string(),
+                classes: None,
+                package: None,
+                test_path: None,
+                target_pct: None,
+                namespace: Some(p.namespace.clone()),
+                cobertura_path: None,
+            };
+            let _ = coverage::handle_iris_coverage(&iris, client, &stop_params).await;
+            Some(cov)
         } else {
             None
         };

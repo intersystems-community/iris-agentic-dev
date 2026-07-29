@@ -406,6 +406,7 @@ fn test_handle_iris_doc_get_object_cls() {
             max_results: None,
             expected: None,
             line: None,
+            allow_storage_regeneration: false,
         };
         let r = handle_iris_doc(
             &conn,
@@ -459,6 +460,7 @@ fn test_handle_iris_doc_head_object_cls() {
             max_results: None,
             expected: None,
             line: None,
+            allow_storage_regeneration: false,
         };
         // Must not panic; any structured JSON response is acceptable
         let r = handle_iris_doc(
@@ -712,6 +714,7 @@ fn test_handle_iris_doc_batch_get() {
             max_results: None,
             expected: None,
             line: None,
+            allow_storage_regeneration: false,
         };
         let r = handle_iris_doc(
             &conn,
@@ -11306,9 +11309,9 @@ static LLM_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static GITHUB_RAW_URL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static GITHUB_API_URL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-// Serialize tests that remove IRIS_CONTAINER to force DOCKER_REQUIRED paths.
-// Without serialization, a concurrent test running with IRIS_CONTAINER set will
-// race against the remove_var and the DOCKER_REQUIRED branch is never reached.
+// Serialize tests that remove IRIS_CONTAINER to isolate no-container behavior.
+// Without serialization, a concurrent test running with IRIS_CONTAINER set can
+// race against the remove_var and the no-container branch is never reached.
 static DOCKER_REQUIRED_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[tokio::test]
@@ -12050,6 +12053,7 @@ async fn test_doc_put_returns_200_with_status_errors() {
             max_results: None,
             expected: None,
             line: None,
+            allow_storage_regeneration: false,
         },
         &elicitation_store,
         &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
@@ -12129,6 +12133,7 @@ async fn test_doc_put_compile_non_2xx_compile_request() {
             max_results: None,
             expected: None,
             line: None,
+            allow_storage_regeneration: false,
         },
         &elicitation_store,
         &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
@@ -12197,6 +12202,7 @@ async fn test_doc_delete_non_2xx_non_404() {
             max_results: None,
             expected: None,
             line: None,
+            allow_storage_regeneration: false,
         },
         &elicitation_store,
         &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
@@ -12263,6 +12269,7 @@ async fn test_doc_put_non_2xx_upload() {
             max_results: None,
             expected: None,
             line: None,
+            allow_storage_regeneration: false,
         },
         &elicitation_store,
         &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
@@ -14380,7 +14387,7 @@ async fn test_lookup_manage_set_generator_error_via_wiremock() {
 // when IRIS_CONTAINER is not set. With WireMock tools (no container), all docker-exec
 // paths hit the DOCKER_REQUIRED branch, covering interop.rs lines 167, 202, 237, etc.
 
-/// iris_production action=status → DOCKER_REQUIRED (interop.rs line 167).
+/// iris_production action=status with no container → INTEROP_ERROR (HTTP path, no docker needed since v0.9.9).
 #[tokio::test]
 async fn test_production_status_docker_required_via_wiremock() {
     use wiremock::MockServer;
@@ -14408,12 +14415,12 @@ async fn test_production_status_docker_required_via_wiremock() {
     let v = parse_result(result);
     assert_eq!(
         v["error_code"].as_str(),
-        Some("DOCKER_REQUIRED"),
-        "prod status docker required: {v}"
+        Some("INTEROP_ERROR"),
+        "prod status interop error: {v}"
     );
 }
 
-/// iris_production action=start → DOCKER_REQUIRED (interop.rs line 202).
+/// iris_production action=start with no container → INTEROP_ERROR (HTTP path, no docker needed since v0.9.9).
 #[tokio::test]
 async fn test_production_start_docker_required_via_wiremock() {
     use wiremock::MockServer;
@@ -14441,12 +14448,12 @@ async fn test_production_start_docker_required_via_wiremock() {
     let v = parse_result(result);
     assert_eq!(
         v["error_code"].as_str(),
-        Some("DOCKER_REQUIRED"),
-        "prod start docker required: {v}"
+        Some("INTEROP_ERROR"),
+        "prod start interop error: {v}"
     );
 }
 
-/// iris_production action=stop → DOCKER_REQUIRED (interop.rs line 237).
+/// iris_production action=stop with no container → INTEROP_ERROR (HTTP path, no docker needed since v0.9.9).
 #[tokio::test]
 async fn test_production_stop_docker_required_via_wiremock() {
     use wiremock::MockServer;
@@ -14474,12 +14481,12 @@ async fn test_production_stop_docker_required_via_wiremock() {
     let v = parse_result(result);
     assert_eq!(
         v["error_code"].as_str(),
-        Some("DOCKER_REQUIRED"),
-        "prod stop docker required: {v}"
+        Some("INTEROP_ERROR"),
+        "prod stop interop error: {v}"
     );
 }
 
-/// iris_production action=update → DOCKER_REQUIRED (interop.rs line 272).
+/// iris_production action=update with no container → INTEROP_ERROR (HTTP path, no docker needed since v0.9.9).
 #[tokio::test]
 async fn test_production_update_docker_required_via_wiremock() {
     use wiremock::MockServer;
@@ -14507,12 +14514,12 @@ async fn test_production_update_docker_required_via_wiremock() {
     let v = parse_result(result);
     assert_eq!(
         v["error_code"].as_str(),
-        Some("DOCKER_REQUIRED"),
-        "prod update docker required: {v}"
+        Some("INTEROP_ERROR"),
+        "prod update interop error: {v}"
     );
 }
 
-/// iris_production action=check → DOCKER_REQUIRED (interop.rs line 298).
+/// iris_production action=check with no container → INTEROP_ERROR (HTTP path, no docker needed since v0.9.9).
 #[tokio::test]
 async fn test_production_check_docker_required_via_wiremock() {
     use wiremock::MockServer;
@@ -14540,12 +14547,12 @@ async fn test_production_check_docker_required_via_wiremock() {
     let v = parse_result(result);
     assert_eq!(
         v["error_code"].as_str(),
-        Some("DOCKER_REQUIRED"),
-        "prod check docker required: {v}"
+        Some("INTEROP_ERROR"),
+        "prod check interop error: {v}"
     );
 }
 
-/// iris_production action=recover → DOCKER_REQUIRED (interop.rs line 329).
+/// iris_production action=recover with no container → INTEROP_ERROR (HTTP path, no docker needed since v0.9.9).
 #[tokio::test]
 async fn test_production_recover_docker_required_via_wiremock() {
     use wiremock::MockServer;
@@ -14573,8 +14580,8 @@ async fn test_production_recover_docker_required_via_wiremock() {
     let v = parse_result(result);
     assert_eq!(
         v["error_code"].as_str(),
-        Some("DOCKER_REQUIRED"),
-        "prod recover docker required: {v}"
+        Some("INTEROP_ERROR"),
+        "prod recover interop error: {v}"
     );
 }
 

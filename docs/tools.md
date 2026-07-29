@@ -12,13 +12,32 @@ write-gated (suppressed on Live instances unless `IRIS_ALLOW_PROD=1`).
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | `iris_compile`          | Compile a class, routine, or wildcard. Returns errors with line numbers.                                                  |
 | `iris_doc`              | Read, write, delete, insert, or check any IRIS document. Supports stale-edit guards via `expected`.                       |
-| `iris_execute`          | Run ObjectScript, return output.                                                                                          |
+| `iris_execute`          | Run ObjectScript, return output. Code-editing calls are blocked — see [Code-edit guard](#code-edit-guard).                |
 | `iris_execute_method`   | Invoke a `ClassMethod` directly by class+method+args, no boilerplate. String-returning methods only (v1).                 |
 | `iris_query`            | Execute SQL, return rows as JSON. `mode=explain\|count\|write` for query plans, row-count estimates, and gated DML.       |
 | `iris_test`             | Run `%UnitTest` tests, return structured pass/fail results. Set `coverage=true` to also measure line coverage inline.     |
 | `iris_coverage`         | Measure ObjectScript line coverage via `%Monitor.System.LineByLine`. `mode=run` is all-in-one. See [Coverage](#coverage). |
 | `iris_global`           | Read, write, kill, or list IRIS global nodes. Gated — see [Data safety gates](#data-safety-gates).                        |
 | `iris_source_control` ✦ | Check lock status, checkout, execute SCM actions. CheckIn is opt-in via `IRIS_SCM_ALLOW_CHECKIN=1`.                       |
+
+### Code-edit guard
+
+`iris_execute` rejects any code that matches class- or routine-editing patterns. The
+check runs before execution — a compound line that mixes innocent data work with one
+blocked token is rejected entirely and nothing executes.
+
+Blocked patterns include: `%Dictionary.*Definition`, `$system.OBJ` (Load, Compile,
+Delete, and variants), `%RoutineMgr`, and direct writes to code-storage globals
+(`^rOBJ`, `^rINDEX`, `^%occRoutine`, etc.).
+
+The error response includes a `matched` field naming the specific token that triggered
+the block, and a `remediation` field pointing to the correct tools:
+
+- To write or delete a class or routine: `iris_doc` with `mode=put` or `mode=delete`.
+  `iris_doc` is SCM-checkout-gated and auditable.
+- To compile: `iris_compile`.
+
+The guard is non-configurable and applies to all connections.
 
 ---
 
@@ -191,7 +210,7 @@ Manager, so they match the lists that already shipped there.
 | `PHI_GATE_BLOCKED`      | Global name matches a PHI pattern — pass `acknowledgePhi: true`                         |
 | `SCOPE_REQUIRED`        | `iris_search` called without a document scope — pass a `documents` wildcard list        |
 | `STALE_CONTENT`         | `iris_doc` insert/delete_lines `expected` field didn't match stored content             |
-| `CODE_EDIT_BLOCKED`     | Write to a `%` system class blocked by the code-edit gate                               |
+| `CODE_EDIT_BLOCKED`     | `iris_execute` call matched a code-editing pattern — use `iris_doc` + `iris_compile`    |
 | `CHECKIN_BLOCKED`       | SCM CheckIn called without `IRIS_SCM_ALLOW_CHECKIN=1`                                   |
 | `HTTP_EXECUTION_FAILED` | Atelier HTTP call failed — check host, port, credentials                                |
 | `IRIS_UNREACHABLE`      | No IRIS connection discoverable — run `check_config`                                    |

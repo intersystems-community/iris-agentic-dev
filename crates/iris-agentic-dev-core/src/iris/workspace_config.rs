@@ -629,8 +629,18 @@ pub fn workspace_config_to_connection(
             .unwrap_or_else(|| "SYS".to_string());
         // If container is also specified alongside host, update IRIS_CONTAINER so docker
         // exec tools (iris_execute fallback, iris_test, etc.) target the right container.
+        // Use DiscoverySource::Docker so check_config exposes the container name.
         if let Some(ref container) = cfg.container {
             std::env::set_var("IRIS_CONTAINER", container);
+            return Some(IrisConnection::new(
+                base_url,
+                namespace,
+                username,
+                password,
+                DiscoverySource::Docker {
+                    container_name: container.clone(),
+                },
+            ));
         }
         return Some(IrisConnection::new(
             base_url,
