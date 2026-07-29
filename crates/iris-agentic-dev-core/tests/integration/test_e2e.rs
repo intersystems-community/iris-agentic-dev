@@ -450,9 +450,9 @@ fn e2e_doc_stringified_int_not_rpc_rejected() {
 }
 
 #[test]
-fn e2e_doc_put_with_storage_block_strips_and_succeeds() {
+fn e2e_doc_put_with_storage_block_blocked_by_default() {
     require_iris!();
-    // I-3: Storage blocks must be stripped automatically
+    // I-3: Storage blocks are refused by default to prevent silent data-layout loss
     let cls_with_storage = r#"Class Test022.StorageTest Extends %Persistent {
 Property Name As %String;
 Storage Default
@@ -475,8 +475,41 @@ Storage Default
             "content": cls_with_storage, "namespace":"USER"}),
     );
     assert_eq!(
+        result["error_code"], "STORAGE_STRIP_BLOCKED",
+        "put with Storage block should be refused without allow_storage_regeneration: {}",
+        result
+    );
+}
+
+#[test]
+fn e2e_doc_put_with_storage_block_strips_when_opted_in() {
+    require_iris!();
+    // I-3b: Storage blocks are stripped and write succeeds when allow_storage_regeneration: true
+    let cls_with_storage = r#"Class Test022.StorageTest Extends %Persistent {
+Property Name As %String;
+Storage Default
+{
+<Data name="DefaultData">
+<Value name="1"><Value>%%CLASSNAME</Value></Value>
+</Data>
+<DataLocation>^Test022.StorageTestD</DataLocation>
+<DefaultData>DefaultData</DefaultData>
+<IdLocation>^Test022.StorageTestD</IdLocation>
+<IndexLocation>^Test022.StorageTestI</IndexLocation>
+<StreamLocation>^Test022.StorageTestS</StreamLocation>
+<Type>%Storage.Persistent</Type>
+}
+}"#;
+
+    let result = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"put","name":"Test022.StorageTest.cls",
+            "content": cls_with_storage, "namespace":"USER",
+            "allow_storage_regeneration": true}),
+    );
+    assert_eq!(
         result["success"], true,
-        "put with Storage block should succeed: {}",
+        "put with Storage block + allow_storage_regeneration should succeed: {}",
         result
     );
     assert_eq!(
