@@ -4023,7 +4023,8 @@ fn load_bpl_dtl_fixtures() {
                 "mode": "put",
                 "content": content,
                 "compile": true,
-                "namespace": "USER"
+                "namespace": "USER",
+                "allow_storage_regeneration": true
             }),
         );
         assert!(

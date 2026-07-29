@@ -6833,7 +6833,8 @@ async fn setup_bpl_dtl_fixtures(tools: &iris_agentic_dev_core::tools::IrisTools)
                     "mode": "put",
                     "content": content,
                     "compile": true,
-                    "namespace": "USER"
+                    "namespace": "USER",
+                    "allow_storage_regeneration": true
                 }),
             )
             .await;
