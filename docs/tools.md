@@ -160,6 +160,8 @@ Run arbitrary ObjectScript and return the output.
 | `namespace`     | string | `"USER"` |                                                            |
 | `timeout`       | int    | `120`    | Seconds; overridden by `OBJECTSCRIPT_TEST_TIMEOUT` env var |
 | `translate_sql` | bool   | `true`   | Rewrite `&sql(...)` macros to `%SQL.Statement`             |
+| `use_session`   | bool   | `false`  | Enable `%ctx` session carrier (see below)                  |
+| `session_state` | string | —        | Token from a prior call; restores `%ctx`                   |
 
 ```text
 iris_execute(code="Write $ZVersion")
@@ -167,6 +169,43 @@ iris_execute(code="Set sc = ##class(MyApp.Util).Run() Write sc", namespace="MYAP
 ```
 
 **Code-edit guard** — see [Code-edit guard](#code-edit-guard) below.
+
+#### Session state
+
+Set `use_session: true` to get a `%ctx` variable (`%DynamicObject`) injected before your code
+and serialized into a `session_state` token in the response. Pass that token back as
+`session_state` on the next call to restore `%ctx`. Nothing is written to IRIS — the token
+lives entirely in the client.
+
+```text
+# Call 1 — compute something and stash it
+iris_execute(
+  use_session=true,
+  code="Set %ctx.count = 1247  Set %ctx.label = \"patients\""
+)
+# → response includes session_state: "eyJjb3VudCI6MTI0N..."
+
+# Call 2 — pick up where you left off
+iris_execute(
+  use_session=true,
+  session_state="eyJjb3VudCI6MTI0N...",
+  code="Write %ctx.count * 0.05"
+)
+# → output: 62.35
+```
+
+`%Persistent` objects are automatically stubbed on save (`{"_cls": "...", "_id": "..."}`)
+and re-opened on restore. `%DynamicObject` and scalar values survive round-trips unchanged.
+Values that cannot serialize (open file handles, result sets, device references) must be
+removed from `%ctx` before the epilogue runs.
+
+Session error codes:
+
+| Code                       | Meaning                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------- |
+| `SESSION_INVALID`          | Token is malformed or `%FromJSON` failed                                        |
+| `SESSION_RESTORE_FAILED`   | A stubbed `%Persistent` object could not be re-opened (class missing or bad ID) |
+| `SESSION_SERIALIZE_FAILED` | `%ctx` could not be serialized at end of call                                   |
 
 ---
 

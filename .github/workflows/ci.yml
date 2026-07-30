@@ -331,6 +331,30 @@ jobs:
         # binary's (v0.9.x), 404ing every auto-install.
         run: cd vscode-iris-agentic-dev && npm test
 
+  coverage-floors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.92.0
+        with:
+          components: llvm-tools
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+      - name: Build binary (required for mcp_handshake and plugin_dispatch tests)
+        run: cargo build -p iris-agentic-dev
+        env:
+          RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+      - name: Install mold linker
+        run: sudo apt-get install -y mold
+      - name: Check per-file coverage floors
+        # Runs unit tests only — no IRIS container needed. Fails if:
+        #   - any src/ file drops below its registered floor
+        #   - any src/ file has no entry in coverage-floors.toml (new code must register)
+        run: bash scripts/check-coverage-floors.sh
+        env:
+          RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+
   doc-lint:
     runs-on: ubuntu-latest
     steps:

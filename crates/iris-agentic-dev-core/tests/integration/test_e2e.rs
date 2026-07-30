@@ -5067,3 +5067,239 @@ fn e2e_generate_prompt_returns_context() {
         );
     }
 }
+
+// ── Session state tests (071-execute-session) ─────────────────────────────────
+
+/// US1: scalar values round-trip through session_state across two calls.
+#[test]
+#[ignore]
+fn e2e_execute_session_scalar_roundtrip() {
+    require_iris!();
+
+    // Call 1: set scalars in %ctx, expect session_state in response
+    let call1 = call_tool(
+        "iris_execute",
+        serde_json::json!({
+            "code": "Set %ctx.x = 42\nSet %ctx.label = \"hello\"\nWrite \"call1 ok\", !",
+            "use_session": true,
+            "namespace": "USER"
+        }),
+    );
+    if call1["error_code"].as_str() == Some("IRIS_UNREACHABLE")
+        || call1["error_code"].as_str() == Some("ENV_GATE_BLOCKED")
+    {
+        return;
+    }
+    assert_eq!(call1["success"], true, "session call 1 failed: {}", call1);
+    let token = call1["session_state"]
+        .as_str()
+        .expect("session_state missing from call 1 response");
+    assert!(!token.is_empty(), "session_state token must not be empty");
+
+    // Call 2: restore %ctx and read scalars back
+    let call2 = call_tool(
+        "iris_execute",
+        serde_json::json!({
+            "code": "Write %ctx.x, !, %ctx.label, !",
+            "use_session": true,
+            "session_state": token,
+            "namespace": "USER"
+        }),
+    );
+    assert_eq!(call2["success"], true, "session call 2 failed: {}", call2);
+    let output = call2["output"].as_str().unwrap_or("");
+    assert!(
+        output.contains("42"),
+        "call 2 output must contain 42: {}",
+        output
+    );
+    assert!(
+        output.contains("hello"),
+        "call 2 output must contain 'hello': {}",
+        output
+    );
+}
+
+/// US2: %Persistent OID stored in %ctx is restored across calls.
+#[test]
+#[ignore]
+fn e2e_execute_session_persistent_oid() {
+    require_iris!();
+
+    // Call 1: open a known-persistent object, store in %ctx
+    let call1 = call_tool(
+        "iris_execute",
+        serde_json::json!({
+            "code": "Set %ctx.hdr = $classmethod(\"Ens.MessageHeader\", \"%OpenId\", \"1\")\nIf $isobject(%ctx.hdr) { Write %ctx.hdr.SourceConfigName, ! } Else { Write \"NOT FOUND\", ! }",
+            "use_session": true,
+            "namespace": "USER"
+        }),
+    );
+    if call1["error_code"].as_str() == Some("IRIS_UNREACHABLE")
+        || call1["error_code"].as_str() == Some("ENV_GATE_BLOCKED")
+    {
+        return;
+    }
+    // If there's no message header ID 1, skip gracefully
+    if call1["output"].as_str().unwrap_or("").contains("NOT FOUND") {
+        eprintln!("Skipping: no Ens.MessageHeader ID 1 in this instance");
+        return;
+    }
+    assert_eq!(
+        call1["success"], true,
+        "session persistent call 1 failed: {}",
+        call1
+    );
+    let token = call1["session_state"]
+        .as_str()
+        .expect("session_state missing from call 1");
+
+    // Call 2: read a different property — object must be restored from OID stub
+    let call2 = call_tool(
+        "iris_execute",
+        serde_json::json!({
+            "code": "Write $classname(%ctx.hdr), !, %ctx.hdr.MessageBodyClassName, !",
+            "use_session": true,
+            "session_state": token,
+            "namespace": "USER"
+        }),
+    );
+    assert_eq!(
+        call2["success"], true,
+        "session persistent call 2 failed: {}",
+        call2
+    );
+    let output = call2["output"].as_str().unwrap_or("");
+    assert!(
+        output.contains("Ens.MessageHeader"),
+        "call 2 must show restored class: {}",
+        output
+    );
+}
+
+/// US2 error path: session_state with OID for missing class returns SESSION_RESTORE_FAILED.
+#[test]
+#[ignore]
+fn e2e_execute_session_missing_class() {
+    require_iris!();
+
+    // Manually build a token with a non-existent class OID
+    // JSON: {"missingObj":{"_cls":"NoSuch.TestClass9999","_id":"1"}}
+    // Base64 of that JSON:
+    let fake_json = r#"{"missingObj":{"_cls":"NoSuch.TestClass9999","_id":"1"}}"#;
+    // Use IRIS to Base64-encode it so the token is valid IRIS-format Base64
+    let enc_result = call_tool(
+        "iris_execute",
+        serde_json::json!({
+            "code": format!("Write $system.Encryption.Base64Encode(\"{}\"), !", fake_json.replace('"', "\"\"")),
+            "namespace": "USER"
+        }),
+    );
+    if enc_result["error_code"].as_str() == Some("IRIS_UNREACHABLE")
+        || enc_result["error_code"].as_str() == Some("ENV_GATE_BLOCKED")
+    {
+        return;
+    }
+    let token = enc_result["output"].as_str().unwrap_or("").trim();
+    if token.is_empty() {
+        eprintln!("Skipping: could not generate test token");
+        return;
+    }
+
+    let result = call_tool(
+        "iris_execute",
+        serde_json::json!({
+            "code": "Write \"should not reach here\", !",
+            "use_session": true,
+            "session_state": token,
+            "namespace": "USER"
+        }),
+    );
+    assert_eq!(
+        result["error_code"].as_str(),
+        Some("SESSION_RESTORE_FAILED"),
+        "must return SESSION_RESTORE_FAILED for missing class: {}",
+        result
+    );
+}
+
+/// US3: %DynamicObject accumulation across two calls.
+#[test]
+#[ignore]
+fn e2e_execute_session_dynamic_accumulation() {
+    require_iris!();
+
+    // Call 1: add step1 to %ctx
+    let call1 = call_tool(
+        "iris_execute",
+        serde_json::json!({
+            "code": "Set %ctx.step1 = \"done\"",
+            "use_session": true,
+            "namespace": "USER"
+        }),
+    );
+    if call1["error_code"].as_str() == Some("IRIS_UNREACHABLE")
+        || call1["error_code"].as_str() == Some("ENV_GATE_BLOCKED")
+    {
+        return;
+    }
+    assert_eq!(call1["success"], true, "dynamic call 1 failed: {}", call1);
+    let token = call1["session_state"]
+        .as_str()
+        .expect("session_state missing from call 1");
+
+    // Call 2: add step2, write both
+    let call2 = call_tool(
+        "iris_execute",
+        serde_json::json!({
+            "code": "Set %ctx.step2 = \"also done\"\nWrite %ctx.step1, !\nWrite %ctx.step2, !",
+            "use_session": true,
+            "session_state": token,
+            "namespace": "USER"
+        }),
+    );
+    assert_eq!(call2["success"], true, "dynamic call 2 failed: {}", call2);
+    let output = call2["output"].as_str().unwrap_or("");
+    assert!(
+        output.contains("done"),
+        "call 2 must contain step1 value: {}",
+        output
+    );
+    assert!(
+        output.contains("also done"),
+        "call 2 must contain step2 value: {}",
+        output
+    );
+}
+
+/// T012: no-session path (use_session=false) is accepted and behaves normally.
+#[test]
+#[ignore]
+fn e2e_execute_session_disabled_is_transparent() {
+    require_iris!();
+    let result = call_tool(
+        "iris_execute",
+        serde_json::json!({
+            "code": "Write 1+1, !",
+            "use_session": false,
+            "namespace": "USER"
+        }),
+    );
+    if result["error_code"].as_str() == Some("IRIS_UNREACHABLE")
+        || result["error_code"].as_str() == Some("ENV_GATE_BLOCKED")
+    {
+        return;
+    }
+    assert_eq!(
+        result["success"], true,
+        "plain execute with use_session=false failed: {}",
+        result
+    );
+    assert_eq!(result["output"].as_str().map(str::trim), Some("2"));
+    // Must NOT have session_state in response when use_session=false
+    assert!(
+        result.get("session_state").is_none(),
+        "session_state must be absent when use_session=false: {}",
+        result
+    );
+}

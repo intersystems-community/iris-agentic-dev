@@ -48,6 +48,7 @@ pub mod coverage;
 pub mod dict;
 pub mod doc;
 pub mod doc_search;
+pub mod execute_session;
 pub mod gate_macro;
 pub mod global;
 pub mod info;
@@ -862,6 +863,15 @@ pub struct ExecuteParams {
     /// Set to false to send code as-is for debugging.
     #[serde(default = "default_translate_sql")]
     pub translate_sql: bool,
+    /// Enable session state. When true, `%ctx` (%DynamicObject) is injected before user code
+    /// and serialized to `session_state` in the response after user code runs. Pass the prior
+    /// call's `session_state` to restore `%ctx` across calls — no state is written to IRIS.
+    #[serde(default)]
+    pub use_session: bool,
+    /// Opaque session token from a prior `iris_execute` call with `use_session: true`.
+    /// Restores `%ctx` at the start of execution. Ignored when `use_session: false`.
+    #[serde(default)]
+    pub session_state: Option<String>,
 }
 fn default_translate_sql() -> bool {
     true
@@ -3509,7 +3519,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Execute arbitrary ObjectScript code on IRIS and return stdout. Uses pure-HTTP execution via CodeMode=objectgenerator (write temp class, compile, query result, delete). Falls back to docker exec if IRIS_CONTAINER env var is set and HTTP fails. &sql(...) embedded SQL macros are automatically translated to %SQL.Statement calls (set translate_sql: false to disable). When translation fires, response includes sql_translated: true and translated_code. Example: code='write $ZVERSION,!' returns the IRIS version string. Skill: objectscript-tdd for the compile-execute-fix loop."
+        description = "Execute arbitrary ObjectScript code on IRIS and return stdout. Uses pure-HTTP execution via CodeMode=objectgenerator (write temp class, compile, query result, delete). Falls back to docker exec if IRIS_CONTAINER env var is set and HTTP fails. &sql(...) embedded SQL macros are automatically translated to %SQL.Statement calls (set translate_sql: false to disable). When translation fires, response includes sql_translated: true and translated_code. Example: code='write $ZVERSION,!' returns the IRIS version string. Skill: objectscript-tdd for the compile-execute-fix loop. Session state: set use_session: true to enable the %ctx carrier (%DynamicObject). Store values in %ctx.key between calls — scalars, %DynamicObject, and %Persistent objects (stored as OID stubs and re-opened on restore). The response includes session_state (opaque Base64 token); pass it back as session_state on the next call to restore %ctx. Nothing is written to IRIS — the token is held by the client. Error codes: SESSION_INVALID (bad token), SESSION_RESTORE_FAILED (missing class or bad OID), SESSION_SERIALIZE_FAILED (serialization error)."
     )]
     async fn iris_execute(
         &self,
@@ -3584,9 +3594,24 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         ) {
             return ok_json(gate);
         }
-        tracing::info!(namespace = %p.namespace, translate_sql = p.translate_sql, "iris_execute");
+        tracing::info!(namespace = %p.namespace, translate_sql = p.translate_sql, use_session = p.use_session, "iris_execute");
         let client = exec_client.as_ref();
         let timeout = std::time::Duration::from_secs(p.timeout);
+
+        // Session preamble: validate token early so we can return SESSION_INVALID before
+        // compiling anything, which satisfies FR-010 ("without executing user code").
+        if p.use_session {
+            if let Some(ref tok) = p.session_state {
+                if let Err(e) = execute_session::SessionToken::new(tok) {
+                    self.record_call("iris_execute", false);
+                    return ok_json(serde_json::json!({
+                        "success": false,
+                        "error_code": "SESSION_INVALID",
+                        "error": format!("invalid session_state token: {e}"),
+                    }));
+                }
+            }
+        }
 
         // &sql macro translation — rewrite before sending to IRIS (035)
         let translation = if p.translate_sql {
@@ -3595,11 +3620,23 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         } else {
             None
         };
-        let code_to_run = translation
+        let base_code = translation
             .as_ref()
             .filter(|r| r.found)
             .map(|r| r.translated_code.as_str())
             .unwrap_or(&p.code);
+
+        // Session wrapping: inject preamble before and epilogue after user code.
+        let session_wrapped: String;
+        let code_to_run: &str = if p.use_session {
+            let preamble = execute_session::build_session_preamble(p.session_state.as_deref())
+                .expect("token already validated above");
+            let epilogue = execute_session::build_session_epilogue();
+            session_wrapped = format!("{preamble}{base_code}\n{epilogue}");
+            &session_wrapped
+        } else {
+            base_code
+        };
 
         // Try pure-HTTP execution first (write-compile-query via CodeMode=objectgenerator).
         let gen_result = tokio::time::timeout(
@@ -3621,7 +3658,29 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 }));
             }
             Ok(Ok(output)) => {
-                let trimmed = output.trim();
+                // Parse session sentinel lines before trimming/error-checking.
+                let (session_visible, session_token, session_error) = if p.use_session {
+                    execute_session::parse_session_output(&output)
+                } else {
+                    (output.clone(), None, None)
+                };
+
+                // Session fatal errors (invalid token, restore failure, serialize failure)
+                // take priority over normal output processing.
+                if let Some((err_code, detail)) = session_error {
+                    self.record_call("iris_execute", false);
+                    return ok_json(serde_json::json!({
+                        "success": false,
+                        "error_code": err_code,
+                        "error": detail,
+                        "namespace": p.namespace,
+                        "method": "http",
+                        "auth_user": auth_user,
+                        "service_account_env": svc_env,
+                    }));
+                }
+
+                let trimmed = session_visible.trim();
                 // Catch ObjectScript runtime errors written by the Catch block or $ZERROR check.
                 let is_runtime_error =
                     trimmed.starts_with("ERROR: ") || trimmed.starts_with("ERROR($ZERROR): ");
@@ -3636,6 +3695,9 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 });
                 if is_runtime_error {
                     resp["error_code"] = serde_json::Value::String("IRIS_RUNTIME_ERROR".into());
+                }
+                if let Some(tok) = session_token {
+                    resp["session_state"] = serde_json::Value::String(tok);
                 }
                 if let Some(ref tr) = translation {
                     if tr.found {
