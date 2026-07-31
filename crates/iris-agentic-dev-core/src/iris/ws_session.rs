@@ -12,7 +12,7 @@ use futures_util::{SinkExt, StreamExt};
 use rmcp::ErrorData as McpError;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
-use tokio_tungstenite::{connect_async_tls_with_config, tungstenite::Message};
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use crate::iris::connection::IrisConnection;
 
@@ -124,26 +124,24 @@ impl WsSessionPool {
             .body(())
             .map_err(|e| McpError::internal_error(format!("WS request build failed: {e}"), None))?;
 
-        let (ws_stream, _response) = connect_async_tls_with_config(request, None, false, None)
-            .await
-            .map_err(|e| {
-                let msg = e.to_string();
-                if msg.contains("404") || msg.contains("not found") {
-                    McpError::invalid_request(
-                        format!(
-                            "{}: {}",
-                            SESSION_WS_UNAVAILABLE,
-                            "IRIS Atelier API v7 required for WebSocket terminal (IRIS 2023.2+)"
-                        ),
-                        None,
-                    )
-                } else {
-                    McpError::internal_error(
-                        format!("{}: WebSocket connect failed: {e}", SESSION_WS_DISCONNECTED),
-                        None,
-                    )
-                }
-            })?;
+        let (ws_stream, _response) = connect_async(request).await.map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("404") || msg.contains("not found") {
+                McpError::invalid_request(
+                    format!(
+                        "{}: {}",
+                        SESSION_WS_UNAVAILABLE,
+                        "IRIS Atelier API v7 required for WebSocket terminal (IRIS 2023.2+)"
+                    ),
+                    None,
+                )
+            } else {
+                McpError::internal_error(
+                    format!("{}: WebSocket connect failed: {e}", SESSION_WS_DISCONNECTED),
+                    None,
+                )
+            }
+        })?;
 
         let (mut sink, mut stream) = ws_stream.split();
 
