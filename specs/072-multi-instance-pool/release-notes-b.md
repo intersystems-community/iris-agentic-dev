@@ -15,7 +15,7 @@ first call is readable in the second. No need to rebuild state on every execute.
 Sessions are keyed by `ws:{server}:{NAMESPACE}:{uuid}`. You can open multiple sessions
 in different namespaces or against different named servers at the same time.
 
-Requires IRIS 2026.2+ with Atelier V7 API. The toolset checks the API version at
+Requires IRIS 2023.2+ (Atelier V7 API). The toolset checks the API version at
 connection time — `iris_ws_open` returns `WS_TERMINAL_NOT_SUPPORTED` on older instances
 rather than connecting and failing mid-handshake.
 
