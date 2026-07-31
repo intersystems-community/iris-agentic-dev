@@ -44,6 +44,8 @@ impl std::ops::Deref for AnyParams {
     }
 }
 pub mod admin;
+pub mod admin_tools;
+pub mod comparison_tools;
 pub mod coverage;
 pub mod dict;
 pub mod doc;
@@ -57,8 +59,10 @@ pub mod log_store;
 pub mod observability;
 pub mod scm;
 pub mod search;
+pub mod server_tools;
 pub mod skills_tools;
 pub mod symbols_local;
+pub mod ws_tools;
 pub mod xdata_flow;
 
 pub use doc::{DocMode, IrisDocParams};
@@ -674,6 +678,9 @@ pub struct CompileParams {
     /// Set to true to confirm execution on a subject-role instance (role-gate bypass).
     #[serde(default)]
     pub confirm: bool,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TestParams {
@@ -688,6 +695,9 @@ pub struct TestParams {
     pub coverage_classes: Option<Vec<String>>,
     /// Coverage target percentage threshold
     pub coverage_target_pct: Option<f64>,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 fn default_test_timeout() -> u64 {
@@ -700,12 +710,18 @@ pub struct SymbolsParams {
     pub limit: usize,
     #[serde(default = "default_namespace")]
     pub namespace: String,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct IntrospectParams {
     pub class_name: String,
     #[serde(default = "default_namespace")]
     pub namespace: String,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct DebugMapParams {
@@ -725,12 +741,18 @@ pub struct GenerateClassParams {
     pub overwrite: bool,
     #[serde(default = "default_namespace")]
     pub namespace: String,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GenerateTestParams {
     pub class_name: String,
     #[serde(default = "default_namespace")]
     pub namespace: String,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SkillNameParams {
@@ -788,6 +810,9 @@ pub struct SymbolsLocalParams {
     pub limit: usize,
     #[serde(default)]
     pub kinds: Option<Vec<String>>,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 fn default_symbols_local_limit() -> usize {
     50
@@ -823,6 +848,9 @@ pub struct GetLogParams {
     /// Start index into the stored result. Default 0.
     #[serde(default)]
     pub offset: usize,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -848,6 +876,9 @@ pub struct IrisExecuteMethodParams {
     pub args: Vec<String>,
     #[serde(default = "default_namespace")]
     pub namespace: String,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -872,6 +903,9 @@ pub struct ExecuteParams {
     /// Restores `%ctx` at the start of execution. Ignored when `use_session: false`.
     #[serde(default)]
     pub session_state: Option<String>,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 fn default_translate_sql() -> bool {
     true
@@ -901,6 +935,9 @@ pub struct QueryParams {
     /// Max rows an UPDATE/DELETE may affect in mode="write" before ROWS_LIMIT_EXCEEDED.
     /// Default 1000, clamped to [1, 10000]. 0 is treated as the default.
     pub max_rows_affected: Option<u32>,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ListContainersParams {
@@ -1123,6 +1160,28 @@ fn ok_json(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 fn err_json(code: &str, msg: &str) -> Result<CallToolResult, McpError> {
     ok_json(serde_json::json!({"success": false, "error_code": code, "error": msg}))
 }
+
+/// Parse `"http://host:port"` into `(host, port)`.
+///
+/// Returns `("unknown", 0)` on failure. Used by `iris_servers` for clean output.
+fn parse_host_port(base_url: &str) -> (String, u16) {
+    // Strip scheme prefix (e.g. "http://").
+    let after_scheme = base_url
+        .find("://")
+        .map(|i| &base_url[i + 3..])
+        .unwrap_or(base_url);
+    // Strip any path suffix.
+    let host_port = after_scheme.split('/').next().unwrap_or(after_scheme);
+    // Split on the last colon to handle IPv6 or plain host:port.
+    if let Some(colon) = host_port.rfind(':') {
+        let host = host_port[..colon].to_string();
+        let port = host_port[colon + 1..].parse::<u16>().unwrap_or(0);
+        (host, port)
+    } else {
+        (host_port.to_string(), 0)
+    }
+}
+
 pub fn write_open_hint(namespace: &str, document: &str) {
     if let Some(home) = dirs::home_dir() {
         let dir = home.join(".iris-agentic-dev");
@@ -1998,6 +2057,12 @@ pub struct IrisTools {
     pub log_store: Arc<std::sync::Mutex<log_store::LogStore>>,
     /// Session-scoped TTL cache for %Dictionary introspection results (037).
     pub metadata_cache: Arc<dict::MetadataCache>,
+    /// Multi-instance connection pool (072-multi-instance-pool).
+    pub pool: Arc<crate::iris::connection_pool::ConnectionPool>,
+    /// WebSocket terminal session pool (072-b).
+    pub ws_pool: Arc<crate::iris::ws_session::WsSessionPool>,
+    /// Confirmation tokens for global_preview/global_kill flow (072-c).
+    pub confirm_tokens: Arc<tokio::sync::Mutex<HashMap<String, admin_tools::ConfirmEntry>>>,
     /// Active toolset — controls which tools are registered.
     pub toolset: Toolset,
     /// One MCP server process lifetime (059-tool-telemetry-benchmark). Stamped onto
@@ -2037,6 +2102,10 @@ impl IrisTools {
                 log_max, log_ttl,
             ))),
             metadata_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            // T018: no with_connection constructor found — pool field added to all existing constructors
+            pool: Arc::new(crate::iris::connection_pool::load_pool(None)),
+            ws_pool: Arc::new(crate::iris::ws_session::WsSessionPool::new()),
+            confirm_tokens: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             toolset: Toolset::Baseline,
             session: crate::telemetry::Session::new(),
             tool_router: Self::tool_router(),
@@ -2114,6 +2183,41 @@ impl IrisTools {
             // 059-tool-telemetry-benchmark
             "telemetry_query",
             "telemetry_export_trace",
+            // 072-multi-instance-pool: server management
+            "iris_servers",
+            "iris_add_server",
+            "iris_remove_server",
+            "iris_test_server",
+            "iris_import_servers",
+            // 072-b: WebSocket terminal sessions
+            "iris_ws_open",
+            "iris_ws_exec",
+            "iris_ws_close",
+            // 072-c: comparison tools
+            "compare_document",
+            "compare_namespace",
+            // 072-c: global confirm/kill
+            "global_preview",
+            "global_kill",
+            // 072-c: namespace/database admin
+            "iris_namespace_list",
+            "iris_database_list",
+            "iris_namespace_create",
+            "iris_database_stats",
+            // 072-c: observability
+            "journal_search",
+            "query_audit_log",
+            "stream_inspect",
+            // 072-c: security
+            "my_access",
+            "capability_matrix",
+            // 072-c: HL7
+            "hl7_schema_list",
+            "hl7_schema_inspect",
+            // 072-c: Mermaid + storage
+            "mermaid_class",
+            "mermaid_production",
+            "resolve_storage",
         ];
 
         // Tools removed in nostub — 4 stubs returning NOT_IMPLEMENTED
@@ -2213,6 +2317,8 @@ impl IrisTools {
         config_watcher: Option<ConfigWatcher>,
         config_path: Option<std::path::PathBuf>,
     ) -> anyhow::Result<Self> {
+        // Clone config_path for load_pool before it may be moved into conn_state (072).
+        let pool_config_path = config_path.clone();
         let client = Arc::new(IrisConnection::http_client()?);
         let exec_client = Arc::new(IrisConnection::http_client()?);
         let mut router = Self::tool_router();
@@ -2345,6 +2451,11 @@ impl IrisTools {
                 log_max, log_ttl,
             ))),
             metadata_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            pool: Arc::new(crate::iris::connection_pool::load_pool(
+                pool_config_path.as_deref(),
+            )),
+            ws_pool: Arc::new(crate::iris::ws_session::WsSessionPool::new()),
+            confirm_tokens: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             toolset,
             session: crate::telemetry::Session::new(),
             tool_router: router,
@@ -2391,6 +2502,20 @@ impl IrisTools {
         match iris.with_service_account() {
             Some(svc) => Ok((Arc::new(svc), Arc::clone(&self.exec_client))),
             None => Ok((iris, Arc::clone(&self.client))),
+        }
+    }
+
+    /// Resolve which IRIS connection to use for a tool call (072-multi-instance-pool).
+    ///
+    /// - `None`  → hot-reload the default connection (preserves existing behaviour)
+    /// - `Some(n)` → look up named server `n` in the pool
+    pub async fn resolve_server(
+        &self,
+        name: Option<&str>,
+    ) -> Result<Arc<IrisConnection>, McpError> {
+        match name {
+            None => self.get_iris_reloaded().await,
+            Some(n) => self.pool.get(Some(n)),
         }
     }
 
@@ -2666,13 +2791,13 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Compile an ObjectScript class, routine, or wildcard package on IRIS via Atelier REST. Supports 'MyApp.*.cls' for package-level compilation. Returns structured errors with line numbers, columns, and severity. No Python required. Skill: objectscript-tdd for the compile-test-fix loop."
+        description = "Compile an ObjectScript class, routine, or wildcard package on IRIS via Atelier REST. Supports 'MyApp.*.cls' for package-level compilation. Returns structured errors with line numbers, columns, and severity. No Python required. Skill: objectscript-tdd for the compile-test-fix loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_compile(
         &self,
         Parameters(p): Parameters<CompileParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         let (sm_server, policy) = self.active_server_manager_policy();
         let params_json = serde_json::json!({ "target": p.target, "namespace": p.namespace });
         if let Err(gate) = crate::policy::gate::dispatch_gate(
@@ -3090,7 +3215,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Run %UnitTest.Manager tests on IRIS and return structured pass/fail results. Uses pure-HTTP execution via Atelier REST — works with or without IRIS_CONTAINER. Pass a class name pattern like 'MyApp.Tests' or 'ISC.sql.TestFoo' to run already-compiled test classes (uses /noload automatically). Pass a directory path like 'MyApp/Tests' to load from disk. Returns suite-level summary inline plus log_id for per-test-case detail via iris_get_log. Skill: objectscript-unit-test for test scaffolding; objectscript-tdd for the full loop."
+        description = "Run %UnitTest.Manager tests on IRIS and return structured pass/fail results. Uses pure-HTTP execution via Atelier REST — works with or without IRIS_CONTAINER. Pass a class name pattern like 'MyApp.Tests' or 'ISC.sql.TestFoo' to run already-compiled test classes (uses /noload automatically). Pass a directory path like 'MyApp/Tests' to load from disk. Returns suite-level summary inline plus log_id for per-test-case detail via iris_get_log. Skill: objectscript-unit-test for test scaffolding; objectscript-tdd for the full loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_test(
         &self,
@@ -3103,7 +3228,7 @@ impl IrisTools {
         // classes which never existed in a fresh iris session, causing false "no test classes"
         // errors; HTTP path with /verbose=1 is reliable and works with or without docker).
         let path_label = "http";
-        let iris = self.get_iris()?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         let client = self.http_client();
 
         // US3: namespace existence check before running tests.
@@ -3184,6 +3309,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 .unwrap_or(&p.pattern);
             let start_params = coverage::IrisCoverageParams {
                 mode: "start".to_string(),
+                server: None,
                 classes: p.coverage_classes.clone(),
                 package: if p.coverage_classes.is_none() {
                     Some(pkg.to_string())
@@ -3470,6 +3596,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 .unwrap_or(&p.pattern);
             let report_params = coverage::IrisCoverageParams {
                 mode: "report".to_string(),
+                server: None,
                 classes: p.coverage_classes.clone(),
                 package: if p.coverage_classes.is_none() {
                     Some(pkg.to_string())
@@ -3485,6 +3612,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             // Stop the monitor now that data is collected.
             let stop_params = coverage::IrisCoverageParams {
                 mode: "stop".to_string(),
+                server: None,
                 classes: None,
                 package: None,
                 test_path: None,
@@ -3519,7 +3647,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Execute arbitrary ObjectScript code on IRIS and return stdout. Uses pure-HTTP execution via CodeMode=objectgenerator (write temp class, compile, query result, delete). Falls back to docker exec if IRIS_CONTAINER env var is set and HTTP fails. &sql(...) embedded SQL macros are automatically translated to %SQL.Statement calls (set translate_sql: false to disable). When translation fires, response includes sql_translated: true and translated_code. Example: code='write $ZVERSION,!' returns the IRIS version string. Skill: objectscript-tdd for the compile-execute-fix loop. Session state: set use_session: true to enable the %ctx carrier (%DynamicObject). Store values in %ctx.key between calls — scalars, %DynamicObject, and %Persistent objects (stored as OID stubs and re-opened on restore). The response includes session_state (opaque Base64 token); pass it back as session_state on the next call to restore %ctx. Nothing is written to IRIS — the token is held by the client. Error codes: SESSION_INVALID (bad token), SESSION_RESTORE_FAILED (missing class or bad OID), SESSION_SERIALIZE_FAILED (serialization error)."
+        description = "Execute arbitrary ObjectScript code on IRIS and return stdout. Uses pure-HTTP execution via CodeMode=objectgenerator (write temp class, compile, query result, delete). Falls back to docker exec if IRIS_CONTAINER env var is set and HTTP fails. &sql(...) embedded SQL macros are automatically translated to %SQL.Statement calls (set translate_sql: false to disable). When translation fires, response includes sql_translated: true and translated_code. Example: code='write $ZVERSION,!' returns the IRIS version string. Skill: objectscript-tdd for the compile-execute-fix loop. Session state: set use_session: true to enable the %ctx carrier (%DynamicObject). Store values in %ctx.key between calls — scalars, %DynamicObject, and %Persistent objects (stored as OID stubs and re-opened on restore). The response includes session_state (opaque Base64 token); pass it back as session_state on the next call to restore %ctx. Nothing is written to IRIS — the token is held by the client. Error codes: SESSION_INVALID (bad token), SESSION_RESTORE_FAILED (missing class or bad OID), SESSION_SERIALIZE_FAILED (serialization error). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_execute(
         &self,
@@ -3529,7 +3657,11 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         // runs under a least-privilege IRIS identity that cannot edit code (see get_iris_for_exec).
         // The paired client carries the matching (isolated) cookie jar — see
         // get_iris_for_exec_with_client for why sharing the primary client would defeat routing.
-        let (iris, exec_client) = self.get_iris_for_exec_with_client().await?;
+        let (iris, exec_client) = if let Some(ref s) = p.server {
+            (self.pool.get(Some(s.as_str()))?, Arc::clone(&self.client))
+        } else {
+            self.get_iris_for_exec_with_client().await?
+        };
         // Diagnostic: the identity this connection will authenticate as, and whether a service
         // account is configured in the env at this instant. Surfaced in the response so account
         // routing is directly observable per call instead of inferred.
@@ -3794,13 +3926,13 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Read/write/delete IRIS documents. mode: get (fetch source), put (write, auto SCM checkout), delete, head (existence), fragment (read lines start..end), compiled (read INT), list (glob `pattern`), insert (splice `content` before 1-based `line`; omit `line` to append), delete_lines (remove start..end). `name` is required for all single-document modes; `line`/`start`/`end` are integers. For insert with an explicit `line` and for delete_lines, pass `expected` (current text at the target lines) or the edit is refused with STALE_CONTENT. Edits return the re-numbered post-write `content` to chain from, plus a `diff` field (git-style unified diff of the change) — render it to the user inside a ```diff fenced code block. Batch via `names`; SCM dialogs resume via elicitation_id/elicitation_answer. Skill: objectscript-navigation to locate documents before editing."
+        description = "Read/write/delete IRIS documents. mode: get (fetch source), put (write, auto SCM checkout), delete, head (existence), fragment (read lines start..end), compiled (read INT), list (glob `pattern`), insert (splice `content` before 1-based `line`; omit `line` to append), delete_lines (remove start..end). `name` is required for all single-document modes; `line`/`start`/`end` are integers. For insert with an explicit `line` and for delete_lines, pass `expected` (current text at the target lines) or the edit is refused with STALE_CONTENT. Edits return the re-numbered post-write `content` to chain from, plus a `diff` field (git-style unified diff of the change) — render it to the user inside a ```diff fenced code block. Batch via `names`; SCM dialogs resume via elicitation_id/elicitation_answer. Skill: objectscript-navigation to locate documents before editing. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_doc(
         &self,
         Parameters(p): Parameters<IrisDocParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         tracing::info!(namespace = %p.namespace, "iris_doc");
         let client = self.http_client();
         let result = doc::handle_iris_doc(
@@ -3816,7 +3948,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Execute SQL against IRIS via Atelier REST. mode=\"read\" (default): SELECT only, destructive SQL blocked unless force=true. mode=\"explain\": returns the IRIS query plan for a SELECT (plan_text, query_hash), no rows. mode=\"count\": returns a row count for `table` or `query` without transferring rows. mode=\"write\": executes INSERT/UPDATE/DELETE/CALL/TRUNCATE (Execute-gated, blocked on mcpTemplate=live/test); UPDATE/DELETE are pre-checked against max_rows_affected (default 1000, max 10000) before executing. Skill: objectscript-sql-patterns for IRIS SQL quirks."
+        description = "Execute SQL against IRIS via Atelier REST. mode=\"read\" (default): SELECT only, destructive SQL blocked unless force=true. mode=\"explain\": returns the IRIS query plan for a SELECT (plan_text, query_hash), no rows. mode=\"count\": returns a row count for `table` or `query` without transferring rows. mode=\"write\": executes INSERT/UPDATE/DELETE/CALL/TRUNCATE (Execute-gated, blocked on mcpTemplate=live/test); UPDATE/DELETE are pre-checked against max_rows_affected (default 1000, max 10000) before executing. Skill: objectscript-sql-patterns for IRIS SQL quirks. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_query(
         &self,
@@ -3906,7 +4038,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
         match mode {
             "explain" => {
-                let iris = self.get_iris_reloaded().await?;
+                let iris = self.resolve_server(p.server.as_deref()).await?;
                 let client = self.http_client();
                 let result = iris_query_explain(&iris, client, &p).await;
                 self.record_call(
@@ -3916,7 +4048,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 return result;
             }
             "count" => {
-                let iris = self.get_iris_reloaded().await?;
+                let iris = self.resolve_server(p.server.as_deref()).await?;
                 let client = self.http_client();
                 let result = iris_query_count(&iris, client, &p).await;
                 self.record_call(
@@ -3929,7 +4061,11 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 // DML runs under the restricted service account when configured (least-privilege).
                 // Use the paired client so the service-account identity isn't overridden by the
                 // primary user's CSP session cookie (see get_iris_for_exec_with_client).
-                let (iris, exec_client) = self.get_iris_for_exec_with_client().await?;
+                let (iris, exec_client) = if let Some(ref s) = p.server {
+                    (self.pool.get(Some(s.as_str()))?, Arc::clone(&self.client))
+                } else {
+                    self.get_iris_for_exec_with_client().await?
+                };
                 let result = iris_query_write(&iris, exec_client.as_ref(), &p).await;
                 self.record_call(
                     "iris_query",
@@ -3969,7 +4105,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             }
         }
 
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         let client = self.http_client();
         let query_url = iris.versioned_ns_url(&p.namespace, "/action/query");
         let resp = client
@@ -4490,13 +4626,13 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Search for ObjectScript classes matching a query in the IRIS namespace. Query supports: plain substring ('Patient'), package prefix ('HT.*' or 'HT.'), mid-glob ('HT.*.Service'), or bare '*' for all. Skill: objectscript-navigation."
+        description = "Search for ObjectScript classes matching a query in the IRIS namespace. Query supports: plain substring ('Patient'), package prefix ('HT.*' or 'HT.'), mid-glob ('HT.*.Service'), or bare '*' for all. Skill: objectscript-navigation. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_symbols(
         &self,
         Parameters(p): Parameters<SymbolsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         let client = self.http_client();
         let (sql, params) = translate_symbols_query(p.limit, &p.query);
         match iris.query(&sql, params, &p.namespace, client).await {
@@ -4567,13 +4703,13 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Introspect an ObjectScript class — returns methods, properties, and type information. Methods include FormalSpec as a structured array of {name, type, byref, output, default} objects and a ReturnType field. For BPL and DTL classes, an xdata_flow field describes the process steps (BPL: kind=bpl, steps array with Call/Code/If/Other entries, has_dynamic_dispatch flag; DTL: kind=dtl, source_class, target_class, subtransforms, assign_count). Skill: objectscript-navigation."
+        description = "Introspect an ObjectScript class — returns methods, properties, and type information. Methods include FormalSpec as a structured array of {name, type, byref, output, default} objects and a ReturnType field. For BPL and DTL classes, an xdata_flow field describes the process steps (BPL: kind=bpl, steps array with Call/Code/If/Other entries, has_dynamic_dispatch flag; DTL: kind=dtl, source_class, target_class, subtransforms, assign_count). Skill: objectscript-navigation. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn docs_introspect(
         &self,
         Parameters(p): Parameters<IntrospectParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         let client = self.http_client();
         // Bug 15: use parameterized queries instead of manual string escaping.
         let methods = iris.query(
@@ -4749,7 +4885,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Generate an ObjectScript class from a natural language description. Requires IRIS_GENERATE_CLASS_MODEL + OPENAI_API_KEY env vars."
+        description = "Generate an ObjectScript class from a natural language description. Requires IRIS_GENERATE_CLASS_MODEL + OPENAI_API_KEY env vars. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_generate_class(
         &self,
@@ -4834,7 +4970,7 @@ Original: {}",
     }
 
     #[tool(
-        description = "Generate a %UnitTest.TestCase for an existing ObjectScript class. Introspects the class first. Requires IRIS_GENERATE_CLASS_MODEL + OPENAI_API_KEY."
+        description = "Generate a %UnitTest.TestCase for an existing ObjectScript class. Introspects the class first. Requires IRIS_GENERATE_CLASS_MODEL + OPENAI_API_KEY. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_generate_test(
         &self,
@@ -5368,13 +5504,13 @@ Methods:
     }
 
     #[tool(
-        description = "Full-text search across IRIS documents via Atelier REST v2. Auto-upgrades to async polling for large namespaces. Supports regex, case sensitivity, category filter (CLS/MAC/INT/INC/ALL), and wildcard document scopes. Skill: objectscript-navigation."
+        description = "Full-text search across IRIS documents via Atelier REST v2. Auto-upgrades to async polling for large namespaces. Supports regex, case sensitivity, category filter (CLS/MAC/INT/INC/ALL), and wildcard document scopes. Skill: objectscript-navigation. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_search(
         &self,
         Parameters(p): Parameters<search::SearchParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         let result =
             search::handle_iris_search(&iris, self.http_client(), p, Arc::clone(&self.log_store))
                 .await;
@@ -5383,13 +5519,13 @@ Methods:
     }
 
     #[tool(
-        description = "Discover IRIS namespace contents. what=documents lists all docs, what=modified lists recently changed, what=namespace returns config, what=metadata returns IRIS version, what=jobs lists active jobs, what=csp_apps lists CSP apps, what=csp_debug returns debug ID, what=sa_schema returns SQL Analytics schema."
+        description = "Discover IRIS namespace contents. what=documents lists all docs, what=modified lists recently changed, what=namespace returns config, what=metadata returns IRIS version, what=jobs lists active jobs, what=csp_apps lists CSP apps, what=csp_debug returns debug ID, what=sa_schema returns SQL Analytics schema. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_info(
         &self,
         Parameters(p): Parameters<info::InfoParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         let result =
             info::handle_iris_info(&iris, self.http_client(), p, Arc::clone(&self.log_store)).await;
         self.record_call("iris_info", result.is_ok());
@@ -5397,26 +5533,26 @@ Methods:
     }
 
     #[tool(
-        description = "Inspect a SQL table: returns whether it is a class-projected table or DDL-created, the backing data/index globals, and (optionally) an approximate row count. Works for both class-projected tables (with real storage globals from %Dictionary.CompiledStorage) and DDL tables (globals inferred by IRIS naming convention). Use include_row_count=true to add a COUNT(*) estimate."
+        description = "Inspect a SQL table: returns whether it is a class-projected table or DDL-created, the backing data/index globals, and (optionally) an approximate row count. Works for both class-projected tables (with real storage globals from %Dictionary.CompiledStorage) and DDL tables (globals inferred by IRIS naming convention). Use include_row_count=true to add a COUNT(*) estimate. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_table_info(
         &self,
         Parameters(p): Parameters<info::TableInfoParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         let result = info::handle_iris_table_info(&iris, self.http_client(), p).await;
         self.record_call("iris_table_info", result.is_ok());
         result
     }
 
     #[tool(
-        description = "Resolve ObjectScript dynamic dispatch: find all compiled classes that implement a given method. Use when you see $classmethod(var, method) or ##class({variable}).Method() and need to know the possible targets. Returns candidates with confidence scores (fewer matches = higher confidence). Confidence: 1 match=0.90, 2-5=0.75, 6-20=0.55, >20=0.30. Results cached 60s per session. Skill: objectscript-navigation."
+        description = "Resolve ObjectScript dynamic dispatch: find all compiled classes that implement a given method. Use when you see $classmethod(var, method) or ##class({variable}).Method() and need to know the possible targets. Returns candidates with confidence scores (fewer matches = higher confidence). Confidence: 1 match=0.90, 2-5=0.75, 6-20=0.55, >20=0.30. Results cached 60s per session. Skill: objectscript-navigation. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn resolve_dynamic_dispatch(
         &self,
         Parameters(p): Parameters<dict::ResolveDynamicDispatchParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         let result = dict::handle_resolve_dynamic_dispatch(
             &iris,
             self.http_client(),
@@ -5429,13 +5565,13 @@ Methods:
     }
 
     #[tool(
-        description = "Extract routing from a compiled Ensemble class. For MessageMap routers: returns message_type → method dispatch table (confidence 0.9). For BPL classes (Ens.BusinessProcessBPL): returns kind=bpl with routes derived from Call steps (confidence 0.8); includes note when dynamic dispatch ($classmethod) is detected. For DTL classes (Ens.DataTransformDTL): returns kind=dtl with source_class, target_class, and empty routes. Returns NOT_FOUND for plain classes with no routing. Results cached 60s per session. Skill: ensemble-production."
+        description = "Extract routing from a compiled Ensemble class. For MessageMap routers: returns message_type → method dispatch table (confidence 0.9). For BPL classes (Ens.BusinessProcessBPL): returns kind=bpl with routes derived from Call steps (confidence 0.8); includes note when dynamic dispatch ($classmethod) is detected. For DTL classes (Ens.DataTransformDTL): returns kind=dtl with source_class, target_class, and empty routes. Returns NOT_FOUND for plain classes with no routing. Results cached 60s per session. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn extract_message_map_routing(
         &self,
         Parameters(p): Parameters<dict::ExtractMessageMapParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         let result = dict::handle_extract_message_map_routing(
             &iris,
             self.http_client(),
@@ -5448,13 +5584,13 @@ Methods:
     }
 
     #[tool(
-        description = "Find all concrete subclass implementations of a method in the full inheritance hierarchy. Given base class names and a method name, expands to all descendants at any depth and returns classes where the method is defined (Origin = parent, not inherited). Use to resolve polymorphic dispatch: adapter.Execute() → find all EnsLib.*.Adapter subclasses that implement Execute. Results cached 60s per session. Skill: objectscript-navigation."
+        description = "Find all concrete subclass implementations of a method in the full inheritance hierarchy. Given base class names and a method name, expands to all descendants at any depth and returns classes where the method is defined (Origin = parent, not inherited). Use to resolve polymorphic dispatch: adapter.Execute() → find all EnsLib.*.Adapter subclasses that implement Execute. Results cached 60s per session. Skill: objectscript-navigation. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn find_subclass_implementations(
         &self,
         Parameters(p): Parameters<dict::FindSubclassImplementationsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         let result = dict::handle_find_subclass_implementations(
             &iris,
             self.http_client(),
@@ -5467,39 +5603,39 @@ Methods:
     }
 
     #[tool(
-        description = "Inspect IRIS macros. action=list returns all macros, action=signature returns parameters, action=location finds definition file/line, action=definition returns text, action=expand expands with arguments."
+        description = "Inspect IRIS macros. action=list returns all macros, action=signature returns parameters, action=location finds definition file/line, action=definition returns text, action=expand expands with arguments. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_macro(
         &self,
         Parameters(p): Parameters<info::MacroParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         let result = info::handle_iris_macro(&iris, self.http_client(), p).await;
         self.record_call("iris_macro", result.is_ok());
         result
     }
 
     #[tool(
-        description = "IRIS debug tools. action=map_int maps a runtime error offset to source line, action=error_logs fetches recent error log entries, action=capture captures current error state, action=source_map builds .INT to .CLS mapping. Skill: objectscript-debugging."
+        description = "IRIS debug tools. action=map_int maps a runtime error offset to source line, action=error_logs fetches recent error log entries, action=capture captures current error state, action=source_map builds .INT to .CLS mapping. Skill: objectscript-debugging. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_debug(
         &self,
         Parameters(p): Parameters<info::DebugParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         let result = info::handle_iris_debug(&iris, self.http_client(), p).await;
         self.record_call("iris_debug", result.is_ok());
         result
     }
 
     #[tool(
-        description = "Prepare context for generating an ObjectScript class or %UnitTest. Returns a ready-to-use prompt plus IRIS namespace context (existing class names, method signatures). No API key needed — the calling AI agent does the generation using the returned prompt, then saves with iris_doc(mode=put) and compiles with iris_compile. gen_type=class for new classes, gen_type=test for %UnitTest scaffolding."
+        description = "Prepare context for generating an ObjectScript class or %UnitTest. Returns a ready-to-use prompt plus IRIS namespace context (existing class names, method signatures). No API key needed — the calling AI agent does the generation using the returned prompt, then saves with iris_doc(mode=put) and compiles with iris_compile. gen_type=class for new classes, gen_type=test for %UnitTest scaffolding. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_generate(
         &self,
         Parameters(p): Parameters<info::GenerateParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         let result = info::handle_iris_generate(&iris, self.http_client(), p).await;
         self.record_call("iris_generate", result.is_ok());
         result
@@ -5561,13 +5697,13 @@ Methods:
     }
 
     #[tool(
-        description = "IRIS source control operations. action=status checks lock state and owner, action=menu lists available SCM actions, action=checkout checks out the document, action=execute runs a specific SCM action by ID. Handles elicitation for interactive SCM dialogs. Pass elicitation_id+answer to resume a pending SCM interaction."
+        description = "IRIS source control operations. action=status checks lock state and owner, action=menu lists available SCM actions, action=checkout checks out the document, action=execute runs a specific SCM action by ID. Handles elicitation for interactive SCM dialogs. Pass elicitation_id+answer to resume a pending SCM interaction. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_source_control(
         &self,
         Parameters(p): Parameters<ScmParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         // Policy gate (044 + 051): check before role gate.
         let (sm_server_sc, policy_sc) = self.active_server_manager_policy();
         {
@@ -5652,7 +5788,7 @@ Methods:
     // ── 052: iris_global ───────────────────────────────────────────────────────
 
     #[tool(
-        description = "Read, write, kill, or list IRIS global nodes. action: get=read a node or subtree, set=write a node, kill=delete a node/subtree, list=enumerate subscripts. PHI and system-blocklist gates enforced before any IRIS call. Pass acknowledgePhi=true to bypass per-global PHI gate. Skill: iris-agentic-dev."
+        description = "Read, write, kill, or list IRIS global nodes. action: get=read a node or subtree, set=write a node, kill=delete a node/subtree, list=enumerate subscripts. PHI and system-blocklist gates enforced before any IRIS call. Pass acknowledgePhi=true to bypass per-global PHI gate. Skill: iris-agentic-dev. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_global(
         &self,
@@ -5664,9 +5800,16 @@ Methods:
         // Pair the identity with its matching cookie jar: write actions run under the service
         // account via exec_client (isolated CSP session), reads stay on the primary connection.
         let (iris, exec_client) = if is_write {
-            self.get_iris_for_exec_with_client().await?
+            if let Some(ref s) = p.server {
+                (self.pool.get(Some(s.as_str()))?, Arc::clone(&self.client))
+            } else {
+                self.get_iris_for_exec_with_client().await?
+            }
         } else {
-            (self.get_iris_reloaded().await?, Arc::clone(&self.client))
+            (
+                self.resolve_server(p.server.as_deref()).await?,
+                Arc::clone(&self.client),
+            )
         };
         let (sm_server, policy) = self.active_server_manager_policy();
         let params_json = serde_json::json!({
@@ -5713,13 +5856,13 @@ Methods:
     // ── 064: iris_coverage ────────────────────────────────────────────────────
 
     #[tool(
-        description = "Measure ObjectScript line coverage using %Monitor.System.LineByLine. mode=run: start monitoring + run compiled test suite + stop + return per-class and total coverage in one call (use this for most tasks). mode=check: verify the monitor is available by doing a dry Start() — if BBSIZ_NOT_CONFIGURED is returned, increase gmheap to 256+ in Management Portal > System Administration > Configuration > Additional Settings > Advanced Memory, then restart IRIS. mode=start/stop/report: manual multi-step control. Provide either classes=['MyApp.MyClass',...] or package='MyApp' (auto-discovers concrete classes). test_path must be a compiled class pattern (e.g. 'MyApp.Tests') — /noload always used. Returns {total_pct, hits, total, classes:[{class,routine,hit,total,pct}], meets_target, target_pct}. Error codes: BBSIZ_NOT_CONFIGURED (gmheap too small), MONITOR_IN_USE, MISSING_PARAM. Skill: objectscript-coverage (merged toolset only)."
+        description = "Measure ObjectScript line coverage using %Monitor.System.LineByLine. mode=run: start monitoring + run compiled test suite + stop + return per-class and total coverage in one call (use this for most tasks). mode=check: verify the monitor is available by doing a dry Start() — if BBSIZ_NOT_CONFIGURED is returned, increase gmheap to 256+ in Management Portal > System Administration > Configuration > Additional Settings > Advanced Memory, then restart IRIS. mode=start/stop/report: manual multi-step control. Provide either classes=['MyApp.MyClass',...] or package='MyApp' (auto-discovers concrete classes). test_path must be a compiled class pattern (e.g. 'MyApp.Tests') — /noload always used. Returns {total_pct, hits, total, classes:[{class,routine,hit,total,pct}], meets_target, target_pct}. Error codes: BBSIZ_NOT_CONFIGURED (gmheap too small), MONITOR_IN_USE, MISSING_PARAM. Skill: objectscript-coverage (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_coverage(
         &self,
         Parameters(p): Parameters<coverage::IrisCoverageParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.resolve_server(p.server.as_deref()).await?;
         let result = coverage::handle_iris_coverage(&iris, &self.client, &p).await;
         ok_json(result)
     }
@@ -5741,7 +5884,7 @@ Methods:
     // ── 053: iris_execute_method ──────────────────────────────────────────────
 
     #[tool(
-        description = "Invoke a ClassMethod directly by class+method+args without writing ObjectScript boilerplate. Returns the string return value. Execute-gated: blocked on mcpTemplate=live and mcpTemplate=test. v1 limitation: only string-returning methods. Skill: objectscript-navigation (merged toolset only)."
+        description = "Invoke a ClassMethod directly by class+method+args without writing ObjectScript boilerplate. Returns the string return value. Execute-gated: blocked on mcpTemplate=live and mcpTemplate=test. v1 limitation: only string-returning methods. Skill: objectscript-navigation (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_execute_method(
         &self,
@@ -5750,7 +5893,11 @@ Methods:
         // Invoking an arbitrary ClassMethod by name is the $classmethod indirection vector — route
         // it through the restricted service account when configured (least-privilege). The paired
         // client carries the matching cookie jar (see get_iris_for_exec_with_client).
-        let (iris, exec_client) = self.get_iris_for_exec_with_client().await?;
+        let (iris, exec_client) = if let Some(ref s) = p.server {
+            (self.pool.get(Some(s.as_str()))?, Arc::clone(&self.client))
+        } else {
+            self.get_iris_for_exec_with_client().await?
+        };
         let (sm_server, policy) = self.active_server_manager_policy();
         let params_json = serde_json::json!({
             "class": p.class,
@@ -5786,14 +5933,18 @@ Methods:
     // Note: iris_debug already exists above as a real tool — it IS the merged debug dispatcher.
 
     #[tool(
-        description = "Interoperability production lifecycle (merged). action: status=get current state, start=start named production, stop=stop production, update=hot-apply config, check=check if update needed, recover=recover troubled production. Skill: ensemble-production."
+        description = "Interoperability production lifecycle (merged). action: status=get current state, start=start named production, stop=stop production, update=hot-apply config, check=check if update needed, recover=recover troubled production. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_production(
         &self,
         Parameters(p): Parameters<AnyParams>,
     ) -> Result<CallToolResult, McpError> {
         let action = p.get("action").and_then(|v| v.as_str()).unwrap_or("status");
-        let _iris_arc_hold = self.iris_arc();
+        let _iris_arc_hold: Option<Arc<IrisConnection>> =
+            match p.get("server").and_then(|v| v.as_str()) {
+                Some(s) => Some(self.pool.get(Some(s))?),
+                None => self.iris_arc(),
+            };
         let iris_opt = _iris_arc_hold.as_deref();
         let result = match action {
             "status" => {
@@ -5919,14 +6070,18 @@ Methods:
     }
 
     #[tool(
-        description = "Interoperability query dispatcher (merged). what: logs=recent log entries, queues=message queue depths, messages=search message archive. Skill: ensemble-production."
+        description = "Interoperability query dispatcher (merged). what: logs=recent log entries, queues=message queue depths, messages=search message archive. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_interop_query(
         &self,
         Parameters(p): Parameters<AnyParams>,
     ) -> Result<CallToolResult, McpError> {
         let what = p.get("what").and_then(|v| v.as_str()).unwrap_or("logs");
-        let _iris_arc_hold = self.iris_arc();
+        let _iris_arc_hold: Option<Arc<IrisConnection>> =
+            match p.get("server").and_then(|v| v.as_str()) {
+                Some(s) => Some(self.pool.get(Some(s))?),
+                None => self.iris_arc(),
+            };
         let iris_opt = _iris_arc_hold.as_deref();
         #[allow(unused_variables)]
         let result = match what {
@@ -6027,7 +6182,7 @@ Methods:
     // ─── 024-interop-depth: Production item control (US1) ───
 
     #[tool(
-        description = "Enable, disable, or inspect/modify settings of an individual Interoperability production config item. action: enable|disable|get_settings|set_settings. item: exact config item name. namespace: optional. settings: key-value map (for set_settings). Works via HTTP, no Docker required. Skill: ensemble-production."
+        description = "Enable, disable, or inspect/modify settings of an individual Interoperability production config item. action: enable|disable|get_settings|set_settings. item: exact config item name. namespace: optional. settings: key-value map (for set_settings). Works via HTTP, no Docker required. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_production_item(
         &self,
@@ -6057,8 +6212,13 @@ Methods:
                     .collect()
             })
             .unwrap_or_default();
+        let _iris_arc_hold: Option<Arc<IrisConnection>> =
+            match p.get("server").and_then(|v| v.as_str()) {
+                Some(s) => Some(self.pool.get(Some(s))?),
+                None => self.iris_arc(),
+            };
         let result = interop::interop_production_item_impl(
-            self.iris_arc().as_deref(),
+            _iris_arc_hold.as_deref(),
             interop::ProductionItemParams {
                 action,
                 item,
@@ -6074,7 +6234,7 @@ Methods:
     // ─── 056-interop-depth ───
 
     #[tool(
-        description = "Read an Ensemble/Interoperability message body by message ID. Handles plain-text and stream-backed bodies (Ens.StreamContainer, %Stream.Object). PHI-gated: dataPolicy=block returns PHI_POLICY_BLOCKED; dataPolicy=allow requires acknowledgePhi=true; dataPolicy=redact scrubs HL7 v2 PID/MSH fields. max_bytes default 65536, clamped to 1048576. Skill: ensemble-production (merged toolset only)."
+        description = "Read an Ensemble/Interoperability message body by message ID. Handles plain-text and stream-backed bodies (Ens.StreamContainer, %Stream.Object). PHI-gated: dataPolicy=block returns PHI_POLICY_BLOCKED; dataPolicy=allow requires acknowledgePhi=true; dataPolicy=redact scrubs HL7 v2 PID/MSH fields. max_bytes default 65536, clamped to 1048576. Skill: ensemble-production (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_message_body(
         &self,
@@ -6117,8 +6277,13 @@ Methods:
         ) {
             return ok_json(gate);
         }
+        let _iris_arc_hold: Option<Arc<IrisConnection>> =
+            match p.get("server").and_then(|v| v.as_str()) {
+                Some(s) => Some(self.pool.get(Some(s))?),
+                None => self.iris_arc(),
+            };
         let result = interop::handle_iris_message_body(
-            self.iris_arc().as_deref(),
+            _iris_arc_hold.as_deref(),
             &interop::MessageBodyParams {
                 message_id,
                 namespace,
@@ -6133,7 +6298,7 @@ Methods:
     }
 
     #[tool(
-        description = "List or inspect Ensemble business rules (Ens.Rule.RuleSet). action=list returns all rule sets with name/description/modified. action=get with rule_name returns conditions/actions counts for that rule set. Returns INTEROP_NOT_AVAILABLE if Ensemble is not installed. Skill: ensemble-production (merged toolset only)."
+        description = "List or inspect Ensemble business rules (Ens.Rule.RuleSet). action=list returns all rule sets with name/description/modified. action=get with rule_name returns conditions/actions counts for that rule set. Returns INTEROP_NOT_AVAILABLE if Ensemble is not installed. Skill: ensemble-production (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_business_rule_info(
         &self,
@@ -6163,8 +6328,13 @@ Methods:
         ) {
             return ok_json(gate);
         }
+        let _iris_arc_hold: Option<Arc<IrisConnection>> =
+            match p.get("server").and_then(|v| v.as_str()) {
+                Some(s) => Some(self.pool.get(Some(s))?),
+                None => self.iris_arc(),
+            };
         let result = interop::handle_iris_business_rule_info(
-            self.iris_arc().as_deref(),
+            _iris_arc_hold.as_deref(),
             &interop::BusinessRuleInfoParams {
                 action,
                 rule_name,
@@ -6177,7 +6347,7 @@ Methods:
     }
 
     #[tool(
-        description = "Diff the running Interoperability production config against the last source-controlled version. Returns in_sync:true with changes:[] when no drift, or a changes array of {item_name, item_type, status} where status is added/removed/modified. Returns NO_SCM if no source control is configured. Skill: ensemble-production (merged toolset only)."
+        description = "Diff the running Interoperability production config against the last source-controlled version. Returns in_sync:true with changes:[] when no drift, or a changes array of {item_name, item_type, status} where status is added/removed/modified. Returns NO_SCM if no source control is configured. Skill: ensemble-production (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_production_diff(
         &self,
@@ -6202,8 +6372,13 @@ Methods:
         ) {
             return ok_json(gate);
         }
+        let _iris_arc_hold: Option<Arc<IrisConnection>> =
+            match p.get("server").and_then(|v| v.as_str()) {
+                Some(s) => Some(self.pool.get(Some(s))?),
+                None => self.iris_arc(),
+            };
         let result = interop::handle_iris_production_diff(
-            self.iris_arc().as_deref(),
+            _iris_arc_hold.as_deref(),
             &interop::ProductionDiffParams {
                 production,
                 namespace,
@@ -6358,13 +6533,18 @@ Methods:
         create_namespace, delete_namespace, create_webapp, delete_webapp. \
         All operations run in %SYS namespace. check_permission checks the currently connected \
         user (IRIS_USERNAME). view_processes requires dataPolicy param (block/redact/allow). \
-        journal_search requires dataPolicy=allow and at least one of global_pattern or time_range.")]
+        journal_search requires dataPolicy=allow and at least one of global_pattern or time_range. \
+        `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.")]
     async fn iris_admin(
         &self,
         Parameters(p): Parameters<AnyParams>,
     ) -> Result<CallToolResult, McpError> {
         let action = p.get("action").and_then(|v| v.as_str()).unwrap_or("");
-        let _iris_arc_hold = self.iris_arc();
+        let _iris_arc_hold: Option<Arc<IrisConnection>> =
+            match p.get("server").and_then(|v| v.as_str()) {
+                Some(s) => Some(self.pool.get(Some(s))?),
+                None => self.iris_arc(),
+            };
         let iris_opt = _iris_arc_hold.as_deref();
         let result = match action {
             "list_namespaces" => admin::admin_list_namespaces_impl(iris_opt).await,
@@ -6625,6 +6805,917 @@ Methods:
                 }
             }
         }
+    }
+
+    // ── 072: server management tools ─────────────────────────────────────────
+
+    #[tool(
+        description = "List all IRIS server instances registered in the connection pool. Returns an array of {name, host, port, namespace, username, source, reachable} objects. `source` values: iad-native (added via iris_add_server), vscode (from VS Code/Cursor Server Manager), fleet (from workspace TOML), env (from IRIS_HOST env var). `reachable` is null — call iris_test_server to probe connectivity."
+    )]
+    async fn iris_servers(&self) -> Result<CallToolResult, McpError> {
+        let entries: Vec<serde_json::Value> = self
+            .pool
+            .names()
+            .iter()
+            .map(|name| {
+                let source = self.pool.source_of(name);
+                // Get connection metadata without triggering a live connection.
+                match self.pool.get(Some(name)) {
+                    Ok(conn) => {
+                        // Parse host/port from base_url for clean output.
+                        let (host, port) = parse_host_port(&conn.base_url);
+                        serde_json::json!({
+                            "name": name,
+                            "host": host,
+                            "port": port,
+                            "namespace": conn.namespace,
+                            "username": conn.username,
+                            "source": source,
+                            "reachable": serde_json::Value::Null,
+                        })
+                    }
+                    Err(_) => serde_json::json!({ "name": name, "source": source }),
+                }
+            })
+            .collect();
+        ok_json(serde_json::json!({"servers": entries, "count": entries.len()}))
+    }
+
+    #[tool(
+        description = "Add a new IRIS server to the iad-native configuration. The password is stored in the OS keychain — never written to disk. The running pool does not hot-reload; restart iad after adding a server to make it available via the `server` param. Returns {added: true, name, note}."
+    )]
+    async fn iris_add_server(
+        &self,
+        Parameters(p): Parameters<server_tools::AddServerParams>,
+    ) -> Result<CallToolResult, McpError> {
+        use crate::iris::server_manager;
+        use crate::iris::servers_config::{self, ServerEntry};
+
+        // Validate name is non-empty.
+        if p.name.trim().is_empty() {
+            return ok_json(serde_json::json!({
+                "error_code": "INVALID_PARAMS",
+                "message": "Server name must not be empty."
+            }));
+        }
+
+        // Load, merge, save.
+        let mut cfg = servers_config::load_native_config();
+        cfg.servers.insert(
+            p.name.clone(),
+            ServerEntry {
+                host: p.host.clone(),
+                port: p.port,
+                namespace: p.namespace.clone(),
+                username: p.username.clone(),
+                description: p.description.clone(),
+                scheme: p.scheme.clone(),
+            },
+        );
+        if let Err(e) = servers_config::save_native_config(&cfg) {
+            return ok_json(serde_json::json!({
+                "error_code": "SAVE_FAILED",
+                "message": format!("Failed to save servers.json: {e}")
+            }));
+        }
+
+        // Store credential in OS keychain.
+        if let Err(e) = server_manager::store_credential(&p.name, &p.username, &p.password) {
+            return ok_json(serde_json::json!({
+                "error_code": "KEYCHAIN_FAILED",
+                "message": format!("Server added to config but keychain storage failed: {e}. \
+                    You can reconnect via iris_import_servers after authenticating in VS Code Server Manager.")
+            }));
+        }
+
+        ok_json(serde_json::json!({
+            "added": true,
+            "name": p.name,
+            "note": "Restart iad for the pool to include this server."
+        }))
+    }
+
+    #[tool(
+        description = "Remove a server from the iad-native configuration. Only servers with source=iad-native can be removed (vscode, fleet, and env sources are read-only). Also removes the OS keychain entry. Returns {removed: true, name, note}. Error codes: REMOVE_NOT_ALLOWED (source is not iad-native), SERVER_NOT_FOUND (not in pool)."
+    )]
+    async fn iris_remove_server(
+        &self,
+        Parameters(p): Parameters<server_tools::RemoveServerParams>,
+    ) -> Result<CallToolResult, McpError> {
+        use crate::iris::servers_config;
+
+        // Check source — only iad-native servers can be removed.
+        let source = self.pool.source_of(&p.name);
+        if source != "iad-native" {
+            return ok_json(serde_json::json!({
+                "error_code": server_tools::REMOVE_NOT_ALLOWED,
+                "source": source,
+                "message": format!(
+                    "Server '{}' is sourced from '{}' and cannot be removed via iris_remove_server. \
+                     Only iad-native servers (added via iris_add_server) can be removed.",
+                    p.name, source
+                )
+            }));
+        }
+
+        // Load, remove entry, save.
+        let mut cfg = servers_config::load_native_config();
+        if !cfg.servers.contains_key(&p.name) {
+            return ok_json(serde_json::json!({
+                "error_code": "SERVER_NOT_FOUND",
+                "message": format!("Server '{}' not found in iad-native config.", p.name)
+            }));
+        }
+        cfg.servers.remove(&p.name);
+        // Clear default if it was pointing to the removed server.
+        if cfg.default.as_deref() == Some(&p.name) {
+            cfg.default = None;
+        }
+        if let Err(e) = servers_config::save_native_config(&cfg) {
+            return ok_json(serde_json::json!({
+                "error_code": "SAVE_FAILED",
+                "message": format!("Failed to save servers.json: {e}")
+            }));
+        }
+
+        // Best-effort keychain removal — ignore errors (entry may not exist on all platforms).
+        let username = self
+            .pool
+            .get(Some(&p.name))
+            .map(|c| c.username.clone())
+            .unwrap_or_default();
+        let account = format!("credentialProvider:{}/{}", p.name, username.to_lowercase());
+        if let Ok(entry) = keyring_core::Entry::new("intersystems-server-credentials", &account) {
+            let _ = entry.delete_credential();
+        }
+
+        ok_json(serde_json::json!({
+            "removed": true,
+            "name": p.name,
+            "note": "Restart iad for the pool to reflect the removal."
+        }))
+    }
+
+    #[tool(
+        description = "Probe an IRIS server for reachability. Performs GET /api/atelier/ with timing. Does not modify the active connection. Returns {name, reachable, atelier_version, iris_version, latency_ms} on success, or {name, reachable: false, error} on failure. Error codes: SERVER_NOT_FOUND (not in pool)."
+    )]
+    async fn iris_test_server(
+        &self,
+        Parameters(p): Parameters<server_tools::TestServerParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let conn = self.pool.get(Some(&p.name))?;
+        let url = conn.atelier_url("/");
+        let start = std::time::Instant::now();
+        match self
+            .client
+            .get(&url)
+            .basic_auth(&conn.username, Some(&conn.password))
+            .send()
+            .await
+        {
+            Err(e) => ok_json(serde_json::json!({
+                "name": p.name,
+                "reachable": false,
+                "error": e.to_string(),
+                "latency_ms": start.elapsed().as_millis(),
+            })),
+            Ok(resp) => {
+                let status = resp.status();
+                let latency_ms = start.elapsed().as_millis();
+                if !status.is_success() {
+                    return ok_json(serde_json::json!({
+                        "name": p.name,
+                        "reachable": false,
+                        "http_status": status.as_u16(),
+                        "latency_ms": latency_ms,
+                    }));
+                }
+                let auth = status != reqwest::StatusCode::UNAUTHORIZED;
+                match resp.json::<serde_json::Value>().await {
+                    Err(e) => ok_json(serde_json::json!({
+                        "name": p.name,
+                        "reachable": true,
+                        "auth": auth,
+                        "latency_ms": latency_ms,
+                        "parse_error": e.to_string(),
+                    })),
+                    Ok(body) => {
+                        let content = &body["result"]["content"];
+                        ok_json(serde_json::json!({
+                            "name": p.name,
+                            "reachable": true,
+                            "auth": auth,
+                            "atelier_version": content["api"],
+                            "iris_version": content["version"],
+                            "latency_ms": latency_ms,
+                        }))
+                    }
+                }
+            }
+        }
+    }
+
+    #[tool(
+        description = "Import IRIS server definitions from VS Code / Cursor Server Manager into the iad-native config. Reads intersystems.servers from VS Code and Cursor settings.json. Servers already present in the iad-native config are skipped (no overwrite). Passwords are resolved from the OS keychain; servers where no keychain entry exists are imported without a password (listed in no_keychain). Returns {imported, skipped, no_keychain: [...]}. Restart iad after importing."
+    )]
+    async fn iris_import_servers(&self) -> Result<CallToolResult, McpError> {
+        use crate::iris::server_manager;
+        use crate::iris::servers_config::{self, ServerEntry};
+
+        // Collect all VS Code / Cursor SM profiles.
+        let mut sm_paths: Vec<std::path::PathBuf> = Vec::new();
+        if let Some(p) = server_manager::sm_settings_path() {
+            sm_paths.push(p);
+        }
+        if let Some(home) = dirs::home_dir() {
+            #[cfg(target_os = "macos")]
+            sm_paths.push(home.join("Library/Application Support/Cursor/User/settings.json"));
+            #[cfg(not(target_os = "macos"))]
+            sm_paths.push(home.join(".config/Cursor/User/settings.json"));
+        }
+
+        let mut all_profiles: Vec<crate::iris::server_manager::ServerManagerProfile> = Vec::new();
+        for path in &sm_paths {
+            let profiles = server_manager::parse_sm_settings(path);
+            for profile in profiles {
+                let already_seen = all_profiles.iter().any(|p| p.name == profile.name);
+                if !already_seen {
+                    all_profiles.push(profile);
+                }
+            }
+        }
+
+        // Load current iad-native config.
+        let mut cfg = servers_config::load_native_config();
+
+        let mut imported = 0usize;
+        let mut skipped = 0usize;
+        let mut no_keychain: Vec<String> = Vec::new();
+
+        for profile in &all_profiles {
+            if cfg.servers.contains_key(&profile.name) {
+                skipped += 1;
+                continue;
+            }
+
+            // Try to resolve password from keychain.
+            let has_keychain =
+                server_manager::resolve_credential(&profile.name, &profile.username).is_ok();
+            if !has_keychain {
+                no_keychain.push(profile.name.clone());
+            }
+
+            // Determine port/namespace from SM profile — SM profiles use port 52773 default,
+            // namespace is not carried; use USER as default.
+            cfg.servers.insert(
+                profile.name.clone(),
+                ServerEntry {
+                    host: profile.host.clone(),
+                    port: profile.port,
+                    namespace: "USER".to_string(),
+                    username: profile.username.clone(),
+                    description: None,
+                    scheme: Some(profile.scheme.clone()),
+                },
+            );
+            imported += 1;
+        }
+
+        if imported > 0 {
+            if let Err(e) = servers_config::save_native_config(&cfg) {
+                return ok_json(serde_json::json!({
+                    "error_code": "SAVE_FAILED",
+                    "message": format!("Failed to save servers.json after importing: {e}")
+                }));
+            }
+        }
+
+        ok_json(serde_json::json!({
+            "imported": imported,
+            "skipped": skipped,
+            "no_keychain": no_keychain,
+            "note": if imported > 0 {
+                "Restart iad for the pool to include imported servers."
+            } else {
+                "No new servers to import."
+            }
+        }))
+    }
+
+    // ── 072-b: WebSocket terminal session tools ───────────────────────────────
+
+    #[tool(
+        description = "Open a persistent WebSocket terminal session on an IRIS instance. Returns a session token. Use server to target a specific registered instance; defaults to the active connection. Requires IRIS 2023.2+ (Atelier API v7)."
+    )]
+    async fn iris_ws_open(
+        &self,
+        Parameters(p): Parameters<ws_tools::WsOpenParams>,
+    ) -> Result<CallToolResult, McpError> {
+        use crate::iris::ws_session::{WsSessionPool, SESSION_WS_UNAVAILABLE};
+
+        let conn = self.resolve_server(p.server.as_deref()).await?;
+
+        // Version gate: require V7 or V8.
+        if !conn.atelier_version.supports_ws_terminal() {
+            return err_json(
+                SESSION_WS_UNAVAILABLE,
+                "IRIS Atelier API v7 required for WebSocket terminal (IRIS 2023.2+)",
+            );
+        }
+
+        let server_name = p
+            .server
+            .as_deref()
+            .unwrap_or_else(|| conn.base_url.as_str());
+        let namespace = p
+            .namespace
+            .as_deref()
+            .unwrap_or_else(|| conn.namespace.as_str());
+
+        let token = WsSessionPool::open(&self.ws_pool, &conn, server_name, namespace).await?;
+
+        ok_json(serde_json::json!({
+            "session": token,
+            "server": server_name,
+            "namespace": namespace,
+        }))
+    }
+
+    #[tool(
+        description = "Execute ObjectScript code in a persistent WebSocket terminal session. Variables and state persist across calls within the same session. Returns the terminal output."
+    )]
+    async fn iris_ws_exec(
+        &self,
+        Parameters(p): Parameters<ws_tools::WsExecParams>,
+    ) -> Result<CallToolResult, McpError> {
+        use crate::iris::ws_session::WsSessionPool;
+
+        let output = WsSessionPool::exec(&self.ws_pool, &p.session, &p.code).await?;
+
+        ok_json(serde_json::json!({
+            "output": output,
+            "session": p.session,
+        }))
+    }
+
+    #[tool(description = "Close a WebSocket terminal session and release server resources.")]
+    async fn iris_ws_close(
+        &self,
+        Parameters(p): Parameters<ws_tools::WsCloseParams>,
+    ) -> Result<CallToolResult, McpError> {
+        use crate::iris::ws_session::WsSessionPool;
+
+        WsSessionPool::close(&self.ws_pool, &p.session).await?;
+
+        ok_json(serde_json::json!({
+            "closed": true,
+        }))
+    }
+
+    // ── 072-c: Comparison tools ───────────────────────────────────────────────
+
+    #[tool(
+        description = "Compare the source of a document (class, routine, etc.) across two registered IRIS servers. Returns {same: bool, diff: string, server_a, server_b, document, namespace}. Use iris_servers to see registered instances. Skill: iris-agentic-dev."
+    )]
+    async fn compare_document(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let document = p
+            .get("document")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let server_a_name = p
+            .get("server_a")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let server_b_name = p
+            .get("server_b")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let namespace = p
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .unwrap_or("USER")
+            .to_string();
+
+        let server_a = self.pool.get(Some(&server_a_name))?;
+        let server_b = self.pool.get(Some(&server_b_name))?;
+
+        let result = comparison_tools::compare_document_impl(
+            comparison_tools::CompareDocumentParams {
+                document,
+                server_a,
+                server_b,
+                namespace,
+            },
+            &self.client,
+        )
+        .await;
+        self.record_call("compare_document", result.is_ok());
+        result
+    }
+
+    #[tool(
+        description = "Compare all classes in a namespace across two registered IRIS servers. Returns {only_in_a, only_in_b, different, same_count}. Use iris_servers to see registered instances. Skill: iris-agentic-dev."
+    )]
+    async fn compare_namespace(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let namespace = p
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .unwrap_or("USER")
+            .to_string();
+        let server_a_name = p
+            .get("server_a")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let server_b_name = p
+            .get("server_b")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let server_a = self.pool.get(Some(&server_a_name))?;
+        let server_b = self.pool.get(Some(&server_b_name))?;
+
+        let result = comparison_tools::compare_namespace_impl(
+            comparison_tools::CompareNamespaceParams {
+                namespace,
+                server_a,
+                server_b,
+            },
+            &self.client,
+        )
+        .await;
+        self.record_call("compare_namespace", result.is_ok());
+        result
+    }
+
+    // ── 072-c: Global preview/kill with confirmation token ─────────────────────
+
+    #[tool(
+        description = "Preview the contents of an IRIS global before deleting it. Returns the first N subscripts plus a confirm_token (valid 5 minutes) required by global_kill. global: name of the global (with or without ^). count: max entries to preview (default 20, max 100). server: optional registered instance name. Skill: iris-agentic-dev."
+    )]
+    async fn global_preview(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let global = p
+            .get("global")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let count = p.get("count").and_then(|v| v.as_u64()).unwrap_or(20) as u32;
+
+        let iris = self.resolve_server(server.as_deref()).await?;
+
+        let result = admin_tools::global_preview_impl(
+            admin_tools::GlobalPreviewParams {
+                global,
+                server,
+                count,
+                iris,
+                client: Arc::clone(&self.client),
+            },
+            &self.confirm_tokens,
+        )
+        .await;
+        self.record_call("global_preview", result.is_ok());
+        result
+    }
+
+    #[tool(
+        description = "Kill (delete) an entire IRIS global. WRITE-GATED. Requires a confirm_token from global_preview (valid 5 minutes). global: global name. confirm_token: token from global_preview. server: optional registered instance name. Error codes: CONFIRM_REQUIRED (call global_preview first), CONFIRM_EXPIRED (token expired), CONFIRM_MISMATCH (token for different global/server). Skill: iris-agentic-dev."
+    )]
+    async fn global_kill(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let global = p
+            .get("global")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let confirm_token = p
+            .get("confirm_token")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let iris = self.resolve_server(server.as_deref()).await?;
+
+        let result = admin_tools::global_kill_impl(
+            admin_tools::GlobalKillParams {
+                global,
+                server,
+                confirm_token,
+                iris,
+                client: Arc::clone(&self.client),
+                write_tools_enabled: self.write_tools_enabled(),
+            },
+            &self.confirm_tokens,
+        )
+        .await;
+        self.record_call("global_kill", result.is_ok());
+        result
+    }
+
+    // ── 072-c: Namespace/database admin ───────────────────────────────────────
+
+    #[tool(
+        description = "List all namespaces on an IRIS instance. server: optional registered instance name. Returns {namespaces: [...], count: N}. Skill: iris-agentic-dev."
+    )]
+    async fn iris_namespace_list(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result = admin_tools::iris_namespace_list_impl(&iris, &self.client).await;
+        self.record_call("iris_namespace_list", result.is_ok());
+        result
+    }
+
+    #[tool(
+        description = "List all databases (directories) on an IRIS instance. server: optional registered instance name. Returns {databases: [{directory, mounted, size_mb}], count: N}. Skill: iris-agentic-dev."
+    )]
+    async fn iris_database_list(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result = admin_tools::iris_database_list_impl(&iris, &self.client).await;
+        self.record_call("iris_database_list", result.is_ok());
+        result
+    }
+
+    #[tool(
+        description = "Create a new namespace on an IRIS instance. WRITE-GATED. name: namespace name. db_path: optional database directory (defaults to name). server: optional registered instance name. Skill: iris-agentic-dev."
+    )]
+    async fn iris_namespace_create(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let name = p
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let db_path = p
+            .get("db_path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result = admin_tools::iris_namespace_create_impl(
+            &iris,
+            &self.client,
+            &name,
+            db_path.as_deref(),
+            self.write_tools_enabled(),
+        )
+        .await;
+        self.record_call("iris_namespace_create", result.is_ok());
+        result
+    }
+
+    #[tool(
+        description = "Get disk usage statistics for IRIS databases. db: optional directory path to limit to one database; if omitted returns all. server: optional registered instance name. Returns {stats: [{directory, free_space_mb, free_blocks}]}. Skill: iris-agentic-dev."
+    )]
+    async fn iris_database_stats(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let db = p.get("db").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result =
+            admin_tools::iris_database_stats_impl(&iris, &self.client, db.as_deref()).await;
+        self.record_call("iris_database_stats", result.is_ok());
+        result
+    }
+
+    // ── 072-c: Observability tools ────────────────────────────────────────────
+
+    #[tool(
+        description = "Search the IRIS journal for SetKill records. start/end: optional ISO timestamp filters. global_pattern: optional substring filter on GlobalReference. max_entries: default 100, max 500. server: optional registered instance name. Returns {entries: [{timestamp, type, job_id, global}]}. Skill: iris-agentic-dev."
+    )]
+    async fn journal_search(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let start = p
+            .get("start")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let end = p.get("end").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let global_pattern = p
+            .get("global_pattern")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let max_entries = p.get("max_entries").and_then(|v| v.as_u64()).unwrap_or(100) as u32;
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result = admin_tools::journal_search_impl(
+            &iris,
+            &self.client,
+            start.as_deref(),
+            end.as_deref(),
+            global_pattern.as_deref(),
+            max_entries,
+        )
+        .await;
+        self.record_call("journal_search", result.is_ok());
+        result
+    }
+
+    #[tool(
+        description = "Query the IRIS audit log (%SYS.Audit). user: filter by username. event_type: filter by event type. start/end: ISO timestamp filters. limit: max rows (default 100, max 500). server: optional registered instance name. Returns {entries: [{event, event_type, username, timestamp}]}. Skill: iris-agentic-dev."
+    )]
+    async fn query_audit_log(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let user = p
+            .get("user")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let event_type = p
+            .get("event_type")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let start = p
+            .get("start")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let end = p.get("end").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let limit = p.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as u32;
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result = admin_tools::query_audit_log_impl(
+            &iris,
+            &self.client,
+            user.as_deref(),
+            event_type.as_deref(),
+            start.as_deref(),
+            end.as_deref(),
+            limit,
+        )
+        .await;
+        self.record_call("query_audit_log", result.is_ok());
+        result
+    }
+
+    #[tool(
+        description = "Inspect the content of an IRIS stream object by OID. oid: the stream OID (integer string). namespace: optional namespace (default USER). server: optional registered instance name. Returns {content, type: 'text'|'binary', size, oid}. Skill: iris-agentic-dev."
+    )]
+    async fn stream_inspect(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let oid = p
+            .get("oid")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let namespace = p
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .unwrap_or("USER")
+            .to_string();
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result = admin_tools::stream_inspect_impl(&iris, &self.client, &oid, &namespace).await;
+        self.record_call("stream_inspect", result.is_ok());
+        result
+    }
+
+    // ── 072-c: Security tools ──────────────────────────────────────────────────
+
+    #[tool(
+        description = "Show the current user's username, full name, and assigned roles on an IRIS instance. server: optional registered instance name. Returns {username, full_name, roles: [...]}. Skill: iris-agentic-dev."
+    )]
+    async fn my_access(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result = admin_tools::my_access_impl(&iris, &self.client).await;
+        self.record_call("my_access", result.is_ok());
+        result
+    }
+
+    #[tool(
+        description = "Show the roles assigned to a user on an IRIS instance. user: optional username (default: current user). server: optional registered instance name. Returns {user, full_name, roles: [...]}. Skill: iris-agentic-dev."
+    )]
+    async fn capability_matrix(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let user = p
+            .get("user")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result =
+            admin_tools::capability_matrix_impl(&iris, &self.client, user.as_deref()).await;
+        self.record_call("capability_matrix", result.is_ok());
+        result
+    }
+
+    // ── 072-c: HL7 tools ──────────────────────────────────────────────────────
+
+    #[tool(
+        description = "List available HL7 schemas on an IRIS/HealthShare instance. Returns HL7_NOT_AVAILABLE if EnsLib.HL7.Schema is absent. namespace: optional (default USER). server: optional registered instance name. Returns {schemas: [...], count: N}. Skill: iris-agentic-dev."
+    )]
+    async fn hl7_schema_list(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let namespace = p
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .unwrap_or("USER")
+            .to_string();
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result = admin_tools::hl7_schema_list_impl(&iris, &self.client, &namespace).await;
+        self.record_call("hl7_schema_list", result.is_ok());
+        result
+    }
+
+    #[tool(
+        description = "Inspect an HL7 schema's message structures or a specific segment's fields. Returns HL7_NOT_AVAILABLE if EnsLib.HL7.Schema is absent. schema: schema name (e.g. '2.5'). segment: optional segment name to inspect fields. namespace: optional. server: optional registered instance name. Skill: iris-agentic-dev."
+    )]
+    async fn hl7_schema_inspect(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let schema = p
+            .get("schema")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let segment = p
+            .get("segment")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let namespace = p
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .unwrap_or("USER")
+            .to_string();
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result = admin_tools::hl7_schema_inspect_impl(
+            &iris,
+            &self.client,
+            &schema,
+            segment.as_deref(),
+            &namespace,
+        )
+        .await;
+        self.record_call("hl7_schema_inspect", result.is_ok());
+        result
+    }
+
+    // ── 072-c: Mermaid + storage ──────────────────────────────────────────────
+
+    #[tool(
+        description = "Generate a Mermaid classDiagram for an ObjectScript class, walking the superclass chain up to `depth` levels (default 3, max 5). Returns a string starting with 'classDiagram'. class: fully qualified class name. depth: optional traversal depth. namespace: optional. server: optional registered instance name. Skill: objectscript-navigation."
+    )]
+    async fn mermaid_class(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let class = p
+            .get("class")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let depth = p.get("depth").and_then(|v| v.as_u64()).unwrap_or(3) as u32;
+        let namespace = p
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .unwrap_or("USER")
+            .to_string();
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result =
+            admin_tools::mermaid_class_impl(&iris, &self.client, &class, depth, &namespace).await;
+        self.record_call("mermaid_class", result.is_ok());
+        result
+    }
+
+    #[tool(
+        description = "Generate a Mermaid flowchart for an Ensemble/Interoperability production, showing all configured items. production: full production class name. namespace: optional. server: optional registered instance name. Returns a Mermaid flowchart TD string. Skill: ensemble-production."
+    )]
+    async fn mermaid_production(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let production = p
+            .get("production")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let namespace = p
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .unwrap_or("USER")
+            .to_string();
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result =
+            admin_tools::mermaid_production_impl(&iris, &self.client, &production, &namespace)
+                .await;
+        self.record_call("mermaid_production", result.is_ok());
+        result
+    }
+
+    #[tool(
+        description = "Resolve storage definitions for an ObjectScript class — returns global maps (data, id, index locations) from %Dictionary.CompiledStorage. class: fully qualified class name. namespace: optional. server: optional registered instance name. Returns {class, storages: [{name, type, data_location, id_location, index_location}]}. Skill: objectscript-navigation."
+    )]
+    async fn resolve_storage(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let class = p
+            .get("class")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let namespace = p
+            .get("namespace")
+            .and_then(|v| v.as_str())
+            .unwrap_or("USER")
+            .to_string();
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result =
+            admin_tools::resolve_storage_impl(&iris, &self.client, &class, &namespace).await;
+        self.record_call("resolve_storage", result.is_ok());
+        result
     }
 }
 
@@ -8077,6 +9168,39 @@ mod validate_sql_tests {
             Err("LOAD".to_string())
         );
     }
+
+    // ── T015: pool integration ────────────────────────────────────────────────
+
+    /// T015 — `IrisTools` constructed with a two-server pool; `pool.get(Some("b"))` returns
+    /// the `"b"` connection; `pool.get(None)` returns the default `"a"` connection.
+    #[test]
+    fn pool_get_named_returns_correct_connection() {
+        use crate::iris::connection::{DiscoverySource, IrisConnection};
+        use crate::iris::connection_pool::ConnectionPool;
+
+        let make_conn = |base_url: &str| -> IrisConnection {
+            IrisConnection::new(base_url, "USER", "_SYSTEM", "", DiscoverySource::EnvVar)
+        };
+
+        let mut b = ConnectionPool::builder();
+        b.add("a".to_string(), make_conn("http://a:52773"), true); // default
+        b.add("b".to_string(), make_conn("http://b:52773"), false);
+        let pool = b.build();
+
+        // get(Some("b")) returns the "b" connection
+        let conn_b = pool.get(Some("b")).expect("should find 'b'");
+        assert_eq!(
+            conn_b.base_url, "http://b:52773",
+            "pool.get(Some(\"b\")) should return the b connection"
+        );
+
+        // get(None) returns the default "a", not "b"
+        let conn_default = pool.get(None).expect("should return default 'a'");
+        assert_eq!(
+            conn_default.base_url, "http://a:52773",
+            "pool.get(None) should return the default 'a' connection, not 'b'"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -8421,6 +9545,31 @@ impl IrisTools {
             iris_execute_method
         );
         dispatch!("iris_coverage", coverage::IrisCoverageParams, iris_coverage);
+        // 072: server management tools
+        if tool == "iris_servers" {
+            return self.iris_servers().await.map_err(|e| format!("{e:?}"));
+        }
+        if tool == "iris_import_servers" {
+            return self
+                .iris_import_servers()
+                .await
+                .map_err(|e| format!("{e:?}"));
+        }
+        dispatch!(
+            "iris_add_server",
+            server_tools::AddServerParams,
+            iris_add_server
+        );
+        dispatch!(
+            "iris_remove_server",
+            server_tools::RemoveServerParams,
+            iris_remove_server
+        );
+        dispatch!(
+            "iris_test_server",
+            server_tools::TestServerParams,
+            iris_test_server
+        );
         Err(format!("unknown tool: {tool}"))
     }
 }

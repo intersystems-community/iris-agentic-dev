@@ -554,8 +554,10 @@ fn sc002_shape_parity() {
 }
 
 // ── T032 / SC-003: 500-line parse < 100ms ────────────────────────────────────
+// #[ignore]: wall-clock assertion is unreliable under llvm-cov instrumentation.
 
 #[test]
+#[ignore]
 fn sc003_parse_500_lines_under_100ms() {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/Large500.cls");
     let source = std::fs::read(&path).expect("read Large500.cls");

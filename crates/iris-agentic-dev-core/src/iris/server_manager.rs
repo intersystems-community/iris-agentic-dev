@@ -249,6 +249,41 @@ pub fn init_platform_keystore() {
 /// the OS store varies but the service name string is always `"intersystems-server-credentials"`.
 const SM_KEYCHAIN_SERVICE: &str = "intersystems-server-credentials";
 
+/// Store a credential in the OS keychain using the Server Manager key format.
+///
+/// Uses service `SM_KEYCHAIN_SERVICE` = `"intersystems-server-credentials"` and
+/// account `"credentialProvider:<server-name>/<username-lowercase>"`.
+///
+/// # Errors
+/// Returns `SmCredentialError::KeychainError` on any failure.
+pub fn store_credential(
+    server_name: &str,
+    username: &str,
+    password: &str,
+) -> Result<(), SmCredentialError> {
+    let account = format!(
+        "credentialProvider:{}/{}",
+        server_name,
+        username.to_lowercase()
+    );
+
+    let entry = keyring_core::Entry::new(SM_KEYCHAIN_SERVICE, &account).map_err(
+        |e: keyring_core::Error| SmCredentialError::KeychainError {
+            server_name: server_name.to_string(),
+            detail: e.to_string(),
+        },
+    )?;
+
+    entry
+        .set_password(password)
+        .map_err(|e: keyring_core::Error| SmCredentialError::KeychainError {
+            server_name: server_name.to_string(),
+            detail: e.to_string(),
+        })?;
+
+    Ok(())
+}
+
 /// Resolve a Server Manager credential from the OS keychain.
 ///
 /// Uses service `SM_KEYCHAIN_SERVICE` = `"intersystems-server-credentials"` and
@@ -444,4 +479,41 @@ fn tool_to_category(tool_name: &str) -> Option<crate::iris::workspace_config::To
         "telemetry_query" | "telemetry_export_trace" => ToolCategory::Query,
         _ => return None, // unknown tool — not gated
     })
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Round-trip test for `store_credential` + `resolve_credential`.
+    ///
+    /// Marked `#[ignore]` because it requires a live OS keychain (macOS Keychain,
+    /// Windows Credential Manager, or a running Linux Secret Service daemon).
+    /// Run with: `cargo test -- --ignored store_resolve_credential_roundtrip`
+    #[test]
+    #[ignore]
+    fn store_resolve_credential_roundtrip() {
+        init_platform_keystore();
+
+        if store_credential("test-072-server", "_system", "test-pw-072").is_err() {
+            eprintln!("store_resolve_credential_roundtrip: no keychain available, skipping");
+            return;
+        }
+
+        let resolved = resolve_credential("test-072-server", "_system")
+            .expect("resolve_credential should find the stored credential");
+
+        assert_eq!(resolved, "test-pw-072");
+
+        // Clean up: delete the entry from the keychain.
+        let entry = keyring_core::Entry::new(
+            SM_KEYCHAIN_SERVICE,
+            "credentialProvider:test-072-server/_system",
+        )
+        .expect("keyring_core::Entry::new should succeed for cleanup");
+        // keyring-core uses delete_credential().
+        let _ = entry.delete_credential();
+    }
 }

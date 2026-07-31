@@ -1,0 +1,6 @@
+id: MUL-02
+category: MUL
+path: both
+description: "Register a new IRIS instance named 'test' at localhost:52780, list all servers, then remove 'test'."
+expected_behavior: "Agent calls iris_add_server, then iris_servers (confirming 'test' appears), then iris_remove_server. iris_servers after removal does not show 'test'."
+tags: [multi-instance, server-management, iris_add_server, iris_remove_server]

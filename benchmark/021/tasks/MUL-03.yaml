@@ -1,0 +1,6 @@
+id: MUL-03
+category: MUL
+path: both
+description: "Open a WebSocket session, set a variable x = 42 in one call, read it back in a second call."
+expected_behavior: "Agent calls iris_ws_open, then iris_ws_exec twice with the same session token. Second call outputs 42 without re-setting x."
+tags: [multi-instance, websocket, iris_ws_open, iris_ws_exec]

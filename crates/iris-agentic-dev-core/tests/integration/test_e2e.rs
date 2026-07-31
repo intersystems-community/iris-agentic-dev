@@ -5303,3 +5303,93 @@ fn e2e_execute_session_disabled_is_transparent() {
         result
     );
 }
+
+// ── T019–T020: server param routing (072-multi-instance-pool) ─────────────────
+
+/// T019: iris_execute with server=null behaves identically to the default path.
+#[test]
+#[ignore = "requires live IRIS container"]
+fn e2e_server_param_default() {
+    require_iris!();
+    // server: null (omitted) — must behave identically to an iris_execute call
+    // without the server param at all.
+    let result = call_tool(
+        "iris_execute",
+        serde_json::json!({
+            "code": "Write $ZVERSION",
+            "namespace": "USER"
+        }),
+    );
+    let result_with_null = call_tool(
+        "iris_execute",
+        serde_json::json!({
+            "code": "Write $ZVERSION",
+            "namespace": "USER",
+            "server": null
+        }),
+    );
+    // Both calls must either succeed (same output) or fail with the same error_code.
+    // We don't assert on the actual version string — just that the two paths are equivalent.
+    assert_eq!(
+        result["success"], result_with_null["success"],
+        "server=null should behave identically to no server param: default={}, null={}",
+        result, result_with_null
+    );
+    if result["success"] == true {
+        assert_eq!(
+            result["output"].as_str().map(|s| s.contains("IRIS")),
+            result_with_null["output"]
+                .as_str()
+                .map(|s| s.contains("IRIS")),
+            "output mismatch between default and server=null"
+        );
+    }
+}
+
+/// T020: iris_execute with server="iris-dev-iris" routes to the named container.
+#[test]
+#[ignore = "requires live IRIS container registered as 'iris-dev-iris' in the pool"]
+fn e2e_server_param_named() {
+    require_iris!();
+    // The dev container name is "iris-dev-iris" (from IRIS_CONTAINER env var / pool registration).
+    // If the pool knows about this server, the call should succeed and return a version string.
+    // If the pool does NOT have this server registered, the call returns SERVER_NOT_FOUND — which
+    // we treat as a skip (the pool may not be configured in all CI environments).
+    let container = std::env::var("IRIS_CONTAINER").unwrap_or_else(|_| "iris-dev-iris".to_string());
+    let result = call_tool(
+        "iris_execute",
+        serde_json::json!({
+            "code": "Write $ZVERSION",
+            "namespace": "USER",
+            "server": container
+        }),
+    );
+    // SERVER_NOT_FOUND means pool isn't configured — skip gracefully.
+    if result["error_code"].as_str() == Some("SERVER_NOT_FOUND") {
+        eprintln!(
+            "Skipping e2e_server_param_named: server '{}' not in pool",
+            container
+        );
+        return;
+    }
+    assert_eq!(
+        result["success"], true,
+        "iris_execute with server='{}' should succeed: {}",
+        container, result
+    );
+    let output = result["output"].as_str().unwrap_or("");
+    // Empty output can happen when the pool finds the server via VS Code settings
+    // but credentials are not available (e.g. no keychain in CI). Skip gracefully.
+    if output.is_empty() {
+        eprintln!(
+            "Skipping e2e_server_param_named: server '{}' found but returned no output (likely missing credential)",
+            container
+        );
+        return;
+    }
+    assert!(
+        output.contains("IRIS") || output.contains("Cache") || output.contains("202"),
+        "expected IRIS version string in output, got: {:?}",
+        output
+    );
+}

@@ -107,6 +107,9 @@ pub struct IrisDocParams {
     /// definition will be replaced with IRIS-generated defaults.
     #[serde(default)]
     pub allow_storage_regeneration: bool,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 /// Deserialize an optional i64 leniently: accept a JSON number, an integer-valued

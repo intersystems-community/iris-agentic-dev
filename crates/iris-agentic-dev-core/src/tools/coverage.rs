@@ -25,6 +25,9 @@ pub struct IrisCoverageParams {
     pub namespace: Option<String>,
     /// Write Cobertura XML to this path (requires TestCoverage IPM package)
     pub cobertura_path: Option<String>,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 // ── Routine name helpers ──────────────────────────────────────────────────────

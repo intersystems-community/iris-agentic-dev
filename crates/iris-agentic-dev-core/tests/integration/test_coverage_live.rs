@@ -44,6 +44,7 @@ async fn live_coverage_check_returns_ok_or_bbsiz_error() {
         target_pct: None,
         namespace: Some("USER".to_string()),
         cobertura_path: None,
+        server: None,
     };
     let result = handle_iris_coverage(&iris, &client, &params).await;
     let is_ready = result["ok"].as_bool().unwrap_or(false);
@@ -75,6 +76,7 @@ async fn live_coverage_check_testcoverage_hint_when_unavailable() {
         target_pct: None,
         namespace: Some("USER".to_string()),
         cobertura_path: None,
+        server: None,
     };
     let result = handle_iris_coverage(&iris, &client, &params).await;
     let tc_avail = result["testcoverage_available"].as_bool().unwrap_or(true);
@@ -118,6 +120,7 @@ async fn live_coverage_run_returns_structured_result() {
         target_pct: Some(80.0),
         namespace: Some("USER".to_string()),
         cobertura_path: None,
+        server: None,
     };
     let result = handle_iris_coverage(&iris, &client, &params).await;
 
@@ -175,6 +178,7 @@ async fn live_coverage_run_with_package_param() {
         target_pct: None,
         namespace: Some("USER".to_string()),
         cobertura_path: None,
+        server: None,
     };
     let result = handle_iris_coverage(&iris, &client, &params).await;
 
@@ -220,6 +224,7 @@ async fn live_coverage_run_cobertura_skipped_when_unavailable() {
         target_pct: None,
         namespace: Some("USER".to_string()),
         cobertura_path: Some("/tmp/coverage.xml".to_string()),
+        server: None,
     };
     let result = handle_iris_coverage(&iris, &client, &params).await;
 
@@ -252,6 +257,7 @@ async fn live_coverage_start_stop_flow() {
         target_pct: None,
         namespace: Some("USER".to_string()),
         cobertura_path: None,
+        server: None,
     };
     let start_result = handle_iris_coverage(&iris, &client, &start_params).await;
 
@@ -281,6 +287,7 @@ async fn live_coverage_start_stop_flow() {
         target_pct: None,
         namespace: Some("USER".to_string()),
         cobertura_path: None,
+        server: None,
     };
     let stop_result = handle_iris_coverage(&iris, &client, &stop_params).await;
     assert_eq!(
@@ -306,6 +313,7 @@ async fn live_coverage_run_missing_test_path_returns_error() {
         target_pct: None,
         namespace: Some("USER".to_string()),
         cobertura_path: None,
+        server: None,
     };
     let result = handle_iris_coverage(&iris, &client, &params).await;
     assert_eq!(result["error_code"].as_str(), Some("MISSING_PARAM"));
@@ -327,6 +335,7 @@ async fn live_coverage_run_no_classes_or_package_returns_error() {
         target_pct: None,
         namespace: Some("USER".to_string()),
         cobertura_path: None,
+        server: None,
     };
     let result = handle_iris_coverage(&iris, &client, &params).await;
     assert_eq!(result["error_code"].as_str(), Some("MISSING_PARAM"));
@@ -348,6 +357,7 @@ async fn live_coverage_invalid_mode_returns_error() {
         target_pct: None,
         namespace: Some("USER".to_string()),
         cobertura_path: None,
+        server: None,
     };
     let result = handle_iris_coverage(&iris, &client, &params).await;
     assert_eq!(result["error_code"].as_str(), Some("INVALID_ACTION"));

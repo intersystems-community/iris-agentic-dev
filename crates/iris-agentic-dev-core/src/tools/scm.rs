@@ -66,6 +66,9 @@ pub struct ScmParams {
     /// writes on subject instances are always hard-blocked regardless of confirm.
     #[serde(default)]
     pub confirm: bool,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 async fn xecute(

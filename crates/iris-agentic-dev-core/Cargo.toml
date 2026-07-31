@@ -32,6 +32,10 @@ tree-sitter = "0.26"
 tree-sitter-objectscript = "1.9"
 tree-sitter-objectscript-routine = "1.9"
 quick-xml = "0.37"
+tokio-tungstenite = { version = "0.26", features = ["native-tls"] }
+futures-util = { version = "0.3", features = ["sink"] }
+base64 = "0.22"
+similar = "2"
 
 # Test dependencies
 [dev-dependencies]
@@ -464,3 +468,20 @@ required-features = ["testing"]
 name = "test_doc_search_live"
 path = "tests/integration/test_doc_search_live.rs"
 required-features = ["testing"]
+
+[[test]]
+name = "test_server_pool_e2e"
+path = "tests/integration/test_server_pool_e2e.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_ws_e2e"
+path = "tests/integration/test_ws_e2e.rs"
+
+[[test]]
+name = "test_comparison_e2e"
+path = "tests/integration/test_comparison_e2e.rs"
+
+[[test]]
+name = "test_admin_e2e"
+path = "tests/integration/test_admin_e2e.rs"

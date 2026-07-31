@@ -17,6 +17,7 @@ pub enum SystemMode {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AtelierVersion {
     V8,
+    V7,
     V2,
     V1,
 }
@@ -25,9 +26,15 @@ impl AtelierVersion {
     pub fn version_str(&self) -> &'static str {
         match self {
             AtelierVersion::V8 => "v8",
+            AtelierVersion::V7 => "v7",
             AtelierVersion::V2 => "v2",
             AtelierVersion::V1 => "v1",
         }
+    }
+
+    /// Returns true if this version supports WebSocket terminal sessions (v7+).
+    pub fn supports_ws_terminal(&self) -> bool {
+        matches!(self, AtelierVersion::V7 | AtelierVersion::V8)
     }
 }
 
@@ -199,6 +206,7 @@ impl IrisConnection {
                     self.version = content["version"].as_str().map(|v| v.to_string());
                     self.atelier_version = match content["api"].as_u64() {
                         Some(v) if v >= 8 => AtelierVersion::V8,
+                        Some(v) if v >= 7 => AtelierVersion::V7,
                         Some(v) if v >= 2 => AtelierVersion::V2,
                         _ => AtelierVersion::V1,
                     };
