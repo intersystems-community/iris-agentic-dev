@@ -1,4 +1,4 @@
-# 072-b: WebSocket Terminal Sessions — Release Notes
+# What's New: Persistent WebSocket Terminal Sessions
 
 ## What's new
 
@@ -29,5 +29,5 @@ as natural back-and-forth.
 
 ## Compatibility
 
-No changes to existing tools. The `server` routing from 072-a applies to WS sessions —
+No changes to existing tools. Named server routing applies to WS sessions —
 `iris_ws_open(server: "prod")` opens a session against the `prod` instance in the pool.

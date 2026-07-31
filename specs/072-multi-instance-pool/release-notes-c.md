@@ -1,4 +1,4 @@
-# 072-c: Administration and Cross-Instance Comparison — Release Notes
+# What's New: Administration and Cross-Instance Comparison
 
 ## What's new
 
@@ -52,14 +52,14 @@ servers — lists what's only in A, only in B, and what differs.
 
 ## Why it matters
 
-The multi-instance pool from 072-a made it possible to talk to several IRIS instances in
-one session. This phase makes that useful for real migration work: compare dev against
-prod before a deploy, check namespace contents after a copy, inspect globals before
-killing them, trace a HL7 message from inbound to its stored stream object.
+Named server routing made it possible to talk to several IRIS instances in one session.
+These tools make that useful for real migration work: compare dev against prod before a
+deploy, check namespace contents after a copy, inspect globals before killing them, trace
+a HL7 message from inbound to its stored stream object.
 
 ## Compatibility
 
-All new tools follow the same `server` routing from 072-a. Passing `server: "prod"` on
-any 072-c tool routes to the `prod` instance in the pool. No changes to existing tools.
+All new tools accept the `server` parameter for named instance routing. Passing
+`server: "prod"` routes to the `prod` instance in the pool. No changes to existing tools.
 Write-gated tools (`global_kill`, `iris_namespace_create`) respect `write_tools_enabled`
 from config — they do nothing on connections where writes are off.

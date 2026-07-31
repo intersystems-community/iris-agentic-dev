@@ -1,4 +1,4 @@
-# What's New: Multi-Instance Connection Pool — Foundation (072-a)
+# What's New: Multi-Instance Connection Pool
 
 ## Named server routing
 
@@ -47,12 +47,5 @@ automatically, so no passwords to re-enter.
 ## Backward compatibility
 
 All existing tool calls work identically. The `server` parameter defaults to `None`, which
-preserves the current active connection behavior including hot-reload (spec 034).
+preserves the current active connection behavior including hot-reload.
 `iris_select_container` still works.
-
-## Coverage note
-
-Unit-only coverage is 33% — a pre-existing gap from the subprocess e2e architecture
-(profraw files from the instrumented binary are not merged into llvm-cov). Running with
-`--include-ignored` against a live container covers the new pool, cascade loader, server
-tools, and credential storage paths.
