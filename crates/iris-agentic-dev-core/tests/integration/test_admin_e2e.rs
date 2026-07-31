@@ -55,9 +55,8 @@ async fn e2e_namespace_list() {
         .await
         .expect("iris_namespace_list_impl failed");
     let v = parse_json(result);
-    assert_eq!(
+    assert!(
         v["success"].as_bool().unwrap_or(false),
-        true,
         "expected success=true, got: {v}"
     );
     let namespaces = v["namespaces"]
@@ -115,9 +114,8 @@ async fn e2e_my_access() {
         .await
         .expect("my_access_impl failed");
     let v = parse_json(result);
-    assert_eq!(
+    assert!(
         v["success"].as_bool().unwrap_or(false),
-        true,
         "expected success=true, got: {v}"
     );
     let username = v["username"].as_str().unwrap_or("");
@@ -169,9 +167,8 @@ async fn e2e_mermaid_class() {
         .await
         .expect("mermaid_class_impl failed");
     let v = parse_json(result);
-    assert_eq!(
+    assert!(
         v["success"].as_bool().unwrap_or(false),
-        true,
         "expected success=true, got: {v}"
     );
     let diagram = v["diagram"].as_str().unwrap_or("");
@@ -221,9 +218,8 @@ async fn e2e_global_kill_confirm() {
     .await
     .expect("global_preview_impl failed");
     let pv = parse_json(preview_result);
-    assert_eq!(
+    assert!(
         pv["success"].as_bool().unwrap_or(false),
-        true,
         "global_preview must succeed, got: {pv}"
     );
     let token = pv["confirm_token"]
@@ -246,14 +242,12 @@ async fn e2e_global_kill_confirm() {
     .await
     .expect("global_kill_impl failed");
     let kv = parse_json(kill_result);
-    assert_eq!(
+    assert!(
         kv["success"].as_bool().unwrap_or(false),
-        true,
         "global_kill must succeed, got: {kv}"
     );
-    assert_eq!(
+    assert!(
         kv["killed"].as_bool().unwrap_or(false),
-        true,
         "killed must be true, got: {kv}"
     );
 }

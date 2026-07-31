@@ -62,14 +62,12 @@ async fn e2e_compare_document_same() {
         .map(|c| c.raw.as_text().unwrap().text.clone())
         .expect("no text content");
     let v: serde_json::Value = serde_json::from_str(&text).expect("json parse");
-    assert_eq!(
+    assert!(
         v["success"].as_bool().unwrap_or(false),
-        true,
         "expected success=true, got: {v}"
     );
-    assert_eq!(
+    assert!(
         v["same"].as_bool().unwrap_or(false),
-        true,
         "comparing class to itself should be same=true, got: {v}"
     );
     let diff = v["diff"].as_str().unwrap_or("not-empty");
