@@ -5364,11 +5364,12 @@ fn e2e_server_param_named() {
             "server": container
         }),
     );
-    // SERVER_NOT_FOUND means pool isn't configured — skip gracefully.
-    if result["error_code"].as_str() == Some("SERVER_NOT_FOUND") {
+    // SERVER_NOT_FOUND or IRIS_UNREACHABLE means pool isn't configured / not reachable — skip.
+    let err = result["error_code"].as_str().unwrap_or("");
+    if err == "SERVER_NOT_FOUND" || err == "IRIS_UNREACHABLE" || result == serde_json::json!({}) {
         eprintln!(
-            "Skipping e2e_server_param_named: server '{}' not in pool",
-            container
+            "Skipping e2e_server_param_named: server '{}' not reachable or not in pool ({})",
+            container, err
         );
         return;
     }

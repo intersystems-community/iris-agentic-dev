@@ -34,10 +34,13 @@
 # iris/ — connection and config logic
 "src/iris/audit_log.rs"               = 92
 "src/iris/connection.rs"              = 85
+"src/iris/connection_pool.rs"         = 79
 "src/iris/discovery.rs"               = 32
 "src/iris/server_manager.rs"          = 94
+"src/iris/servers_config.rs"          = 90
 "src/iris/vscode_config.rs"           = 97
 "src/iris/workspace_config.rs"        = 89
+"src/iris/ws_session.rs"              = 21
 
 # manifest/ — TOML schema parser
 "src/manifest/mod.rs"                 = 93
@@ -70,6 +73,8 @@
 # tools/ — dispatch-layer files have low floors (subprocess-only paths);
 # pure-logic files (execute_session, gate_macro, patterns) stay near 100%
 "src/tools/admin.rs"                  = 79
+"src/tools/admin_tools.rs"            = 15
+"src/tools/comparison_tools.rs"       = 11
 "src/tools/coverage.rs"               = 23
 "src/tools/dict.rs"                   = 52
 "src/tools/doc.rs"                    = 38
@@ -84,6 +89,8 @@
 "src/tools/observability.rs"          = 17
 "src/tools/scm.rs"                    = 86
 "src/tools/search.rs"                 = 81
+"src/tools/server_tools.rs"           = 90
 "src/tools/skills_tools.rs"           = 38
 "src/tools/symbols_local.rs"          = 59
+"src/tools/ws_tools.rs"               = 84
 "src/tools/xdata_flow.rs"             = 56
