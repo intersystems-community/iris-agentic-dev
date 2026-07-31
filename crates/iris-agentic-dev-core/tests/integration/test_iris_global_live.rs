@@ -42,6 +42,7 @@ fn make_params(action: &str, global_name: &str) -> IrisGlobalParams {
         max_nodes: None,
         max_subscripts: None,
         acknowledge_phi: None,
+        server: None,
     }
 }
 
@@ -71,6 +72,7 @@ async fn test_get_defined_and_absent() {
         max_nodes: None,
         max_subscripts: None,
         acknowledge_phi: None,
+        server: None,
     };
     let result = handle_iris_global(&conn, &client, &p, Ok(())).await;
     assert_eq!(result["success"], true, "get failed: {result}");
@@ -117,6 +119,7 @@ async fn test_set_and_get_roundtrip() {
         max_nodes: None,
         max_subscripts: None,
         acknowledge_phi: None,
+        server: None,
     };
     let set_result = handle_iris_global(&conn, &client, &set_params, Ok(())).await;
     assert_eq!(set_result["success"], true, "set failed: {set_result}");
@@ -132,6 +135,7 @@ async fn test_set_and_get_roundtrip() {
         max_nodes: None,
         max_subscripts: None,
         acknowledge_phi: None,
+        server: None,
     };
     let get_result = handle_iris_global(&conn, &client, &get_params, Ok(())).await;
     assert_eq!(
@@ -168,6 +172,7 @@ async fn test_kill_removes_subtree() {
             max_nodes: None,
             max_subscripts: None,
             acknowledge_phi: None,
+            server: None,
         };
         let r = handle_iris_global(&conn, &client, &p, Ok(())).await;
         assert_eq!(r["success"], true, "set {k} failed: {r}");
@@ -190,6 +195,7 @@ async fn test_kill_removes_subtree() {
             max_nodes: None,
             max_subscripts: None,
             acknowledge_phi: None,
+            server: None,
         };
         let gr = handle_iris_global(&conn, &client, &get, Ok(())).await;
         assert_eq!(gr["defined"], false, "expected {k} gone after kill: {gr}");
@@ -218,6 +224,7 @@ async fn test_list_subscripts() {
             max_nodes: None,
             max_subscripts: None,
             acknowledge_phi: None,
+            server: None,
         };
         let r = handle_iris_global(&conn, &client, &p, Ok(())).await;
         assert_eq!(r["success"], true, "set k{i} failed: {r}");
@@ -242,6 +249,7 @@ async fn test_list_subscripts() {
         subtree: None,
         max_nodes: None,
         acknowledge_phi: None,
+        server: None,
     };
     let lr2 = handle_iris_global(&conn, &client, &list2, Ok(())).await;
     assert_eq!(lr2["success"], true, "list(2) failed: {lr2}");

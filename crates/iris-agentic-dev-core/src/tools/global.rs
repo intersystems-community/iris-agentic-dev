@@ -276,6 +276,9 @@ pub struct IrisGlobalParams {
     /// Bypass PHI name gate (per spec 051)
     #[serde(rename = "acknowledgePhi")]
     pub acknowledge_phi: Option<bool>,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

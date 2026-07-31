@@ -298,6 +298,7 @@ fn test_handle_iris_info_namespace() {
             name: None,
             namespace: "USER".to_string(),
             inline: false,
+            server: None,
         };
         let r = handle_iris_info(&conn, &client, p, make_log_store()).await;
         let v = result_json(r);
@@ -328,6 +329,7 @@ fn test_handle_iris_info_documents() {
             name: None,
             namespace: "USER".to_string(),
             inline: true,
+            server: None,
         };
         let r = handle_iris_info(&conn, &client, p, make_log_store()).await;
         let v = result_json(r);
@@ -360,6 +362,7 @@ fn test_handle_iris_search_basic() {
             documents: vec![],
             namespace: "USER".to_string(),
             inline: true,
+            server: None,
         };
         let r = handle_iris_search(&conn, &client, p, make_log_store()).await;
         let v = result_json(r);
@@ -407,6 +410,7 @@ fn test_handle_iris_doc_get_object_cls() {
             expected: None,
             line: None,
             allow_storage_regeneration: false,
+            server: None,
         };
         let r = handle_iris_doc(
             &conn,
@@ -461,6 +465,7 @@ fn test_handle_iris_doc_head_object_cls() {
             expected: None,
             line: None,
             allow_storage_regeneration: false,
+            server: None,
         };
         // Must not panic; any structured JSON response is acceptable
         let r = handle_iris_doc(
@@ -496,6 +501,7 @@ fn test_handle_iris_macro_list() {
             name: None,
             args: vec![],
             namespace: "USER".to_string(),
+            server: None,
         };
         let r = handle_iris_macro(&conn, &client, p).await;
         let v = result_json(r);
@@ -535,6 +541,7 @@ fn test_handle_iris_table_info() {
             table: "INFORMATION_SCHEMA.TABLES".to_string(),
             namespace: "USER".to_string(),
             include_row_count: false,
+            server: None,
         };
         let r = handle_iris_table_info(&conn, &client, p).await;
         let v = result_json(r);
@@ -601,6 +608,7 @@ fn test_handle_iris_info_metadata() {
             name: None,
             namespace: "USER".to_string(),
             inline: false,
+            server: None,
         };
         let r = handle_iris_info(&conn, &client, p, make_log_store()).await;
         let v = result_json(r);
@@ -630,6 +638,7 @@ fn test_handle_iris_info_invalid_what() {
             name: None,
             namespace: "USER".to_string(),
             inline: false,
+            server: None,
         };
         let r = handle_iris_info(&conn, &client, p, make_log_store()).await;
         let v = result_json(r);
@@ -715,6 +724,7 @@ fn test_handle_iris_doc_batch_get() {
             expected: None,
             line: None,
             allow_storage_regeneration: false,
+            server: None,
         };
         let r = handle_iris_doc(
             &conn,
@@ -752,6 +762,7 @@ fn test_handle_iris_search_regex() {
             documents: vec![],
             namespace: "USER".to_string(),
             inline: true,
+            server: None,
         };
         let r = handle_iris_search(&conn, &client, p, make_log_store()).await;
         let v = result_json(r);
@@ -11848,6 +11859,7 @@ async fn test_search_sync_success_null_work_id() {
         documents: vec![],
         namespace: "USER".to_string(),
         inline: true,
+        server: None,
     };
 
     let result = handle_iris_search(&conn, &client, params, log).await;
@@ -11904,6 +11916,7 @@ async fn test_search_sync_with_wiremock_null_work_id() {
         documents: vec!["Test.*.cls".to_string()],
         namespace: "USER".to_string(),
         inline: true,
+        server: None,
     };
 
     let result = handle_iris_search(&conn, &client, params, log).await;
@@ -11990,6 +12003,7 @@ async fn test_search_async_poll_with_wiremock() {
         documents: vec![],
         namespace: "USER".to_string(),
         inline: true,
+        server: None,
     };
 
     let result = handle_iris_search(&conn, &client, params, log).await;
@@ -12055,6 +12069,7 @@ async fn test_doc_put_returns_200_with_status_errors() {
             expected: None,
             line: None,
             allow_storage_regeneration: false,
+            server: None,
         },
         &elicitation_store,
         &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
@@ -12135,6 +12150,7 @@ async fn test_doc_put_compile_non_2xx_compile_request() {
             expected: None,
             line: None,
             allow_storage_regeneration: false,
+            server: None,
         },
         &elicitation_store,
         &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
@@ -12204,6 +12220,7 @@ async fn test_doc_delete_non_2xx_non_404() {
             expected: None,
             line: None,
             allow_storage_regeneration: false,
+            server: None,
         },
         &elicitation_store,
         &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
@@ -12271,6 +12288,7 @@ async fn test_doc_put_non_2xx_upload() {
             expected: None,
             line: None,
             allow_storage_regeneration: false,
+            server: None,
         },
         &elicitation_store,
         &iris_agentic_dev_core::elicitation::CheckoutCache::new(),

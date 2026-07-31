@@ -25,6 +25,9 @@ pub struct SearchParams {
     /// If true, bypass the log store and return all results inline regardless of count.
     #[serde(default)]
     pub inline: bool,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 fn default_namespace() -> String {

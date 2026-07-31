@@ -225,16 +225,15 @@ fn test_merged_excludes_original_interop_production_tools() {
     }
 }
 
-/// Merged must have exactly 42 tools (38 + telemetry_query + telemetry_export_trace from 059,
-/// + iris_coverage from 064, + iris_doc_search from 065).
+/// Merged must have exactly 68 tools (baseline 68 - 4 stubs - 4 merged_removed + 8 merged_added-only).
 #[test]
 fn test_merged_tool_count_is_23() {
     let _lock = ENV_LOCK.lock().unwrap();
     let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
     let count = tools.registered_tool_names().len();
     assert_eq!(
-        count, 42,
-        "Merged toolset must have exactly 42 tools (38 + telemetry_query + telemetry_export_trace from 059, + iris_coverage from 064, + iris_doc_search from 065), got {}",
+        count, 68,
+        "Merged toolset must have exactly 68 tools (baseline 68 - stubs 4 - merged_removed 4 + new merged_added 8), got {}",
         count
     );
     // iris_get_log must be registered in Merged (027-progressive-disclosure)

@@ -1,0 +1,6 @@
+id: MUL-01
+category: MUL
+path: both
+description: "Two IRIS instances are registered: 'dev' and 'prod'. Count classes in USER namespace on each. Report both counts without switching the active connection."
+expected_behavior: "Agent calls iris_execute twice with server: 'dev' and server: 'prod' respectively. Both calls succeed. Agent reports two distinct counts. Active connection does not change."
+tags: [multi-instance, connection-pool, server-routing]

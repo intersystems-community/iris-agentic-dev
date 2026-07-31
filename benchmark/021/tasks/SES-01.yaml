@@ -1,0 +1,6 @@
+id: SES-01
+category: SES
+path: both
+description: "Count the number of classes in the USER namespace that extend %Persistent, then — without rerunning the query — report what 5% of that count would be. Two separate tool calls are required: one to compute the count, one to report the derived value."
+expected_behavior: "Agent calls iris_execute (or iris_query) once to count %Persistent subclasses, stores the result in session state (%ctx.count), then calls iris_execute a second time with the prior session_state to compute and output count * 0.05. Both calls use use_session: true. Final answer is numerically correct (5% of the actual count). Agent does NOT rerun the query in the second call."
+tags: [session, use_session, ctx, multi-call, no-requery]

@@ -43,7 +43,10 @@ async fn probe_atelier_respects_timeout() {
 #[ignore = "requires isolated env — no Docker IRIS, no VS Code Server Manager configured"]
 async fn discover_iris_reads_env_vars() {
     // Skip on machines with Docker IRIS running — Docker discovery fires before env vars
-    if std::env::var("IRIS_CONTAINER").is_ok() || std::env::var("IRIS_WEB_PORT").is_ok() {
+    if std::env::var("IRIS_CONTAINER").is_ok()
+        || std::env::var("IRIS_WEB_PORT").is_ok()
+        || std::env::var("IRIS_HOST").is_ok()
+    {
         return;
     }
     // Set env vars to a non-existent host

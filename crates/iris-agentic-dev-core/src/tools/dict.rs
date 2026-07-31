@@ -64,6 +64,9 @@ pub struct ResolveDynamicDispatchParams {
     pub namespace: String,
     /// Max candidates to return. Defaults to 50.
     pub limit: Option<usize>,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 pub async fn handle_resolve_dynamic_dispatch(
@@ -157,6 +160,9 @@ pub struct ExtractMessageMapParams {
     /// IRIS namespace. Defaults to "USER".
     #[serde(default = "default_namespace")]
     pub namespace: String,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 fn build_message_map_code(cls: &str) -> String {
@@ -362,6 +368,9 @@ pub struct FindSubclassImplementationsParams {
     pub namespace: String,
     /// Max results. Defaults to 100.
     pub limit: Option<usize>,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 fn build_expand_hierarchy_code(base_classes: &[String]) -> String {

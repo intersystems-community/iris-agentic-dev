@@ -196,20 +196,21 @@ iris-agentic-dev resolves the IRIS connection in this order — first match wins
 
 ## Environment variables
 
-| Variable                   | Default     | Description                                                                  |
-| -------------------------- | ----------- | ---------------------------------------------------------------------------- |
-| `IRIS_HOST`                | `localhost` | IRIS web gateway hostname                                                    |
-| `IRIS_WEB_PORT`            | `52773`     | Web gateway port                                                             |
-| `IRIS_SCHEME`              | `http`      | `http` or `https`                                                            |
-| `IRIS_WEB_PREFIX`          | _(empty)_   | URL path prefix for non-root gateway installs                                |
-| `IRIS_USERNAME`            | `_SYSTEM`   | IRIS username                                                                |
-| `IRIS_PASSWORD`            | `SYS`       | IRIS password                                                                |
-| `IRIS_NAMESPACE`           | `USER`      | Default namespace                                                            |
-| `IRIS_CONTAINER`           | _(empty)_   | Docker container name — required for Docker-dependent tools                  |
-| `IRIS_SERVER_NAME`         | _(empty)_   | Server Manager server name when multiple are configured                      |
-| `OBJECTSCRIPT_WORKSPACE`   | `$PWD`      | Workspace root for `.iris-agentic-dev.toml` lookup                           |
-| `IRIS_SEARCH_SYNC_TIMEOUT` | `30`        | Seconds to wait for synchronous search before falling back to async polling  |
-| `IRIS_DISABLED_TOOLS`      | _(empty)_   | Comma-separated tool names to exclude, e.g. `iris_source_control,iris_admin` |
+| Variable                   | Default     | Description                                                                                                                                                           |
+| -------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IRIS_HOST`                | `localhost` | IRIS web gateway hostname                                                                                                                                             |
+| `IRIS_WEB_PORT`            | `52773`     | Web gateway port                                                                                                                                                      |
+| `IRIS_SCHEME`              | `http`      | `http` or `https`                                                                                                                                                     |
+| `IRIS_WEB_PREFIX`          | _(empty)_   | URL path prefix for non-root gateway installs                                                                                                                         |
+| `IRIS_USERNAME`            | `_SYSTEM`   | IRIS username                                                                                                                                                         |
+| `IRIS_PASSWORD`            | `SYS`       | IRIS password                                                                                                                                                         |
+| `IRIS_NAMESPACE`           | `USER`      | Default namespace                                                                                                                                                     |
+| `IRIS_CONTAINER`           | _(empty)_   | Docker container name — required for Docker-dependent tools                                                                                                           |
+| `IRIS_SERVER_NAME`         | _(empty)_   | Server Manager server name when multiple are configured                                                                                                               |
+| `OBJECTSCRIPT_WORKSPACE`   | `$PWD`      | Workspace root for `.iris-agentic-dev.toml` lookup                                                                                                                    |
+| `IRIS_SEARCH_SYNC_TIMEOUT` | `30`        | Seconds to wait for synchronous search before falling back to async polling                                                                                           |
+| `IRIS_WS_TIMEOUT_SECS`     | `30`        | Timeout in seconds for WebSocket terminal session responses. Applies to `iris_ws_exec` calls. The session is left open on timeout; use `iris_ws_close` to release it. |
+| `IRIS_DISABLED_TOOLS`      | _(empty)_   | Comma-separated tool names to exclude, e.g. `iris_source_control,iris_admin`                                                                                          |
 
 ---
 

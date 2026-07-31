@@ -39,6 +39,9 @@ pub struct InfoParams {
     /// If true, bypass the log store and return all results inline regardless of count.
     #[serde(default)]
     pub inline: bool,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 pub async fn handle_iris_info(
@@ -118,6 +121,9 @@ pub struct MacroParams {
     pub args: Vec<String>,
     #[serde(default = "default_namespace")]
     pub namespace: String,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 pub async fn handle_iris_macro(
@@ -199,6 +205,9 @@ pub struct DebugParams {
     pub limit: usize,
     #[serde(default = "default_namespace")]
     pub namespace: String,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 pub async fn handle_iris_debug(
@@ -293,6 +302,9 @@ pub struct GenerateParams {
     pub class_name: Option<String>,
     #[serde(default = "default_namespace")]
     pub namespace: String,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 fn default_type() -> String {
@@ -418,6 +430,9 @@ pub struct TableInfoParams {
     /// Include approximate row count (runs SELECT COUNT(*) — may be slow on large tables).
     #[serde(default)]
     pub include_row_count: bool,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 pub async fn handle_iris_table_info(

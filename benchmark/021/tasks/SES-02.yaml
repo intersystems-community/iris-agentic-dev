@@ -1,0 +1,6 @@
+id: SES-02
+category: SES
+path: both
+description: "Open Ens.MessageHeader ID 1 in the USER namespace and store it in session state. Then, in a separate iris_execute call using the restored session, read and output the MessageBodyClassName property — without knowing or hardcoding the ID in the second call."
+expected_behavior: "First call: opens Ens.MessageHeader ID 1, stores the object in %ctx.hdr, sets use_session: true. Second call: passes the session_state token from the first call, reads %ctx.hdr.MessageBodyClassName and writes it. The second call contains no hardcoded ID ('1'). Output is a valid class name string. Agent does not re-open the object in the second call."
+tags: [session, use_session, ctx, persistent-object, oid-stub, multi-call]

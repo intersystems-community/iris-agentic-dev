@@ -65,6 +65,7 @@ fn execute_method_params(class: &str, method: &str, args: Vec<&str>) -> IrisExec
         method: method.to_string(),
         args: args.iter().map(|s| s.to_string()).collect(),
         namespace: "USER".to_string(),
+        server: None,
     }
 }
 

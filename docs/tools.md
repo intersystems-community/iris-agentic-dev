@@ -13,6 +13,11 @@ unless there is something non-obvious to say about it.
 
 | Tool                                                              | Section                   |
 | ----------------------------------------------------------------- | ------------------------- |
+| [`iris_servers`](#iris_servers)                                   | Server Management         |
+| [`iris_add_server`](#iris_add_server)                             | Server Management         |
+| [`iris_remove_server`](#iris_remove_server)                       | Server Management         |
+| [`iris_test_server`](#iris_test_server)                           | Server Management         |
+| [`iris_import_servers`](#iris_import_servers)                     | Server Management         |
 | [`iris_doc`](#iris_doc)                                           | Code                      |
 | [`iris_compile`](#iris_compile)                                   | Code                      |
 | [`iris_execute`](#iris_execute)                                   | Code                      |
@@ -48,6 +53,27 @@ unless there is something non-obvious to say about it.
 | [`iris_credential_manage`](#iris_credential_manage-) 🔒           | Interoperability          |
 | [`iris_lookup_manage`](#iris_lookup_manage)                       | Interoperability          |
 | [`iris_lookup_transfer`](#iris_lookup_transfer)                   | Interoperability          |
+| [`iris_ws_open`](#iris_ws_open)                                   | WebSocket sessions        |
+| [`iris_ws_exec`](#iris_ws_exec)                                   | WebSocket sessions        |
+| [`iris_ws_close`](#iris_ws_close)                                 | WebSocket sessions        |
+| [`global_preview`](#global_preview)                               | Administration            |
+| [`global_kill`](#global_kill-) 🔒                                 | Administration            |
+| [`iris_namespace_list`](#iris_namespace_list)                     | Administration            |
+| [`iris_namespace_create`](#iris_namespace_create-) 🔒             | Administration            |
+| [`iris_database_list`](#iris_database_list)                       | Administration            |
+| [`iris_database_stats`](#iris_database_stats)                     | Administration            |
+| [`journal_search`](#journal_search)                               | Administration            |
+| [`query_audit_log`](#query_audit_log)                             | Administration            |
+| [`stream_inspect`](#stream_inspect)                               | Administration            |
+| [`my_access`](#my_access)                                         | Administration            |
+| [`capability_matrix`](#capability_matrix)                         | Administration            |
+| [`hl7_schema_list`](#hl7_schema_list)                             | Administration            |
+| [`hl7_schema_inspect`](#hl7_schema_inspect)                       | Administration            |
+| [`mermaid_class`](#mermaid_class)                                 | Administration            |
+| [`mermaid_production`](#mermaid_production)                       | Administration            |
+| [`resolve_storage`](#resolve_storage)                             | Administration            |
+| [`compare_document`](#compare_document)                           | Administration            |
+| [`compare_namespace`](#compare_namespace)                         | Administration            |
 | [`iris_admin`](#iris_admin)                                       | Administration            |
 | [`iris_containers`](#iris_containers-) ✦                          | Administration            |
 | [`skill`](#skill)                                                 | Skills and knowledge base |
@@ -56,6 +82,48 @@ unless there is something non-obvious to say about it.
 | [`agent_history` / `agent_stats`](#agent_history--agent_stats)    | Skills and knowledge base |
 | [`telemetry_query`](#telemetry_query)                             | Skills and knowledge base |
 | [`telemetry_export_trace`](#telemetry_export_trace)               | Skills and knowledge base |
+
+---
+
+## Server Management
+
+Tools for registering, testing, and managing IRIS server connections. All other tools
+accept an optional `server` parameter that routes to a named instance — see `iris_servers`
+to list what's registered.
+
+### `iris_servers`
+
+List all registered IRIS instances from all configuration sources (iad-native config, VS
+Code Server Manager settings, workspace fleet config, environment variables). Shows name,
+host, port, namespace, source, and reachability status (`null` = not yet tested).
+
+### `iris_add_server`
+
+Register a new IRIS instance. Writes server details to
+`~/.config/iris-agentic-dev/servers.json` and stores the password in the OS keychain —
+the password never appears in any config file. Uses the same keychain format as VS Code
+Server Manager, so credentials are shared automatically if both tools are installed.
+
+Parameters: `name`, `host`, `port`, `namespace`, `username`, `password`, `description`
+(optional), `scheme` (optional, default `"http"`).
+
+After adding a server, restart iad for the new connection to appear in the pool.
+
+### `iris_remove_server`
+
+Remove a server from the iad-native config. Also removes its keychain entry. Cannot
+remove servers sourced from VS Code settings — edit `settings.json` directly for those.
+
+### `iris_test_server`
+
+Test connectivity to a named server without changing the active connection. Returns
+Atelier API version, IRIS version string, and round-trip latency.
+
+### `iris_import_servers`
+
+One-time import of IRIS server definitions from VS Code or Cursor settings into the
+iad-native config. Reads passwords from the existing OS keychain — no re-entry required.
+Reports servers imported, skipped (already present), and those with no keychain entry.
 
 ---
 
@@ -160,6 +228,8 @@ Run arbitrary ObjectScript and return the output.
 | `namespace`     | string | `"USER"` |                                                            |
 | `timeout`       | int    | `120`    | Seconds; overridden by `OBJECTSCRIPT_TEST_TIMEOUT` env var |
 | `translate_sql` | bool   | `true`   | Rewrite `&sql(...)` macros to `%SQL.Statement`             |
+| `use_session`   | bool   | `false`  | Enable `%ctx` session carrier (see below)                  |
+| `session_state` | string | —        | Token from a prior call; restores `%ctx`                   |
 
 ```text
 iris_execute(code="Write $ZVersion")
@@ -167,6 +237,46 @@ iris_execute(code="Set sc = ##class(MyApp.Util).Run() Write sc", namespace="MYAP
 ```
 
 **Code-edit guard** — see [Code-edit guard](#code-edit-guard) below.
+
+#### Session state
+
+Set `use_session: true` to get a `%ctx` variable (`%DynamicObject`) injected before your code
+and serialized into a `session_state` token in the response. Pass that token back as
+`session_state` on the next call to restore `%ctx`. Nothing is written to IRIS — the token
+lives entirely in the client.
+
+```text
+# Call 1 — compute something and stash it
+iris_execute(
+  use_session=true,
+  code="Set %ctx.count = 1247  Set %ctx.label = \"patients\""
+)
+# → response includes session_state: "eyJjb3VudCI6MTI0N..."
+
+# Call 2 — pick up where you left off
+iris_execute(
+  use_session=true,
+  session_state="eyJjb3VudCI6MTI0N...",
+  code="Write %ctx.count * 0.05"
+)
+# → output: 62.35
+```
+
+`%Persistent` objects are automatically stubbed on save (`{"_cls": "...", "_id": "..."}`)
+and re-opened on restore. `%DynamicObject` and scalar values survive round-trips unchanged.
+Values that cannot serialize (open file handles, result sets, device references) must be
+removed from `%ctx` before the epilogue runs.
+
+Session error codes:
+
+| Code                       | Meaning                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------- |
+| `SESSION_INVALID`          | Token is malformed or `%FromJSON` failed                                        |
+| `SESSION_RESTORE_FAILED`   | A stubbed `%Persistent` object could not be re-opened (class missing or bad ID) |
+| `SESSION_SERIALIZE_FAILED` | `%ctx` could not be serialized at end of call                                   |
+
+**`server`** (optional): route this call to a named registered IRIS instance. If omitted,
+uses the default connection. Use `iris_servers` to list available instances.
 
 ---
 
@@ -218,6 +328,9 @@ iris_query(table="MyApp.Patient", mode="count")
 iris_query(query="UPDATE MyApp.Patient SET Status = 'Archived' WHERE ID = ?",
            parameters=["123"], mode="write")
 ```
+
+**`server`** (optional): route this call to a named registered IRIS instance. If omitted,
+uses the default connection. Use `iris_servers` to list available instances.
 
 ---
 
@@ -812,6 +925,196 @@ Export or import an Ensemble lookup table as XML. Import is 🔒 gated.
 
 ## Administration
 
+### `global_preview`
+
+Preview the top N subscripts of an IRIS global and mint a confirmation token for a
+subsequent `global_kill`. Returns up to 100 entries, the total subscript count, and a
+`confirm_token` that expires in 5 minutes.
+
+| Parameter | Type   | Default | Notes                                          |
+| --------- | ------ | ------- | ---------------------------------------------- |
+| `global`  | string | —       | **Required.** Global name, with or without `^` |
+| `count`   | number | `20`    | Max entries to preview (1–100)                 |
+| `server`  | string | —       | Named server; omit for default                 |
+
+### `global_kill` 🔒
+
+Kill an IRIS global after confirming with a token from `global_preview`. The token
+validates the global name and server — a token issued for `^Foo` cannot be used to kill
+`^Bar`. Tokens expire after 5 minutes. Write-gated.
+
+| Parameter       | Type   | Default | Notes                                            |
+| --------------- | ------ | ------- | ------------------------------------------------ |
+| `global`        | string | —       | **Required.** Must match the global in the token |
+| `confirm_token` | string | —       | **Required.** Token from `global_preview`        |
+| `server`        | string | —       | Named server; omit for default                   |
+
+### `iris_namespace_list`
+
+List all namespaces on the connected IRIS instance.
+
+| Parameter | Type   | Default | Notes                          |
+| --------- | ------ | ------- | ------------------------------ |
+| `server`  | string | —       | Named server; omit for default |
+
+### `iris_namespace_create` 🔒
+
+Create a new namespace and its backing database. Write-gated.
+
+| Parameter | Type   | Default | Notes                                        |
+| --------- | ------ | ------- | -------------------------------------------- |
+| `name`    | string | —       | **Required.** Namespace name (A–Z, 0–9, `-`) |
+| `db_path` | string | —       | Database directory path; defaults to `name`  |
+| `server`  | string | —       | Named server; omit for default               |
+
+### `iris_database_list`
+
+List databases and their directory paths.
+
+| Parameter | Type   | Default | Notes                          |
+| --------- | ------ | ------- | ------------------------------ |
+| `server`  | string | —       | Named server; omit for default |
+
+### `iris_database_stats`
+
+Show size, free space, and block stats for a specific database directory.
+
+| Parameter | Type   | Default | Notes                                 |
+| --------- | ------ | ------- | ------------------------------------- |
+| `db_path` | string | —       | **Required.** Database directory path |
+| `server`  | string | —       | Named server; omit for default        |
+
+### `journal_search`
+
+Search the IRIS journal for global set/kill records in a time range. Bulk-PHI gated —
+requires `dataPolicy = "allow"` on the connection.
+
+| Parameter        | Type   | Default | Notes                                |
+| ---------------- | ------ | ------- | ------------------------------------ |
+| `start`          | string | —       | ISO 8601 start timestamp (inclusive) |
+| `end`            | string | —       | ISO 8601 end timestamp (inclusive)   |
+| `global_pattern` | string | —       | Substring to filter global names     |
+| `max_entries`    | number | `100`   | Cap results (1–500)                  |
+| `server`         | string | —       | Named server; omit for default       |
+
+### `query_audit_log`
+
+Query the `%SYS_Audit.Log` table for recent events.
+
+| Parameter    | Type   | Default | Notes                              |
+| ------------ | ------ | ------- | ---------------------------------- |
+| `event_type` | string | —       | Filter by `Event` column substring |
+| `username`   | string | —       | Filter by `SystemID` substring     |
+| `limit`      | number | `50`    | Max rows (1–200)                   |
+| `server`     | string | —       | Named server; omit for default     |
+
+### `stream_inspect`
+
+Inspect a `%Stream.GlobalBinary` or `%Stream.GlobalCharacter` object by OID.
+Returns the first N characters and the total size.
+
+| Parameter   | Type   | Default  | Notes                               |
+| ----------- | ------ | -------- | ----------------------------------- |
+| `oid`       | string | —        | **Required.** Stream OID            |
+| `namespace` | string | `"USER"` | Namespace that contains the stream  |
+| `max_chars` | number | `2000`   | Max characters to return (1–10 000) |
+| `server`    | string | —        | Named server; omit for default      |
+
+### `my_access`
+
+Show current user, roles, and privileges for the connected session.
+
+| Parameter | Type   | Default | Notes                          |
+| --------- | ------ | ------- | ------------------------------ |
+| `server`  | string | —       | Named server; omit for default |
+
+### `capability_matrix`
+
+Show which role grants which privilege across a list of namespaces. Useful for auditing
+access before a release.
+
+| Parameter    | Type     | Default | Notes                              |
+| ------------ | -------- | ------- | ---------------------------------- |
+| `namespaces` | string[] | `[]`    | Namespaces to include; empty = all |
+| `server`     | string   | —       | Named server; omit for default     |
+
+### `hl7_schema_list`
+
+List available HL7 2.x schema versions. Returns `HL7_NOT_AVAILABLE` if
+`EnsLib.HL7.Schema` is not installed (e.g. Community edition without Ensemble).
+
+| Parameter | Type   | Default | Notes                          |
+| --------- | ------ | ------- | ------------------------------ |
+| `server`  | string | —       | Named server; omit for default |
+
+### `hl7_schema_inspect`
+
+Show segment definitions, field names, and data types for a specific HL7 schema version
+and optional segment filter.
+
+| Parameter | Type   | Default | Notes                                        |
+| --------- | ------ | ------- | -------------------------------------------- |
+| `version` | string | —       | **Required.** e.g. `"2.6"`                   |
+| `segment` | string | —       | Segment name filter, e.g. `"PID"` (optional) |
+| `server`  | string | —       | Named server; omit for default               |
+
+### `mermaid_class`
+
+Generate a Mermaid class diagram showing inheritance for one or more classes. Walks the
+`Super` hierarchy up to 3 levels deep and strips `%`-prefixed system class names.
+
+| Parameter   | Type     | Default  | Notes                              |
+| ----------- | -------- | -------- | ---------------------------------- |
+| `classes`   | string[] | —        | **Required.** Starting class names |
+| `namespace` | string   | `"USER"` | Namespace to query                 |
+| `server`    | string   | —        | Named server; omit for default     |
+
+### `mermaid_production`
+
+Generate a Mermaid flowchart of an Ensemble/IRIS Interoperability production — hosts,
+connections, and enabled/disabled state.
+
+| Parameter    | Type   | Default  | Notes                               |
+| ------------ | ------ | -------- | ----------------------------------- |
+| `production` | string | —        | **Required.** Production class name |
+| `namespace`  | string | `"USER"` | Namespace that hosts the production |
+| `server`     | string | —        | Named server; omit for default      |
+
+### `resolve_storage`
+
+Show the storage definition (`^oddDEF` structure) for a persistent class. Helps diagnose
+global layout, extents, and index locations.
+
+| Parameter   | Type   | Default  | Notes                          |
+| ----------- | ------ | -------- | ------------------------------ |
+| `class`     | string | —        | **Required.** Class name       |
+| `namespace` | string | `"USER"` | Namespace to query             |
+| `server`    | string | —        | Named server; omit for default |
+
+### `compare_document`
+
+Compare a single document (class, routine, or include file) between two IRIS servers.
+Returns `same: true/false` and a unified diff when different.
+
+| Parameter   | Type   | Default  | Notes                                         |
+| ----------- | ------ | -------- | --------------------------------------------- |
+| `document`  | string | —        | **Required.** Document name, e.g. `MyApp.cls` |
+| `server_a`  | string | —        | **Required.** First server name               |
+| `server_b`  | string | —        | **Required.** Second server name              |
+| `namespace` | string | `"USER"` | Namespace on both servers                     |
+
+### `compare_namespace`
+
+Compare all classes in a namespace between two IRIS servers. Lists classes only in A,
+only in B, and classes present in both that differ. Caps comparison at 200 classes to
+avoid overload — `unchecked_count` reports how many were skipped.
+
+| Parameter   | Type   | Default  | Notes                            |
+| ----------- | ------ | -------- | -------------------------------- |
+| `namespace` | string | `"USER"` | Namespace to compare             |
+| `server_a`  | string | —        | **Required.** First server name  |
+| `server_b`  | string | —        | **Required.** Second server name |
+
 ### `iris_admin`
 
 List namespaces, databases, users, roles, and web apps. Write actions require
@@ -886,6 +1189,46 @@ List, select, or start IRIS Docker containers.
 iris_containers(action="list")
 iris_containers(action="select", name="my-iris-container")
 ```
+
+---
+
+## WebSocket sessions
+
+Persistent IRIS terminal sessions over WebSocket. Requires IRIS 2026.2+ with Atelier V7
+API (PWS enabled). Each session keeps a live ObjectScript context between calls — variables
+set in one `iris_ws_exec` call are visible in the next.
+
+Session tokens have the form `ws:{server}:{NAMESPACE}:{uuid}`.
+
+### `iris_ws_open`
+
+Open a new WebSocket terminal session. Returns a `session_token` to pass to subsequent
+calls.
+
+| Parameter   | Type   | Default  | Notes                          |
+| ----------- | ------ | -------- | ------------------------------ |
+| `namespace` | string | `"USER"` | Namespace for the session      |
+| `server`    | string | —        | Named server; omit for default |
+
+### `iris_ws_exec`
+
+Execute ObjectScript in an existing session. The session context (variables, open
+devices) persists across calls.
+
+| Parameter       | Type   | Default | Notes                                   |
+| --------------- | ------ | ------- | --------------------------------------- |
+| `session_token` | string | —       | **Required.** Token from `iris_ws_open` |
+| `code`          | string | —       | **Required.** ObjectScript to run       |
+| `timeout_secs`  | number | `30`    | Per-call execution timeout              |
+
+### `iris_ws_close`
+
+Close a WebSocket session and free its resources. Passing an already-closed or expired
+token returns `already_closed: true` rather than an error.
+
+| Parameter       | Type   | Default | Notes                                   |
+| --------------- | ------ | ------- | --------------------------------------- |
+| `session_token` | string | —       | **Required.** Token from `iris_ws_open` |
 
 ---
 
@@ -1066,18 +1409,26 @@ comes back as-is, so `redact` is not a safe default for XML or custom message bo
 
 ## Common error codes
 
-| Code                    | Meaning                                                                                              |
-| ----------------------- | ---------------------------------------------------------------------------------------------------- |
-| `POLICY_GATE`           | Call blocked by per-connection policy — see `allow` in `.iris-agentic-dev.toml`                      |
-| `ENV_GATE_BLOCKED`      | Tool not permitted by this connection's `mcpTemplate` — see [gates](#data-safety-gates)              |
-| `DATA_POLICY_BLOCKED`   | Bulk-PHI tool called without `dataPolicy = "allow"`                                                  |
-| `SYSTEM_BLOCKLIST`      | Global is on the system blocklist — not bypassable                                                   |
-| `PHI_GATE_BLOCKED`      | Global name matches a PHI pattern — pass `acknowledgePhi: true`                                      |
-| `SCOPE_REQUIRED`        | `iris_search` called without a document scope — pass a `documents` wildcard list                     |
-| `STALE_CONTENT`         | `iris_doc` insert/delete_lines `expected` field didn't match stored content                          |
-| `STORAGE_STRIP_BLOCKED` | `iris_doc mode=put` would strip a Storage block — pass `allow_storage_regeneration: true` to proceed |
-| `CODE_EDIT_BLOCKED`     | `iris_execute` call matched a code-editing pattern — use `iris_doc` + `iris_compile`                 |
-| `CHECKIN_BLOCKED`       | SCM CheckIn called without `IRIS_SCM_ALLOW_CHECKIN=1`                                                |
-| `HTTP_EXECUTION_FAILED` | Atelier HTTP call failed — check host, port, credentials                                             |
-| `IRIS_UNREACHABLE`      | No IRIS connection discoverable — run `check_config`                                                 |
-| `INTEROP_ERROR`         | Ensemble/interop HTTP call failed — check production state and container access                      |
+| Code                        | Meaning                                                                                              |
+| --------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `POLICY_GATE`               | Call blocked by per-connection policy — see `allow` in `.iris-agentic-dev.toml`                      |
+| `ENV_GATE_BLOCKED`          | Tool not permitted by this connection's `mcpTemplate` — see [gates](#data-safety-gates)              |
+| `DATA_POLICY_BLOCKED`       | Bulk-PHI tool called without `dataPolicy = "allow"`                                                  |
+| `SYSTEM_BLOCKLIST`          | Global is on the system blocklist — not bypassable                                                   |
+| `PHI_GATE_BLOCKED`          | Global name matches a PHI pattern — pass `acknowledgePhi: true`                                      |
+| `SCOPE_REQUIRED`            | `iris_search` called without a document scope — pass a `documents` wildcard list                     |
+| `STALE_CONTENT`             | `iris_doc` insert/delete_lines `expected` field didn't match stored content                          |
+| `STORAGE_STRIP_BLOCKED`     | `iris_doc mode=put` would strip a Storage block — pass `allow_storage_regeneration: true` to proceed |
+| `CODE_EDIT_BLOCKED`         | `iris_execute` call matched a code-editing pattern — use `iris_doc` + `iris_compile`                 |
+| `CHECKIN_BLOCKED`           | SCM CheckIn called without `IRIS_SCM_ALLOW_CHECKIN=1`                                                |
+| `HTTP_EXECUTION_FAILED`     | Atelier HTTP call failed — check host, port, credentials                                             |
+| `IRIS_UNREACHABLE`          | No IRIS connection discoverable — run `check_config`                                                 |
+| `INTEROP_ERROR`             | Ensemble/interop HTTP call failed — check production state and container access                      |
+| `WS_TERMINAL_NOT_SUPPORTED` | Atelier API version is below V7 — WebSocket terminal requires IRIS 2026.2+                           |
+| `WS_SESSION_NOT_FOUND`      | Session token is invalid or already closed — call `iris_ws_open` to get a new token                  |
+| `CONFIRM_REQUIRED`          | `global_kill` requires a `confirm_token` from `global_preview`                                       |
+| `CONFIRM_EXPIRED`           | Confirmation token is older than 5 minutes — call `global_preview` again                             |
+| `CONFIRM_MISMATCH`          | Token was issued for a different global or server                                                    |
+| `WRITE_TOOLS_DISABLED`      | Write tool called without `write_tools = true` in `.iris-agentic-dev.toml`                           |
+| `FETCH_FAILED`              | `compare_document` could not fetch source from one or both servers                                   |
+| `HL7_NOT_AVAILABLE`         | `EnsLib.HL7.Schema` not installed on this instance                                                   |
