@@ -27,12 +27,13 @@ Five new tools manage the pool: `iris_servers`, `iris_add_server`, `iris_remove_
 
 Three new tools give Claude a persistent ObjectScript terminal over WebSocket:
 `iris_ws_open`, `iris_ws_exec`, `iris_ws_close`. Variables and process state persist
-between calls — no need to bundle a whole sequence into one `iris_execute`. Requires
-IRIS 2023.2+ (Atelier V7 API).
+between calls. Before this, every `iris_execute` call was a fresh context — a sequence
+like "set X, do some work, read X back" had to be one call or use a global to carry
+state. Now each step can be separate. Requires IRIS 2023.2+ (Atelier V7 API).
 
 ### Administration and cross-instance comparison
 
-Twenty-two new tools covering global management, namespace/database admin, observability,
+Twenty-two new tools across global management, namespace/database admin, observability,
 and cross-instance comparison:
 
 - **Global management**: `global_preview` + `global_kill`. Preview returns a confirmation
@@ -50,25 +51,27 @@ and cross-instance comparison:
 
 ### MCP ToolAnnotations
 
-All 64 tools now expose MCP `ToolAnnotations`. 57 tools carry `read_only_hint = true`.
-The 7 destructive tools (`global_kill`, `iris_admin`, `iris_credential_manage`,
-`iris_lookup_manage`, `iris_namespace_create`, `iris_remove_server`, `skill_forget`) carry
-`destructive_hint = true`. MCP clients that respect these hints can gate confirmation
-dialogs or run read-only tools in parallel without prompts.
+All 64 tools now carry MCP `ToolAnnotations`. 57 are tagged `read_only_hint = true`
+(queries, introspection, list tools). The 7 destructive tools — `global_kill`,
+`iris_admin`, `iris_credential_manage`, `iris_lookup_manage`, `iris_namespace_create`,
+`iris_remove_server`, `skill_forget` — are tagged `destructive_hint = true`. Claude Code
+and other MCP clients that read these hints can show a confirmation step before
+destructive calls and run read-only tools without prompting.
 
 ## Notable fixes
 
 ### Production management and skill tools broken on Atelier REST connections
 
 `iris_production`, `iris_production_item`, and all skill tools returned errors or empty
-results on connections without `IRIS_CONTAINER` set — VS Code extension, remote servers,
-anything not running in a named local container. The docker-exec fallback was incorrectly
-used in paths that have working Atelier REST endpoints. Fixed across all affected tools.
+results on connections without `IRIS_CONTAINER` set: VS Code extension, remote servers,
+anything not running in a named local container. These tools have working Atelier REST
+paths; the docker-exec fallback was routing around them. All affected tools now use
+Atelier REST.
 
 ## Breaking changes
 
-None. All existing tool calls work identically. The `server` parameter defaults to `None`,
-preserving current active-connection behavior including hot-reload.
+None. All existing tool calls work identically. The `server` parameter defaults to
+omitted, so hot-reload and active-connection behavior are unchanged.
 `iris_select_container` still works.
 
 **Full changelog:**
