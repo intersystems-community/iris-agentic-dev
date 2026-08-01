@@ -47,11 +47,22 @@ iris_symbols_local()                    # parse .cls files on disk, no IRIS need
 docs_introspect(class_name="My.Class") # full method signatures
 ```
 
-### Switch containers mid-session
+### Route a call to a different server
+
+Pass `server:` to any tool to route that call to a named IRIS instance without changing
+the default connection:
 
 ```text
-iris_list_containers()                          # see all running IRIS containers
-iris_select_container(name="my-iris-container") # reconnect without restart
+iris_servers()                                  # list all registered instances
+iris_execute(server="dev", code="Write $ZV")    # target a specific named server
+iris_test_server(server="dev")                  # verify connectivity first
+```
+
+To switch the default connection to a different Docker container (legacy approach):
+
+```text
+iris_list_containers()                          # see running Docker containers
+iris_select_container(name="my-iris-container") # reconnect to that container
 ```
 
 ---

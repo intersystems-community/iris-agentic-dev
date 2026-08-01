@@ -305,7 +305,8 @@ Diff the running production config against the last source-controlled version. R
 Read, write, delete, or list Ensemble lookup table entries.
 
 - `get` and `list` are always available
-- `set` and `delete` are write-gated (requires write permissions on the connection)
+- `set` and `delete` are write-gated **and destructive-gated** (requires both
+  `write_tools_enabled = true` and `destructive_tools_enabled = true`)
 
 ### `iris_lookup_transfer(action, table)`
 
@@ -320,7 +321,8 @@ List all Ensemble credential IDs and usernames. Passwords are never returned.
 
 ### `iris_credential_manage(action, id)`
 
-Create, update, or delete Ensemble credentials. Write-gated.
+Create, update, or delete Ensemble credentials. Write-gated **and destructive-gated**
+(requires both `write_tools_enabled = true` and `destructive_tools_enabled = true`).
 
 ---
 

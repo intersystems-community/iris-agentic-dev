@@ -98,11 +98,15 @@ Returns: unified log with timestamps, error codes, namespaces
 
 ### If IRIS tools return errors — fix the connection first
 
-```bash
-# Check which containers are available:
-iris_list_containers()
+```text
+# List all registered IRIS instances (named pool + Docker containers):
+iris_servers()
 
-# Connect to the right one (no restart needed):
+# Route a single call to a named instance without changing the default:
+iris_execute(server="dev", code="Write $ZV")
+
+# Or switch the default to a different Docker container (legacy):
+iris_list_containers()
 iris_select_container(name="arno_iris_test")
 iris_select_container(name="arno_iris_test", password="SYS2")  # if password changed
 

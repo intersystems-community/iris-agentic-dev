@@ -144,6 +144,50 @@ container has no 52773 mapping, or when the build genuinely has no private web s
 (Enterprise `2026.2.0AI`, DPP-1192). You usually do not need it — iad detects the NoPWS
 case itself and reports `atelier_rest: false`. Community images do have PWS on 52773.
 
+### Multi-instance connection pool
+
+Every tool accepts an optional `server` parameter that routes the call to a named IRIS
+instance without changing the default connection:
+
+```text
+iris_execute(server="prod", code="Write $ZVersion")
+iris_query(server="staging", query="SELECT COUNT(*) FROM MyApp.Patient")
+```
+
+Manage the pool with the server management tools:
+
+```text
+iris_servers()                        # list all registered instances + reachability
+iris_add_server(name="prod", host="iris.example.com", port=52773,
+                namespace="LIVE", username="svc", password="...")
+iris_test_server(server="prod")       # probe: version, Atelier API, latency
+iris_remove_server(server="prod")     # ☠ destructive — requires destructive_tools_enabled
+iris_import_servers()                 # pull VS Code Server Manager entries into iad
+```
+
+`iris_servers` shows `reachable: null` until you call `iris_test_server` — reachability
+is not probed at startup.
+
+### Write protection — three tiers
+
+**Tier 1** (`write_tools_enabled = true`) — compile, execute, source control, routine
+writes. Default: respects `mcpTemplate`; `live` template sets it false.
+
+**Tier 2** (`destructive_tools_enabled = true`) — `global_kill`, `iris_admin` writes,
+`iris_credential_manage`, `iris_lookup_manage` (write/delete), `iris_namespace_create`,
+`iris_remove_server`, `skill_forget`. Default: **false** regardless of tier 1.
+Setting this without tier 1 is an error.
+
+**Tier 3** (`write_allowed_servers = ["dev", "staging"]`) — name-based allowlist. Write
+calls targeting any server not in the list return `WRITE_SERVER_NOT_ALLOWED`. Read-only
+tools (`iris_query`, `iris_search`, etc.) are unaffected.
+
+```toml
+write_tools_enabled       = true
+destructive_tools_enabled = true          # only needed for ☠ tools
+write_allowed_servers     = ["dev"]       # block accidental writes to prod
+```
+
 ### Fleet / operate mode (multi-instance)
 
 ```toml
@@ -189,6 +233,11 @@ on the `prod` Server Manager connection. Categories: `compile`, `execute`, `quer
   `check_config` and expect `credential_status: "resolved"`.
 - **Several Server Manager servers and none selected** — set `IRIS_SERVER_NAME` to the
   map key from `intersystems.servers`.
+- **`WRITE_SERVER_NOT_ALLOWED`** — `write_allowed_servers` is set and the `server:`
+  parameter names an instance not in the list. Add the server name to the list, or omit
+  `server:` to use the default connection.
+- **`DESTRUCTIVE_TOOLS_DISABLED`** — a ☠ tool was called without
+  `destructive_tools_enabled = true`. Add that key to the toml for this connection.
 
 ## Atelier REST requirement
 
