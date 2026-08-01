@@ -34,8 +34,8 @@ running a migration.
 ### HL7 schema
 
 **`hl7_schema_list`** and **`hl7_schema_inspect`** cover the HL7 2.x schema installed on
-the instance. Both return `HL7_NOT_AVAILABLE` cleanly on Community builds that ship
-without Ensemble.
+the instance. Both return `HL7_NOT_AVAILABLE` cleanly on IRIS builds without
+`EnsLib.HL7.Schema` — requires HealthShare or IRIS for Health.
 
 ### Visualization
 

@@ -44,7 +44,7 @@ and cross-instance comparison:
 - **Observability**: `journal_search`, `query_audit_log`, `stream_inspect`, `my_access`,
   `capability_matrix`.
 - **HL7 schema**: `hl7_schema_list`, `hl7_schema_inspect`. Return `HL7_NOT_AVAILABLE`
-  cleanly on Community builds.
+  cleanly on IRIS builds without `EnsLib.HL7.Schema` (requires HealthShare or IRIS for Health).
 - **Visualization**: `mermaid_class`, `mermaid_production`, `resolve_storage`.
 - **Cross-instance comparison**: `compare_document` (unified diff of a single document
   across two servers), `compare_namespace` (full namespace diff).

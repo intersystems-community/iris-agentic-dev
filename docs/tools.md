@@ -1045,7 +1045,8 @@ access before a release.
 ### `hl7_schema_list`
 
 List available HL7 2.x schema versions. Returns `HL7_NOT_AVAILABLE` if
-`EnsLib.HL7.Schema` is not installed (e.g. Community edition without Ensemble).
+`EnsLib.HL7.Schema` is absent. Requires HealthShare or IRIS for Health — not present on
+plain IRIS regardless of edition.
 
 | Parameter | Type   | Default | Notes                          |
 | --------- | ------ | ------- | ------------------------------ |
