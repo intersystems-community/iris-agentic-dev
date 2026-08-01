@@ -2,7 +2,9 @@
 
 Most tools work over the Atelier REST API and connect to any IRIS instance — no Docker
 required unless noted. Tools marked ✦ require `IRIS_CONTAINER`. Tools marked 🔒 are
-write-gated (suppressed on Live instances unless `IRIS_ALLOW_PROD=1`).
+write-gated (suppressed on Live instances unless `IRIS_ALLOW_PROD=1`). Tools marked ☠
+are destructive-gated — they require `destructive_tools_enabled = true` in addition to
+`write_tools_enabled = true`.
 
 `namespace` defaults to `"USER"` on every tool. It is omitted from parameter tables below
 unless there is something non-obvious to say about it.
@@ -15,7 +17,7 @@ unless there is something non-obvious to say about it.
 | ----------------------------------------------------------------- | ------------------------- |
 | [`iris_servers`](#iris_servers)                                   | Server Management         |
 | [`iris_add_server`](#iris_add_server)                             | Server Management         |
-| [`iris_remove_server`](#iris_remove_server)                       | Server Management         |
+| [`iris_remove_server`](#iris_remove_server-) ☠                    | Server Management         |
 | [`iris_test_server`](#iris_test_server)                           | Server Management         |
 | [`iris_import_servers`](#iris_import_servers)                     | Server Management         |
 | [`iris_doc`](#iris_doc)                                           | Code                      |
@@ -50,16 +52,16 @@ unless there is something non-obvious to say about it.
 | [`iris_message_body`](#iris_message_body)                         | Interoperability          |
 | [`iris_business_rule_info`](#iris_business_rule_info)             | Interoperability          |
 | [`iris_credential_list`](#iris_credential_list)                   | Interoperability          |
-| [`iris_credential_manage`](#iris_credential_manage-) 🔒           | Interoperability          |
-| [`iris_lookup_manage`](#iris_lookup_manage)                       | Interoperability          |
+| [`iris_credential_manage`](#iris_credential_manage--) 🔒 ☠        | Interoperability          |
+| [`iris_lookup_manage`](#iris_lookup_manage-) ☠                    | Interoperability          |
 | [`iris_lookup_transfer`](#iris_lookup_transfer)                   | Interoperability          |
 | [`iris_ws_open`](#iris_ws_open)                                   | WebSocket sessions        |
 | [`iris_ws_exec`](#iris_ws_exec)                                   | WebSocket sessions        |
 | [`iris_ws_close`](#iris_ws_close)                                 | WebSocket sessions        |
 | [`global_preview`](#global_preview)                               | Administration            |
-| [`global_kill`](#global_kill-) 🔒                                 | Administration            |
+| [`global_kill`](#global_kill--) 🔒 ☠                              | Administration            |
 | [`iris_namespace_list`](#iris_namespace_list)                     | Administration            |
-| [`iris_namespace_create`](#iris_namespace_create-) 🔒             | Administration            |
+| [`iris_namespace_create`](#iris_namespace_create--) 🔒 ☠          | Administration            |
 | [`iris_database_list`](#iris_database_list)                       | Administration            |
 | [`iris_database_stats`](#iris_database_stats)                     | Administration            |
 | [`journal_search`](#journal_search)                               | Administration            |
@@ -74,7 +76,7 @@ unless there is something non-obvious to say about it.
 | [`resolve_storage`](#resolve_storage)                             | Administration            |
 | [`compare_document`](#compare_document)                           | Administration            |
 | [`compare_namespace`](#compare_namespace)                         | Administration            |
-| [`iris_admin`](#iris_admin)                                       | Administration            |
+| [`iris_admin`](#iris_admin-) ☠                                    | Administration            |
 | [`iris_containers`](#iris_containers-) ✦                          | Administration            |
 | [`skill`](#skill)                                                 | Skills and knowledge base |
 | [`skill_community`](#skill_community)                             | Skills and knowledge base |
@@ -109,10 +111,11 @@ Parameters: `name`, `host`, `port`, `namespace`, `username`, `password`, `descri
 
 After adding a server, restart iad for the new connection to appear in the pool.
 
-### `iris_remove_server`
+### `iris_remove_server` ☠
 
-Remove a server from the iad-native config. Also removes its keychain entry. Cannot
-remove servers sourced from VS Code settings — edit `settings.json` directly for those.
+Remove a server from the iad-native config and its keychain entry. Requires
+`destructive_tools_enabled = true`. Cannot remove servers sourced from VS Code settings —
+edit `settings.json` directly for those.
 
 ### `iris_test_server`
 
@@ -876,7 +879,7 @@ List Ensemble credentials. Passwords are never returned.
 
 ---
 
-### `iris_credential_manage` 🔒
+### `iris_credential_manage` 🔒 ☠
 
 Create, update, or delete an Ensemble credential.
 
@@ -890,9 +893,10 @@ Create, update, or delete an Ensemble credential.
 
 ---
 
-### `iris_lookup_manage`
+### `iris_lookup_manage` ☠
 
-Read, write, delete, or list Ensemble lookup table entries. Write actions are 🔒 gated.
+Read, write, delete, or list Ensemble lookup table entries. Write and delete actions are
+🔒 ☠ gated. Read actions (`get`, `list_keys`, `list_tables`) are unrestricted.
 
 | Parameter   | Type   | Default  | Notes                                                                              |
 | ----------- | ------ | -------- | ---------------------------------------------------------------------------------- |
@@ -937,7 +941,7 @@ subsequent `global_kill`. Returns up to 100 entries, the total subscript count, 
 | `count`   | number | `20`    | Max entries to preview (1–100)                 |
 | `server`  | string | —       | Named server; omit for default                 |
 
-### `global_kill` 🔒
+### `global_kill` 🔒 ☠
 
 Kill an IRIS global after confirming with a token from `global_preview`. The token
 validates the global name and server — a token issued for `^Foo` cannot be used to kill
@@ -957,9 +961,9 @@ List all namespaces on the connected IRIS instance.
 | --------- | ------ | ------- | ------------------------------ |
 | `server`  | string | —       | Named server; omit for default |
 
-### `iris_namespace_create` 🔒
+### `iris_namespace_create` 🔒 ☠
 
-Create a new namespace and its backing database. Write-gated.
+Create a new namespace and its backing database. Write-gated and destructive-gated.
 
 | Parameter | Type   | Default | Notes                                        |
 | --------- | ------ | ------- | -------------------------------------------- |
@@ -1115,10 +1119,10 @@ avoid overload — `unchecked_count` reports how many were skipped.
 | `server_a`  | string | —        | **Required.** First server name  |
 | `server_b`  | string | —        | **Required.** Second server name |
 
-### `iris_admin`
+### `iris_admin` ☠
 
-List namespaces, databases, users, roles, and web apps. Write actions require
-`IRIS_ADMIN_TOOLS=1`.
+List namespaces, databases, users, roles, and web apps. Read actions have no gate.
+Write actions require both `destructive_tools_enabled = true` and `IRIS_ADMIN_TOOLS=1`.
 
 **Read actions** (no env gate):
 
@@ -1194,9 +1198,9 @@ iris_containers(action="select", name="my-iris-container")
 
 ## WebSocket sessions
 
-Persistent IRIS terminal sessions over WebSocket. Requires IRIS 2026.2+ with Atelier V7
-API (PWS enabled). Each session keeps a live ObjectScript context between calls — variables
-set in one `iris_ws_exec` call are visible in the next.
+Persistent IRIS terminal sessions over WebSocket. Requires IRIS 2023.2+ (Atelier V7 API).
+Each session keeps a live ObjectScript context between calls — variables set in one
+`iris_ws_exec` call are visible in the next.
 
 Session tokens have the form `ws:{server}:{NAMESPACE}:{uuid}`.
 
@@ -1243,6 +1247,8 @@ Manage the learning agent skill registry.
 | `action`  | string | —       | **Required.** `"list"` \| `"describe"` \| `"search"` \| `"forget"` \| `"propose"` |
 | `name`    | string | —       | For `describe`/`forget`                                                           |
 | `query`   | string | —       | For `search`                                                                      |
+
+`action=forget` is ☠ destructive-gated — requires `destructive_tools_enabled = true`.
 
 ```text
 skill(action="list")
@@ -1366,6 +1372,93 @@ results in the IDE. They share the same server connection.
 
 ---
 
+## Tool annotations
+
+Every tool in iad exposes MCP `ToolAnnotations` — machine-readable hints that MCP clients
+can act on before calling the tool.
+
+| Annotation         | Set on                                                                                                                                               | What it means                                      |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `read_only_hint`   | 57 tools — all query, inspect, list, history, and comparison tools                                                                                   | The tool makes no changes to IRIS state            |
+| `destructive_hint` | 7 tools — `global_kill`, `iris_admin`, `iris_credential_manage`, `iris_lookup_manage`, `iris_namespace_create`, `iris_remove_server`, `skill_forget` | The tool can irreversibly delete or overwrite data |
+
+MCP clients that respect `read_only_hint` can run read-only tools in parallel or in
+background without approval prompts. Clients that respect `destructive_hint` can surface
+an extra confirmation step before calling the destructive tools.
+
+These are hints, not enforcement. Enforcement comes from the config gates described below.
+
+---
+
+## Write protection
+
+Three config keys control which servers and which tools can perform writes. They form a
+stack — each layer can only further restrict, never expand.
+
+### `write_tools_enabled`
+
+All write tools return `WRITE_TOOLS_DISABLED` when this is `false` (the default for
+connections detected as Live). Set it in `.iris-agentic-dev.toml`:
+
+```toml
+write_tools_enabled = true
+```
+
+### `destructive_tools_enabled`
+
+The 7 tools marked ☠ require an additional opt-in. Even with `write_tools_enabled = true`,
+they return `DESTRUCTIVE_TOOLS_DISABLED` unless you also set:
+
+```toml
+destructive_tools_enabled = true
+```
+
+Default: `false`. Setting `destructive_tools_enabled = true` with `write_tools_enabled = false`
+is an error — iad refuses to start with `DESTRUCTIVE_REQUIRES_WRITES`.
+
+**Why a separate flag?** A compile-test workflow needs `write_tools_enabled = true`, but
+there's no reason for that same session to be able to kill globals or delete namespaces.
+Enabling the two tiers independently means an agent that can compile can't accidentally wipe
+data even if it constructs a destructive call.
+
+Environment variable: `IRIS_DESTRUCTIVE_TOOLS_ENABLED=1`
+
+### `write_allowed_servers`
+
+With a multi-instance pool, writes can be directed to any registered server by name.
+`write_allowed_servers` restricts which names are valid write targets:
+
+```toml
+write_allowed_servers = ["dev", "staging"]
+```
+
+Any write-capable tool call with `server: "prod"` (or any other name not in the list)
+returns `WRITE_SERVER_NOT_ALLOWED`. Read-only tools (`read_only_hint = true`) are
+unaffected — they work against any server regardless of this setting.
+
+When `server` is omitted, the active (default) connection is checked. If the default
+connection has no registered name (env-var or bare toml), the allowlist check is skipped.
+
+An empty list `write_allowed_servers = []` blocks writes to every named server. Omitting
+the key entirely disables the filter.
+
+Environment variable: `IRIS_WRITE_ALLOWED_SERVERS=dev,staging` (comma-separated)
+
+### Check order for write tool calls
+
+```text
+1. write_tools_enabled        — if false, WRITE_TOOLS_DISABLED
+2. write_allowed_servers      — if set and server not listed, WRITE_SERVER_NOT_ALLOWED
+3. destructive_tools_enabled  — if false and tool is ☠, DESTRUCTIVE_TOOLS_DISABLED
+4. policy.<server>.allow      — category gate (POLICY_GATE)
+5. data safety gates          — PHI, system globals, env template
+6. Execute
+```
+
+Read-only tools skip steps 1–3.
+
+---
+
 ## Data safety gates
 
 PHI is Protected Health Information — the patient-identifying data HIPAA governs.
@@ -1409,26 +1502,29 @@ comes back as-is, so `redact` is not a safe default for XML or custom message bo
 
 ## Common error codes
 
-| Code                        | Meaning                                                                                              |
-| --------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `POLICY_GATE`               | Call blocked by per-connection policy — see `allow` in `.iris-agentic-dev.toml`                      |
-| `ENV_GATE_BLOCKED`          | Tool not permitted by this connection's `mcpTemplate` — see [gates](#data-safety-gates)              |
-| `DATA_POLICY_BLOCKED`       | Bulk-PHI tool called without `dataPolicy = "allow"`                                                  |
-| `SYSTEM_BLOCKLIST`          | Global is on the system blocklist — not bypassable                                                   |
-| `PHI_GATE_BLOCKED`          | Global name matches a PHI pattern — pass `acknowledgePhi: true`                                      |
-| `SCOPE_REQUIRED`            | `iris_search` called without a document scope — pass a `documents` wildcard list                     |
-| `STALE_CONTENT`             | `iris_doc` insert/delete_lines `expected` field didn't match stored content                          |
-| `STORAGE_STRIP_BLOCKED`     | `iris_doc mode=put` would strip a Storage block — pass `allow_storage_regeneration: true` to proceed |
-| `CODE_EDIT_BLOCKED`         | `iris_execute` call matched a code-editing pattern — use `iris_doc` + `iris_compile`                 |
-| `CHECKIN_BLOCKED`           | SCM CheckIn called without `IRIS_SCM_ALLOW_CHECKIN=1`                                                |
-| `HTTP_EXECUTION_FAILED`     | Atelier HTTP call failed — check host, port, credentials                                             |
-| `IRIS_UNREACHABLE`          | No IRIS connection discoverable — run `check_config`                                                 |
-| `INTEROP_ERROR`             | Ensemble/interop HTTP call failed — check production state and container access                      |
-| `WS_TERMINAL_NOT_SUPPORTED` | Atelier API version is below V7 — WebSocket terminal requires IRIS 2026.2+                           |
-| `WS_SESSION_NOT_FOUND`      | Session token is invalid or already closed — call `iris_ws_open` to get a new token                  |
-| `CONFIRM_REQUIRED`          | `global_kill` requires a `confirm_token` from `global_preview`                                       |
-| `CONFIRM_EXPIRED`           | Confirmation token is older than 5 minutes — call `global_preview` again                             |
-| `CONFIRM_MISMATCH`          | Token was issued for a different global or server                                                    |
-| `WRITE_TOOLS_DISABLED`      | Write tool called without `write_tools = true` in `.iris-agentic-dev.toml`                           |
-| `FETCH_FAILED`              | `compare_document` could not fetch source from one or both servers                                   |
-| `HL7_NOT_AVAILABLE`         | `EnsLib.HL7.Schema` not installed on this instance                                                   |
+| Code                          | Meaning                                                                                              |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `POLICY_GATE`                 | Call blocked by per-connection policy — see `allow` in `.iris-agentic-dev.toml`                      |
+| `ENV_GATE_BLOCKED`            | Tool not permitted by this connection's `mcpTemplate` — see [gates](#data-safety-gates)              |
+| `DATA_POLICY_BLOCKED`         | Bulk-PHI tool called without `dataPolicy = "allow"`                                                  |
+| `SYSTEM_BLOCKLIST`            | Global is on the system blocklist — not bypassable                                                   |
+| `PHI_GATE_BLOCKED`            | Global name matches a PHI pattern — pass `acknowledgePhi: true`                                      |
+| `SCOPE_REQUIRED`              | `iris_search` called without a document scope — pass a `documents` wildcard list                     |
+| `STALE_CONTENT`               | `iris_doc` insert/delete_lines `expected` field didn't match stored content                          |
+| `STORAGE_STRIP_BLOCKED`       | `iris_doc mode=put` would strip a Storage block — pass `allow_storage_regeneration: true` to proceed |
+| `CODE_EDIT_BLOCKED`           | `iris_execute` call matched a code-editing pattern — use `iris_doc` + `iris_compile`                 |
+| `CHECKIN_BLOCKED`             | SCM CheckIn called without `IRIS_SCM_ALLOW_CHECKIN=1`                                                |
+| `HTTP_EXECUTION_FAILED`       | Atelier HTTP call failed — check host, port, credentials                                             |
+| `IRIS_UNREACHABLE`            | No IRIS connection discoverable — run `check_config`                                                 |
+| `INTEROP_ERROR`               | Ensemble/interop HTTP call failed — check production state and container access                      |
+| `WS_TERMINAL_NOT_SUPPORTED`   | Atelier API version is below V7 — WebSocket terminal requires IRIS 2023.2+                           |
+| `WS_SESSION_NOT_FOUND`        | Session token is invalid or already closed — call `iris_ws_open` to get a new token                  |
+| `CONFIRM_REQUIRED`            | `global_kill` requires a `confirm_token` from `global_preview`                                       |
+| `CONFIRM_EXPIRED`             | Confirmation token is older than 5 minutes — call `global_preview` again                             |
+| `CONFIRM_MISMATCH`            | Token was issued for a different global or server                                                    |
+| `WRITE_TOOLS_DISABLED`        | Write tool called without `write_tools_enabled = true` in `.iris-agentic-dev.toml`                   |
+| `DESTRUCTIVE_TOOLS_DISABLED`  | Destructive tool (☠) called without `destructive_tools_enabled = true`                               |
+| `DESTRUCTIVE_REQUIRES_WRITES` | `destructive_tools_enabled = true` set while `write_tools_enabled = false` — invalid config          |
+| `WRITE_SERVER_NOT_ALLOWED`    | Write directed to a server not in `write_allowed_servers`                                            |
+| `FETCH_FAILED`                | `compare_document` could not fetch source from one or both servers                                   |
+| `HL7_NOT_AVAILABLE`           | `EnsLib.HL7.Schema` not installed on this instance                                                   |
