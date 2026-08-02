@@ -341,12 +341,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
+      - name: Install mold linker
+        run: sudo apt-get install -y mold
       - name: Build binary (required for mcp_handshake and plugin_dispatch tests)
         run: cargo build -p iris-agentic-dev
         env:
           RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
-      - name: Install mold linker
-        run: sudo apt-get install -y mold
       - name: Check per-file coverage floors
         # Runs unit tests only — no IRIS container needed. Fails if:
         #   - any src/ file drops below its registered floor
