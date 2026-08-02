@@ -7149,6 +7149,7 @@ Methods:
         }
 
         ok_json(serde_json::json!({
+            "success": true,
             "imported": imported,
             "skipped": skipped,
             "no_keychain": no_keychain,

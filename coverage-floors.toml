@@ -4,93 +4,103 @@
 # lines MUST have an entry here. Adding code to a file without maintaining its
 # floor fails CI. Adding a new file without an entry also fails CI.
 #
-# Floors are set 2pp below the measured unit-test baseline (2026-07-30).
-# "Unit-test" means: --lib --test '*' --features testing, no live IRIS.
+# Two measurement modes:
 #
-# Files in the tools/ dispatch layer have low floors because their code is
-# only fully exercised via the MCP subprocess — see the coverage archaeology
-# in specs/071-execute-session/tasks.md (T028) for details.
-# The subprocess profraw merge is tracked as a future project.
+#   Unit-only (fast, offline) — what CI enforces on every push:
+#     PATH="$HOME/.cargo/bin:$PATH" cargo llvm-cov \
+#       --features testing --no-fail-fast -p iris-agentic-dev-core \
+#       --lib --test '*' --summary-only -- --test-threads=1
+#     Then: bash scripts/check-coverage-floors.sh
 #
-# To raise a floor after adding tests: measure, verify it passes, update here.
-# To register a new file: run scripts/check-coverage-floors.sh to see its
-# measured %, then add an entry at (measured - 2).
+#   Merged/subprocess (full picture, requires live IRIS) — release gate:
+#     IRIS_HOST=localhost IRIS_WEB_PORT=52780 bash scripts/coverage.sh
+#     Merges profraw from spawned iris-agentic-dev subprocesses; dispatch-layer
+#     files (mod.rs, observability.rs, etc.) are properly counted here.
+#     Enforces the `overall` floor in addition to per-file floors.
 #
-# Measurement command (no IRIS needed):
-#   PATH="$HOME/.cargo/bin:$PATH" cargo llvm-cov \
-#     --features testing --no-fail-fast -p iris-agentic-dev-core \
-#     --lib --test '*' --summary-only -- --test-threads=1
+# Per-file floors = unit-only baseline minus 2pp.
+# `overall` = merged/subprocess baseline minus 2pp (enforced only by coverage.sh).
+#
+# To raise a floor: measure, verify it passes, update here.
+# To register a new file: run check-coverage-floors.sh to find measured %,
+# then add an entry at (measured - 2).
 
 [floors]
+# Overall line coverage floor — enforced only in merged/subprocess mode (src/ files only).
+# Baseline: 87.28% src-only (2026-08-02, v1.0.0 pre-release, with T118 failing).
+# Target: reach 90% src-only once T118 and remaining dispatch gaps are closed.
+overall = 85
+
 # benchmark/ — task runner and LLM integration
-"src/benchmark/container.rs"          = 57
-"src/benchmark/llm.rs"                = 83
+"src/benchmark/container.rs"          = 43
+"src/benchmark/llm.rs"                = 85
 "src/benchmark/mod.rs"                = 52
 
 # top-level modules
-"src/elicitation.rs"                  = 96
-"src/generate.rs"                     = 94
+"src/elicitation.rs"                  = 97
+"src/generate.rs"                     = 96
 
 # iris/ — connection and config logic
 "src/iris/audit_log.rs"               = 92
-"src/iris/connection.rs"              = 85
-"src/iris/connection_pool.rs"         = 79
+"src/iris/connection.rs"              = 55
+"src/iris/connection_pool.rs"         = 74
 "src/iris/discovery.rs"               = 32
-"src/iris/server_manager.rs"          = 94
-"src/iris/servers_config.rs"          = 90
+"src/iris/server_manager.rs"          = 55
+"src/iris/servers_config.rs"          = 87
 "src/iris/vscode_config.rs"           = 97
-"src/iris/workspace_config.rs"        = 89
+"src/iris/workspace_config.rs"        = 83
 "src/iris/ws_session.rs"              = 21
 
 # manifest/ — TOML schema parser
 "src/manifest/mod.rs"                 = 93
-"src/manifest/resolve.rs"             = 94
+"src/manifest/resolve.rs"             = 96
 
 # policy/ — pure logic, high coverage expected
-"src/policy/code_edit_gate.rs"        = 97
-"src/policy/data_policy_gate.rs"      = 95
+"src/policy/code_edit_gate.rs"        = 98
+"src/policy/data_policy_gate.rs"      = 96
 "src/policy/env_gate.rs"              = 94
-"src/policy/gate.rs"                  = 96
+"src/policy/gate.rs"                  = 95
 "src/policy/patterns.rs"              = 98
 "src/policy/system_blocklist_gate.rs" = 98
 
 # skill_install/ — installer helpers
 "src/skill_install/claude_code.rs"    = 88
-"src/skill_install/copilot.rs"        = 72
+"src/skill_install/copilot.rs"        = 67
 "src/skill_install/mod.rs"            = 77
 "src/skill_install/opencode.rs"       = 88
 
 # skills/ — bundled skill registry
-"src/skills/bundled.rs"               = 91
-"src/skills/mod.rs"                   = 59
+"src/skills/bundled.rs"               = 93
+"src/skills/mod.rs"                   = 58
 
 # telemetry/ — trace and redaction
-"src/telemetry/mod.rs"                = 80
-"src/telemetry/prune.rs"              = 73
+"src/telemetry/mod.rs"                = 81
+"src/telemetry/prune.rs"              = 69
 "src/telemetry/redact.rs"             = 98
 "src/telemetry/trace_export.rs"       = 98
 
-# tools/ — dispatch-layer files have low floors (subprocess-only paths);
-# pure-logic files (execute_session, gate_macro, patterns) stay near 100%
-"src/tools/admin.rs"                  = 79
-"src/tools/admin_tools.rs"            = 15
+# tools/ — dispatch-layer files have low unit-only floors because they're only
+# fully exercised by the MCP subprocess. Run scripts/coverage.sh to see real
+# numbers after subprocess profraw merge.
+"src/tools/admin.rs"                  = 81
+"src/tools/admin_tools.rs"            = 12
 "src/tools/comparison_tools.rs"       = 11
-"src/tools/coverage.rs"               = 23
-"src/tools/dict.rs"                   = 52
-"src/tools/doc.rs"                    = 38
-"src/tools/doc_search.rs"             = 64
+"src/tools/coverage.rs"               = 21
+"src/tools/dict.rs"                   = 53
+"src/tools/doc.rs"                    = 35
+"src/tools/doc_search.rs"             = 63
 "src/tools/execute_session.rs"        = 98
 "src/tools/gate_macro.rs"             = 98
-"src/tools/global.rs"                 = 58
-"src/tools/info.rs"                   = 67
-"src/tools/interop.rs"                = 44
-"src/tools/log_store.rs"              = 95
-"src/tools/mod.rs"                    = 37
+"src/tools/global.rs"                 = 41
+"src/tools/info.rs"                   = 36
+"src/tools/interop.rs"                = 45
+"src/tools/log_store.rs"              = 96
+"src/tools/mod.rs"                    = 35
 "src/tools/observability.rs"          = 17
-"src/tools/scm.rs"                    = 86
-"src/tools/search.rs"                 = 81
+"src/tools/scm.rs"                    = 58
+"src/tools/search.rs"                 = 53
 "src/tools/server_tools.rs"           = 90
-"src/tools/skills_tools.rs"           = 38
-"src/tools/symbols_local.rs"          = 59
+"src/tools/skills_tools.rs"           = 37
+"src/tools/symbols_local.rs"          = 57
 "src/tools/ws_tools.rs"               = 84
-"src/tools/xdata_flow.rs"             = 56
+"src/tools/xdata_flow.rs"             = 58

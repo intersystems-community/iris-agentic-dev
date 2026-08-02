@@ -76,3 +76,19 @@ Before closing any release (tagging, publishing, merging release branch):
 ## Recent Changes
 
 - 068-windows-docker: Added Dockerfile (no specific version), Bash (GHA steps), Markdown + `gcr.io/distroless/static-debian12` (base image), `docker/build-push-action@v6`, `docker/metadata-action@v5`
+
+<!-- codebase-memory-mcp: Code Discovery Protocol -->
+## Code Discovery Protocol (codebase-memory-mcp)
+
+**ALWAYS use `codebase-memory-mcp` tools FIRST for any code exploration:**
+
+- `search_graph(name_pattern/label/qn_pattern)` — find functions, classes, routes
+- `trace_path(function_name, mode=calls|data_flow|cross_service)` — call chains
+- `get_code_snippet(qualified_name)` — exact symbol source with precise line ranges
+- `query_graph(query)` — complex Cypher patterns across the codebase graph
+- `get_architecture(aspects)` — project structure overview
+- `search_code(pattern)` — graph-augmented text search
+
+Use `Grep`/`Glob`/`Read` freely for text, configs, and non-code files, and always
+`Read` a file before editing it. If the project is not indexed yet, run
+`index_repository` first.

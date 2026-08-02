@@ -23,24 +23,30 @@ import sys
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--floors", required=True, help="Path to coverage-floors.toml")
-    p.add_argument("--coverage", required=True, help="Path to llvm-cov --summary-only output")
+    p.add_argument("--coverage", help="Path to llvm-cov --summary-only output")
+    p.add_argument("--lcov", help="Path to lcov file (alternative to --coverage)")
     p.add_argument("--src", required=True, help="Path to crates/iris-agentic-dev-core/src/")
     return p.parse_args()
 
 
 def load_floors(path):
-    """Parse coverage-floors.toml. Returns dict: rel_path -> int floor."""
+    """Parse coverage-floors.toml. Returns (file_floors dict, overall_floor int or None)."""
     floors = {}
+    overall = None
     with open(path) as f:
         for line in f:
             m = re.match(r'\s*"(src/[^"]+\.rs)"\s*=\s*(\d+)', line)
             if m:
                 floors[m.group(1)] = int(m.group(2))
-    return floors
+                continue
+            m = re.match(r'\s*overall\s*=\s*(\d+)', line)
+            if m:
+                overall = int(m.group(1))
+    return floors, overall
 
 
 def load_coverage(path):
-    """Parse llvm-cov output. Returns dict: rel_path -> float line coverage %."""
+    """Parse llvm-cov --summary-only output. Returns dict: rel_path -> float line coverage %."""
     actual = {}
     with open(path) as f:
         for line in f:
@@ -53,6 +59,52 @@ def load_coverage(path):
             if m:
                 actual[m.group(1)] = float(m.group(2))
     return actual
+
+
+def load_lcov(path):
+    """Parse an lcov file. Returns (file_dict, overall_pct).
+
+    file_dict: rel_path -> float line coverage %
+    overall_pct: float or None if no lines found
+    """
+    actual = {}
+    total_lines = 0
+    total_covered = 0
+
+    cur_file = None
+    file_lines = 0
+    file_covered = 0
+
+    crate_marker = "iris-agentic-dev-core/"
+
+    with open(path) as f:
+        for raw in f:
+            line = raw.strip()
+            if line.startswith("SF:"):
+                cur_file = None
+                file_lines = 0
+                file_covered = 0
+                full_path = line[3:]
+                if crate_marker in full_path:
+                    idx = full_path.index(crate_marker)
+                    rel = full_path[idx + len(crate_marker):]
+                    if rel.startswith("src/") and rel.endswith(".rs"):
+                        cur_file = rel
+            elif line.startswith("DA:") and cur_file is not None:
+                parts = line[3:].split(",")
+                if len(parts) >= 2:
+                    file_lines += 1
+                    total_lines += 1
+                    if int(parts[1]) > 0:
+                        file_covered += 1
+                        total_covered += 1
+            elif line == "end_of_record":
+                if cur_file is not None and file_lines > 0:
+                    actual[cur_file] = 100.0 * file_covered / file_lines
+                cur_file = None
+
+    overall = (100.0 * total_covered / total_lines) if total_lines > 0 else None
+    return actual, overall
 
 
 def find_src_files(src_dir):
@@ -74,8 +126,18 @@ def find_src_files(src_dir):
 def main():
     args = parse_args()
 
-    floors = load_floors(args.floors)
-    actual = load_coverage(args.coverage)
+    if not args.coverage and not args.lcov:
+        print("ERROR: one of --coverage or --lcov is required")
+        sys.exit(1)
+
+    floors, overall_floor = load_floors(args.floors)
+
+    if args.lcov:
+        actual, measured_overall = load_lcov(args.lcov)
+    else:
+        actual = load_coverage(args.coverage)
+        measured_overall = None
+
     src_files = find_src_files(args.src)
 
     violations = 0
@@ -127,6 +189,22 @@ def main():
         for rel in sorted(stale):
             print(f"  {rel}")
         print()
+
+    # Check overall floor (only when using --lcov and overall= is set in toml)
+    if overall_floor is not None and measured_overall is not None:
+        if int(measured_overall) < overall_floor:
+            print(
+                f"FAIL: overall line coverage {measured_overall:.2f}% is below "
+                f"floor {overall_floor}% (gap: {overall_floor - int(measured_overall)}pp)"
+            )
+            violations += 1
+        else:
+            margin = int(measured_overall) - overall_floor
+            print(
+                f"Overall: {measured_overall:.2f}%  floor={overall_floor}%  margin={margin}pp"
+            )
+    elif measured_overall is not None:
+        print(f"Overall: {measured_overall:.2f}%  (no overall floor set)")
 
     if violations == 0:
         covered = len([r for r in floors if r in actual])
