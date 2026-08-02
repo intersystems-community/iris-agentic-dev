@@ -929,6 +929,10 @@ Export or import an Ensemble lookup table as XML. Import is 🔒 gated.
 
 ## Administration
 
+Most tools in this section are ported from Pierre Abdelsayed's Server Manager MCP work.
+The global confirmation pattern, namespace/database admin, observability tools, HL7
+schema tools, Mermaid diagrams, and `resolve_storage` all originate from his design.
+
 ### `global_preview`
 
 Preview the top N subscripts of an IRIS global and mint a confirmation token for a
@@ -1119,6 +1123,65 @@ avoid overload — `unchecked_count` reports how many were skipped.
 | `namespace` | string | `"USER"` | Namespace to compare             |
 | `server_a`  | string | —        | **Required.** First server name  |
 | `server_b`  | string | —        | **Required.** Second server name |
+
+### System observability
+
+Five read-only `iris_admin` actions give a real-time view into IRIS internals. All run
+against `%SYS` directly — no external monitoring stack required.
+
+**`view_locks`** — lists all active IRIS locks. Each row shows the lock name, lock type
+(shared/exclusive), the owning process ID, and the caller's job ID. Useful for debugging
+contention during long-running transactions or BPL routes that hold locks across
+`Await` calls.
+
+```text
+iris_admin(action="view_locks")
+```
+
+**`view_processes`** — shows running IRIS processes. Columns include process ID,
+namespace, routine+label (i.e. where the process is executing), CPU time, and whether
+the process is suspended. The `namespace_filter` parameter narrows results to a single
+namespace. Process user names are redacted in the response (PHI precaution) unless your
+connection has `dataPolicy = "allow"`.
+
+```text
+iris_admin(action="view_processes")
+iris_admin(action="view_processes", namespace_filter="MYAPP")
+```
+
+**`namespace_mappings`** — returns the global, package, and routine mappings for a
+namespace: which packages and globals resolve to which databases. Equivalent to the
+Namespace Mappings page in Management Portal, useful when debugging `<CLASS DOES NOT
+EXIST>` errors that turn out to be mapping gaps.
+
+```text
+iris_admin(action="namespace_mappings", namespace="MYAPP")
+```
+
+**`database_status`** — calls `SYS.Database:FreeSpace` and returns size, free space, and
+journal state for every database. Pass `name_filter` to narrow to a substring match on
+the database path.
+
+```text
+iris_admin(action="database_status")
+iris_admin(action="database_status", name_filter="MYAPP")
+```
+
+**`journal_search`** — scans the IRIS journal for global set/kill records in a time
+window. Gated: requires `dataPolicy = "allow"` because journal records can contain PHI.
+The `global_pattern` substring filter keeps results manageable; `max_records` caps at 1000.
+
+```text
+iris_admin(action="journal_search",
+           global_pattern="^MyApp.Order",
+           time_range={"from": "2026-01-15T00:00:00Z",
+                       "to":   "2026-01-15T23:59:59Z"})
+```
+
+For standalone journal access with the same parameters, the `journal_search` tool
+(Administration section below) is an alias that does not require `iris_admin`.
+
+---
 
 ### `iris_admin` ☠
 
@@ -1461,6 +1524,8 @@ Read-only tools skip steps 1–3.
 ---
 
 ## Data safety gates
+
+Gate design by Pierre Abdelsayed (InterSystems Server Manager MCP), ported to Rust.
 
 PHI is Protected Health Information — the patient-identifying data HIPAA governs.
 

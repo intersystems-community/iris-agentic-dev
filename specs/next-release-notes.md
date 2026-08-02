@@ -34,7 +34,11 @@ state. Now each step can be separate. Requires IRIS 2023.2+ (Atelier V7 API).
 ### Administration and cross-instance comparison
 
 Twenty-two new tools across global management, namespace/database admin, observability,
-and cross-instance comparison:
+and cross-instance comparison. Most of this section is ported from Pierre Abdelsayed's
+Server Manager MCP work — the global confirmation pattern, namespace/database admin,
+observability tools, HL7 schema tools, Mermaid diagrams, and `resolve_storage` all
+originate from his design. The data safety gates (PHI policy, system globals blocklist,
+environment template) are also his, ported to Rust in an earlier release.
 
 - **Global management**: `global_preview` + `global_kill`. Preview returns a confirmation
   token; kill requires it. The token is bound to the specific global and server, expires
