@@ -2419,8 +2419,12 @@ impl IrisTools {
                 // Use ConfigFile source (and record the path) when the connection came from
                 // a .iris-agentic-dev.toml — so check_config can show config_file at startup,
                 // not just after the first hot-reload cycle (issue #82).
+                // Use EnvVars when IRIS_HOST is set but no toml file was found — env-var
+                // connections are pinned, not discovered, and check_config should say so.
                 let (source, file) = if config_path.is_some() {
                     (ConnectionSource::ConfigFile, config_path)
+                } else if std::env::var("IRIS_HOST").is_ok() {
+                    (ConnectionSource::EnvVars, None)
                 } else {
                     (ConnectionSource::AutoDiscovered, None)
                 };

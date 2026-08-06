@@ -1901,3 +1901,61 @@ async fn check_config_returns_capabilities_field() {
         }
     }
 }
+
+// ── T097: connection_source = env_vars when IRIS_HOST is set ─────────────────
+
+/// with_registry_and_toolset with a live IrisConnection and no config_path reports
+/// EnvVars when IRIS_HOST is set, AutoDiscovered when it is not.
+#[test]
+fn connection_source_is_env_vars_when_iris_host_set() {
+    use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
+    use iris_agentic_dev_core::tools::{ConnectionSource, IrisTools, Toolset};
+
+    let iris_conn = IrisConnection::new(
+        "https://sec.iscinternal.com:443",
+        "SEC",
+        "svc_account",
+        "hunter2",
+        DiscoverySource::EnvVar,
+    );
+
+    // With IRIS_HOST set: source must be EnvVars, not AutoDiscovered.
+    std::env::set_var("IRIS_HOST", "sec.iscinternal.com");
+    let tools = IrisTools::with_registry_and_toolset(
+        Some(iris_conn.clone()),
+        iris_agentic_dev_core::skills::SkillRegistry::new(),
+        Toolset::Merged,
+        None,
+        None,
+    )
+    .unwrap();
+    let source_with = {
+        let conn = tools.connection.lock().unwrap();
+        conn.source.clone()
+    };
+    std::env::remove_var("IRIS_HOST");
+    assert_eq!(
+        source_with,
+        ConnectionSource::EnvVars,
+        "IRIS_HOST set → source must be EnvVars"
+    );
+
+    // Without IRIS_HOST: source must be AutoDiscovered.
+    let tools_no_env = IrisTools::with_registry_and_toolset(
+        Some(iris_conn),
+        iris_agentic_dev_core::skills::SkillRegistry::new(),
+        Toolset::Merged,
+        None,
+        None,
+    )
+    .unwrap();
+    let source_without = {
+        let conn = tools_no_env.connection.lock().unwrap();
+        conn.source.clone()
+    };
+    assert_eq!(
+        source_without,
+        ConnectionSource::AutoDiscovered,
+        "IRIS_HOST absent → source must be AutoDiscovered"
+    );
+}

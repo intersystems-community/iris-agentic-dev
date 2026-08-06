@@ -174,7 +174,17 @@ impl VsCodeSettings {
                 format!("{}://{}:{}/{}", scheme, host, web_port, path_prefix)
             };
             let username = server.username.as_deref().unwrap_or("_SYSTEM");
-            let password = server.password.as_deref().unwrap_or("SYS");
+            // Password priority: settings.json field → OS keychain (Server Manager key format)
+            // → fallback. The ObjectScript extension stores passwords in SecretStorage, not
+            // settings.json, so keychain lookup is the normal path for named servers.
+            let keychain_pw;
+            let password = if let Some(pw) = server.password.as_deref() {
+                pw
+            } else {
+                keychain_pw =
+                    crate::iris::server_manager::resolve_credential(server_name, username).ok();
+                keychain_pw.as_deref().unwrap_or("SYS")
+            };
             let ns = conn.ns.as_deref().unwrap_or("USER");
 
             let iris_conn = IrisConnection::new(

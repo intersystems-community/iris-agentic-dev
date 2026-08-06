@@ -3,6 +3,16 @@
 
 use iris_agentic_dev_core::iris::vscode_config::parse_vscode_settings;
 
+const SM_SERVICE: &str = "intersystems-server-credentials";
+static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn with_mock_store<F: FnOnce()>(f: F) {
+    let _guard = STORE_LOCK.lock().unwrap();
+    keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+    f();
+    keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+}
+
 fn write_settings(dir: &std::path::Path, content: &str) -> std::path::PathBuf {
     let path = dir.join("settings.json");
     std::fs::write(&path, content).unwrap();
@@ -135,4 +145,67 @@ fn settings_without_objectscript_conn_is_ok() {
     let path = write_settings(dir.path(), r#"{"editor.fontSize": 14}"#);
     let settings = parse_vscode_settings(&path).unwrap();
     assert!(settings.objectscript_conn.is_none());
+}
+
+// ── T097: Named server keychain credential resolution ────────────────────────
+
+/// Named server with no password in settings.json but credential in keychain →
+/// to_iris_connection resolves the real password from the OS keychain.
+#[test]
+fn named_server_no_settings_password_uses_keychain() {
+    with_mock_store(|| {
+        let entry = keyring_core::Entry::new(SM_SERVICE, "credentialProvider:sec-iris/svc_account")
+            .unwrap();
+        entry.set_password("real-secret-42").unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_settings(
+            dir.path(),
+            r#"{
+            "objectscript.conn": { "active": true, "server": "sec-iris", "ns": "SEC" },
+            "intersystems.servers": {
+                "sec-iris": {
+                    "webServer": { "scheme": "https", "host": "sec.iscinternal.com", "port": 443 },
+                    "username": "svc_account"
+                }
+            }
+        }"#,
+        );
+
+        let settings = parse_vscode_settings(&path).unwrap();
+        let conn = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(settings.to_iris_connection())
+            .unwrap();
+        assert_eq!(conn.password, "real-secret-42");
+    });
+}
+
+/// Named server with no password in settings.json and nothing in keychain →
+/// to_iris_connection falls back to "SYS".
+#[test]
+fn named_server_no_settings_password_no_keychain_falls_back() {
+    with_mock_store(|| {
+        // Empty store — no entry seeded.
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_settings(
+            dir.path(),
+            r#"{
+            "objectscript.conn": { "active": true, "server": "dev-iris", "ns": "USER" },
+            "intersystems.servers": {
+                "dev-iris": {
+                    "webServer": { "host": "localhost", "port": 52773 },
+                    "username": "_SYSTEM"
+                }
+            }
+        }"#,
+        );
+
+        let settings = parse_vscode_settings(&path).unwrap();
+        let conn = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(settings.to_iris_connection())
+            .unwrap();
+        assert_eq!(conn.password, "SYS");
+    });
 }
