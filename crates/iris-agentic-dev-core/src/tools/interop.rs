@@ -1,4 +1,5 @@
 use crate::iris::connection::IrisConnection;
+use crate::objectscript::{os_str_expr, os_stream_write_stmts};
 use rmcp::{model::*, ErrorData as McpError};
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -498,7 +499,7 @@ pub async fn interop_production_item_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let item = params.item.replace('\'', "''");
+    let item = os_str_expr(&params.item);
     let ns = &params.namespace;
     let client = IrisConnection::http_client()
         .map_err(|_| McpError::invalid_request("IRIS_UNREACHABLE", None))?;
@@ -512,15 +513,14 @@ If $System.Status.IsError(tSC) {{ Write "ERROR:NO_PRODUCTION:"_$System.Status.Ge
 If n="" {{ Write "ERROR:NO_PRODUCTION:No production running" Quit }}
 Set tProd=##class(Ens.Config.Production).%OpenId(n,,.tSC2)
 If '$IsObject(tProd) {{ Write "ERROR:INTEROP_ERROR:Cannot open production" Quit }}
-Set tItem=tProd.FindItemByConfigName("{}",,.tSC3)
-If '$IsObject(tItem) {{ Write "ERROR:ITEM_NOT_FOUND:Item not found: {}" Quit }}
-Set tItem.Enabled={}
+Set tItem=tProd.FindItemByConfigName({item},,.tSC3)
+If '$IsObject(tItem) {{ Write "ERROR:ITEM_NOT_FOUND:Item not found: "_{item} Quit }}
+Set tItem.Enabled={enabled_val}
 Set tSC4=tProd.%Save()
 If $System.Status.IsError(tSC4) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC4) Quit }}
 Set tSC5=##class(Ens.Director).UpdateProduction(10,0)
 If $System.Status.IsError(tSC5) {{ Write "ERROR:UPDATE_FAILED:"_$System.Status.GetErrorText(tSC5) Quit }}
-Write "OK""#,
-                item, item, enabled_val
+Write "OK""#
             );
             match iris.execute_via_generator(&code, ns, &client).await {
                 Ok(out) => {
@@ -555,11 +555,10 @@ Write "OK""#,
 If $System.Status.IsError(tSC)||n="" {{ Write "ERROR:NO_PRODUCTION:No production running" Quit }}
 Set tProd=##class(Ens.Config.Production).%OpenId(n,,.tSC2)
 If '$IsObject(tProd) {{ Write "ERROR:INTEROP_ERROR:Cannot open production" Quit }}
-Set tItem=tProd.FindItemByConfigName("{}",,.tSC3)
-If '$IsObject(tItem) {{ Write "ERROR:ITEM_NOT_FOUND:Item not found: {}" Quit }}
+Set tItem=tProd.FindItemByConfigName({item},,.tSC3)
+If '$IsObject(tItem) {{ Write "ERROR:ITEM_NOT_FOUND:Item not found: "_{item} Quit }}
 Set tKey="" For {{ Set tSetting=tItem.Settings.GetNext(.tKey) Quit:tKey=""
-  Write tSetting.Name_"="_tSetting.Value_$CHAR(10) }}"#,
-                item, item
+  Write tSetting.Name_"="_tSetting.Value_$CHAR(10) }}"#
             );
             match iris.execute_via_generator(&code, ns, &client).await {
                 Ok(out) => {
@@ -610,14 +609,15 @@ Set tKey="" For {{ Set tSetting=tItem.Settings.GetNext(.tKey) Quit:tKey=""
             // Build ObjectScript to set each setting then UpdateProduction
             let mut setting_lines = String::new();
             for (k, v) in &params.settings {
-                let k_esc = k.replace('\'', "''");
-                let v_esc = v.replace('\'', "''");
+                let k_expr = os_str_expr(k);
+                let v_expr = os_str_expr(v);
                 setting_lines.push_str(&format!(
-                    r#"Set tS=tItem.FindSettingByName("{}","Host")
-If '$IsObject(tS) {{ Set tS=##class(Ens.Config.Setting).%New() Set tS.Name="{}" Set tS.Target="Host" Do tItem.Settings.Insert(tS) }}
-Set tS.Value="{}"
+                    r#"Set tS=tItem.FindSettingByName({k},"Host")
+If '$IsObject(tS) {{ Set tS=##class(Ens.Config.Setting).%New() Set tS.Name={k} Set tS.Target="Host" Do tItem.Settings.Insert(tS) }}
+Set tS.Value={v}
 "#,
-                    k_esc, k_esc, v_esc
+                    k = k_expr,
+                    v = v_expr
                 ));
             }
             let code = format!(
@@ -625,14 +625,13 @@ Set tS.Value="{}"
 If $System.Status.IsError(tSC)||n="" {{ Write "ERROR:NO_PRODUCTION:No production running" Quit }}
 Set tProd=##class(Ens.Config.Production).%OpenId(n,,.tSC2)
 If '$IsObject(tProd) {{ Write "ERROR:INTEROP_ERROR:Cannot open production" Quit }}
-Set tItem=tProd.FindItemByConfigName("{}",,.tSC3)
-If '$IsObject(tItem) {{ Write "ERROR:ITEM_NOT_FOUND:Item not found: {}" Quit }}
-{}Set tSC4=tProd.%Save()
+Set tItem=tProd.FindItemByConfigName({item},,.tSC3)
+If '$IsObject(tItem) {{ Write "ERROR:ITEM_NOT_FOUND:Item not found: "_{item} Quit }}
+{setting_lines}Set tSC4=tProd.%Save()
 If $System.Status.IsError(tSC4) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC4) Quit }}
 Set tSC5=##class(Ens.Director).UpdateProduction(10,0)
 If $System.Status.IsError(tSC5) {{ Write "ERROR:UPDATE_FAILED:"_$System.Status.GetErrorText(tSC5) Quit }}
-Write "OK""#,
-                item, item, setting_lines
+Write "OK""#
             );
             match iris.execute_via_generator(&code, ns, &client).await {
                 Ok(out) => {
@@ -750,21 +749,21 @@ pub async fn interop_credential_manage_impl(
     };
     let client = IrisConnection::http_client()
         .map_err(|_| McpError::invalid_request("IRIS_UNREACHABLE", None))?;
-    let id = params.id.replace('\'', "''");
+    let id = os_str_expr(&params.id);
     let ns = &params.namespace;
 
     match params.action.as_str() {
         "create" => {
             let username = match &params.username {
-                Some(u) => u.replace('\'', "''"),
+                Some(u) => os_str_expr(u),
                 None => return err_json("INVALID_PARAMS", "create requires username"),
             };
             let password = match &params.password {
-                Some(p) => p.replace('\'', "''"),
+                Some(p) => os_str_expr(p),
                 None => return err_json("INVALID_PARAMS", "create requires password"),
             };
             let code = format!(
-                r#"Set tSC=##class(Ens.Config.Credentials).SetCredential("{}","{}","{}",0)
+                r#"Set tSC=##class(Ens.Config.Credentials).SetCredential({},{},{},0)
 If $System.Status.IsError(tSC) {{ Write "ERROR:CREDENTIAL_EXISTS:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#,
                 id, username, password
             );
@@ -794,21 +793,21 @@ If $System.Status.IsError(tSC) {{ Write "ERROR:CREDENTIAL_EXISTS:"_$System.Statu
         "update" => {
             // Read current values then overwrite with provided ones
             let username_expr = match &params.username {
-                Some(u) => format!("\"{}\"", u.replace('\'', "''")),
+                Some(u) => os_str_expr(u),
                 None => format!(
-                    "##class(Ens.Config.Credentials).GetValue(\"{}\",\"Username\")",
+                    "##class(Ens.Config.Credentials).GetValue({},\"Username\")",
                     id
                 ),
             };
             let password_expr = match &params.password {
-                Some(p) => format!("\"{}\"", p.replace('\'', "''")),
+                Some(p) => os_str_expr(p),
                 None => format!(
-                    "##class(Ens.Config.Credentials).GetValue(\"{}\",\"Password\")",
+                    "##class(Ens.Config.Credentials).GetValue({},\"Password\")",
                     id
                 ),
             };
             let code = format!(
-                r#"Set tSC=##class(Ens.Config.Credentials).SetCredential("{}",{},{},1)
+                r#"Set tSC=##class(Ens.Config.Credentials).SetCredential({},{},{},1)
 If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#,
                 id, username_expr, password_expr
             );
@@ -835,10 +834,9 @@ If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.Ge
         }
         "delete" => {
             let code = format!(
-                r#"If '##class(Ens.Config.Credentials).%ExistsId("{}") {{ Write "ERROR:CREDENTIAL_NOT_FOUND:Credential not found: {}" Quit }}
-Set tSC=##class(Ens.Config.Credentials).%DeleteId("{}")
-If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#,
-                id, id, id
+                r#"If '##class(Ens.Config.Credentials).%ExistsId({id}) {{ Write "ERROR:CREDENTIAL_NOT_FOUND:Credential not found: "_{id} Quit }}
+Set tSC=##class(Ens.Config.Credentials).%DeleteId({id})
+If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#
             );
             match iris.execute_via_generator(&code, ns, &client).await {
                 Ok(out) => {
@@ -934,19 +932,18 @@ pub async fn interop_lookup_manage_impl(
         }
         "get" => {
             let table = match &params.table {
-                Some(t) => t.replace('\'', "''"),
+                Some(t) => os_str_expr(t),
                 None => return err_json("INVALID_PARAMS", "get requires table"),
             };
             let key = match &params.key {
-                Some(k) => k.replace('\'', "''"),
+                Some(k) => os_str_expr(k),
                 None => return err_json("INVALID_PARAMS", "get requires key"),
             };
             let code = format!(
-                r#"If '$DATA(^Ens.LookupTable("{}")) {{ Write "ERROR:TABLE_NOT_FOUND:Table not found: {}" Quit }}
-Set tVal=$GET(^Ens.LookupTable("{}","{}"))
-If tVal="" {{ Write "ERROR:KEY_NOT_FOUND:Key not found: {}" Quit }}
-Write tVal"#,
-                table, table, table, key, key
+                r#"If '$DATA(^Ens.LookupTable({table})) {{ Write "ERROR:TABLE_NOT_FOUND:Table not found: "_{table} Quit }}
+Set tVal=$GET(^Ens.LookupTable({table},{key}))
+If tVal="" {{ Write "ERROR:KEY_NOT_FOUND:Key not found: "_{key} Quit }}
+Write tVal"#
             );
             match iris.execute_via_generator(&code, ns, &client).await {
                 Ok(out) => {
@@ -973,21 +970,20 @@ Write tVal"#,
         }
         "set" => {
             let table = match &params.table {
-                Some(t) => t.replace('\'', "''"),
+                Some(t) => os_str_expr(t),
                 None => return err_json("INVALID_PARAMS", "set requires table"),
             };
             let key = match &params.key {
-                Some(k) => k.replace('\'', "''"),
+                Some(k) => os_str_expr(k),
                 None => return err_json("INVALID_PARAMS", "set requires key"),
             };
             let value = match &params.value {
-                Some(v) => v.replace('\'', "''"),
+                Some(v) => os_str_expr(v),
                 None => return err_json("INVALID_PARAMS", "set requires value"),
             };
             let code = format!(
-                r#"Set tSC=##class(Ens.Util.LookupTable).%UpdateValue("{}","{}","{}",1)
-If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#,
-                table, key, value
+                r#"Set tSC=##class(Ens.Util.LookupTable).%UpdateValue({table},{key},{value},1)
+If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#
             );
             match iris.execute_via_generator(&code, ns, &client).await {
                 Ok(out) => {
@@ -1012,18 +1008,17 @@ If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.Ge
         }
         "delete" => {
             let table = match &params.table {
-                Some(t) => t.replace('\'', "''"),
+                Some(t) => os_str_expr(t),
                 None => return err_json("INVALID_PARAMS", "delete requires table"),
             };
             let key = match &params.key {
-                Some(k) => k.replace('\'', "''"),
+                Some(k) => os_str_expr(k),
                 None => return err_json("INVALID_PARAMS", "delete requires key"),
             };
             let code = format!(
-                r#"If '$DATA(^Ens.LookupTable("{}")) {{ Write "ERROR:TABLE_NOT_FOUND:Table not found: {}" Quit }}
-Set tSC=##class(Ens.Util.LookupTable).%RemoveValue("{}","{}")
-If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#,
-                table, table, table, key
+                r#"If '$DATA(^Ens.LookupTable({table})) {{ Write "ERROR:TABLE_NOT_FOUND:Table not found: "_{table} Quit }}
+Set tSC=##class(Ens.Util.LookupTable).%RemoveValue({table},{key})
+If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#
             );
             match iris.execute_via_generator(&code, ns, &client).await {
                 Ok(out) => {
@@ -1050,13 +1045,12 @@ If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.Ge
         }
         "list_keys" => {
             let table = match &params.table {
-                Some(t) => t.replace('\'', "''"),
+                Some(t) => os_str_expr(t),
                 None => return err_json("INVALID_PARAMS", "list_keys requires table"),
             };
             let code = format!(
-                r#"If '$DATA(^Ens.LookupTable("{}")) {{ Write "ERROR:TABLE_NOT_FOUND:Table not found: {}" Quit }}
-Set tKey="" For {{ Set tKey=$ORDER(^Ens.LookupTable("{}",tKey)) Quit:tKey=""  Write tKey_$CHAR(10) }}"#,
-                table, table, table
+                r#"If '$DATA(^Ens.LookupTable({table})) {{ Write "ERROR:TABLE_NOT_FOUND:Table not found: "_{table} Quit }}
+Set tKey="" For {{ Set tKey=$ORDER(^Ens.LookupTable({table},tKey)) Quit:tKey=""  Write tKey_$CHAR(10) }}"#
             );
             match iris.execute_via_generator(&code, ns, &client).await {
                 Ok(out) => {
@@ -1090,6 +1084,29 @@ Set tKey="" For {{ Set tKey=$ORDER(^Ens.LookupTable("{}",tKey)) Quit:tKey=""  Wr
     }
 }
 
+/// Generated code that writes the XML to a server-side temp file and runs
+/// `Ens.Util.LookupTable.%Import`. The XML is user-supplied free text (quotes,
+/// newlines, unicode), so it is embedded via `os_stream_write_stmts` — C-style
+/// `\"` escaping made every import die with `<SYNTAX>` (XML always carries
+/// attribute quotes).
+fn build_lookup_import_code(table: &str, xml: &str) -> String {
+    let table_expr = os_str_expr(table);
+    let write_block = os_stream_write_stmts("tStream", xml, 400).join("\n");
+    format!(
+        r#"Set tFile=##class(%Library.File).TempFilename("xml")
+Set tStream=##class(%Stream.FileCharacter).%New()
+Set tStream.Filename=tFile
+Set tStream.TranslateTable="UTF8"
+{write_block}
+Set tSC=tStream.%Save()
+If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:Cannot write temp file" Quit }}
+Set tSC2=##class(Ens.Util.LookupTable).%Import(tFile,{table_expr},"")
+Do ##class(%File).Delete(tFile)
+If $System.Status.IsError(tSC2) {{ Write "ERROR:INVALID_XML:"_$System.Status.GetErrorText(tSC2) Quit }}
+Write "OK""#
+    )
+}
+
 pub async fn interop_lookup_transfer_impl(
     iris: Option<&IrisConnection>,
     params: LookupTransferParams,
@@ -1101,19 +1118,18 @@ pub async fn interop_lookup_transfer_impl(
     let client = IrisConnection::http_client()
         .map_err(|_| McpError::invalid_request("IRIS_UNREACHABLE", None))?;
     let ns = &params.namespace;
-    let table = params.table.replace('\'', "''");
+    let table = os_str_expr(&params.table);
 
     match params.action.as_str() {
         "export" => {
             let code = format!(
-                r#"If '$DATA(^Ens.LookupTable("{}")) {{ Write "ERROR:TABLE_NOT_FOUND:Table not found: {}" Quit }}
+                r#"If '$DATA(^Ens.LookupTable({table})) {{ Write "ERROR:TABLE_NOT_FOUND:Table not found: "_{table} Quit }}
 Set tStream=##class(%Stream.TmpBinary).%New()
-Set tSC=##class(Ens.Util.LookupTable).%Export(tStream,"{}")
+Set tSC=##class(Ens.Util.LookupTable).%Export(tStream,{table})
 If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) Quit }}
 Do tStream.Rewind()
 Set tOut="" While 'tStream.AtEnd {{ Set tOut=tOut_tStream.Read(32000) }}
-Write tOut"#,
-                table, table, table
+Write tOut"#
             );
             match iris.execute_via_generator(&code, ns, &client).await {
                 Ok(out) => {
@@ -1146,20 +1162,7 @@ Write tOut"#,
                 None => return err_json("INVALID_PARAMS", "import requires xml"),
             };
             // Write XML to temp file, import, delete
-            let xml_escaped = xml.replace('\\', "\\\\").replace('"', "\\\"");
-            let code = format!(
-                r#"Set tFile=##class(%Library.File).TempFilename("xml")
-Set tStream=##class(%Stream.FileCharacter).%New()
-Set tStream.Filename=tFile
-Do tStream.Write("{}")
-Set tSC=tStream.%Save()
-If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:Cannot write temp file" Quit }}
-Set tSC2=##class(Ens.Util.LookupTable).%Import(tFile,"{}","")
-Do ##class(%File).Delete(tFile)
-If $System.Status.IsError(tSC2) {{ Write "ERROR:INVALID_XML:"_$System.Status.GetErrorText(tSC2) Quit }}
-Write "OK""#,
-                xml_escaped, table
-            );
+            let code = build_lookup_import_code(&params.table, &xml);
             match iris.execute_via_generator(&code, ns, &client).await {
                 Ok(out) => {
                     let out = out.trim();
@@ -1276,7 +1279,7 @@ If $System.Status.IsError(tSC) { Write "ERROR:INTEROP_ERROR:"_$System.Status.Get
 
     // enabled=true: resolve production name
     let prod_name = if let Some(p) = &params.production {
-        p.replace('\'', "''")
+        p.clone()
     } else {
         // Get currently running production
         let status_code = r#"Set sc=##class(Ens.Director).GetProductionStatus(.n,.s) If $System.Status.IsError(sc)||n="" { Write "ERROR:NO_PRODUCTION:No production running" } Else { Write n }"#;
@@ -1302,9 +1305,9 @@ If $System.Status.IsError(tSC) { Write "ERROR:INTEROP_ERROR:"_$System.Status.Get
     };
 
     let code = format!(
-        r#"Set tSC=##class(Ens.Director).SetAutoStart("{}")
+        r#"Set tSC=##class(Ens.Director).SetAutoStart({})
 If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#,
-        prod_name
+        os_str_expr(&prod_name)
     );
     match iris.execute_via_generator(&code, ns, &client).await {
         Ok(out) if out.trim() == "OK" => ok_json(
@@ -2881,43 +2884,75 @@ mod tests {
         assert!(!is_network_error("DNS Error"));
     }
 
+    // Every line of generated ObjectScript must hold only complete string
+    // literals: an odd number of `"` on a line means a literal was torn open
+    // by an embedded quote or newline — exactly the escaping bug's <SYNTAX>.
+    fn assert_valid_objectscript_lines(code: &str) {
+        for line in code.lines() {
+            assert_eq!(
+                line.matches('"').count() % 2,
+                0,
+                "unbalanced quotes in generated line: {line}"
+            );
+        }
+        assert!(
+            !code.contains("\\\""),
+            "generated code must never use C-style quote escaping"
+        );
+    }
+
     #[test]
     fn production_item_escape_in_objectscript_code() {
-        let item = "Service'Name";
-        let escaped = item.replace('\'', "''");
-        assert_eq!(escaped, "Service''Name");
-        // Verify escaping would work in a format string
-        let code = format!(r#"Set tItem=tProd.FindItemByConfigName("{}")"#, escaped);
-        assert!(code.contains("Service''Name"));
+        // apostrophes pass through untouched — ObjectScript literals only escape `"`
+        let item = os_str_expr("Service'Name");
+        assert_eq!(item, "\"Service'Name\"");
+        let code = format!(r#"Set tItem=tProd.FindItemByConfigName({item})"#);
+        assert_valid_objectscript_lines(&code);
+        assert!(code.contains("Service'Name"));
     }
 
     #[test]
     fn credential_id_escaping() {
-        let id = "Cred'With'Quotes";
-        let escaped = id.replace('\'', "''");
-        assert_eq!(escaped, "Cred''With''Quotes");
+        assert_eq!(os_str_expr("Cred'With'Quotes"), "\"Cred'With'Quotes\"");
     }
 
     #[test]
     fn credential_username_escaping() {
-        let username = "user'name@example.com";
-        let escaped = username.replace('\'', "''");
-        assert_eq!(escaped, "user''name@example.com");
+        assert_eq!(
+            os_str_expr("user'name@example.com"),
+            "\"user'name@example.com\""
+        );
     }
 
     #[test]
     fn credential_password_escaping() {
-        let password = "pass'word!@#$%";
-        let escaped = password.replace('\'', "''");
-        assert_eq!(escaped, "pass''word!@#$%");
+        // SQL-style '' doubling here would silently corrupt the stored password
+        assert_eq!(os_str_expr("pass'word!@#$%"), "\"pass'word!@#$%\"");
+        assert_eq!(os_str_expr(r#"pa"ss"#), r#""pa""ss""#);
     }
 
     #[test]
-    fn xml_escaping_backslash_and_quote() {
-        let xml = r#"<value path="C:\Users\test">"#;
-        let escaped = xml.replace('\\', "\\\\").replace('"', "\\\"");
-        assert!(escaped.contains("\\\\"));
-        assert!(escaped.contains("\\\""));
+    fn lookup_import_code_survives_real_xml() {
+        // Quote-heavy multi-line XML — the shape %Export produces
+        let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<lookupTable>\n<entry table=\"T1\" key=\"M\">1</entry>\n</lookupTable>";
+        let code = build_lookup_import_code("T1", xml);
+        assert_valid_objectscript_lines(&code);
+        assert!(code.contains(r#"table=""T1"""#), "quotes doubled: {code}");
+        assert!(code.contains("$CHAR(10)"), "newlines spliced via $CHAR");
+        assert!(code.contains(r#"%Import(tFile,"T1","")"#));
+    }
+
+    #[test]
+    fn lookup_import_code_chunks_large_single_line_xml() {
+        let xml = format!("<lookupTable>{}</lookupTable>", "x".repeat(5000));
+        let code = build_lookup_import_code("T", &xml);
+        assert_valid_objectscript_lines(&code);
+        let writes = code.matches("Do tStream.Write(").count();
+        assert!(
+            writes > 1,
+            "long payload must span several Write statements"
+        );
+        assert!(code.lines().all(|l| l.len() < 2000), "no oversized lines");
     }
 
     #[test]

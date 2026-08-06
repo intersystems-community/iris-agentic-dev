@@ -301,8 +301,9 @@ fn test_lookup_crud() {
     let ns = std::env::var("IRIS_NAMESPACE").unwrap_or_else(|_| "USER".to_string());
     let table = "IrisDevTestTable";
 
-    // set 3 keys
-    for (key, val) in &[("Key1", "Val1"), ("Key2", "Val2"), ("Key3", "Val3")] {
+    // set 3 keys — Key3's value carries a quote, an apostrophe and an accent:
+    // the old SQL-style escaping corrupted ' to '' and died with <SYNTAX> on "
+    for (key, val) in &[("Key1", "Val1"), ("Key2", "Val2"), ("Key3", "Va\"l'ñ3")] {
         let start = Instant::now();
         let responses = mcp_exchange(&[
             serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"e2e","version":"0.1"}}}),
@@ -311,7 +312,7 @@ fn test_lookup_crud() {
         ]);
         assert!(start.elapsed().as_secs() < 3, "SC-003: set exceeded 3s");
         let r = parse_tool_text(&find_response(&responses, 2).expect("no response"));
-        assert!(r["success"] == true || r.get("error_code").is_some());
+        assert_eq!(r["success"], true, "set {key} failed: {r}");
     }
 
     // list_tables — assert table present
@@ -321,14 +322,13 @@ fn test_lookup_crud() {
         serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"iris_lookup_manage","arguments":{"action":"list_tables","namespace":ns}}}),
     ]);
     let lt = parse_tool_text(&find_response(&resp_lt, 2).expect("no response"));
-    if lt["success"] == true {
-        let empty = vec![];
-        let tables = lt["tables"].as_array().unwrap_or(&empty);
-        assert!(
-            tables.iter().any(|t| t.as_str() == Some(table)),
-            "table must appear in list_tables"
-        );
-    }
+    assert_eq!(lt["success"], true, "list_tables failed: {lt}");
+    let empty = vec![];
+    let tables = lt["tables"].as_array().unwrap_or(&empty);
+    assert!(
+        tables.iter().any(|t| t.as_str() == Some(table)),
+        "table must appear in list_tables"
+    );
 
     // export
     let resp_ex = mcp_exchange(&[
@@ -337,7 +337,9 @@ fn test_lookup_crud() {
         serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"iris_lookup_transfer","arguments":{"action":"export","table":table,"namespace":ns}}}),
     ]);
     let ex = parse_tool_text(&find_response(&resp_ex, 2).expect("no response"));
+    assert_eq!(ex["success"], true, "export failed: {ex}");
     let xml = ex["xml"].as_str().unwrap_or("");
+    assert!(!xml.is_empty(), "export must return the XML");
 
     // delete keys
     for key in &["Key1", "Key2", "Key3"] {
@@ -349,33 +351,39 @@ fn test_lookup_crud() {
         let _ = find_response(&responses, 2);
     }
 
-    // import and verify round-trip
-    if !xml.is_empty() {
-        let resp_im = mcp_exchange(&[
-            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"e2e","version":"0.1"}}}),
-            serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}),
-            serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"iris_lookup_transfer","arguments":{"action":"import","table":table,"xml":xml,"namespace":ns}}}),
-        ]);
-        let im = parse_tool_text(&find_response(&resp_im, 2).expect("no response"));
-        assert!(
-            im["success"] == true || im.get("error_code").is_some(),
-            "import must return success or error_code"
-        );
+    // import and verify round-trip — issue #6: this failed 7/7 with <SYNTAX>
+    let resp_im = mcp_exchange(&[
+        serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"e2e","version":"0.1"}}}),
+        serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}),
+        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"iris_lookup_transfer","arguments":{"action":"import","table":table,"xml":xml,"namespace":ns}}}),
+    ]);
+    let im = parse_tool_text(&find_response(&resp_im, 2).expect("no response"));
+    assert_eq!(im["success"], true, "import failed: {im}");
 
-        // verify Key1 restored
+    // verify values restored, including the quote/apostrophe/accent one
+    for (key, want) in &[("Key1", "Val1"), ("Key3", "Va\"l'ñ3")] {
         let resp_get = mcp_exchange(&[
             serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"e2e","version":"0.1"}}}),
             serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}),
-            serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"iris_lookup_manage","arguments":{"action":"get","table":table,"key":"Key1","namespace":ns}}}),
+            serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"iris_lookup_manage","arguments":{"action":"get","table":table,"key":key,"namespace":ns}}}),
         ]);
         let g = parse_tool_text(&find_response(&resp_get, 2).expect("no response"));
-        if g["success"] == true {
-            assert_eq!(
-                g["value"].as_str(),
-                Some("Val1"),
-                "SC-005: round-trip value must match"
-            );
-        }
+        assert_eq!(g["success"], true, "get {key} after import failed: {g}");
+        assert_eq!(
+            g["value"].as_str(),
+            Some(*want),
+            "SC-005: round-trip value must match for {key}"
+        );
+    }
+
+    // leave the namespace clean
+    for key in &["Key1", "Key2", "Key3"] {
+        let responses = mcp_exchange(&[
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"e2e","version":"0.1"}}}),
+            serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}),
+            serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"iris_lookup_manage","arguments":{"action":"delete","table":table,"key":key,"namespace":ns}}}),
+        ]);
+        let _ = find_response(&responses, 2);
     }
 }
 

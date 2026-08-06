@@ -2,6 +2,7 @@ pub mod benchmark;
 pub mod elicitation;
 pub mod iris;
 pub mod manifest;
+pub mod objectscript;
 pub mod policy;
 pub mod skill_install;
 pub mod skills;

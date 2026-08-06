@@ -3,6 +3,7 @@
 //! Read operations are always available; write operations require IRIS_ADMIN_TOOLS=1.
 
 use crate::iris::connection::IrisConnection;
+use crate::objectscript::os_str_expr;
 use rmcp::{model::*, ErrorData as McpError};
 
 fn ok_json(v: serde_json::Value) -> Result<CallToolResult, McpError> {
@@ -296,12 +297,11 @@ pub async fn admin_list_user_roles_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
-    let un = username.replace('\'', "''");
+    let un = os_str_expr(username);
     let code = format!(
-        r#"Set tSC=##class(Security.Users).Get("{}",.props)
-If $$$ISERR(tSC) {{ Write "ERROR:USER_NOT_FOUND:User not found: {}" Quit }}
-Write $GET(props("Roles"))"#,
-        un, un
+        r#"Set tSC=##class(Security.Users).Get({un},.props)
+If $$$ISERR(tSC) {{ Write "ERROR:USER_NOT_FOUND:User not found: "_{un} Quit }}
+Write $GET(props("Roles"))"#
     );
     match iris.execute_via_generator(&code, "%SYS", &client).await {
         Ok(out) => {
@@ -331,16 +331,15 @@ pub async fn admin_get_webapp_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
-    let p = path.replace('\'', "''");
+    let p = os_str_expr(path);
     let code = format!(
-        r#"Set tSC=##class(Security.Applications).Get("{}",.props)
-If $$$ISERR(tSC) {{ Write "ERROR:WEBAPP_NOT_FOUND:Webapp not found: {}" Quit }}
+        r#"Set tSC=##class(Security.Applications).Get({p},.props)
+If $$$ISERR(tSC) {{ Write "ERROR:WEBAPP_NOT_FOUND:Webapp not found: "_{p} Quit }}
 Set dc=$GET(props("DispatchClass"))
 Set ns=$GET(props("NameSpace"))
 Set en=$GET(props("Enabled"))
 Set tp=$SELECT(dc'="":"REST",1:"CSP")
-Write ns_"|"_dc_"|"_en_"|"_tp"#,
-        p, p
+Write ns_"|"_dc_"|"_en_"|"_tp"#
     );
     match iris.execute_via_generator(&code, "%SYS", &client).await {
         Ok(out) => {
@@ -387,11 +386,11 @@ pub async fn admin_check_permission_impl(
         "DELETE" | "D" => "D",
         other => other,
     };
-    let res = resource.replace('\'', "''");
-    let op_escaped = op.replace('\'', "''");
+    let res = os_str_expr(resource);
+    let op_escaped = os_str_expr(op);
     // %SYSTEM.Security.Check(ResourceName, Permissions) — documented IRIS API
     let code = format!(
-        r#"If ##class(%SYSTEM.Security).Check("{}","{}") {{ Write "GRANTED" }} Else {{ Write "DENIED" }}"#,
+        r#"If ##class(%SYSTEM.Security).Check({},{}) {{ Write "GRANTED" }} Else {{ Write "DENIED" }}"#,
         res, op_escaped
     );
     // Get the current username from env for reporting
@@ -428,17 +427,16 @@ pub async fn admin_create_user_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
-    let un = username.replace('\'', "''");
-    let pw = password.replace('\'', "''");
-    let fn_ = full_name.unwrap_or("").replace('\'', "''");
-    let ro = roles.unwrap_or("").replace('\'', "''");
+    let un = os_str_expr(username);
+    let pw = os_str_expr(password);
+    let fn_ = os_str_expr(full_name.unwrap_or(""));
+    let ro = os_str_expr(roles.unwrap_or(""));
     let code = format!(
-        r#"Set props("Password")="{}"
-Set props("FullName")="{}"
-Set props("Roles")="{}"
-Set tSC=##class(Security.Users).Create("{}",.props)
-If $$$ISERR(tSC) {{ Write "ERROR:USER_EXISTS:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#,
-        pw, fn_, ro, un
+        r#"Set props("Password")={pw}
+Set props("FullName")={fn_}
+Set props("Roles")={ro}
+Set tSC=##class(Security.Users).Create({un},.props)
+If $$$ISERR(tSC) {{ Write "ERROR:USER_EXISTS:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#
     );
     match iris.execute_via_generator(&code, "%SYS", &client).await {
         Ok(out) => {
@@ -474,13 +472,10 @@ pub async fn admin_update_user_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
-    let un = username.replace('\'', "''");
+    let un = os_str_expr(username);
     let mut set_lines = String::new();
     if let Some(pw) = password {
-        set_lines.push_str(&format!(
-            "Set props(\"Password\")=\"{}\"\n",
-            pw.replace('\'', "''")
-        ));
+        set_lines.push_str(&format!("Set props(\"Password\")={}\n", os_str_expr(pw)));
     }
     if let Some(en) = enabled {
         set_lines.push_str(&format!(
@@ -489,17 +484,13 @@ pub async fn admin_update_user_impl(
         ));
     }
     if let Some(ro) = roles {
-        set_lines.push_str(&format!(
-            "Set props(\"Roles\")=\"{}\"\n",
-            ro.replace('\'', "''")
-        ));
+        set_lines.push_str(&format!("Set props(\"Roles\")={}\n", os_str_expr(ro)));
     }
     let code = format!(
-        r#"Set tSC=##class(Security.Users).Get("{}",.props)
-If $$$ISERR(tSC) {{ Write "ERROR:USER_NOT_FOUND:User not found: {}" Quit }}
-{}Set tSC2=##class(Security.Users).Modify("{}",.props)
-If $$$ISERR(tSC2) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC2) }} Else {{ Write "OK" }}"#,
-        un, un, set_lines, un
+        r#"Set tSC=##class(Security.Users).Get({un},.props)
+If $$$ISERR(tSC) {{ Write "ERROR:USER_NOT_FOUND:User not found: "_{un} Quit }}
+{set_lines}Set tSC2=##class(Security.Users).Modify({un},.props)
+If $$$ISERR(tSC2) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC2) }} Else {{ Write "OK" }}"#
     );
     match iris.execute_via_generator(&code, "%SYS", &client).await {
         Ok(out) => {
@@ -532,12 +523,11 @@ pub async fn admin_delete_user_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
-    let un = username.replace('\'', "''");
+    let un = os_str_expr(username);
     let code = format!(
-        r#"If '##class(Security.Users).Exists("{}") {{ Write "ERROR:USER_NOT_FOUND:User not found: {}" Quit }}
-Set tSC=##class(Security.Users).Delete("{}")
-If $$$ISERR(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#,
-        un, un, un
+        r#"If '##class(Security.Users).Exists({un}) {{ Write "ERROR:USER_NOT_FOUND:User not found: "_{un} Quit }}
+Set tSC=##class(Security.Users).Delete({un})
+If $$$ISERR(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#
     );
     match iris.execute_via_generator(&code, "%SYS", &client).await {
         Ok(out) => {
@@ -572,16 +562,15 @@ pub async fn admin_create_namespace_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
-    let nm = name.replace('\'', "''");
-    let cd = code_database.replace('\'', "''");
-    let dd = data_database.replace('\'', "''");
+    let nm = os_str_expr(name);
+    let cd = os_str_expr(code_database);
+    let dd = os_str_expr(data_database);
     let code = format!(
-        r#"Set ns("Globals")="{}"
-Set ns("Routines")="{}"
-Set ns("Database")="{}"
-Set tSC=##class(Config.Namespaces).Create("{}",.ns)
-If $$$ISERR(tSC) {{ Write "ERROR:NAMESPACE_EXISTS:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#,
-        dd, cd, dd, nm
+        r#"Set ns("Globals")={dd}
+Set ns("Routines")={cd}
+Set ns("Database")={dd}
+Set tSC=##class(Config.Namespaces).Create({nm},.ns)
+If $$$ISERR(tSC) {{ Write "ERROR:NAMESPACE_EXISTS:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#
     );
     match iris.execute_via_generator(&code, "%SYS", &client).await {
         Ok(out) => {
@@ -612,13 +601,12 @@ pub async fn admin_delete_namespace_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
-    let nm = name.replace('\'', "''");
+    let nm = os_str_expr(name);
     // Deletes namespace definition only — databases are NOT deleted (by design)
     let code = format!(
-        r#"If '##class(Config.Namespaces).Exists("{}") {{ Write "ERROR:NAMESPACE_NOT_FOUND:Namespace not found: {}" Quit }}
-Set tSC=##class(Config.Namespaces).Delete("{}")
-If $$$ISERR(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#,
-        nm, nm, nm
+        r#"If '##class(Config.Namespaces).Exists({nm}) {{ Write "ERROR:NAMESPACE_NOT_FOUND:Namespace not found: "_{nm} Quit }}
+Set tSC=##class(Config.Namespaces).Delete({nm})
+If $$$ISERR(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#
     );
     match iris.execute_via_generator(&code, "%SYS", &client).await {
         Ok(out) => {
@@ -652,18 +640,17 @@ pub async fn admin_create_webapp_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
-    let p = path.replace('\'', "''");
-    let ns = namespace.replace('\'', "''");
-    let dc = dispatch_class.unwrap_or("").replace('\'', "''");
+    let p = os_str_expr(path);
+    let ns = os_str_expr(namespace);
+    let dc = os_str_expr(dispatch_class.unwrap_or(""));
     let en = if enabled { 1 } else { 0 };
     let code = format!(
-        r#"Set props("NameSpace")="{}"
-Set props("DispatchClass")="{}"
-Set props("Enabled")={}
+        r#"Set props("NameSpace")={ns}
+Set props("DispatchClass")={dc}
+Set props("Enabled")={en}
 Set props("AutheEnabled")=32
-Set tSC=##class(Security.Applications).Create("{}",.props)
-If $$$ISERR(tSC) {{ Write "ERROR:WEBAPP_EXISTS:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#,
-        ns, dc, en, p
+Set tSC=##class(Security.Applications).Create({p},.props)
+If $$$ISERR(tSC) {{ Write "ERROR:WEBAPP_EXISTS:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#
     );
     match iris.execute_via_generator(&code, "%SYS", &client).await {
         Ok(out) => {
@@ -694,13 +681,12 @@ pub async fn admin_delete_webapp_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
-    let p = path.replace('\'', "''");
+    let p = os_str_expr(path);
     let code = format!(
-        r#"Set tSC=##class(Security.Applications).Get("{}",.props)
-If $$$ISERR(tSC) {{ Write "ERROR:WEBAPP_NOT_FOUND:Webapp not found: {}" Quit }}
-Set tSC2=##class(Security.Applications).Delete("{}")
-If $$$ISERR(tSC2) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC2) }} Else {{ Write "OK" }}"#,
-        p, p, p
+        r#"Set tSC=##class(Security.Applications).Get({p},.props)
+If $$$ISERR(tSC) {{ Write "ERROR:WEBAPP_NOT_FOUND:Webapp not found: "_{p} Quit }}
+Set tSC2=##class(Security.Applications).Delete({p})
+If $$$ISERR(tSC2) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC2) }} Else {{ Write "OK" }}"#
     );
     match iris.execute_via_generator(&code, "%SYS", &client).await {
         Ok(out) => {
