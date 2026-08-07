@@ -39,8 +39,7 @@ If the [InterSystems Testing Manager](https://marketplace.visualstudio.com/items
 
 ```bash
 # Mac (Homebrew)
-brew tap intersystems-community/tap
-brew install iris-agentic-dev
+brew install https://raw.githubusercontent.com/intersystems-community/iris-agentic-dev/master/Formula/iris-agentic-dev.rb
 
 # Mac direct download (Apple Silicon)
 curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-macos-arm64 \
@@ -237,7 +236,7 @@ iris-agentic-dev resolves the IRIS connection in this order — first match wins
 | `IRIS_WEB_PREFIX` | *(empty)* | URL path prefix for non-root gateway installs |
 | `IRIS_USERNAME` | `_SYSTEM` | IRIS username |
 | `IRIS_PASSWORD` | `SYS` | IRIS password |
-| `IRIS_SERVICE_USERNAME` | *(empty)* | Restricted service account for arbitrary-execution tools (see below) |
+| `IRIS_SERVICE_USERNAME` | *(empty)* | Least-privilege account for execute/query/global-write tools (see below) |
 | `IRIS_SERVICE_PASSWORD` | *(empty)* | Password for `IRIS_SERVICE_USERNAME` |
 | `IRIS_NAMESPACE` | `USER` | Default namespace |
 | `IRIS_CONTAINER` | *(empty)* | Docker container name — required for Docker-dependent tools |
@@ -273,9 +272,8 @@ Tested with Claude Sonnet 4.6 on the ObjectScript repair suite (22 tasks):
 
 The top skill is **`objectscript-review`** — a 205-word checklist that catches the 10 most common ObjectScript mistakes before the AI writes any code.
 
-The multi-file and SQL-quirks suites referenced in earlier versions of this table are not
-yet ported to the current native benchmark harness (`iris-agentic-dev benchmark`) — only
-the repair suite above is runnable today.
+The multi-file and SQL-quirks suites are not yet ported to the native benchmark harness
+(`iris-agentic-dev benchmark`) — only the repair suite above is runnable today.
 
 Read the +27% as a rough signal. It comes from one run against one model, on 22 tasks that
 live in this public repo and may well be in the model's training data. Each of those
@@ -410,7 +408,15 @@ blocked and how to permit it.
 
 | Tool | What it does |
 |------|-------------|
-| `iris_admin` | List namespaces, databases, users, roles, web apps; create/delete users (requires `IRIS_ADMIN_TOOLS=1`). |
+| `iris_admin` | List namespaces, databases, users, roles, web apps; create/delete users; real-time observability via `view_locks`, `view_processes`, `namespace_mappings`, `database_status` (requires `IRIS_ADMIN_TOOLS=1` for write actions). |
+| `journal_search` | Search the IRIS journal for SetKill records by global pattern and/or time range. |
+| `iris_namespace_list` | List all namespaces on the connected instance. |
+| `iris_namespace_create` 🔒 | Create a new namespace. |
+| `iris_database_list` | List databases and their paths. |
+| `iris_database_stats` | Disk usage and block-level stats for a database. |
+| `query_audit_log` | Query the IRIS SQL audit log for recent activity. |
+| `my_access` | Show the current user's roles and resource permissions. |
+| `capability_matrix` | Show which tools are enabled/disabled and why (gates, policy, container availability). |
 | `iris_containers` ✦ | List, select, or start IRIS Docker containers. Hot-swaps the active connection without a session restart. |
 
 ### Learning agent, skills, and knowledge base

@@ -190,71 +190,82 @@ jobs:
   update-homebrew-tap:
     needs: release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: master
       - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
           pattern: 'iris-agentic-dev-*'
-      - name: Compute SHA256s
-        id: sha
+      - name: Compute SHA256s and update Formula/iris-agentic-dev.rb
         run: |
-          echo "arm64=$(shasum -a 256 iris-agentic-dev-macos-arm64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-          echo "x86_64=$(shasum -a 256 iris-agentic-dev-macos-x86_64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-          echo "linux=$(shasum -a 256 iris-agentic-dev-linux-x86_64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-      - name: Update homebrew-tap formula
+          ARM64=$(shasum -a 256 iris-agentic-dev-macos-arm64 | awk '{print $1}')
+          X86_64=$(shasum -a 256 iris-agentic-dev-macos-x86_64 | awk '{print $1}')
+          LINUX=$(shasum -a 256 iris-agentic-dev-linux-x86_64 | awk '{print $1}')
+          VERSION="${GITHUB_REF_NAME#v}"
+          python3 - "$VERSION" "$ARM64" "$X86_64" "$LINUX" << 'PYEOF'
+          import sys, textwrap
+          v, a64, x86, lnx = sys.argv[1:]
+          rb = textwrap.dedent(f"""\
+            class IrisAgenticDev < Formula
+              desc "MCP server connecting AI assistants to InterSystems IRIS — compile, test, debug ObjectScript without leaving the chat"
+              homepage "https://github.com/intersystems-community/iris-agentic-dev"
+              version "{v}"
+              license "MIT"
+
+              on_macos do
+                on_arm do
+                  url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v{v}/iris-agentic-dev-macos-arm64"
+                  sha256 "{a64}"
+                end
+                on_intel do
+                  url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v{v}/iris-agentic-dev-macos-x86_64"
+                  sha256 "{x86}"
+                end
+              end
+
+              on_linux do
+                on_intel do
+                  url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v{v}/iris-agentic-dev-linux-x86_64"
+                  sha256 "{lnx}"
+                end
+              end
+
+              def install
+                bin_name = "iris-agentic-dev-macos-arm64"
+                bin_name = "iris-agentic-dev-macos-x86_64" if Hardware::CPU.intel? && OS.mac?
+                bin_name = "iris-agentic-dev-linux-x86_64" if OS.linux?
+                bin.install bin_name => "iris-agentic-dev"
+              end
+
+              test do
+                assert_match "iris-agentic-dev #{{version}}", shell_output("#{{bin}}/iris-agentic-dev --version")
+              end
+            end
+          """)
+          with open("Formula/iris-agentic-dev.rb", "w") as f:
+            f.write(rb)
+          PYEOF
+      - name: Commit Formula to main repo
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/iris-agentic-dev.rb
+          git commit -m "chore: bump Formula to v${VERSION}"
+          git push origin master
+      - name: Push formula to homebrew-tap repo
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          VERSION: ${{ steps.sha.outputs.version }}
-          ARM64: ${{ steps.sha.outputs.arm64 }}
-          X86_64: ${{ steps.sha.outputs.x86_64 }}
-          LINUX: ${{ steps.sha.outputs.linux }}
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           TAP_SHA=$(gh api repos/intersystems-community/homebrew-tap/contents/Formula/iris-agentic-dev.rb --jq '.sha')
-          export TAP_SHA
-          cat > update_formula.py << 'SCRIPT'
-          import base64, json, os, subprocess, sys
-          v=os.environ['VERSION']; a64=os.environ['ARM64']; x86=os.environ['X86_64']; lnx=os.environ['LINUX']; sha=os.environ['TAP_SHA']
-          lines = [
-            'class IrisAgenticDev < Formula',
-            '  desc "MCP server connecting AI assistants to InterSystems IRIS — compile, test, debug ObjectScript without leaving the chat"',
-            '  homepage "https://github.com/intersystems-community/iris-agentic-dev"',
-            '  version "' + v + '"',
-            '  license "MIT"',
-            '',
-            '  on_macos do',
-            '    on_arm do',
-            '      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v' + v + '/iris-agentic-dev-macos-arm64"',
-            '      sha256 "' + a64 + '"',
-            '    end',
-            '    on_intel do',
-            '      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v' + v + '/iris-agentic-dev-macos-x86_64"',
-            '      sha256 "' + x86 + '"',
-            '    end',
-            '  end',
-            '',
-            '  on_linux do',
-            '    on_intel do',
-            '      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v' + v + '/iris-agentic-dev-linux-x86_64"',
-            '      sha256 "' + lnx + '"',
-            '    end',
-            '  end',
-            '',
-            '  def install',
-            '    bin_name = "iris-agentic-dev-macos-arm64"',
-            '    bin_name = "iris-agentic-dev-macos-x86_64" if Hardware::CPU.intel? && OS.mac?',
-            '    bin_name = "iris-agentic-dev-linux-x86_64" if OS.linux?',
-            '    bin.install bin_name => "iris-agentic-dev"',
-            '  end',
-            '',
-            '  test do',
-            '    assert_match "iris-agentic-dev ' + v + '", shell_output("#{bin}/iris-agentic-dev --version")',
-            '  end',
-            'end',
-          ]
-          rb = '\n'.join(lines) + '\n'
-          payload = json.dumps({'message': 'chore: bump iris-agentic-dev to v' + v, 'content': base64.b64encode(rb.encode()).decode(), 'sha': sha})
-          r = subprocess.run(['gh','api','--method','PUT','repos/intersystems-community/homebrew-tap/contents/Formula/iris-agentic-dev.rb','--input','-'], input=payload, capture_output=True, text=True)
-          sys.exit(0 if r.returncode==0 else (print(r.stderr,file=sys.stderr) or 1))
-          SCRIPT
-          python3 update_formula.py
+          CONTENT=$(base64 < Formula/iris-agentic-dev.rb)
+          gh api --method PUT \
+            repos/intersystems-community/homebrew-tap/contents/Formula/iris-agentic-dev.rb \
+            -f message="chore: bump iris-agentic-dev to v${VERSION}" \
+            -f content="${CONTENT}" \
+            -f sha="${TAP_SHA}"
