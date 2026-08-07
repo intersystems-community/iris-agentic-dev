@@ -9,7 +9,9 @@ fn ok_json(v: serde_json::Value) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::success(vec![Content::text(v.to_string())]))
 }
 fn err_json(code: &str, msg: &str) -> Result<CallToolResult, McpError> {
-    ok_json(serde_json::json!({"success": false, "error_code": code, "error": msg}))
+    crate::tools::err_result(
+        serde_json::json!({"success": false, "error_code": code, "error": msg}),
+    )
 }
 fn iris_unreachable() -> McpError {
     McpError::invalid_request("IRIS_UNREACHABLE", None)
@@ -845,6 +847,7 @@ mod tests {
     #[test]
     fn test_err_json_code_and_message() {
         let result = err_json("TEST_ERROR", "This is a test error message").unwrap();
+        assert_eq!(result.is_error, Some(true));
         let text = result.content[0].raw.as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "TEST_ERROR");

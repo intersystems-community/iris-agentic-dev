@@ -135,12 +135,12 @@ pub async fn compare_document_impl(
     .await;
 
     match (source_a, source_b) {
-        (Err(e), _) => ok_json(serde_json::json!({
+        (Err(e), _) => crate::tools::err_result(serde_json::json!({
             "success": false,
             "error_code": ERR_COMPARE_FETCH_FAILED,
             "error": format!("Failed to fetch from server_a: {e}"),
         })),
-        (_, Err(e)) => ok_json(serde_json::json!({
+        (_, Err(e)) => crate::tools::err_result(serde_json::json!({
             "success": false,
             "error_code": ERR_COMPARE_FETCH_FAILED,
             "error": format!("Failed to fetch from server_b: {e}"),
@@ -182,14 +182,14 @@ pub async fn compare_namespace_impl(
 
     let (list_a, list_b) = match (list_a, list_b) {
         (Err(e), _) => {
-            return ok_json(serde_json::json!({
+            return crate::tools::err_result(serde_json::json!({
                 "success": false,
                 "error_code": ERR_COMPARE_FETCH_FAILED,
                 "error": format!("Failed to list from server_a: {e}"),
             }))
         }
         (_, Err(e)) => {
-            return ok_json(serde_json::json!({
+            return crate::tools::err_result(serde_json::json!({
                 "success": false,
                 "error_code": ERR_COMPARE_FETCH_FAILED,
                 "error": format!("Failed to list from server_b: {e}"),

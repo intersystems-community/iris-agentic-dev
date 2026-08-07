@@ -12961,6 +12961,13 @@ async fn test_scm_checkout_elicitation_required_via_wiremock() {
             std::env::set_var("IRIS_CONTAINER", v);
         }
     }
+    // Elicitation dialogs are a normal outcome, not a tool failure — the MCP
+    // isError flag must NOT be set (issue #95).
+    assert_ne!(
+        result.as_ref().map(|r| r.is_error).ok().flatten(),
+        Some(true),
+        "elicitation dialog must not carry isError"
+    );
     let v = parse_result(result);
     // action_code=1 → elicitation_required
     assert_eq!(
