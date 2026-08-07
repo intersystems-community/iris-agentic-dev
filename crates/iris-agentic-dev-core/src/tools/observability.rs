@@ -14,7 +14,9 @@ pub(crate) fn ok_json(v: serde_json::Value) -> Result<CallToolResult, McpError> 
 }
 
 pub(crate) fn err_json(code: &str, msg: &str) -> Result<CallToolResult, McpError> {
-    ok_json(serde_json::json!({"success": false, "error_code": code, "error": msg}))
+    crate::tools::err_result(
+        serde_json::json!({"success": false, "error_code": code, "error": msg}),
+    )
 }
 
 /// Guard: requires dataPolicy == "allow". Returns Some(blocked error) when not allowed.

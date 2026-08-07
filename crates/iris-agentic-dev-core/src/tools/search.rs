@@ -69,7 +69,7 @@ pub async fn handle_iris_search(
     let files = match resolve_files(&p.documents) {
         Some(f) => f,
         None => {
-            return ok_json(serde_json::json!({
+            return crate::tools::err_result(serde_json::json!({
                 "success": false,
                 "error_code": "SCOPE_REQUIRED",
                 "error": "iris_search requires a document scope. Namespace-wide search \
@@ -201,7 +201,7 @@ async fn poll_async_search(
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
         if std::time::Instant::now() > deadline {
-            return ok_json(serde_json::json!({
+            return crate::tools::err_result(serde_json::json!({
                 "success": false,
                 "error_code": "SEARCH_TIMEOUT",
                 "error": "Async search did not complete within 5 minutes",

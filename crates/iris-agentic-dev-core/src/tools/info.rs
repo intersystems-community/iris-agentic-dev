@@ -15,7 +15,9 @@ fn ok_json(v: serde_json::Value) -> Result<rmcp::model::CallToolResult, rmcp::Er
     ]))
 }
 fn err_json(code: &str, msg: &str) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
-    ok_json(serde_json::json!({"success": false, "error_code": code, "error": msg}))
+    crate::tools::err_result(
+        serde_json::json!({"success": false, "error_code": code, "error": msg}),
+    )
 }
 fn default_namespace() -> String {
     "USER".to_string()
@@ -228,10 +230,12 @@ pub async fn handle_iris_debug(
                 Ok(output) => ok_json(
                     serde_json::json!({"success": true, "error_string": err, "source_location": output.trim()}),
                 ),
-                Err(e) if e.to_string() == "DOCKER_REQUIRED" => ok_json(serde_json::json!({
-                    "success": false, "error_code": "DOCKER_REQUIRED",
-                    "error": "iris_debug map_int requires docker exec. Set IRIS_CONTAINER=<container_name>.",
-                })),
+                Err(e) if e.to_string() == "DOCKER_REQUIRED" => {
+                    crate::tools::err_result(serde_json::json!({
+                        "success": false, "error_code": "DOCKER_REQUIRED",
+                        "error": "iris_debug map_int requires docker exec. Set IRIS_CONTAINER=<container_name>.",
+                    }))
+                }
                 Err(e) => err_json("EXECUTION_FAILED", &e.to_string()),
             }
         }
@@ -251,10 +255,12 @@ pub async fn handle_iris_debug(
                 Ok(output) => {
                     ok_json(serde_json::json!({"success": true, "capture": output.trim()}))
                 }
-                Err(e) if e.to_string() == "DOCKER_REQUIRED" => ok_json(serde_json::json!({
-                    "success": false, "error_code": "DOCKER_REQUIRED",
-                    "error": "iris_debug capture requires docker exec. Set IRIS_CONTAINER=<container_name>.",
-                })),
+                Err(e) if e.to_string() == "DOCKER_REQUIRED" => {
+                    crate::tools::err_result(serde_json::json!({
+                        "success": false, "error_code": "DOCKER_REQUIRED",
+                        "error": "iris_debug capture requires docker exec. Set IRIS_CONTAINER=<container_name>.",
+                    }))
+                }
                 Err(e) => err_json("EXECUTION_FAILED", &e.to_string()),
             }
         }
@@ -268,10 +274,12 @@ pub async fn handle_iris_debug(
                 Ok(output) => ok_json(
                     serde_json::json!({"success": true, "class": cls, "mapping": output.trim()}),
                 ),
-                Err(e) if e.to_string() == "DOCKER_REQUIRED" => ok_json(serde_json::json!({
-                    "success": false, "error_code": "DOCKER_REQUIRED",
-                    "error": "iris_debug source_map requires docker exec. Set IRIS_CONTAINER=<container_name>.",
-                })),
+                Err(e) if e.to_string() == "DOCKER_REQUIRED" => {
+                    crate::tools::err_result(serde_json::json!({
+                        "success": false, "error_code": "DOCKER_REQUIRED",
+                        "error": "iris_debug source_map requires docker exec. Set IRIS_CONTAINER=<container_name>.",
+                    }))
+                }
                 Err(e) => err_json("EXECUTION_FAILED", &e.to_string()),
             }
         }
@@ -478,7 +486,7 @@ if rs.%Next() {{
         output.lines().filter_map(|l| l.split_once(':')).collect();
 
     if output.trim() == "NOT_FOUND" {
-        return crate::tools::ok_json(serde_json::json!({
+        return crate::tools::err_result(serde_json::json!({
             "success": false,
             "error": format!("Table '{}' not found in namespace '{}'", p.table, p.namespace),
             "table": p.table,
