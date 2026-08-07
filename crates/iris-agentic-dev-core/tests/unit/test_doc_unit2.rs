@@ -8,7 +8,8 @@ fn doc_params_defaults() {
     assert_eq!(p.name.as_deref(), Some("Foo.Bar.cls"));
     assert!(p.mode == "get");
     assert!(!p.compile);
-    assert_eq!(p.namespace, "USER");
+    // Omitted namespace stays None; resolution falls back to the connection namespace.
+    assert_eq!(p.namespace, None);
 }
 
 #[test]

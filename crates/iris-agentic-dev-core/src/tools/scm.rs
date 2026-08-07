@@ -13,9 +13,6 @@ fn ok_json(v: serde_json::Value) -> Result<rmcp::model::CallToolResult, rmcp::Er
 fn err_json(code: &str, msg: &str) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     ok_json(serde_json::json!({"success": false, "error_code": code, "error": msg}))
 }
-fn default_namespace() -> String {
-    "USER".to_string()
-}
 
 /// Menu prefix used for source control actions.
 pub const SCM_MENU: &str = "%SourceMenu";
@@ -60,8 +57,9 @@ pub struct ScmParams {
     /// Elicitation resume answer
     pub answer: Option<String>,
     pub elicitation_id: Option<String>,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Set to true to confirm write on a subject-role instance. Has no effect: source_control
     /// writes on subject instances are always hard-blocked regardless of confirm.
     #[serde(default)]
@@ -120,7 +118,7 @@ pub async fn handle_iris_source_control(
     } else {
         raw_doc
     };
-    let ns = &p.namespace;
+    let ns = crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace);
 
     // Handle elicitation resume
     if let (Some(eid), Some(answer)) = (&p.elicitation_id, &p.answer) {
@@ -320,7 +318,7 @@ pub async fn handle_iris_source_control(
                 ElicitationAction::ScmExecute,
                 None,
                 Some("%CheckOut".to_string()),
-                ns.clone(),
+                ns.to_string(),
             );
             ok_json(serde_json::json!({
                 "success": false,
@@ -377,7 +375,7 @@ pub async fn handle_iris_source_control(
                         ElicitationAction::ScmExecute,
                         None,
                         Some(action_id.to_string()),
-                        ns.clone(),
+                        ns.to_string(),
                     );
                     ok_json(serde_json::json!({
                         "success": false, "elicitation_required": true, "elicitation_id": eid,
@@ -392,7 +390,7 @@ pub async fn handle_iris_source_control(
                         ElicitationAction::ScmExecute,
                         None,
                         Some(action_id.to_string()),
-                        ns.clone(),
+                        ns.to_string(),
                     );
                     ok_json(serde_json::json!({
                         "success": false, "elicitation_required": true, "elicitation_id": eid,
