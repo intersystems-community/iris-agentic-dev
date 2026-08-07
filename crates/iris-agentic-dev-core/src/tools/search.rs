@@ -20,18 +20,15 @@ pub struct SearchParams {
     /// and times out server-side, so at least one scope must be provided.
     #[serde(default)]
     pub documents: Vec<String>,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// If true, bypass the log store and return all results inline regardless of count.
     #[serde(default)]
     pub inline: bool,
     /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
     #[serde(default)]
     pub server: Option<String>,
-}
-
-fn default_namespace() -> String {
-    "USER".to_string()
 }
 
 fn ok_json(v: serde_json::Value) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
@@ -62,6 +59,7 @@ pub async fn handle_iris_search(
     p: SearchParams,
     log_store: Arc<Mutex<log_store::LogStore>>,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+    let namespace = crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace);
     let category = p.category.as_deref().unwrap_or("ALL");
     // A scope is mandatory. Without one Atelier would grep the whole namespace and
     // time out server-side, returning nothing — an empty result that reads as
@@ -95,7 +93,7 @@ pub async fn handle_iris_search(
         case_flag,
     );
 
-    let sync_url = iris.versioned_ns_url(&p.namespace, &format!("/action/search?{}", query_string));
+    let sync_url = iris.versioned_ns_url(namespace, &format!("/action/search?{}", query_string));
 
     // Try the synchronous search first. Many IRIS servers answer `/action/search`
     // synchronously — even for broad wildcard scopes that take several seconds —
@@ -131,19 +129,13 @@ pub async fn handle_iris_search(
             }
             let work_id = body["result"]["workId"].as_str().unwrap_or("").to_string();
             poll_async_search(
-                iris,
-                client,
-                &work_id,
-                &p.namespace,
-                &p.query,
-                p.inline,
-                &log_store,
+                iris, client, &work_id, namespace, &p.query, p.inline, &log_store,
             )
             .await
         }
         _ => {
             // Timeout or error — fall back to async POST
-            let post_url = iris.versioned_ns_url(&p.namespace, "/action/search");
+            let post_url = iris.versioned_ns_url(namespace, "/action/search");
             let post_body = serde_json::json!({
                 "query": p.query,
                 "regex": p.regex,
@@ -166,13 +158,7 @@ pub async fn handle_iris_search(
             let body: serde_json::Value = resp.json().await.unwrap_or_default();
             if let Some(work_id) = body["result"]["workId"].as_str() {
                 poll_async_search(
-                    iris,
-                    client,
-                    work_id,
-                    &p.namespace,
-                    &p.query,
-                    p.inline,
-                    &log_store,
+                    iris, client, work_id, namespace, &p.query, p.inline, &log_store,
                 )
                 .await
             } else {
@@ -315,13 +301,17 @@ mod tests {
         let result: Result<SearchParams, _> =
             serde_json::from_str(r#"{"query":"x","namespace":"MYNS"}"#);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().namespace, "MYNS");
+        assert_eq!(result.unwrap().namespace.as_deref(), Some("MYNS"));
     }
 
     #[test]
     fn test_search_params_defaults() {
         let p: SearchParams = serde_json::from_str(r#"{"query": "Ens.*"}"#).unwrap();
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
+        assert_eq!(
+            crate::tools::resolve_namespace(p.namespace.as_deref(), "APP"),
+            "APP"
+        );
         assert!(!p.regex);
         assert!(!p.case_sensitive);
         assert!(p.category.is_none());
@@ -420,7 +410,11 @@ mod tests {
         assert!(p.case_sensitive);
         assert_eq!(p.category.as_deref(), Some("MAC"));
         assert_eq!(p.documents, vec!["App.*.cls"]);
-        assert_eq!(p.namespace, "PROD");
+        assert_eq!(p.namespace.as_deref(), Some("PROD"));
+        assert_eq!(
+            crate::tools::resolve_namespace(p.namespace.as_deref(), "APP"),
+            "PROD"
+        );
         assert!(p.inline);
     }
 

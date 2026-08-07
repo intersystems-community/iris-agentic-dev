@@ -63,13 +63,10 @@ pub fn glob_to_sql_like(pattern: &str) -> String {
     out
 }
 
-/// Resolve the effective namespace: use `param` if non-empty, else `connection_ns`.
-pub fn resolve_namespace<'a>(param: Option<&'a str>, connection_ns: &'a str) -> &'a str {
-    match param {
-        Some(s) if !s.is_empty() => s,
-        _ => connection_ns,
-    }
-}
+// Re-exported so existing `tools::observability::resolve_namespace` imports keep working.
+// The shared definition lives in `crate::tools` (tools/mod.rs) since every tool module
+// resolves per-call namespaces the same way (issue #96).
+pub use crate::tools::resolve_namespace;
 
 // ── US1: view_locks ───────────────────────────────────────────────────────────
 

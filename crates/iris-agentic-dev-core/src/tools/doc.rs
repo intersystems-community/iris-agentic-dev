@@ -59,8 +59,9 @@ pub struct IrisDocParams {
     pub names: Vec<String>,
     /// Source content (required for mode=put)
     pub content: Option<String>,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Elicitation resume ID (from a prior elicitation_required response)
     pub elicitation_id: Option<String>,
     /// User's answer to the elicitation question ("yes" or "no")
@@ -146,9 +147,6 @@ where
     }
 }
 
-fn default_namespace() -> String {
-    "USER".to_string()
-}
 fn default_mode() -> String {
     "get".to_string()
 }
@@ -303,17 +301,22 @@ pub async fn handle_iris_doc(
             )
         }
     };
+    // Resolve the effective namespace ONCE against the connection this call uses
+    // (pool member or default); sub-handlers receive the resolved value (issue #96).
+    let ns = crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace).to_string();
     match mode {
-        DocMode::Get => handle_get(iris, client, p).await,
-        DocMode::Put => handle_put(iris, client, p, elicitation_store, checkout_cache).await,
-        DocMode::Delete => handle_delete(iris, client, p).await,
-        DocMode::Head => handle_head(iris, client, p).await,
-        DocMode::Fragment => handle_fragment(iris, client, p).await,
-        DocMode::Compiled => handle_compiled(iris, client, p).await,
-        DocMode::List => handle_list(iris, client, p).await,
-        DocMode::Insert => handle_insert(iris, client, p, elicitation_store, checkout_cache).await,
+        DocMode::Get => handle_get(iris, client, p, &ns).await,
+        DocMode::Put => handle_put(iris, client, p, &ns, elicitation_store, checkout_cache).await,
+        DocMode::Delete => handle_delete(iris, client, p, &ns).await,
+        DocMode::Head => handle_head(iris, client, p, &ns).await,
+        DocMode::Fragment => handle_fragment(iris, client, p, &ns).await,
+        DocMode::Compiled => handle_compiled(iris, client, p, &ns).await,
+        DocMode::List => handle_list(iris, client, p, &ns).await,
+        DocMode::Insert => {
+            handle_insert(iris, client, p, &ns, elicitation_store, checkout_cache).await
+        }
         DocMode::DeleteLines => {
-            handle_delete_lines(iris, client, p, elicitation_store, checkout_cache).await
+            handle_delete_lines(iris, client, p, &ns, elicitation_store, checkout_cache).await
         }
     }
 }
@@ -322,6 +325,7 @@ async fn handle_get(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: IrisDocParams,
+    ns: &str,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     // Batch get — Bug 19: fetch concurrently instead of sequentially.
     if !p.names.is_empty() {
@@ -338,8 +342,7 @@ async fn handle_get(
             .unwrap_or_else(|_| client.clone());
         let mut set = tokio::task::JoinSet::new();
         for name in &p.names {
-            let url =
-                iris.versioned_ns_url(&p.namespace, &format!("/doc/{}", urlencoding::encode(name)));
+            let url = iris.versioned_ns_url(ns, &format!("/doc/{}", urlencoding::encode(name)));
             let username = iris.username.clone();
             let password = iris.password.clone();
             let name = name.clone();
@@ -380,10 +383,7 @@ async fn handle_get(
         Ok(n) => n,
         Err(r) => return Ok(r),
     };
-    let url = iris.versioned_ns_url(
-        &p.namespace,
-        &format!("/doc/{}", urlencoding::encode(&name)),
-    );
+    let url = iris.versioned_ns_url(ns, &format!("/doc/{}", urlencoding::encode(&name)));
     let resp = client
         .get(&url)
         .basic_auth(&iris.username, Some(&iris.password))
@@ -413,11 +413,11 @@ async fn handle_put(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: IrisDocParams,
+    ns: &str,
     elicitation_store: &crate::elicitation::ElicitationStore,
     checkout_cache: &crate::elicitation::CheckoutCache,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     let name = p.name.as_deref().unwrap_or("");
-    let ns = &p.namespace;
 
     // Elicitation resume is handled centrally in handle_iris_doc before dispatch.
 
@@ -728,14 +728,14 @@ async fn handle_delete(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: IrisDocParams,
+    ns: &str,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     // Batch delete
     if !p.names.is_empty() {
         let mut deleted = vec![];
         let mut errors = vec![];
         for name in &p.names {
-            let url =
-                iris.versioned_ns_url(&p.namespace, &format!("/doc/{}", urlencoding::encode(name)));
+            let url = iris.versioned_ns_url(ns, &format!("/doc/{}", urlencoding::encode(name)));
             match client
                 .delete(&url)
                 .basic_auth(&iris.username, Some(&iris.password))
@@ -771,10 +771,7 @@ async fn handle_delete(
         Ok(n) => n,
         Err(r) => return Ok(r),
     };
-    let url = iris.versioned_ns_url(
-        &p.namespace,
-        &format!("/doc/{}", urlencoding::encode(&name)),
-    );
+    let url = iris.versioned_ns_url(ns, &format!("/doc/{}", urlencoding::encode(&name)));
     let resp = client
         .delete(&url)
         .basic_auth(&iris.username, Some(&iris.password))
@@ -810,15 +807,13 @@ async fn handle_head(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: IrisDocParams,
+    ns: &str,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     let name = match require_name(&p, "head") {
         Ok(n) => n,
         Err(r) => return Ok(r),
     };
-    let url = iris.versioned_ns_url(
-        &p.namespace,
-        &format!("/doc/{}", urlencoding::encode(&name)),
-    );
+    let url = iris.versioned_ns_url(ns, &format!("/doc/{}", urlencoding::encode(&name)));
     let resp = client
         .head(&url)
         .basic_auth(&iris.username, Some(&iris.password))
@@ -1047,6 +1042,7 @@ async fn handle_insert(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: IrisDocParams,
+    ns: &str,
     elicitation_store: &crate::elicitation::ElicitationStore,
     checkout_cache: &crate::elicitation::CheckoutCache,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
@@ -1070,7 +1066,7 @@ async fn handle_insert(
         );
     }
 
-    let existing = match fetch_doc_lines(iris, client, name, &p.namespace).await {
+    let existing = match fetch_doc_lines(iris, client, name, ns).await {
         Ok(Some(lines)) => lines,
         Ok(None) => return err_json("NOT_FOUND", &format!("Document not found: {name}")),
         Err(resp) => return Ok(resp),
@@ -1106,7 +1102,7 @@ async fn handle_insert(
         client,
         name,
         &new_content,
-        &p.namespace,
+        ns,
         p.compile,
         true, // surgical insert never writes a full Storage block
         elicitation_store,
@@ -1117,7 +1113,7 @@ async fn handle_insert(
         iris,
         client,
         name,
-        &p.namespace,
+        ns,
         result,
         serde_json::json!({
             "edit": "insert",
@@ -1133,6 +1129,7 @@ async fn handle_delete_lines(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: IrisDocParams,
+    ns: &str,
     elicitation_store: &crate::elicitation::ElicitationStore,
     checkout_cache: &crate::elicitation::CheckoutCache,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
@@ -1170,7 +1167,7 @@ async fn handle_delete_lines(
         }
     };
 
-    let existing = match fetch_doc_lines(iris, client, name, &p.namespace).await {
+    let existing = match fetch_doc_lines(iris, client, name, ns).await {
         Ok(Some(lines)) => lines,
         Ok(None) => return err_json("NOT_FOUND", &format!("Document not found: {name}")),
         Err(resp) => return Ok(resp),
@@ -1217,7 +1214,7 @@ async fn handle_delete_lines(
         client,
         name,
         &new_content,
-        &p.namespace,
+        ns,
         p.compile,
         true, // surgical delete never writes a full Storage block
         elicitation_store,
@@ -1228,7 +1225,7 @@ async fn handle_delete_lines(
         iris,
         client,
         name,
-        &p.namespace,
+        ns,
         result,
         serde_json::json!({
             "edit": "delete_lines",
@@ -1303,6 +1300,7 @@ async fn handle_fragment(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: IrisDocParams,
+    ns: &str,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     let name = match require_name(&p, "fragment") {
         Ok(n) => n,
@@ -1323,10 +1321,7 @@ async fn handle_fragment(
         );
     }
 
-    let url = iris.versioned_ns_url(
-        &p.namespace,
-        &format!("/doc/{}", urlencoding::encode(&name)),
-    );
+    let url = iris.versioned_ns_url(ns, &format!("/doc/{}", urlencoding::encode(&name)));
     let resp = client
         .get(&url)
         .basic_auth(&iris.username, Some(&iris.password))
@@ -1400,6 +1395,7 @@ async fn handle_compiled(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: IrisDocParams,
+    ns: &str,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     let name = match require_name(&p, "compiled") {
         Ok(n) => n,
@@ -1440,10 +1436,7 @@ async fn handle_compiled(
         " Set rtn = ##class(%Library.Routine).%OpenId(\"{routine}.INT\")\n If rtn = \"\" {{ Write \"NOT_COMPILED\",$C(10)  Quit }}\n Do rtn.Rewind()\n While 'rtn.AtEnd {{ Write rtn.ReadLine(),$C(10) }}\n Write \"DONE\",$C(10)"
     );
 
-    let output = match iris
-        .execute_via_generator(&code, &p.namespace, client)
-        .await
-    {
+    let output = match iris.execute_via_generator(&code, ns, client).await {
         Ok(s) => s,
         Err(e) => return err_json("IRIS_EXECUTE_ERROR", &e.to_string()),
     };
@@ -1524,6 +1517,7 @@ async fn handle_list(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: IrisDocParams,
+    ns: &str,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     let pattern = match p.pattern.as_deref() {
         Some(pat) => pat,
@@ -1572,7 +1566,7 @@ async fn handle_list(
 
     let mut all_docs: Vec<serde_json::Value> = Vec::new();
     for cat in cats {
-        match fetch_docnames_for_cat(iris, client, &p.namespace, cat).await {
+        match fetch_docnames_for_cat(iris, client, ns, cat).await {
             Ok(docs) => all_docs.extend(docs),
             Err(e) => {
                 return err_json(
@@ -1611,7 +1605,7 @@ async fn handle_list(
         "documents": matched,
         "count": count,
         "truncated": truncated,
-        "namespace": p.namespace,
+        "namespace": ns,
     }))
 }
 
@@ -1651,10 +1645,8 @@ pub async fn handle_iris_execute_method(
 
     let code = format!(" Set result = {call_expr}\n Write result,$C(10)");
 
-    let output = match iris
-        .execute_via_generator(&code, &p.namespace, client)
-        .await
-    {
+    let namespace = crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace);
+    let output = match iris.execute_via_generator(&code, namespace, client).await {
         Ok(s) => s,
         Err(e) => {
             let msg = e.to_string();
@@ -1820,7 +1812,11 @@ mod tests {
     #[test]
     fn test_iris_doc_params_defaults() {
         let p: IrisDocParams = serde_json::from_str(r#"{}"#).unwrap();
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
+        assert_eq!(
+            crate::tools::resolve_namespace(p.namespace.as_deref(), "APP"),
+            "APP"
+        );
         assert!(p.name.is_none());
         assert!(p.names.is_empty());
         assert!(p.content.is_none());
@@ -1920,7 +1916,11 @@ mod tests {
     fn test_iris_doc_params_namespace_override() {
         let p: IrisDocParams =
             serde_json::from_str(r#"{"name": "Foo.cls", "namespace": "MYNS"}"#).unwrap();
-        assert_eq!(p.namespace, "MYNS");
+        assert_eq!(p.namespace.as_deref(), Some("MYNS"));
+        assert_eq!(
+            crate::tools::resolve_namespace(p.namespace.as_deref(), "APP"),
+            "MYNS"
+        );
     }
 
     #[test]

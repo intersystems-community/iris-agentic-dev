@@ -668,8 +668,9 @@ pub struct CompileParams {
     pub target: String,
     #[serde(default = "default_flags")]
     pub flags: String,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     #[serde(default)]
     pub force_writable: bool,
     /// If true, bypass the log store and return all errors/warnings inline regardless of count.
@@ -685,8 +686,9 @@ pub struct CompileParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TestParams {
     pub pattern: String,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     #[serde(default = "default_test_timeout")]
     pub timeout: u64,
     /// Set true to also measure line coverage inline (wraps iris_coverage mode=run)
@@ -708,8 +710,9 @@ pub struct SymbolsParams {
     pub query: String,
     #[serde(default = "default_limit")]
     pub limit: usize,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
     #[serde(default)]
     pub server: Option<String>,
@@ -717,8 +720,9 @@ pub struct SymbolsParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct IntrospectParams {
     pub class_name: String,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
     #[serde(default)]
     pub server: Option<String>,
@@ -731,16 +735,18 @@ pub struct DebugMapParams {
     pub offset: i64,
     #[serde(default)]
     pub error_string: String,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GenerateClassParams {
     pub description: String,
     #[serde(default)]
     pub overwrite: bool,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
     #[serde(default)]
     pub server: Option<String>,
@@ -748,8 +754,9 @@ pub struct GenerateClassParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct GenerateTestParams {
     pub class_name: String,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
     #[serde(default)]
     pub server: Option<String>,
@@ -819,13 +826,15 @@ fn default_symbols_local_limit() -> usize {
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct CapturePacketParams {
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ErrorLogsParams {
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     #[serde(default = "default_max_entries")]
     pub max_entries: usize,
     /// If true, bypass the log store and return all entries inline regardless of count.
@@ -861,8 +870,9 @@ pub struct SourceMapParams {
     #[serde(default)]
     pub cls_text: Option<String>,
     pub workspace_path: Option<String>,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
 }
 // 053-doc-depth
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -874,8 +884,9 @@ pub struct IrisExecuteMethodParams {
     /// Positional string arguments passed to the method
     #[serde(default)]
     pub args: Vec<String>,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
     #[serde(default)]
     pub server: Option<String>,
@@ -884,8 +895,9 @@ pub struct IrisExecuteMethodParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExecuteParams {
     pub code: String,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     #[serde(default = "default_execute_timeout")]
     pub timeout: u64,
     #[serde(default)]
@@ -918,8 +930,9 @@ pub struct QueryParams {
     /// Query parameters as strings (e.g. ["Alice", "42"])
     #[serde(default)]
     pub parameters: Vec<String>,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// If true, bypass SQL safety validation. Use only for intentional administrative queries.
     /// Has no effect on production IRIS instances (where write tools are disabled).
     /// Ignored in mode="write" — see `force_ignored` in the response.
@@ -946,8 +959,9 @@ pub struct ListContainersParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SelectContainerParams {
     pub name: String,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     #[serde(default = "default_username")]
     pub username: String,
     #[serde(default = "default_password")]
@@ -964,8 +978,15 @@ pub struct StartSandboxParams {
 fn default_flags() -> String {
     "cuk".to_string()
 }
-fn default_namespace() -> String {
-    "USER".to_string()
+/// Resolve the effective namespace for a tool call: use `param` if non-empty, else
+/// `connection_ns` (the configured namespace of the connection the call actually uses —
+/// pool member or default). Callers with no connection in scope pass "USER" as
+/// `connection_ns`, so USER is only ever the last-resort fallback (issue #96).
+pub fn resolve_namespace<'a>(param: Option<&'a str>, connection_ns: &'a str) -> &'a str {
+    match param {
+        Some(s) if !s.is_empty() => s,
+        _ => connection_ns,
+    }
 }
 fn default_limit() -> usize {
     20
@@ -1500,6 +1521,7 @@ async fn iris_query_explain(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: &QueryParams,
+    namespace: &str,
 ) -> Result<CallToolResult, McpError> {
     let first_word = p
         .query
@@ -1517,7 +1539,7 @@ async fn iris_query_explain(
         );
     }
 
-    let query_url = iris.versioned_ns_url(&p.namespace, "/action/query");
+    let query_url = iris.versioned_ns_url(namespace, "/action/query");
     let explain_sql = format!("EXPLAIN {}", p.query);
     let resp = client
         .post(&query_url)
@@ -1567,6 +1589,7 @@ async fn iris_query_count(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: &QueryParams,
+    namespace: &str,
 ) -> Result<CallToolResult, McpError> {
     let table = p.table.as_deref();
     let query = if p.query.trim().is_empty() {
@@ -1582,7 +1605,7 @@ async fn iris_query_count(
     }
 
     let count_sql = build_count_query(table, query);
-    let query_url = iris.versioned_ns_url(&p.namespace, "/action/query");
+    let query_url = iris.versioned_ns_url(namespace, "/action/query");
     let resp = client
         .post(&query_url)
         .basic_auth(&iris.username, Some(&iris.password))
@@ -1624,6 +1647,7 @@ async fn iris_query_write(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: &QueryParams,
+    namespace: &str,
 ) -> Result<CallToolResult, McpError> {
     match validate_dml_sql(&p.query) {
         Err(ref reason) if reason == "EMPTY" => {
@@ -1674,10 +1698,7 @@ If rs.%SQLCODE<0 {{ Write "ERROR:ROWS_CHECK_FAILED:"_rs.%Message Quit }}
 If rs.%Next() {{ Write "OK:"_rs.%GetData(1) }} Else {{ Write "OK:0" }}"#,
                     count_sql = count_sql.replace('"', "\"\""),
                 );
-                match iris
-                    .execute_via_generator(&code, &p.namespace, client)
-                    .await
-                {
+                match iris.execute_via_generator(&code, namespace, client).await {
                     Ok(out) => {
                         let out = out.trim();
                         if let Some(msg) = out.strip_prefix("ERROR:ROWS_CHECK_FAILED:") {
@@ -1717,10 +1738,7 @@ If rs.%SQLCODE<0 {{ Write "ERROR:SQL_ERROR:"_rs.%Message Quit }}
 Write "OK:"_rs.%ROWCOUNT"#,
         sql = p.query.replace('"', "\"\""),
     );
-    match iris
-        .execute_via_generator(&code, &p.namespace, client)
-        .await
-    {
+    match iris.execute_via_generator(&code, namespace, client).await {
         Ok(out) => {
             let out = out.trim();
             if let Some(msg) = out.strip_prefix("ERROR:SQL_ERROR:") {
@@ -2802,8 +2820,9 @@ impl IrisTools {
         Parameters(p): Parameters<CompileParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.resolve_server(p.server.as_deref()).await?;
+        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace).to_string();
         let (sm_server, policy) = self.active_server_manager_policy();
-        let params_json = serde_json::json!({ "target": p.target, "namespace": p.namespace });
+        let params_json = serde_json::json!({ "target": p.target, "namespace": namespace });
         if let Err(gate) = crate::policy::gate::dispatch_gate(
             "iris_compile",
             sm_server.as_deref().unwrap_or(""),
@@ -2861,7 +2880,7 @@ impl IrisTools {
         ) {
             return ok_json(gate);
         }
-        tracing::info!(namespace = %p.namespace, target = %p.target, "iris_compile");
+        tracing::info!(namespace = %namespace, target = %p.target, "iris_compile");
 
         // Capability gate: if atelier_rest is unavailable (docker_only or NoPWS build),
         // compile via docker exec immediately — no 52773 probe, no retry.
@@ -2891,7 +2910,7 @@ impl IrisTools {
                     p.target.replace('"', "\\\""),
                     p.flags.replace('"', "\\\""),
                 );
-                let result = iris.execute(&code, &p.namespace).await;
+                let result = iris.execute(&code, &namespace).await;
                 self.record_call("iris_compile", result.is_ok());
                 return match result {
                     Ok(output) => {
@@ -2900,7 +2919,7 @@ impl IrisTools {
                         ok_json(serde_json::json!({
                             "success": success,
                             "target": p.target,
-                            "namespace": p.namespace,
+                            "namespace": namespace,
                             "method": "docker_exec",
                             "output": trimmed,
                         }))
@@ -2954,7 +2973,7 @@ impl IrisTools {
                     });
                 // Upload via Atelier PUT
                 let put_url = iris.versioned_ns_url(
-                    &p.namespace,
+                    &namespace,
                     &format!("/doc/{}?ignoreConflict=1", urlencoding::encode(&doc_name)),
                 );
                 let lines: Vec<&str> = content.lines().collect();
@@ -2985,7 +3004,7 @@ impl IrisTools {
                 // Compile via shared compile_document helper
                 let local_src = p.target.clone();
                 let cr = iris
-                    .compile_document(&doc_name, &p.namespace, &p.flags, client)
+                    .compile_document(&doc_name, &namespace, &p.flags, client)
                     .await
                     .map_err(|e| McpError::internal_error(e.to_string(), None))?;
                 let errors: Vec<serde_json::Value> = cr
@@ -3005,7 +3024,7 @@ impl IrisTools {
                     "target": doc_name,
                     "uploaded_from": local_src,
                     "targets_compiled": 1,
-                    "namespace": p.namespace,
+                    "namespace": namespace,
                     "errors": errors,
                     "warnings": [],
                     "console": console,
@@ -3014,9 +3033,9 @@ impl IrisTools {
         }
 
         // Expand wildcards: resolve "MyApp.*.cls" to a list of matching class names.
-        // Bug 8: use p.namespace (not iris.namespace) and the correct /docnames/CLS endpoint.
+        // Bug 8: use namespace (not iris.namespace) and the correct /docnames/CLS endpoint.
         let targets: Vec<String> = if p.target.contains('*') {
-            let list_url = iris.versioned_ns_url(&p.namespace, "/docnames/CLS");
+            let list_url = iris.versioned_ns_url(&namespace, "/docnames/CLS");
             match client
                 .get(&list_url)
                 .basic_auth(&iris.username, Some(&iris.password))
@@ -3055,15 +3074,15 @@ impl IrisTools {
         if p.force_writable {
             let code = format!(
                 "do ##class(%Library.EnsembleMgr).EnableNamespace(\"{}\",1)",
-                p.namespace
+                namespace
             );
-            let _ = iris.execute(&code, &p.namespace).await;
+            let _ = iris.execute(&code, &namespace).await;
         }
 
         // Atelier compile: POST with JSON array of document names (with extensions)
         // e.g. ["MyApp.Patient.cls", "MyApp.Utils.cls"]
         let compile_url = iris.versioned_ns_url(
-            &p.namespace,
+            &namespace,
             &format!("/action/compile?flags={}", urlencoding::encode(&p.flags)),
         );
 
@@ -3176,8 +3195,8 @@ impl IrisTools {
 
         // Write open hint for single non-wildcard successful compile
         let open_uri = if success && !p.target.contains('*') && targets.len() == 1 {
-            write_open_hint(&p.namespace, &p.target);
-            Some(format!("isfs://{}/{}", p.namespace, p.target))
+            write_open_hint(&namespace, &p.target);
+            Some(format!("isfs://{}/{}", namespace, p.target))
         } else {
             None
         };
@@ -3186,7 +3205,7 @@ impl IrisTools {
             "success": success,
             "target": p.target,
             "targets_compiled": targets.len(),
-            "namespace": p.namespace,
+            "namespace": namespace,
             "errors": errors,
             "warnings": warnings,
             "console": console,
@@ -3225,7 +3244,6 @@ impl IrisTools {
         &self,
         Parameters(p): Parameters<TestParams>,
     ) -> Result<CallToolResult, McpError> {
-        tracing::info!(namespace = %p.namespace, pattern = %p.pattern, "iris_test");
         let timeout = std::time::Duration::from_secs(p.timeout);
 
         // HTTP path only — docker exec path removed (#46: /noload/run assumed pre-loaded
@@ -3233,12 +3251,14 @@ impl IrisTools {
         // errors; HTTP path with /verbose=1 is reliable and works with or without docker).
         let path_label = "http";
         let iris = self.resolve_server(p.server.as_deref()).await?;
+        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace).to_string();
+        tracing::info!(namespace = %namespace, pattern = %p.pattern, "iris_test");
         let client = self.http_client();
 
         // US3: namespace existence check before running tests.
         let ns_check_code = format!(
             "write ##class(%SYS.Namespace).Exists(\"{}\")",
-            p.namespace.replace('"', "\\\"")
+            namespace.replace('"', "\\\"")
         );
         let ns_exists = tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -3255,8 +3275,8 @@ impl IrisTools {
             return ok_json(serde_json::json!({
                 "success": false,
                 "error_code": ERR_NAMESPACE_NOT_FOUND,
-                "error": format!("Namespace '{}' does not exist on this IRIS instance", p.namespace),
-                "namespace": p.namespace,
+                "error": format!("Namespace '{}' does not exist on this IRIS instance", namespace),
+                "namespace": namespace,
             }));
         }
 
@@ -3322,7 +3342,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 },
                 test_path: None,
                 target_pct: None,
-                namespace: Some(p.namespace.clone()),
+                namespace: Some(namespace.clone()),
                 cobertura_path: None,
             };
             // Ignore start errors — if monitor fails, coverage will return zeros/error
@@ -3345,7 +3365,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
         let run_output = if has_container {
             // Docker exec: full filesystem access, captures terminal output from RunTest
-            match tokio::time::timeout(timeout, iris.execute(&run_code, &p.namespace)).await {
+            match tokio::time::timeout(timeout, iris.execute(&run_code, &namespace)).await {
                 Err(_) => {
                     self.record_call("iris_test", false);
                     return ok_json(serde_json::json!({
@@ -3358,7 +3378,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                     // Docker exec unavailable — fall through to HTTP
                     match tokio::time::timeout(
                         timeout,
-                        iris.execute_via_generator(&run_code, &p.namespace, client),
+                        iris.execute_via_generator(&run_code, &namespace, client),
                     )
                     .await
                     {
@@ -3379,7 +3399,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             // HTTP path: works for remote IRIS without docker
             match tokio::time::timeout(
                 timeout,
-                iris.execute_via_generator(&run_code, &p.namespace, client),
+                iris.execute_via_generator(&run_code, &namespace, client),
             )
             .await
             {
@@ -3547,7 +3567,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 "error": "Pattern matched no test classes",
                 "hint": hint,
                 "pattern": p.pattern,
-                "namespace": p.namespace,
+                "namespace": namespace,
                 "total": 0,
                 "passed": 0,
                 "failed": 0,
@@ -3609,7 +3629,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 },
                 test_path: None,
                 target_pct: p.coverage_target_pct,
-                namespace: Some(p.namespace.clone()),
+                namespace: Some(namespace.clone()),
                 cobertura_path: None,
             };
             let cov = coverage::handle_iris_coverage(&iris, client, &report_params).await;
@@ -3621,7 +3641,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 package: None,
                 test_path: None,
                 target_pct: None,
-                namespace: Some(p.namespace.clone()),
+                namespace: Some(namespace.clone()),
                 cobertura_path: None,
             };
             let _ = coverage::handle_iris_coverage(&iris, client, &stop_params).await;
@@ -3641,7 +3661,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             "path": path_label,
             "log_id": log_id,
             "pattern": p.pattern,
-            "namespace": p.namespace,
+            "namespace": namespace,
             "test_suites": test_suites,
         });
         if let Some(cov) = coverage_result {
@@ -3666,13 +3686,14 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         } else {
             self.get_iris_for_exec_with_client().await?
         };
+        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace).to_string();
         // Diagnostic: the identity this connection will authenticate as, and whether a service
         // account is configured in the env at this instant. Surfaced in the response so account
         // routing is directly observable per call instead of inferred.
         let auth_user = iris.username.clone();
         let svc_env = std::env::var("IRIS_SERVICE_USERNAME").unwrap_or_default();
         let (sm_server, policy) = self.active_server_manager_policy();
-        let params_json = serde_json::json!({ "namespace": p.namespace, "code": p.code });
+        let params_json = serde_json::json!({ "namespace": &namespace, "code": p.code });
         if let Err(gate) = crate::policy::gate::dispatch_gate(
             "iris_execute",
             sm_server.as_deref().unwrap_or(""),
@@ -3730,7 +3751,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         ) {
             return ok_json(gate);
         }
-        tracing::info!(namespace = %p.namespace, translate_sql = p.translate_sql, use_session = p.use_session, "iris_execute");
+        tracing::info!(namespace = %namespace, translate_sql = p.translate_sql, use_session = p.use_session, "iris_execute");
         let client = exec_client.as_ref();
         let timeout = std::time::Duration::from_secs(p.timeout);
 
@@ -3777,7 +3798,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         // Try pure-HTTP execution first (write-compile-query via CodeMode=objectgenerator).
         let gen_result = tokio::time::timeout(
             timeout,
-            iris.execute_via_generator(code_to_run, &p.namespace, client),
+            iris.execute_via_generator(code_to_run, &namespace, client),
         )
         .await;
 
@@ -3809,7 +3830,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                         "success": false,
                         "error_code": err_code,
                         "error": detail,
-                        "namespace": p.namespace,
+                        "namespace": namespace,
                         "method": "http",
                         "auth_user": auth_user,
                         "service_account_env": svc_env,
@@ -3824,7 +3845,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 let mut resp = serde_json::json!({
                     "success": !is_runtime_error,
                     "output": trimmed,
-                    "namespace": p.namespace,
+                    "namespace": namespace,
                     "method": "http",
                     "auth_user": auth_user,
                     "service_account_env": svc_env,
@@ -3860,7 +3881,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
         // Fallback: docker exec (requires IRIS_CONTAINER env var).
         let docker_result =
-            tokio::time::timeout(timeout, iris.execute(code_to_run, &p.namespace)).await;
+            tokio::time::timeout(timeout, iris.execute(code_to_run, &namespace)).await;
         match docker_result {
             Err(_) => {
                 self.record_call("iris_execute", false);
@@ -3903,7 +3924,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 let mut resp = serde_json::json!({
                     "success": !is_runtime_error,
                     "output": trimmed,
-                    "namespace": p.namespace,
+                    "namespace": namespace,
                     "method": "docker",
                 });
                 if is_runtime_error {
@@ -3938,7 +3959,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         Parameters(p): Parameters<IrisDocParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.resolve_server(p.server.as_deref()).await?;
-        tracing::info!(namespace = %p.namespace, "iris_doc");
+        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
+        tracing::info!(namespace = %namespace, "iris_doc");
         let client = self.http_client();
         let result = doc::handle_iris_doc(
             &iris,
@@ -3961,13 +3983,17 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         Parameters(p): Parameters<QueryParams>,
     ) -> Result<CallToolResult, McpError> {
         let mode = p.mode.as_deref().unwrap_or("read");
-        tracing::info!(namespace = %p.namespace, force = p.force, mode, "iris_query");
+        // The gates below run before any connection is resolved, so log/audit the
+        // *requested* namespace here; each execution branch resolves the effective
+        // namespace against the connection it actually uses.
+        let requested_ns = p.namespace.as_deref().unwrap_or("(connection default)");
+        tracing::info!(namespace = %requested_ns, force = p.force, mode, "iris_query");
 
         // Policy gate (044 + 051): fires before role gate.
         let (sm_server_q, policy_q) = self.active_server_manager_policy();
         {
             let params_json =
-                serde_json::json!({ "namespace": p.namespace, "mode": mode, "query": p.query });
+                serde_json::json!({ "namespace": &p.namespace, "mode": mode, "query": p.query });
             if let Err(gate) = crate::policy::gate::dispatch_gate(
                 "iris_query",
                 sm_server_q.as_deref().unwrap_or(""),
@@ -4045,8 +4071,9 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         match mode {
             "explain" => {
                 let iris = self.resolve_server(p.server.as_deref()).await?;
+                let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
                 let client = self.http_client();
-                let result = iris_query_explain(&iris, client, &p).await;
+                let result = iris_query_explain(&iris, client, &p, namespace).await;
                 self.record_call(
                     "iris_query",
                     result.as_ref().map(is_success).unwrap_or(false),
@@ -4055,8 +4082,9 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             }
             "count" => {
                 let iris = self.resolve_server(p.server.as_deref()).await?;
+                let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
                 let client = self.http_client();
-                let result = iris_query_count(&iris, client, &p).await;
+                let result = iris_query_count(&iris, client, &p, namespace).await;
                 self.record_call(
                     "iris_query",
                     result.as_ref().map(is_success).unwrap_or(false),
@@ -4072,7 +4100,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 } else {
                     self.get_iris_for_exec_with_client().await?
                 };
-                let result = iris_query_write(&iris, exec_client.as_ref(), &p).await;
+                let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
+                let result = iris_query_write(&iris, exec_client.as_ref(), &p, namespace).await;
                 self.record_call(
                     "iris_query",
                     result.as_ref().map(is_success).unwrap_or(false),
@@ -4112,8 +4141,9 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         }
 
         let iris = self.resolve_server(p.server.as_deref()).await?;
+        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace).to_string();
         let client = self.http_client();
-        let query_url = iris.versioned_ns_url(&p.namespace, "/action/query");
+        let query_url = iris.versioned_ns_url(&namespace, "/action/query");
         let resp = client
             .post(&query_url)
             .basic_auth(&iris.username, Some(&iris.password))
@@ -4147,7 +4177,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         let count = rows.len();
         self.record_call("iris_query", true);
         ok_json(
-            serde_json::json!({"success": true, "rows": rows, "count": count, "namespace": p.namespace}),
+            serde_json::json!({"success": true, "rows": rows, "count": count, "namespace": namespace}),
         )
     }
 
@@ -4258,6 +4288,15 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         Parameters(p): Parameters<SelectContainerParams>,
     ) -> Result<CallToolResult, McpError> {
         self.check_reload().await;
+        // This tool creates a NEW connection, so there is no existing connection to
+        // resolve against: explicit param wins, else the configured IRIS_NAMESPACE,
+        // else USER as the last resort.
+        let env_ns = std::env::var("IRIS_NAMESPACE")
+            .ok()
+            .filter(|s| !s.is_empty());
+        let namespace =
+            resolve_namespace(p.namespace.as_deref(), env_ns.as_deref().unwrap_or("USER"))
+                .to_string();
         let workspace_basename = String::new();
 
         let containers = list_iris_containers(&workspace_basename).await;
@@ -4287,7 +4326,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
         let mut new_conn = crate::iris::connection::IrisConnection::new(
             &base_url,
-            &p.namespace,
+            &namespace,
             &p.username,
             &p.password,
             crate::iris::connection::DiscoverySource::Docker {
@@ -4327,7 +4366,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             "container": p.name,
             "port_superserver": port_superserver,
             "port_web": port_web,
-            "namespace": p.namespace,
+            "namespace": namespace,
             "version": version,
             "write_tools_enabled": write_tools_enabled,
         }))
@@ -4642,9 +4681,10 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         Parameters(p): Parameters<SymbolsParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.resolve_server(p.server.as_deref()).await?;
+        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         let client = self.http_client();
         let (sql, params) = translate_symbols_query(p.limit, &p.query);
-        match iris.query(&sql, params, &p.namespace, client).await {
+        match iris.query(&sql, params, namespace, client).await {
             Ok(resp) => ok_json(serde_json::json!({
                 "source": "iris_dictionary",
                 "symbols": resp["result"]["content"],
@@ -4721,19 +4761,20 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         Parameters(p): Parameters<IntrospectParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.resolve_server(p.server.as_deref()).await?;
+        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         let client = self.http_client();
         // Bug 15: use parameterized queries instead of manual string escaping.
         let methods = iris.query(
             "SELECT Name,FormalSpec,ReturnType FROM %Dictionary.CompiledMethod WHERE parent=? ORDER BY Name",
             vec![serde_json::Value::String(p.class_name.clone())],
-            &p.namespace,
+            namespace,
             client,
         ).await.unwrap_or_default();
         let props = iris
             .query(
                 "SELECT Name,Type FROM %Dictionary.CompiledProperty WHERE parent=? ORDER BY Name",
                 vec![serde_json::Value::String(p.class_name.clone())],
-                &p.namespace,
+                namespace,
                 client,
             )
             .await
@@ -4754,7 +4795,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             .collect::<Vec<_>>();
 
         // Detect BPL/DTL and add structured xdata_flow if present.
-        let xdata_flow = detect_xdata_flow(&iris, &p.class_name, &p.namespace, client).await;
+        let xdata_flow = detect_xdata_flow(&iris, &p.class_name, namespace, client).await;
 
         let mut resp = serde_json::json!({
             "success": true,
@@ -4783,16 +4824,14 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             }
         }
         let iris = self.get_iris_reloaded().await?;
+        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         let client = self.http_client();
         let code = format!(
             "Write ##class(%Studio.Debugger).SourceLine(\"{}\",{})",
             p.routine.replace('"', "\\\""),
             p.offset
         );
-        match iris
-            .execute_via_generator(&code, &p.namespace, client)
-            .await
-        {
+        match iris.execute_via_generator(&code, namespace, client).await {
             Ok(raw) => {
                 let (cls_name, cls_line) = parse_source_line(raw.trim());
                 ok_json(
@@ -4812,8 +4851,9 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         Parameters(_p): Parameters<CapturePacketParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.get_iris_reloaded().await?;
+        let namespace = resolve_namespace(_p.namespace.as_deref(), &iris.namespace);
         let client = self.http_client();
-        match iris.query("SELECT TOP 20 ErrorCode,ErrorText,TimeStamp FROM %SYSTEM.Error ORDER BY TimeStamp DESC", vec![], &_p.namespace, client).await {
+        match iris.query("SELECT TOP 20 ErrorCode,ErrorText,TimeStamp FROM %SYSTEM.Error ORDER BY TimeStamp DESC", vec![], namespace, client).await {
             Ok(resp) => ok_json(serde_json::json!({"success": true, "errors": resp["result"]["content"]})),
             Err(e) => {
                 let msg = e.to_string();
@@ -4836,11 +4876,12 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         Parameters(p): Parameters<ErrorLogsParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.get_iris_reloaded().await?;
+        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         let client = self.http_client();
         // FR-012: cap max_entries to prevent runaway queries.
         let max_entries = p.max_entries.min(1000);
         let sql = format!("SELECT TOP {} ErrorCode,ErrorText,TimeStamp FROM %SYSTEM.Error ORDER BY TimeStamp DESC", max_entries);
-        match iris.query(&sql, vec![], &p.namespace, client).await {
+        match iris.query(&sql, vec![], namespace, client).await {
             Ok(resp) => {
                 let mut result =
                     serde_json::json!({"success": true, "logs": resp["result"]["content"]});
@@ -4881,6 +4922,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         Parameters(p): Parameters<SourceMapParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.get_iris_reloaded().await?;
+        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         let client = self.http_client();
         let cls_name = p.cls_name.trim_end_matches(".cls");
         // Build source map by querying %Studio.Debugger for each .INT method
@@ -4888,10 +4930,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             "set cls=\"{}\" set rtn=$translate(cls,\".\",\".\") set map=\"{{\" set first=1 set method=\"\" for {{ set method=$order(^rIndex(rtn,method)) quit:method=\"\"  set intline=$get(^rIndex(rtn,method)) if 'first {{ set map=map_\",\" }} set map=map_\"\\\"\"_method_\"\\\":\\\"\"_intline_\"\\\"\" set first=0 }} set map=map_\"}}\" write map",
             cls_name.replace('"', "\\\"")
         );
-        match iris
-            .execute_via_generator(&code, &p.namespace, client)
-            .await
-        {
+        match iris.execute_via_generator(&code, namespace, client).await {
             Ok(output) => {
                 let map: serde_json::Value =
                     serde_json::from_str(output.trim()).unwrap_or(serde_json::json!({}));
@@ -4939,13 +4978,14 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             extract_class_name(&class_text).unwrap_or_else(|| "Generated.Class".to_string());
 
         if let Some(iris) = self.iris_arc().as_deref() {
+            let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
             let _client = self.http_client();
             let code = format!(
                 "Set sc=$SYSTEM.OBJ.Compile(\"{}\",\"ck-d\") Write $System.Status.IsOK(sc)",
                 class_name
             );
             let compile_ok = iris
-                .execute(&code, &p.namespace)
+                .execute(&code, namespace)
                 .await
                 .map(|o| o.trim() == "1")
                 .unwrap_or(false);
@@ -4970,7 +5010,7 @@ Original: {}",
                         fixed_name
                     );
                     let ok2 = iris
-                        .execute(&code2, &p.namespace)
+                        .execute(&code2, namespace)
                         .await
                         .map(|o| o.trim() == "1")
                         .unwrap_or(false);
@@ -5006,12 +5046,13 @@ Original: {}",
         })?;
 
         let introspection_context = if let Some(iris) = self.iris_arc().as_deref() {
+            let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
             let client = self.http_client();
             // FR-001/C1: use parameterized query to prevent SQL injection via class_name.
             iris.query(
                 "SELECT Name,FormalSpec,ReturnType FROM %Dictionary.CompiledMethod WHERE parent=? ORDER BY Name",
                 vec![serde_json::Value::String(p.class_name.clone())],
-                &p.namespace,
+                namespace,
                 client,
             )
                 .await
@@ -5747,10 +5788,11 @@ Methods:
         Parameters(p): Parameters<ScmParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.resolve_server(p.server.as_deref()).await?;
+        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         // Policy gate (044 + 051): check before role gate.
         let (sm_server_sc, policy_sc) = self.active_server_manager_policy();
         {
-            let params_json = serde_json::json!({ "action": p.action, "namespace": p.namespace });
+            let params_json = serde_json::json!({ "action": p.action, "namespace": namespace });
             if let Err(gate) = crate::policy::gate::dispatch_gate(
                 "iris_source_control",
                 sm_server_sc.as_deref().unwrap_or(""),
@@ -5992,16 +6034,14 @@ Methods:
                 None => self.iris_arc(),
             };
         let iris_opt = _iris_arc_hold.as_deref();
+        let conn_ns = iris_opt.map(|i| i.namespace.as_str()).unwrap_or("USER");
+        let ns_param = p.get("namespace").and_then(|v| v.as_str());
         let result = match action {
             "status" => {
                 interop::interop_production_status_impl(
                     iris_opt,
                     interop::ProductionStatusParams {
-                        namespace: p
-                            .get("namespace")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("USER")
-                            .to_string(),
+                        namespace: resolve_namespace(ns_param, conn_ns).to_string(),
                         full_status: p.get("full").and_then(|v| v.as_bool()).unwrap_or(false),
                     },
                 )
@@ -6015,11 +6055,7 @@ Methods:
                             .get("production_name")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string()),
-                        namespace: p
-                            .get("namespace")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("USER")
-                            .to_string(),
+                        namespace: resolve_namespace(ns_param, conn_ns).to_string(),
                     },
                 )
                 .await
@@ -6032,11 +6068,7 @@ Methods:
                             .get("production_name")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string()),
-                        namespace: p
-                            .get("namespace")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("USER")
-                            .to_string(),
+                        namespace: resolve_namespace(ns_param, conn_ns).to_string(),
                         timeout: p.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30) as u32,
                         force: p.get("force").and_then(|v| v.as_bool()).unwrap_or(false),
                     },
@@ -6047,11 +6079,7 @@ Methods:
                 interop::interop_production_update_impl(
                     iris_opt,
                     interop::ProductionUpdateParams {
-                        namespace: p
-                            .get("namespace")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("USER")
-                            .to_string(),
+                        namespace: resolve_namespace(ns_param, conn_ns).to_string(),
                         timeout: 30,
                         force: false,
                     },
@@ -6062,11 +6090,7 @@ Methods:
                 interop::interop_production_needs_update_impl(
                     iris_opt,
                     interop::ProductionNeedsUpdateParams {
-                        namespace: p
-                            .get("namespace")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("USER")
-                            .to_string(),
+                        namespace: resolve_namespace(ns_param, conn_ns).to_string(),
                     },
                 )
                 .await
@@ -6075,11 +6099,7 @@ Methods:
                 interop::interop_production_recover_impl(
                     iris_opt,
                     interop::ProductionRecoverParams {
-                        namespace: p
-                            .get("namespace")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("USER")
-                            .to_string(),
+                        namespace: resolve_namespace(ns_param, conn_ns).to_string(),
                     },
                 )
                 .await
@@ -6089,7 +6109,7 @@ Methods:
                     iris_opt,
                     &interop::ProductionAutostartParams {
                         action: "get_autostart".into(),
-                        namespace: p.get("namespace").and_then(|v| v.as_str()).unwrap_or("USER").to_string(),
+                        namespace: resolve_namespace(ns_param, conn_ns).to_string(),
                         enabled: None,
                         production: None,
                     },
@@ -6100,7 +6120,7 @@ Methods:
                     iris_opt,
                     &interop::ProductionAutostartParams {
                         action: "set_autostart".into(),
-                        namespace: p.get("namespace").and_then(|v| v.as_str()).unwrap_or("USER").to_string(),
+                        namespace: resolve_namespace(ns_param, conn_ns).to_string(),
                         enabled: p.get("enabled").and_then(|v| v.as_bool()),
                         production: p.get("production").and_then(|v| v.as_str()).map(|s| s.to_string()),
                     },
@@ -6205,7 +6225,7 @@ Methods:
             "select" => {
                 let params = SelectContainerParams {
                     name: name.unwrap_or_default(),
-                    namespace: default_namespace(),
+                    namespace: None,
                     username: default_username(),
                     password: default_password(),
                 };
@@ -6247,11 +6267,10 @@ Methods:
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let namespace = p
+        let requested_ns = p
             .get("namespace")
             .and_then(|v| v.as_str())
-            .unwrap_or("USER")
-            .to_string();
+            .map(|s| s.to_string());
         let settings: std::collections::HashMap<String, String> = p
             .get("settings")
             .and_then(|v| v.as_object())
@@ -6266,6 +6285,11 @@ Methods:
                 Some(s) => Some(self.pool.get(Some(s))?),
                 None => self.iris_arc(),
             };
+        let conn_ns = _iris_arc_hold
+            .as_deref()
+            .map(|i| i.namespace.as_str())
+            .unwrap_or("USER");
+        let namespace = resolve_namespace(requested_ns.as_deref(), conn_ns).to_string();
         let result = interop::interop_production_item_impl(
             _iris_arc_hold.as_deref(),
             interop::ProductionItemParams {
@@ -6298,11 +6322,17 @@ Methods:
         if message_id.is_empty() {
             return err_json("INVALID_PARAMS", "message_id is required");
         }
-        let namespace = p
-            .get("namespace")
-            .and_then(|v| v.as_str())
-            .unwrap_or("USER")
-            .to_string();
+        let _iris_arc_hold: Option<Arc<IrisConnection>> =
+            match p.get("server").and_then(|v| v.as_str()) {
+                Some(s) => Some(self.pool.get(Some(s))?),
+                None => self.iris_arc(),
+            };
+        let conn_ns = _iris_arc_hold
+            .as_deref()
+            .map(|i| i.namespace.as_str())
+            .unwrap_or("USER");
+        let namespace =
+            resolve_namespace(p.get("namespace").and_then(|v| v.as_str()), conn_ns).to_string();
         let max_bytes = p
             .get("max_bytes")
             .and_then(|v| v.as_u64())
@@ -6318,7 +6348,7 @@ Methods:
             .unwrap_or("block")
             .to_string();
         let (sm_server, policy) = self.active_server_manager_policy();
-        let params_json = serde_json::json!({ "namespace": namespace });
+        let params_json = serde_json::json!({ "namespace": &namespace });
         if let Err(gate) = crate::policy::gate::dispatch_gate(
             "iris_message_body",
             sm_server.as_deref().unwrap_or(""),
@@ -6327,11 +6357,6 @@ Methods:
         ) {
             return ok_json(gate);
         }
-        let _iris_arc_hold: Option<Arc<IrisConnection>> =
-            match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool.get(Some(s))?),
-                None => self.iris_arc(),
-            };
         let result = interop::handle_iris_message_body(
             _iris_arc_hold.as_deref(),
             &interop::MessageBodyParams {
@@ -6364,13 +6389,19 @@ Methods:
             .get("rule_name")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let namespace = p
-            .get("namespace")
-            .and_then(|v| v.as_str())
-            .unwrap_or("USER")
-            .to_string();
+        let _iris_arc_hold: Option<Arc<IrisConnection>> =
+            match p.get("server").and_then(|v| v.as_str()) {
+                Some(s) => Some(self.pool.get(Some(s))?),
+                None => self.iris_arc(),
+            };
+        let conn_ns = _iris_arc_hold
+            .as_deref()
+            .map(|i| i.namespace.as_str())
+            .unwrap_or("USER");
+        let namespace =
+            resolve_namespace(p.get("namespace").and_then(|v| v.as_str()), conn_ns).to_string();
         let (sm_server, policy) = self.active_server_manager_policy();
-        let params_json = serde_json::json!({ "namespace": namespace });
+        let params_json = serde_json::json!({ "namespace": &namespace });
         if let Err(gate) = crate::policy::gate::dispatch_gate(
             "iris_business_rule_info",
             sm_server.as_deref().unwrap_or(""),
@@ -6379,11 +6410,6 @@ Methods:
         ) {
             return ok_json(gate);
         }
-        let _iris_arc_hold: Option<Arc<IrisConnection>> =
-            match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool.get(Some(s))?),
-                None => self.iris_arc(),
-            };
         let result = interop::handle_iris_business_rule_info(
             _iris_arc_hold.as_deref(),
             &interop::BusinessRuleInfoParams {
@@ -6409,13 +6435,19 @@ Methods:
             .get("production")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let namespace = p
-            .get("namespace")
-            .and_then(|v| v.as_str())
-            .unwrap_or("USER")
-            .to_string();
+        let _iris_arc_hold: Option<Arc<IrisConnection>> =
+            match p.get("server").and_then(|v| v.as_str()) {
+                Some(s) => Some(self.pool.get(Some(s))?),
+                None => self.iris_arc(),
+            };
+        let conn_ns = _iris_arc_hold
+            .as_deref()
+            .map(|i| i.namespace.as_str())
+            .unwrap_or("USER");
+        let namespace =
+            resolve_namespace(p.get("namespace").and_then(|v| v.as_str()), conn_ns).to_string();
         let (sm_server, policy) = self.active_server_manager_policy();
-        let params_json = serde_json::json!({ "namespace": namespace });
+        let params_json = serde_json::json!({ "namespace": &namespace });
         if let Err(gate) = crate::policy::gate::dispatch_gate(
             "iris_production_diff",
             sm_server.as_deref().unwrap_or(""),
@@ -6424,11 +6456,6 @@ Methods:
         ) {
             return ok_json(gate);
         }
-        let _iris_arc_hold: Option<Arc<IrisConnection>> =
-            match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool.get(Some(s))?),
-                None => self.iris_arc(),
-            };
         let result = interop::handle_iris_production_diff(
             _iris_arc_hold.as_deref(),
             &interop::ProductionDiffParams {
@@ -6451,13 +6478,15 @@ Methods:
         &self,
         Parameters(p): Parameters<AnyParams>,
     ) -> Result<CallToolResult, McpError> {
-        let namespace = p
-            .get("namespace")
-            .and_then(|v| v.as_str())
-            .unwrap_or("USER")
-            .to_string();
+        let iris_arc = self.iris_arc();
+        let conn_ns = iris_arc
+            .as_deref()
+            .map(|i| i.namespace.as_str())
+            .unwrap_or("USER");
+        let namespace =
+            resolve_namespace(p.get("namespace").and_then(|v| v.as_str()), conn_ns).to_string();
         let result = interop::interop_credential_list_impl(
-            self.iris_arc().as_deref(),
+            iris_arc.as_deref(),
             interop::CredentialListParams { namespace },
         )
         .await;
@@ -6473,8 +6502,13 @@ Methods:
         &self,
         Parameters(p): Parameters<AnyParams>,
     ) -> Result<CallToolResult, McpError> {
+        let iris_arc = self.iris_arc();
+        let conn_ns = iris_arc
+            .as_deref()
+            .map(|i| i.namespace.as_str())
+            .unwrap_or("USER");
         let result = interop::interop_credential_manage_impl(
-            self.iris_arc().as_deref(),
+            iris_arc.as_deref(),
             interop::CredentialManageParams {
                 action: p
                     .get("action")
@@ -6494,10 +6528,7 @@ Methods:
                     .get("password")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string()),
-                namespace: p
-                    .get("namespace")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("USER")
+                namespace: resolve_namespace(p.get("namespace").and_then(|v| v.as_str()), conn_ns)
                     .to_string(),
             },
         )
@@ -6516,8 +6547,13 @@ Methods:
         &self,
         Parameters(p): Parameters<AnyParams>,
     ) -> Result<CallToolResult, McpError> {
+        let iris_arc = self.iris_arc();
+        let conn_ns = iris_arc
+            .as_deref()
+            .map(|i| i.namespace.as_str())
+            .unwrap_or("USER");
         let result = interop::interop_lookup_manage_impl(
-            self.iris_arc().as_deref(),
+            iris_arc.as_deref(),
             interop::LookupManageParams {
                 action: p
                     .get("action")
@@ -6533,10 +6569,7 @@ Methods:
                     .get("value")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string()),
-                namespace: p
-                    .get("namespace")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("USER")
+                namespace: resolve_namespace(p.get("namespace").and_then(|v| v.as_str()), conn_ns)
                     .to_string(),
             },
         )
@@ -6552,8 +6585,13 @@ Methods:
         &self,
         Parameters(p): Parameters<AnyParams>,
     ) -> Result<CallToolResult, McpError> {
+        let iris_arc = self.iris_arc();
+        let conn_ns = iris_arc
+            .as_deref()
+            .map(|i| i.namespace.as_str())
+            .unwrap_or("USER");
         let result = interop::interop_lookup_transfer_impl(
-            self.iris_arc().as_deref(),
+            iris_arc.as_deref(),
             interop::LookupTransferParams {
                 action: p
                     .get("action")
@@ -6566,10 +6604,7 @@ Methods:
                     .unwrap_or("")
                     .to_string(),
                 xml: p.get("xml").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                namespace: p
-                    .get("namespace")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("USER")
+                namespace: resolve_namespace(p.get("namespace").and_then(|v| v.as_str()), conn_ns)
                     .to_string(),
             },
         )
@@ -7260,14 +7295,14 @@ Methods:
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let namespace = p
+        let requested_ns = p
             .get("namespace")
             .and_then(|v| v.as_str())
-            .unwrap_or("USER")
-            .to_string();
+            .map(|s| s.to_string());
 
         let server_a = self.pool.get(Some(&server_a_name))?;
         let server_b = self.pool.get(Some(&server_b_name))?;
+        let namespace = resolve_namespace(requested_ns.as_deref(), &server_a.namespace).to_string();
 
         let result = comparison_tools::compare_document_impl(
             comparison_tools::CompareDocumentParams {
@@ -7291,11 +7326,10 @@ Methods:
         &self,
         Parameters(p): Parameters<AnyParams>,
     ) -> Result<CallToolResult, McpError> {
-        let namespace = p
+        let requested_ns = p
             .get("namespace")
             .and_then(|v| v.as_str())
-            .unwrap_or("USER")
-            .to_string();
+            .map(|s| s.to_string());
         let server_a_name = p
             .get("server_a")
             .and_then(|v| v.as_str())
@@ -7309,6 +7343,7 @@ Methods:
 
         let server_a = self.pool.get(Some(&server_a_name))?;
         let server_b = self.pool.get(Some(&server_b_name))?;
+        let namespace = resolve_namespace(requested_ns.as_deref(), &server_a.namespace).to_string();
 
         let result = comparison_tools::compare_namespace_impl(
             comparison_tools::CompareNamespaceParams {
@@ -7574,7 +7609,7 @@ Methods:
     }
 
     #[tool(
-        description = "Inspect the content of an IRIS stream object by OID. oid: the stream OID (integer string). namespace: optional namespace (default USER). server: optional registered instance name. Returns {content, type: 'text'|'binary', size, oid}. Skill: iris-agentic-dev.",
+        description = "Inspect the content of an IRIS stream object by OID. oid: the stream OID (integer string). namespace: optional namespace (defaults to the connection namespace, IRIS_NAMESPACE). server: optional registered instance name. Returns {content, type: 'text'|'binary', size, oid}. Skill: iris-agentic-dev.",
         annotations(read_only_hint = true)
     )]
     async fn stream_inspect(
@@ -7586,16 +7621,16 @@ Methods:
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let namespace = p
+        let requested_ns = p
             .get("namespace")
             .and_then(|v| v.as_str())
-            .unwrap_or("USER")
-            .to_string();
+            .map(|s| s.to_string());
         let server = p
             .get("server")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         let iris = self.resolve_server(server.as_deref()).await?;
+        let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
         let result = admin_tools::stream_inspect_impl(&iris, &self.client, &oid, &namespace).await;
         self.record_call("stream_inspect", result.is_ok());
         result
@@ -7647,23 +7682,23 @@ Methods:
     // ── 072-c: HL7 tools ──────────────────────────────────────────────────────
 
     #[tool(
-        description = "List available HL7 schemas on an IRIS/HealthShare instance. Returns HL7_NOT_AVAILABLE if EnsLib.HL7.Schema is absent. namespace: optional (default USER). server: optional registered instance name. Returns {schemas: [...], count: N}. Skill: iris-agentic-dev.",
+        description = "List available HL7 schemas on an IRIS/HealthShare instance. Returns HL7_NOT_AVAILABLE if EnsLib.HL7.Schema is absent. namespace: optional (defaults to the connection namespace, IRIS_NAMESPACE). server: optional registered instance name. Returns {schemas: [...], count: N}. Skill: iris-agentic-dev.",
         annotations(read_only_hint = true)
     )]
     async fn hl7_schema_list(
         &self,
         Parameters(p): Parameters<AnyParams>,
     ) -> Result<CallToolResult, McpError> {
-        let namespace = p
+        let requested_ns = p
             .get("namespace")
             .and_then(|v| v.as_str())
-            .unwrap_or("USER")
-            .to_string();
+            .map(|s| s.to_string());
         let server = p
             .get("server")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         let iris = self.resolve_server(server.as_deref()).await?;
+        let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
         let result = admin_tools::hl7_schema_list_impl(&iris, &self.client, &namespace).await;
         self.record_call("hl7_schema_list", result.is_ok());
         result
@@ -7686,16 +7721,16 @@ Methods:
             .get("segment")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let namespace = p
+        let requested_ns = p
             .get("namespace")
             .and_then(|v| v.as_str())
-            .unwrap_or("USER")
-            .to_string();
+            .map(|s| s.to_string());
         let server = p
             .get("server")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         let iris = self.resolve_server(server.as_deref()).await?;
+        let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
         let result = admin_tools::hl7_schema_inspect_impl(
             &iris,
             &self.client,
@@ -7724,16 +7759,16 @@ Methods:
             .unwrap_or("")
             .to_string();
         let depth = p.get("depth").and_then(|v| v.as_u64()).unwrap_or(3) as u32;
-        let namespace = p
+        let requested_ns = p
             .get("namespace")
             .and_then(|v| v.as_str())
-            .unwrap_or("USER")
-            .to_string();
+            .map(|s| s.to_string());
         let server = p
             .get("server")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         let iris = self.resolve_server(server.as_deref()).await?;
+        let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
         let result =
             admin_tools::mermaid_class_impl(&iris, &self.client, &class, depth, &namespace).await;
         self.record_call("mermaid_class", result.is_ok());
@@ -7753,16 +7788,16 @@ Methods:
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let namespace = p
+        let requested_ns = p
             .get("namespace")
             .and_then(|v| v.as_str())
-            .unwrap_or("USER")
-            .to_string();
+            .map(|s| s.to_string());
         let server = p
             .get("server")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         let iris = self.resolve_server(server.as_deref()).await?;
+        let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
         let result =
             admin_tools::mermaid_production_impl(&iris, &self.client, &production, &namespace)
                 .await;
@@ -7783,16 +7818,16 @@ Methods:
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let namespace = p
+        let requested_ns = p
             .get("namespace")
             .and_then(|v| v.as_str())
-            .unwrap_or("USER")
-            .to_string();
+            .map(|s| s.to_string());
         let server = p
             .get("server")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         let iris = self.resolve_server(server.as_deref()).await?;
+        let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
         let result =
             admin_tools::resolve_storage_impl(&iris, &self.client, &class, &namespace).await;
         self.record_call("resolve_storage", result.is_ok());
@@ -8666,20 +8701,23 @@ mod pure_fn_tests {
     #[test]
     fn test_compile_params_defaults() {
         let p: CompileParams = serde_json::from_str(r#"{"target": "Foo.Bar"}"#).unwrap();
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
+        assert_eq!(resolve_namespace(p.namespace.as_deref(), "APP"), "APP");
         assert_eq!(p.target, "Foo.Bar");
         assert!(!p.force_writable);
     }
     #[test]
     fn test_test_params_defaults() {
         let p: TestParams = serde_json::from_str(r#"{"pattern": "MyTests.*"}"#).unwrap();
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
+        assert_eq!(resolve_namespace(p.namespace.as_deref(), "APP"), "APP");
         assert_eq!(p.pattern, "MyTests.*");
     }
     #[test]
     fn test_execute_params_defaults() {
         let p: ExecuteParams = serde_json::from_str(r#"{"code": "Write 1"}"#).unwrap();
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
+        assert_eq!(resolve_namespace(p.namespace.as_deref(), "APP"), "APP");
         assert_eq!(p.code, "Write 1");
         assert!(p.translate_sql, "translate_sql defaults to true");
         assert!(!p.confirmed);
@@ -8693,31 +8731,36 @@ mod pure_fn_tests {
     #[test]
     fn test_symbols_params_defaults() {
         let p: SymbolsParams = serde_json::from_str(r#"{"query": "Ens.*"}"#).unwrap();
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
+        assert_eq!(resolve_namespace(p.namespace.as_deref(), "APP"), "APP");
     }
     #[test]
     fn test_introspect_params_defaults() {
         let p: IntrospectParams =
             serde_json::from_str(r#"{"class_name": "Ens.Production"}"#).unwrap();
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
+        assert_eq!(resolve_namespace(p.namespace.as_deref(), "APP"), "APP");
     }
     #[test]
     fn test_generate_class_params_defaults() {
         let p: GenerateClassParams =
             serde_json::from_str(r#"{"description": "A simple class"}"#).unwrap();
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
+        assert_eq!(resolve_namespace(p.namespace.as_deref(), "APP"), "APP");
         assert!(!p.overwrite);
     }
     #[test]
     fn test_generate_test_params_defaults() {
         let p: GenerateTestParams = serde_json::from_str(r#"{"class_name": "Foo.Bar"}"#).unwrap();
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
+        assert_eq!(resolve_namespace(p.namespace.as_deref(), "APP"), "APP");
         assert_eq!(p.class_name, "Foo.Bar");
     }
     #[test]
     fn test_query_params_defaults() {
         let p: QueryParams = serde_json::from_str(r#"{"query": "SELECT 1"}"#).unwrap();
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
+        assert_eq!(resolve_namespace(p.namespace.as_deref(), "APP"), "APP");
         assert!(p.parameters.is_empty());
     }
     #[test]
@@ -8933,7 +8976,8 @@ mod pure_fn_tests {
     fn test_test_params_namespace_override() {
         let p: TestParams =
             serde_json::from_str(r#"{"pattern": "T.*", "namespace": "MYNS"}"#).unwrap();
-        assert_eq!(p.namespace, "MYNS");
+        assert_eq!(p.namespace.as_deref(), Some("MYNS"));
+        assert_eq!(resolve_namespace(p.namespace.as_deref(), "APP"), "MYNS");
     }
 
     #[test]

@@ -163,7 +163,7 @@ mod tests {
         let p: ResolveDynamicDispatchParams =
             serde_json::from_str(r#"{"method_name": "Connect"}"#).unwrap();
         assert_eq!(p.method_name, "Connect");
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
         assert!(p.package_prefix.is_none());
         assert!(p.limit.is_none());
     }
@@ -188,7 +188,7 @@ mod tests {
     fn test_resolve_params_custom_namespace() {
         let p: ResolveDynamicDispatchParams =
             serde_json::from_str(r#"{"method_name": "Connect", "namespace": "MYNS"}"#).unwrap();
-        assert_eq!(p.namespace, "MYNS");
+        assert_eq!(p.namespace.as_deref(), Some("MYNS"));
     }
 
     #[test]
@@ -196,7 +196,7 @@ mod tests {
         let p: ExtractMessageMapParams =
             serde_json::from_str(r#"{"class_name": "HS.Flash.Router"}"#).unwrap();
         assert_eq!(p.class_name, "HS.Flash.Router");
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
     }
 
     #[test]
@@ -204,7 +204,7 @@ mod tests {
         let p: ExtractMessageMapParams =
             serde_json::from_str(r#"{"class_name": "HS.Flash.Router", "namespace": "HSLIB"}"#)
                 .unwrap();
-        assert_eq!(p.namespace, "HSLIB");
+        assert_eq!(p.namespace.as_deref(), Some("HSLIB"));
     }
 
     #[test]
@@ -214,7 +214,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(p.method_name, "OnProcessInput");
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
         assert!(p.limit.is_none());
         assert_eq!(p.base_classes.len(), 1);
     }
@@ -276,7 +276,7 @@ mod tests {
         .unwrap();
         assert_eq!(p.method_name, "Execute");
         assert_eq!(p.package_prefix.as_deref(), Some("HS"));
-        assert_eq!(p.namespace, "HSLIB");
+        assert_eq!(p.namespace.as_deref(), Some("HSLIB"));
         assert_eq!(p.limit, Some(75));
     }
 
@@ -285,7 +285,7 @@ mod tests {
         let p: ExtractMessageMapParams =
             serde_json::from_str(r#"{"class_name": "MyApp.Router", "namespace": "PROD"}"#).unwrap();
         assert_eq!(p.class_name, "MyApp.Router");
-        assert_eq!(p.namespace, "PROD");
+        assert_eq!(p.namespace.as_deref(), Some("PROD"));
     }
 
     #[test]
@@ -295,7 +295,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(p.method_name, "OnProcessInput");
-        assert_eq!(p.namespace, "ENSLIB");
+        assert_eq!(p.namespace.as_deref(), Some("ENSLIB"));
         assert_eq!(p.limit, Some(100));
     }
 
@@ -405,16 +405,22 @@ mod tests {
     // ── Namespace defaults verification ───────────────────────────────────────
 
     #[test]
-    fn test_all_params_have_user_default() {
+    fn test_all_params_default_to_connection_namespace() {
+        // Omitted namespace stays None; resolve_namespace falls back to the
+        // connection namespace (issue #96) — USER only when no connection exists.
         let r: ResolveDynamicDispatchParams =
             serde_json::from_str(r#"{"method_name": "M"}"#).unwrap();
-        assert_eq!(r.namespace, "USER");
+        assert_eq!(r.namespace, None);
+        assert_eq!(
+            iris_agentic_dev_core::tools::resolve_namespace(r.namespace.as_deref(), "APP"),
+            "APP"
+        );
 
         let e: ExtractMessageMapParams = serde_json::from_str(r#"{"class_name": "C"}"#).unwrap();
-        assert_eq!(e.namespace, "USER");
+        assert_eq!(e.namespace, None);
 
         let f: FindSubclassImplementationsParams =
             serde_json::from_str(r#"{"method_name": "M", "base_classes": ["B"]}"#).unwrap();
-        assert_eq!(f.namespace, "USER");
+        assert_eq!(f.namespace, None);
     }
 }
