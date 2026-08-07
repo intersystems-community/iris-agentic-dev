@@ -1157,8 +1157,28 @@ pub fn telemetry_config_dir() -> std::path::PathBuf {
 fn ok_json(v: serde_json::Value) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::success(vec![Content::text(v.to_string())]))
 }
+/// Wrap a genuine tool-failure envelope: same JSON body as before, but with the
+/// MCP protocol-level `isError` flag set (issue #95). Dialog/soft responses
+/// (elicitation prompts, empty-result notes) must NOT go through this — they are
+/// normal outcomes and stay `CallToolResult::success`.
+pub(crate) fn err_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
+    Ok(CallToolResult::error(vec![Content::text(v.to_string())]))
+}
+/// Wrap a handler-produced JSON value whose error-ness is only known at runtime:
+/// a body carrying a top-level `error_code` without `success: true` is a genuine
+/// failure and gets the `isError` flag; everything else (successes, failing test
+/// runs without an error_code, elicitation dialogs) stays a success result.
+fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
+    let genuine_error = v.get("error_code").is_some()
+        && v.get("success").and_then(serde_json::Value::as_bool) != Some(true);
+    if genuine_error {
+        err_result(v)
+    } else {
+        ok_json(v)
+    }
+}
 fn err_json(code: &str, msg: &str) -> Result<CallToolResult, McpError> {
-    ok_json(serde_json::json!({"success": false, "error_code": code, "error": msg}))
+    err_result(serde_json::json!({"success": false, "error_code": code, "error": msg}))
 }
 
 /// Parse `"http://host:port"` into `(host, port)`.
@@ -1642,7 +1662,7 @@ async fn iris_query_write(
             );
         }
         Err(keyword) => {
-            return ok_json(serde_json::json!({
+            return err_result(serde_json::json!({
                 "success": false,
                 "error_code": "DDL_NOT_ALLOWED",
                 "error": format!("DDL keyword '{keyword}' is not allowed in mode=\"write\"."),
@@ -1688,7 +1708,7 @@ If rs.%Next() {{ Write "OK:"_rs.%GetData(1) }} Else {{ Write "OK:0" }}"#,
                             .and_then(|s| s.parse().ok())
                             .unwrap_or(0);
                         if actual_count > max_rows_affected as i64 {
-                            return ok_json(serde_json::json!({
+                            return err_result(serde_json::json!({
                                 "success": false,
                                 "error_code": "ROWS_LIMIT_EXCEEDED",
                                 "error": format!(
@@ -1799,7 +1819,7 @@ fn err_json_with_url(
     msg: &str,
     attempted_url: &str,
 ) -> Result<CallToolResult, McpError> {
-    ok_json(serde_json::json!({
+    err_result(serde_json::json!({
         "success": false,
         "error_code": code,
         "error": msg,
@@ -2819,7 +2839,7 @@ impl IrisTools {
                 None,
                 params_json,
             );
-            return ok_json(gate);
+            return err_result(gate);
         }
         if let Some(gate) = crate::iris::server_manager::policy_gate(
             "iris_compile",
@@ -2840,7 +2860,7 @@ impl IrisTools {
                 allowed,
                 params_json,
             );
-            return ok_json(gate);
+            return err_result(gate);
         }
         self.write_audit_entry(
             "iris_compile",
@@ -2859,7 +2879,7 @@ impl IrisTools {
             &instance_name,
             false,
         ) {
-            return ok_json(gate);
+            return err_result(gate);
         }
         tracing::info!(namespace = %p.namespace, target = %p.target, "iris_compile");
 
@@ -3252,7 +3272,7 @@ impl IrisTools {
 
         if !ns_exists {
             self.record_call("iris_test", false);
-            return ok_json(serde_json::json!({
+            return err_result(serde_json::json!({
                 "success": false,
                 "error_code": ERR_NAMESPACE_NOT_FOUND,
                 "error": format!("Namespace '{}' does not exist on this IRIS instance", p.namespace),
@@ -3348,7 +3368,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             match tokio::time::timeout(timeout, iris.execute(&run_code, &p.namespace)).await {
                 Err(_) => {
                     self.record_call("iris_test", false);
-                    return ok_json(serde_json::json!({
+                    return err_result(serde_json::json!({
                         "success": false,
                         "error_code": "TIMEOUT",
                         "error": format!("Test run timed out after {}s", p.timeout),
@@ -3365,7 +3385,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                         Ok(Ok(out)) => out,
                         _ => {
                             self.record_call("iris_test", false);
-                            return ok_json(serde_json::json!({
+                            return err_result(serde_json::json!({
                                 "success": false,
                                 "error_code": "DOCKER_REQUIRED",
                                 "error": format!("iris_test: IRIS_CONTAINER set but docker exec failed and HTTP fallback also failed.{DOCKER_REQUIRED_HINT}"),
@@ -3385,7 +3405,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             {
                 Err(_) => {
                     self.record_call("iris_test", false);
-                    return ok_json(serde_json::json!({
+                    return err_result(serde_json::json!({
                         "success": false,
                         "error_code": "TIMEOUT",
                         "error": format!("Test run timed out after {}s", p.timeout),
@@ -3393,7 +3413,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 }
                 Ok(Err(e)) => {
                     self.record_call("iris_test", false);
-                    return ok_json(serde_json::json!({
+                    return err_result(serde_json::json!({
                         "success": false,
                         "error_code": ERR_TEST_EXECUTION_ERROR,
                         "error": e.to_string(),
@@ -3541,7 +3561,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                  your tests directory."
                     .to_string()
             };
-            return ok_json(serde_json::json!({
+            return err_result(serde_json::json!({
                 "success": false,
                 "error_code": ERR_NO_TESTS_FOUND,
                 "error": "Pattern matched no test classes",
@@ -3688,7 +3708,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 None,
                 params_json,
             );
-            return ok_json(gate);
+            return err_result(gate);
         }
         if let Some(gate) = crate::iris::server_manager::policy_gate(
             "iris_execute",
@@ -3709,7 +3729,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 allowed,
                 params_json,
             );
-            return ok_json(gate);
+            return err_result(gate);
         }
         self.write_audit_entry(
             "iris_execute",
@@ -3728,7 +3748,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             &instance_name,
             false,
         ) {
-            return ok_json(gate);
+            return err_result(gate);
         }
         tracing::info!(namespace = %p.namespace, translate_sql = p.translate_sql, use_session = p.use_session, "iris_execute");
         let client = exec_client.as_ref();
@@ -3740,7 +3760,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             if let Some(ref tok) = p.session_state {
                 if let Err(e) = execute_session::SessionToken::new(tok) {
                     self.record_call("iris_execute", false);
-                    return ok_json(serde_json::json!({
+                    return err_result(serde_json::json!({
                         "success": false,
                         "error_code": "SESSION_INVALID",
                         "error": format!("invalid session_state token: {e}"),
@@ -3787,7 +3807,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         let http_err: String = match gen_result {
             Err(_) => {
                 self.record_call("iris_execute", false);
-                return ok_json(serde_json::json!({
+                return err_result(serde_json::json!({
                     "success": false,
                     "error_code": "TIMEOUT",
                     "error": format!("execution timed out after {}s", p.timeout),
@@ -3805,7 +3825,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 // take priority over normal output processing.
                 if let Some((err_code, detail)) = session_error {
                     self.record_call("iris_execute", false);
-                    return ok_json(serde_json::json!({
+                    return err_result(serde_json::json!({
                         "success": false,
                         "error_code": err_code,
                         "error": detail,
@@ -3850,7 +3870,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                         }
                     }
                 }
-                return ok_json(resp);
+                return json_result(resp);
             }
             Ok(Err(e)) => {
                 // HTTP path failed — keep the real cause; fall through to docker exec.
@@ -3864,7 +3884,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         match docker_result {
             Err(_) => {
                 self.record_call("iris_execute", false);
-                ok_json(serde_json::json!({
+                err_result(serde_json::json!({
                     "success": false,
                     "error_code": "TIMEOUT",
                     "error": format!("execution timed out after {}s", p.timeout),
@@ -3876,7 +3896,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 if msg == "DOCKER_REQUIRED" {
                     // Docker is not the real problem — HTTP is the primary path and it failed.
                     // Surface that cause instead of blaming a missing container.
-                    ok_json(serde_json::json!({
+                    err_result(serde_json::json!({
                         "success": false,
                         "error_code": "HTTP_EXECUTION_FAILED",
                         "error": format!(
@@ -3888,7 +3908,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                         "http_error": http_err,
                     }))
                 } else {
-                    ok_json(serde_json::json!({
+                    err_result(serde_json::json!({
                         "success": false,
                         "error_code": "EXECUTION_FAILED",
                         "error": msg,
@@ -3924,7 +3944,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                         }
                     }
                 }
-                ok_json(resp)
+                json_result(resp)
             }
         }
     }
@@ -3981,7 +4001,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                     None,
                     params_json,
                 );
-                return ok_json(gate);
+                return err_result(gate);
             }
             if let Some(gate) = crate::iris::server_manager::policy_gate(
                 "iris_query",
@@ -4002,7 +4022,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                     allowed,
                     params_json,
                 );
-                return ok_json(gate);
+                return err_result(gate);
             }
             self.write_audit_entry(
                 "iris_query",
@@ -4036,7 +4056,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 &instance_name,
                 false,
             ) {
-                return ok_json(gate);
+                return err_result(gate);
             }
         }
 
@@ -4086,7 +4106,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             match validate_read_only_sql(&p.query) {
                 Err(ref kw) if kw == "EMPTY" => {
                     self.record_call("iris_query", false);
-                    return ok_json(serde_json::json!({
+                    return err_result(serde_json::json!({
                         "success": false,
                         "error_code": "EMPTY_QUERY",
                         "error": "SQL query is empty after removing comments.",
@@ -4103,7 +4123,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                     if p.force && !self.write_tools_enabled() {
                         resp["force_ignored"] = serde_json::Value::Bool(true);
                     }
-                    return ok_json(resp);
+                    return err_result(resp);
                 }
                 Ok(()) => {}
             }
@@ -4270,7 +4290,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                     .iter()
                     .filter_map(|c| c["name"].as_str())
                     .collect();
-                return ok_json(serde_json::json!({
+                return err_result(serde_json::json!({
                     "success": false,
                     "error": "CONTAINER_NOT_FOUND",
                     "requested": p.name,
@@ -4297,7 +4317,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
         // Check if probe succeeded (version populated means reachable)
         if new_conn.version.is_none() {
-            return ok_json(serde_json::json!({
+            return err_result(serde_json::json!({
                 "success": false,
                 "error": "CONTAINER_UNREACHABLE",
                 "container": p.name,
@@ -4929,7 +4949,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
             })?;
 
         if !validate_cls_syntax(&class_text) {
-            return ok_json(
+            return err_result(
                 serde_json::json!({"success": false, "error_code": "INVALID_OUTPUT", "raw_llm_output": class_text}),
             );
         }
@@ -5046,7 +5066,7 @@ Methods:
             })?;
 
         if !validate_cls_syntax(&test_text) {
-            return ok_json(
+            return err_result(
                 serde_json::json!({"success": false, "error_code": "INVALID_OUTPUT", "raw_llm_output": test_text}),
             );
         }
@@ -5139,7 +5159,7 @@ Methods:
         }
 
         // FR-004: never a bare miss — say where we looked.
-        ok_json(serde_json::json!({
+        err_result(serde_json::json!({
             "success": false,
             "error_code": "NOT_FOUND",
             "error": format!("Skill '{}' not found", p.name),
@@ -5764,7 +5784,7 @@ Methods:
                     None,
                     params_json,
                 );
-                return ok_json(gate);
+                return err_result(gate);
             }
             if let Some(gate) = crate::iris::server_manager::policy_gate(
                 "iris_source_control",
@@ -5785,7 +5805,7 @@ Methods:
                     allowed,
                     params_json,
                 );
-                return ok_json(gate);
+                return err_result(gate);
             }
             self.write_audit_entry(
                 "iris_source_control",
@@ -5810,7 +5830,7 @@ Methods:
                     &instance_name,
                     true,
                 ) {
-                    return ok_json(gate);
+                    return err_result(gate);
                 }
             }
         }
@@ -5875,7 +5895,7 @@ Methods:
                 None,
                 params_json.clone(),
             );
-            return ok_json(gate_err.clone());
+            return err_result(gate_err.clone());
         }
         let result = global::handle_iris_global(&iris, exec_client.as_ref(), &p, gate).await;
         self.write_audit_entry(
@@ -5891,7 +5911,7 @@ Methods:
             None,
             params_json,
         );
-        ok_json(result)
+        json_result(result)
     }
 
     // ── 064: iris_coverage ────────────────────────────────────────────────────
@@ -5905,7 +5925,7 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let iris = self.resolve_server(p.server.as_deref()).await?;
         let result = coverage::handle_iris_coverage(&iris, &self.client, &p).await;
-        ok_json(result)
+        json_result(result)
     }
 
     // ── 065: iris_doc_search ──────────────────────────────────────────────────
@@ -5920,7 +5940,11 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let result = doc_search::handle_iris_doc_search(&self.client, &p).await;
         self.record_call("iris_doc_search", result.get("error").is_none());
-        ok_json(result)
+        if result.get("error").is_some() {
+            err_result(result)
+        } else {
+            ok_json(result)
+        }
     }
 
     // ── 053: iris_execute_method ──────────────────────────────────────────────
@@ -5962,7 +5986,7 @@ Methods:
                 None,
                 params_json.clone(),
             );
-            return ok_json(gate_err.clone());
+            return err_result(gate_err.clone());
         }
         let result = doc::handle_iris_execute_method(&iris, exec_client.as_ref(), &p).await;
         self.record_call("iris_execute_method", result.is_ok());
@@ -6319,7 +6343,7 @@ Methods:
             policy.as_ref(),
             &params_json,
         ) {
-            return ok_json(gate);
+            return err_result(gate);
         }
         let _iris_arc_hold: Option<Arc<IrisConnection>> =
             match p.get("server").and_then(|v| v.as_str()) {
@@ -6371,7 +6395,7 @@ Methods:
             policy.as_ref(),
             &params_json,
         ) {
-            return ok_json(gate);
+            return err_result(gate);
         }
         let _iris_arc_hold: Option<Arc<IrisConnection>> =
             match p.get("server").and_then(|v| v.as_str()) {
@@ -6416,7 +6440,7 @@ Methods:
             policy.as_ref(),
             &params_json,
         ) {
-            return ok_json(gate);
+            return err_result(gate);
         }
         let _iris_arc_hold: Option<Arc<IrisConnection>> =
             match p.get("server").and_then(|v| v.as_str()) {
@@ -6907,7 +6931,7 @@ Methods:
 
         // Validate name is non-empty.
         if p.name.trim().is_empty() {
-            return ok_json(serde_json::json!({
+            return err_result(serde_json::json!({
                 "error_code": "INVALID_PARAMS",
                 "message": "Server name must not be empty."
             }));
@@ -6927,7 +6951,7 @@ Methods:
             },
         );
         if let Err(e) = servers_config::save_native_config(&cfg) {
-            return ok_json(serde_json::json!({
+            return err_result(serde_json::json!({
                 "error_code": "SAVE_FAILED",
                 "message": format!("Failed to save servers.json: {e}")
             }));
@@ -6935,7 +6959,7 @@ Methods:
 
         // Store credential in OS keychain.
         if let Err(e) = server_manager::store_credential(&p.name, &p.username, &p.password) {
-            return ok_json(serde_json::json!({
+            return err_result(serde_json::json!({
                 "error_code": "KEYCHAIN_FAILED",
                 "message": format!("Server added to config but keychain storage failed: {e}. \
                     You can reconnect via iris_import_servers after authenticating in VS Code Server Manager.")
@@ -6962,7 +6986,7 @@ Methods:
         // Check source — only iad-native servers can be removed.
         let source = self.pool.source_of(&p.name);
         if source != "iad-native" {
-            return ok_json(serde_json::json!({
+            return err_result(serde_json::json!({
                 "error_code": server_tools::REMOVE_NOT_ALLOWED,
                 "source": source,
                 "message": format!(
@@ -6976,7 +7000,7 @@ Methods:
         // Load, remove entry, save.
         let mut cfg = servers_config::load_native_config();
         if !cfg.servers.contains_key(&p.name) {
-            return ok_json(serde_json::json!({
+            return err_result(serde_json::json!({
                 "error_code": "SERVER_NOT_FOUND",
                 "message": format!("Server '{}' not found in iad-native config.", p.name)
             }));
@@ -6987,7 +7011,7 @@ Methods:
             cfg.default = None;
         }
         if let Err(e) = servers_config::save_native_config(&cfg) {
-            return ok_json(serde_json::json!({
+            return err_result(serde_json::json!({
                 "error_code": "SAVE_FAILED",
                 "message": format!("Failed to save servers.json: {e}")
             }));
@@ -7139,7 +7163,7 @@ Methods:
 
         if imported > 0 {
             if let Err(e) = servers_config::save_native_config(&cfg) {
-                return ok_json(serde_json::json!({
+                return err_result(serde_json::json!({
                     "error_code": "SAVE_FAILED",
                     "message": format!("Failed to save servers.json after importing: {e}")
                 }));

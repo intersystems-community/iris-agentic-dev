@@ -11,7 +11,9 @@ fn ok_json(v: serde_json::Value) -> Result<rmcp::model::CallToolResult, rmcp::Er
     ]))
 }
 fn err_json(code: &str, msg: &str) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
-    ok_json(serde_json::json!({"success": false, "error_code": code, "error": msg}))
+    crate::tools::err_result(
+        serde_json::json!({"success": false, "error_code": code, "error": msg}),
+    )
 }
 fn default_namespace() -> String {
     "USER".to_string()
@@ -152,7 +154,7 @@ pub async fn handle_iris_source_control(
                 } else {
                     ("SCM_UNAVAILABLE", msg)
                 };
-                return ok_json(
+                return crate::tools::err_result(
                     serde_json::json!({"success": false, "error_code": ec, "error": emsg}),
                 );
             }
@@ -177,7 +179,7 @@ pub async fn handle_iris_source_control(
                 Err(e) => {
                     // A transport/exec failure must NOT be reported as "editable" — that is the
                     // very inconsistency this path used to have. Surface it honestly.
-                    return ok_json(serde_json::json!({
+                    return crate::tools::err_result(serde_json::json!({
                         "success": false,
                         "error_code": "SCM_UNAVAILABLE",
                         "error": e.to_string(),
@@ -212,7 +214,7 @@ pub async fn handle_iris_source_control(
                 // authentication banner, an empty body — is diagnosable instead of being flattened
                 // into an opaque "no status signal".
                 let raw_trunc: String = raw.trim().chars().take(600).collect();
-                return ok_json(serde_json::json!({
+                return crate::tools::err_result(serde_json::json!({
                     "success": false,
                     "error_code": "SCM_UNAVAILABLE",
                     "error": "Could not determine source control status (no SCMSTATUS sentinel in IRIS output)",
@@ -222,7 +224,7 @@ pub async fn handle_iris_source_control(
             let status =
                 derive_scm_status(is_in_sc, has_co, has_undo, has_add, &owner, &iris.username);
             let Some(status) = status else {
-                return ok_json(serde_json::json!({
+                return crate::tools::err_result(serde_json::json!({
                     "success": false,
                     "error_code": "SCM_UNAVAILABLE",
                     "error": "Source control status is indeterminate for this document",
@@ -272,14 +274,14 @@ pub async fn handle_iris_source_control(
             let raw = match xecute(iris, client, &code, ns).await {
                 Ok(o) => o,
                 Err(e) => {
-                    return ok_json(
+                    return crate::tools::err_result(
                         serde_json::json!({"success": false, "error_code": "SCM_UNAVAILABLE", "error": e.to_string()}),
                     )
                 }
             };
             let out = raw.lines().next().unwrap_or("").trim();
             if out == "SCM_UNAVAILABLE" {
-                return ok_json(
+                return crate::tools::err_result(
                     serde_json::json!({"success": false, "error_code": "SCM_UNAVAILABLE", "error": "Source control session could not be initialized"}),
                 );
             }
@@ -301,7 +303,7 @@ pub async fn handle_iris_source_control(
                         }
                     }
                     Err(e) => {
-                        return ok_json(serde_json::json!({
+                        return crate::tools::err_result(serde_json::json!({
                             "success": false,
                             "error_code": "SCM_UNAVAILABLE",
                             "error": e.to_string(),
@@ -348,14 +350,14 @@ pub async fn handle_iris_source_control(
             let raw = match xecute(iris, client, &code, ns).await {
                 Ok(o) => o,
                 Err(e) => {
-                    return ok_json(
+                    return crate::tools::err_result(
                         serde_json::json!({"success": false, "error_code": "SCM_UNAVAILABLE", "error": e.to_string()}),
                     )
                 }
             };
             let out = raw.lines().next().unwrap_or("").trim();
             if out == "SCM_UNAVAILABLE" {
-                return ok_json(
+                return crate::tools::err_result(
                     serde_json::json!({"success": false, "error_code": "SCM_UNAVAILABLE", "error": "Source control session could not be initialized"}),
                 );
             }

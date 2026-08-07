@@ -34,7 +34,7 @@ fn ok_json(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 }
 
 fn err_json(code: &str, msg: &str) -> Result<CallToolResult, McpError> {
-    ok_json(serde_json::json!({
+    crate::tools::err_result(serde_json::json!({
         "success": false,
         "error_code": code,
         "error": msg,
@@ -204,7 +204,7 @@ pub async fn global_kill_impl(
             "global": name,
         }))
     } else {
-        ok_json(serde_json::json!({
+        crate::tools::err_result(serde_json::json!({
             "success": false,
             "error_code": "IRIS_EXECUTE_ERROR",
             "error": format!("Unexpected output: {out}"),

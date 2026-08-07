@@ -160,7 +160,9 @@ fn ok_json(v: serde_json::Value) -> Result<rmcp::model::CallToolResult, rmcp::Er
     ]))
 }
 fn err_json(code: &str, msg: &str) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
-    ok_json(serde_json::json!({"success": false, "error_code": code, "error": msg}))
+    crate::tools::err_result(
+        serde_json::json!({"success": false, "error_code": code, "error": msg}),
+    )
 }
 
 /// Return the trimmed document name, or a MISSING_PARAMS result if absent/blank.
@@ -171,7 +173,7 @@ fn err_json(code: &str, msg: &str) -> Result<rmcp::model::CallToolResult, rmcp::
 fn require_name(p: &IrisDocParams, mode: &str) -> Result<String, rmcp::model::CallToolResult> {
     match p.name.as_deref().map(str::trim) {
         Some(n) if !n.is_empty() => Ok(n.to_string()),
-        _ => Err(rmcp::model::CallToolResult::success(vec![
+        _ => Err(rmcp::model::CallToolResult::error(vec![
             rmcp::model::Content::text(
                 serde_json::json!({
                     "success": false,
@@ -226,7 +228,7 @@ pub async fn handle_iris_doc(
         if let Some(pending) = elicitation_store.lookup(eid) {
             elicitation_store.clear(eid);
             if answer.to_lowercase() != "yes" {
-                return ok_json(serde_json::json!({
+                return crate::tools::err_result(serde_json::json!({
                     "success": false,
                     "error_code": "WRITE_ABORTED",
                     "error": "User declined checkout",
@@ -990,7 +992,7 @@ fn stale_content_err(
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     let (off, expected, actual) = diff;
     let line_no = block_start + off as i64;
-    ok_json(serde_json::json!({
+    crate::tools::err_result(serde_json::json!({
         "success": false,
         "error_code": "STALE_CONTENT",
         "error": format!(
@@ -1531,7 +1533,7 @@ async fn handle_list(
     };
 
     if let Err(e) = validate_list_pattern(pattern) {
-        return ok_json(e);
+        return crate::tools::err_result(e);
     }
 
     let category = p.category.as_deref().unwrap_or("ALL").to_uppercase();
@@ -2407,6 +2409,7 @@ mod tests {
     #[test]
     fn test_err_json_creates_error_response() {
         let result = err_json("TEST_ERROR", "Test message").unwrap();
+        assert_eq!(result.is_error, Some(true));
         let text = result.content[0].raw.as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["success"], false);
