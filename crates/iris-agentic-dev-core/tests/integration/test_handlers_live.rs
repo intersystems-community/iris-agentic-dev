@@ -296,7 +296,7 @@ fn test_handle_iris_info_namespace() {
             what: "namespace".to_string(),
             doc_type: None,
             name: None,
-            namespace: "USER".to_string(),
+            namespace: Some("USER".to_string()),
             inline: false,
             server: None,
         };
@@ -327,7 +327,7 @@ fn test_handle_iris_info_documents() {
             what: "documents".to_string(),
             doc_type: Some("CLS".to_string()),
             name: None,
-            namespace: "USER".to_string(),
+            namespace: Some("USER".to_string()),
             inline: true,
             server: None,
         };
@@ -360,7 +360,7 @@ fn test_handle_iris_search_basic() {
             case_sensitive: false,
             category: None,
             documents: vec![],
-            namespace: "USER".to_string(),
+            namespace: Some("USER".to_string()),
             inline: true,
             server: None,
         };
@@ -397,7 +397,7 @@ fn test_handle_iris_doc_get_object_cls() {
             name: Some("%Library.Object.cls".to_string()),
             names: vec![],
             content: None,
-            namespace: "USER".to_string(),
+            namespace: Some("USER".to_string()),
             elicitation_id: None,
             elicitation_answer: None,
             compile: false,
@@ -452,7 +452,7 @@ fn test_handle_iris_doc_head_object_cls() {
             name: Some("%Library.Object.cls".to_string()),
             names: vec![],
             content: None,
-            namespace: "USER".to_string(),
+            namespace: Some("USER".to_string()),
             elicitation_id: None,
             elicitation_answer: None,
             compile: false,
@@ -500,7 +500,7 @@ fn test_handle_iris_macro_list() {
             action: "list".to_string(),
             name: None,
             args: vec![],
-            namespace: "USER".to_string(),
+            namespace: Some("USER".to_string()),
             server: None,
         };
         let r = handle_iris_macro(&conn, &client, p).await;
@@ -539,7 +539,7 @@ fn test_handle_iris_table_info() {
         }
         let p = TableInfoParams {
             table: "INFORMATION_SCHEMA.TABLES".to_string(),
-            namespace: "USER".to_string(),
+            namespace: Some("USER".to_string()),
             include_row_count: false,
             server: None,
         };
@@ -606,7 +606,7 @@ fn test_handle_iris_info_metadata() {
             what: "metadata".to_string(),
             doc_type: None,
             name: None,
-            namespace: "USER".to_string(),
+            namespace: Some("USER".to_string()),
             inline: false,
             server: None,
         };
@@ -636,7 +636,7 @@ fn test_handle_iris_info_invalid_what() {
             what: "invalid_value_xyz".to_string(),
             doc_type: None,
             name: None,
-            namespace: "USER".to_string(),
+            namespace: Some("USER".to_string()),
             inline: false,
             server: None,
         };
@@ -711,7 +711,7 @@ fn test_handle_iris_doc_batch_get() {
                 "%Library.RegisteredObject.cls".to_string(),
             ],
             content: None,
-            namespace: "USER".to_string(),
+            namespace: Some("USER".to_string()),
             elicitation_id: None,
             elicitation_answer: None,
             compile: false,
@@ -760,7 +760,7 @@ fn test_handle_iris_search_regex() {
             case_sensitive: false,
             category: Some("CLS".to_string()),
             documents: vec![],
-            namespace: "USER".to_string(),
+            namespace: Some("USER".to_string()),
             inline: true,
             server: None,
         };
@@ -11857,7 +11857,7 @@ async fn test_search_sync_success_null_work_id() {
         case_sensitive: false,
         category: None,
         documents: vec![],
-        namespace: "USER".to_string(),
+        namespace: Some("USER".to_string()),
         inline: true,
         server: None,
     };
@@ -11914,7 +11914,7 @@ async fn test_search_sync_with_wiremock_null_work_id() {
         case_sensitive: false,
         category: None,
         documents: vec!["Test.*.cls".to_string()],
-        namespace: "USER".to_string(),
+        namespace: Some("USER".to_string()),
         inline: true,
         server: None,
     };
@@ -12001,7 +12001,7 @@ async fn test_search_async_poll_with_wiremock() {
         case_sensitive: false,
         category: None,
         documents: vec![],
-        namespace: "USER".to_string(),
+        namespace: Some("USER".to_string()),
         inline: true,
         server: None,
     };
@@ -12056,7 +12056,7 @@ async fn test_doc_put_returns_200_with_status_errors() {
             name: Some("Test.Cls.cls".to_string()),
             names: vec![],
             content: Some("Class Test.Cls {}".to_string()),
-            namespace: "USER".to_string(),
+            namespace: Some("USER".to_string()),
             elicitation_id: None,
             elicitation_answer: None,
             compile: false,
@@ -12137,7 +12137,7 @@ async fn test_doc_put_compile_non_2xx_compile_request() {
             name: Some("Test.ConcurrentCompile.cls".to_string()),
             names: vec![],
             content: Some("Class Test.ConcurrentCompile {}".to_string()),
-            namespace: "USER".to_string(),
+            namespace: Some("USER".to_string()),
             elicitation_id: None,
             elicitation_answer: None,
             compile: true,
@@ -12207,7 +12207,7 @@ async fn test_doc_delete_non_2xx_non_404() {
             name: Some("Test.DeleteMe.cls".to_string()),
             names: vec![],
             content: None,
-            namespace: "USER".to_string(),
+            namespace: Some("USER".to_string()),
             elicitation_id: None,
             elicitation_answer: None,
             compile: false,
@@ -12275,7 +12275,7 @@ async fn test_doc_put_non_2xx_upload() {
             name: Some("Test.ReadOnly.cls".to_string()),
             names: vec![],
             content: Some("Class Test.ReadOnly {}".to_string()),
-            namespace: "USER".to_string(),
+            namespace: Some("USER".to_string()),
             elicitation_id: None,
             elicitation_answer: None,
             compile: false,

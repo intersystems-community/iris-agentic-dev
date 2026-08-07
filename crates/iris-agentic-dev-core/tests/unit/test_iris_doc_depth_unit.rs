@@ -235,7 +235,8 @@ fn test_execute_method_params_defaults() {
     let p: IrisExecuteMethodParams =
         serde_json::from_str(r#"{"class": "%Library.Integer", "method": "IsValid"}"#).unwrap();
     assert!(p.args.is_empty());
-    assert_eq!(p.namespace, "USER");
+    // Omitted namespace stays None; resolution falls back to the connection namespace.
+    assert_eq!(p.namespace, None);
 }
 
 #[test]

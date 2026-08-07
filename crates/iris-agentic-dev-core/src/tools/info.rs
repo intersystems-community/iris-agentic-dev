@@ -19,9 +19,6 @@ fn err_json(code: &str, msg: &str) -> Result<rmcp::model::CallToolResult, rmcp::
         serde_json::json!({"success": false, "error_code": code, "error": msg}),
     )
 }
-fn default_namespace() -> String {
-    "USER".to_string()
-}
 fn default_limit() -> usize {
     20
 }
@@ -36,8 +33,9 @@ pub struct InfoParams {
     pub doc_type: Option<String>,
     /// Schema/cube name for what=sa_schema
     pub name: Option<String>,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// If true, bypass the log store and return all results inline regardless of count.
     #[serde(default)]
     pub inline: bool,
@@ -52,7 +50,7 @@ pub async fn handle_iris_info(
     p: InfoParams,
     log_store: Arc<Mutex<log_store::LogStore>>,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
-    let ns = &p.namespace;
+    let ns = crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace);
     let url = match p.what.as_str() {
         "documents" => {
             // Bug 14: use versioned_ns_url so future API versions are used automatically.
@@ -90,7 +88,7 @@ pub async fn handle_iris_info(
     }
 
     let body: serde_json::Value = resp.json().await.unwrap_or_default();
-    let mut result_json = serde_json::json!({"success": true, "what": p.what, "namespace": p.namespace, "result": body["result"]});
+    let mut result_json = serde_json::json!({"success": true, "what": p.what, "namespace": ns, "result": body["result"]});
 
     // Progressive disclosure (027): for what=documents, truncate the document list.
     // The document names are in result["content"] — flatten to a top-level "documents" key.
@@ -121,8 +119,9 @@ pub struct MacroParams {
     pub name: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
     #[serde(default)]
     pub server: Option<String>,
@@ -133,10 +132,11 @@ pub async fn handle_iris_macro(
     client: &reqwest::Client,
     p: MacroParams,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+    let ns = crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace);
     match p.action.as_str() {
         "list" => {
             // Bug 14: use versioned_ns_url instead of hardcoded /v1/.
-            let url = iris.versioned_ns_url(&p.namespace, "/docnames/INC");
+            let url = iris.versioned_ns_url(ns, "/docnames/INC");
             let resp = client
                 .get(&url)
                 .basic_auth(&iris.username, Some(&iris.password))
@@ -165,7 +165,7 @@ pub async fn handle_iris_macro(
         }
         action @ ("signature" | "location" | "definition" | "expand") => {
             let name = p.name.as_deref().unwrap_or("");
-            let url = iris.versioned_ns_url(&p.namespace, "/action/getmacro");
+            let url = iris.versioned_ns_url(ns, "/action/getmacro");
             let arg_count = p.args.len();
             let resp = client
                 .post(&url)
@@ -205,8 +205,9 @@ pub struct DebugParams {
     pub class_name: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: usize,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
     #[serde(default)]
     pub server: Option<String>,
@@ -217,7 +218,8 @@ pub async fn handle_iris_debug(
     _client: &reqwest::Client,
     p: DebugParams,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
-    let _query_url = iris.versioned_ns_url(&p.namespace, "/action/query");
+    let ns = crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace);
+    let _query_url = iris.versioned_ns_url(ns, "/action/query");
 
     match p.action.as_str() {
         "map_int" => {
@@ -226,7 +228,7 @@ pub async fn handle_iris_debug(
                 "set err=\"{}\" set routine=$piece($piece(err,\"^\",2),\".\",1) set offset=$piece(err,\"+\",2) set offset=$piece(offset,\"^\",1) write ##class(%Studio.Debugger).SourceLine(routine,+offset)",
                 err.replace('"', "\\\"")
             );
-            match iris.execute(&code, &p.namespace).await {
+            match iris.execute(&code, ns).await {
                 Ok(output) => ok_json(
                     serde_json::json!({"success": true, "error_string": err, "source_location": output.trim()}),
                 ),
@@ -251,7 +253,7 @@ pub async fn handle_iris_debug(
         }
         "capture" => {
             let code = "set err=$ZERROR write \"error:\"_err,! set loc=$ZPOSITION write \"position:\"_loc,!";
-            match iris.execute(code, &p.namespace).await {
+            match iris.execute(code, ns).await {
                 Ok(output) => {
                     ok_json(serde_json::json!({"success": true, "capture": output.trim()}))
                 }
@@ -270,7 +272,7 @@ pub async fn handle_iris_debug(
                 "set map=\"\" set line=1 do {{set int=##class(%Studio.Debugger).MapToINT(\"{cls}\",line,.intline) if int=\"\" quit set map=map_line_\"->\"_intline_\",\" set line=line+1 }} while 1 write map",
                 cls = cls.replace('"', "\\\"")
             );
-            match iris.execute(&code, &p.namespace).await {
+            match iris.execute(&code, ns).await {
                 Ok(output) => ok_json(
                     serde_json::json!({"success": true, "class": cls, "mapping": output.trim()}),
                 ),
@@ -308,8 +310,9 @@ pub struct GenerateParams {
     pub gen_type: String,
     /// Existing class name to generate tests for (gen_type=test only)
     pub class_name: Option<String>,
-    #[serde(default = "default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
     #[serde(default)]
     pub server: Option<String>,
@@ -324,7 +327,7 @@ pub async fn handle_iris_generate(
     client: &reqwest::Client,
     p: GenerateParams,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
-    let ns = &p.namespace;
+    let ns = crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace);
     let query_url = iris.versioned_ns_url(ns, "/action/query");
 
     match p.gen_type.as_str() {
@@ -432,9 +435,9 @@ pub async fn handle_iris_generate(
 pub struct TableInfoParams {
     /// SQL table name in Schema.Table format (e.g. "SQLUser.MyTable" or "MyApp.Orders").
     pub table: String,
-    /// IRIS namespace to query. Defaults to "USER".
-    #[serde(default = "crate::tools::default_namespace")]
-    pub namespace: String,
+    /// IRIS namespace to query. Defaults to the connection namespace (IRIS_NAMESPACE).
+    #[serde(default)]
+    pub namespace: Option<String>,
     /// Include approximate row count (runs SELECT COUNT(*) — may be slow on large tables).
     #[serde(default)]
     pub include_row_count: bool,
@@ -448,6 +451,7 @@ pub async fn handle_iris_table_info(
     client: &reqwest::Client,
     p: TableInfoParams,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+    let namespace = crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace);
     // Split "Schema.Table" → (schema, table). Tables with no dot use SQLUser schema.
     let (sql_schema, sql_table) = match p.table.find('.') {
         Some(idx) => (p.table[..idx].to_string(), p.table[idx + 1..].to_string()),
@@ -478,7 +482,7 @@ if rs.%Next() {{
     );
 
     let output = iris
-        .execute_via_generator(&lookup_code, &p.namespace, client)
+        .execute_via_generator(&lookup_code, namespace, client)
         .await
         .map_err(|e| rmcp::ErrorData::internal_error(format!("execute failed: {e}"), None))?;
 
@@ -488,9 +492,9 @@ if rs.%Next() {{
     if output.trim() == "NOT_FOUND" {
         return crate::tools::err_result(serde_json::json!({
             "success": false,
-            "error": format!("Table '{}' not found in namespace '{}'", p.table, p.namespace),
+            "error": format!("Table '{}' not found in namespace '{}'", p.table, namespace),
             "table": p.table,
-            "namespace": p.namespace,
+            "namespace": namespace,
         }));
     }
 
@@ -504,14 +508,14 @@ if rs.%Next() {{
             "table": p.table,
             "type": "class_projection",
             "class": class_name,
-            "namespace": p.namespace,
+            "namespace": namespace,
             "data_global": if data_global.is_empty() { serde_json::Value::Null } else { data_global.into() },
             "index_global": if index_global.is_empty() { serde_json::Value::Null } else { index_global.into() },
             "accessible_from_embedded_python": true,
         });
 
         if p.include_row_count {
-            let count = get_row_count(iris, client, &p.namespace, &sql_schema, &sql_table).await;
+            let count = get_row_count(iris, client, namespace, &sql_schema, &sql_table).await;
             obj["row_count"] = count;
         }
         obj
@@ -524,7 +528,7 @@ if rs.%Next() {{
         let mut obj = serde_json::json!({
             "table": p.table,
             "type": "ddl_table",
-            "namespace": p.namespace,
+            "namespace": namespace,
             "data_global": data_global,
             "index_global": index_global,
             "id_counter_global": id_counter_global,
@@ -532,7 +536,7 @@ if rs.%Next() {{
         });
 
         if p.include_row_count {
-            let count = get_row_count(iris, client, &p.namespace, &sql_schema, &sql_table).await;
+            let count = get_row_count(iris, client, namespace, &sql_schema, &sql_table).await;
             obj["row_count"] = count;
         }
         obj
@@ -574,7 +578,11 @@ mod tests {
     #[test]
     fn test_info_params_defaults() {
         let p: InfoParams = serde_json::from_str(r#"{"what": "documents"}"#).unwrap();
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
+        assert_eq!(
+            crate::tools::resolve_namespace(p.namespace.as_deref(), "APP"),
+            "APP"
+        );
         assert!(p.doc_type.is_none());
         assert!(p.name.is_none());
         assert!(!p.inline);
@@ -596,7 +604,11 @@ mod tests {
     #[test]
     fn test_macro_params_defaults() {
         let p: MacroParams = serde_json::from_str(r#"{"action": "list"}"#).unwrap();
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
+        assert_eq!(
+            crate::tools::resolve_namespace(p.namespace.as_deref(), "APP"),
+            "APP"
+        );
         assert!(p.name.is_none());
         assert!(p.args.is_empty());
     }
@@ -614,7 +626,11 @@ mod tests {
     #[test]
     fn test_debug_params_defaults() {
         let p: DebugParams = serde_json::from_str(r#"{"action": "error_logs"}"#).unwrap();
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
+        assert_eq!(
+            crate::tools::resolve_namespace(p.namespace.as_deref(), "APP"),
+            "APP"
+        );
         assert!(p.error_string.is_none());
         assert!(p.class_name.is_none());
         assert!(p.limit > 0);
@@ -625,7 +641,11 @@ mod tests {
         let p: GenerateParams =
             serde_json::from_str(r#"{"description": "A patient class"}"#).unwrap();
         assert_eq!(p.gen_type, "class");
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
+        assert_eq!(
+            crate::tools::resolve_namespace(p.namespace.as_deref(), "APP"),
+            "APP"
+        );
         assert!(p.class_name.is_none());
     }
 
@@ -642,7 +662,11 @@ mod tests {
     #[test]
     fn test_table_info_params_defaults() {
         let p: TableInfoParams = serde_json::from_str(r#"{"table": "SQLUser.MyTable"}"#).unwrap();
-        assert_eq!(p.namespace, "USER");
+        assert_eq!(p.namespace, None);
+        assert_eq!(
+            crate::tools::resolve_namespace(p.namespace.as_deref(), "APP"),
+            "APP"
+        );
         assert!(!p.include_row_count);
     }
 

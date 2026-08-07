@@ -6,8 +6,8 @@ use iris_agentic_dev_core::tools::search::SearchParams;
 fn test_search_params_minimal() {
     let p: SearchParams = serde_json::from_str(r#"{"query": "test"}"#).unwrap();
     assert_eq!(p.query, "test");
-    // namespace defaults to "USER"
-    assert_eq!(p.namespace, "USER");
+    // Omitted namespace stays None; resolution falls back to the connection namespace.
+    assert_eq!(p.namespace, None);
     // bool fields default to false
     assert!(!p.regex);
     assert!(!p.case_sensitive);
@@ -30,7 +30,7 @@ fn test_search_params_full() {
     )
     .unwrap();
     assert_eq!(p.query, "Director");
-    assert_eq!(p.namespace, "USER");
+    assert_eq!(p.namespace.as_deref(), Some("USER"));
     assert!(p.regex);
     assert!(!p.case_sensitive);
     assert_eq!(p.category.as_deref(), Some("CLS"));
@@ -49,7 +49,7 @@ fn test_search_params_case_sensitive_flag() {
 fn test_search_params_custom_namespace() {
     let p: SearchParams =
         serde_json::from_str(r#"{"query": "foo", "namespace": "IRISAPP"}"#).unwrap();
-    assert_eq!(p.namespace, "IRISAPP");
+    assert_eq!(p.namespace.as_deref(), Some("IRISAPP"));
 }
 
 #[test]

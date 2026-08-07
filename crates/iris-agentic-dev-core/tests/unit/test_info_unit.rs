@@ -9,7 +9,8 @@ fn info_params_defaults() {
     let p: InfoParams = serde_json::from_str(r#"{"what":"documents"}"#).unwrap();
     assert_eq!(p.what, "documents");
     assert!(p.doc_type.is_none());
-    assert_eq!(p.namespace, "USER");
+    // Omitted namespace stays None; resolution falls back to the connection namespace.
+    assert_eq!(p.namespace, None);
     assert!(!p.inline);
 }
 
@@ -31,7 +32,7 @@ fn macro_params_defaults() {
     assert_eq!(p.action, "list");
     assert!(p.name.is_none());
     assert!(p.args.is_empty());
-    assert_eq!(p.namespace, "USER");
+    assert_eq!(p.namespace, None);
 }
 
 #[test]
@@ -47,7 +48,7 @@ fn generate_params_defaults_gen_type_class() {
     let p: GenerateParams = serde_json::from_str(r#"{"description":"a simple class"}"#).unwrap();
     assert_eq!(p.gen_type, "class");
     assert!(p.class_name.is_none());
-    assert_eq!(p.namespace, "USER");
+    assert_eq!(p.namespace, None);
 }
 
 #[test]
@@ -64,7 +65,7 @@ fn generate_params_test_type() {
 fn table_info_params_defaults() {
     let p: TableInfoParams = serde_json::from_str(r#"{"table":"SQLUser.MyTable"}"#).unwrap();
     assert_eq!(p.table, "SQLUser.MyTable");
-    assert_eq!(p.namespace, "USER");
+    assert_eq!(p.namespace, None);
     assert!(!p.include_row_count);
 }
 
@@ -92,7 +93,7 @@ fn info_params_with_all_fields() {
     assert_eq!(p.what, "documents");
     assert_eq!(p.doc_type.as_deref(), Some("MAC"));
     assert_eq!(p.name.as_deref(), Some("Foo"));
-    assert_eq!(p.namespace, "SYS");
+    assert_eq!(p.namespace.as_deref(), Some("SYS"));
     assert!(p.inline);
 }
 
@@ -186,7 +187,7 @@ fn macro_params_with_multiple_args() {
 #[test]
 fn macro_params_custom_namespace() {
     let p: MacroParams = serde_json::from_str(r#"{"action":"list","namespace":"SYS"}"#).unwrap();
-    assert_eq!(p.namespace, "SYS");
+    assert_eq!(p.namespace.as_deref(), Some("SYS"));
 }
 
 // ── DebugParams edge cases ───────────────────────────────────────────────────
@@ -229,7 +230,7 @@ fn debug_params_custom_limit() {
 fn debug_params_custom_namespace() {
     let p: DebugParams =
         serde_json::from_str(r#"{"action":"error_logs","namespace":"TEST"}"#).unwrap();
-    assert_eq!(p.namespace, "TEST");
+    assert_eq!(p.namespace.as_deref(), Some("TEST"));
 }
 
 // ── GenerateParams edge cases ────────────────────────────────────────────────
@@ -238,7 +239,7 @@ fn debug_params_custom_namespace() {
 fn generate_params_with_custom_namespace() {
     let p: GenerateParams =
         serde_json::from_str(r#"{"description":"a class","namespace":"CUSTOM"}"#).unwrap();
-    assert_eq!(p.namespace, "CUSTOM");
+    assert_eq!(p.namespace.as_deref(), Some("CUSTOM"));
 }
 
 #[test]
@@ -248,7 +249,7 @@ fn generate_params_test_with_namespace() {
     )
     .unwrap();
     assert_eq!(p.gen_type, "test");
-    assert_eq!(p.namespace, "SYS");
+    assert_eq!(p.namespace.as_deref(), Some("SYS"));
 }
 
 // ── TableInfoParams edge cases ───────────────────────────────────────────────
@@ -263,7 +264,7 @@ fn table_info_params_with_dot_notation() {
 fn table_info_params_custom_namespace() {
     let p: TableInfoParams =
         serde_json::from_str(r#"{"table":"MyTable","namespace":"SYS"}"#).unwrap();
-    assert_eq!(p.namespace, "SYS");
+    assert_eq!(p.namespace.as_deref(), Some("SYS"));
 }
 
 #[test]
