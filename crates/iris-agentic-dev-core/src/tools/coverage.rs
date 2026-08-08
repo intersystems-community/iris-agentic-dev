@@ -604,3 +604,77 @@ async fn resolve_classes(
         "provide either 'classes' (list of class names) or 'package' (auto-discover)",
     ))
 }
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // build_coverage_report_code: empty routines → boilerplate only, TOTAL line present
+    #[test]
+    fn build_coverage_report_code_empty() {
+        let code = build_coverage_report_code(&[], "USER");
+        assert!(code.contains("$NAMESPACE"), "must set namespace");
+        assert!(code.contains("TOTAL|"), "must emit TOTAL line");
+        assert!(code.contains("totalHit"), "must track totalHit");
+    }
+
+    // build_coverage_report_code: single routine → routine-specific vars present
+    #[test]
+    fn build_coverage_report_code_single_routine() {
+        let routines = vec!["Demo.MyClass.1".to_string()];
+        let code = build_coverage_report_code(&routines, "USER");
+        assert!(code.contains("rtn0="), "must define rtn0");
+        assert!(code.contains("rset0="), "must define rset0");
+        assert!(code.contains("hit0="), "must define hit0");
+        assert!(code.contains("Demo.MyClass"), "must reference class name");
+        assert!(code.contains("TOTAL|"), "must end with TOTAL line");
+    }
+
+    // build_coverage_report_code: multiple routines → indexed per routine
+    #[test]
+    fn build_coverage_report_code_multiple_routines() {
+        let routines = vec![
+            "Demo.A.1".to_string(),
+            "Demo.B.1".to_string(),
+            "Demo.C.1".to_string(),
+        ];
+        let code = build_coverage_report_code(&routines, "%SYS");
+        assert!(code.contains("rtn2="), "must define rtn2 for 3rd routine");
+        assert!(code.contains("TOTAL|"), "must end with TOTAL");
+    }
+
+    // build_testcoverage_check_code: contains TestCoverage.Manager check
+    #[test]
+    fn build_testcoverage_check_code_content() {
+        let code = build_testcoverage_check_code("USER");
+        assert!(
+            code.contains("TestCoverage.Manager"),
+            "must reference class"
+        );
+        assert!(code.contains("YES"), "must have YES branch");
+        assert!(code.contains("NO"), "must have NO branch");
+        assert!(code.contains("USER"), "must include namespace");
+    }
+
+    // build_coverage_start_code: contains Start and Stop calls
+    #[test]
+    fn build_coverage_start_code_content() {
+        let code = build_coverage_start_code("routineList", "USER");
+        assert!(
+            code.contains("LineByLine"),
+            "must reference LineByLine monitor"
+        );
+        assert!(code.contains("Stop()"), "must stop monitor first");
+        assert!(code.contains("Start("), "must start monitor");
+        assert!(
+            code.contains("OK|started"),
+            "must emit OK|started on success"
+        );
+        assert!(
+            code.contains("MONITOR_IN_USE"),
+            "must emit error on failure"
+        );
+    }
+}

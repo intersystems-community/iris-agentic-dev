@@ -1217,6 +1217,155 @@ mod tests {
         );
     }
 
+    // T075b: global_kill_impl with no token in map → CONFIRM_REQUIRED
+    #[tokio::test]
+    async fn global_kill_confirm_required() {
+        use crate::iris::connection::DiscoverySource;
+        let conn = Arc::new(IrisConnection::new(
+            "http://localhost:52780",
+            "USER",
+            "_SYSTEM",
+            "SYS",
+            DiscoverySource::EnvVar,
+        ));
+        let client = Arc::new(reqwest::Client::new());
+        let tokens: tokio::sync::Mutex<HashMap<String, ConfirmEntry>> =
+            tokio::sync::Mutex::new(HashMap::new()); // empty map → no token
+
+        let result = global_kill_impl(
+            GlobalKillParams {
+                global: "TestGlobal".to_string(),
+                server: None,
+                confirm_token: "nonexistent-token".to_string(),
+                iris: conn,
+                client,
+                write_tools_enabled: true,
+            },
+            &tokens,
+        )
+        .await
+        .expect("global_kill_impl returned MCP error");
+
+        let text = result
+            .content
+            .first()
+            .map(|c| c.raw.as_text().unwrap().text.clone())
+            .expect("no text content");
+        let v: serde_json::Value = serde_json::from_str(&text).expect("json parse");
+        assert_eq!(
+            v["error_code"].as_str().unwrap_or(""),
+            ERR_CONFIRM_REQUIRED,
+            "missing token should return {ERR_CONFIRM_REQUIRED}, got: {v}"
+        );
+    }
+
+    // T075c: global_kill_impl with expired token → CONFIRM_EXPIRED
+    #[tokio::test]
+    async fn global_kill_confirm_expired() {
+        use crate::iris::connection::DiscoverySource;
+        let conn = Arc::new(IrisConnection::new(
+            "http://localhost:52780",
+            "USER",
+            "_SYSTEM",
+            "SYS",
+            DiscoverySource::EnvVar,
+        ));
+        let client = Arc::new(reqwest::Client::new());
+        let token = "expired-token".to_string();
+        let tokens: tokio::sync::Mutex<HashMap<String, ConfirmEntry>> = {
+            let mut map = HashMap::new();
+            map.insert(
+                token.clone(),
+                ConfirmEntry {
+                    global: "TestGlobal".to_string(),
+                    server: None,
+                    // Simulate expiry: issued_at more than 300s ago
+                    issued_at: std::time::Instant::now() - std::time::Duration::from_secs(301),
+                },
+            );
+            tokio::sync::Mutex::new(map)
+        };
+
+        let result = global_kill_impl(
+            GlobalKillParams {
+                global: "TestGlobal".to_string(),
+                server: None,
+                confirm_token: token,
+                iris: conn,
+                client,
+                write_tools_enabled: true,
+            },
+            &tokens,
+        )
+        .await
+        .expect("global_kill_impl returned MCP error");
+
+        let text = result
+            .content
+            .first()
+            .map(|c| c.raw.as_text().unwrap().text.clone())
+            .expect("no text content");
+        let v: serde_json::Value = serde_json::from_str(&text).expect("json parse");
+        assert_eq!(
+            v["error_code"].as_str().unwrap_or(""),
+            ERR_CONFIRM_EXPIRED,
+            "expired token should return {ERR_CONFIRM_EXPIRED}, got: {v}"
+        );
+    }
+
+    // T075d: global_kill_impl with token for a different global → CONFIRM_MISMATCH
+    #[tokio::test]
+    async fn global_kill_confirm_mismatch() {
+        use crate::iris::connection::DiscoverySource;
+        let conn = Arc::new(IrisConnection::new(
+            "http://localhost:52780",
+            "USER",
+            "_SYSTEM",
+            "SYS",
+            DiscoverySource::EnvVar,
+        ));
+        let client = Arc::new(reqwest::Client::new());
+        let token = "mismatch-token".to_string();
+        let tokens: tokio::sync::Mutex<HashMap<String, ConfirmEntry>> = {
+            let mut map = HashMap::new();
+            map.insert(
+                token.clone(),
+                ConfirmEntry {
+                    global: "GlobalA".to_string(), // token issued for GlobalA
+                    server: None,
+                    issued_at: std::time::Instant::now(),
+                },
+            );
+            tokio::sync::Mutex::new(map)
+        };
+
+        let result = global_kill_impl(
+            GlobalKillParams {
+                global: "GlobalB".to_string(), // but request is for GlobalB
+                server: None,
+                confirm_token: token,
+                iris: conn,
+                client,
+                write_tools_enabled: true,
+            },
+            &tokens,
+        )
+        .await
+        .expect("global_kill_impl returned MCP error");
+
+        let text = result
+            .content
+            .first()
+            .map(|c| c.raw.as_text().unwrap().text.clone())
+            .expect("no text content");
+        let v: serde_json::Value = serde_json::from_str(&text).expect("json parse");
+        assert_eq!(
+            v["error_code"].as_str().unwrap_or(""),
+            ERR_CONFIRM_MISMATCH,
+            "token for different global should return {ERR_CONFIRM_MISMATCH}, got: {v}"
+        );
+    }
+
     // T084b: iris_namespace_create write-gate returns WRITE_TOOLS_DISABLED (logic only)
     #[tokio::test]
     async fn iris_namespace_create_write_gate_disabled() {

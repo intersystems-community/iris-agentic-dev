@@ -94,8 +94,8 @@ pub async fn fetch_class_list(
         .json()
         .await
         .map_err(|e| format!("JSON parse error: {e}"))?;
-    // Atelier v1 docnames: { "result": [{ "name": "Foo.Bar.cls" }, ...] }
-    let names = body["result"]
+    // Atelier v1 docnames: { "result": { "content": [{ "name": "Foo.Bar.cls" }, ...] } }
+    let names = body["result"]["content"]
         .as_array()
         .map(|arr| {
             arr.iter()
