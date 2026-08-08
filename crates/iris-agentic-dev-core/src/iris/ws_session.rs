@@ -115,14 +115,14 @@ impl WsSessionPool {
         let ws_url = build_ws_url(base, "/api/atelier/v7/%25SYS/terminal");
 
         // Build the WebSocket request with Cookie and Authorization headers.
-        use tokio_tungstenite::tungstenite::handshake::client::Request;
+        use tokio_tungstenite::tungstenite::ClientRequestBuilder;
         let credentials = base64_basic_auth(&conn.username, &conn.password);
-        let request = Request::builder()
-            .uri(&ws_url)
-            .header("Cookie", &cookie_string)
-            .header("Authorization", format!("Basic {}", credentials))
-            .body(())
-            .map_err(|e| McpError::internal_error(format!("WS request build failed: {e}"), None))?;
+        let uri: tokio_tungstenite::tungstenite::http::Uri = ws_url
+            .parse()
+            .map_err(|e| McpError::internal_error(format!("invalid WS URL: {e}"), None))?;
+        let request = ClientRequestBuilder::new(uri)
+            .with_header("Cookie", &cookie_string)
+            .with_header("Authorization", format!("Basic {}", credentials));
 
         let (ws_stream, _response) = connect_async(request).await.map_err(|e| {
             let msg = e.to_string();

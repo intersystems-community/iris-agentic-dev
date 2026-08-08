@@ -39,7 +39,7 @@ async fn iris_conn() -> Option<IrisConnection> {
         .await
     {
         if let Ok(body) = resp.json::<serde_json::Value>().await {
-            let ver = body["result"]["content"]["version"].as_u64().unwrap_or(0);
+            let ver = body["result"]["content"]["api"].as_u64().unwrap_or(0);
             conn.atelier_version = match ver {
                 v if v >= 8 => AtelierVersion::V8,
                 v if v >= 7 => AtelierVersion::V7,
