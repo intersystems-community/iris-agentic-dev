@@ -33,8 +33,8 @@
 
 ## Phase 6: E2E Test (manual / scripted)
 
-- [ ] T6.1 Start `iris-agentic-dev mcp --transport http --port 18765` locally
-- [ ] T6.2 In aihub-iris-116, create a ToolSet with `<MCP><Remote URL="http://host.docker.internal:18765/mcp"/>`, call `check_config`, verify response
+- [X] T6.1 Start `iris-agentic-dev mcp --transport http --port 18765 --bind 0.0.0.0` locally
+- [X] T6.2 In aihub-iris-116, created `IAD.ToolSet.IrisAgenticDevRemote` with `<Remote URL="http://host.docker.internal:18765/mcp"/>`, `%Discover()` returned mcp toolref; `check_config` via HTTP returned `connected:true` with real IRIS data. Fixed two issues: (1) `--bind 0.0.0.0` disables Host allowlist so container can reach host; (2) factory uses Clone not take() to support multiple sessions.
 
 ## Phase 7: Coverage
 

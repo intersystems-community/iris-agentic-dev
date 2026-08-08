@@ -260,26 +260,27 @@ async fn run_http_transport(tools: IrisTools, bind: &str, port: u16) -> anyhow::
         .await
         .map_err(|e| anyhow::anyhow!("failed to bind {}:{}: {}", bind, port, e))?;
 
-    let mut config = StreamableHttpServerConfig::default();
-    config.allowed_hosts = vec![
-        "localhost".into(),
-        "127.0.0.1".into(),
-        "::1".into(),
-        bind.to_string(),
-    ];
+    // When binding to all interfaces (0.0.0.0 / ::) the server is intentionally
+    // reachable from external callers (e.g. AI Hub containers using host.docker.internal).
+    // Disable the Host header allowlist so those callers aren't rejected.
+    let config = if bind_ip.is_unspecified() {
+        StreamableHttpServerConfig::default().disable_allowed_hosts()
+    } else {
+        let mut c = StreamableHttpServerConfig::default();
+        c.allowed_hosts = vec![
+            "localhost".into(),
+            "127.0.0.1".into(),
+            "::1".into(),
+            bind.to_string(),
+        ];
+        c
+    };
 
     let session_mgr = Arc::new(LocalSessionManager::default());
-    let tools = Arc::new(std::sync::Mutex::new(Some(tools)));
-    let svc = StreamableHttpService::new(
-        move || {
-            let mut guard = tools.lock().unwrap();
-            guard
-                .take()
-                .ok_or_else(|| std::io::Error::other("IrisTools already consumed"))
-        },
-        session_mgr,
-        config,
-    );
+    // IrisTools is Clone — each session gets its own clone that shares the inner Arcs
+    // (connection state, client, registry, etc.) so they all observe the same IRIS state.
+    let tools = Arc::new(tools);
+    let svc = StreamableHttpService::new(move || Ok((*tools).clone()), session_mgr, config);
 
     tracing::info!("iris-agentic-dev mcp listening on http://{}/mcp", addr);
 
