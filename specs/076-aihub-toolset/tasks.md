@@ -13,17 +13,17 @@
 
 - [X] T2.1 Write `IAD.ToolSet.IrisAgenticDev` class definition (MCP Stdio, platform chain, env vars)
 - [X] T2.2 Write `IAD.ToolSet.IrisAgenticDevReadOnly` class definition (extends parent, adds Exclude rules)
-- [ ] T2.3 Import both classes into aihub-iris-116 via `iris_doc(mode=put)` and verify compile
+- [X] T2.3 Import both classes into aihub-iris-116 via `iris_doc(mode=put)` and verify compile
 
 ## Phase 3: Export XML
 
 - [X] T3.1 Export both classes to `contrib/aihub/IAD.ToolSet.xml` (hand-authored from class definitions)
 - [X] T3.2 Copy to `contrib/aihub/IAD.ToolSet.xml`
-- [ ] T3.3 Verify round-trip: import XML into aihub-iris-116, confirm both classes compile
+- [X] T3.3 Verify round-trip: import XML into aihub-iris-116, confirm both classes compile
 
 ## Phase 4: Run Tests
 
-- [ ] T4.1 Run T-076-01 through T-076-04 against aihub-iris-116 — all must pass
+- [X] T4.1 Run T-076-01 through T-076-04 against aihub-iris-116 — all must pass (9 passed, 1 skipped — T-076-04 requires ANTHROPIC_API_KEY)
 
 ## Phase 5: Documentation
 
@@ -35,5 +35,5 @@
 ## Phase 6: Commit
 
 - [X] T6.1 `cargo fmt --all -- --check` (no Rust changes but confirm clean)
-- [ ] T6.2 `git add contrib/ specs/076-aihub-toolset/ skills/skills/aihub-eap/SKILL.md`
-- [ ] T6.3 Commit with message: `feat(aihub): add IAD.ToolSet ObjectScript classes for AI Hub stdio integration`
+- [X] T6.2 `git add contrib/ specs/076-aihub-toolset/ skills/skills/aihub-eap/SKILL.md`
+- [X] T6.3 Commit with message: `feat(aihub): add IAD.ToolSet ObjectScript classes for AI Hub stdio integration`

@@ -5,18 +5,33 @@
 <Description>iris-agentic-dev MCP tools for AI Hub agents (stdio pass-through)</Description>
 <Super>%AI.ToolSet</Super>
 <TimeCreated>2026-08-08 00:00:00.000</TimeCreated>
-<XData name="Definition" XMLNamespace="http://www.intersystems.com/ai/toolset">
+<XData name="Definition">
+<MimeType>application/xml</MimeType>
 <Data><![CDATA[
-<ToolSet>
+<ToolSet Name="IrisAgenticDev">
+  <Description>Full iris-agentic-dev tool surface via stdio MCP pass-through.</Description>
   <MCP Name="IrisAgenticDev">
-    <Stdio Platform="macos.*aarch64" Executable="/opt/homebrew/bin/iris-agentic-dev"/>
-    <Stdio Platform="macos" Executable="/usr/local/bin/iris-agentic-dev"/>
-    <Stdio Executable="iris-agentic-dev"/>
-    <Env Name="IRIS_HOST" Value="@{env:IRIS_HOST}"/>
-    <Env Name="IRIS_WEB_PORT" Value="@{env:IRIS_WEB_PORT}"/>
-    <Env Name="IRIS_USERNAME" Value="@{env:IRIS_USERNAME}"/>
-    <Env Name="IRIS_PASSWORD" Value="@{env:IRIS_PASSWORD}"/>
-    <Env Name="IRIS_NAMESPACE" Value="@{env:IRIS_NAMESPACE}"/>
+    <Stdio Platform="macos.*aarch64" Executable="/opt/homebrew/bin/iris-agentic-dev">
+      <Env Name="IRIS_HOST" Value="@{env:IRIS_HOST}"/>
+      <Env Name="IRIS_WEB_PORT" Value="@{env:IRIS_WEB_PORT}"/>
+      <Env Name="IRIS_USERNAME" Value="@{env:IRIS_USERNAME}"/>
+      <Env Name="IRIS_PASSWORD" Value="@{env:IRIS_PASSWORD}"/>
+      <Env Name="IRIS_NAMESPACE" Value="@{env:IRIS_NAMESPACE}"/>
+    </Stdio>
+    <Stdio Platform="macos" Executable="/usr/local/bin/iris-agentic-dev">
+      <Env Name="IRIS_HOST" Value="@{env:IRIS_HOST}"/>
+      <Env Name="IRIS_WEB_PORT" Value="@{env:IRIS_WEB_PORT}"/>
+      <Env Name="IRIS_USERNAME" Value="@{env:IRIS_USERNAME}"/>
+      <Env Name="IRIS_PASSWORD" Value="@{env:IRIS_PASSWORD}"/>
+      <Env Name="IRIS_NAMESPACE" Value="@{env:IRIS_NAMESPACE}"/>
+    </Stdio>
+    <Stdio Executable="iris-agentic-dev">
+      <Env Name="IRIS_HOST" Value="@{env:IRIS_HOST}"/>
+      <Env Name="IRIS_WEB_PORT" Value="@{env:IRIS_WEB_PORT}"/>
+      <Env Name="IRIS_USERNAME" Value="@{env:IRIS_USERNAME}"/>
+      <Env Name="IRIS_PASSWORD" Value="@{env:IRIS_PASSWORD}"/>
+      <Env Name="IRIS_NAMESPACE" Value="@{env:IRIS_NAMESPACE}"/>
+    </Stdio>
   </MCP>
 </ToolSet>
 ]]></Data>
@@ -25,11 +40,14 @@
 
 <Class name="IAD.ToolSet.IrisAgenticDevReadOnly">
 <Description>Read-only subset of iris-agentic-dev — excludes compile, execute, source control, and write tools</Description>
-<Super>IAD.ToolSet.IrisAgenticDev</Super>
+<Super>%AI.ToolSet</Super>
 <TimeCreated>2026-08-08 00:00:00.000</TimeCreated>
-<XData name="Definition" XMLNamespace="http://www.intersystems.com/ai/toolset">
+<XData name="Definition">
+<MimeType>application/xml</MimeType>
 <Data><![CDATA[
-<ToolSet>
+<ToolSet Name="IrisAgenticDevReadOnly">
+  <Description>Read-only iris-agentic-dev tools — safe for navigation, search, and observation.</Description>
+  <Include Class="IAD.ToolSet.IrisAgenticDev"/>
   <Exclude Match="^iris_compile$"/>
   <Exclude Match="^iris_execute$"/>
   <Exclude Match="^iris_source_control$"/>
@@ -45,7 +63,8 @@
 <Super>%AI.Agent.Skill</Super>
 <TimeCreated>2026-08-08 00:00:00.000</TimeCreated>
 <Parameter name="TOOLS"><Default>IAD.ToolSet.IrisAgenticDev</Default></Parameter>
-<XData name="SUMMARY" MimeType="text/yaml">
+<XData name="SUMMARY">
+<MimeType>text/yaml</MimeType>
 <Data><![CDATA[
 name: objectscript-repair
 description: Hard-gate checklist for the 10 most common ObjectScript mistakes. Checks code before this agent presents it.
@@ -55,7 +74,8 @@ tags:
   - code-review
 ]]></Data>
 </XData>
-<XData name="INSTRUCTIONS" MimeType="text/markdown">
+<XData name="INSTRUCTIONS">
+<MimeType>text/markdown</MimeType>
 <Data><![CDATA[
 # ObjectScript Repair — Hard Gate
 
@@ -100,7 +120,8 @@ Then show the code.
 <Super>%AI.Agent.Skill</Super>
 <TimeCreated>2026-08-08 00:00:00.000</TimeCreated>
 <Parameter name="TOOLS"><Default>IAD.ToolSet.IrisAgenticDev</Default></Parameter>
-<XData name="SUMMARY" MimeType="text/yaml">
+<XData name="SUMMARY">
+<MimeType>text/yaml</MimeType>
 <Data><![CDATA[
 name: objectscript-guardrails
 description: All-in-one hard gate for ObjectScript code. Works without MCP connected — the instructions alone provide a 13-item safety checklist.
@@ -111,7 +132,8 @@ tags:
   - core
 ]]></Data>
 </XData>
-<XData name="INSTRUCTIONS" MimeType="text/markdown">
+<XData name="INSTRUCTIONS">
+<MimeType>text/markdown</MimeType>
 <Data><![CDATA[
 # ObjectScript — Hard Gate
 
@@ -175,7 +197,8 @@ Return (tag %INLIST myList)            →  Return ($ListFind(myList, tag) > 0)
 <Super>%AI.Agent.Skill</Super>
 <TimeCreated>2026-08-08 00:00:00.000</TimeCreated>
 <Parameter name="TOOLS"><Default>IAD.ToolSet.IrisAgenticDev</Default></Parameter>
-<XData name="SUMMARY" MimeType="text/yaml">
+<XData name="SUMMARY">
+<MimeType>text/yaml</MimeType>
 <Data><![CDATA[
 name: interop-debugging
 description: Manages and observes IRIS Interoperability productions — lifecycle, logs, queues, and message tracing.
@@ -186,7 +209,8 @@ tags:
   - production
 ]]></Data>
 </XData>
-<XData name="INSTRUCTIONS" MimeType="text/markdown">
+<XData name="INSTRUCTIONS">
+<MimeType>text/markdown</MimeType>
 <Data><![CDATA[
 # Interoperability Debugging
 
@@ -270,7 +294,8 @@ When tracing a message failure:
 <Super>%AI.Agent.Skill</Super>
 <TimeCreated>2026-08-08 00:00:00.000</TimeCreated>
 <Parameter name="TOOLS"><Default>IAD.ToolSet.IrisAgenticDevReadOnly</Default></Parameter>
-<XData name="SUMMARY" MimeType="text/yaml">
+<XData name="SUMMARY">
+<MimeType>text/yaml</MimeType>
 <Data><![CDATA[
 name: iris-navigation
 description: Deep codebase discovery and namespace exploration using read-only IRIS tools. Bridges raw MCP tool data to architectural understanding.
@@ -281,7 +306,8 @@ tags:
   - read-only
 ]]></Data>
 </XData>
-<XData name="INSTRUCTIONS" MimeType="text/markdown">
+<XData name="INSTRUCTIONS">
+<MimeType>text/markdown</MimeType>
 <Data><![CDATA[
 # ObjectScript Semantic Navigation
 
@@ -359,7 +385,8 @@ When this agent receives a list of symbols from `iris_symbols`, it should follow
 <Parameter name="APIKEY"><Default>@{env:ANTHROPIC_API_KEY}</Default></Parameter>
 <Parameter name="TOOLSETS"><Default>IAD.ToolSet.IrisAgenticDev</Default></Parameter>
 <Parameter name="SKILLS"><Default>IAD.Skill.ObjectScriptRepair,IAD.Skill.ObjectScriptGuardrails,IAD.Skill.IrisNavigation</Default></Parameter>
-<XData name="INSTRUCTIONS" MimeType="text/markdown">
+<XData name="INSTRUCTIONS">
+<MimeType>text/markdown</MimeType>
 <Data><![CDATA[
 You are an ObjectScript and InterSystems IRIS development assistant.
 
