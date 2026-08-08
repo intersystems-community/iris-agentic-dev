@@ -20,11 +20,12 @@ tags: [iris, aihub, eap, ai, configstore, langchain, mcp, docker]
 
 ## 1. Getting the Build
 
-**EAP Portal**: https://evaluation.intersystems.com/Eval/early-access/AIHub
+**EAP Portal**: <https://evaluation.intersystems.com/Eval/early-access/AIHub>
 
 **Current build: 2026.2.0AI.162.0** (as of 2026-04-26)
 
 Available downloads:
+
 ```
 iris-community-2026.2.0AI.158.0-docker.tar.gz          # x86_64 Docker (community, no key needed)
 iris_arm64-community-2026.2.0AI.158.0-docker.tar.gz    # ARM64 Docker (community)
@@ -54,6 +55,7 @@ docker run --name iris-ai-hub \
 ```
 
 ### Fix expired default password
+
 ```bash
 docker exec -it iris-ai-hub iris session iris -U %SYS
 # In session:
@@ -61,6 +63,7 @@ docker exec -it iris-ai-hub iris session iris -U %SYS
 ```
 
 ### iris-devtester integration
+
 ```python
 from iris_devtester import IRISContainer
 container = IRISContainer("intersystems/iris:2026.2.0AI.159") \
@@ -100,6 +103,7 @@ Class MyApp.AI.MyAgent Extends %AI.Agent
 ```
 
 **Usage:**
+
 ```objectscript
 Set agent = ##class(MyApp.AI.MyAgent).%New()
 $$$ThrowOnError(agent.%Init())           // REQUIRED — initializes provider, tools, prompt
@@ -171,6 +175,7 @@ Class MyApp.AI.ProdAgent Extends %AI.Agent
 ```
 
 **ConfigStore entry for "opsreview":**
+
 ```objectscript
 Set config = {
     "model_provider": "anthropic",
@@ -352,6 +357,7 @@ mcp = init_mcp_client("AI.MCP.my-server")
 ```
 
 **Common issues:**
+
 - Version mismatch: check `pip show langchain-intersystems` matches the whl filename
 - Platform errors: add `--force-reinstall` if wheel metadata conflicts
 
@@ -376,6 +382,7 @@ mcp = init_mcp_client("AI.MCP.my-server")
 | `@{wallet.*}` substitution | Not available | `@{wallet.Collection.Key}` |
 
 **DEAD CODE from build 141 (do not use):**
+
 ```objectscript
 // ❌ LLMConfig is gone
 Set agent.LLMConfig = "AI.LLM.openai"
@@ -517,6 +524,7 @@ Write response.%Get("content")
 ```
 
 Available properties on the response object:
+
 - `.Content` — `%String` — the assistant's text reply
 - `.ToolCalls` — `%DynamicArray` — tool call requests from the model
 - `.Usage` — `%DynamicObject` — token usage (`prompt_tokens`, `completion_tokens`)
@@ -569,6 +577,7 @@ This is the recommended pattern for local dev. For production, use ConfigStore +
 Build 162 community has **51 `%AI` classes** vs **38 in enterprise 161**. The 13 additions:
 
 ### RAG stack (new in 162)
+
 ```
 %AI.RAG.Embedding
 %AI.RAG.Embedding.FastEmbed
@@ -578,6 +587,7 @@ Build 162 community has **51 `%AI` classes** vs **38 in enterprise 161**. The 13
 ```
 
 ### MCP client in ToolSet XData (consume external MCP servers, new in 162)
+
 ```
 %AI.ToolSet.Specification.MCP
 %AI.ToolSet.Specification.MCP.Remote
@@ -586,6 +596,7 @@ Build 162 community has **51 `%AI` classes** vs **38 in enterprise 161**. The 13
 ```
 
 ### Built-in tool providers (new in 162)
+
 ```
 %AI.Tools.FileSystem
 %AI.Tools.ShellTools
@@ -593,6 +604,7 @@ Build 162 community has **51 `%AI` classes** vs **38 in enterprise 161**. The 13
 ```
 
 ### Agent composition (new in 162)
+
 ```
 %AI.Agent.Skill
 %AI.Agent.SubAgent
@@ -602,6 +614,7 @@ Build 162 community has **51 `%AI` classes** vs **38 in enterprise 161**. The 13
 ```
 
 ### ConfigStore/Wallet API (new in 162, NOT in enterprise 161)
+
 ```
 %AI.Utils.ConfigStore
 %AI.Utils.SettingStore
@@ -640,6 +653,7 @@ docker pull docker.iscinternal.com/docker-intersystems/intersystems/irishealth-c
 ## 13. Linux Docker Volume Permissions (from READY 2026 hackathon — Anthony Master)
 
 **Symptom**: IRIS container exits immediately on Linux with:
+
 ```
 terminate called after throwing an instance of 'std::runtime_error'
 what(): Unable to find/open file iris-main.log in current directory /home/irisowner/dev
@@ -652,14 +666,17 @@ what(): Unable to find/open file iris-main.log in current directory /home/irisow
 ### Fix options
 
 **Option 1 — POSIX ACLs (recommended, minimal footprint)**
+
 ```bash
 setfacl -R -m u:51773:rwX <repo-dir>
 setfacl -R -d -m u:51773:rwX <repo-dir>
 ```
+
 The `-d` flag makes new files/dirs inherit the rule automatically.
 Verify with: `getfacl <repo-dir>`
 
 **Option 2 — tmpfs (no persistence)**
+
 ```yaml
 # docker-compose.yml
 volumes:
@@ -668,11 +685,13 @@ volumes:
 ```
 
 **Option 3 — chown on host (broad)**
+
 ```bash
 sudo chown -R 51773:51773 <repo-dir>
 ```
 
 **Option 4 — Docker named volume (avoid bind-mount entirely)**
+
 ```yaml
 volumes:
   iris-data:
@@ -683,3 +702,31 @@ services:
 ```
 
 **Team note**: If you re-clone or a new team member sets up the repo on Linux, they must re-run the `setfacl` commands. Add this to your project README or Makefile setup target.
+
+---
+
+## iris-agentic-dev ToolSet and Skills for AI Hub
+
+`contrib/aihub/IAD.ToolSet.xml` ships pre-built ToolSet and Skill classes for AI Hub
+agents. One import gives agents the full iris-agentic-dev tool surface plus workflow
+instructions drawn from the SKILL.md library.
+
+### Import
+
+```objectscript
+Do $system.OBJ.Load("/path/to/IAD.ToolSet.xml", "ck")
+```
+
+### Classes included
+
+| Class | Type | Description |
+|-------|------|-------------|
+| `IAD.ToolSet.IrisAgenticDev` | ToolSet | Full toolset, stdio pass-through |
+| `IAD.ToolSet.IrisAgenticDevReadOnly` | ToolSet | Read-only subset |
+| `IAD.Skill.ObjectScriptRepair` | Skill | 10-item hard-gate checklist |
+| `IAD.Skill.ObjectScriptGuardrails` | Skill | 13-item guardrail (works without MCP) |
+| `IAD.Skill.InteropDebugging` | Skill | Production lifecycle and log analysis |
+| `IAD.Skill.IrisNavigation` | Skill | Codebase discovery (read-only tools) |
+| `IAD.Agent.ObjectScriptDev` | Agent | Example declarative agent |
+
+See `contrib/aihub/README.md` for setup, env vars, and troubleshooting.
