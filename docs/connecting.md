@@ -252,6 +252,46 @@ write_tools_enabled = false
 This is the recommended default for any server that more than one person connects
 to, or any server that isn't purely local.
 
+## HTTP transport
+
+By default, `iris-agentic-dev mcp` communicates over stdio — the standard MCP channel
+for Claude Code and similar CLI-launched clients. For AI Hub remote MCP connections
+(or any client that connects via HTTP rather than launching a child process), use the
+HTTP transport instead:
+
+```bash
+iris-agentic-dev mcp --transport http --port 8080
+```
+
+The server binds on `127.0.0.1:8080` and accepts MCP connections at `/mcp`. To bind
+on a different address:
+
+```bash
+iris-agentic-dev mcp --transport http --port 8080 --bind 0.0.0.0
+```
+
+**Security note:** The HTTP endpoint has no authentication. Bind to loopback
+(`127.0.0.1`, the default) for local use, or put a reverse proxy in front of it if
+you need auth or external access.
+
+### AI Hub remote MCP
+
+To connect an AI Hub agent to iris-agentic-dev over HTTP, start the server with
+`--transport http`, then configure a `<Remote>` element in your ToolSet XData:
+
+```xml
+<ToolSet>
+  <MCP Name="IrisAgenticDev">
+    <Remote Url="http://127.0.0.1:8080/mcp"/>
+  </MCP>
+</ToolSet>
+```
+
+See [`contrib/aihub/README.md`](../contrib/aihub/README.md) for the full AI Hub
+ToolSet setup guide.
+
+---
+
 ## Windows (Docker)
 
 The native Windows binary is not yet signed. Windows users can run iris-agentic-dev

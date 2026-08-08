@@ -45,6 +45,9 @@ pub struct McpCommand {
     pub transport: String,
     #[arg(long, default_value = "8080")]
     pub port: u16,
+    /// Bind address for HTTP transport (default: 127.0.0.1)
+    #[arg(long, default_value = "127.0.0.1")]
+    pub bind: String,
     #[arg(long, env = "IRIS_HOST")]
     pub host: Option<String>,
     #[arg(long, env = "IRIS_WEB_PORT")]
@@ -214,11 +217,89 @@ impl McpCommand {
             });
         }
 
-        let service = tools
-            .serve(stdio())
-            .await
-            .inspect_err(|e| tracing::error!("MCP server error: {:?}", e))?;
-        service.waiting().await?;
+        match self.transport.as_str() {
+            "stdio" => {
+                let service = tools
+                    .serve(stdio())
+                    .await
+                    .inspect_err(|e| tracing::error!("MCP server error: {:?}", e))?;
+                service.waiting().await?;
+            }
+            "http" => {
+                run_http_transport(tools, &self.bind, self.port).await?;
+            }
+            other => {
+                eprintln!(
+                    "error: unsupported transport '{}' — supported values: stdio, http",
+                    other
+                );
+                std::process::exit(1);
+            }
+        }
         Ok(())
+    }
+}
+
+async fn run_http_transport(tools: IrisTools, bind: &str, port: u16) -> anyhow::Result<()> {
+    use std::net::{IpAddr, SocketAddr};
+    use std::str::FromStr;
+    use std::sync::Arc;
+
+    use hyper::body::Incoming;
+    use hyper::service::service_fn;
+    use hyper_util::rt::TokioIo;
+    use rmcp::transport::streamable_http_server::{
+        session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
+    };
+
+    let bind_ip = IpAddr::from_str(bind)
+        .map_err(|e| anyhow::anyhow!("invalid bind address '{}': {}", bind, e))?;
+    let addr = SocketAddr::from((bind_ip, port));
+
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to bind {}:{}: {}", bind, port, e))?;
+
+    let mut config = StreamableHttpServerConfig::default();
+    config.allowed_hosts = vec![
+        "localhost".into(),
+        "127.0.0.1".into(),
+        "::1".into(),
+        bind.to_string(),
+    ];
+
+    let session_mgr = Arc::new(LocalSessionManager::default());
+    let tools = Arc::new(std::sync::Mutex::new(Some(tools)));
+    let svc = StreamableHttpService::new(
+        move || {
+            let mut guard = tools.lock().unwrap();
+            guard
+                .take()
+                .ok_or_else(|| std::io::Error::other("IrisTools already consumed"))
+        },
+        session_mgr,
+        config,
+    );
+
+    tracing::info!("iris-agentic-dev mcp listening on http://{}/mcp", addr);
+
+    loop {
+        let (stream, _peer) = listener.accept().await?;
+        let io = TokioIo::new(stream);
+        let svc_clone = svc.clone();
+        tokio::spawn(async move {
+            let result = hyper::server::conn::http1::Builder::new()
+                .serve_connection(
+                    io,
+                    service_fn(move |req: hyper::Request<Incoming>| {
+                        let mut s = svc_clone.clone();
+                        async move { tower_service::Service::call(&mut s, req).await }
+                    }),
+                )
+                .await;
+            if let Err(e) = result {
+                tracing::debug!("HTTP connection error: {}", e);
+            }
+        });
     }
 }

@@ -21,7 +21,7 @@ repository = "https://github.com/intersystems-community/iris-agentic-dev"
 
 [workspace.dependencies]
 # MCP server
-rmcp = { version = "1.4", features = ["server", "macros", "schemars", "transport-io"] }
+rmcp = { version = "1.4", features = ["server", "macros", "schemars", "transport-io", "transport-streamable-http-server"] }
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
 which = "6"

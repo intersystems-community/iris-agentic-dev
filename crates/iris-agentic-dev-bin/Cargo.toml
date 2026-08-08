@@ -25,6 +25,9 @@ serde_json.workspace = true
 urlencoding = "2"
 tracing.workspace = true
 tracing-subscriber.workspace = true
+hyper = { version = "1", features = ["http1", "server"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
+tower-service = "0.3"
 
 [dev-dependencies]
 tempfile = "3"
@@ -84,3 +87,7 @@ path = "tests/integration/test_doc_live.rs"
 [[test]]
 name = "test_tool_live"
 path = "tests/integration/test_tool_live.rs"
+
+[[test]]
+name = "test_http_transport"
+path = "tests/integration/test_http_transport.rs"
