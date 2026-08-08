@@ -27,9 +27,9 @@
 
 [floors]
 # Overall line coverage floor — enforced only in merged/subprocess mode (src/ files only).
-# Baseline: 87.28% src-only (2026-08-02, v1.0.0 pre-release, with T118 failing).
-# Target: reach 90% src-only once T118 and remaining dispatch gaps are closed.
-overall = 85
+# Baseline: 88.48% (2026-08-08, master, subprocess profraw merge, ws_session bugfix).
+# Target: reach 90% once admin_tools/comparison_tools/xdata_flow dispatch gaps are closed.
+overall = 86
 
 # benchmark/ — task runner and LLM integration
 "src/benchmark/container.rs"          = 43
@@ -49,7 +49,7 @@ overall = 85
 "src/iris/servers_config.rs"          = 87
 "src/iris/vscode_config.rs"           = 97
 "src/iris/workspace_config.rs"        = 83
-"src/iris/ws_session.rs"              = 21
+"src/iris/ws_session.rs"              = 68
 
 # manifest/ — TOML schema parser
 "src/manifest/mod.rs"                 = 93

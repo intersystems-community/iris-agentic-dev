@@ -62,20 +62,31 @@ IRIS_CONTAINER="${IRIS_CONTAINER:-iris-dev-iris}"
 # ── Step 0: Build the instrumented binary ─────────────────────────────────────
 
 echo "=== Step 0: Build instrumented binary ==="
-# --no-run builds but doesn't run tests, giving us the instrumented binary
-# in target/llvm-cov-target/debug/ before the full test run starts.
-PATH="$HOME/.cargo/bin:$PATH" \
-"$CARGO" llvm-cov \
-    --features testing \
-    --no-report \
-    --no-run \
-    -p iris-agentic-dev \
-    2>&1 | tail -3
+# cargo llvm-cov show-env prints the env vars that enable instrumented compilation.
+# Eval them, then build with cargo build so we get the binary without running tests.
+# This sets RUSTC_WRAPPER, LLVM_PROFILE_FILE, and related vars.
+eval "$(PATH="$HOME/.cargo/bin:$PATH" "$CARGO" llvm-cov show-env --sh 2>/dev/null)"
 
-BIN="$REPO_ROOT/target/llvm-cov-target/debug/iris-agentic-dev"
-[[ -f "$BIN" ]] || BIN="$REPO_ROOT/target/llvm-cov-target/release/iris-agentic-dev"
-[[ -f "$BIN" ]] || { echo "ERROR: instrumented binary not found under target/llvm-cov-target/"; exit 1; }
+# Override LLVM_PROFILE_FILE — we will set our own location in Step 1.
+unset LLVM_PROFILE_FILE
+
+PATH="$HOME/.cargo/bin:$PATH" \
+"$CARGO" build \
+    --features iris-agentic-dev-core/testing \
+    -p iris-agentic-dev \
+    2>&1 | tail -5
+
+# cargo-llvm-cov builds to target/llvm-cov-target when CARGO_LLVM_COV_TARGET_DIR is set.
+BIN="${CARGO_LLVM_COV_TARGET_DIR:-$REPO_ROOT/target}/llvm-cov-target/debug/iris-agentic-dev"
+[[ -f "$BIN" ]] || BIN="$REPO_ROOT/target/debug/iris-agentic-dev"
+[[ -f "$BIN" ]] || { echo "ERROR: instrumented binary not found. Expected at ${CARGO_LLVM_COV_TARGET_DIR:-target}/llvm-cov-target/debug/iris-agentic-dev"; exit 1; }
 echo "Instrumented binary: $BIN"
+
+# Unset the instrumentation env vars set by show-env — Step 1 re-enters cargo llvm-cov
+# and those vars would double-wrap the compiler, causing "resource temporarily unavailable".
+unset RUSTC_WRAPPER CARGO_LLVM_COV __CARGO_LLVM_COV_RUSTC_WRAPPER \
+      __CARGO_LLVM_COV_RUSTC_WRAPPER_RUSTFLAGS __CARGO_LLVM_COV_RUSTC_WRAPPER_CRATE_NAMES \
+      CARGO_LLVM_COV_SHOW_ENV CARGO_LLVM_COV_TARGET_DIR CARGO_LLVM_COV_BUILD_DIR
 
 # ── Step 1: Full test suite with subprocess profraw capture ───────────────────
 
