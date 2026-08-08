@@ -38,7 +38,7 @@
 
 ## Phase 7: Coverage
 
-- [X] T7.1 Run `cargo llvm-cov --features testing -- --include-ignored --test-threads=1` — required fixing IRIS irislocaldata FILEFULL by disabling AutoParallel in CPF (WorkQueue no longer fills during compile-heavy test runs); added IRIS_HOST=localhost env var for admin_e2e_tests; total 84.94% lines.
+- [X] T7.1 Run `cargo llvm-cov --features testing -- --include-ignored --test-threads=1` — required fresh container (old one had FILEFULL + write-daemon crash). Added IRIS_HOST=localhost for admin_e2e_tests. Also fixed two bugs found during coverage run: (1) test_ws_e2e probed `"version"` string not `"api"` integer so WS tests always saw v1 and skipped; (2) WsSessionPool::open() used raw Request::builder() missing Sec-WebSocket-Key — switched to ClientRequestBuilder. Core coverage: 85.67% (overall: 84.47%). 90% gate blocked by subprocess profraw gap (spec 075).
 - [X] T7.2 `cmd/mcp.rs` at 90.62% functions / 88.69% lines. Added 10 unit tests covering: `build_explicit_connection()` (all branches), `run_http_transport()` bad-bind error, 127.0.0.1 bind, 0.0.0.0 bind (disable_allowed_hosts), accept-loop body, and McpCommand::run() http dispatch. Remaining 37 uncovered lines are in the stdio transport path and IrisDiscovery spawn — both require a live MCP client loop, structurally untestable as unit tests.
 
 ## Phase 8: Documentation
@@ -48,5 +48,5 @@
 
 ## Phase 9: Commit
 
-- [ ] T9.1 `git add Cargo.toml crates/ docs/connecting.md`
-- [ ] T9.2 Commit: `feat: add HTTP streamable transport (--transport http --port N --bind addr)`
+- [X] T9.1 `git add Cargo.toml crates/ docs/connecting.md`
+- [X] T9.2 Commit: `feat: add HTTP streamable transport (--transport http --port N --bind addr)` — done as `970b8db`
