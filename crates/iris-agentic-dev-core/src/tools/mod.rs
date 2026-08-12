@@ -3152,6 +3152,12 @@ impl IrisTools {
                             .unwrap_or("Unknown.cls")
                             .to_string()
                     });
+                // Compile-time code execution gate
+                if let Some(err) =
+                    crate::policy::code_edit_gate::check_compile_time_code_mode(&content, &doc_name)
+                {
+                    return ok_json(err);
+                }
                 // Upload via Atelier PUT
                 let put_url = iris.versioned_ns_url(
                     &namespace,

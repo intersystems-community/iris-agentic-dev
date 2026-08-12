@@ -499,6 +499,13 @@ async fn write_with_scm(
     elicitation_store: &crate::elicitation::ElicitationStore,
     checkout_cache: &crate::elicitation::CheckoutCache,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+    // Privilege-escalation gate (fail fast, before the SCM checkout probe so we never lock a
+    // doc we are going to refuse): block edits to a class that owns a whitelisted
+    // iris_execute_method target. do_write re-checks this for the elicitation-resume path.
+    if let Some(err) = check_whitelisted_class_edit(name) {
+        return ok_json(err);
+    }
+
     // SCM takes precedence over the storage guardrail: every path below
     // resolves checkout first, and only once it's settled do we run
     // check_storage_reset just before do_write.
@@ -766,6 +773,20 @@ async fn do_write(
              If a previous call lost its arguments, resend with name/content set explicitly.",
         );
     }
+    // Compile-time code execution gate: block CodeMode = objectgenerator/expression/call.
+    // Fires on the FULL assembled content, so multi-call assembly tricks are moot.
+    if let Some(err) = crate::policy::code_edit_gate::check_compile_time_code_mode(content, name) {
+        return ok_json(err);
+    }
+
+    // Privilege-escalation gate: block edits to a class that owns a whitelisted
+    // iris_execute_method target. Such a method runs under the primary (privileged) account,
+    // so allowing its class to be rewritten would let the agent inject code and execute it
+    // with elevated privileges. Covers put + all surgical edit modes (they funnel here).
+    if let Some(err) = check_whitelisted_class_edit(name) {
+        return ok_json(err);
+    }
+
     // Write content verbatim, exactly as supplied — matching the Atelier REST
     // contract, and never stripping/second-guessing Storage (see `tools::storage_guard`).
     let lines: Vec<&str> = content.lines().collect();
@@ -892,6 +913,14 @@ async fn handle_delete(
         let mut deleted = vec![];
         let mut errors = vec![];
         for name in &p.names {
+            // Deleting a whitelisted method's class is as dangerous as editing it: the class
+            // could be recreated with a hostile method body. Block per-entry so one protected
+            // doc does not fail the whole batch.
+            if let Some(err) = check_whitelisted_class_edit(name) {
+                let msg = err["message"].as_str().unwrap_or("blocked");
+                errors.push(serde_json::json!({"name": name, "error": msg}));
+                continue;
+            }
             let url = iris.versioned_ns_url(ns, &format!("/doc/{}", urlencoding::encode(name)));
             match client
                 .delete(&url)
@@ -928,6 +957,10 @@ async fn handle_delete(
         Ok(n) => n,
         Err(r) => return Ok(r),
     };
+    // Deleting a whitelisted method's class is as dangerous as editing it — see do_write.
+    if let Some(err) = check_whitelisted_class_edit(&name) {
+        return ok_json(err);
+    }
     let url = iris.versioned_ns_url(ns, &format!("/doc/{}", urlencoding::encode(&name)));
     let resp = client
         .delete(&url)
@@ -1060,6 +1093,29 @@ pub fn apply_delete_lines(lines: &[String], start: i64, end: i64) -> (Vec<String
     (out, removed, actual_start, actual_end)
 }
 
+/// Replace the 1-based inclusive line range [start, end] with `block` in one pass.
+/// This is delete + insert-at-same-spot fused: the removed range is cut and `block`
+/// is spliced back in where it began, so the edit is atomic (no intermediate document
+/// state that IRIS could renumber between two calls). An empty `block` degenerates to
+/// a pure delete. Returns (new_lines, removed_count, actual_start, actual_end); bounds
+/// are clamped identically to [`apply_delete_lines`], and a start past EOF replaces
+/// nothing (removed = 0) rather than appending.
+pub fn apply_replace_lines(
+    lines: &[String],
+    start: i64,
+    end: i64,
+    block: &[String],
+) -> (Vec<String>, i64, i64, i64) {
+    let (after_delete, removed, actual_start, actual_end) = apply_delete_lines(lines, start, end);
+    if removed == 0 {
+        return (after_delete, 0, actual_start, actual_end);
+    }
+    let idx = (actual_start - 1) as usize;
+    let mut out = after_delete;
+    out.splice(idx..idx, block.iter().cloned());
+    (out, removed, actual_start, actual_end)
+}
+
 /// Number of unchanged context lines shown around a change in the rendered diff.
 const DIFF_CONTEXT: usize = 3;
 
@@ -1109,6 +1165,62 @@ fn unified_diff(before: &[String], del_start: usize, del_len: usize, add: &[Stri
     // Drop the trailing newline so the fenced block has no blank last line.
     if out.ends_with('\n') {
         out.pop();
+    }
+    out
+}
+
+/// Sentinel `expected` value meaning "the anchored line(s) are blank". A caller
+/// cannot pass `expected: ""` to anchor a blank line: several tool-use layers drop
+/// the *entire* argument object when any string field is the empty string (the same
+/// class of bug that motivates the flat-schema note on `DocMode`). So a blank-line
+/// anchor is expressed with this sentinel, which `resolve_expected` maps back to "".
+pub const BLANK_ANCHOR: &str = "<BLANK>";
+
+/// Normalize a caller-supplied `expected` into the text to compare against the live
+/// document. The `<BLANK>` sentinel (see [`BLANK_ANCHOR`]) becomes an empty anchor;
+/// everything else passes through unchanged. Each newline-separated line is mapped
+/// independently, so a multi-line `delete_lines` block can mix real and blank lines
+/// (e.g. `"foo\n<BLANK>\nbar"`).
+///
+/// Also un-escapes literal `\n` and `\t` sequences that arrive when an LLM double-
+/// escapes its JSON (common with tool-use layers that stringify before embedding).
+fn resolve_expected(expected: &str) -> String {
+    let unescaped = unescape_line_escapes(expected);
+    unescaped
+        .split('\n')
+        .map(|l| if l == BLANK_ANCHOR { "" } else { l })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Un-escape literal two-char sequences `\n` → newline, `\t` → tab, `\\` → `\`.
+/// This handles the common case where an LLM double-escapes its tool-call JSON,
+/// producing the literal characters `\` `n` instead of a real newline.
+///
+/// Only applied when the input contains NO real newlines — if real newlines are
+/// present, serde already decoded the JSON correctly and we must not re-interpret
+/// backslash sequences that are part of the actual source content.
+fn unescape_line_escapes(s: &str) -> String {
+    if s.contains('\n') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('\\') => out.push('\\'),
+                Some(other) => {
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
     }
     out
 }
@@ -1769,6 +1881,103 @@ async fn handle_list(
 
 // ── 053: iris_execute_method handler ─────────────────────────────────────────
 
+/// Env var listing (class, method) pairs allowed to bypass the service account and run under
+/// the primary user identity. Comma-separated entries; each entry is `Class.Path:Method`.
+/// Example: `IRIS_EXECUTE_METHOD_WHITELIST="MyApp.Utils:Ping,%SYSTEM.Version:GetVersion"`.
+pub const EXECUTE_METHOD_WHITELIST_ENV: &str = "IRIS_EXECUTE_METHOD_WHITELIST";
+
+/// Parse the whitelist env var into (class, method) pairs. Blank entries and entries missing
+/// the `:` separator are ignored. Whitespace around class/method is trimmed.
+pub fn parse_execute_method_whitelist(raw: &str) -> Vec<(String, String)> {
+    raw.split(',')
+        .filter_map(|entry| {
+            let (cls, mth) = entry.split_once(':')?;
+            let cls = cls.trim();
+            let mth = mth.trim();
+            if cls.is_empty() || mth.is_empty() {
+                return None;
+            }
+            Some((cls.to_string(), mth.to_string()))
+        })
+        .collect()
+}
+
+/// Read + parse the whitelist from the environment. Returns an empty vec when unset or blank.
+pub fn read_execute_method_whitelist() -> Vec<(String, String)> {
+    std::env::var(EXECUTE_METHOD_WHITELIST_ENV)
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(|s| parse_execute_method_whitelist(&s))
+        .unwrap_or_default()
+}
+
+/// Whether `(class, method)` is in the whitelist. Comparison is case-sensitive to match
+/// IRIS's class-name resolution.
+pub fn is_execute_method_whitelisted(class: &str, method: &str) -> bool {
+    read_execute_method_whitelist()
+        .iter()
+        .any(|(c, m)| c == class && m == method)
+}
+
+/// Convert a document name to its ObjectScript class name, or `None` if it is not a class
+/// document. `MyApp.Utils.cls` → `Some("MyApp.Utils")`; a `.mac`/`.inc`/`.int` routine → `None`.
+/// Trailing whitespace is trimmed; the `.cls` suffix match is case-insensitive.
+fn doc_name_to_class(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    lower
+        .strip_suffix(".cls")
+        .map(|_| trimmed[..trimmed.len() - 4].to_string())
+}
+
+/// Pure core of [`whitelisted_class_for_doc`]: given the parsed whitelist, return the whitelisted
+/// class name that `doc_name` is the definition of, or `None`. Comparison is case-insensitive
+/// because IRIS resolves class names case-insensitively, so `myapp.utils.cls` must be blocked as
+/// readily as `MyApp.Utils.cls`. Kept env-free so it can be unit-tested without racy env vars.
+fn whitelisted_class_match(doc_name: &str, whitelist: &[(String, String)]) -> Option<String> {
+    let class = doc_name_to_class(doc_name)?;
+    whitelist
+        .iter()
+        .map(|(c, _)| c)
+        .find(|c| c.eq_ignore_ascii_case(&class))
+        .cloned()
+}
+
+/// If `doc_name` is the class definition of a class that owns a whitelisted method, return the
+/// matched class name. Editing such a class would let the agent rewrite the whitelisted method
+/// body and then invoke it via `iris_execute_method`'s service-account bypass — arbitrary code
+/// under the privileged identity.
+///
+/// Only the class that literally declares a whitelisted method is protected here; a helper class
+/// it calls transitively is not (that would require full call-graph analysis). Keep whitelisted
+/// methods self-contained, or add their helpers to the whitelist's protection surface.
+pub fn whitelisted_class_for_doc(doc_name: &str) -> Option<String> {
+    whitelisted_class_match(doc_name, &read_execute_method_whitelist())
+}
+
+/// Gate: block edits/deletes to a class document that owns a whitelisted `iris_execute_method`
+/// target. Returns `Some(error_json)` when blocked, `None` otherwise.
+pub fn check_whitelisted_class_edit(doc_name: &str) -> Option<serde_json::Value> {
+    let matched = whitelisted_class_for_doc(doc_name)?;
+    Some(serde_json::json!({
+        "success": false,
+        "error_code": "WHITELISTED_CLASS_EDIT_BLOCKED",
+        "code_edit_blocked": true,
+        "document": doc_name,
+        "matched_class": matched,
+        "message": format!(
+            "Editing '{doc_name}' is blocked: class '{matched}' owns a method listed in \
+             {EXECUTE_METHOD_WHITELIST_ENV}, which iris_execute_method runs under the primary \
+             (privileged) account instead of the restricted service account. Allowing edits to \
+             this class would let a method body be rewritten and then executed with elevated \
+             privileges — an arbitrary-code-execution escalation. This protection is \
+             non-configurable while the method is whitelisted."
+        ),
+        "remediation": "Remove the class's method(s) from IRIS_EXECUTE_METHOD_WHITELIST to edit \
+                        the class, then re-add them after reviewing the change.",
+    }))
+}
+
 pub async fn handle_iris_execute_method(
     iris: &IrisConnection,
     client: &reqwest::Client,
@@ -1932,6 +2141,113 @@ mod tests {
         let body = serde_json::json!({});
         let s = doc_content_to_string(&body);
         assert_eq!(s, "");
+    }
+
+    // ── iris_execute_method whitelist parsing ─────────────────────────────────
+
+    #[test]
+    fn test_whitelist_parse_basic() {
+        let pairs = parse_execute_method_whitelist("MyApp.Utils:Ping,%SYSTEM.Version:GetVersion");
+        assert_eq!(
+            pairs,
+            vec![
+                ("MyApp.Utils".to_string(), "Ping".to_string()),
+                ("%SYSTEM.Version".to_string(), "GetVersion".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_whitelist_parse_trims_whitespace() {
+        let pairs = parse_execute_method_whitelist(" MyApp.Utils : Ping , A.B : C ");
+        assert_eq!(
+            pairs,
+            vec![
+                ("MyApp.Utils".to_string(), "Ping".to_string()),
+                ("A.B".to_string(), "C".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_whitelist_parse_skips_malformed() {
+        let pairs = parse_execute_method_whitelist("bad_entry,Good.Cls:GoodMth,:NoClass,NoMethod:");
+        assert_eq!(pairs, vec![("Good.Cls".to_string(), "GoodMth".to_string())]);
+    }
+
+    #[test]
+    fn test_whitelist_parse_empty() {
+        assert!(parse_execute_method_whitelist("").is_empty());
+        assert!(parse_execute_method_whitelist(",,").is_empty());
+    }
+
+    // ── whitelisted-class edit gate ───────────────────────────────────────────
+
+    fn wl(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(c, m)| (c.to_string(), m.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn test_doc_name_to_class_only_cls() {
+        assert_eq!(
+            doc_name_to_class("MyApp.Utils.cls").as_deref(),
+            Some("MyApp.Utils")
+        );
+        assert_eq!(
+            doc_name_to_class("  MyApp.Utils.CLS ").as_deref(),
+            Some("MyApp.Utils")
+        );
+        assert_eq!(doc_name_to_class("MyApp.Routine.mac"), None);
+        assert_eq!(doc_name_to_class("include.inc"), None);
+        assert_eq!(doc_name_to_class("Foo.int"), None);
+    }
+
+    #[test]
+    fn test_whitelisted_class_match_blocks_owning_class() {
+        let w = wl(&[("MyApp.Utils", "Ping"), ("Other.Svc", "Run")]);
+        assert_eq!(
+            whitelisted_class_match("MyApp.Utils.cls", &w).as_deref(),
+            Some("MyApp.Utils")
+        );
+    }
+
+    #[test]
+    fn test_whitelisted_class_match_case_insensitive() {
+        let w = wl(&[("MyApp.Utils", "Ping")]);
+        // IRIS resolves class names case-insensitively, so a lowercased doc name must still block.
+        assert_eq!(
+            whitelisted_class_match("myapp.utils.cls", &w).as_deref(),
+            Some("MyApp.Utils")
+        );
+    }
+
+    #[test]
+    fn test_whitelisted_class_match_allows_unrelated_class() {
+        let w = wl(&[("MyApp.Utils", "Ping")]);
+        assert!(whitelisted_class_match("MyApp.Other.cls", &w).is_none());
+    }
+
+    #[test]
+    fn test_whitelisted_class_match_ignores_routines() {
+        // A .mac/.inc cannot define a ClassMethod, so it is never a whitelisted class.
+        let w = wl(&[("MyApp.Utils", "Ping")]);
+        assert!(whitelisted_class_match("MyApp.Utils.mac", &w).is_none());
+    }
+
+    #[test]
+    fn test_whitelisted_class_match_empty_whitelist() {
+        assert!(whitelisted_class_match("MyApp.Utils.cls", &[]).is_none());
+    }
+
+    #[test]
+    fn test_check_whitelisted_class_edit_error_shape() {
+        // With no env set the gate is inert; assert the pure matcher drives the error shape.
+        let w = wl(&[("MyApp.Utils", "Ping")]);
+        let matched = whitelisted_class_match("MyApp.Utils.cls", &w).unwrap();
+        assert_eq!(matched, "MyApp.Utils");
     }
 
     #[test]

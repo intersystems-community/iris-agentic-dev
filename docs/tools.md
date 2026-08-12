@@ -323,6 +323,17 @@ iris_execute_method(class="MyApp.Util", method="GetVersion")
 iris_execute_method(class="%Library.Integer", method="IsValid", args=["42"])
 ```
 
+By default this runs under the restricted service account (`IRIS_SERVICE_USERNAME`) when one is
+configured, so it cannot edit code even via `$classmethod` indirection. Set
+`IRIS_EXECUTE_METHOD_WHITELIST` to a comma-separated list of `Class.Path:Method` entries to let
+specific methods run under the primary (privileged) account instead — e.g.
+`IRIS_EXECUTE_METHOD_WHITELIST="MyApp.Utils:Ping,%SYSTEM.Version:GetVersion"`. Whitelisted entries
+are appended to the tool description so the agent knows which methods qualify.
+
+Because a whitelisted method runs privileged, `iris_doc` refuses to edit or delete the class that
+owns it (`WHITELISTED_CLASS_EDIT_BLOCKED`) — otherwise the method body could be rewritten and then
+executed with elevated rights. Remove the method from the whitelist to edit its class.
+
 ---
 
 ### `iris_query`
@@ -1601,6 +1612,8 @@ comes back as-is, so `redact` is not a safe default for XML or custom message bo
 | `STALE_CONTENT`               | `iris_doc` insert/delete_lines `expected` field didn't match stored content                          |
 | `STORAGE_STRIP_BLOCKED`       | `iris_doc mode=put` would strip a Storage block — pass `allow_storage_regeneration: true` to proceed |
 | `CODE_EDIT_BLOCKED`           | `iris_execute` call matched a code-editing pattern — use `iris_doc` + `iris_compile`                 |
+| `COMPILE_TIME_EXEC_BLOCKED`   | `iris_doc` write included `CodeMode = objectgenerator/expression/call` — only `CodeMode = code` allowed |
+| `WHITELISTED_CLASS_EDIT_BLOCKED` | `iris_doc` edit/delete targets a class that owns an `IRIS_EXECUTE_METHOD_WHITELIST` method — remove it from the whitelist first |
 | `CHECKIN_BLOCKED`             | SCM CheckIn called without `IRIS_SCM_ALLOW_CHECKIN=1`                                                |
 | `HTTP_EXECUTION_FAILED`       | Atelier HTTP call failed — check host, port, credentials                                             |
 | `IRIS_UNREACHABLE`            | No IRIS connection discoverable — run `check_config`                                                 |

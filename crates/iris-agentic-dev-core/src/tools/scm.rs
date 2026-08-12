@@ -650,6 +650,30 @@ pub(crate) fn after_user_action_code(
     )
 }
 
+/// Parse the output of `after_user_action_code`.
+///
+/// The snippet writes `SCMEND:<errtext>` as its last line — a sentinel that lets us
+/// distinguish our result from the diagnostic noise the SCM hook chain writes to stdout
+/// (p4 revert progress, Compile errors, Imported/Exported confirmations, etc.).
+///
+/// Returns `Ok(None)` on success (sentinel present with empty errtext, or sentinel absent),
+/// `Err(msg)` when the hook set errtext to a non-empty error string.
+pub(crate) fn parse_after_user_action_out(out: &str) -> Result<Option<String>, String> {
+    for line in out.lines().rev() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("SCMEND:") {
+            let payload = trimmed["SCMEND:".len()..].trim();
+            return if payload.is_empty() {
+                Ok(None)
+            } else {
+                Err(payload.to_string())
+            };
+        }
+    }
+    // No sentinel found — treat as success (legacy path or hook wrote nothing)
+    Ok(None)
+}
+
 /// Build a single ObjectScript snippet that queries all enabled SCM menu items via
 /// the MenuItems ResultSet, writing one "name|enabled|displayName" line per item.
 fn menu_all_items_code(doc: &str, username: &str, password: &str) -> String {
@@ -1120,6 +1144,120 @@ mod tests {
     fn test_after_user_action_code_no_becomes_0() {
         let code = after_user_action_code("CheckOut", "Doc.cls", "no", "user", "pass");
         assert!(code.contains(",0,"), "no should become 0: {code}");
+    }
+
+    #[test]
+    fn test_after_user_action_code_passes_reload_byref_to_after() {
+        // Regression: AfterUserAction must receive `.reload` by reference so the hook's
+        // reload signal (set on %UndoCheckout) is captured, not discarded.
+        let code = after_user_action_code("%UndoCheckout", "Doc.cls", "yes", "user", "pass");
+        assert!(
+            code.contains(
+                "AfterUserAction(0,\"%SourceMenu,%UndoCheckout\",\"Doc.cls\",1,\"\",.reload)"
+            ),
+            "AfterUserAction must be passed .reload byref: {code}"
+        );
+    }
+
+    #[test]
+    fn test_after_user_action_code_reimports_on_undo_checkout() {
+        // %UndoCheckout: kills the FileTimeStamp cache entry (bypasses ISC.Load's
+        // timestamp check) then calls ISC.Load directly to reimport from disk.
+        let code = after_user_action_code("%UndoCheckout", "Doc.cls", "yes", "user", "pass");
+        assert!(
+            code.contains("(1)||(+$get(reload))"),
+            "revert action must force reimport (reimport=1): {code}"
+        );
+        assert!(
+            code.contains("$$Load^%apiOBJ"),
+            "must reimport via $$Load^%apiOBJ (bypasses timestamp check): {code}"
+        );
+        assert!(
+            code.contains("ExtName"),
+            "must resolve the path via ISC ExtName: {code}"
+        );
+        assert!(
+            code.contains("SCMEND:"),
+            "must use SCMEND: sentinel so it's distinguishable from hook noise: {code}"
+        );
+    }
+
+    #[test]
+    fn test_after_user_action_code_getlatest_also_reimports() {
+        let code = after_user_action_code("%GetLatest", "Doc.cls", "yes", "user", "pass");
+        assert!(
+            code.contains("(1)||(+$get(reload))"),
+            "GetLatest must force reimport: {code}"
+        );
+        assert!(
+            code.contains("$$Load^%apiOBJ"),
+            "GetLatest must reimport via apiOBJ: {code}"
+        );
+    }
+
+    #[test]
+    fn test_after_user_action_code_checkout_does_not_force_reimport() {
+        // Non-revert action: no REIMPORT: signal, only Reload fallback.
+        let code = after_user_action_code("%CheckOut", "Doc.cls", "yes", "user", "pass");
+        assert!(
+            code.contains("(0)||(+$get(reload))"),
+            "non-revert action must leave reimport=0: {code}"
+        );
+        // The REIMPORT: signal is still present in the code (shared template) but
+        // gated on (0)||(+$get(reload)) — it only fires if the hook sets Reload=1,
+        // not unconditionally. The test above verifies reimport=0 is the gate value.
+    }
+
+    // ── parse_after_user_action_out ──────────────────────────────────────────
+    #[test]
+    fn test_parse_after_user_action_out_empty_is_ok_none() {
+        assert_eq!(parse_after_user_action_out(""), Ok(None));
+        assert_eq!(parse_after_user_action_out("   \n"), Ok(None));
+    }
+
+    #[test]
+    fn test_parse_after_user_action_out_scmend_empty_ok() {
+        // Clean success: SCMEND: with empty errtext
+        assert_eq!(
+            parse_after_user_action_out("CMD: p4 revert foo.xml\nSCMEND:"),
+            Ok(None)
+        );
+        assert_eq!(parse_after_user_action_out("SCMEND:  "), Ok(None));
+    }
+
+    #[test]
+    fn test_parse_after_user_action_out_scmend_error() {
+        // SCMEND with non-empty errtext is an error
+        assert_eq!(
+            parse_after_user_action_out("CMD: p4 revert\nSCMEND:RELOAD_FAILED: oops"),
+            Err("RELOAD_FAILED: oops".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_after_user_action_out_no_sentinel_ok_none() {
+        // No sentinel (legacy path) → treat as success
+        assert_eq!(parse_after_user_action_out("CMD: p4 revert"), Ok(None));
+    }
+
+    #[test]
+    fn test_parse_after_user_action_out_error() {
+        // SCMEND with error payload
+        assert_eq!(
+            parse_after_user_action_out("SCMEND:some error text"),
+            Err("some error text".to_string())
+        );
+    }
+
+    #[test]
+    fn test_after_user_action_code_escapes_doc_in_reload_path() {
+        // The doc name is interpolated into the ExternalName call too — must stay quoted.
+        let code = after_user_action_code("%UndoCheckout", "My\"Doc.cls", "yes", "user", "pass");
+        assert!(
+            code.contains("\"\""),
+            "double-quote in doc must be doubled: {code}"
+        );
+        assert!(!code.contains("\\\""), "no backslash-quote: {code}");
     }
 
     // ── Document name normalization ──────────────────────────────────────────
