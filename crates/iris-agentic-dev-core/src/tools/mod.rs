@@ -3297,6 +3297,16 @@ impl IrisTools {
         } else {
             None
         };
+        // Atelier parity: the compiler can rewrite content beyond what was submitted
+        // (e.g. auto-mapping a new property into Storage) — re-fetch so the caller
+        // can sync a local copy without a separate get, same as the local-path branch
+        // above. Only for a genuine single-document compile — a wildcard/package
+        // compile has no single "the content" to hand back.
+        let content = if single_target {
+            doc::fetch_doc_content(&iris, client, &targets_with_ext[0], &namespace).await
+        } else {
+            None
+        };
 
         let mut resp = serde_json::json!({
             "success": success,
