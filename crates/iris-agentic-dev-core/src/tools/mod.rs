@@ -6,6 +6,17 @@ use crate::iris::connection::IrisConnection;
 const DOCKER_REQUIRED_HINT: &str = " Ensure HTTP/Atelier REST is reachable: verify \
     http://<host>:<port>/api/atelier and set host/web_port in .iris-agentic-dev.toml.";
 
+/// `CARGO_PKG_VERSION` plus a `+<git-describe>` build-metadata suffix (see
+/// `build.rs`), so `check_config`'s `server_version` can distinguish a local/
+/// fork build from an official tagged release even when the crate version
+/// hasn't been bumped. Empty suffix exactly when the build is a clean
+/// checkout at the tag matching this version (a genuine release build) — not
+/// merely "no .git", since CI release builds have one too (`actions/checkout`).
+const SERVER_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    env!("IRIS_AGENTIC_DEV_BUILD_SUFFIX")
+);
+
 use rmcp::{
     handler::server::router::tool::ToolRouter, handler::server::wrapper::Parameters, model::*,
     tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler,
@@ -61,6 +72,7 @@ pub mod scm;
 pub mod search;
 pub mod server_tools;
 pub mod skills_tools;
+pub mod storage_guard;
 pub mod symbols_local;
 pub mod ws_tools;
 pub mod xdata_flow;
@@ -2795,7 +2807,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Compile an ObjectScript class, routine, or wildcard package on IRIS via Atelier REST. Supports 'MyApp.*.cls' for package-level compilation. Returns structured errors with line numbers, columns, and severity. No Python required. Skill: objectscript-tdd for the compile-test-fix loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
+        description = "Compile an ObjectScript class, routine, or wildcard package on IRIS via Atelier REST. Supports 'MyApp.*.cls' for package-level compilation. Also accepts a local file path as `target` — uploads it first, then compiles. Returns structured errors with line numbers, columns, and severity. On a successful single-document compile, `content` carries the post-compile source (the compiler can rewrite it beyond what was submitted, e.g. auto-mapping a new property into Storage) — use it to sync a local file without a separate `iris_doc(get)`; `content` is omitted for wildcard/package compiles. No Python required. Skill: objectscript-tdd for the compile-test-fix loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_compile(
         &self,
@@ -3000,6 +3012,14 @@ impl IrisTools {
                     .collect();
                 let success = cr.success();
                 self.record_call("iris_compile", success);
+                // Atelier parity: the compiler can rewrite content beyond what was
+                // uploaded (e.g. auto-mapping a new property into Storage) — re-fetch
+                // so the caller can sync the local file without a separate get.
+                let content = if success {
+                    doc::fetch_doc_content(&iris, client, &doc_name, &p.namespace).await
+                } else {
+                    None
+                };
                 return ok_json(serde_json::json!({
                     "success": success,
                     "target": doc_name,
@@ -3009,6 +3029,7 @@ impl IrisTools {
                     "errors": errors,
                     "warnings": [],
                     "console": console,
+                    "content": content,
                 }));
             }
         }
@@ -3028,12 +3049,12 @@ impl IrisTools {
                     let pattern = p.target.replace('.', "\\.").replace('*', ".*");
                     let re = regex::Regex::new(&format!("(?i)^{}$", pattern))
                         .unwrap_or_else(|_| regex::Regex::new(".*").unwrap());
-                    // /docnames/ returns an array of strings, not objects with a "name" key.
+                    // /docnames/ returns an array of ({name, cat, ts, ...}), not strings.
                     body["result"]["content"]
                         .as_array()
                         .unwrap_or(&vec![])
                         .iter()
-                        .filter_map(|d| d.as_str())
+                        .filter_map(|d| d["name"].as_str())
                         .filter(|n| re.is_match(n))
                         .map(|n| n.to_string())
                         .collect()
@@ -3175,9 +3196,20 @@ impl IrisTools {
         self.record_call("iris_compile", success);
 
         // Write open hint for single non-wildcard successful compile
-        let open_uri = if success && !p.target.contains('*') && targets.len() == 1 {
+        let single_target = success && !p.target.contains('*') && targets.len() == 1;
+        let open_uri = if single_target {
             write_open_hint(&p.namespace, &p.target);
             Some(format!("isfs://{}/{}", p.namespace, p.target))
+        } else {
+            None
+        };
+        // Atelier parity: the compiler can rewrite content beyond what was submitted
+        // (e.g. auto-mapping a new property into Storage) — re-fetch so the caller
+        // can sync a local copy without a separate get, same as the local-path branch
+        // above. Only for a genuine single-document compile — a wildcard/package
+        // compile has no single "the content" to hand back.
+        let content = if single_target {
+            doc::fetch_doc_content(&iris, client, &targets_with_ext[0], &p.namespace).await
         } else {
             None
         };
@@ -3190,6 +3222,7 @@ impl IrisTools {
             "errors": errors,
             "warnings": warnings,
             "console": console,
+            "content": content,
         });
         if let Some(uri) = open_uri {
             resp["open_uri"] = serde_json::Value::String(uri);
@@ -3930,7 +3963,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Read/write/delete IRIS documents. mode: get (fetch source), put (write, auto SCM checkout), delete, head (existence), fragment (read lines start..end), compiled (read INT), list (glob `pattern`), insert (splice `content` before 1-based `line`; omit `line` to append), delete_lines (remove start..end). `name` is required for all single-document modes; `line`/`start`/`end` are integers. For insert with an explicit `line` and for delete_lines, pass `expected` (current text at the target lines) or the edit is refused with STALE_CONTENT. Edits return the re-numbered post-write `content` to chain from, plus a `diff` field (git-style unified diff of the change) — render it to the user inside a ```diff fenced code block. Batch via `names`; SCM dialogs resume via elicitation_id/elicitation_answer. Skill: objectscript-navigation to locate documents before editing. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "Read/write/delete IRIS documents. mode: get (fetch source), put (write, auto SCM checkout), delete, head (existence), fragment (read lines start..end), compiled (read INT), list (glob `pattern`), insert (splice `content` before 1-based `line`; omit `line` to append), delete_lines (remove start..end). `name` is required for all single-document modes; `line`/`start`/`end` are integers. For insert with an explicit `line` and for delete_lines, pass `expected` (current text at the target lines) or the edit is refused with STALE_CONTENT. Edits return the re-numbered post-write `content` to chain from, plus a `diff` field (git-style unified diff of the change) — render it to the user inside a ```diff fenced code block. Batch via `names`; SCM dialogs resume via elicitation_id/elicitation_answer. Skill: objectscript-navigation to locate documents before editing. Storage blocks on %Persistent/%SerialObject classes: never stripped or regenerated — written verbatim, exactly like Studio/VS Code. Treat the Storage definition as off-limits: when removing a property, leave its Storage entry alone (the compiler leaves it as a harmless orphan; do not delete or edit it). Exception — renaming a property: you may update the corresponding Storage entry's name to match, in the same edit. A full storage reset (submitting content with no Storage block for a class that has one) is refused with STORAGE_RESET_REQUIRES_CONFIRMATION unless allow_storage_regeneration:true is set — only set this after the user has explicitly confirmed the reset is intentional for this session; the response then reports the pre-reset property list so you can decide how to clean up any existing data (e.g. %KillExtent). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         annotations(read_only_hint = true)
     )]
     async fn iris_doc(
@@ -4334,7 +4367,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active. To switch connection mid-session without restart: call check_config first to get config_watch_path, then write a .iris-agentic-dev.toml to that exact path, then call any tool — the reload fires automatically. Fields: connected, connection_source (http|docker|disconnected), host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled, capabilities. Skill: iris-agentic-dev.",
+        description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active, (4) confirm which build of this MCP server is actually running (server_version) when multiple installs/forks may be registered. To switch connection mid-session without restart: call check_config first to get config_watch_path, then write a .iris-agentic-dev.toml to that exact path, then call any tool — the reload fires automatically. Fields: server_version, connected, connection_source (http|docker|disconnected), host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled, capabilities. Skill: iris-agentic-dev.",
         annotations(read_only_hint = true)
     )]
     async fn check_config(
@@ -4439,6 +4472,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
         };
 
         let mut response = serde_json::json!({
+            "server_version": SERVER_VERSION,
             "connected": conn.iris.is_some(),
             "connection_source": connection_source,
             "host": host,
@@ -7827,7 +7861,14 @@ impl ServerHandler for IrisTools {
                 env!("CARGO_PKG_VERSION").to_string(),
             ))
             .with_instructions(
-                "iris-agentic-dev: composable MCP tools for ObjectScript and IRIS development."
+                "iris-agentic-dev: composable MCP tools for ObjectScript and IRIS development. \
+                 Before writing or editing any ObjectScript code (.cls/.mac/.int), call \
+                 skill(action=\"describe\") for objectscript-guardrails and objectscript-review \
+                 and follow their checklists — this includes Storage block handling. \"Save\" and \
+                 \"compile\" mean the IRIS server, not just disk: iris_compile only recompiles \
+                 source IRIS already has stored — it never reads local files. After editing a \
+                 local .cls/.mac/.int file, push it to IRIS first via iris_doc(mode=\"put\", \
+                 compile=true) before considering the change saved."
                     .to_string(),
             )
     }

@@ -449,79 +449,726 @@ fn e2e_doc_stringified_int_not_rpc_rejected() {
     );
 }
 
+// ── Storage-block behavior ─────────────────────────────────────────────────────
+//
+// iris_doc writes Storage blocks verbatim: put/insert/delete_lines all write
+// content exactly like a raw Atelier PUT, and let IRIS's own compiler handle
+// storage evolution — existing properties keep their ordinal forever, removed
+// properties leave a harmless orphan, and a rename needs the caller to also
+// update the Storage entry, same as refactoring any other identifier. Storage
+// is otherwise off-limits to iris_doc: the only guardrail is a flag-gated
+// refusal when a write would drop an existing Storage block entirely (see
+// `allow_storage_regeneration` and `check_storage_reset` in `tools::doc`).
+// These tests cover each of those outcomes end to end.
+
+/// 1-based line number of the first line containing `needle`, or panics with a
+/// descriptive message (every caller here expects the line to exist).
+fn line_containing(content: &str, needle: &str) -> i64 {
+    content
+        .lines()
+        .position(|l| l.contains(needle))
+        .map(|i| i as i64 + 1)
+        .unwrap_or_else(|| panic!("no line containing {needle:?} in:\n{content}"))
+}
+
+/// 1-based line number of the LAST standalone `}` line — the class's own closing
+/// brace. When a Storage block is present it has its own nested closing braces, so
+/// the *first* `}` (line_containing's usual match) would land inside Storage's XData
+/// instead of after it; the class's closing brace is always the last bare `}` line.
+fn last_bare_closing_brace_line(content: &str) -> i64 {
+    content
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.trim() == "}")
+        .last()
+        .map(|(i, _)| i as i64 + 1)
+        .unwrap_or_else(|| panic!("no standalone '}}' line in:\n{content}"))
+}
+
 #[test]
-fn e2e_doc_put_with_storage_block_blocked_by_default() {
+fn e2e_doc_put_round_trips_storage_verbatim_no_flag_needed() {
     require_iris!();
-    // I-3: Storage blocks are refused by default to prevent silent data-layout loss
-    let cls_with_storage = r#"Class Test022.StorageTest Extends %Persistent {
-Property Name As %String;
-Storage Default
-{
-<Data name="DefaultData">
-<Value name="1"><Value>%%CLASSNAME</Value></Value>
-</Data>
-<DataLocation>^Test022.StorageTestD</DataLocation>
-<DefaultData>DefaultData</DefaultData>
-<IdLocation>^Test022.StorageTestD</IdLocation>
-<IndexLocation>^Test022.StorageTestI</IndexLocation>
-<StreamLocation>^Test022.StorageTestS</StreamLocation>
-<Type>%Storage.Persistent</Type>
-}
-}"#;
-
-    let result = call_tool(
+    // Core regression: a get-then-put round trip of a class WITH an explicit Storage
+    // block must succeed unconditionally — no STORAGE_STRIP_BLOCKED, no
+    // allow_storage_regeneration needed. This is exactly the shape that used to be
+    // refused by default (and, before that, would have been mangled into invalid XML).
+    let cls_name = "Test022.RoundTripStorage";
+    let cls_file = format!("{cls_name}.cls");
+    let cls_src = format!("Class {cls_name} Extends %Persistent {{\nProperty Name As %String;\n}}");
+    let put_result = call_tool(
         "iris_doc",
-        serde_json::json!({"mode":"put","name":"Test022.StorageTest.cls",
-            "content": cls_with_storage, "namespace":"USER"}),
+        serde_json::json!({"mode":"put","name": cls_file, "content": cls_src,
+            "namespace":"USER", "compile": true}),
     );
     assert_eq!(
-        result["error_code"], "STORAGE_STRIP_BLOCKED",
-        "put with Storage block should be refused without allow_storage_regeneration: {}",
-        result
+        put_result["success"], true,
+        "fixture setup failed: {put_result}"
     );
-}
 
-#[test]
-fn e2e_doc_put_with_storage_block_strips_when_opted_in() {
-    require_iris!();
-    // I-3b: Storage blocks are stripped and write succeeds when allow_storage_regeneration: true
-    let cls_with_storage = r#"Class Test022.StorageTest Extends %Persistent {
-Property Name As %String;
-Storage Default
-{
-<Data name="DefaultData">
-<Value name="1"><Value>%%CLASSNAME</Value></Value>
-</Data>
-<DataLocation>^Test022.StorageTestD</DataLocation>
-<DefaultData>DefaultData</DefaultData>
-<IdLocation>^Test022.StorageTestD</IdLocation>
-<IndexLocation>^Test022.StorageTestI</IndexLocation>
-<StreamLocation>^Test022.StorageTestS</StreamLocation>
-<Type>%Storage.Persistent</Type>
-}
-}"#;
-
-    let result = call_tool(
+    let fetched = call_tool(
         "iris_doc",
-        serde_json::json!({"mode":"put","name":"Test022.StorageTest.cls",
-            "content": cls_with_storage, "namespace":"USER",
-            "allow_storage_regeneration": true}),
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
     );
-    assert_eq!(
-        result["success"], true,
-        "put with Storage block + allow_storage_regeneration should succeed: {}",
-        result
-    );
-    assert_eq!(
-        result["storage_stripped"], true,
-        "response must include storage_stripped:true: {}",
-        result
+    let content = fetched["content"].as_str().unwrap_or_default().to_string();
+    assert!(
+        content.contains("Storage Default"),
+        "fixture must have a compiled Storage block: {fetched}"
     );
 
-    // Cleanup
+    // Put the exact same content straight back — no flag set.
+    let put_again = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"put","name": cls_file, "content": content, "namespace":"USER"}),
+    );
+    assert_eq!(
+        put_again["success"], true,
+        "round-tripping a class with an explicit Storage block must succeed with no \
+         flag: {put_again}"
+    );
+    assert!(
+        put_again.get("error_code").is_none(),
+        "must not be refused: {put_again}"
+    );
+
+    let refetched = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    assert_eq!(
+        refetched["content"],
+        serde_json::Value::String(content),
+        "content must be preserved byte-for-byte: {refetched}"
+    );
+
     call_tool(
         "iris_doc",
-        serde_json::json!({"mode":"delete","name":"Test022.StorageTest.cls","namespace":"USER"}),
+        serde_json::json!({"mode":"delete","name": cls_file, "namespace":"USER"}),
+    );
+}
+
+#[test]
+fn e2e_doc_insert_add_property_evolves_storage_and_preserves_data() {
+    require_iris!();
+    // Adding a property via insert must evolve Storage (existing ordinal for
+    // Name untouched, Description gets the next free ordinal) rather than
+    // stripping and regenerating it. Seeded data must survive untouched.
+    let cls_name = "Test022.InsertEvolve";
+    let cls_file = format!("{cls_name}.cls");
+    let cls_src = format!("Class {cls_name} Extends %Persistent {{\nProperty Name As %String;\n}}");
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"put","name": cls_file, "content": cls_src,
+            "namespace":"USER", "compile": true}),
+    );
+
+    let obj_new = format!(
+        "set obj = ##class({cls_name}).%New() set obj.Name = \"original-name\" set sc = obj.%Save() \
+         write $system.Status.GetErrorText(sc)"
+    );
+    let save = call_tool(
+        "iris_execute",
+        serde_json::json!({"code": obj_new, "namespace": "USER"}),
+    );
+    assert_eq!(save["output"], "", "seeding data failed: {save}");
+
+    let fetched = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let content = fetched["content"].as_str().unwrap_or_default().to_string();
+    let closing_brace_line = last_bare_closing_brace_line(&content);
+    // Storage's Name ordinal before the edit — must be unchanged after.
+    let name_ordinal_before = content
+        .lines()
+        .position(|l| l.contains("<Value>Name</Value>"))
+        .unwrap();
+    let name_ordinal_line_before = content.lines().nth(name_ordinal_before - 1).unwrap();
+
+    let insert_result = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"insert","name": cls_file, "namespace":"USER",
+            "line": closing_brace_line, "expected": "}",
+            "content": "Property Description As %String;", "compile": true}),
+    );
+    assert_eq!(
+        insert_result["success"], true,
+        "insert adding a property must succeed with no flag: {insert_result}"
+    );
+    assert!(
+        insert_result.get("error_code").is_none(),
+        "must not be refused: {insert_result}"
+    );
+
+    let refetched = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let new_content = refetched["content"].as_str().unwrap_or_default();
+    assert!(
+        new_content.contains("<Value>Description</Value>"),
+        "Description must be added to Storage: {refetched}"
+    );
+    let name_ordinal_after = new_content
+        .lines()
+        .position(|l| l.contains("<Value>Name</Value>"))
+        .unwrap();
+    let name_ordinal_line_after = new_content.lines().nth(name_ordinal_after - 1).unwrap();
+    assert_eq!(
+        name_ordinal_line_after, name_ordinal_line_before,
+        "Name's existing ordinal must be untouched by adding Description"
+    );
+
+    let check = call_tool(
+        "iris_execute",
+        serde_json::json!({"code": format!(
+            "set obj = ##class({cls_name}).%OpenId(1) write obj.Name"
+        ), "namespace": "USER"}),
+    );
+    assert_eq!(
+        check["output"], "original-name",
+        "seeded data must survive the property addition: {check}"
+    );
+
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"delete","name": cls_file, "namespace":"USER"}),
+    );
+    call_tool(
+        "iris_execute",
+        serde_json::json!({"code": format!("kill ^{cls_name}D, ^{cls_name}I, ^{cls_name}S"), "namespace": "USER"}),
+    );
+}
+
+#[test]
+fn e2e_doc_delete_lines_remove_property_leaves_harmless_orphan() {
+    require_iris!();
+    // Removing a property via delete_lines must leave its Storage entry as
+    // an orphan (never touched), not strip the whole block. Other
+    // properties' data must survive untouched.
+    let cls_name = "Test022.DeleteOrphan";
+    let cls_file = format!("{cls_name}.cls");
+    let cls_src = format!(
+        "Class {cls_name} Extends %Persistent {{\nProperty Name As %String;\nProperty Description As %String;\n}}"
+    );
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"put","name": cls_file, "content": cls_src,
+            "namespace":"USER", "compile": true}),
+    );
+    let save = call_tool(
+        "iris_execute",
+        serde_json::json!({"code": format!(
+            "set obj = ##class({cls_name}).%New() set obj.Name = \"keeper\" \
+             set obj.Description = \"orphaned-value\" set sc = obj.%Save() \
+             write $system.Status.GetErrorText(sc)"
+        ), "namespace": "USER"}),
+    );
+    assert_eq!(save["output"], "", "seeding data failed: {save}");
+
+    let fetched = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let content = fetched["content"].as_str().unwrap_or_default().to_string();
+    let description_prop_line = line_containing(&content, "Property Description As %String;");
+
+    let delete_result = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"delete_lines","name": cls_file, "namespace":"USER",
+            "start": description_prop_line, "end": description_prop_line,
+            "expected": "Property Description As %String;", "compile": true}),
+    );
+    assert_eq!(
+        delete_result["success"], true,
+        "delete_lines removing a property must succeed with no flag: {delete_result}"
+    );
+    assert!(
+        delete_result.get("error_code").is_none(),
+        "must not be refused: {delete_result}"
+    );
+
+    let refetched = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let new_content = refetched["content"].as_str().unwrap_or_default();
+    assert!(
+        new_content.contains("<Value>Description</Value>"),
+        "Description's Storage entry must remain as a harmless orphan, not be \
+         stripped: {refetched}"
+    );
+    assert!(
+        !new_content.contains("Property Description As %String;"),
+        "the class body itself must no longer declare Description"
+    );
+
+    let check = call_tool(
+        "iris_execute",
+        serde_json::json!({"code": format!(
+            "set obj = ##class({cls_name}).%OpenId(1) write obj.Name"
+        ), "namespace": "USER"}),
+    );
+    assert_eq!(
+        check["output"], "keeper",
+        "Name's data must survive removing Description: {check}"
+    );
+
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"delete","name": cls_file, "namespace":"USER"}),
+    );
+    call_tool(
+        "iris_execute",
+        serde_json::json!({"code": format!("kill ^{cls_name}D, ^{cls_name}I, ^{cls_name}S"), "namespace": "USER"}),
+    );
+}
+
+#[test]
+fn e2e_doc_insert_after_orphan_gets_next_free_ordinal() {
+    require_iris!();
+    // Adding a property after an orphan exists must get the next free
+    // ordinal, leaving the orphan's ordinal untouched.
+    let cls_name = "Test022.InsertAfterOrphan";
+    let cls_file = format!("{cls_name}.cls");
+    // Start already-orphaned (Description removed, its Storage entry
+    // lingering) by hand-authoring that shape directly, rather than
+    // repeating the remove step here.
+    let cls_src = format!("Class {cls_name} Extends %Persistent\n{{\n\nProperty Name As %String;\n\nStorage Default\n{{\n<Data name=\"{cls_name}DefaultData\">\n<Value name=\"1\">\n<Value>%%CLASSNAME</Value>\n</Value>\n<Value name=\"2\">\n<Value>Name</Value>\n</Value>\n<Value name=\"3\">\n<Value>Description</Value>\n</Value>\n</Data>\n<DataLocation>^{cls_name}D</DataLocation>\n<DefaultData>{cls_name}DefaultData</DefaultData>\n<IdLocation>^{cls_name}D</IdLocation>\n<IndexLocation>^{cls_name}I</IndexLocation>\n<StreamLocation>^{cls_name}S</StreamLocation>\n<Type>%Storage.Persistent</Type>\n}}\n\n}}\n");
+    let put_result = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"put","name": cls_file, "content": cls_src,
+            "namespace":"USER", "compile": true}),
+    );
+    assert_eq!(
+        put_result["success"], true,
+        "fixture put (with an explicit orphaned Storage entry) must succeed with no \
+         flag: {put_result}"
+    );
+
+    let fetched = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let content = fetched["content"].as_str().unwrap_or_default().to_string();
+    let closing_brace_line = last_bare_closing_brace_line(&content);
+
+    let insert_result = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"insert","name": cls_file, "namespace":"USER",
+            "line": closing_brace_line, "expected": "}",
+            "content": "Property Comments As %String;", "compile": true}),
+    );
+    assert_eq!(insert_result["success"], true, "{insert_result}");
+
+    let refetched = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let new_content = refetched["content"].as_str().unwrap_or_default();
+    let comments_ordinal_idx = new_content
+        .lines()
+        .position(|l| l.contains("<Value>Comments</Value>"))
+        .expect("Comments must be in Storage");
+    let ordinal_name_line = new_content.lines().nth(comments_ordinal_idx - 1).unwrap();
+    assert!(
+        ordinal_name_line.contains("name=\"4\""),
+        "Comments must get the next free ordinal (4), leaving the orphan's ordinal \
+         3 alone: {refetched}"
+    );
+    assert!(
+        new_content.contains("<Value>Description</Value>"),
+        "the pre-existing orphan must remain untouched: {refetched}"
+    );
+
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"delete","name": cls_file, "namespace":"USER"}),
+    );
+}
+
+#[test]
+fn e2e_doc_rename_without_updating_storage_is_no_longer_blocked() {
+    require_iris!();
+    // Renaming a property (delete old + insert new, i.e. how a "rename"
+    // happens through iris_doc's actual primitives) without also updating
+    // the Storage Data entry produces an orphan plus a fresh ordinal for the
+    // new property — the developer's own choice, same as it would be in
+    // Studio/VS Code.
+    let cls_name = "Test022.RenameNaive";
+    let cls_file = format!("{cls_name}.cls");
+    let cls_src = format!(
+        "Class {cls_name} Extends %Persistent {{\nProperty Name As %String;\nProperty Description As %String;\n}}"
+    );
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"put","name": cls_file, "content": cls_src,
+            "namespace":"USER", "compile": true}),
+    );
+
+    let fetched = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let content = fetched["content"].as_str().unwrap_or_default().to_string();
+    let description_prop_line = line_containing(&content, "Property Description As %String;");
+
+    let delete_result = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"delete_lines","name": cls_file, "namespace":"USER",
+            "start": description_prop_line, "end": description_prop_line,
+            "expected": "Property Description As %String;"}),
+    );
+    assert!(
+        delete_result.get("error_code").is_none(),
+        "must not be refused: {delete_result}"
+    );
+
+    let after_delete = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let after_delete_content = after_delete["content"].as_str().unwrap_or_default();
+    let closing_brace_line = last_bare_closing_brace_line(after_delete_content);
+
+    let insert_result = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"insert","name": cls_file, "namespace":"USER",
+            "line": closing_brace_line, "expected": "}",
+            "content": "Property Comments As %String;", "compile": true}),
+    );
+    assert_eq!(
+        insert_result["success"], true,
+        "must succeed with no flag: {insert_result}"
+    );
+
+    let refetched = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let new_content = refetched["content"].as_str().unwrap_or_default();
+    assert!(
+        new_content.contains("<Value>Description</Value>"),
+        "old name should be left as a harmless orphan: {refetched}"
+    );
+    assert!(
+        new_content.contains("<Value>Comments</Value>"),
+        "new name present as its own ordinal: {refetched}"
+    );
+
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"delete","name": cls_file, "namespace":"USER"}),
+    );
+}
+
+#[test]
+fn e2e_doc_rename_updating_storage_preserves_data() {
+    require_iris!();
+    // A *correct* rename also edits the Storage Data entry's Value text
+    // (same ordinal, new name). Confirms data actually survives when the
+    // caller does it right, not just that the class compiles.
+    let cls_name = "Test022.RenameCorrect";
+    let cls_file = format!("{cls_name}.cls");
+    let cls_src = format!(
+        "Class {cls_name} Extends %Persistent {{\nProperty Name As %String;\nProperty Description As %String;\n}}"
+    );
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"put","name": cls_file, "content": cls_src,
+            "namespace":"USER", "compile": true}),
+    );
+    let save = call_tool(
+        "iris_execute",
+        serde_json::json!({"code": format!(
+            "set obj = ##class({cls_name}).%New() set obj.Name = \"n\" \
+             set obj.Description = \"rename-me\" set sc = obj.%Save() \
+             write $system.Status.GetErrorText(sc)"
+        ), "namespace": "USER"}),
+    );
+    assert_eq!(save["output"], "", "seeding data failed: {save}");
+
+    // Rename the property declaration itself.
+    let fetched = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let content = fetched["content"].as_str().unwrap_or_default().to_string();
+    let description_prop_line = line_containing(&content, "Property Description As %String;");
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"delete_lines","name": cls_file, "namespace":"USER",
+            "start": description_prop_line, "end": description_prop_line,
+            "expected": "Property Description As %String;"}),
+    );
+    let after_prop_delete = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let after_prop_delete_content = after_prop_delete["content"].as_str().unwrap_or_default();
+    let closing_brace_line = last_bare_closing_brace_line(after_prop_delete_content);
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"insert","name": cls_file, "namespace":"USER",
+            "line": closing_brace_line, "expected": "}",
+            "content": "Property Comments As %String;"}),
+    );
+
+    // Now edit the Storage Data entry's Value text at the SAME ordinal,
+    // from Description to Comments — completing the rename correctly.
+    let before_storage_edit = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let storage_content = before_storage_edit["content"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let value_desc_line = line_containing(&storage_content, "<Value>Description</Value>");
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"delete_lines","name": cls_file, "namespace":"USER",
+            "start": value_desc_line, "end": value_desc_line,
+            "expected": "<Value>Description</Value>"}),
+    );
+    // Deleting only the inner <Value>Description</Value> line leaves an emptied
+    // <Value name="3">\n</Value> pair — IRIS's own document storage collapses that
+    // into a self-closing <Value name="3"/> immediately on write, shifting line
+    // numbers by more than the one line just removed. Re-fetch rather than reuse
+    // value_desc_line (learned the hard way: reusing it here silently targeted the
+    // wrong line and the "rename" produced no data at all instead of an error).
+    let after_value_delete = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let after_value_delete_content = after_value_delete["content"].as_str().unwrap_or_default();
+    let collapsed_ordinal_line = line_containing(after_value_delete_content, "<Value name=\"3\"/>");
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"delete_lines","name": cls_file, "namespace":"USER",
+            "start": collapsed_ordinal_line, "end": collapsed_ordinal_line,
+            "expected": "<Value name=\"3\"/>"}),
+    );
+    // Re-fetch again (same lesson) rather than assume what shifted into the gap.
+    let after_collapsed_delete = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let after_collapsed_delete_content = after_collapsed_delete["content"]
+        .as_str()
+        .unwrap_or_default();
+    let data_close_line = line_containing(after_collapsed_delete_content, "</Data>");
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"insert","name": cls_file, "namespace":"USER",
+            "line": data_close_line, "expected": "</Data>",
+            "content": "<Value name=\"3\">\n<Value>Comments</Value>\n</Value>"}),
+    );
+
+    let refetched_for_compile = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let final_body = refetched_for_compile["content"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let compiled = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"put","name": cls_file, "namespace":"USER",
+            "content": final_body, "compile": true}),
+    );
+    assert_eq!(compiled["success"], true, "{compiled}");
+
+    let final_content = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let fc = final_content["content"].as_str().unwrap_or_default();
+    assert!(
+        !fc.contains("<Value>Description</Value>"),
+        "no orphan should remain — the rename was done correctly: {final_content}"
+    );
+
+    let check = call_tool(
+        "iris_execute",
+        serde_json::json!({"code": format!(
+            "set obj = ##class({cls_name}).%OpenId(1) write obj.Comments"
+        ), "namespace": "USER"}),
+    );
+    assert_eq!(
+        check["output"], "rename-me",
+        "a correctly-done rename (property + Storage entry both updated) must \
+         preserve the data: {check}"
+    );
+
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"delete","name": cls_file, "namespace":"USER"}),
+    );
+    call_tool(
+        "iris_execute",
+        serde_json::json!({"code": format!("kill ^{cls_name}D, ^{cls_name}I, ^{cls_name}S"), "namespace": "USER"}),
+    );
+}
+
+#[test]
+fn e2e_doc_storage_reset_without_flag_is_refused() {
+    require_iris!();
+    // Storage is present server-side and the submitted content omits it
+    // entirely - this must be refused outright, not silently applied and not
+    // paused for an interactive round trip. The existing Storage block must
+    // survive untouched.
+    let cls_name = "Test022.StorageResetRefused";
+    let cls_file = format!("{cls_name}.cls");
+    let cls_src = format!(
+        "Class {cls_name} Extends %Persistent {{\nProperty Name As %String;\nProperty Comments As %String;\n}}"
+    );
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"put","name": cls_file, "content": cls_src,
+            "namespace":"USER", "compile": true}),
+    );
+    let before = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+
+    let reset_src = format!(
+        "Class {cls_name} Extends %Persistent {{\nProperty Name As %String;\nProperty Comments As %String;\n}}"
+    );
+    let reset_attempt = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"put","name": cls_file, "content": reset_src,
+            "namespace":"USER", "compile": true}),
+    );
+    assert_eq!(reset_attempt["success"], false, "{reset_attempt}");
+    assert_eq!(
+        reset_attempt["error_code"], "STORAGE_RESET_REQUIRES_CONFIRMATION",
+        "storage present server-side but missing from submitted content must be \
+         refused without allow_storage_regeneration: {reset_attempt}"
+    );
+    assert!(
+        reset_attempt.get("elicitation_required").is_none(),
+        "this is a hard refusal, not an interactive elicitation: {reset_attempt}"
+    );
+
+    let after = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    assert_eq!(
+        after["content"], before["content"],
+        "a refused reset must leave the document exactly as it was: {after}"
+    );
+
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"delete","name": cls_file, "namespace":"USER"}),
+    );
+}
+
+#[test]
+fn e2e_doc_storage_reset_with_flag_succeeds_and_reports_stale_data() {
+    require_iris!();
+    // The escape hatch: allow_storage_regeneration:true lets the reset through
+    // and reports the properties that existed before the reset, plus whether
+    // %KillExtent is available, so the caller can decide how to clean up.
+    let cls_name = "Test022.StorageResetWithFlag";
+    let cls_file = format!("{cls_name}.cls");
+    let cls_src = format!(
+        "Class {cls_name} Extends %Persistent {{\nProperty Name As %String;\nProperty Comments As %String;\n}}"
+    );
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"put","name": cls_file, "content": cls_src,
+            "namespace":"USER", "compile": true}),
+    );
+
+    let reset_src = format!(
+        "Class {cls_name} Extends %Persistent {{\nProperty Name As %String;\nProperty Comments As %String;\n}}"
+    );
+    let reset_result = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"put","name": cls_file, "content": reset_src,
+            "namespace":"USER", "compile": true, "allow_storage_regeneration": true}),
+    );
+    assert_eq!(
+        reset_result["success"], true,
+        "confirming the reset via the flag must proceed with the write: {reset_result}"
+    );
+    assert_eq!(reset_result["storage_reset"], true, "{reset_result}");
+    assert_eq!(
+        reset_result["kill_extent_available"], true,
+        "a %Persistent class has an extent to kill: {reset_result}"
+    );
+    let stale_properties: Vec<String> = reset_result["stale_properties"]
+        .as_array()
+        .unwrap_or_else(|| panic!("stale_properties missing: {reset_result}"))
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    assert!(
+        stale_properties.contains(&"Name".to_string())
+            && stale_properties.contains(&"Comments".to_string()),
+        "stale_properties must list the properties that existed before the reset: \
+         {reset_result}"
+    );
+    assert!(
+        reset_result["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("KillExtent"),
+        "message must point at %KillExtent for a %Persistent class: {reset_result}"
+    );
+
+    let refetched = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"get","name": cls_file, "namespace":"USER"}),
+    );
+    let new_content = refetched["content"].as_str().unwrap_or_default();
+    assert!(
+        new_content.contains("Storage Default"),
+        "IRIS regenerates a fresh Storage block on compile: {refetched}"
+    );
+
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"delete","name": cls_file, "namespace":"USER"}),
+    );
+}
+
+#[test]
+fn e2e_doc_storage_reset_with_flag_serial_object_has_no_kill_extent() {
+    require_iris!();
+    // %SerialObject classes have no extent of their own, so a flag-gated
+    // reset must report kill_extent_available:false rather than claiming an
+    // option that doesn't exist for this storage kind.
+    let cls_name = "Test022.StorageResetSerialNoKillExtent";
+    let cls_file = format!("{cls_name}.cls");
+    let cls_src =
+        format!("Class {cls_name} Extends %SerialObject {{\nProperty Name As %String;\n}}");
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"put","name": cls_file, "content": cls_src,
+            "namespace":"USER", "compile": true}),
+    );
+
+    let reset_src =
+        format!("Class {cls_name} Extends %SerialObject {{\nProperty Name As %String;\n}}");
+    let reset_result = call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"put","name": cls_file, "content": reset_src,
+            "namespace":"USER", "compile": true, "allow_storage_regeneration": true}),
+    );
+    assert_eq!(reset_result["success"], true, "{reset_result}");
+    assert_eq!(
+        reset_result["kill_extent_available"], false,
+        "a %SerialObject has no extent to kill: {reset_result}"
+    );
+
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"delete","name": cls_file, "namespace":"USER"}),
     );
 }
 
@@ -896,21 +1543,14 @@ fn e2e_compile_wildcard_package() {
         serde_json::json!({"target":"Test022.Wild.*.cls","namespace":"USER","flags":"ck"}),
     );
 
-    // Must not crash and must return a structured response
+    // Both seeded classes exist, so this must actually succeed.
+    assert_eq!(result["success"], true, "{result}");
+    let compiled = result["targets_compiled"].as_u64().unwrap_or(0);
     assert!(
-        result["success"] == true || result["error_code"].is_string(),
-        "wildcard compile must return structured response: {}",
-        result
+        compiled >= 2,
+        "wildcard compile Test022.Wild.* should compile at least 2 classes, got: {}",
+        compiled
     );
-    // If it succeeded, targets_compiled should be >= 2
-    if result["success"] == true {
-        let compiled = result["targets_compiled"].as_u64().unwrap_or(0);
-        assert!(
-            compiled >= 2,
-            "wildcard compile Test022.Wild.* should compile at least 2 classes, got: {}",
-            compiled
-        );
-    }
 
     // Cleanup
     call_tool(
@@ -921,6 +1561,19 @@ fn e2e_compile_wildcard_package() {
         "iris_doc",
         serde_json::json!({"mode":"delete","name":name_b,"namespace":"USER"}),
     );
+}
+
+#[test]
+fn e2e_compile_wildcard_no_match_returns_not_found() {
+    require_iris!();
+    // a wildcard that genuinely matches nothing (package doesn't exist) must still
+    // return structured response with failure and a error code.
+    let result = call_tool(
+        "iris_compile",
+        serde_json::json!({"target":"Test022.DoesNotExist.Nothing.*.cls","namespace":"USER"}),
+    );
+    assert_eq!(result["success"], false, "{result}");
+    assert_eq!(result["error_code"], "NOT_FOUND", "{result}");
 }
 
 // ── iris_test with real tests ─────────────────────────────────────────────────

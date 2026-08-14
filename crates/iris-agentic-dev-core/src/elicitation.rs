@@ -11,7 +11,7 @@ const EXPIRY: Duration = Duration::from_secs(300); // 5 minutes
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ElicitationAction {
-    /// Resume a iris_doc(mode=put) write
+    /// Resume a iris_doc(mode=put) write pending an SCM checkout dialog
     Put,
     /// Resume an iris_source_control execute action
     ScmExecute,
@@ -34,7 +34,7 @@ pub struct PendingElicitation {
     pub id: String,
     pub document: String,
     pub action: ElicitationAction,
-    /// Document content to write on resume (Put only)
+    /// Put: document content to write on resume.
     pub content: Option<String>,
     /// SCM action id to execute on resume (ScmExecute only)
     pub scm_action_id: Option<String>,

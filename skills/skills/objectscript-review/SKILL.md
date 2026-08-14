@@ -26,6 +26,7 @@ For each item, check the generated code and flag any violations:
 - [ ] **%TimeStamp**: Uses `YYYY-MM-DD HH:MM:SS` format, not ISO 8601 with `T`
 - [ ] **%Status returns**: Methods returning %Status use `$$$OK` and check with `$$$ISOK`/`$$$ISERR`
 - [ ] **Globals**: No temporary data stored in globals when locals suffice
+- [ ] **Storage blocks**: Never edit `Storage Default { ... }` — compiler auto-maps properties on compile, added or removed (orphans are fine). Rename exception: also rename its Storage entry. Reset needs explicit user confirmation.
 
 ## Output Format
 
