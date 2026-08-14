@@ -55,7 +55,7 @@ trigger: Use for tdyar/iris-light-slim
 - [ ] **$ListBuild()**: Empty list is `""` not `$ListBuild()` — `$ListLength($ListBuild()) = 1`
 - [ ] **%Status**: Use `$$$ISERR(sc)` / `$$$ThrowOnError(sc)`. Never return `$$$OK` after catching an error
 - [ ] **Transactions**: `If $TLevel > 0 { TROLLBACK }` — never `Return` inside TSTART without rollback
-- [ ] **Storage blocks**: NEVER write `Storage Default { ... }` in UDL — omit entirely. IRIS auto-generates storage. Writing one causes ERROR #5559 in IRIS 2025.1+.
+- [ ] **Storage blocks**: Never edit `Storage Default { ... }` — compiler auto-maps properties on compile, added or removed (orphans are fine). Rename exception: also rename its Storage entry. Reset needs explicit user confirmation.
 - [ ] **%INLIST in ObjectScript**: `%INLIST` is SQL-only. In ObjectScript method code use `$ListFind(list, value) > 0`. Writing `Return (x %INLIST list)` causes ERROR #1010.
 - [ ] **`'=` in SQL strings**: `'=` is the ObjectScript not-equal operator. Inside SQL string literals, use `<>`. `"WHERE Tags '= ''"` → parser sees `'` as start of SQL string.
 
@@ -88,9 +88,11 @@ celsius * 9 / 5 + 32               →  (celsius * 1.8) + 32
 Set lst = $ListBuild()             →  Set lst = ""
 
 // Storage / Operators:
-Storage Default { <Type>...</Type> }   →  (omit entirely — IRIS auto-generates)
-Return (tag %INLIST myList)            →  Return ($ListFind(myList, tag) > 0)
-"WHERE Tags '= ''"                     →  "WHERE Tags <> ''"
+Add Property + map into Storage           →  leave Storage alone (compiler auto-maps)
+Remove Property + delete Storage entry    →  leave Storage entry (orphan is fine)
+Rename Property only                      →  also rename its Storage entry
+Return (tag %INLIST myList)               →  Return ($ListFind(myList, tag) > 0)
+"WHERE Tags '= ''"                        →  "WHERE Tags <> ''"
 ```
 
 ## Related skills
