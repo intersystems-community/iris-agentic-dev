@@ -17,6 +17,8 @@ use super::connection_args::ConnectionArgs;
 /// no dispatch arm, so `iris-agentic-dev tool <name>` rejected them as "unknown tool" while
 /// the MCP stdio transport served them correctly.
 pub const TOOL_NAMES: &[&str] = &[
+    "agent_history",
+    "agent_stats",
     "capability_matrix",
     "check_config",
     "compare_document",
@@ -45,6 +47,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "iris_execute_method",
     "iris_generate",
     "iris_generate_class",
+    "iris_generate_test",
     "iris_get_log",
     "iris_global",
     "iris_import_servers",
@@ -74,6 +77,8 @@ pub const TOOL_NAMES: &[&str] = &[
     "iris_ws_open",
     "journal_search",
     "kb",
+    "kb_index",
+    "kb_recall",
     "mermaid_class",
     "mermaid_production",
     "my_access",
@@ -82,6 +87,11 @@ pub const TOOL_NAMES: &[&str] = &[
     "resolve_storage",
     "skill",
     "skill_community",
+    "skill_community_list",
+    "skill_describe",
+    "skill_forget",
+    "skill_list",
+    "skill_search",
     "stream_inspect",
     "telemetry_export_trace",
     "telemetry_query",

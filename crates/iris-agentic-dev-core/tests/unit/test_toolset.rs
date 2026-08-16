@@ -117,6 +117,29 @@ fn test_nostub_tool_count() {
     );
 }
 
+/// Baseline is 90 total `#[tool]` methods minus the 9 that are Merged-tier-only
+/// dispatchers (iris_admin, iris_debug, iris_containers, iris_get_log, iris_global,
+/// iris_execute_method, iris_message_body, iris_business_rule_info,
+/// iris_production_diff) = 81. Pinned to a specific number for the same reason as
+/// test_merged_tool_count: `registered_tool_names()` now derives directly from the router
+/// so it has no parallel list left to drift against, but the router itself can still
+/// silently grow or shrink if a `#[tool]` method is added, removed, or accidentally
+/// scoped to a narrower toolset than intended. This is the one test in the suite that
+/// would catch that.
+#[test]
+fn test_baseline_tool_count() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
+    let count = tools.registered_tool_names().len();
+    assert_eq!(
+        count, 81,
+        "Baseline toolset must have exactly 81 tools (90 total #[tool] methods - 9 \
+         Merged-tier-only dispatchers), got {}. If this changed on purpose, update this \
+         number — do not just silence the assertion.",
+        count
+    );
+}
+
 // ── T020–T027: Merged — parity stubs (full parity tests require live IRIS) ──
 
 /// iris_debug must be registered in merged toolset (FR-007).
@@ -225,15 +248,27 @@ fn test_merged_excludes_original_interop_production_tools() {
     }
 }
 
-/// Merged must have exactly 68 tools (baseline 68 - 4 stubs - 4 merged_removed + 8 merged_added-only).
+/// Merged tool count, derived from the real router (90 `#[tool]` methods total in
+/// Baseline) minus the 4 stub tools minus the 8 tools replaced by consolidated
+/// dispatchers (debug_capture_packet/debug_get_error_logs/debug_map_int_to_cls/
+/// debug_source_map → iris_debug; agent_info/iris_list_containers/
+/// iris_select_container/iris_start_sandbox → iris_containers) = 78.
+///
+/// This asserts a specific number deliberately, even though `registered_tool_names()`
+/// no longer has a parallel hand-maintained list to drift against: a hardcoded number
+/// here still catches an accidental removal (or addition) of a `#[tool]` method that
+/// nobody meant to make Merged-tier-visible, since that's exactly the class of change a
+/// count assertion is supposed to force someone to look at and update deliberately.
 #[test]
-fn test_merged_tool_count_is_23() {
+fn test_merged_tool_count() {
     let _lock = ENV_LOCK.lock().unwrap();
     let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
     let count = tools.registered_tool_names().len();
     assert_eq!(
-        count, 68,
-        "Merged toolset must have exactly 68 tools (baseline 68 - stubs 4 - merged_removed 4 + new merged_added 8), got {}",
+        count, 78,
+        "Merged toolset must have exactly 78 tools (90 total #[tool] methods - stubs 4 - \
+         replaced-by-dispatcher 8), got {}. If this changed on purpose (a tool was added, \
+         removed, or moved tiers), update this number — do not just silence the assertion.",
         count
     );
     // iris_get_log must be registered in Merged (027-progressive-disclosure)
