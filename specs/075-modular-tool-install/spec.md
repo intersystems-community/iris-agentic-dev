@@ -2,12 +2,12 @@
 
 **Feature Branch**: `075-modular-tool-install`
 **Created**: 2026-08-16
-**Status**: Draft
+**Status**: In Progress — User Story 1 (P1) delivered; User Stories 2–3 (P2–P3) not started
 **Input**: User description: "A user in the global masters community wants skills and tools to be separately installable/usable, rather than bundled all-or-nothing with the full iris-agentic-dev binary. Skills already have a mostly-solved path (the 061 official skill pack via `npx skills`); scope what's needed on the tools side — let a developer or a downstream project expose, or depend on, a chosen subset of the 90 MCP tools without pulling in the whole tool surface, and evaluate whether a genuinely smaller compiled artifact is warranted or whether interface-level subsetting is enough."
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Expose only a chosen subset of tools to an agent (Priority: P1)
+### User Story 1 - Expose only a chosen subset of tools to an agent (Priority: P1) — ✅ Delivered
 
 A developer configuring their AI coding agent's MCP connection to iris-agentic-dev wants their agent to see only a specific, named set of tools — for example, only the SQL and search tools, to reduce the number of tools their agent has to reason over and to shrink the blast radius of anything that could touch a live instance. Today they can only choose between three fixed presets (`baseline`, `nostub`, `merged`) or remove individually-named tools from whichever preset they picked; there is no way to start from "nothing" and add exactly the tools they want.
 
@@ -21,6 +21,19 @@ A developer configuring their AI coding agent's MCP connection to iris-agentic-d
 2. **Given** an allowlist naming a tool that does not exist, **When** the MCP server starts, **Then** startup does not fail and the nonexistent name is silently ignored (matching the existing behavior of `IRIS_DISABLED_TOOLS` for unknown names).
 3. **Given** both an allowlist and the existing `IRIS_DISABLED_TOOLS` blocklist name the same tool, **When** the MCP server starts, **Then** that tool is absent — the blocklist takes precedence over the allowlist for any name present in both.
 4. **Given** an allowlist is set, **When** the CLI (`iris-agentic-dev tool <name>`), the MCP stdio transport, and the VS Code extension's toolset setting are all used against the same running configuration, **Then** all three observe the identical effective tool set — no consumer has a separate enforcement path that could disagree with the others.
+
+**Delivered**: `IRIS_ENABLED_TOOLS` env var + `enabled_tools` field in `.iris-agentic-dev.toml`
+(`workspace_config.rs`), enforced by pruning `self.tool_router` with the same
+`remove_route()` primitive the `Toolset` presets and `IRIS_DISABLED_TOOLS` already use
+(`with_registry_and_toolset` in `tools/mod.rs`) — no second enforcement path, satisfying
+FR-003/AS-4 by construction rather than by convention. All four acceptance scenarios
+covered by tests in `test_toolset.rs` (`test_enabled_tools_env_restricts_to_named_subset`,
+`test_enabled_tools_env_unknown_name_is_ignored`, `test_disabled_tools_wins_over_enabled_tools_for_same_name`,
+`test_enabled_tools_env_applies_on_top_of_toolset_pruning`) plus the toml/env-export path
+in `test_workspace_config.rs`. AS-4's CLI/VS-Code-setting claim holds by construction
+(one router, one enforcement point) rather than by a dedicated cross-consumer test — no
+new test exercises the VS Code extension or the CLI specifically against an active
+allowlist, so treat that half of AS-4 as architecturally true, not independently verified.
 
 ---
 
@@ -59,7 +72,7 @@ A developer or downstream packager wants an iris-agentic-dev *binary* — not ju
 
 ### Edge Cases
 
-- What happens when an allowlist (User Story 1) is set to an empty list — does the MCP server start with zero tools, or is an empty allowlist treated as "no allowlist" (falls back to the `Toolset` preset)? This must be decided and documented; both are defensible, but only one can be correct.
+- ~~What happens when an allowlist (User Story 1) is set to an empty list~~ — **Resolved**: empty means "no allowlist" (falls back to the active `Toolset` preset), not "expose zero tools." Documented on the `enabled_tools` field and covered by `test_enabled_tools_env_empty_string_means_no_allowlist`.
 - What happens when a tool named in an allowlist exists in the tool registry but is currently write-gated or destructive-gated and those gates are not satisfied by the active connection — does the allowlist name it as present-but-blocked, or does it disappear entirely the way `iris_production_item`/`iris_credential_manage` already do today when write tools are disabled?
 - What happens when a manifest-declared subset (User Story 2) is resolved on a machine that also has a `Toolset` preset explicitly set — which one is the "outer" constraint and which is the "inner" one?
 - What happens when the CLI's own tool-name validation (`iris-agentic-dev tool <name>`) is asked to run a tool that exists in the registry but has been excluded by an active allowlist — is that the same "unknown tool" error as a genuinely nonexistent name, or a distinguishable "excluded by policy" error? (These must not be conflated — see the Dependencies section on why that distinction matters here specifically.)
@@ -69,9 +82,9 @@ A developer or downstream packager wants an iris-agentic-dev *binary* — not ju
 
 ### Functional Requirements
 
-- **FR-001**: System MUST support an explicit tool allowlist — a named, comma-separated set of tool names — configurable via an `IRIS_ENABLED_TOOLS` environment variable and an `enabled_tools` field in `.iris-agentic-dev.toml`, symmetric to the existing `IRIS_DISABLED_TOOLS` blocklist mechanism.
-- **FR-002**: When both an allowlist and the blocklist name the same tool, the blocklist MUST win — that tool MUST be absent regardless of allowlist membership.
-- **FR-003**: The allowlist MUST be enforced by pruning routes from the same already-built `ToolRouter` the `Toolset` presets and `IRIS_DISABLED_TOOLS` already prune — no second, independent enforcement path may be introduced. (This project has already paid once for a second enforcement path disagreeing with the first — see Dependencies below — and must not do it again.)
+- **FR-001**: ✅ Done. System MUST support an explicit tool allowlist — a named, comma-separated set of tool names — configurable via an `IRIS_ENABLED_TOOLS` environment variable and an `enabled_tools` field in `.iris-agentic-dev.toml`, symmetric to the existing `IRIS_DISABLED_TOOLS` blocklist mechanism.
+- **FR-002**: ✅ Done. When both an allowlist and the blocklist name the same tool, the blocklist MUST win — that tool MUST be absent regardless of allowlist membership.
+- **FR-003**: ✅ Done. The allowlist MUST be enforced by pruning routes from the same already-built `ToolRouter` the `Toolset` presets and `IRIS_DISABLED_TOOLS` already prune — no second, independent enforcement path may be introduced. (This project has already paid once for a second enforcement path disagreeing with the first — see Dependencies below — and must not do it again.)
 - **FR-004**: `manifest::Provides` MUST gain an optional `tools: Vec<String>` field, resolved through the existing `Resolve`/lockfile pipeline used today for `skills`, `kb_items`, and `plugins`, and MUST write its resolved result through the same enforcement mechanism as FR-001 (env var or toml field) rather than a parallel code path.
 - **FR-005**: A manifest-declared tool name (FR-004) that does not exist in the tool registry MUST be reported as an error at resolve time, not silently dropped — this is intentionally stricter than the allowlist's own silent-ignore behavior (FR-001 mirrors `IRIS_DISABLED_TOOLS`'s existing unknown-name tolerance; a manifest is authored once and consumed by everyone who depends on it, so a typo deserves a loud failure at the point of authorship).
 - **FR-006**: System MUST produce a written design evaluation of whether a genuinely smaller compiled artifact (User Story 3) is achievable, before any implementation work toward it is scheduled. The evaluation MUST address `IrisTools`'s shared mutable state (connection pool, config watcher, elicitation store, telemetry session) explicitly, since that state is what makes today's single-binary architecture what it is.
@@ -96,8 +109,8 @@ A developer or downstream packager wants an iris-agentic-dev *binary* — not ju
 
 ### Measurable Outcomes
 
-- **SC-001**: A user can start the MCP server exposing only a caller-chosen subset of named tools and see exactly those tools — and no others — in a `list_tools` response, verified with no live IRIS container required.
-- **SC-002**: A downstream project can declare a named tool subset in its own manifest and have the existing install/resolve command produce a working local configuration exposing exactly that subset, with no hand-edited environment variables.
-- **SC-003**: No regression in existing `Toolset` behavior (`baseline`/`nostub`/`merged`) — all existing toolset tests continue to pass unchanged in behavior (only in the internals that compute them).
+- **SC-001**: ✅ Done. A user can start the MCP server exposing only a caller-chosen subset of named tools and see exactly those tools — and no others — in a `list_tools` response, verified with no live IRIS container required. (`test_enabled_tools_env_restricts_to_named_subset` asserts this against `registered_tool_names()`, which is itself derived from the same router `list_tools` reads — see Dependencies.)
+- **SC-002**: Not started (User Story 2 / FR-004–005).
+- **SC-003**: ✅ Done. No regression in existing `Toolset` behavior (`baseline`/`nostub`/`merged`) — full `cargo test` suite (`--test-threads=1`) passes with zero failures after the allowlist change, plus `cargo clippy -- -D warnings` and `cargo fmt --all -- --check` clean.
 - **SC-004**: The design evaluation for User Story 3 is written and reviewed, with an explicit go/no-go recommendation, before any code toward a modular binary is written.
 - **SC-005**: The two previously-disagreeing skill manifest files are reconciled to one, and `docs/skills.md`'s VS Code Copilot claim matches actual behavior — verified by reading the file, not by re-asking whether it's true.
