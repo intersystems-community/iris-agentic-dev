@@ -1,0 +1,116 @@
+//! Regression test for 076-interface-modernization User Story 1's Acceptance Scenario 2:
+//! "the actual response validates against [the declared] schema."
+//!
+//! These are real tool calls through `call_for_test` — the same dispatch path the CLI and
+//! MCP transport both use — not mocks. They're unit tests, not live-IRIS integration tests,
+//! because every tool exercised here is one that genuinely needs no IRIS connection to
+//! produce its real response (bundled skills read from disk, in-process call history, local
+//! filesystem symbol scanning) — `IrisTools::new(None)` is this project's own supported
+//! disconnected mode, not a workaround. Tools whose declared output schema can only be
+//! exercised against a live container (`iris_symbols`, `docs_introspect`,
+//! `debug_map_int_to_cls`, `debug_source_map`, `iris_ws_open`/`iris_ws_exec`/`iris_ws_close`)
+//! are NOT covered here — per this project's testing policy, that coverage belongs in an
+//! `--include-ignored` live test, not a mocked substitute.
+
+use iris_agentic_dev_core::tools::{IrisTools, Toolset};
+
+fn tools() -> IrisTools {
+    IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new")
+}
+
+async fn call(tools: &IrisTools, tool: &str, args: serde_json::Value) -> serde_json::Value {
+    let result = tools
+        .call_for_test(tool, args)
+        .await
+        .unwrap_or_else(|e| panic!("{tool} call failed: {e}"));
+    for content in &result.content {
+        if let Some(text) = content.raw.as_text() {
+            return serde_json::from_str(&text.text)
+                .unwrap_or_else(|e| panic!("{tool} returned non-JSON text: {e}"));
+        }
+    }
+    panic!("{tool} returned no text content");
+}
+
+#[tokio::test]
+async fn test_skill_list_response_matches_declared_shape() {
+    let body = call(&tools(), "skill_list", serde_json::json!({})).await;
+    assert!(body["skills"].is_array(), "skills must be an array");
+    assert!(
+        body["count"].is_u64(),
+        "count must be a non-negative integer"
+    );
+    assert!(
+        body["sources"].is_object(),
+        "sources must be an object (bundled/synthesized counts)"
+    );
+}
+
+#[tokio::test]
+async fn test_skill_community_list_response_matches_declared_shape() {
+    let body = call(&tools(), "skill_community_list", serde_json::json!({})).await;
+    assert!(body["skills"].is_array());
+    assert!(body["kb_items"].is_array());
+    assert!(body["skill_count"].is_u64());
+    assert!(body["kb_count"].is_u64());
+    assert!(body["hint"].is_string());
+}
+
+#[tokio::test]
+async fn test_agent_stats_response_matches_declared_shape() {
+    let body = call(&tools(), "agent_stats", serde_json::json!({})).await;
+    assert!(body["status"].is_string());
+    assert!(body["skill_count"].is_u64());
+    assert!(body["session_calls"].is_u64());
+    assert!(body["learning_enabled"].is_boolean());
+}
+
+#[tokio::test]
+async fn test_agent_history_response_matches_declared_shape() {
+    let body = call(&tools(), "agent_history", serde_json::json!({"limit": 5})).await;
+    assert!(body["calls"].is_array());
+    assert!(body["limit"].is_u64());
+    // Each call entry, if any, must carry every field AgentHistoryCall declares.
+    for c in body["calls"].as_array().unwrap() {
+        assert!(c["tool"].is_string());
+        assert!(c["success"].is_boolean());
+        assert!(c["ago_secs"].is_u64());
+        assert!(c["duration_ms"].is_u64());
+        assert!(c["session_id"].is_string());
+    }
+}
+
+#[tokio::test]
+async fn test_kb_recall_response_matches_declared_shape() {
+    let body = call(
+        &tools(),
+        "kb_recall",
+        serde_json::json!({"query": "objectscript"}),
+    )
+    .await;
+    assert!(body["query"].is_string());
+    assert!(body["results"].is_array());
+    assert!(body["count"].is_u64());
+    for hit in body["results"].as_array().unwrap() {
+        assert!(hit["title"].is_string());
+        assert!(hit["snippet"].is_string());
+        assert!(hit["source"].is_string());
+        assert!(hit["score"].is_number());
+    }
+}
+
+#[tokio::test]
+async fn test_iris_symbols_local_response_matches_declared_shape() {
+    // No IRIS connection needed — scans the local filesystem. workspace_path defaults to cwd.
+    let body = call(
+        &tools(),
+        "iris_symbols_local",
+        serde_json::json!({"query": "*"}),
+    )
+    .await;
+    assert!(body["source"] == "local_filesystem");
+    assert!(body["symbols"].is_array());
+    assert!(body["count"].is_u64());
+    assert!(body["query_hint"].is_string());
+    assert!(body["parse_warnings"].is_array());
+}
