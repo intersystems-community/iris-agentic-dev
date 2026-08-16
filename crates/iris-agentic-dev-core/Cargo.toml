@@ -169,6 +169,15 @@ name = "test_tool_category_coverage"
 path = "tests/unit/test_tool_category_coverage.rs"
 
 [[test]]
+name = "test_output_schema"
+path = "tests/unit/test_output_schema.rs"
+
+[[test]]
+name = "test_output_schema_shapes"
+path = "tests/unit/test_output_schema_shapes.rs"
+required-features = ["testing"]
+
+[[test]]
 name = "symbols_local_tests"
 path = "tests/symbols_local_tests.rs"
 

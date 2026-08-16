@@ -18,13 +18,23 @@ const SERVER_VERSION: &str = concat!(
 );
 
 use rmcp::{
-    handler::server::router::tool::ToolRouter, handler::server::wrapper::Parameters, model::*,
-    tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler,
+    handler::server::router::tool::ToolRouter, handler::server::tool::schema_for_output,
+    handler::server::wrapper::Parameters, model::*, tool, tool_handler, tool_router,
+    ErrorData as McpError, ServerHandler,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+
+// 076-interface-modernization User Story 1: output-schema-only response shapes. Not
+// constructed at runtime — see output_schemas.rs's module doc comment for why.
+use output_schemas::{
+    AgentHistoryResponse, AgentStatsResponse, DebugMapIntToClsResponse, DebugSourceMapResponse,
+    DocsIntrospectResponse, IrisServersResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse,
+    IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse, KbRecallResponse,
+    SkillCommunityListResponse, SkillForgetResponse, SkillListResponse,
+};
 
 tokio::task_local! {
     /// Set once per `call_tool` invocation (see the `ServerHandler::call_tool` override
@@ -68,6 +78,7 @@ pub mod info;
 pub mod interop;
 pub mod log_store;
 pub mod observability;
+pub mod output_schemas;
 pub mod scm;
 pub mod search;
 pub mod server_tools;
@@ -2212,6 +2223,19 @@ impl IrisTools {
             .into_iter()
             .map(|t| t.name.to_string())
             .collect()
+    }
+
+    /// Returns `true` if `tool_name` is registered and declares a non-null `output_schema` —
+    /// the same `Tool` definitions a real `list_tools` RPC serves (076-interface-modernization
+    /// User Story 1). Used by tests to confirm a tool's declared output schema actually reaches
+    /// `list_tools`, without needing a live IRIS connection — this only inspects the static
+    /// router, never calls the tool.
+    pub fn tool_declares_output_schema(&self, tool_name: &str) -> bool {
+        self.tool_router
+            .list_all()
+            .into_iter()
+            .find(|t| t.name == tool_name)
+            .is_some_and(|t| t.output_schema.is_some())
     }
 
     pub fn with_registry(
@@ -4636,7 +4660,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
     #[tool(
         description = "Search for ObjectScript classes matching a query in the IRIS namespace. Query supports: plain substring ('Patient'), package prefix ('HT.*' or 'HT.'), mid-glob ('HT.*.Service'), or bare '*' for all. Skill: objectscript-navigation. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisSymbolsResponse>()
     )]
     async fn iris_symbols(
         &self,
@@ -4659,7 +4684,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
     #[tool(
         description = "Search for ObjectScript symbols in local .cls/.mac/.inc files on disk — no IRIS connection required. query: glob pattern (MyApp.*, *Service, MyApp.Foo.Do*). workspace_path: optional path (defaults to OBJECTSCRIPT_WORKSPACE or cwd). limit: max symbols to return (default 50). kinds: optional filter on symbol kind (class, method, property, parameter, index, xdata, query, trigger, relationship, foreignkey, projection, storage, routine, label). Each symbol includes a line field (1-based source line). Skill: objectscript-navigation.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisSymbolsLocalResponse>()
     )]
     async fn iris_symbols_local(
         &self,
@@ -4716,7 +4742,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
     #[tool(
         description = "Introspect an ObjectScript class — returns methods, properties, and type information. Methods include FormalSpec as a structured array of {name, type, byref, output, default} objects and a ReturnType field. For BPL and DTL classes, an xdata_flow field describes the process steps (BPL: kind=bpl, steps array with Call/Code/If/Other entries, has_dynamic_dispatch flag; DTL: kind=dtl, source_class, target_class, subtransforms, assign_count). Skill: objectscript-navigation. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = schema_for_output::<DocsIntrospectResponse>().unwrap()
     )]
     async fn docs_introspect(
         &self,
@@ -4773,7 +4800,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
     #[tool(
         description = "Map a .INT routine offset to the original .CLS source line. Pass routine+offset OR a raw IRIS error string like '<UNDEFINED>x+3^MyApp.Foo.1'.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<DebugMapIntToClsResponse>()
     )]
     async fn debug_map_int_to_cls(
         &self,
@@ -4877,7 +4905,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
     #[tool(
         description = "Build a .INT source map for a compiled ObjectScript class via Atelier xecute. Maps .INT routine line offsets back to .CLS source lines for stack trace resolution. No Python required.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<DebugSourceMapResponse>()
     )]
     async fn debug_source_map(
         &self,
@@ -5084,7 +5113,8 @@ Methods:
 
     #[tool(
         description = "List every available skill — both the skills bundled with this server (on disk, no IRIS needed) and any synthesized skills in the IRIS ^SKILLS global. Each result carries a `source` field: `bundled` or `synthesized`.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = schema_for_output::<SkillListResponse>().unwrap()
     )]
     async fn skill_list(&self, _: Parameters<NoParams>) -> Result<CallToolResult, McpError> {
         use crate::skills::bundled;
@@ -5234,7 +5264,8 @@ Methods:
 
     #[tool(
         description = "Remove a skill from the registry by name.",
-        annotations(destructive_hint = true)
+        annotations(destructive_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<SkillForgetResponse>()
     )]
     async fn skill_forget(
         &self,
@@ -5293,7 +5324,8 @@ Methods:
 
     #[tool(
         description = "List all skills loaded from --subscribe packages. Use --subscribe owner/repo when starting iris-agentic-dev mcp to load community skills.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = schema_for_output::<SkillCommunityListResponse>().unwrap()
     )]
     async fn skill_community_list(
         &self,
@@ -5363,7 +5395,8 @@ Methods:
 
     #[tool(
         description = "Search the knowledge base for relevant guidance. Searches subscribed KB packages and any indexed content.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = schema_for_output::<KbRecallResponse>().unwrap()
     )]
     async fn kb_recall(
         &self,
@@ -5424,7 +5457,8 @@ Methods:
 
     #[tool(
         description = "Return recent tool call history for this session.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = schema_for_output::<AgentHistoryResponse>().unwrap()
     )]
     async fn agent_history(
         &self,
@@ -5525,7 +5559,8 @@ Methods:
 
     #[tool(
         description = "Return learning agent status: skill count, pattern count, KB size.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = schema_for_output::<AgentStatsResponse>().unwrap()
     )]
     async fn agent_stats(&self, _: Parameters<NoParams>) -> Result<CallToolResult, McpError> {
         let skill_count = self.registry.list_skills().len();
@@ -6867,7 +6902,8 @@ Methods:
 
     #[tool(
         description = "List all IRIS server instances registered in the connection pool. Returns an array of {name, host, port, namespace, username, source, reachable} objects. `source` values: iad-native (added via iris_add_server), vscode (from VS Code/Cursor Server Manager), fleet (from workspace TOML), env (from IRIS_HOST env var). `reachable` is null — call iris_test_server to probe connectivity.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = schema_for_output::<IrisServersResponse>().unwrap()
     )]
     async fn iris_servers(&self) -> Result<CallToolResult, McpError> {
         let entries: Vec<serde_json::Value> = self
@@ -7165,7 +7201,8 @@ Methods:
     // ── 072-b: WebSocket terminal session tools ───────────────────────────────
 
     #[tool(
-        description = "Open a persistent WebSocket terminal session on an IRIS instance. Returns a session token. Use server to target a specific registered instance; defaults to the active connection. Requires IRIS 2023.2+ (Atelier API v7)."
+        description = "Open a persistent WebSocket terminal session on an IRIS instance. Returns a session token. Use server to target a specific registered instance; defaults to the active connection. Requires IRIS 2023.2+ (Atelier API v7).",
+        output_schema = output_schemas::oneof_output_schema::<IrisWsOpenResponse>()
     )]
     async fn iris_ws_open(
         &self,
@@ -7202,7 +7239,8 @@ Methods:
     }
 
     #[tool(
-        description = "Execute ObjectScript code in a persistent WebSocket terminal session. Variables and state persist across calls within the same session. Returns the terminal output."
+        description = "Execute ObjectScript code in a persistent WebSocket terminal session. Variables and state persist across calls within the same session. Returns the terminal output.",
+        output_schema = schema_for_output::<IrisWsExecResponse>().unwrap()
     )]
     async fn iris_ws_exec(
         &self,
@@ -7218,7 +7256,10 @@ Methods:
         }))
     }
 
-    #[tool(description = "Close a WebSocket terminal session and release server resources.")]
+    #[tool(
+        description = "Close a WebSocket terminal session and release server resources.",
+        output_schema = schema_for_output::<IrisWsCloseResponse>().unwrap()
+    )]
     async fn iris_ws_close(
         &self,
         Parameters(p): Parameters<ws_tools::WsCloseParams>,

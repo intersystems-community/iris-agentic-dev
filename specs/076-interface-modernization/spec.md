@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (15/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -99,6 +99,17 @@ A developer or tooling author consuming iris-agentic-dev's MCP tools programmati
 
 1. **Given** a tool that already returns a structured JSON object (the overwhelming majority of the 90), **When** its `#[tool(...)]` definition is inspected via `list_tools`, **Then** it declares an `output_schema` matching its actual return shape.
 2. **Given** a tool's output schema is declared, **When** the tool is called, **Then** the actual response validates against that schema (this is a regression check, not new behavior — the shapes already exist, only the declaration is new).
+
+**In progress — batch 1 of N delivered.** All 90 `#[tool(...)]` definitions live in one file (`crates/iris-agentic-dev-core/src/tools/mod.rs`, ~9,600 lines), each with its own hand-rolled `ok_json(serde_json::json!({...}))`/`err_json(...)` response shape — there is no shortcut that covers many tools at once; each one needs its actual body read and its real shape modeled. Batch 1 covers 15 tools, chosen for having a fully-understood, stable shape: `iris_servers`, `skill_list`, `skill_community_list`, `skill_forget`, `agent_stats`, `agent_history`, `kb_recall`, `iris_symbols`, `iris_symbols_local`, `docs_introspect`, `debug_map_int_to_cls`, `debug_source_map`, `iris_ws_open`, `iris_ws_exec`, `iris_ws_close`.
+
+Response shapes live in a new file, `crates/iris-agentic-dev-core/src/tools/output_schemas.rs` — plain structs (`#[derive(Serialize, JsonSchema)]`) that exist purely to be handed to `schema_for_output::<T>()`; they're never constructed at runtime, so a tool's actual `ok_json(...)` body is completely untouched. Two design decisions, made once and reused across every tool in the batch:
+
+- **Genuinely dynamic/heterogeneous fields stay `serde_json::Value`** rather than being force-fit into a struct that would misdescribe them (e.g. `iris_symbols`' raw SQL-query rows, `docs_introspect`'s BPL/DTL-dependent `xdata_flow`, `debug_source_map`'s `{method_name: int_line}` map with dynamic keys). This is the Edge Cases section's "per-tool judgment call" in practice, not a shortcut — each one is a deliberate call, documented inline in `output_schemas.rs`.
+- **A real MCP constraint surfaced immediately and changed the implementation approach.** `rmcp::Tool::with_output_schema::<T>()` panics unless the root schema has a literal `"type": "object"` — and schemars renders a `#[serde(untagged)] enum { Ok(...), Err(ToolError) }` (the natural shape for a tool whose only two possible responses are its success object or this project's shared `{success: false, error_code, error}` embedded-error convention) as a bare `{"oneOf": [...]}` with no root type at all. Every tool in the batch with a real error path (`skill_forget`, `iris_symbols`, `iris_symbols_local`, `debug_map_int_to_cls`, `debug_source_map`, `iris_ws_open`) hit this. Fix: `output_schemas::oneof_output_schema::<T>()`, which calls the same underlying generator `schema_for_output` uses (`rmcp::handler::server::tool::schema_for_type`, which skips the root-type validation), adds the one key MCP requires, and hands the result to `with_raw_output_schema` — which does no validation itself, by design, as the escape hatch for exactly this. Still zero rmcp dependency-version change, still "the existing rmcp 1.6.0 API," per FR-001 — just not the one-line shorthand for tools with two possible shapes.
+
+Verified two ways: `test_output_schema.rs` (no IRIS needed — inspects the live router's `Tool.output_schema` directly, confirming all 15 declare a schema in both Baseline and Merged, correctly excluding `debug_map_int_to_cls`/`debug_source_map` from the Merged check since both are consolidated into `iris_debug` there and legitimately absent, not "present but unscheduled"). `test_output_schema_shapes.rs` covers Acceptance Scenario 2 for real — actual `call_for_test` calls (not mocks) against the 6 tools in this batch that need no live IRIS connection at all (`skill_list`, `skill_community_list`, `agent_stats`, `agent_history`, `kb_recall`, `iris_symbols_local` — bundled/disk/in-memory data, `IrisTools::new(None)` is this project's own supported disconnected mode), asserting the real response carries every field the declared schema promises. The other 9 tools in this batch need a live IRIS connection to actually call — per this project's non-negotiable testing policy (no mocked IRIS), that half of Acceptance Scenario 2 isn't exercised in this pass; it belongs in an `--include-ignored` live test against a real container, not a substitute here.
+
+**Remaining**: 75 of 90 tools still need their shape read, modeled, and declared. No shortcut across the remaining batches — same one-tool-at-a-time process.
 
 ---
 
