@@ -2,7 +2,7 @@
 
 **Feature Branch**: `076-interface-modernization`
 **Created**: 2026-08-16
-**Status**: Draft (research-backed scoping — no implementation committed yet)
+**Status**: In Progress — User Story 2 (P2) delivered; User Stories 1, 3, 4, 5 not started
 **Input**: User description: "Keep some things in view while we spec this: (1) MCP protocol has been updated, look into what benefits that could give us; (2) full CLI/MCP parity so iad could be used fully as just CLI tools — how much work would that be, and would it help with progressive disclosure given we now have ~90 tools; (3) research MCP alternatives — structured tool calling, and 'code mode' (models write code that calls tools instead of emitting JSON tool-call blocks)."
 
 This spec is deliberately research-heavy: three of its four threads are genuinely new information (MCP shipped a major spec revision three weeks before this was written), and the right amount of committed work depends on getting the facts right before scoping effort. Every claim below is sourced; where a source was unreachable through this session's network egress, that's noted rather than guessed around.
@@ -102,7 +102,7 @@ A developer or tooling author consuming iris-agentic-dev's MCP tools programmati
 
 ---
 
-### User Story 2 - Stop the CLI reimplementation drift; give `iris_execute` its session flags (Priority: P2)
+### User Story 2 - Stop the CLI reimplementation drift; give `iris_execute` its session flags (Priority: P2) — ✅ Delivered
 
 A developer using `compile`/`exec`/`query`/`doc` from the CLI wants the same capability the equivalent MCP tool call has — multi-instance `--server` routing, policy gates, and (for `exec` specifically) the session carrier — instead of a thinner, silently-diverging reimplementation.
 
@@ -116,6 +116,12 @@ A developer using `compile`/`exec`/`query`/`doc` from the CLI wants the same cap
 2. **Given** `iris-agentic-dev exec --use-session` completes, **When** its printed `session_state` token is passed to a second, separate `exec --session-state <token>` invocation, **Then** the second invocation sees the first's `%ctx` state (this works today only via the generic `tool iris_execute` fallback — User Story 2 is exposing it as a real flag on the dedicated command, not inventing new capability).
 3. **Given** the delegation refactor lands, **When** `compile`/`query`/`doc` are run with `--server <name>`, **Then** they route to that named instance, which none of the four can do today.
 4. **Given** `doc.rs` is rewritten to call the real `iris_doc` tool logic, **When** a write needs SCM checkout, **Then** the CLI surfaces the same `elicitation_required`/`elicitation_id` response the MCP path does, instead of failing with no path to resolution (closing part of the gap User Story 3 addresses for real interactive resumption).
+
+**Delivered**, with one improvement on the original plan: `doc put` doesn't just surface the elicitation response and stop — it prompts interactively (stderr, `[y/N]`, defaults to declining on non-interactive/EOF stdin) and resumes immediately, all within the one CLI process. That's only possible because it reuses a single `IrisTools` instance (`dispatch::build_tools` + `dispatch::call`, not the one-shot `dispatch::dispatch_tool`) across both the initial write and the resume call, so the second call finds the `PendingElicitation` the first one stored — a fresh instance per call (which a real second CLI invocation would always get) could not do this, exactly per the Gap 2 table above. This means `doc put`'s elicitation path is functionally solved for the single-command case already; User Story 3's batch mode is still what's needed for the WS-terminal and `iris_get_log` cases, which don't have a single command that naturally owns both ends of the round trip the way `doc put`'s prompt-and-resume does.
+
+Also found and preserved during the refactor, not merely carried over: `iris_execute`/`iris_doc`'s own role-gate (`check_role_gate`) only fires for a fleet "operate mode" `Subject` connection — it does not protect the default, single-instance case at all. The CLI's `is_write_allowed()` pre-check (SystemMode-based Live detection + `IRIS_ALLOW_PROD` override) was the only guard against running `exec`/`doc put` against a Live instance in the common case, and a naive delegation would have silently dropped it. Kept explicitly in both commands, ahead of the dispatch call, with a comment explaining why it can't just be assumed to live in the tool method.
+
+`compile`/`query` output formats are unchanged (TSV via the same `tsv.rs` helpers, wrapping `iris_query`'s `{rows, count}` shape into a synthetic Atelier body so the extraction helpers didn't need duplicating); `compile`'s file-args success line now prints the `.cls`-suffixed document name `iris_compile` itself returns, a minor, disclosed formatting change (previously printed the bare class name) — not covered by any existing test, so not a regression by the tests' own definition, but worth knowing about if you're scripting against the old text.
 
 ---
 
@@ -206,8 +212,8 @@ The maintainers want a clear, written answer to "should we upgrade rmcp to reach
 ### Measurable Outcomes
 
 - **SC-001**: Every tool with a fixed return shape has a declared `output_schema`, verifiable via `list_tools`.
-- **SC-002**: `compile`/`query`/`doc` accept `--server` and route to a named instance; none can today. Existing CLI argument-parsing tests for all four commands still pass after the delegation refactor.
-- **SC-003**: `iris-agentic-dev exec --use-session`/`--session-state` round-trips `%ctx` state across two separate invocations using only documented flags, no hand-constructed `--args` JSON.
+- **SC-002**: ✅ Done. `compile`/`query`/`doc` accept `--server` and route to a named instance; previously none could. Existing CLI argument-parsing tests for all four commands (`test_exec_args.rs`, `test_compile_args.rs`, `test_query_tsv.rs`, `test_doc_args.rs`) still pass after the delegation refactor.
+- **SC-003**: ✅ Done. `iris-agentic-dev exec --use-session`/`--session-state` round-trips `%ctx` state across two separate invocations using only documented flags, no hand-constructed `--args` JSON.
 - **SC-004**: A batch script can open a WS session, exec twice, and close it within one CLI invocation, with the second exec observing state the first one set.
 - **SC-005**: `list_tools` pagination is exercised by at least one test that proves no tool is duplicated or omitted across pages.
 - **SC-006**: The rmcp upgrade spike is written, reviewed, and has an explicit go/no-go — before any code changes toward the upgrade land.

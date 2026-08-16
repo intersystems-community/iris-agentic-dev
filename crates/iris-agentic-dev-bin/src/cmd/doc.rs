@@ -1,9 +1,10 @@
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
-use std::io::Read;
+use std::io::{BufRead, Read, Write};
 use std::path::PathBuf;
 
 use super::connection_args::ConnectionArgs;
+use super::dispatch;
 
 #[derive(Subcommand)]
 pub enum DocAction {
@@ -31,6 +32,10 @@ pub struct DocCommand {
     #[command(subcommand)]
     pub action: DocAction,
 
+    /// Route this call to a named registered IRIS instance instead of the default connection.
+    #[arg(long)]
+    pub server: Option<String>,
+
     #[command(flatten)]
     pub conn: ConnectionArgs,
 }
@@ -39,32 +44,23 @@ impl DocCommand {
     pub async fn run(self) -> Result<()> {
         let namespace = self.conn.namespace.clone();
         let iris = self.conn.resolve().await?;
-        let client = iris_agentic_dev_core::iris::connection::IrisConnection::http_client()?;
 
         match self.action {
             DocAction::Get { name } => {
                 let doc_name = ensure_cls_extension(&name);
-                let url = iris.versioned_ns_url(
-                    &namespace,
-                    &format!("/doc/{}", urlencoding::encode(&doc_name)),
-                );
-                let resp = client
-                    .get(&url)
-                    .basic_auth(&iris.username, Some(&iris.password))
-                    .send()
-                    .await
-                    .context("GET /doc failed")?;
-                let status = resp.status();
-                if status.as_u16() == 404 {
-                    eprintln!("error: document not found: {}", doc_name);
+                let mut args =
+                    serde_json::json!({ "mode": "get", "name": doc_name, "namespace": namespace });
+                if let Some(server) = &self.server {
+                    args["server"] = serde_json::Value::String(server.clone());
+                }
+
+                let body = dispatch::dispatch_tool(iris, "iris_doc", args).await?;
+                if body["success"].as_bool() != Some(true) {
+                    let msg = body["error"].as_str().unwrap_or("get failed");
+                    eprintln!("error: {}", msg);
                     std::process::exit(1);
                 }
-                if !status.is_success() {
-                    eprintln!("error: HTTP {}", status);
-                    std::process::exit(1);
-                }
-                let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                let content = doc_content_to_string(&body);
+                let content = body["content"].as_str().unwrap_or("");
                 // Print raw UDL source — no framing, pipe-safe
                 print!("{}", content);
                 if !content.ends_with('\n') {
@@ -72,6 +68,8 @@ impl DocCommand {
                 }
             }
             DocAction::Put { name, file } => {
+                // iris_doc's own role-gate only fires for a fleet "operate mode" Subject
+                // instance, same gap as iris_execute — see dispatch.rs's doc comment.
                 if !iris.is_write_allowed() {
                     eprintln!(
                         "error: write operations are suppressed on production IRIS instances.\n\
@@ -95,35 +93,65 @@ impl DocCommand {
                     std::process::exit(1);
                 };
 
-                let lines: Vec<&str> = content.lines().collect();
-                let url = iris.versioned_ns_url(
-                    &namespace,
-                    &format!("/doc/{}?ignoreConflict=1", urlencoding::encode(&doc_name)),
-                );
-                let resp = client
-                    .put(&url)
-                    .basic_auth(&iris.username, Some(&iris.password))
-                    .json(&serde_json::json!({"enc": false, "content": lines}))
-                    .send()
-                    .await
-                    .context("PUT /doc failed")?;
-                if !resp.status().is_success() {
-                    eprintln!("error: HTTP {}", resp.status());
+                let mut args = serde_json::json!({
+                    "mode": "put",
+                    "name": doc_name,
+                    "content": content,
+                    "namespace": namespace,
+                });
+                if let Some(server) = &self.server {
+                    args["server"] = serde_json::Value::String(server.clone());
+                }
+
+                // Built once, reused for both the initial write and (if needed) the
+                // elicitation resume — both calls must land in the same in-process
+                // ElicitationStore, which a fresh IrisTools per call would not provide.
+                let tools = dispatch::build_tools(iris)?;
+                let mut body = dispatch::call(&tools, "iris_doc", args).await?;
+
+                // SCM checkout dialog: prompt right here, in this same process, and
+                // resume immediately — the only way this can work at all, since the
+                // elicitation_id is a key into an in-memory store that would already be
+                // gone by the time a second CLI invocation looked it up.
+                while body["elicitation_required"].as_bool() == Some(true) {
+                    let eid = body["elicitation_id"].as_str().unwrap_or("").to_string();
+                    let message = body["message"].as_str().unwrap_or("Proceed?");
+                    let answer = prompt_yes_no(message)?;
+
+                    let resume_args = serde_json::json!({
+                        "elicitation_id": eid,
+                        "elicitation_answer": if answer { "yes" } else { "no" },
+                    });
+                    body = dispatch::call(&tools, "iris_doc", resume_args).await?;
+                }
+
+                if body["success"].as_bool() != Some(true) {
+                    let msg = body["error"].as_str().unwrap_or("write failed");
+                    eprintln!("error: {}", msg);
                     std::process::exit(1);
                 }
-                let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                if let Some(errs) = body["status"]["errors"].as_array() {
-                    if !errs.is_empty() {
-                        let msg = errs[0]["error"].as_str().unwrap_or("write failed");
-                        eprintln!("error: {}", msg);
-                        std::process::exit(1);
-                    }
-                }
-                println!("OK: {}", doc_name);
+                println!("OK: {}", body["name"].as_str().unwrap_or(&doc_name));
             }
         }
         Ok(())
     }
+}
+
+/// Prompt `message` on stderr and read a yes/no answer from stdin.
+/// Defaults to "no" on EOF (non-interactive stdin — e.g. piped from /dev/null in a
+/// script) rather than blocking forever or guessing "yes" for a destructive-adjacent
+/// SCM checkout.
+fn prompt_yes_no(message: &str) -> Result<bool> {
+    eprint!("{} [y/N]: ", message);
+    std::io::stderr().flush().ok();
+    let mut line = String::new();
+    let n = std::io::stdin().lock().read_line(&mut line)?;
+    if n == 0 {
+        eprintln!("(no input — declining)");
+        return Ok(false);
+    }
+    let answer = line.trim().to_ascii_lowercase();
+    Ok(answer == "y" || answer == "yes")
 }
 
 fn ensure_cls_extension(name: &str) -> String {
@@ -141,16 +169,4 @@ fn ensure_cls_extension(name: &str) -> String {
         // Has dots but no known extension — append .cls
         format!("{}.cls", name)
     }
-}
-
-fn doc_content_to_string(body: &serde_json::Value) -> String {
-    body["result"]["content"]
-        .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .unwrap_or_default()
 }
