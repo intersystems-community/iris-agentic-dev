@@ -31,9 +31,18 @@ pub struct WorkspaceConfig {
     /// Tools to exclude from the MCP tool list at startup.
     /// Each entry is an exact tool name (e.g. "iris_source_control", "iris_admin").
     /// Useful for stripping tools irrelevant to your workflow to reduce noise.
-    /// Takes effect regardless of toolset.
+    /// Takes effect regardless of toolset. Always wins over `enabled_tools` for any
+    /// name in both.
     #[serde(default)]
     pub disabled_tools: Vec<String>,
+    /// Allowlist: when non-empty, ONLY these tools remain in the MCP tool list at
+    /// startup — everything else is pruned, regardless of toolset (075-modular-tool-
+    /// install, FR-001). An empty list (the default) means "no allowlist" — the active
+    /// `Toolset` preset applies as usual — not "expose zero tools." `disabled_tools`
+    /// still wins for any name present in both (FR-002); a name here that doesn't
+    /// match any real tool is silently ignored, same as `disabled_tools` today.
+    #[serde(default)]
+    pub enabled_tools: Vec<String>,
 }
 
 /// Connection role for fleet/operate mode instances.
@@ -586,10 +595,13 @@ pub fn workspace_config_to_connection(
     cfg: &WorkspaceConfig,
     namespace_default: &str,
 ) -> Option<IrisConnection> {
-    // Export disabled_tools to env so IrisTools::with_registry_and_toolset picks them up.
-    // Only set if the field is non-empty and env var not already set by user.
+    // Export disabled_tools/enabled_tools to env so IrisTools::with_registry_and_toolset
+    // picks them up. Only set if the field is non-empty and env var not already set by user.
     if !cfg.disabled_tools.is_empty() && std::env::var("IRIS_DISABLED_TOOLS").is_err() {
         std::env::set_var("IRIS_DISABLED_TOOLS", cfg.disabled_tools.join(","));
+    }
+    if !cfg.enabled_tools.is_empty() && std::env::var("IRIS_ENABLED_TOOLS").is_err() {
+        std::env::set_var("IRIS_ENABLED_TOOLS", cfg.enabled_tools.join(","));
     }
 
     // host + web_port → explicit HTTP/HTTPS connection (highest priority, no docker needed)
@@ -752,6 +764,9 @@ namespace = "{namespace}"
 # ── Tool filtering (optional) ────────────────────────────────────────────────
 # Remove tools you don't use from the MCP tool list to reduce noise.
 # disabled_tools = ["iris_source_control", "iris_admin", "iris_credential_manage"]
+# Or go the other way: expose ONLY a named subset, regardless of toolset.
+# disabled_tools always wins for a name in both lists.
+# enabled_tools = ["iris_query", "iris_search", "iris_symbols"]
 "#
     )
 }
@@ -928,6 +943,7 @@ mod tests {
             web_prefix: None,
             docker_only: false,
             disabled_tools: vec![],
+            enabled_tools: vec![],
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
         assert!(conn.is_some(), "host config should produce connection");
@@ -948,6 +964,7 @@ mod tests {
             web_prefix: None,
             docker_only: false,
             disabled_tools: vec![],
+            enabled_tools: vec![],
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
         let container_env = std::env::var("IRIS_CONTAINER").ok();
@@ -969,6 +986,7 @@ mod tests {
             web_prefix: None,
             docker_only: false,
             disabled_tools: vec![],
+            enabled_tools: vec![],
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
         assert!(conn.is_none());
@@ -1010,6 +1028,7 @@ mod tests {
             web_prefix: Some("iriscore".to_string()),
             docker_only: false,
             disabled_tools: vec![],
+            enabled_tools: vec![],
         };
         let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
         assert!(
@@ -1034,6 +1053,7 @@ mod tests {
             web_prefix: None,
             docker_only: false,
             disabled_tools: vec![],
+            enabled_tools: vec![],
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
         let container_env = std::env::var("IRIS_CONTAINER").ok();
@@ -1064,6 +1084,7 @@ mod tests {
             web_prefix: None,
             docker_only: false,
             disabled_tools: vec![],
+            enabled_tools: vec![],
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
         let ns_env = std::env::var("IRIS_NAMESPACE").ok();
@@ -1093,6 +1114,7 @@ mod tests {
             web_prefix: None,
             docker_only: true,
             disabled_tools: vec![],
+            enabled_tools: vec![],
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
         std::env::remove_var("IRIS_CONTAINER");

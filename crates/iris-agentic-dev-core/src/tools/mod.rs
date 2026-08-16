@@ -2243,6 +2243,43 @@ impl IrisTools {
             }
         }
 
+        // Apply user-specified tool allowlist from IRIS_ENABLED_TOOLS env var or toml
+        // enabled_tools field (config loader sets the env var from toml before this runs).
+        // Comma-separated tool names — when non-empty, ONLY these remain, regardless of
+        // toolset (075-modular-tool-install, FR-001). Enforced through the same
+        // remove_route() primitive as everything else in this constructor (FR-003) — no
+        // second enforcement path. An empty list means "no allowlist" (FR edge case:
+        // does NOT mean "expose zero tools"). Runs before the disabled-tools block below
+        // so disabled always wins for a name in both (FR-002).
+        let enabled: Vec<String> = std::env::var("IRIS_ENABLED_TOOLS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !enabled.is_empty() {
+            let enabled_set: std::collections::HashSet<&str> =
+                enabled.iter().map(|s| s.as_str()).collect();
+            // Snapshot current route names before mutating — remove_route() while
+            // iterating router.list_all()'s own borrow would not compile, and this way
+            // an allowlist name that doesn't match any real route is simply never
+            // removed, matching disabled_tools' existing unknown-name tolerance.
+            let current_names: Vec<String> = router
+                .list_all()
+                .into_iter()
+                .map(|t| t.name.to_string())
+                .collect();
+            for name in &current_names {
+                if !enabled_set.contains(name.as_str()) {
+                    router.remove_route(name);
+                }
+            }
+            tracing::info!(
+                enabled = ?enabled,
+                "iris-agentic-dev: tool allowlist applied — only these tools remain"
+            );
+        }
+
         // Apply user-specified disabled tools from IRIS_DISABLED_TOOLS env var or toml
         // disabled_tools field (config loader sets the env var from toml before this runs).
         // Comma-separated tool names, e.g. "iris_source_control,iris_admin".

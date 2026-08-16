@@ -211,6 +211,7 @@ iris-agentic-dev resolves the IRIS connection in this order — first match wins
 | `IRIS_SEARCH_SYNC_TIMEOUT` | `30`        | Seconds to wait for synchronous search before falling back to async polling                                                                                           |
 | `IRIS_WS_TIMEOUT_SECS`     | `30`        | Timeout in seconds for WebSocket terminal session responses. Applies to `iris_ws_exec` calls. The session is left open on timeout; use `iris_ws_close` to release it. |
 | `IRIS_DISABLED_TOOLS`      | _(empty)_   | Comma-separated tool names to exclude, e.g. `iris_source_control,iris_admin`                                                                                          |
+| `IRIS_ENABLED_TOOLS`       | _(empty)_   | Comma-separated allowlist — when set, ONLY these tools remain, regardless of `--toolset`. Empty means no allowlist, not "expose zero tools." `IRIS_DISABLED_TOOLS` wins for any name in both. |
 
 ---
 
