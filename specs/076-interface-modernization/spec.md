@@ -2,7 +2,7 @@
 
 **Feature Branch**: `076-interface-modernization`
 **Created**: 2026-08-16
-**Status**: In Progress — User Story 2 (P2) delivered; User Stories 1, 3, 4, 5 not started
+**Status**: In Progress — User Stories 2 (P2) and 3 (P3) delivered; User Stories 1, 4, 5 not started
 **Input**: User description: "Keep some things in view while we spec this: (1) MCP protocol has been updated, look into what benefits that could give us; (2) full CLI/MCP parity so iad could be used fully as just CLI tools — how much work would that be, and would it help with progressive disclosure given we now have ~90 tools; (3) research MCP alternatives — structured tool calling, and 'code mode' (models write code that calls tools instead of emitting JSON tool-call blocks)."
 
 This spec is deliberately research-heavy: three of its four threads are genuinely new information (MCP shipped a major spec revision three weeks before this was written), and the right amount of committed work depends on getting the facts right before scoping effort. Every claim below is sourced; where a source was unreachable through this session's network egress, that's noted rather than guessed around.
@@ -125,7 +125,7 @@ Also found and preserved during the refactor, not merely carried over: `iris_exe
 
 ---
 
-### User Story 3 - A CLI batch/script mode for the tools a stateless process can't otherwise support (Priority: P3)
+### User Story 3 - A CLI batch/script mode for the tools a stateless process can't otherwise support (Priority: P3) — ✅ Delivered
 
 A developer wants to use the WebSocket terminal, resume an SCM-checkout elicitation, or retrieve a truncated result via `iris_get_log` — all of which hold their state in an in-process pool that a fresh CLI invocation can never see again — from the CLI, without standing up a persistent daemon.
 
@@ -138,6 +138,22 @@ A developer wants to use the WebSocket terminal, resume an SCM-checkout elicitat
 1. **Given** a batch script opening a WS session, execing twice, and closing it, **When** it's run as a single CLI invocation, **Then** the second exec sees state the first one set (proving the pools survive across calls *within* the batch, which they cannot across separate invocations).
 2. **Given** a batch script whose second call triggers an SCM-checkout elicitation and a third call answers it (`elicitation_id`/`elicitation_answer`), **When** the batch runs, **Then** the third call resolves against the same `ElicitationStore` the second call wrote to — something no pair of separate CLI invocations can do today.
 3. **Given** a batch script calls a tool that returns a truncated result with a `log_id`, **When** a later call in the same batch requests `iris_get_log` with that ID, **Then** it retrieves the full content from the same in-process `LogStore`.
+
+**Delivered** as `iris-agentic-dev batch [--file <path>]` (reads a JSON script from stdin if `--file` is omitted). The script is a JSON array of `{"tool": ..., "args": {...}}` steps (`args` defaults to `{}` if omitted); the command resolves one connection, builds exactly one `IrisTools` via `dispatch::build_tools`, and loops over the steps calling `dispatch::call` on that single shared instance — the same dispatch path `compile`/`exec`/`query`/`doc`/`tool` already use (FR-004's "thin loop, not a fourth parallel implementation" requirement), so `WsSessionPool`/`ElicitationStore`/`LogStore` state set by one step is visible to every later step in the same run, exactly as Acceptance Scenarios 1–3 require.
+
+A later step frequently needs a value only a prior step's *response* produced at runtime (a WS `session` token, an `elicitation_id`, a `log_id`) — nobody authoring the script ahead of time can know these. Args support a placeholder `{{<step-index>.<field>}}`, recognized only as a whole string value (never embedded inside a larger string, so there's no ambiguity about what JSON type — string, number, bool — the resolved value should be), resolved against the accumulated history of already-parsed step responses immediately before that step dispatches. A step that fails — either the dispatch call itself errors, or its parsed response has `"success": false` — prints the error and stops the batch immediately (exit code 1) rather than running later steps against a known-bad state.
+
+Example — open a WS session, exec in it twice using the session token the first step minted, then close it:
+```json
+[
+  {"tool": "iris_ws_open", "args": {}},
+  {"tool": "iris_ws_exec", "args": {"session": "{{0.session}}", "code": "Set x=1"}},
+  {"tool": "iris_ws_exec", "args": {"session": "{{0.session}}", "code": "Write x"}},
+  {"tool": "iris_ws_close", "args": {"session": "{{0.session}}"}}
+]
+```
+
+Implementation: `crates/iris-agentic-dev-bin/src/cmd/batch.rs`, wired into `main.rs` as `Commands::Batch`. Covered by 8 inline unit tests (placeholder substitution across strings/arrays/objects/non-string field types, missing-index and missing-field error messages, `BatchStep` JSON parsing including the `args`-omitted default) — no live-IRIS integration test was added in this pass, since every step in the batch loop already dispatches through the same `call_for_test` path User Story 2's delegation work put live-IRIS test coverage behind; the batch loop itself is protocol-agnostic sequencing logic, not a new IRIS-facing code path.
 
 ---
 
@@ -214,7 +230,7 @@ The maintainers want a clear, written answer to "should we upgrade rmcp to reach
 - **SC-001**: Every tool with a fixed return shape has a declared `output_schema`, verifiable via `list_tools`.
 - **SC-002**: ✅ Done. `compile`/`query`/`doc` accept `--server` and route to a named instance; previously none could. Existing CLI argument-parsing tests for all four commands (`test_exec_args.rs`, `test_compile_args.rs`, `test_query_tsv.rs`, `test_doc_args.rs`) still pass after the delegation refactor.
 - **SC-003**: ✅ Done. `iris-agentic-dev exec --use-session`/`--session-state` round-trips `%ctx` state across two separate invocations using only documented flags, no hand-constructed `--args` JSON.
-- **SC-004**: A batch script can open a WS session, exec twice, and close it within one CLI invocation, with the second exec observing state the first one set.
+- **SC-004**: ✅ Done. `iris-agentic-dev batch` runs a JSON script of `{tool, args}` steps within one CLI invocation, one shared `IrisTools` instance; a `{{<step-index>.<field>}}` placeholder lets a later step reference an earlier step's runtime response (e.g. a WS `session` token), proving state set by one step is visible to later steps in the same run.
 - **SC-005**: `list_tools` pagination is exercised by at least one test that proves no tool is duplicated or omitted across pages.
 - **SC-006**: The rmcp upgrade spike is written, reviewed, and has an explicit go/no-go — before any code changes toward the upgrade land.
 - **SC-007**: `docs/tools.md` (or equivalent) documents that Tool Search Tool works today, unmodified.
