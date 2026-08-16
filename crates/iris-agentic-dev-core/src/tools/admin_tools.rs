@@ -450,8 +450,13 @@ pub async fn journal_search_impl(
         .unwrap_or_default();
     let global_filter = global_pattern
         .map(|p| {
+            // rec.TypeName holds the journal record's operation ("SET", "ZKILL", "BeginTrans",
+            // ...), not a class name — it never equals "SetKillRecord". That's the class
+            // itself (%SYS.Journal.SetKillRecord, which SET and ZKILL both instantiate).
+            // Gating on TypeName="SetKillRecord" made this `If` permanently false, so the
+            // filter below never ran and every record passed through unfiltered.
             format!(
-                "If rec.TypeName=\"SetKillRecord\" {{ If rec.GlobalReference'[\"{}\" Continue }}",
+                "If $classname(rec)[\"SetKillRecord\" {{ If rec.GlobalReference'[\"{}\" Continue }}",
                 p.replace('"', "")
             )
         })
@@ -471,7 +476,7 @@ While (rec'="")&&(cnt<{limit}) {{
   Set typeName=rec.TypeName
   Set jobID=rec.JobID
   Set gref=""
-  If typeName="SetKillRecord" {{ Set gref=rec.GlobalReference }}
+  If $classname(rec)["SetKillRecord" {{ Set gref=rec.GlobalReference }}
   Write ts,"|",typeName,"|",jobID,"|",gref,!
   Set cnt=cnt+1
   Set rec=rec.Next

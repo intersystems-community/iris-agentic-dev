@@ -9,7 +9,13 @@ use super::connection_args::ConnectionArgs;
 
 /// Sorted list of all tool names available in the Merged toolset.
 /// Must stay in sync with `IrisTools::registered_tool_names(Toolset::Merged)`.
-/// The T032 unit test enforces parity at compile+test time.
+/// The T032 unit test enforces that parity — but parity with the tool *registry* says
+/// nothing about whether `IrisTools::call_for_test()` (this CLI's dispatcher, distinct
+/// from the MCP tool_router) actually has an arm for each name. That second relation is
+/// covered separately by `test_all_tool_names_dispatch_in_call_for_test` in
+/// tests/unit/test_tool_dispatch.rs — added after a field report found 22 names here with
+/// no dispatch arm, so `iris-agentic-dev tool <name>` rejected them as "unknown tool" while
+/// the MCP stdio transport served them correctly.
 pub const TOOL_NAMES: &[&str] = &[
     "capability_matrix",
     "check_config",
