@@ -66,6 +66,10 @@ name = "test_tool_dispatch"
 path = "tests/unit/test_tool_dispatch.rs"
 
 [[test]]
+name = "test_plugin_manifest_version"
+path = "tests/unit/test_plugin_manifest_version.rs"
+
+[[test]]
 name = "test_exec_live"
 path = "tests/integration/test_exec_live.rs"
 

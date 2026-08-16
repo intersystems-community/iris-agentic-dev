@@ -71,13 +71,28 @@ pub use scm::{ScmAction, ScmParams};
 
 /// Controls which tools are registered at startup.
 /// Read from `IRIS_TOOLSET` env var or `--toolset` CLI flag.
+///
+/// Tool counts below are pinned by `test_baseline_tool_count` / `test_merged_tool_count`
+/// in `tests/unit/test_toolset.rs` — update both the test and this comment together, since
+/// nothing checks that a comment matches reality automatically. (These counts previously
+/// drifted for a long time — see `registered_tool_names()`'s doc comment for how that
+/// happened and how it's now derived instead of hand-maintained.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Toolset {
-    /// All 34 tools — current behavior (default when IRIS_TOOLSET unset).
+    /// 81 tools — 90 total `#[tool]` methods minus the 9 that are Merged-tier-only
+    /// dispatchers (iris_admin, iris_debug, iris_containers, iris_get_log, iris_global,
+    /// iris_execute_method, iris_message_body, iris_business_rule_info,
+    /// iris_production_diff — added by later specs and deliberately scoped to Merged
+    /// rather than the original tool surface). Default when `IRIS_TOOLSET` is unset.
     Baseline,
-    /// 29 tools — stub tools/actions removed; no merged tools.
+    /// 77 tools — Baseline (81) minus the 4 stub tools (skill_propose/skill_optimize/
+    /// skill_share/skill_community_install).
     Nostub,
-    /// 23 tools — stubs removed + 4 merger groups consolidated.
+    /// 78 tools — 90 total minus the 4 stubs minus 8 tools replaced by 2 consolidated
+    /// dispatchers (4 debug_* tools → iris_debug; agent_info/iris_list_containers/
+    /// iris_select_container/iris_start_sandbox → iris_containers). The 9
+    /// Merged-tier-only dispatchers from Baseline's note above are present here, which
+    /// is the point of this tier.
     Merged,
 }
 
@@ -2127,181 +2142,26 @@ impl IrisTools {
 
     /// Returns the set of tool names registered for the current toolset.
     /// Used by tests and by the benchmark harness to build valid_tool_names.
+    ///
+    /// Derived directly from `self.tool_router` — the same macro-generated, already-pruned
+    /// router the real MCP `list_tools` RPC serves (see the `list_tools` override in the
+    /// `ServerHandler` impl below, which also calls `self.tool_router.list_all()`). This
+    /// used to be a ~170-line hand-maintained mirror of the constructor's pruning logic
+    /// (`all_tools`/`stub_tools`/`merged_removed`/`merged_added` arrays, kept in sync by
+    /// hand with both the `#[tool]` methods in this file and the `router.remove_route(...)`
+    /// calls just above in `with_registry_and_toolset`) — and it had already drifted from
+    /// both: it had no entry at all for `agent_info`, `iris_list_containers`,
+    /// `iris_select_container`, or `iris_start_sandbox` (real, callable tools in every
+    /// toolset), and it reported `iris_coverage`/`iris_doc_search` as merged-only when the
+    /// constructor's actual `merged_only` removal list never removed them from
+    /// Baseline/Nostub. Deriving from the router instead leaves nothing to keep in sync —
+    /// this can no longer disagree with what MCP clients actually see.
     pub fn registered_tool_names(&self) -> std::collections::HashSet<String> {
-        // Authoritative baseline list — 36 tools (053: +iris_execute_method).
-        // 36 - stubs(4) = nostub(32); 32 - merged_removed(4) + merged_added(6) = merged(35)
-        // Note: iris_symbols_local is no longer a stub (025-symbols-local-ts)
-        let all_tools: &[&str] = &[
-            // REST — 14
-            "iris_compile",
-            "iris_execute",
-            "iris_doc",
-            "iris_query",
-            "iris_symbols",
-            "iris_symbols_local",
-            "docs_introspect",
-            "iris_search",
-            "iris_info",
-            "iris_macro",
-            "iris_table_info",
-            "resolve_dynamic_dispatch",
-            "extract_message_map_routing",
-            "find_subclass_implementations",
-            "debug_capture_packet",
-            "debug_get_error_logs",
-            "iris_generate",
-            "iris_generate_class",
-            // Docker exec
-            "iris_test",
-            "debug_map_int_to_cls",
-            "debug_source_map",
-            "iris_source_control",
-            "skill",
-            "skill_propose",
-            "skill_optimize",
-            // Local/CLI — 4
-            "skill_share",
-            "skill_community",
-            "skill_community_install",
-            "kb",
-            // Interoperability — available in all tiers (036: removed individual stubs)
-            "iris_production",
-            "iris_interop_query",
-            "iris_production_item",
-            "iris_credential_list",
-            "iris_credential_manage",
-            "iris_lookup_manage",
-            "iris_lookup_transfer",
-            // 026-admin-tools
-            "iris_admin",
-            // 034-live-connection-reload
-            "check_config",
-            // 052-iris-global
-            "iris_global",
-            // 053-doc-depth
-            "iris_execute_method",
-            // 059-tool-telemetry-benchmark
-            "telemetry_query",
-            "telemetry_export_trace",
-            // 072-multi-instance-pool: server management
-            "iris_servers",
-            "iris_add_server",
-            "iris_remove_server",
-            "iris_test_server",
-            "iris_import_servers",
-            // 072-b: WebSocket terminal sessions
-            "iris_ws_open",
-            "iris_ws_exec",
-            "iris_ws_close",
-            // 072-c: comparison tools
-            "compare_document",
-            "compare_namespace",
-            // 072-c: global confirm/kill
-            "global_preview",
-            "global_kill",
-            // 072-c: namespace/database admin
-            "iris_namespace_list",
-            "iris_database_list",
-            "iris_namespace_create",
-            "iris_database_stats",
-            // 072-c: observability
-            "journal_search",
-            "query_audit_log",
-            "stream_inspect",
-            // 072-c: security
-            "my_access",
-            "capability_matrix",
-            // 072-c: HL7
-            "hl7_schema_list",
-            "hl7_schema_inspect",
-            // 072-c: Mermaid + storage
-            "mermaid_class",
-            "mermaid_production",
-            "resolve_storage",
-        ];
-
-        // Tools removed in nostub — 4 stubs returning NOT_IMPLEMENTED
-        // iris_symbols_local is NO LONGER a stub (025-symbols-local-ts)
-        let stub_tools: &[&str] = &[
-            "skill_propose",
-            "skill_optimize",
-            "skill_share",
-            "skill_community_install",
-        ];
-
-        // Tools removed in merged (on top of stubs)
-        // 036: individual interop stubs removed entirely; merged dispatchers now in all tiers
-        let merged_removed: &[&str] = &[
-            "debug_capture_packet",
-            "debug_get_error_logs",
-            "debug_map_int_to_cls",
-            "debug_source_map",
-        ];
-        let merged_removed_2: &[&str] = &[] as &[&str]; // placeholder
-        let merged_added: &[&str] = &[
-            "iris_debug",
-            "iris_containers",
-            // 026-admin-tools
-            "iris_admin",
-            // 027-progressive-disclosure
-            "iris_get_log",
-            // 052-iris-global
-            "iris_global",
-            // 053-doc-depth
-            "iris_execute_method",
-            // 056-interop-depth
-            "iris_message_body",
-            "iris_business_rule_info",
-            "iris_production_diff",
-            // 064-objectscript-coverage
-            "iris_coverage",
-            // 065-iris-doc-search
-            "iris_doc_search",
-        ];
-
-        let mut names: std::collections::HashSet<String> =
-            all_tools.iter().map(|s| s.to_string()).collect();
-
-        match self.toolset {
-            Toolset::Baseline => {}
-            Toolset::Nostub => {
-                for s in stub_tools {
-                    names.remove(*s);
-                }
-            }
-            Toolset::Merged => {
-                for s in stub_tools {
-                    names.remove(*s);
-                }
-                for s in merged_removed {
-                    names.remove(*s);
-                }
-                let _ = merged_removed_2; // unused in this path
-                for s in merged_added {
-                    names.insert(s.to_string());
-                }
-                // Apply write-gate: remove write-only tools if not write-allowed
-                if !self.write_tools_enabled() {
-                    let write_gated: &[&str] = &["iris_production_item", "iris_credential_manage"];
-                    for s in write_gated {
-                        names.remove(*s);
-                    }
-                }
-            }
-        }
-
-        // Apply user-disabled tools (IRIS_DISABLED_TOOLS env var or toml disabled_tools field).
-        let disabled: Vec<String> = std::env::var("IRIS_DISABLED_TOOLS")
-            .unwrap_or_default()
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        for name in &disabled {
-            names.remove(name.as_str());
-        }
-
-        names
+        self.tool_router
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect()
     }
 
     pub fn with_registry(
