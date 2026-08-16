@@ -165,6 +165,10 @@ name = "test_toolset"
 path = "tests/unit/test_toolset.rs"
 
 [[test]]
+name = "test_tool_category_coverage"
+path = "tests/unit/test_tool_category_coverage.rs"
+
+[[test]]
 name = "symbols_local_tests"
 path = "tests/symbols_local_tests.rs"
 
