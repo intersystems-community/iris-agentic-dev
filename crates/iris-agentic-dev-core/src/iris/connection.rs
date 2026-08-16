@@ -552,6 +552,24 @@ impl IrisConnection {
             .json(&serde_json::json!({"query": sql, "parameters": params}))
             .send()
             .await?;
+        // Check status before decoding: on auth failure IRIS/WebGateway returns an HTML
+        // challenge page, not JSON. Decoding that first turned every 401/403 into a
+        // "error decoding response body" parse failure that pointed at the wrong
+        // subsystem entirely — this is the first error many new users ever see, since an
+        // unconfigured or freshly started container is 401 by default.
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            anyhow::bail!(
+                "authentication failed (HTTP {}) for user '{}' at {}\n\
+                 hint: check credentials, or whether the account requires a password change",
+                status.as_u16(),
+                self.username,
+                url
+            );
+        }
+        if !status.is_success() {
+            anyhow::bail!("query HTTP {}", status);
+        }
         let body: serde_json::Value = resp.json().await?;
         // Surface Atelier-level errors returned as 200 OK with status.errors in body.
         if let Some(errs) = body["status"]["errors"].as_array() {
