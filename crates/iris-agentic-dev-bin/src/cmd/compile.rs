@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
 use clap::Args;
-use iris_agentic_dev_core::iris::connection::CompileResult;
 use std::path::PathBuf;
 
 use super::connection_args::ConnectionArgs;
+use super::dispatch::dispatch_tool;
 
 #[derive(Args)]
 pub struct CompileCommand {
@@ -11,6 +11,10 @@ pub struct CompileCommand {
     /// With no files: reads iris-dev.toml (existing behavior).
     #[arg(value_name = "FILE")]
     pub files: Vec<PathBuf>,
+
+    /// Route this call to a named registered IRIS instance instead of the default connection.
+    #[arg(long)]
+    pub server: Option<String>,
 
     #[command(flatten)]
     pub conn: ConnectionArgs,
@@ -32,10 +36,12 @@ impl CompileCommand {
         let format = self.format.clone();
 
         let iris = self.conn.resolve().await?;
-        let client = iris_agentic_dev_core::iris::connection::IrisConnection::http_client()?;
 
         if self.files.is_empty() {
-            // Legacy toml-based compile (original behavior preserved)
+            // Legacy toml-based compile (original behavior preserved). This is a
+            // namespace-wide $SYSTEM.OBJ.CompileAll, not a single iris_compile call —
+            // there's no tool method to delegate to here, so it stays direct.
+            let client = iris_agentic_dev_core::iris::connection::IrisConnection::http_client()?;
             let target = ".";
             let code = format!(
                 "Set sc=$SYSTEM.OBJ.CompileAll(\"{}\") If $System.Status.IsOK(sc) {{Write \"OK\"}} Else {{Write $System.Status.GetErrorText(sc)}}",
@@ -58,80 +64,50 @@ impl CompileCommand {
             return Ok(());
         }
 
-        // File-args mode: compile each file directly
+        // File-args mode: delegate to iris_compile per file. iris_compile's own
+        // is_local_path detection (target contains a path separator, or ends in .cls
+        // and exists on disk) already does exactly what this used to hand-roll here —
+        // upload via PUT, derive the class name from the file's `Class` declaration,
+        // then compile. Passing the file path as `target` is enough; the tool method
+        // does the read/upload/compile itself.
         let mut any_error = false;
         for path in &self.files {
-            let target = path.to_string_lossy();
-            let cls_text =
-                std::fs::read_to_string(path).with_context(|| format!("reading {}", target))?;
-            let cls_name = cls_text
-                .lines()
-                .find(|l| l.trim_start().starts_with("Class "))
-                .and_then(|l| l.split_whitespace().nth(1))
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| {
-                    target
-                        .trim_end_matches(".cls")
-                        .replace(['/', '\\'], ".")
-                        .trim_start_matches('.')
-                        .to_string()
-                });
-            let doc_name = format!("{}.cls", cls_name);
-
-            // Upload
-            let put_url = iris.versioned_ns_url(
-                &namespace,
-                &format!("/doc/{}?ignoreConflict=1", urlencoding::encode(&doc_name)),
-            );
-            let lines: Vec<&str> = cls_text.lines().collect();
-            let put_resp = client
-                .put(&put_url)
-                .basic_auth(&iris.username, Some(&iris.password))
-                .json(&serde_json::json!({"enc": false, "content": lines}))
-                .send()
-                .await
-                .context("PUT /doc failed")?;
-            if !put_resp.status().is_success() {
-                eprintln!(
-                    "error: upload failed for {}: HTTP {}",
-                    target,
-                    put_resp.status()
-                );
-                any_error = true;
-                continue;
+            let target = path.to_string_lossy().to_string();
+            let mut args = serde_json::json!({
+                "target": target,
+                "flags": flags,
+                "namespace": namespace,
+            });
+            if let Some(server) = &self.server {
+                args["server"] = serde_json::Value::String(server.clone());
             }
-            let put_body: serde_json::Value = put_resp.json().await.unwrap_or_default();
-            if let Some(errs) = put_body["status"]["errors"].as_array() {
-                if !errs.is_empty() {
-                    let msg = errs[0]["error"].as_str().unwrap_or("Upload failed");
-                    eprintln!("error: {}", msg);
-                    any_error = true;
-                    continue;
-                }
+            if self.force_writable {
+                args["force_writable"] = serde_json::Value::Bool(true);
             }
 
-            // Compile
-            let compile_result = iris
-                .compile_document(&doc_name, &namespace, &flags, &client)
-                .await
-                .context("compile request failed")?;
-
-            if compile_result.success() {
-                if format == "json" {
-                    let result = compile_result_to_json(&compile_result, &target, &namespace);
-                    println!("{}", result);
-                } else {
-                    println!("OK: {}", cls_name);
-                }
-            } else {
-                any_error = true;
-                if format == "json" {
-                    let result = compile_result_to_json(&compile_result, &target, &namespace);
-                    println!("{}", result);
-                } else {
-                    for err in &compile_result.errors {
-                        println!("ERROR: {}: {}", cls_name, err);
+            match dispatch_tool(iris.clone(), "iris_compile", args).await {
+                Ok(body) => {
+                    let success = body["success"].as_bool().unwrap_or(false);
+                    let doc_name = body["target"].as_str().unwrap_or(&target);
+                    if format == "json" {
+                        println!("{}", body);
+                    } else if success {
+                        println!("OK: {}", doc_name);
+                    } else if let Some(errs) = body["errors"].as_array() {
+                        for e in errs {
+                            let text = e["text"].as_str().unwrap_or("");
+                            println!("ERROR: {}: {}", doc_name, text);
+                        }
+                    } else if let Some(err) = body["error"].as_str() {
+                        println!("ERROR: {}: {}", target, err);
                     }
+                    if !success {
+                        any_error = true;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("error: compile failed for {}: {}", target, e);
+                    any_error = true;
                 }
             }
         }
@@ -141,21 +117,6 @@ impl CompileCommand {
         }
         Ok(())
     }
-}
-
-fn compile_result_to_json(r: &CompileResult, target: &str, namespace: &str) -> serde_json::Value {
-    let errors: Vec<serde_json::Value> = r
-        .errors
-        .iter()
-        .map(|e| serde_json::json!({"severity":"error","text":e}))
-        .collect();
-    serde_json::json!({
-        "success": r.success(),
-        "target": target,
-        "namespace": namespace,
-        "errors": errors,
-        "console": r.console,
-    })
 }
 
 fn output_result(result: &serde_json::Value, format: &str) {
