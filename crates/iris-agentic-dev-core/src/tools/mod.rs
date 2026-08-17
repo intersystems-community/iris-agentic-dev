@@ -44,9 +44,9 @@ use output_schemas::{
     IrisNamespaceCreateResponse, IrisNamespaceListResponse, IrisProductionDiffResponse,
     IrisQueryResponse, IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
     IrisStartSandboxResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse,
-    IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse,
-    JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse, MermaidClassResponse,
-    MermaidProductionResponse, MyAccessResponse, QueryAuditLogResponse,
+    IrisTestResponse, IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse,
+    IrisWsOpenResponse, JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse,
+    MermaidClassResponse, MermaidProductionResponse, MyAccessResponse, QueryAuditLogResponse,
     ResolveDynamicDispatchResponse, ResolveStorageResponse, SkillCommunityListResponse,
     SkillCommunityResponse, SkillDescribeResponse, SkillForgetResponse, SkillListResponse,
     SkillResponse, SkillSearchResponse, StreamInspectResponse, TelemetryExportTraceResponse,
@@ -3243,7 +3243,8 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Run %UnitTest.Manager tests on IRIS and return structured pass/fail results. Uses pure-HTTP execution via Atelier REST — works with or without IRIS_CONTAINER. Pass a class name pattern like 'MyApp.Tests' or 'ISC.sql.TestFoo' to run already-compiled test classes (uses /noload automatically). Pass a directory path like 'MyApp/Tests' to load from disk. Returns suite-level summary inline plus log_id for per-test-case detail via iris_get_log. Skill: objectscript-unit-test for test scaffolding; objectscript-tdd for the full loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
+        description = "Run %UnitTest.Manager tests on IRIS and return structured pass/fail results. Uses pure-HTTP execution via Atelier REST — works with or without IRIS_CONTAINER. Pass a class name pattern like 'MyApp.Tests' or 'ISC.sql.TestFoo' to run already-compiled test classes (uses /noload automatically). Pass a directory path like 'MyApp/Tests' to load from disk. Returns suite-level summary inline plus log_id for per-test-case detail via iris_get_log. Skill: objectscript-unit-test for test scaffolding; objectscript-tdd for the full loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<IrisTestResponse>()
     )]
     async fn iris_test(
         &self,
