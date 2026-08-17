@@ -26,16 +26,17 @@ use output_schemas::{
     GlobalPreviewResponse, Hl7SchemaInspectResponse, Hl7SchemaListResponse, IrisAddServerResponse,
     IrisBusinessRuleInfoResponse, IrisCompileResponse, IrisCredentialListResponse,
     IrisCredentialManageResponse, IrisDatabaseListResponse, IrisDatabaseStatsResponse,
-    IrisDebugResponse, IrisDocSearchResponse, IrisExecuteMethodResponse, IrisGenerateClassResponse,
-    IrisGenerateResponse, IrisGenerateTestResponse, IrisGetLogResponse, IrisImportServersResponse,
-    IrisInfoResponse, IrisListContainersResponse, IrisLookupManageResponse,
-    IrisLookupTransferResponse, IrisMacroResponse, IrisMessageBodyResponse,
-    IrisNamespaceCreateResponse, IrisNamespaceListResponse, IrisProductionDiffResponse,
-    IrisQueryResponse, IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
-    IrisStartSandboxResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse,
-    IrisTestResponse, IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse,
-    IrisWsOpenResponse, JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse,
-    MermaidClassResponse, MermaidProductionResponse, MyAccessResponse, QueryAuditLogResponse,
+    IrisDebugResponse, IrisDocSearchResponse, IrisExecuteMethodResponse, IrisExecuteResponse,
+    IrisGenerateClassResponse, IrisGenerateResponse, IrisGenerateTestResponse, IrisGetLogResponse,
+    IrisImportServersResponse, IrisInfoResponse, IrisListContainersResponse,
+    IrisLookupManageResponse, IrisLookupTransferResponse, IrisMacroResponse,
+    IrisMessageBodyResponse, IrisNamespaceCreateResponse, IrisNamespaceListResponse,
+    IrisProductionDiffResponse, IrisQueryResponse, IrisRemoveServerResponse,
+    IrisSelectContainerResponse, IrisServersResponse, IrisStartSandboxResponse,
+    IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse, IrisTestResponse,
+    IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse,
+    JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse, MermaidClassResponse,
+    MermaidProductionResponse, MyAccessResponse, QueryAuditLogResponse,
     ResolveDynamicDispatchResponse, ResolveStorageResponse, SkillCommunityListResponse,
     SkillCommunityResponse, SkillDescribeResponse, SkillForgetResponse, SkillListResponse,
     SkillResponse, SkillSearchResponse, StreamInspectResponse, TelemetryExportTraceResponse,
@@ -3591,7 +3592,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Execute arbitrary ObjectScript code on IRIS and return stdout. Uses pure-HTTP execution via CodeMode=objectgenerator (write temp class, compile, query result, delete). Falls back to docker exec if IRIS_CONTAINER env var is set and HTTP fails. &sql(...) embedded SQL macros are automatically translated to %SQL.Statement calls (set translate_sql: false to disable). When translation fires, response includes sql_translated: true and translated_code. Example: code='write $ZVERSION,!' returns the IRIS version string. Skill: objectscript-tdd for the compile-execute-fix loop. Session state: set use_session: true to enable the %ctx carrier (%DynamicObject). Store values in %ctx.key between calls — scalars, %DynamicObject, and %Persistent objects (stored as OID stubs and re-opened on restore). The response includes session_state (opaque Base64 token); pass it back as session_state on the next call to restore %ctx. Nothing is written to IRIS — the token is held by the client. Error codes: SESSION_INVALID (bad token), SESSION_RESTORE_FAILED (missing class or bad OID), SESSION_SERIALIZE_FAILED (serialization error). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
+        description = "Execute arbitrary ObjectScript code on IRIS and return stdout. Uses pure-HTTP execution via CodeMode=objectgenerator (write temp class, compile, query result, delete). Falls back to docker exec if IRIS_CONTAINER env var is set and HTTP fails. &sql(...) embedded SQL macros are automatically translated to %SQL.Statement calls (set translate_sql: false to disable). When translation fires, response includes sql_translated: true and translated_code. Example: code='write $ZVERSION,!' returns the IRIS version string. Skill: objectscript-tdd for the compile-execute-fix loop. Session state: set use_session: true to enable the %ctx carrier (%DynamicObject). Store values in %ctx.key between calls — scalars, %DynamicObject, and %Persistent objects (stored as OID stubs and re-opened on restore). The response includes session_state (opaque Base64 token); pass it back as session_state on the next call to restore %ctx. Nothing is written to IRIS — the token is held by the client. Error codes: SESSION_INVALID (bad token), SESSION_RESTORE_FAILED (missing class or bad OID), SESSION_SERIALIZE_FAILED (serialization error). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<IrisExecuteResponse>()
     )]
     async fn iris_execute(
         &self,
