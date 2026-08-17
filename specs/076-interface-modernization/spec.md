@@ -194,6 +194,18 @@ No `test_output_schema_shapes.rs` coverage — every mode needs `resolve_server`
 
 ---
 
+### Batch 8 — `iris_compile` (76/90 total)
+
+Confirmed. `iris_compile` has three sub-paths (docker-exec when Atelier REST is unavailable, local-file upload+compile, and the normal Atelier `/action/compile` path), the same three gate mechanisms `iris_query` has ahead of any of them, and its own progressive-disclosure truncation (`log_store::apply_truncation`, same helper `debug_get_error_logs`/`iris_info` use) on top of that.
+
+**A second, distinct error convention surfaced — and a real accuracy gap in `iris_query`'s already-shipped schema was found and fixed in the same pass.** `err_json_with_url` (used by every HTTP-calling branch of both `iris_compile` and `iris_query`) adds `attempted_url` and a fixed `hint` string on top of `ToolError`'s three fields — genuinely not `ToolError`, the same category of finding as `ServerMutationError`/`IrisSelectContainerNotFound`/`IrisDocSearchError` from earlier batches. Batch 7's `IrisQueryResponse` used plain `Err(ToolError)` for its `IRIS_UNREACHABLE` case, missing this — caught while modeling the same helper for `iris_compile`. Added a shared `IrisUnreachableWithUrlError` type and a new variant to both `IrisCompileResponse` and (retroactively) `IrisQueryResponse`. Doesn't change what actually validates today — schemars only emits `additionalProperties: false` under `#[serde(deny_unknown_fields)]`, which nothing in this file uses, so the extra real fields were already accepted by the permissive `ToolError` variant — but it fixes the schema's accuracy as documentation, which is the entire point of this user story.
+
+No `test_output_schema_shapes.rs` coverage — every sub-path needs a live connection.
+
+**Remaining**: 14 of 90 tools — `iris_test`, `iris_execute`, `iris_doc`, `check_config`, `iris_search`, `extract_message_map_routing`, `iris_source_control`, `iris_global`, `iris_coverage`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`. (`iris_coverage` was in the original remaining-tools count all along — batches 6 and 7's prose lists above dropped it by mistake; the tool counts themselves were always right.)
+
+---
+
 ### User Story 2 - Stop the CLI reimplementation drift; give `iris_execute` its session flags (Priority: P2) — ✅ Delivered
 
 A developer using `compile`/`exec`/`query`/`doc` from the CLI wants the same capability the equivalent MCP tool call has — multi-instance `--server` routing, policy gates, and (for `exec` specifically) the session carrier — instead of a thinner, silently-diverging reimplementation.

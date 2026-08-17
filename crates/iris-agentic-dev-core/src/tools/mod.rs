@@ -24,14 +24,14 @@ use output_schemas::{
     DebugGetErrorLogsResponse, DebugMapIntToClsResponse, DebugSourceMapResponse,
     DocsIntrospectResponse, FindSubclassImplementationsResponse, GlobalKillResponse,
     GlobalPreviewResponse, Hl7SchemaInspectResponse, Hl7SchemaListResponse, IrisAddServerResponse,
-    IrisBusinessRuleInfoResponse, IrisCredentialListResponse, IrisCredentialManageResponse,
-    IrisDatabaseListResponse, IrisDatabaseStatsResponse, IrisDebugResponse, IrisDocSearchResponse,
-    IrisExecuteMethodResponse, IrisGenerateClassResponse, IrisGenerateResponse,
-    IrisGenerateTestResponse, IrisGetLogResponse, IrisImportServersResponse, IrisInfoResponse,
-    IrisListContainersResponse, IrisLookupManageResponse, IrisLookupTransferResponse,
-    IrisMacroResponse, IrisMessageBodyResponse, IrisNamespaceCreateResponse,
-    IrisNamespaceListResponse, IrisProductionDiffResponse, IrisQueryResponse,
-    IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
+    IrisBusinessRuleInfoResponse, IrisCompileResponse, IrisCredentialListResponse,
+    IrisCredentialManageResponse, IrisDatabaseListResponse, IrisDatabaseStatsResponse,
+    IrisDebugResponse, IrisDocSearchResponse, IrisExecuteMethodResponse, IrisGenerateClassResponse,
+    IrisGenerateResponse, IrisGenerateTestResponse, IrisGetLogResponse, IrisImportServersResponse,
+    IrisInfoResponse, IrisListContainersResponse, IrisLookupManageResponse,
+    IrisLookupTransferResponse, IrisMacroResponse, IrisMessageBodyResponse,
+    IrisNamespaceCreateResponse, IrisNamespaceListResponse, IrisProductionDiffResponse,
+    IrisQueryResponse, IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
     IrisStartSandboxResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse,
     IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse,
     JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse, MermaidClassResponse,
@@ -2733,7 +2733,8 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Compile an ObjectScript class, routine, or wildcard package on IRIS via Atelier REST. Supports 'MyApp.*.cls' for package-level compilation. Returns structured errors with line numbers, columns, and severity. No Python required. Skill: objectscript-tdd for the compile-test-fix loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
+        description = "Compile an ObjectScript class, routine, or wildcard package on IRIS via Atelier REST. Supports 'MyApp.*.cls' for package-level compilation. Returns structured errors with line numbers, columns, and severity. No Python required. Skill: objectscript-tdd for the compile-test-fix loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<IrisCompileResponse>()
     )]
     async fn iris_compile(
         &self,

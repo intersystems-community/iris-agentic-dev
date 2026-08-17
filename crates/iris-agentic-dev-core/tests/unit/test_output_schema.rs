@@ -93,6 +93,8 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "skill_community",
     // batch 7
     "iris_query",
+    // batch 8
+    "iris_compile",
 ];
 
 /// Tools legitimately absent from the Merged toolset entirely (not "present but missing a
@@ -187,9 +189,10 @@ fn test_baseline_removed_tools_are_absent_from_baseline_router() {
 
 #[test]
 fn test_a_tool_without_a_declared_schema_reports_false_not_a_panic() {
-    // iris_compile hasn't been given an output_schema yet (spec 076 US1 batch 2+) — confirms
-    // the accessor distinguishes "no schema" from "not found" without special-casing either.
+    // iris_test hasn't been given an output_schema yet (spec 076 US1, still in progress) —
+    // confirms the accessor distinguishes "no schema" from "not found" without special-casing
+    // either. iris_compile was this test's original example until batch 8 gave it a schema.
     let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
-    assert!(!tools.tool_declares_output_schema("iris_compile"));
+    assert!(!tools.tool_declares_output_schema("iris_test"));
     assert!(!tools.tool_declares_output_schema("not_a_real_tool_name"));
 }
