@@ -2031,3 +2031,264 @@ pub enum IrisExecuteResponse {
     Err(ToolError),
     GateBlocked(serde_json::Value),
 }
+
+// ── iris_doc ───────────────────────────────────────────────────────────────────
+//
+// The fifth and last core execution tool, and the largest by mode count: get, put,
+// delete, head, fragment, compiled, list, insert, delete_lines — plus a top-level
+// elicitation-resume path handled before mode dispatch (so it works uniformly for
+// put and the two surgical-edit modes). No gate calls at all (`grep` confirms — like
+// `iris_test`, not like `iris_query`/`iris_compile`/`iris_execute`), so no `GateBlocked`
+// variant.
+//
+// Every single-document read/write mode (get/put/delete/head/fragment/compiled) shares
+// one required-name guard (`require_name`) whose JSON happens to already match
+// `ToolError`'s three fields exactly, so MISSING_PARAMS across all of them reuses it
+// rather than a bespoke type.
+//
+// The two batch paths (`names` non-empty on get/delete) are deliberately modeled with
+// `serde_json::Value` entries rather than a nested per-item oneof: each entry is itself
+// `{name, content}` on success or `{name, error}` on failure, decided per-document, and
+// the outer response is unconditionally `success: true` even when every entry failed —
+// the real status lives inside each entry. A oneof-of-oneof here would cost more schema
+// complexity than it documents.
+
+/// mode=get, single document.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDocGetOk {
+    pub success: bool,
+    pub name: String,
+    pub content: String,
+    /// Atelier's per-document ETag/timestamp, empty string if the server didn't send one.
+    pub timestamp: String,
+}
+
+/// mode=get with `names` set (batch fetch, concurrent). Always `success: true` at this
+/// level — see the module-level note on why per-document outcomes live inside `documents`
+/// instead of here.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDocGetBatchOk {
+    pub success: bool,
+    /// Each entry is `{name, content}` (fetched) or `{name, error}` (failed) — see the
+    /// module doc comment for why this stays `Value` rather than a nested oneof.
+    pub documents: Vec<serde_json::Value>,
+}
+
+/// The SCM checkout confirmation dialog — returned by mode=put and, with the extra
+/// edit-annotation fields populated, by mode=insert/mode=delete_lines when the target
+/// document needs checkout before either can write. Resume by calling again with
+/// `elicitation_id` + `elicitation_answer: "yes"|"no"`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDocElicitationRequired {
+    pub success: bool,
+    pub elicitation_required: bool,
+    pub elicitation_id: String,
+    pub message: String,
+    pub options: Vec<String>,
+    /// Present only when this dialog was raised from mode=insert or mode=delete_lines
+    /// (`annotate_edit` merges the pending edit's metadata onto the dialog response so a
+    /// caller resuming it can still see what edit is about to happen).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inserted_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines_added: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_start: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_end: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines_removed: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff: Option<String>,
+}
+
+/// The shared "a write actually landed" shape — covers mode=put (with or without
+/// `compile: true`), an elicitation-resume write, and a successful mode=insert/
+/// mode=delete_lines edit, all via the same optional annotation fields. Keeping these
+/// as one struct rather than four separate ones reflects what the code actually does:
+/// `do_write`'s core success JSON gets progressively more fields merged onto it
+/// (`annotate_edit`) depending on which caller invoked it, never fewer.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDocWriteOk {
+    /// `true` unless `compile: true` was passed and the compile itself failed — in that
+    /// case the write landed but `success` reports the compile outcome, not plain "write
+    /// happened", and `compile_errors` explains why.
+    pub success: bool,
+    pub name: String,
+    pub open_uri: String,
+    /// `true` if the class had an explicit Storage block that got stripped before writing
+    /// (see `allow_storage_regeneration` on the request).
+    pub storage_stripped: bool,
+    /// Present only when `compile: true` was passed on the write.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compiled: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compile_errors: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compile_console: Option<Vec<String>>,
+    /// Present only when this write was reached via an elicitation resume
+    /// (`elicitation_id`/`elicitation_answer: "yes"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resumed: Option<bool>,
+    /// Present only when this write came from mode=insert or mode=delete_lines.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inserted_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines_added: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_start: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_end: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines_removed: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff: Option<String>,
+    /// Post-write line count, re-fetched fresh so a chained surgical edit has authoritative
+    /// numbers (IRIS renumbers .cls source on save). Present on a surgical-edit or resumed
+    /// write when the re-fetch itself succeeded; absent if the write succeeded but the
+    /// immediate re-fetch failed (rare — `finalize_edit` swallows that failure rather than
+    /// turning a landed write into an error).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_lines: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+}
+
+/// mode=delete, single document.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDocDeleteOk {
+    pub success: bool,
+    pub name: String,
+}
+
+/// mode=delete with `names` set (batch). Unlike batch-get, `success` here does reflect the
+/// real outcome (`errors.is_empty()`) — partial failure is visible at the top level, not
+/// just per-entry.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDocDeleteBatchOk {
+    pub success: bool,
+    pub deleted: Vec<String>,
+    /// Each entry is `{name, error}`.
+    pub errors: Vec<serde_json::Value>,
+}
+
+/// mode=head.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDocHeadOk {
+    pub success: bool,
+    pub name: String,
+    pub exists: bool,
+    /// The ETag header, empty string if absent — same convention as mode=get's `timestamp`.
+    pub timestamp: String,
+}
+
+/// mode=fragment: a 1-based inclusive line-range read.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDocFragmentOk {
+    pub success: bool,
+    pub name: String,
+    pub lines: Vec<String>,
+    /// The actual (post-clamp) start/end, which may differ from the request if it ran past
+    /// end-of-file.
+    pub start: i64,
+    pub end: i64,
+    /// `true` if `end` (or `start`) had to be clamped to fit the document.
+    pub clamped: bool,
+    pub total_lines: i64,
+}
+
+/// mode=compiled: the INT form of a compiled document.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDocCompiledOk {
+    pub success: bool,
+    pub name: String,
+    /// The derived IRIS routine name the INT form was read from (e.g. `MyApp.Patient.1`
+    /// for a `.cls`).
+    pub routine: String,
+    /// Always `"INT"` — `OBJ` is accepted as a request value but not yet implemented.
+    pub category: String,
+    pub content: String,
+    pub total_lines: i64,
+}
+
+/// mode=list: glob-matched docnames.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDocListOk {
+    pub success: bool,
+    pub documents: Vec<IrisDocListEntry>,
+    pub count: i64,
+    /// `true` if the real match count exceeded `max_results` and the list was truncated.
+    pub truncated: bool,
+    pub namespace: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDocListEntry {
+    pub name: String,
+    pub category: String,
+    pub ts: String,
+}
+
+/// The `STALE_CONTENT` refusal from mode=insert (positional) or mode=delete_lines when the
+/// live document no longer matches the caller's `expected` text at the targeted line(s).
+/// Extends `ToolError`'s three fields with the exact divergence, so a caller can decide
+/// whether to re-fetch-and-retry or investigate further, without re-fetching blind first.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDocStaleContentError {
+    pub success: bool,
+    pub error_code: String,
+    pub error: String,
+    /// 1-based line number of the first divergence.
+    pub line: i64,
+    pub expected_line: String,
+    pub actual_line: String,
+}
+
+/// A rare failure path: mode=insert/mode=delete_lines already fetched the document,
+/// computed the diff, and called through to the actual write — which then failed
+/// (`SCM_REJECTED`, an HTTP error, or a requested `compile: true` failing) after the edit
+/// was already known. `annotate_edit` merges the edit metadata onto the failure the same
+/// way it does onto a success, so these carry the same optional annotation fields as
+/// `IrisDocWriteOk` on top of `ToolError`'s three.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDocEditFailedError {
+    pub success: bool,
+    pub error_code: String,
+    pub error: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub edit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inserted_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines_added: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_start: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted_end: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines_removed: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisDocResponse {
+    Get(IrisDocGetOk),
+    GetBatch(IrisDocGetBatchOk),
+    ElicitationRequired(IrisDocElicitationRequired),
+    WriteOk(IrisDocWriteOk),
+    Delete(IrisDocDeleteOk),
+    DeleteBatch(IrisDocDeleteBatchOk),
+    Head(IrisDocHeadOk),
+    Fragment(IrisDocFragmentOk),
+    Compiled(IrisDocCompiledOk),
+    List(IrisDocListOk),
+    StaleContent(IrisDocStaleContentError),
+    EditFailed(IrisDocEditFailedError),
+    Err(ToolError),
+}

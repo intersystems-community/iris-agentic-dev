@@ -99,6 +99,8 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "iris_test",
     // batch 10
     "iris_execute",
+    // batch 11
+    "iris_doc",
 ];
 
 /// Tools legitimately absent from the Merged toolset entirely (not "present but missing a
