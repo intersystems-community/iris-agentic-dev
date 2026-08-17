@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (84/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (85/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -309,6 +309,16 @@ A `what: logs|queues|messages` dispatcher over three SQL-backed lookups (`Ens_Ut
 This tool resolves its connection via `self.iris_arc()`, not `resolve_server`/`get_iris_reloaded` — same pattern as batch 5's trio (`iris_message_body`/`iris_business_rule_info`/`iris_production_diff`) — so it gets real `test_output_schema_shapes.rs` coverage: one test per `what` value, each hitting the deterministic `IRIS_UNREACHABLE` response with no live IRIS needed.
 
 **Remaining**: 6 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_production`, `iris_production_item`, `iris_admin`.
+
+---
+
+### Batch 17 — `iris_production_item` (85/90 total)
+
+An `action: enable|disable|get_settings|set_settings` dispatcher against a single production config item. Three genuinely different success shapes, one per action group (enable/disable share one, get_settings and set_settings each have their own) — all errors funnel through the shared `ToolError` convention (`ITEM_NOT_FOUND`, `NO_PRODUCTION`, `UPDATE_FAILED`, `INTEROP_ERROR`, `IRIS_UNREACHABLE`, `INVALID_PARAMS`, `INVALID_ACTION`).
+
+Resolves its connection via `self.iris_arc()` like `iris_interop_query` before it, so it gets a real `test_output_schema_shapes.rs` test hitting the deterministic `IRIS_UNREACHABLE` response with no live IRIS needed.
+
+**Remaining**: 5 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_production`, `iris_admin`.
 
 ---
 

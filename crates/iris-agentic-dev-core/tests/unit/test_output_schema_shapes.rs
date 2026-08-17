@@ -329,3 +329,18 @@ async fn test_iris_interop_query_messages_no_connection_response_matches_declare
     assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
     assert!(body["error"].is_string());
 }
+
+// batch 17: iris_production_item resolves its connection via `self.iris_arc()` as well.
+
+#[tokio::test]
+async fn test_iris_production_item_no_connection_response_matches_declared_shape() {
+    let body = call(
+        &tools(),
+        "iris_production_item",
+        serde_json::json!({"action": "get_settings", "item": "SomeItem"}),
+    )
+    .await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
+    assert!(body["error"].is_string());
+}
