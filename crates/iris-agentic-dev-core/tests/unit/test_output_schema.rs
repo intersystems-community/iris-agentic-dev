@@ -109,6 +109,8 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "iris_source_control",
     // batch 15
     "iris_containers",
+    // batch 16
+    "iris_interop_query",
 ];
 
 /// Tools legitimately absent from the Merged toolset entirely (not "present but missing a

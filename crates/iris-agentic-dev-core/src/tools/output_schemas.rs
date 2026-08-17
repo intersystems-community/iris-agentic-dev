@@ -2644,3 +2644,43 @@ pub enum IrisContainersResponse {
     Start(IrisStartSandboxResponse),
     Err(ToolError),
 }
+
+// ── iris_interop_query ───────────────────────────────────────────────────────
+//
+// A `what: logs|queues|messages` dispatcher over three simple SQL-backed lookups
+// (`Ens_Util.Log`, `Ens.Queue_Enumerate()`, `Ens.MessageHeader`) — all three success shapes
+// carry their row data as raw `serde_json::Value` (the SQL query result's `result.content`
+// array, passed through verbatim), the same "genuinely dynamic" carve-out used for other
+// tools' raw query-result fields, since modeling arbitrary SQL row shapes precisely isn't
+// possible. All three sub-actions share one error convention (plain `ToolError`), including
+// the "no connection" case — `iris_arc()` returning `None` maps to `IRIS_UNREACHABLE` here,
+// not a distinct shape.
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisInteropLogsOk {
+    pub success: bool,
+    pub logs: serde_json::Value,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisInteropQueuesOk {
+    pub success: bool,
+    pub queues: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisInteropMessagesOk {
+    pub success: bool,
+    pub messages: serde_json::Value,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisInteropQueryResponse {
+    Logs(IrisInteropLogsOk),
+    Queues(IrisInteropQueuesOk),
+    Messages(IrisInteropMessagesOk),
+    Err(ToolError),
+}
