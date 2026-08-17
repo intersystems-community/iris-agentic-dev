@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (82/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (83/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -289,6 +289,16 @@ One more single-purpose error type: action=status's specific `SCM_UNAVAILABLE` (
 No `test_output_schema_shapes.rs` coverage — routes through `resolve_server`, needing a live connection.
 
 **Remaining**: 8 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`.
+
+---
+
+### Batch 15 — `iris_containers` (83/90 total)
+
+A pure dispatcher (Merged toolset only — added to `BASELINE_REMOVED`, same category as `iris_global` before it): `action: list|select|start` calls straight through to `iris_list_containers`/`iris_select_container`/`iris_start_sandbox` respectively and returns exactly what they return. No new struct needed — `IrisContainersResponse` just composes those three tools' own already-declared response types plus this dispatcher's own `INVALID_ACTION` `ToolError`, since reusing the real shapes is more accurate than re-describing them.
+
+No `test_output_schema_shapes.rs` coverage — inherits the same exclusion as the three tools it dispatches to (all shell out to `docker`/`idt` subprocesses).
+
+**Remaining**: 7 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_production`, `iris_interop_query`, `iris_production_item`, `iris_admin`.
 
 ---
 

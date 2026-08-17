@@ -107,6 +107,8 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "iris_global",
     // batch 14
     "iris_source_control",
+    // batch 15
+    "iris_containers",
 ];
 
 /// Tools legitimately absent from the Merged toolset entirely (not "present but missing a
@@ -140,6 +142,7 @@ const BASELINE_REMOVED: &[&str] = &[
     "iris_execute_method",
     "iris_debug",
     "iris_global",
+    "iris_containers",
 ];
 
 #[test]
