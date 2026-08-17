@@ -29,18 +29,19 @@ use output_schemas::{
     IrisDatabaseListResponse, IrisDatabaseStatsResponse, IrisDebugResponse, IrisDocResponse,
     IrisDocSearchResponse, IrisExecuteMethodResponse, IrisExecuteResponse,
     IrisGenerateClassResponse, IrisGenerateResponse, IrisGenerateTestResponse, IrisGetLogResponse,
-    IrisGlobalResponse, IrisImportServersResponse, IrisInfoResponse, IrisListContainersResponse,
-    IrisLookupManageResponse, IrisLookupTransferResponse, IrisMacroResponse,
-    IrisMessageBodyResponse, IrisNamespaceCreateResponse, IrisNamespaceListResponse,
-    IrisProductionDiffResponse, IrisQueryResponse, IrisRemoveServerResponse,
-    IrisSelectContainerResponse, IrisServersResponse, IrisSourceControlResponse,
-    IrisStartSandboxResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse,
-    IrisTestResponse, IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse,
-    IrisWsOpenResponse, JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse,
-    MermaidClassResponse, MermaidProductionResponse, MyAccessResponse, QueryAuditLogResponse,
-    ResolveDynamicDispatchResponse, ResolveStorageResponse, SkillCommunityListResponse,
-    SkillCommunityResponse, SkillDescribeResponse, SkillForgetResponse, SkillListResponse,
-    SkillResponse, SkillSearchResponse, StreamInspectResponse, TelemetryExportTraceResponse,
+    IrisGlobalResponse, IrisImportServersResponse, IrisInfoResponse, IrisInteropQueryResponse,
+    IrisListContainersResponse, IrisLookupManageResponse, IrisLookupTransferResponse,
+    IrisMacroResponse, IrisMessageBodyResponse, IrisNamespaceCreateResponse,
+    IrisNamespaceListResponse, IrisProductionDiffResponse, IrisQueryResponse,
+    IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
+    IrisSourceControlResponse, IrisStartSandboxResponse, IrisSymbolsLocalResponse,
+    IrisSymbolsResponse, IrisTableInfoResponse, IrisTestResponse, IrisTestServerResponse,
+    IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse, JournalSearchResponse,
+    KbIndexResponse, KbRecallResponse, KbResponse, MermaidClassResponse, MermaidProductionResponse,
+    MyAccessResponse, QueryAuditLogResponse, ResolveDynamicDispatchResponse,
+    ResolveStorageResponse, SkillCommunityListResponse, SkillCommunityResponse,
+    SkillDescribeResponse, SkillForgetResponse, SkillListResponse, SkillResponse,
+    SkillSearchResponse, StreamInspectResponse, TelemetryExportTraceResponse,
     TelemetryQueryResponse, ToolError,
 };
 
@@ -6113,7 +6114,8 @@ Methods:
 
     #[tool(
         description = "Interoperability query dispatcher (merged). what: logs=recent log entries, queues=message queue depths, messages=search message archive. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisInteropQueryResponse>()
     )]
     async fn iris_interop_query(
         &self,

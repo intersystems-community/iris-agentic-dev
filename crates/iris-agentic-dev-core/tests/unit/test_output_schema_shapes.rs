@@ -287,3 +287,45 @@ async fn test_iris_production_diff_no_connection_response_matches_declared_shape
     assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
     assert!(body["error"].is_string());
 }
+
+// batch 16: iris_interop_query resolves the same way (`self.iris_arc()`, never
+// `resolve_server`) for all three of its `what` sub-actions.
+
+#[tokio::test]
+async fn test_iris_interop_query_logs_no_connection_response_matches_declared_shape() {
+    let body = call(
+        &tools(),
+        "iris_interop_query",
+        serde_json::json!({"what": "logs"}),
+    )
+    .await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
+    assert!(body["error"].is_string());
+}
+
+#[tokio::test]
+async fn test_iris_interop_query_queues_no_connection_response_matches_declared_shape() {
+    let body = call(
+        &tools(),
+        "iris_interop_query",
+        serde_json::json!({"what": "queues"}),
+    )
+    .await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
+    assert!(body["error"].is_string());
+}
+
+#[tokio::test]
+async fn test_iris_interop_query_messages_no_connection_response_matches_declared_shape() {
+    let body = call(
+        &tools(),
+        "iris_interop_query",
+        serde_json::json!({"what": "messages"}),
+    )
+    .await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
+    assert!(body["error"].is_string());
+}

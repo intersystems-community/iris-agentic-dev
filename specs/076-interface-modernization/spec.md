@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (83/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (84/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -299,6 +299,16 @@ A pure dispatcher (Merged toolset only — added to `BASELINE_REMOVED`, same cat
 No `test_output_schema_shapes.rs` coverage — inherits the same exclusion as the three tools it dispatches to (all shell out to `docker`/`idt` subprocesses).
 
 **Remaining**: 7 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_production`, `iris_interop_query`, `iris_production_item`, `iris_admin`.
+
+---
+
+### Batch 16 — `iris_interop_query` (84/90 total)
+
+A `what: logs|queues|messages` dispatcher over three SQL-backed lookups (`Ens_Util.Log`, `Ens.Queue_Enumerate()`, `Ens.MessageHeader`). Each success shape carries its row data as raw `serde_json::Value` (the SQL query result's `result.content` array, passed through verbatim) — the same carve-out used for other tools' raw query-result fields, since arbitrary SQL row shapes can't be modeled precisely. All three sub-actions share one error convention (plain `ToolError`), including the no-connection case.
+
+This tool resolves its connection via `self.iris_arc()`, not `resolve_server`/`get_iris_reloaded` — same pattern as batch 5's trio (`iris_message_body`/`iris_business_rule_info`/`iris_production_diff`) — so it gets real `test_output_schema_shapes.rs` coverage: one test per `what` value, each hitting the deterministic `IRIS_UNREACHABLE` response with no live IRIS needed.
+
+**Remaining**: 6 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_production`, `iris_production_item`, `iris_admin`.
 
 ---
 
