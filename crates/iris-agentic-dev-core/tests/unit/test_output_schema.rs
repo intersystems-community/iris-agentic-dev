@@ -95,6 +95,8 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "iris_query",
     // batch 8
     "iris_compile",
+    // batch 9
+    "iris_test",
 ];
 
 /// Tools legitimately absent from the Merged toolset entirely (not "present but missing a
@@ -189,10 +191,11 @@ fn test_baseline_removed_tools_are_absent_from_baseline_router() {
 
 #[test]
 fn test_a_tool_without_a_declared_schema_reports_false_not_a_panic() {
-    // iris_test hasn't been given an output_schema yet (spec 076 US1, still in progress) —
+    // iris_execute hasn't been given an output_schema yet (spec 076 US1, still in progress) —
     // confirms the accessor distinguishes "no schema" from "not found" without special-casing
-    // either. iris_compile was this test's original example until batch 8 gave it a schema.
+    // either. iris_compile, then iris_test, were this test's example until they got schemas
+    // in batches 8 and 9 respectively.
     let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
-    assert!(!tools.tool_declares_output_schema("iris_test"));
+    assert!(!tools.tool_declares_output_schema("iris_execute"));
     assert!(!tools.tool_declares_output_schema("not_a_real_tool_name"));
 }

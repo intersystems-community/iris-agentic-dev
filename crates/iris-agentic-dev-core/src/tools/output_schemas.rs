@@ -1848,3 +1848,95 @@ pub enum IrisCompileResponse {
     UnreachableWithUrl(IrisUnreachableWithUrlError),
     GateBlocked(serde_json::Value),
 }
+
+// ── iris_test ─────────────────────────────────────────────────────────────────
+//
+// The third of the five core execution tools. No policy gate here — unlike `iris_query`/
+// `iris_compile`, `iris_test` never calls `dispatch_gate`/`policy_gate`/`check_role_gate`, so
+// there's no `GateBlocked` variant to add. Its complexity is elsewhere: parsing free-text
+// `%UnitTest.Manager` RunTest stdout into structured pass/fail results, an optional coverage
+// sub-run wrapping the whole thing, and a `NO_TESTS_FOUND` case IRIS itself doesn't distinguish
+// from "zero test methods ran" at the protocol level — this code has to infer it.
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisTestCase {
+    pub name: String,
+    pub class_name: String,
+    pub status: String,
+    /// Always `null` today — stdout parsing recovers pass/fail and a failure message, but not
+    /// per-method timing. Modeled as `Option<u64>`, not a fixed null, in case that changes.
+    pub duration_ms: Option<u64>,
+    pub failure_message: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisTestSuite {
+    pub name: String,
+    pub tests: usize,
+    pub failures: u64,
+    /// Always `0` — this code never distinguishes a suite-level error from a failure.
+    pub errors: u64,
+    pub duration_ms: Option<u64>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisTestOk {
+    pub success: bool,
+    pub total: u64,
+    pub passed: u64,
+    pub failed: u64,
+    /// Always `0` at the top level too — see `IrisTestSuite::errors`.
+    pub errors: u64,
+    /// Always `0` — this tool never skips individual test methods.
+    pub skipped: u64,
+    pub duration_ms: Option<u64>,
+    pub path: String,
+    /// Full per-test-case detail (nested under each suite) is stored here, retrievable via
+    /// `iris_get_log` — this response carries only the suite-level summary.
+    pub log_id: String,
+    pub pattern: String,
+    pub namespace: String,
+    pub test_suites: Vec<IrisTestSuite>,
+    /// Present only when `coverage: true` was passed. `iris_coverage`'s own output schema
+    /// isn't declared yet (still on this spec's remaining-tools list), so this stays free-form
+    /// JSON rather than referencing a type that doesn't exist yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<serde_json::Value>,
+}
+
+/// Distinct from `ToolError` — adds a `namespace` field.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisTestNamespaceNotFoundError {
+    pub success: bool,
+    pub error_code: String,
+    pub error: String,
+    pub namespace: String,
+}
+
+/// The "pattern matched no test classes" case — IRIS creates a synthetic 1-failure suite at the
+/// path-separator level rather than reporting this as a real error, so this code has to infer
+/// it from an empty parsed-method list and report it as its own shape: `ToolError`'s three
+/// fields plus a pattern-shape-aware `hint`, echoed `pattern`/`namespace`, and zeroed counts.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisTestNoTestsFoundError {
+    pub success: bool,
+    pub error_code: String,
+    pub error: String,
+    pub hint: String,
+    pub pattern: String,
+    pub namespace: String,
+    pub total: u64,
+    pub passed: u64,
+    pub failed: u64,
+    pub path: String,
+    pub source: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisTestResponse {
+    Ok(IrisTestOk),
+    NamespaceNotFound(IrisTestNamespaceNotFoundError),
+    NoTestsFound(IrisTestNoTestsFoundError),
+    Err(ToolError),
+}

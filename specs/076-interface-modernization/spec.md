@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (75/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (77/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -203,6 +203,18 @@ Confirmed. `iris_compile` has three sub-paths (docker-exec when Atelier REST is 
 No `test_output_schema_shapes.rs` coverage — every sub-path needs a live connection.
 
 **Remaining**: 14 of 90 tools — `iris_test`, `iris_execute`, `iris_doc`, `check_config`, `iris_search`, `extract_message_map_routing`, `iris_source_control`, `iris_global`, `iris_coverage`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`. (`iris_coverage` was in the original remaining-tools count all along — batches 6 and 7's prose lists above dropped it by mistake; the tool counts themselves were always right.)
+
+---
+
+### Batch 9 — `iris_test` (77/90 total)
+
+The third core execution tool. Simpler than `iris_query`/`iris_compile` in one specific way — **no policy gate at all**: `iris_test` never calls `dispatch_gate`/`policy_gate`/`check_role_gate`, so `IrisTestResponse` has no `GateBlocked` variant, the first of the five core tools without one. Its complexity is elsewhere: parsing free-text `%UnitTest.Manager` RunTest stdout into structured pass/fail results (IRIS's own output format, not a JSON API), an optional coverage sub-run that wraps the whole test run, and a `NO_TESTS_FOUND` case IRIS itself doesn't distinguish from "ran zero test methods" at the protocol level — a synthetic 1-failure suite gets created at the path-separator level instead, which this code's stdout parser has to notice and re-report as its own explicit error.
+
+`coverage` (present only when `coverage: true` is passed) stays `serde_json::Value` — `iris_coverage`'s own output schema isn't declared yet (still on the remaining list below), so referencing a type that doesn't exist would be backwards; this field gets tightened for real once that tool's own batch lands.
+
+No `test_output_schema_shapes.rs` coverage — every path needs a live connection. The "known-undeclared" example in `test_a_tool_without_a_declared_schema_reports_false_not_a_panic` moved to `iris_execute` (its third home, after `iris_compile` then `iris_test`, as batches 8 and 9 gave each of them a real schema in turn).
+
+**Remaining**: 13 of 90 tools — `iris_execute`, `iris_doc`, `check_config`, `iris_search`, `extract_message_map_routing`, `iris_source_control`, `iris_global`, `iris_coverage`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`.
 
 ---
 
