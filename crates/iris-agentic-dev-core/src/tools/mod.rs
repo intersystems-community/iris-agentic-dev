@@ -7876,12 +7876,29 @@ impl ServerHandler for IrisTools {
             )
     }
 
-    /// Override list_tools to rewrite JSON Schema 2020-12 nullable types to OpenAPI 3.0 anyOf.
-    /// schemars + rmcp emit `"type": ["T", "null"]` which Google Vertex AI and Azure OpenAI
-    /// reject. Rewrite to `"anyOf": [{"type": "T", ...siblings}, {"type": "null"}]`.
+    /// Override list_tools to (1) rewrite JSON Schema 2020-12 nullable types to OpenAPI 3.0
+    /// anyOf — schemars + rmcp emit `"type": ["T", "null"]` which Google Vertex AI and Azure
+    /// OpenAI reject; rewritten to `"anyOf": [{"type": "T", ...siblings}, {"type": "null"}]`
+    /// — and (2) paginate the result (076-interface-modernization User Story 4): the full
+    /// catalog is still computed once per call (pagination doesn't change which tools exist,
+    /// only how many are handed back in one response), then sliced via `paginate_tool_list`,
+    /// an already-tested pure function, using the incoming request's `cursor` and a
+    /// server-configured page size (`IRIS_LIST_TOOLS_PAGE_SIZE`) — the MCP pagination
+    /// contract is server-paced, not a client-requested page size.
+    ///
+    /// The default (`DEFAULT_LIST_TOOLS_PAGE_SIZE`) is deliberately set above every current
+    /// toolset's real count (Baseline 81, Nostub 77, Merged 78, as of this writing) so a
+    /// plain unconfigured `tools/list` call keeps returning the whole catalog in one
+    /// response, unchanged from before this feature existed — every existing client
+    /// (including this project's own `mcp_handshake.rs` e2e assertions) that assumes one
+    /// call returns everything keeps working with no config changes. Pagination becomes
+    /// real the moment an operator sets `IRIS_LIST_TOOLS_PAGE_SIZE` below the effective
+    /// tool count, and it's exercised end-to-end that way in
+    /// `tests/mcp_handshake.rs::mcp_server_tools_list_pagination_works` — not just via the
+    /// pure-function unit tests in `test_list_tools_pagination.rs`.
     async fn list_tools(
         &self,
-        _request: Option<rmcp::model::PaginatedRequestParams>,
+        request: Option<rmcp::model::PaginatedRequestParams>,
         _context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::ListToolsResult, rmcp::ErrorData> {
         let mut tools = self.tool_router.list_all();
@@ -7889,12 +7906,58 @@ impl ServerHandler for IrisTools {
             let schema = std::sync::Arc::make_mut(&mut tool.input_schema);
             normalize_schema_openapi3(schema);
         }
+        let page_size = log_store::read_inline_threshold(
+            "IRIS_LIST_TOOLS_PAGE_SIZE",
+            DEFAULT_LIST_TOOLS_PAGE_SIZE,
+        );
+        let cursor = request.and_then(|r| r.cursor);
+        let (page, next_cursor) = paginate_tool_list(tools, cursor.as_deref(), page_size);
         Ok(rmcp::model::ListToolsResult {
-            tools,
-            next_cursor: None,
+            tools: page,
+            next_cursor,
             meta: None,
         })
     }
+}
+
+/// Default `list_tools` page size — see the doc comment on `list_tools` for why this is set
+/// above every current toolset's real tool count rather than at a value that would actually
+/// paginate by default.
+const DEFAULT_LIST_TOOLS_PAGE_SIZE: usize = 200;
+
+/// Slice a `list_tools` catalog (already sorted deterministically by
+/// `ToolRouter::list_all()`) into one page, given an opaque cursor from a prior response.
+///
+/// `cursor` is a base-10 offset into `all`, as previously handed back via `next_cursor` —
+/// but per MCP's own cursor contract it's an *opaque* continuation token, not a value
+/// clients are expected to construct, so a missing, unparseable, or out-of-range cursor
+/// degrades to "start from the beginning" rather than an error. That degrade-safely
+/// behavior matters here specifically because `list_all()`'s output can change size across
+/// requests (an `IRIS_ENABLED_TOOLS` change, a live toolset switch) — an offset that no
+/// longer fits should never panic or produce a nonsensical empty page forever.
+///
+/// Returns `(page, next_cursor)` — `next_cursor` is `None` exactly when `page` reaches the
+/// end of `all`, so a caller paging until `next_cursor` is `None` sees every tool exactly
+/// once with no gap, assuming the catalog doesn't change size mid-pagination.
+pub fn paginate_tool_list(
+    all: Vec<rmcp::model::Tool>,
+    cursor: Option<&str>,
+    page_size: usize,
+) -> (Vec<rmcp::model::Tool>, Option<String>) {
+    let total = all.len();
+    let offset = cursor
+        .and_then(|c| c.parse::<usize>().ok())
+        .filter(|&o| o <= total)
+        .unwrap_or(0);
+    let page_size = page_size.max(1);
+    let end = offset.saturating_add(page_size).min(total);
+    let next_cursor = if end < total {
+        Some(end.to_string())
+    } else {
+        None
+    };
+    let page = all.into_iter().skip(offset).take(end - offset).collect();
+    (page, next_cursor)
 }
 
 /// Recursively rewrite JSON Schema 2020-12 nullable arrays to OpenAPI 3.0 anyOf.

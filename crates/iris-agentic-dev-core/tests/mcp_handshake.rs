@@ -180,6 +180,110 @@ fn mcp_server_tools_list_returns_23_tools() {
     child.kill().ok();
 }
 
+/// 076-interface-modernization User Story 4: `tools/list` pagination works end-to-end over
+/// the real JSON-RPC wire, not just via `paginate_tool_list`'s own pure-function unit tests
+/// (`test_list_tools_pagination.rs`). `IRIS_LIST_TOOLS_PAGE_SIZE=5` forces real pagination
+/// on the Baseline toolset's 81 tools; paging through with `cursor` must reconstruct the
+/// exact same set `mcp_server_tools_list_returns_23_tools` sees in one unpaginated call,
+/// with no duplicate and no omission.
+#[test]
+fn mcp_server_tools_list_pagination_works() {
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let bin = iris_dev_bin();
+    if !bin.exists() {
+        eprintln!("Skipping: iris-agentic-dev binary not found");
+        return;
+    }
+
+    let mut child = Command::new(&bin)
+        .arg("mcp")
+        .env("IRIS_WEB_PORT", "9")
+        .env("IRIS_LIST_TOOLS_PAGE_SIZE", "5")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn iris-agentic-dev mcp");
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+
+    send_jsonrpc(
+        &mut stdin,
+        1,
+        "initialize",
+        r#"{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}"#,
+    );
+    let _init = read_jsonrpc(&mut reader);
+    let init_notif = concat!(
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}"#,
+        "\n"
+    );
+    stdin.write_all(init_notif.as_bytes()).unwrap();
+    stdin.flush().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    let mut all_names: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut request_id = 2u64;
+    let mut page_count = 0;
+    loop {
+        let params = match &cursor {
+            Some(c) => format!(r#"{{"cursor":"{c}"}}"#),
+            None => "{}".to_string(),
+        };
+        send_jsonrpc(&mut stdin, request_id, "tools/list", &params);
+        request_id += 1;
+        let response = read_jsonrpc(&mut reader);
+
+        let tools = response["result"]["tools"]
+            .as_array()
+            .expect("tools/list response missing tools array");
+        assert!(
+            !tools.is_empty() || page_count > 0,
+            "first page must not be empty"
+        );
+        // Every page but a possible final empty one must respect the configured page size.
+        assert!(
+            tools.len() <= 5,
+            "page {page_count} returned {} tools, expected <= 5 (IRIS_LIST_TOOLS_PAGE_SIZE)",
+            tools.len()
+        );
+        all_names.extend(
+            tools
+                .iter()
+                .filter_map(|t| t["name"].as_str().map(|s| s.to_string())),
+        );
+        page_count += 1;
+
+        match response["result"]["nextCursor"].as_str() {
+            Some(next) => cursor = Some(next.to_string()),
+            None => break,
+        }
+        assert!(page_count < 100, "pagination did not terminate");
+    }
+
+    assert!(
+        page_count > 1,
+        "expected multiple pages with IRIS_LIST_TOOLS_PAGE_SIZE=5 on the Baseline toolset"
+    );
+
+    let unique: std::collections::HashSet<&String> = all_names.iter().collect();
+    assert_eq!(
+        unique.len(),
+        all_names.len(),
+        "a tool name appeared on more than one page"
+    );
+    assert!(
+        all_names.len() >= 23,
+        "paginated total ({}) must still cover at least the required-tool floor",
+        all_names.len()
+    );
+
+    child.kill().ok();
+}
+
 /// Startup latency p50 < 100ms over 5 runs (SC-001).
 ///
 /// SC-001 target is for release builds. Debug builds run ~2-3x slower due to
