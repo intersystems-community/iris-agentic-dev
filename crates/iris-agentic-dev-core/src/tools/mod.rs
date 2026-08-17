@@ -44,11 +44,11 @@ use output_schemas::{
     IrisLookupManageResponse, IrisLookupTransferResponse, IrisMacroResponse,
     IrisMessageBodyResponse, IrisNamespaceCreateResponse, IrisNamespaceListResponse,
     IrisProductionDiffResponse, IrisQueryResponse, IrisRemoveServerResponse,
-    IrisSelectContainerResponse, IrisServersResponse, IrisStartSandboxResponse,
-    IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse, IrisTestResponse,
-    IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse,
-    JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse, MermaidClassResponse,
-    MermaidProductionResponse, MyAccessResponse, QueryAuditLogResponse,
+    IrisSelectContainerResponse, IrisServersResponse, IrisSourceControlResponse,
+    IrisStartSandboxResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse,
+    IrisTestResponse, IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse,
+    IrisWsOpenResponse, JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse,
+    MermaidClassResponse, MermaidProductionResponse, MyAccessResponse, QueryAuditLogResponse,
     ResolveDynamicDispatchResponse, ResolveStorageResponse, SkillCommunityListResponse,
     SkillCommunityResponse, SkillDescribeResponse, SkillForgetResponse, SkillListResponse,
     SkillResponse, SkillSearchResponse, StreamInspectResponse, TelemetryExportTraceResponse,
@@ -5836,7 +5836,8 @@ Methods:
     }
 
     #[tool(
-        description = "IRIS source control operations. action=status checks lock state and owner, action=menu lists available SCM actions, action=checkout checks out the document, action=execute runs a specific SCM action by ID. Handles elicitation for interactive SCM dialogs. Pass elicitation_id+answer to resume a pending SCM interaction. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
+        description = "IRIS source control operations. action=status checks lock state and owner, action=menu lists available SCM actions, action=checkout checks out the document, action=execute runs a specific SCM action by ID. Handles elicitation for interactive SCM dialogs. Pass elicitation_id+answer to resume a pending SCM interaction. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<IrisSourceControlResponse>()
     )]
     async fn iris_source_control(
         &self,
