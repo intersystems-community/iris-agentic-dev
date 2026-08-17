@@ -165,3 +165,83 @@ async fn test_iris_symbols_local_response_matches_declared_shape() {
     assert!(body["query_hint"].is_string());
     assert!(body["parse_warnings"].is_array());
 }
+
+#[tokio::test]
+async fn test_skill_describe_not_found_response_matches_declared_shape() {
+    // Bundled-skill lookup path needs no IRIS connection; a name that matches no bundled or
+    // synthesized skill deterministically hits the NOT_FOUND branch.
+    let body = call(
+        &tools(),
+        "skill_describe",
+        serde_json::json!({"name": "definitely-not-a-real-skill-name"}),
+    )
+    .await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "NOT_FOUND");
+    assert!(body["error"].is_string());
+    assert!(body["sources"].is_object());
+    assert!(body["note"].is_string());
+}
+
+#[tokio::test]
+async fn test_skill_search_response_matches_declared_shape() {
+    let body = call(
+        &tools(),
+        "skill_search",
+        serde_json::json!({"query": "objectscript"}),
+    )
+    .await;
+    assert!(body["query"].is_string());
+    assert!(body["results"].is_array());
+    assert!(body["count"].is_u64());
+    assert!(body["sources"].is_object());
+}
+
+#[tokio::test]
+async fn test_iris_get_log_list_response_matches_declared_shape() {
+    // No `id` — the listing path, backed entirely by the in-process LogStore, no IRIS needed.
+    let body = call(&tools(), "iris_get_log", serde_json::json!({})).await;
+    assert_eq!(body["success"], true);
+    assert!(body["logs"].is_array());
+}
+
+#[tokio::test]
+async fn test_iris_credential_manage_no_connection_response_matches_declared_shape() {
+    // interop_credential_manage_impl takes Option<&IrisConnection> and returns a real,
+    // deterministic IRIS_UNREACHABLE error when there's no connection — no live IRIS needed.
+    let body = call(
+        &tools(),
+        "iris_credential_manage",
+        serde_json::json!({"action": "create", "id": "test", "username": "u", "password": "p"}),
+    )
+    .await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
+    assert!(body["error"].is_string());
+}
+
+#[tokio::test]
+async fn test_iris_lookup_manage_no_connection_response_matches_declared_shape() {
+    let body = call(
+        &tools(),
+        "iris_lookup_manage",
+        serde_json::json!({"action": "list_tables"}),
+    )
+    .await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
+    assert!(body["error"].is_string());
+}
+
+#[tokio::test]
+async fn test_iris_lookup_transfer_no_connection_response_matches_declared_shape() {
+    let body = call(
+        &tools(),
+        "iris_lookup_transfer",
+        serde_json::json!({"action": "export", "table": "SomeTable"}),
+    )
+    .await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
+    assert!(body["error"].is_string());
+}

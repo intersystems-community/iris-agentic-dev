@@ -59,12 +59,25 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "telemetry_query",
     "telemetry_export_trace",
     "iris_credential_list",
+    // batch 4
+    "resolve_dynamic_dispatch",
+    "find_subclass_implementations",
+    "skill_describe",
+    "skill_search",
+    "iris_get_log",
+    "agent_info",
+    "kb",
+    "kb_index",
+    "iris_credential_manage",
+    "iris_lookup_manage",
+    "iris_lookup_transfer",
 ];
 
 /// Tools legitimately absent from the Merged toolset entirely (not "present but missing a
 /// schema"), so excluded from the Merged-only check — either consolidated into `iris_debug`
-/// (the debug_* quartet) or pruned as stub tools for any non-Baseline toolset (the skill_*
-/// quartet — see `with_registry_and_toolset`'s `stubs_to_remove`).
+/// (the debug_* quartet), pruned as stub tools for any non-Baseline toolset (the skill_*
+/// quartet — see `with_registry_and_toolset`'s `stubs_to_remove`), or replaced by `iris_containers`
+/// in Merged (`agent_info`, per the same block's `merged_replaced` list).
 const MERGED_REMOVED: &[&str] = &[
     "debug_map_int_to_cls",
     "debug_source_map",
@@ -74,12 +87,21 @@ const MERGED_REMOVED: &[&str] = &[
     "skill_optimize",
     "skill_share",
     "skill_community_install",
+    "agent_info",
 ];
+
+/// The mirror image of `MERGED_REMOVED`: tools that exist only in Merged, not Baseline/Nostub
+/// (`with_registry_and_toolset`'s `merged_only` removal list) — excluded from the Baseline-only
+/// check for the same reason, just the opposite direction.
+const BASELINE_REMOVED: &[&str] = &["iris_get_log"];
 
 #[test]
 fn test_declared_tools_advertise_output_schema_in_baseline() {
     let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
-    for name in TOOLS_WITH_DECLARED_OUTPUT_SCHEMA {
+    for name in TOOLS_WITH_DECLARED_OUTPUT_SCHEMA
+        .iter()
+        .filter(|n| !BASELINE_REMOVED.contains(n))
+    {
         assert!(
             tools.tool_declares_output_schema(name),
             "'{name}' should declare a non-null output_schema in Baseline's list_tools"
@@ -101,8 +123,8 @@ fn test_declared_tools_advertise_output_schema_in_merged() {
     }
 }
 
-/// The debug_* quartet must be legitimately absent from Merged (not silently missing a
-/// schema) — confirms MERGED_REMOVED's exclusion is real, not papering over a bug.
+/// `MERGED_REMOVED` tools must be legitimately absent from Merged (not silently missing a
+/// schema) — confirms the exclusion is real, not papering over a bug.
 #[test]
 fn test_merged_removed_tools_are_absent_from_merged_router() {
     let merged = IrisTools::new_with_toolset(None, Toolset::Merged)
@@ -111,7 +133,22 @@ fn test_merged_removed_tools_are_absent_from_merged_router() {
     for name in MERGED_REMOVED {
         assert!(
             !merged.contains(*name),
-            "'{name}' was expected to be replaced by iris_debug in Merged, but is still present"
+            "'{name}' was expected to be absent from Merged, but is still present"
+        );
+    }
+}
+
+/// Mirror of the above for `BASELINE_REMOVED` — `iris_get_log` must be genuinely Merged-only,
+/// not just skipped in the Baseline check because someone assumed it without verifying.
+#[test]
+fn test_baseline_removed_tools_are_absent_from_baseline_router() {
+    let baseline = IrisTools::new_with_toolset(None, Toolset::Baseline)
+        .expect("IrisTools::new")
+        .registered_tool_names();
+    for name in BASELINE_REMOVED {
+        assert!(
+            !baseline.contains(*name),
+            "'{name}' was expected to be Merged-only, but is present in Baseline"
         );
     }
 }

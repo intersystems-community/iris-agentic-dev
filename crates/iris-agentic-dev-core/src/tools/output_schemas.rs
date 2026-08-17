@@ -106,7 +106,7 @@ pub struct SkillListResponse {
     pub skills: Vec<serde_json::Value>,
     pub count: usize,
     pub sources: serde_json::Value,
-    pub note: serde_json::Value,
+    pub note: String,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -828,4 +828,281 @@ pub struct IrisWsExecResponse {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct IrisWsCloseResponse {
     pub closed: bool,
+}
+
+// ── resolve_dynamic_dispatch / find_subclass_implementations ───────────────
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ResolveDynamicDispatchOk {
+    pub success: bool,
+    pub method_name: String,
+    /// Absent on the empty-candidates early-return path, which skips these two fields entirely
+    /// rather than nulling them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_prefix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    /// `{class, origin, formal_spec, confidence}` objects — left as free-form JSON rather than
+    /// duplicating the ObjectScript-generated shape here.
+    pub candidates: Vec<serde_json::Value>,
+    pub candidate_count: usize,
+    pub confidence: f64,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ResolveDynamicDispatchResponse {
+    Ok(ResolveDynamicDispatchOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct FindSubclassImplementationsOk {
+    pub success: bool,
+    pub method_name: String,
+    pub base_classes: Vec<String>,
+    pub namespace: String,
+    /// `{class, formal_spec, confidence}` objects — free-form JSON, same reasoning as
+    /// `ResolveDynamicDispatchOk::candidates`.
+    pub implementations: Vec<serde_json::Value>,
+    pub implementation_count: usize,
+    pub confidence: f64,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum FindSubclassImplementationsResponse {
+    Ok(FindSubclassImplementationsOk),
+    Err(ToolError),
+}
+
+// ── skill_describe / skill_search ────────────────────────────────────────────
+
+/// Distinct from `ToolError` — `skill_describe`'s one failure path (`NOT_FOUND`) adds `sources`
+/// and `note` fields describing where it looked, per FR-004's "never a bare miss" requirement.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SkillNotFoundError {
+    pub success: bool,
+    pub error_code: String,
+    pub error: String,
+    pub sources: serde_json::Value,
+    pub note: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SkillDescribeOk {
+    pub success: bool,
+    /// Bundled or synthesized skill metadata — free-form JSON, same reasoning as
+    /// `SkillListResponse::skills`.
+    pub skill: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum SkillDescribeResponse {
+    Ok(SkillDescribeOk),
+    Err(SkillNotFoundError),
+}
+
+/// `skill_search` has no error path at all — bundled and synthesized skills are both handled
+/// gracefully with no IRIS connection, so there's nothing left to fail on. One flat shape.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SkillSearchResponse {
+    pub query: String,
+    pub results: Vec<serde_json::Value>,
+    pub count: usize,
+    pub sources: serde_json::Value,
+    pub note: String,
+}
+
+// ── iris_get_log ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGetLogListOk {
+    pub success: bool,
+    /// Log-entry summaries (id, tool, timestamp, total count) — free-form JSON rather than
+    /// duplicating `LogStore::list`'s own summary struct here.
+    pub logs: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGetLogPaginatedOk {
+    pub success: bool,
+    pub log_id: String,
+    pub total_count: usize,
+    pub offset: usize,
+    pub limit: Option<usize>,
+    pub has_more: bool,
+    pub result: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGetLogFullOk {
+    pub success: bool,
+    pub log_id: String,
+    pub total_count: usize,
+    pub result: serde_json::Value,
+}
+
+/// Three distinct success shapes, not one — the no-`id` listing path, the `id`+`limit` paginated
+/// path, and the `id`-only full-result path never overlap in which fields they carry.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisGetLogResponse {
+    List(IrisGetLogListOk),
+    Paginated(IrisGetLogPaginatedOk),
+    Full(IrisGetLogFullOk),
+    Err(ToolError),
+}
+
+// ── agent_info / kb / kb_index ───────────────────────────────────────────────
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct AgentInfoStatsOk {
+    pub success: bool,
+    pub skill_count: usize,
+    pub session_calls: usize,
+    pub learning_enabled: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct AgentInfoHistoryOk {
+    pub success: bool,
+    pub calls: Vec<serde_json::Value>,
+}
+
+/// `what=stats` and `what=history` never share fields — two distinct success shapes, driven by
+/// the `what` param, same pattern as `hl7_schema_inspect` and `iris_get_log`.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum AgentInfoResponse {
+    Stats(AgentInfoStatsOk),
+    History(AgentInfoHistoryOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct KbIndexOk {
+    pub success: bool,
+    pub indexed: usize,
+    pub path: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct KbRecallActionOk {
+    pub success: bool,
+    pub query: String,
+    /// `{file, excerpt}` objects built from raw ObjectScript-generated JSON — free-form.
+    pub results: serde_json::Value,
+}
+
+/// The `kb` tool is action-multiplexed (`action=index` or `action=recall`); `kb_index` is a
+/// separate, single-purpose tool that always calls the same underlying handler with
+/// `action="index"` hardcoded, so it only ever produces the `Index` shape (plus `ToolError` for
+/// the shared `LEARNING_DISABLED` gate) — see `KbIndexResponse` below.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum KbResponse {
+    Index(KbIndexOk),
+    Recall(KbRecallActionOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum KbIndexResponse {
+    Ok(KbIndexOk),
+    Err(ToolError),
+}
+
+// ── iris_credential_manage / iris_lookup_manage / iris_lookup_transfer ──────
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisCredentialManageOk {
+    pub success: bool,
+    pub action: String,
+    pub id: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisCredentialManageResponse {
+    Ok(IrisCredentialManageOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct LookupListTablesOk {
+    pub success: bool,
+    pub tables: Vec<String>,
+    pub count: usize,
+    pub truncated: bool,
+    pub total_count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct LookupGetOk {
+    pub success: bool,
+    pub table: String,
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct LookupSetOk {
+    pub success: bool,
+    pub table: String,
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct LookupDeleteOk {
+    pub success: bool,
+    pub table: String,
+    pub key: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct LookupListKeysOk {
+    pub success: bool,
+    pub table: String,
+    pub keys: Vec<String>,
+    pub count: usize,
+}
+
+/// Five distinct success shapes, one per `action` (`list_tables`/`get`/`set`/`delete`/
+/// `list_keys`) — none share the same field set.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisLookupManageResponse {
+    ListTables(LookupListTablesOk),
+    Get(LookupGetOk),
+    Set(LookupSetOk),
+    Delete(LookupDeleteOk),
+    ListKeys(LookupListKeysOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct LookupExportOk {
+    pub success: bool,
+    pub table: String,
+    pub xml: String,
+    pub entry_count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct LookupImportOk {
+    pub success: bool,
+    pub table: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisLookupTransferResponse {
+    Export(LookupExportOk),
+    Import(LookupImportOk),
+    Err(ToolError),
 }
