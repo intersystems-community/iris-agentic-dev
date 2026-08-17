@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (56/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (68/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -149,6 +149,20 @@ New findings from this batch:
 `test_output_schema_shapes.rs` gained 6 more real, no-live-IRIS-needed tests this batch: `skill_describe` (NOT_FOUND path — the bundled-skill lookup needs no connection), `skill_search` (same reasoning as batch 1's `skill_list`), `iris_get_log`'s list path (backed entirely by the in-process `LogStore`), and `iris_credential_manage`/`iris_lookup_manage`/`iris_lookup_transfer` — all three take `Option<&IrisConnection>` and return a real, deterministic `IRIS_UNREACHABLE` `ToolError` with no connection, not a mock. Also caught two `note` fields (`SkillListResponse`, `SkillSearchResponse`) that were typed as loose `serde_json::Value` when `bundled::searched_note` always returns a plain `String` — tightened both while writing this batch's `SkillNotFoundError` type, which needed the same field modeled correctly for the first time.
 
 **Remaining after batch 4**: 34 of 90 tools.
+
+**Batch 5 delivered — 12 more tools (68/90 total).** `iris_list_containers`, `iris_select_container`, `iris_start_sandbox`, `iris_generate_class`, `iris_generate_test`, `resolve_storage`, `iris_info`, `iris_table_info`, `iris_doc_search`, `iris_message_body`, `iris_business_rule_info`, `iris_production_diff`.
+
+New findings from this batch:
+
+- **A third bespoke error convention, distinct from both `ToolError` and `ServerMutationError`.** `iris_select_container`'s two failure shapes put the error CODE directly in an `error` field (`"error": "CONTAINER_NOT_FOUND"`) rather than a separate `error_code`+`error` pair, and each carries different extra context (`requested`/`available` vs `container`/`port_web`/`message`). Modeled as two distinct structs, not shoehorned into either existing error type.
+- **Not every failure path is even JSON-shaped the same as a "normal" error.** `iris_doc_search` (a live Algolia network call, not IRIS) returns `{error, hits: []}` on failure — no `success` or `error_code` field at all. `iris_table_info`'s `NOT_FOUND` case has `error` but no `error_code`. Both got their own bespoke error struct rather than being forced to match `ToolError`.
+- **LLM-backed tools (`iris_generate_class`/`iris_generate_test`) have no embedded-JSON error path for their main failure mode.** `LLM_UNAVAILABLE`/`LLM_TIMEOUT` propagate via `?` as protocol-level `McpError`s; the only embedded-JSON failure is a shared `INVALID_OUTPUT` shape (`{success: false, error_code, raw_llm_output}`, no `error` field) when the LLM's response fails `validate_cls_syntax` — same struct reused for both tools since it's identical.
+- **Nested type-dependent variance was deliberately left dynamic rather than double-nested.** `iris_table_info`'s success shape wraps a `result` object whose *internal* fields differ by `type` (`class_projection` vs `ddl_table`) — modeling that fully would mean a second nested untagged enum inside the first. Left as `serde_json::Value` with a comment explaining why, rather than over-engineering a schema this batch's scope didn't call for.
+- **A live external network call (not IRIS) is still not something to unit-test as if it were free.** `iris_doc_search` calls Algolia's real search API — no live-IRIS policy applies here, but hitting a real third-party endpoint from a unit test is still flaky/slow/rate-limit-prone by nature, so it wasn't added to `test_output_schema_shapes.rs` despite being technically callable with no connection. Same reasoning kept `iris_list_containers`/`iris_select_container`/`iris_start_sandbox` out too — all three shell out to `docker`/`idt` subprocesses that aren't available in this sandbox and would behave differently across environments.
+
+`test_output_schema_shapes.rs` gained 3 more real tests: `iris_message_body`, `iris_business_rule_info`, `iris_production_diff` — all three resolve their connection via `self.iris_arc()` (never `resolve_server`/`get_iris_reloaded`, which fail via `?` instead) when no `server` param is given, so with no connection each hits its own `Option<&IrisConnection>` match and returns a real, deterministic `IRIS_UNREACHABLE` — not a mock, same pattern as batch 4's credential/lookup tools.
+
+**Remaining after batch 5**: 22 of 90 tools.
 
 ---
 

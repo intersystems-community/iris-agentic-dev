@@ -1106,3 +1106,311 @@ pub enum IrisLookupTransferResponse {
     Import(LookupImportOk),
     Err(ToolError),
 }
+
+// ── iris_list_containers / iris_select_container / iris_start_sandbox ──────
+
+/// No embedded-JSON error path at all — this tool never fails, only reports what it found.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisListContainersResponse {
+    pub status: String,
+    /// Raw container descriptors from `iris-devtester`/`docker ps` — free-form JSON.
+    pub containers: Vec<serde_json::Value>,
+    pub workspace_basename: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
+    pub workspace_config: serde_json::Value,
+    pub active_connection: serde_json::Value,
+    pub mismatch: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mismatch_hint: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisSelectContainerOk {
+    pub status: String,
+    pub switched: bool,
+    pub container: String,
+    pub port_superserver: u16,
+    pub port_web: u16,
+    pub namespace: String,
+    pub version: Option<String>,
+    pub write_tools_enabled: bool,
+}
+
+/// Distinct from `ToolError` — `iris_select_container`'s two failure shapes put the error CODE
+/// directly in the `error` field itself (never `error_code`+`error`), and each carries different
+/// extra context (`requested`/`available` vs `container`/`port_web`/`message`).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisSelectContainerNotFound {
+    pub success: bool,
+    pub error: String,
+    pub requested: String,
+    pub available: Vec<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisSelectContainerUnreachable {
+    pub success: bool,
+    pub error: String,
+    pub container: String,
+    pub port_web: u16,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisSelectContainerResponse {
+    Ok(IrisSelectContainerOk),
+    NotFound(IrisSelectContainerNotFound),
+    Unreachable(IrisSelectContainerUnreachable),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisStartSandboxIdempotentOk {
+    pub name: String,
+    /// Pulled straight from the container descriptor JSON — free-form, same reasoning as
+    /// `IrisListContainersResponse::containers`.
+    pub port_superserver: serde_json::Value,
+    pub port_web: serde_json::Value,
+    pub started: bool,
+    pub idempotent: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisStartSandboxStartedOk {
+    pub name: String,
+    pub port_superserver: serde_json::Value,
+    pub port_web: serde_json::Value,
+    pub started: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisStartSandboxStartedNoPortsOk {
+    pub name: String,
+    pub started: bool,
+    pub warning: String,
+}
+
+/// Three success shapes (idempotent-found / started-with-ports / started-but-not-yet-visible)
+/// plus `ToolError` for the `idt` CLI failure paths.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisStartSandboxResponse {
+    Idempotent(IrisStartSandboxIdempotentOk),
+    Started(IrisStartSandboxStartedOk),
+    StartedNoPorts(IrisStartSandboxStartedNoPortsOk),
+    Err(ToolError),
+}
+
+// ── iris_generate_class / iris_generate_test ────────────────────────────────
+
+/// Shared by both generate tools — an LLM response that failed `validate_cls_syntax` returns
+/// this instead of `ToolError` (no `error` field; `raw_llm_output` instead).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct GenerateInvalidOutputError {
+    pub success: bool,
+    pub error_code: String,
+    pub raw_llm_output: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGenerateClassOk {
+    pub success: bool,
+    pub class_name: String,
+    pub class_text: String,
+    pub compiled: bool,
+    pub retried: bool,
+    /// Present only on the no-IRIS-connection path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// `LLM_UNAVAILABLE`/`LLM_TIMEOUT` propagate via `?` as protocol-level `McpError`, outside this
+/// schema's scope — the only embedded-JSON failure is the invalid-output case.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisGenerateClassResponse {
+    Ok(IrisGenerateClassOk),
+    InvalidOutput(GenerateInvalidOutputError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGenerateTestOk {
+    pub success: bool,
+    pub class_name: String,
+    pub test_class_name: String,
+    pub test_text: String,
+    pub introspected: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisGenerateTestResponse {
+    Ok(IrisGenerateTestOk),
+    InvalidOutput(GenerateInvalidOutputError),
+}
+
+// ── resolve_storage / iris_info / iris_table_info ───────────────────────────
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ResolveStorageOk {
+    pub success: bool,
+    pub class: String,
+    /// `{name, type, data_location, id_location, index_location}` objects — free-form JSON,
+    /// values come straight from an SQL query row.
+    pub storages: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ResolveStorageResponse {
+    Ok(ResolveStorageOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisInfoOk {
+    pub success: bool,
+    pub what: String,
+    pub namespace: String,
+    /// Shape depends entirely on `what` (raw Atelier REST response body) — free-form JSON.
+    pub result: serde_json::Value,
+    /// Present only for `what=documents`, where the document list is flattened to a top-level
+    /// key and progressive-disclosure truncation (`log_store::apply_truncation`) may apply.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub documents: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inline_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_count: Option<usize>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisInfoResponse {
+    Ok(IrisInfoOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisTableInfoOk {
+    pub success: bool,
+    /// Two internal shapes depending on whether the table is class-projected or a plain DDL
+    /// table (`type: "class_projection"` vs `"ddl_table"`, differing fields beyond that) — left
+    /// as free-form JSON rather than a second nested union, to keep this batch's scope real.
+    pub result: serde_json::Value,
+}
+
+/// Distinct from `ToolError` — no `error_code` field, just `error` plus `table`/`namespace`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisTableInfoNotFound {
+    pub success: bool,
+    pub error: String,
+    pub table: String,
+    pub namespace: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisTableInfoResponse {
+    Ok(IrisTableInfoOk),
+    NotFound(IrisTableInfoNotFound),
+}
+
+// ── iris_doc_search ───────────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDocSearchOk {
+    pub query: String,
+    pub total_hits: u64,
+    /// `{title, url, excerpt, breadcrumbs, version, product}` objects — free-form JSON.
+    pub hits: Vec<serde_json::Value>,
+}
+
+/// Distinct from `ToolError` — no `success`/`error_code` fields at all, just `error` + `hits`
+/// (always empty on this path).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDocSearchError {
+    pub error: String,
+    pub hits: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisDocSearchResponse {
+    Ok(IrisDocSearchOk),
+    Err(IrisDocSearchError),
+}
+
+// ── iris_message_body / iris_business_rule_info / iris_production_diff ─────
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisMessageBodyOk {
+    pub success: bool,
+    pub message_id: String,
+    pub content_type: String,
+    pub body: String,
+    pub truncated: bool,
+    pub actual_size: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_bytes_clamped: Option<bool>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisMessageBodyResponse {
+    Ok(IrisMessageBodyOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct BusinessRuleListOk {
+    pub success: bool,
+    /// `{name, class_name, description, modified}` objects — free-form JSON.
+    pub rules: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct BusinessRuleGetOk {
+    pub success: bool,
+    pub name: String,
+    pub description: serde_json::Value,
+    /// Placeholder `{}` entries, one per condition/action — the RuleSet's own condition/action
+    /// objects aren't introspected further, only counted. Left as free-form JSON.
+    pub conditions: Vec<serde_json::Value>,
+    pub actions: Vec<serde_json::Value>,
+}
+
+/// `action=list` and `action=get` never share fields — two distinct success shapes.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisBusinessRuleInfoResponse {
+    List(BusinessRuleListOk),
+    Get(BusinessRuleGetOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ProductionDiffChange {
+    pub item_name: String,
+    pub item_type: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisProductionDiffOk {
+    pub success: bool,
+    pub in_sync: bool,
+    pub changes: Vec<ProductionDiffChange>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisProductionDiffResponse {
+    Ok(IrisProductionDiffOk),
+    Err(ToolError),
+}
