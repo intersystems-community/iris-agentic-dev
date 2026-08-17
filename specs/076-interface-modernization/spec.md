@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (68/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (74/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -163,6 +163,22 @@ New findings from this batch:
 `test_output_schema_shapes.rs` gained 3 more real tests: `iris_message_body`, `iris_business_rule_info`, `iris_production_diff` — all three resolve their connection via `self.iris_arc()` (never `resolve_server`/`get_iris_reloaded`, which fail via `?` instead) when no `server` param is given, so with no connection each hits its own `Option<&IrisConnection>` match and returns a real, deterministic `IRIS_UNREACHABLE` — not a mock, same pattern as batch 4's credential/lookup tools.
 
 **Remaining after batch 5**: 22 of 90 tools.
+
+**Batch 6 delivered — 6 more tools (74/90 total), plus a retroactive correctness fix to 3 already-shipped schemas.** `iris_execute_method`, `iris_macro`, `iris_debug`, `iris_generate`, `skill`, `skill_community`.
+
+**The correctness fix, found while modeling this batch, not after:** while reading `iris_execute_method`'s wrapper to model its schema, its call to the shared cross-tool policy gate (`crate::policy::gate::dispatch_gate`) stood out — the same gate `iris_message_body`, `iris_business_rule_info`, and `iris_production_diff` (all shipped in batch 5) also call, *before* the impl function this file had modeled even runs. Batch 5's schemas for those three never accounted for the gate's own blocked-response shape, which the wrapper returns via `ok_json(gate)` ahead of the tool's real logic — a real gap in already-merged work, not a hypothetical one. Fixed by adding a `GateBlocked(serde_json::Value)` variant to all three response enums (`IrisMessageBodyResponse`, `IrisBusinessRuleInfoResponse`, `IrisProductionDiffResponse`) plus the new `IrisExecuteMethodResponse`. The gate's blocked-response shape genuinely varies by which of its four internal checks fired (env-template, bulk-PHI, global blocklist, PHI-name pattern) — left as free-form JSON rather than a fourth nested union on top of each tool's own variants, consistent with this spec's existing "genuinely dynamic" carve-outs.
+
+**This same gate is called by at least 6 tools total** (`iris_compile`, `iris_execute`, `iris_query`, `iris_source_control`, `iris_global`, `iris_execute_method`) — a note is now in `IrisExecuteMethodResponse`'s doc comment so a future batch declaring schemas for the still-undeclared four doesn't repeat batch 5's mistake.
+
+Other findings from this batch:
+
+- **`iris_debug` is a separate implementation from batch 1's individual debug tools, not a thin dispatcher to them.** Despite the near-identical name and four matching actions (`map_int`/`error_logs`/`capture`/`source_map`), `iris_debug` lives in `info.rs` with its own SQL/exec logic — it needed its own four response structs, not a reuse of `debug_map_int_to_cls`'s/`debug_source_map`'s types. Its `DOCKER_REQUIRED` failure path happens to already match `ToolError`'s exact shape, so no bespoke error type was needed there, unlike `skill_forget`'s superficially-similar case in batch 1.
+- **`iris_generate` (the context-provider tool) has no embedded-JSON error path at all** — it always returns one of two prompt-context shapes (`gen_type=class` vs `gen_type=test`), with HTTP failures propagating via `?`. Genuinely distinct from the LLM-backed `iris_generate_class`/`iris_generate_test` from batch 5, despite the similar name.
+- **`skill` and `skill_community` are yet another instance of "looks like the individual tools, isn't."** `skill`'s five actions (`list`/`describe`/`search`/`forget`/`propose`) read `^SKILLS` directly via their own ObjectScript, completely independent from `skill_list`/`skill_describe`/`skill_search`/`skill_forget`'s bundled-skill logic from batches 1 and 4 — same naming collision risk as `iris_debug`, same fix (separate response types, not reused ones).
+
+No new `test_output_schema_shapes.rs` coverage this batch — all six new tools need `resolve_server`/`get_iris_reloaded` (which fail via `?` with no connection, unlike the `Option<&IrisConnection>` tools from batches 4-5), so there's no genuine no-IRIS-needed path to test for real.
+
+**Remaining after batch 6**: 16 of 90 tools — `iris_compile`, `iris_test`, `iris_execute`, `iris_doc`, `iris_query`, `check_config`, `iris_search`, `extract_message_map_routing`, `iris_source_control`, `iris_global`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`. These are the tools this spec's batches have been implicitly triaging away from throughout: the five core execution tools (large, multi-mode, already CLI-delegated in User Story 2 — `iris_query` alone has 6 distinct response branches), `check_config` (intentionally uncategorized elsewhere in this codebase for the same reason — genuinely heterogeneous, conditionally-appended fields), `iris_search` (an async-polling implementation with a sync/async fallback path), `extract_message_map_routing` (deferred in batch 4 — a third BPL/DTL response path beyond success/failure), and the Merged-tier action-multiplexed dispatchers (`iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin` — `iris_admin` alone is ~200 lines of action-dispatch). Each remaining tool needs meaningfully more reading than this batch's per-tool budget allowed without repeating the mermaid_production-style mistake batch 3 caught, so they're left for a dedicated future pass rather than rushed.
 
 ---
 

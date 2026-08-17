@@ -1360,11 +1360,20 @@ pub struct IrisMessageBodyOk {
     pub max_bytes_clamped: Option<bool>,
 }
 
+/// `iris_message_body`'s wrapper calls the shared cross-tool policy gate
+/// (`crate::policy::gate::dispatch_gate`) *before* the impl function this file otherwise models
+/// runs at all, and short-circuits with `ok_json(gate)` on a block — a real gap in this file's
+/// first pass at this tool's schema, caught while modeling `iris_execute_method` (which calls
+/// the same gate) in a later batch. The gate's blocked-response shape genuinely varies by which
+/// of its four internal checks fired (env-template, bulk-PHI, global blocklist, PHI-name
+/// pattern) — left as free-form JSON rather than a fourth nested union on top of this tool's own
+/// two variants; see `PolicyGateBlocked`'s doc comment below for the shared reasoning.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum IrisMessageBodyResponse {
     Ok(IrisMessageBodyOk),
     Err(ToolError),
+    GateBlocked(serde_json::Value),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -1386,12 +1395,15 @@ pub struct BusinessRuleGetOk {
 }
 
 /// `action=list` and `action=get` never share fields — two distinct success shapes.
+/// Same retroactive fix as `IrisMessageBodyResponse` above — this tool's wrapper also calls the
+/// shared policy gate before its own logic runs.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum IrisBusinessRuleInfoResponse {
     List(BusinessRuleListOk),
     Get(BusinessRuleGetOk),
     Err(ToolError),
+    GateBlocked(serde_json::Value),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -1408,9 +1420,231 @@ pub struct IrisProductionDiffOk {
     pub changes: Vec<ProductionDiffChange>,
 }
 
+/// Same retroactive fix as `IrisMessageBodyResponse` above.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(untagged)]
 pub enum IrisProductionDiffResponse {
     Ok(IrisProductionDiffOk),
+    Err(ToolError),
+    GateBlocked(serde_json::Value),
+}
+
+// ── iris_execute_method / iris_macro / iris_debug / iris_generate ──────────
+// ── skill / skill_community ─────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisExecuteMethodOk {
+    pub success: bool,
+    pub return_value: String,
+}
+
+/// This tool's wrapper calls the shared cross-tool policy gate
+/// (`crate::policy::gate::dispatch_gate`) before `handle_iris_execute_method` runs — the same
+/// gate `iris_message_body`/`iris_business_rule_info`/`iris_production_diff` call, hence the
+/// same `GateBlocked` treatment. At least 6 more tools in this codebase call this same gate
+/// (`iris_compile`, `iris_execute`, `iris_query`, `iris_source_control`, `iris_global`) — a
+/// future batch declaring their schemas must account for it too, not just their own impl
+/// function's shape.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisExecuteMethodResponse {
+    Ok(IrisExecuteMethodOk),
+    Err(ToolError),
+    GateBlocked(serde_json::Value),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisMacroListOk {
+    pub success: bool,
+    pub macros: Vec<String>,
+    pub note: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisMacroActionOk {
+    pub success: bool,
+    pub name: String,
+    pub action: String,
+    /// Raw Atelier `/action/getmacro` response body — free-form JSON.
+    pub result: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisMacroResponse {
+    List(IrisMacroListOk),
+    Action(IrisMacroActionOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDebugMapIntOk {
+    pub success: bool,
+    pub error_string: String,
+    pub source_location: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDebugErrorLogsOk {
+    pub success: bool,
+    pub logs: Vec<serde_json::Value>,
+    pub note: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDebugCaptureOk {
+    pub success: bool,
+    pub capture: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDebugSourceMapOk {
+    pub success: bool,
+    pub class: String,
+    pub mapping: String,
+}
+
+/// Distinct from batch 1's `debug_map_int_to_cls`/`debug_source_map` tools — `iris_debug` is a
+/// separate implementation in `info.rs`, not a thin dispatcher to those same handlers, so it
+/// gets its own response types rather than reusing theirs. Its `DOCKER_REQUIRED` failure path
+/// happens to already match `ToolError`'s exact shape (`success`, `error_code`, `error`), so no
+/// bespoke error type is needed here, unlike `skill_forget`'s identical-looking case in batch 1.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisDebugResponse {
+    MapInt(IrisDebugMapIntOk),
+    ErrorLogs(IrisDebugErrorLogsOk),
+    Capture(IrisDebugCaptureOk),
+    SourceMap(IrisDebugSourceMapOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGenerateTestGenContext {
+    /// `%Dictionary.CompiledMethod` query rows — free-form JSON.
+    pub methods: serde_json::Value,
+    pub suggested_class_name: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGenerateTestGenOk {
+    pub success: bool,
+    pub gen_type: String,
+    pub target_class: String,
+    pub namespace: String,
+    pub prompt: String,
+    pub context: IrisGenerateTestGenContext,
+    pub instructions: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGenerateClassGenContext {
+    pub existing_classes: Vec<String>,
+    pub suggested_package: String,
+    pub iris_version: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGenerateClassGenOk {
+    pub success: bool,
+    pub gen_type: String,
+    pub namespace: String,
+    pub prompt: String,
+    pub context: IrisGenerateClassGenContext,
+    pub instructions: String,
+}
+
+/// `iris_generate` (the context-provider tool — distinct from the LLM-backed
+/// `iris_generate_class`/`iris_generate_test`) has no embedded-JSON error path at all; HTTP
+/// failures propagate via `?`. Two success shapes, driven by `gen_type`.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisGenerateResponse {
+    Test(IrisGenerateTestGenOk),
+    Class(IrisGenerateClassGenOk),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SkillListActionOk {
+    pub success: bool,
+    /// `{name, description, usage_count}` objects built from raw `^SKILLS` global data —
+    /// free-form JSON.
+    pub skills: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SkillDescribeActionOk {
+    pub success: bool,
+    pub name: String,
+    pub description: String,
+    pub body: String,
+    /// Parsed from a pipe-delimited `^SKILLS` global value — always a numeric string, never a
+    /// JSON number, hence `String` here.
+    pub usage_count: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SkillSearchActionOk {
+    pub success: bool,
+    pub query: String,
+    /// `{name, description}` objects — free-form JSON.
+    pub results: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SkillForgetActionOk {
+    pub success: bool,
+    pub name: String,
+    pub action: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ProposedSkill {
+    pub name: String,
+    pub description: String,
+    pub body: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SkillProposeActionOk {
+    pub success: bool,
+    pub skill: ProposedSkill,
+}
+
+/// The `skill` tool (learning-agent skill registry management — distinct from the individual
+/// `skill_list`/`skill_describe`/`skill_search`/`skill_forget` tools, which are separate
+/// implementations reading `^SKILLS` directly rather than delegating to this one) is
+/// action-multiplexed across five shapes, all sharing the same `ToolError` failure convention
+/// (`LEARNING_DISABLED`/`NOT_FOUND`/`INSUFFICIENT_HISTORY`/`INVALID_PARAM`).
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum SkillResponse {
+    List(SkillListActionOk),
+    Describe(SkillDescribeActionOk),
+    Search(SkillSearchActionOk),
+    Forget(SkillForgetActionOk),
+    Propose(SkillProposeActionOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SkillCommunityListActionOk {
+    pub success: bool,
+    /// `{name, description}` objects — free-form JSON.
+    pub skills: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SkillCommunityInstallActionOk {
+    pub success: bool,
+    pub installed: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum SkillCommunityResponse {
+    List(SkillCommunityListActionOk),
+    Install(SkillCommunityInstallActionOk),
     Err(ToolError),
 }

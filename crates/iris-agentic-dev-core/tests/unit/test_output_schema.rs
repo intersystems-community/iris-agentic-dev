@@ -84,6 +84,13 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "iris_message_body",
     "iris_business_rule_info",
     "iris_production_diff",
+    // batch 6
+    "iris_execute_method",
+    "iris_macro",
+    "iris_debug",
+    "iris_generate",
+    "skill",
+    "skill_community",
 ];
 
 /// Tools legitimately absent from the Merged toolset entirely (not "present but missing a
@@ -114,6 +121,8 @@ const BASELINE_REMOVED: &[&str] = &[
     "iris_message_body",
     "iris_business_rule_info",
     "iris_production_diff",
+    "iris_execute_method",
+    "iris_debug",
 ];
 
 #[test]
