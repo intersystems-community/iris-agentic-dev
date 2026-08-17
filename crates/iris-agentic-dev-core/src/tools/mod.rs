@@ -35,19 +35,19 @@ use output_schemas::{
     DebugGetErrorLogsResponse, DebugMapIntToClsResponse, DebugSourceMapResponse,
     DocsIntrospectResponse, FindSubclassImplementationsResponse, GlobalKillResponse,
     GlobalPreviewResponse, Hl7SchemaInspectResponse, Hl7SchemaListResponse, IrisAddServerResponse,
-    IrisBusinessRuleInfoResponse, IrisCompileResponse, IrisCredentialListResponse,
-    IrisCredentialManageResponse, IrisDatabaseListResponse, IrisDatabaseStatsResponse,
-    IrisDebugResponse, IrisDocResponse, IrisDocSearchResponse, IrisExecuteMethodResponse,
-    IrisExecuteResponse, IrisGenerateClassResponse, IrisGenerateResponse, IrisGenerateTestResponse,
-    IrisGetLogResponse, IrisImportServersResponse, IrisInfoResponse, IrisListContainersResponse,
-    IrisLookupManageResponse, IrisLookupTransferResponse, IrisMacroResponse,
-    IrisMessageBodyResponse, IrisNamespaceCreateResponse, IrisNamespaceListResponse,
-    IrisProductionDiffResponse, IrisQueryResponse, IrisRemoveServerResponse,
-    IrisSelectContainerResponse, IrisServersResponse, IrisStartSandboxResponse,
-    IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse, IrisTestResponse,
-    IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse,
-    JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse, MermaidClassResponse,
-    MermaidProductionResponse, MyAccessResponse, QueryAuditLogResponse,
+    IrisBusinessRuleInfoResponse, IrisCompileResponse, IrisCoverageResponse,
+    IrisCredentialListResponse, IrisCredentialManageResponse, IrisDatabaseListResponse,
+    IrisDatabaseStatsResponse, IrisDebugResponse, IrisDocResponse, IrisDocSearchResponse,
+    IrisExecuteMethodResponse, IrisExecuteResponse, IrisGenerateClassResponse,
+    IrisGenerateResponse, IrisGenerateTestResponse, IrisGetLogResponse, IrisImportServersResponse,
+    IrisInfoResponse, IrisListContainersResponse, IrisLookupManageResponse,
+    IrisLookupTransferResponse, IrisMacroResponse, IrisMessageBodyResponse,
+    IrisNamespaceCreateResponse, IrisNamespaceListResponse, IrisProductionDiffResponse,
+    IrisQueryResponse, IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
+    IrisStartSandboxResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse,
+    IrisTestResponse, IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse,
+    IrisWsOpenResponse, JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse,
+    MermaidClassResponse, MermaidProductionResponse, MyAccessResponse, QueryAuditLogResponse,
     ResolveDynamicDispatchResponse, ResolveStorageResponse, SkillCommunityListResponse,
     SkillCommunityResponse, SkillDescribeResponse, SkillForgetResponse, SkillListResponse,
     SkillResponse, SkillSearchResponse, StreamInspectResponse, TelemetryExportTraceResponse,
@@ -5995,8 +5995,8 @@ Methods:
     // ── 064: iris_coverage ────────────────────────────────────────────────────
 
     #[tool(
-        description = "Measure ObjectScript line coverage using %Monitor.System.LineByLine. mode=run: start monitoring + run compiled test suite + stop + return per-class and total coverage in one call (use this for most tasks). mode=check: verify the monitor is available by doing a dry Start() — if BBSIZ_NOT_CONFIGURED is returned, increase gmheap to 256+ in Management Portal > System Administration > Configuration > Additional Settings > Advanced Memory, then restart IRIS. mode=start/stop/report: manual multi-step control. Provide either classes=['MyApp.MyClass',...] or package='MyApp' (auto-discovers concrete classes). test_path must be a compiled class pattern (e.g. 'MyApp.Tests') — /noload always used. Returns {total_pct, hits, total, classes:[{class,routine,hit,total,pct}], meets_target, target_pct}. Error codes: BBSIZ_NOT_CONFIGURED (gmheap too small), MONITOR_IN_USE, MISSING_PARAM. Skill: objectscript-coverage (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
-    )]
+        description = "Measure ObjectScript line coverage using %Monitor.System.LineByLine. mode=run: start monitoring + run compiled test suite + stop + return per-class and total coverage in one call (use this for most tasks). mode=check: verify the monitor is available by doing a dry Start() — if BBSIZ_NOT_CONFIGURED is returned, increase gmheap to 256+ in Management Portal > System Administration > Configuration > Additional Settings > Advanced Memory, then restart IRIS. mode=start/stop/report: manual multi-step control. Provide either classes=['MyApp.MyClass',...] or package='MyApp' (auto-discovers concrete classes). test_path must be a compiled class pattern (e.g. 'MyApp.Tests') — /noload always used. Returns {total_pct, hits, total, classes:[{class,routine,hit,total,pct}], meets_target, target_pct}. Error codes: BBSIZ_NOT_CONFIGURED (gmheap too small), MONITOR_IN_USE, MISSING_PARAM. Skill: objectscript-coverage (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<IrisCoverageResponse>()    )]
     async fn iris_coverage(
         &self,
         Parameters(p): Parameters<coverage::IrisCoverageParams>,
