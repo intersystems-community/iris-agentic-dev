@@ -44,15 +44,15 @@ use output_schemas::{
     IrisListContainersResponse, IrisLookupManageResponse, IrisLookupTransferResponse,
     IrisMacroResponse, IrisMessageBodyResponse, IrisNamespaceCreateResponse,
     IrisNamespaceListResponse, IrisProductionDiffResponse, IrisProductionItemResponse,
-    IrisQueryResponse, IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
-    IrisSourceControlResponse, IrisStartSandboxResponse, IrisSymbolsLocalResponse,
-    IrisSymbolsResponse, IrisTableInfoResponse, IrisTestResponse, IrisTestServerResponse,
-    IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse, JournalSearchResponse,
-    KbIndexResponse, KbRecallResponse, KbResponse, MermaidClassResponse, MermaidProductionResponse,
-    MyAccessResponse, QueryAuditLogResponse, ResolveDynamicDispatchResponse,
-    ResolveStorageResponse, SkillCommunityListResponse, SkillCommunityResponse,
-    SkillDescribeResponse, SkillForgetResponse, SkillListResponse, SkillResponse,
-    SkillSearchResponse, StreamInspectResponse, TelemetryExportTraceResponse,
+    IrisProductionResponse, IrisQueryResponse, IrisRemoveServerResponse,
+    IrisSelectContainerResponse, IrisServersResponse, IrisSourceControlResponse,
+    IrisStartSandboxResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse,
+    IrisTestResponse, IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse,
+    IrisWsOpenResponse, JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse,
+    MermaidClassResponse, MermaidProductionResponse, MyAccessResponse, QueryAuditLogResponse,
+    ResolveDynamicDispatchResponse, ResolveStorageResponse, SkillCommunityListResponse,
+    SkillCommunityResponse, SkillDescribeResponse, SkillForgetResponse, SkillListResponse,
+    SkillResponse, SkillSearchResponse, StreamInspectResponse, TelemetryExportTraceResponse,
     TelemetryQueryResponse, ToolError,
 };
 
@@ -6083,8 +6083,8 @@ Methods:
     // Note: iris_debug already exists above as a real tool — it IS the merged debug dispatcher.
 
     #[tool(
-        description = "Interoperability production lifecycle (merged). action: status=get current state, start=start named production, stop=stop production, update=hot-apply config, check=check if update needed, recover=recover troubled production. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
-    )]
+        description = "Interoperability production lifecycle (merged). action: status=get current state, start=start named production, stop=stop production, update=hot-apply config, check=check if update needed, recover=recover troubled production. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<IrisProductionResponse>()    )]
     async fn iris_production(
         &self,
         Parameters(p): Parameters<AnyParams>,

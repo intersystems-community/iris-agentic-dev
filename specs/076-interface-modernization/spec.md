@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (85/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (86/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -319,6 +319,16 @@ An `action: enable|disable|get_settings|set_settings` dispatcher against a singl
 Resolves its connection via `self.iris_arc()` like `iris_interop_query` before it, so it gets a real `test_output_schema_shapes.rs` test hitting the deterministic `IRIS_UNREACHABLE` response with no live IRIS needed.
 
 **Remaining**: 5 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_production`, `iris_admin`.
+
+---
+
+### Batch 18 — `iris_production` (86/90 total)
+
+An `action: status|start|stop|update|check|recover|get_autostart|set_autostart` dispatcher over the whole production lifecycle. Several actions share one success shape exactly rather than needing their own struct: start/stop/recover all report only `{success, state}` (just a different state string), and get_autostart/set_autostart both report `{success, namespace, autostart_enabled, production}`. All errors funnel through `ToolError` (`NO_PRODUCTION`, `INTEROP_ERROR`, `IRIS_UNREACHABLE`, `INVALID_ACTION`).
+
+Resolves its connection via `self.iris_arc()` like the other interop dispatchers before it, so it gets a real `test_output_schema_shapes.rs` test hitting the deterministic `IRIS_UNREACHABLE` response with no live IRIS needed.
+
+**Remaining**: 4 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_admin`.
 
 ---
 
