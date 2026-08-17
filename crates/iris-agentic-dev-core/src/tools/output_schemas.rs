@@ -1746,5 +1746,105 @@ pub enum IrisQueryResponse {
     DdlNotAllowed(DdlNotAllowedError),
     RowsLimitExceeded(RowsLimitExceededError),
     Err(ToolError),
+    /// `IRIS_UNREACHABLE` on this tool's four HTTP-calling modes goes through
+    /// `err_json_with_url`, not plain `err_json` — see `IrisUnreachableWithUrlError`'s doc
+    /// comment. Found and added while modeling `iris_compile` (batch 8), which shares the same
+    /// helper; this variant was missing from this type's first pass in batch 7. Doesn't change
+    /// what actually validates (schemars only emits `additionalProperties: false` under
+    /// `#[serde(deny_unknown_fields)]`, which nothing here uses, so the plain `Err(ToolError)`
+    /// variant already accepted these responses' extra fields) — this only fixes the schema's
+    /// own accuracy as documentation.
+    UnreachableWithUrl(IrisUnreachableWithUrlError),
+}
+
+// ── iris_compile ──────────────────────────────────────────────────────────────
+//
+// The second of the five core execution tools (see `IrisQueryResponse`'s doc comment). Three
+// sub-paths depending on connection capability and target shape: docker-exec (no Atelier REST
+// available), local-file upload+compile, and the normal Atelier `/action/compile` path — each
+// with its own success shape and, for the last one, its own progressive-disclosure truncation.
+
+/// Shared by every mode of every core execution tool that reports an unreachable IRIS instance
+/// via the `err_json_with_url` helper (`iris_compile`, `iris_query`, and likely `iris_execute`/
+/// `iris_test`/`iris_doc` once those are modeled) — adds `attempted_url` and a fixed `hint`
+/// string on top of `ToolError`'s three fields, so it doesn't fit `ToolError` exactly despite
+/// looking like a minor variant of it.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisUnreachableWithUrlError {
+    pub success: bool,
+    pub error_code: String,
+    pub error: String,
+    pub attempted_url: String,
+    pub hint: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CompileErrorEntry {
+    pub severity: String,
+    pub code: String,
+    pub line: u32,
+    pub column: u32,
+    pub text: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisCompileDockerExecOk {
+    pub success: bool,
+    pub target: String,
+    pub namespace: String,
+    pub method: String,
+    pub output: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisCompileLocalPathOk {
+    pub success: bool,
+    pub target: String,
+    pub uploaded_from: String,
+    pub targets_compiled: usize,
+    pub namespace: String,
+    pub errors: Vec<CompileErrorEntry>,
+    /// Always `[]` on this path today — the local-file upload branch never populates warnings,
+    /// only errors — but modeled as a real array rather than a fixed empty one, since nothing
+    /// stops a future change from populating it the way the main compile path already does.
+    pub warnings: Vec<serde_json::Value>,
+    pub console: Vec<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisCompileOk {
+    pub success: bool,
+    pub target: String,
+    pub targets_compiled: usize,
+    pub namespace: String,
+    pub errors: Vec<CompileErrorEntry>,
+    pub warnings: Vec<CompileErrorEntry>,
+    /// Raw Atelier compile console lines — free-form JSON (normally strings, but sourced
+    /// directly from the HTTP response body rather than something this code constructs).
+    pub console: Vec<serde_json::Value>,
+    /// Present only for a successful, non-wildcard, single-target compile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub open_uri: Option<String>,
+    /// Progressive disclosure (`log_store::apply_truncation`) — present whenever the
+    /// errors+warnings count was checked against the threshold, which is every response on
+    /// this path (unlike `debug_get_error_logs`'s community-edition fallback, there's no early
+    /// return here that skips the check).
+    pub truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inline_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_count: Option<usize>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisCompileResponse {
+    DockerExec(IrisCompileDockerExecOk),
+    LocalPath(IrisCompileLocalPathOk),
+    Ok(IrisCompileOk),
+    Err(ToolError),
+    UnreachableWithUrl(IrisUnreachableWithUrlError),
     GateBlocked(serde_json::Value),
 }

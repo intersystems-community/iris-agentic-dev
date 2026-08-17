@@ -35,14 +35,14 @@ use output_schemas::{
     DebugGetErrorLogsResponse, DebugMapIntToClsResponse, DebugSourceMapResponse,
     DocsIntrospectResponse, FindSubclassImplementationsResponse, GlobalKillResponse,
     GlobalPreviewResponse, Hl7SchemaInspectResponse, Hl7SchemaListResponse, IrisAddServerResponse,
-    IrisBusinessRuleInfoResponse, IrisCredentialListResponse, IrisCredentialManageResponse,
-    IrisDatabaseListResponse, IrisDatabaseStatsResponse, IrisDebugResponse, IrisDocSearchResponse,
-    IrisExecuteMethodResponse, IrisGenerateClassResponse, IrisGenerateResponse,
-    IrisGenerateTestResponse, IrisGetLogResponse, IrisImportServersResponse, IrisInfoResponse,
-    IrisListContainersResponse, IrisLookupManageResponse, IrisLookupTransferResponse,
-    IrisMacroResponse, IrisMessageBodyResponse, IrisNamespaceCreateResponse,
-    IrisNamespaceListResponse, IrisProductionDiffResponse, IrisQueryResponse,
-    IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
+    IrisBusinessRuleInfoResponse, IrisCompileResponse, IrisCredentialListResponse,
+    IrisCredentialManageResponse, IrisDatabaseListResponse, IrisDatabaseStatsResponse,
+    IrisDebugResponse, IrisDocSearchResponse, IrisExecuteMethodResponse, IrisGenerateClassResponse,
+    IrisGenerateResponse, IrisGenerateTestResponse, IrisGetLogResponse, IrisImportServersResponse,
+    IrisInfoResponse, IrisListContainersResponse, IrisLookupManageResponse,
+    IrisLookupTransferResponse, IrisMacroResponse, IrisMessageBodyResponse,
+    IrisNamespaceCreateResponse, IrisNamespaceListResponse, IrisProductionDiffResponse,
+    IrisQueryResponse, IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
     IrisStartSandboxResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse,
     IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse,
     JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse, MermaidClassResponse,
@@ -2796,7 +2796,8 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Compile an ObjectScript class, routine, or wildcard package on IRIS via Atelier REST. Supports 'MyApp.*.cls' for package-level compilation. Also accepts a local file path as `target` — uploads it first, then compiles. Returns structured errors with line numbers, columns, and severity. On a successful single-document compile, `content` carries the post-compile source (the compiler can rewrite it beyond what was submitted, e.g. auto-mapping a new property into Storage) — use it to sync a local file without a separate `iris_doc(get)`; `content` is omitted for wildcard/package compiles. No Python required. Skill: objectscript-tdd for the compile-test-fix loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
+        description = "Compile an ObjectScript class, routine, or wildcard package on IRIS via Atelier REST. Supports 'MyApp.*.cls' for package-level compilation. Also accepts a local file path as `target` — uploads it first, then compiles. Returns structured errors with line numbers, columns, and severity. On a successful single-document compile, `content` carries the post-compile source (the compiler can rewrite it beyond what was submitted, e.g. auto-mapping a new property into Storage) — use it to sync a local file without a separate `iris_doc(get)`; `content` is omitted for wildcard/package compiles. No Python required. Skill: objectscript-tdd for the compile-test-fix loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<IrisCompileResponse>()
     )]
     async fn iris_compile(
         &self,
@@ -3978,8 +3979,9 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Execute SQL against IRIS via Atelier REST. mode=\",
-        output_schema = output_schemas::oneof_output_schema::<IrisQueryResponse>()    )]
+        description = "Execute SQL against IRIS via Atelier REST. mode=\"read\" (default): SELECT only, destructive SQL blocked unless force=true. mode=\"explain\": returns the IRIS query plan for a SELECT (plan_text, query_hash), no rows. mode=\"count\": returns a row count for `table` or `query` without transferring rows. mode=\"write\": executes INSERT/UPDATE/DELETE/CALL/TRUNCATE (Execute-gated, blocked on mcpTemplate=live/test); UPDATE/DELETE are pre-checked against max_rows_affected (default 1000, max 10000) before executing. Skill: objectscript-sql-patterns for IRIS SQL quirks. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<IrisQueryResponse>()
+    )]
     async fn iris_query(
         &self,
         Parameters(p): Parameters<QueryParams>,
