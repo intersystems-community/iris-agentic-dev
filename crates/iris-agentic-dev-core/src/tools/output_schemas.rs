@@ -1648,3 +1648,103 @@ pub enum SkillCommunityResponse {
     Install(SkillCommunityInstallActionOk),
     Err(ToolError),
 }
+
+// ── iris_query ────────────────────────────────────────────────────────────────
+//
+// One of the five core execution tools (spec 076 US2's CLI delegation target) — deferred out
+// of batches 1-6 because it's genuinely one of the largest, highest-variance tools in the
+// codebase: four modes (default/select, explain, count, write), three independent gate
+// mechanisms ahead of any of them (`dispatch_gate`, `crate::iris::server_manager::policy_gate`,
+// `workspace_config::check_role_gate`), and per-mode bespoke error shapes beyond the shared
+// `ToolError` convention. Modeled in full rather than left dynamic, since — unlike this file's
+// other deferred tools — every branch was actually read this pass.
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisQuerySelectOk {
+    pub success: bool,
+    /// SQL result rows — free-form JSON, shape depends entirely on the query's own SELECT list.
+    pub rows: Vec<serde_json::Value>,
+    pub count: usize,
+    pub namespace: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisQueryExplainOk {
+    pub success: bool,
+    pub plan_text: String,
+    pub query_hash: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisQueryCountOk {
+    pub success: bool,
+    pub count: i64,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisQueryWriteOk {
+    pub success: bool,
+    pub rows_affected: i64,
+    /// Present only when `force: true` was passed (DML that would otherwise be blocked, run
+    /// anyway because write tools are enabled).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub force_ignored: Option<bool>,
+    /// Present only when the UPDATE/DELETE rows-affected pre-check couldn't confidently parse
+    /// the statement (multi-table UPDATE, missing table name) and was skipped rather than run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rows_check_skipped: Option<bool>,
+}
+
+/// `mode="select"` (the default)'s `SQL_WRITE_BLOCKED` case — a destructive keyword was found
+/// without `force: true`. Extends `ToolError`'s fields with `blocked_keyword`, and optionally
+/// `force_ignored` (set when `force: true` was passed but write tools aren't enabled, so the
+/// override itself was ignored) — too different from plain `ToolError` to reuse it.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct SqlWriteBlockedError {
+    pub success: bool,
+    pub error_code: String,
+    pub error: String,
+    pub blocked_keyword: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub force_ignored: Option<bool>,
+}
+
+/// `mode="write"`'s DDL-keyword-detected case (distinct from the plain `err_json` DDL_NOT_ALLOWED
+/// case for statement types `validate_dml_sql` doesn't recognize at all, which matches `ToolError`
+/// exactly and needs no separate type).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DdlNotAllowedError {
+    pub success: bool,
+    pub error_code: String,
+    pub error: String,
+    pub blocked_keyword: String,
+}
+
+/// `mode="write"`'s UPDATE/DELETE rows-affected pre-check limit.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct RowsLimitExceededError {
+    pub success: bool,
+    pub error_code: String,
+    pub error: String,
+    pub actual_count: i64,
+    pub limit: u32,
+}
+
+/// The three independent gate mechanisms `iris_query` runs before any mode-specific logic
+/// (`dispatch_gate`, `policy_gate` with its own `allowed_categories` field, `check_role_gate`)
+/// each produce their own free-form blocked-response JSON — genuinely three different possible
+/// shapes, not one. Left dynamic rather than three more nested variants; see `IrisMessageBodyResponse`'s
+/// doc comment for the same reasoning applied to a single gate.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisQueryResponse {
+    Select(IrisQuerySelectOk),
+    Explain(IrisQueryExplainOk),
+    Count(IrisQueryCountOk),
+    Write(IrisQueryWriteOk),
+    SqlWriteBlocked(SqlWriteBlockedError),
+    DdlNotAllowed(DdlNotAllowedError),
+    RowsLimitExceeded(RowsLimitExceededError),
+    Err(ToolError),
+    GateBlocked(serde_json::Value),
+}
