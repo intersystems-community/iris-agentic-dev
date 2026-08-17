@@ -26,9 +26,9 @@ use output_schemas::{
     GlobalPreviewResponse, Hl7SchemaInspectResponse, Hl7SchemaListResponse, IrisAddServerResponse,
     IrisBusinessRuleInfoResponse, IrisCompileResponse, IrisCredentialListResponse,
     IrisCredentialManageResponse, IrisDatabaseListResponse, IrisDatabaseStatsResponse,
-    IrisDebugResponse, IrisDocSearchResponse, IrisExecuteMethodResponse, IrisExecuteResponse,
-    IrisGenerateClassResponse, IrisGenerateResponse, IrisGenerateTestResponse, IrisGetLogResponse,
-    IrisImportServersResponse, IrisInfoResponse, IrisListContainersResponse,
+    IrisDebugResponse, IrisDocResponse, IrisDocSearchResponse, IrisExecuteMethodResponse,
+    IrisExecuteResponse, IrisGenerateClassResponse, IrisGenerateResponse, IrisGenerateTestResponse,
+    IrisGetLogResponse, IrisImportServersResponse, IrisInfoResponse, IrisListContainersResponse,
     IrisLookupManageResponse, IrisLookupTransferResponse, IrisMacroResponse,
     IrisMessageBodyResponse, IrisNamespaceCreateResponse, IrisNamespaceListResponse,
     IrisProductionDiffResponse, IrisQueryResponse, IrisRemoveServerResponse,
@@ -3873,7 +3873,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
     #[tool(
         description = "Read/write/delete IRIS documents. mode: get (fetch source), put (write, auto SCM checkout), delete, head (existence), fragment (read lines start..end), compiled (read INT), list (glob `pattern`), insert (splice `content` before 1-based `line`; omit `line` to append), delete_lines (remove start..end). `name` is required for all single-document modes; `line`/`start`/`end` are integers. For insert with an explicit `line` and for delete_lines, pass `expected` (current text at the target lines) or the edit is refused with STALE_CONTENT. Edits return the re-numbered post-write `content` to chain from, plus a `diff` field (git-style unified diff of the change) — render it to the user inside a ```diff fenced code block. Batch via `names`; SCM dialogs resume via elicitation_id/elicitation_answer. Skill: objectscript-navigation to locate documents before editing. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisDocResponse>()
     )]
     async fn iris_doc(
         &self,

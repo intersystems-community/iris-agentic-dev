@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (78/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (79/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -227,6 +227,24 @@ Two more error shapes, both bespoke rather than plain `ToolError`: `IrisExecuteS
 No `test_output_schema_shapes.rs` coverage — every path needs a live connection or service-account routing; there's no side-effect-free way to exercise this one without a real IRIS instance. The "known-undeclared" example in `test_a_tool_without_a_declared_schema_reports_false_not_a_panic` moved off the execution-tool rotation entirely this time, to `check_config` — deliberately picked as unlikely to need a schema soon (genuinely heterogeneous, conditionally-appended fields, already carved out elsewhere in this codebase as intentionally uncategorized) rather than another tool that would just need swapping out again next batch.
 
 **Remaining**: 12 of 90 tools — `iris_doc`, `check_config`, `iris_search`, `extract_message_map_routing`, `iris_source_control`, `iris_global`, `iris_coverage`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`.
+
+---
+
+### Batch 11 — `iris_doc` (79/90 total)
+
+The fifth and last core execution tool, and the largest by mode count: get, put, delete, head, fragment, compiled, list, insert, delete_lines, plus a top-level elicitation-resume path handled before mode dispatch so it works uniformly for put and both surgical-edit modes. No gate calls at all — like `iris_test`, not like `iris_query`/`iris_compile`/`iris_execute` — so no `GateBlocked` variant.
+
+The real complexity is that `do_write`'s core success JSON gets progressively more fields merged onto it depending on which caller invoked it, never fewer: plain mode=put, mode=put with `compile: true`, an elicitation-resume write, and a successful mode=insert/mode=delete_lines edit all share one underlying shape with a growing set of optional annotations (`compiled`/`compile_errors`/`compile_console` for the compile case; `resumed` for the elicitation-resume case; `edit`/`inserted_at`/`deleted_start`/`deleted_end`/`lines_added`/`lines_removed`/`diff`/`total_lines`/`content` for the surgical-edit case). Modeled as one `IrisDocWriteOk` struct with all of these as `Option` fields rather than four separate structs — that's what the code itself does (`annotate_edit` merging onto `do_write`'s base JSON), not an approximation of it. The SCM checkout dialog (`elicitation_required`) gets the same treatment for the same reason: mode=put's plain dialog and mode=insert/mode=delete_lines' edit-annotated dialog are the same JSON shape with the edit fields present or absent.
+
+Two more bespoke error shapes beyond plain `ToolError`: `IrisDocStaleContentError` (mode=insert/mode=delete_lines' `STALE_CONTENT` refusal, carrying the exact line/expected/actual divergence) and `IrisDocEditFailedError` (the rare case where a surgical edit's write itself fails — `SCM_REJECTED`, an HTTP error, or a requested compile failing — after the diff was already computed, so the edit-annotation fields get merged onto the failure the same way they do onto a success).
+
+The two batch paths (`names` set on get/delete) stay `Vec<serde_json::Value>` for their per-item entries rather than a nested oneof — each entry's shape (`{name, content}` vs `{name, error}` for get; `{name, error}` for delete's failures) is decided per-document, and a oneof-of-oneof here would cost more schema complexity than it documents. `IrisDocResponse` ends up with 13 variants: `Get`, `GetBatch`, `ElicitationRequired`, `WriteOk`, `Delete`, `DeleteBatch`, `Head`, `Fragment`, `Compiled`, `List`, `StaleContent`, `EditFailed`, `Err(ToolError)`.
+
+No `test_output_schema_shapes.rs` coverage — every mode needs a live connection (`resolve_server`).
+
+This closes the five core execution tools (`iris_query`, `iris_compile`, `iris_test`, `iris_execute`, `iris_doc`) — all now schema'd.
+
+**Remaining**: 11 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_source_control`, `iris_global`, `iris_coverage`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`.
 
 ---
 
