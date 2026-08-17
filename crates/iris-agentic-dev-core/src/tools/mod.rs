@@ -32,8 +32,8 @@ use output_schemas::{
     IrisGlobalResponse, IrisImportServersResponse, IrisInfoResponse, IrisInteropQueryResponse,
     IrisListContainersResponse, IrisLookupManageResponse, IrisLookupTransferResponse,
     IrisMacroResponse, IrisMessageBodyResponse, IrisNamespaceCreateResponse,
-    IrisNamespaceListResponse, IrisProductionDiffResponse, IrisQueryResponse,
-    IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
+    IrisNamespaceListResponse, IrisProductionDiffResponse, IrisProductionItemResponse,
+    IrisQueryResponse, IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
     IrisSourceControlResponse, IrisStartSandboxResponse, IrisSymbolsLocalResponse,
     IrisSymbolsResponse, IrisTableInfoResponse, IrisTestResponse, IrisTestServerResponse,
     IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse, JournalSearchResponse,
@@ -6230,7 +6230,8 @@ Methods:
 
     #[tool(
         description = "Enable, disable, or inspect/modify settings of an individual Interoperability production config item. action: enable|disable|get_settings|set_settings. item: exact config item name. namespace: optional. settings: key-value map (for set_settings). Works via HTTP, no Docker required. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisProductionItemResponse>()
     )]
     async fn iris_production_item(
         &self,

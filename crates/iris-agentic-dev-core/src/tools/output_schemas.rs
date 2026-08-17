@@ -2684,3 +2684,43 @@ pub enum IrisInteropQueryResponse {
     Messages(IrisInteropMessagesOk),
     Err(ToolError),
 }
+
+// ── iris_production_item ─────────────────────────────────────────────────────
+//
+// An `action: enable|disable|get_settings|set_settings` dispatcher against a single
+// production config item. Three genuinely different success shapes, one per action group
+// (enable/disable share one, get_settings and set_settings each have their own) — all
+// errors funnel through the shared `err_json`/`ToolError` convention (`ITEM_NOT_FOUND`,
+// `NO_PRODUCTION`, `UPDATE_FAILED`, `INTEROP_ERROR`, `IRIS_UNREACHABLE`, `INVALID_PARAMS`,
+// `INVALID_ACTION`).
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisProductionItemEnableOk {
+    pub success: bool,
+    pub item: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisProductionItemSettingsOk {
+    pub success: bool,
+    pub item: String,
+    pub settings: std::collections::HashMap<String, String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisProductionItemSetSettingsOk {
+    pub success: bool,
+    pub item: String,
+    /// Always `"Settings updated and production updated"`.
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisProductionItemResponse {
+    EnableDisable(IrisProductionItemEnableOk),
+    GetSettings(IrisProductionItemSettingsOk),
+    SetSettings(IrisProductionItemSetSettingsOk),
+    Err(ToolError),
+}
