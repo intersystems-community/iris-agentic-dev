@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (45/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (56/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -136,6 +136,19 @@ New findings from this batch:
 **`test_output_schema_shapes.rs` gained real coverage this batch, unlike batch 2.** The four stub tools are always callable with no live IRIS and no side effects — their response is deterministic regardless of connection state — so all four got genuine `call_for_test` assertions (not mocks), the same standard as batch 1's no-IRIS-needed tools.
 
 **Remaining after batch 3**: 45 of 90 tools — exactly halfway.
+
+**Batch 4 delivered — 11 more tools (56/90 total).** Smaller than the previous three batches on purpose: `resolve_dynamic_dispatch`, `find_subclass_implementations`, `skill_describe`, `skill_search`, `iris_get_log`, `agent_info`, `kb`, `kb_index`, `iris_credential_manage`, `iris_lookup_manage`, `iris_lookup_transfer` needed genuinely more careful, multi-action modeling than a straight 15-tool batch would allow without cutting corners.
+
+New findings from this batch:
+
+- **Action-multiplexed tools can have several genuinely distinct success shapes, not just two.** `iris_lookup_manage` dispatches on `action` (`list_tables`/`get`/`set`/`delete`/`list_keys`) to five shapes that share no fields; `iris_get_log` has three (list / paginated-get / full-get, depending on whether `id` and `limit` are present); `agent_info` and `kb` each have two (`what`/`action`-driven). All modeled as N-variant untagged enums — `oneof_output_schema` generalizes cleanly past the 2- and 3-variant cases from batches 1 and 3.
+- **`kb_index` and `kb` are a genuinely interesting pair.** Both call the same underlying `handle_kb`, but `kb_index` always passes `action="index"` hardcoded — so it gets its own single-shape `KbIndexResponse` (`Ok(KbIndexOk) | Err`), while `kb` is the action-multiplexed one (`KbResponse`, both `Index` and `Recall` variants). Two different declared schemas for two different call sites into the same handler, both accurate.
+- **`extract_message_map_routing` was scoped out of this batch, deliberately.** Reading its body showed a third code path beyond MessageMap success/failure: BPL/DTL classes get detected early and return an entirely different, differently-shaped value (`detect_bpl_dtl_routing`) before the MessageMap logic even runs. Modeling that accurately needs tracing `xdata_flow::parse_bpl`/`parse_dtl`'s own return shapes, which this batch's time budget didn't cover — deferred to a future batch rather than declaring a schema that would silently misdescribe that third path. This is the Edge Cases section's "per-tool judgment call" being exercised for real, not a shortcut.
+- **A second toolset-exclusion direction, not just the first.** Every prior batch's `MERGED_REMOVED` handled tools absent *from* Merged. `iris_get_log` is the opposite: it's `merged_only` (present *only* in Merged, per `with_registry_and_toolset`), so it would have failed `test_declared_tools_advertise_output_schema_in_baseline` if left unhandled. Added a mirror `BASELINE_REMOVED` list and a symmetric `test_baseline_removed_tools_are_absent_from_baseline_router` test — the same principle as batch 3's `MERGED_REMOVED` exclusion, just running the other way.
+
+`test_output_schema_shapes.rs` gained 6 more real, no-live-IRIS-needed tests this batch: `skill_describe` (NOT_FOUND path — the bundled-skill lookup needs no connection), `skill_search` (same reasoning as batch 1's `skill_list`), `iris_get_log`'s list path (backed entirely by the in-process `LogStore`), and `iris_credential_manage`/`iris_lookup_manage`/`iris_lookup_transfer` — all three take `Option<&IrisConnection>` and return a real, deterministic `IRIS_UNREACHABLE` `ToolError` with no connection, not a mock. Also caught two `note` fields (`SkillListResponse`, `SkillSearchResponse`) that were typed as loose `serde_json::Value` when `bundled::searched_note` always returns a plain `String` — tightened both while writing this batch's `SkillNotFoundError` type, which needed the same field modeled correctly for the first time.
+
+**Remaining after batch 4**: 34 of 90 tools.
 
 ---
 

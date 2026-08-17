@@ -30,18 +30,22 @@ use std::sync::Arc;
 // 076-interface-modernization User Story 1: output-schema-only response shapes. Not
 // constructed at runtime — see output_schemas.rs's module doc comment for why.
 use output_schemas::{
-    AgentHistoryResponse, AgentStatsResponse, CapabilityMatrixResponse, CompareDocumentResponse,
-    CompareNamespaceResponse, DebugCapturePacketResponse, DebugGetErrorLogsResponse,
-    DebugMapIntToClsResponse, DebugSourceMapResponse, DocsIntrospectResponse, GlobalKillResponse,
+    AgentHistoryResponse, AgentInfoResponse, AgentStatsResponse, CapabilityMatrixResponse,
+    CompareDocumentResponse, CompareNamespaceResponse, DebugCapturePacketResponse,
+    DebugGetErrorLogsResponse, DebugMapIntToClsResponse, DebugSourceMapResponse,
+    DocsIntrospectResponse, FindSubclassImplementationsResponse, GlobalKillResponse,
     GlobalPreviewResponse, Hl7SchemaInspectResponse, Hl7SchemaListResponse, IrisAddServerResponse,
-    IrisCredentialListResponse, IrisDatabaseListResponse, IrisDatabaseStatsResponse,
-    IrisImportServersResponse, IrisNamespaceCreateResponse, IrisNamespaceListResponse,
-    IrisRemoveServerResponse, IrisServersResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse,
-    IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse,
-    JournalSearchResponse, KbRecallResponse, MermaidClassResponse, MermaidProductionResponse,
-    MyAccessResponse, QueryAuditLogResponse, SkillCommunityListResponse, SkillForgetResponse,
-    SkillListResponse, StreamInspectResponse, TelemetryExportTraceResponse, TelemetryQueryResponse,
-    ToolError,
+    IrisCredentialListResponse, IrisCredentialManageResponse, IrisDatabaseListResponse,
+    IrisDatabaseStatsResponse, IrisGetLogResponse, IrisImportServersResponse,
+    IrisLookupManageResponse, IrisLookupTransferResponse, IrisNamespaceCreateResponse,
+    IrisNamespaceListResponse, IrisRemoveServerResponse, IrisServersResponse,
+    IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTestServerResponse, IrisWsCloseResponse,
+    IrisWsExecResponse, IrisWsOpenResponse, JournalSearchResponse, KbIndexResponse,
+    KbRecallResponse, KbResponse, MermaidClassResponse, MermaidProductionResponse,
+    MyAccessResponse, QueryAuditLogResponse, ResolveDynamicDispatchResponse,
+    SkillCommunityListResponse, SkillDescribeResponse, SkillForgetResponse, SkillListResponse,
+    SkillSearchResponse, StreamInspectResponse, TelemetryExportTraceResponse,
+    TelemetryQueryResponse, ToolError,
 };
 
 tokio::task_local! {
@@ -5144,7 +5148,8 @@ Methods:
 
     #[tool(
         description = "Describe a skill by name. Looks in the bundled skills shipped with this server (no IRIS needed) and in the IRIS ^SKILLS global.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<SkillDescribeResponse>()
     )]
     async fn skill_describe(
         &self,
@@ -5195,7 +5200,8 @@ Methods:
 
     #[tool(
         description = "Search all skills by name, description AND frontmatter tags. Covers both the skills bundled with this server (on disk, works with no IRIS connection) and synthesized skills in the IRIS ^SKILLS global. Each result carries a `source` field (`bundled`/`synthesized`); the response always reports how many skills were available in each source, so a zero result never means 'only one place was checked'.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = schema_for_output::<SkillSearchResponse>().unwrap()
     )]
     async fn skill_search(
         &self,
@@ -5394,7 +5400,10 @@ Methods:
         )
     }
 
-    #[tool(description = "Index markdown files into the IRIS knowledge base for semantic search.")]
+    #[tool(
+        description = "Index markdown files into the IRIS knowledge base for semantic search.",
+        output_schema = output_schemas::oneof_output_schema::<KbIndexResponse>()
+    )]
     async fn kb_index(
         &self,
         Parameters(p): Parameters<KbIndexParams>,
@@ -5645,7 +5654,8 @@ Methods:
 
     #[tool(
         description = "Resolve ObjectScript dynamic dispatch: find all compiled classes that implement a given method. Use when you see $classmethod(var, method) or ##class({variable}).Method() and need to know the possible targets. Returns candidates with confidence scores (fewer matches = higher confidence). Confidence: 1 match=0.90, 2-5=0.75, 6-20=0.55, >20=0.30. Results cached 60s per session. Skill: objectscript-navigation. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<ResolveDynamicDispatchResponse>()
     )]
     async fn resolve_dynamic_dispatch(
         &self,
@@ -5685,7 +5695,8 @@ Methods:
 
     #[tool(
         description = "Find all concrete subclass implementations of a method in the full inheritance hierarchy. Given base class names and a method name, expands to all descendants at any depth and returns classes where the method is defined (Origin = parent, not inherited). Use to resolve polymorphic dispatch: adapter.Execute() → find all EnsLib.*.Adapter subclasses that implement Execute. Results cached 60s per session. Skill: objectscript-navigation. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<FindSubclassImplementationsResponse>()
     )]
     async fn find_subclass_implementations(
         &self,
@@ -5772,7 +5783,8 @@ Methods:
     }
 
     #[tool(
-        description = "Knowledge base tools. action=index reads markdown/text files and stores them in ^KBCHUNKS, action=recall searches the KB for relevant content by keyword."
+        description = "Knowledge base tools. action=index reads markdown/text files and stores them in ^KBCHUNKS, action=recall searches the KB for relevant content by keyword.",
+        output_schema = output_schemas::oneof_output_schema::<KbResponse>()
     )]
     async fn kb(
         &self,
@@ -5786,7 +5798,8 @@ Methods:
 
     #[tool(
         description = "Session and learning agent information. what=stats returns skill count and session call count, what=history returns recent tool call history.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<AgentInfoResponse>()
     )]
     async fn agent_info(
         &self,
@@ -6516,7 +6529,8 @@ Methods:
 
     #[tool(
         description = "Create, update, or delete an Ensemble credential. action: create|update|delete. id: credential ID (required). username/password: required for create, optional for update. namespace: optional. Write-gated: suppressed on Live instances unless IRIS_ALLOW_PROD=1.",
-        annotations(destructive_hint = true)
+        annotations(destructive_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisCredentialManageResponse>()
     )]
     async fn iris_credential_manage(
         &self,
@@ -6561,7 +6575,8 @@ Methods:
 
     #[tool(
         description = "Read, write, delete, or list Ensemble lookup table entries. action: get|set|delete|list_keys|list_tables. table: table name (required except list_tables). key: required for get/set/delete. value: required for set. namespace: optional. get/list_keys/list_tables always available; set/delete write-gated. Skill: ensemble-production.",
-        annotations(destructive_hint = true)
+        annotations(destructive_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisLookupManageResponse>()
     )]
     async fn iris_lookup_manage(
         &self,
@@ -6599,7 +6614,8 @@ Methods:
     }
 
     #[tool(
-        description = "Export or import an Ensemble lookup table as XML. action: export|import. table: table name. xml: XML string (required for import). namespace: optional. export always available; import write-gated. Skill: ensemble-production."
+        description = "Export or import an Ensemble lookup table as XML. action: export|import. table: table name. xml: XML string (required for import). namespace: optional. export always available; import write-gated. Skill: ensemble-production.",
+        output_schema = output_schemas::oneof_output_schema::<IrisLookupTransferResponse>()
     )]
     async fn iris_lookup_transfer(
         &self,
@@ -6838,7 +6854,8 @@ Methods:
 
     #[tool(
         description = "Retrieve a stored result by log_id from the progressive disclosure store. With id: returns the full result (optionally paginated with limit/offset). Without id: lists all stored log entries with their IDs, tools, timestamps, and total counts. Use after any tool returns truncated:true.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisGetLogResponse>()
     )]
     async fn iris_get_log(
         &self,
