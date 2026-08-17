@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (88/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (89/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -353,6 +353,18 @@ The MessageMap and BPL paths' route entries turned out structurally identical (`
 No `test_output_schema_shapes.rs` coverage — routes through `resolve_server`, needing a live connection.
 
 **Remaining**: 2 of 90 tools — `check_config`, `iris_search`.
+
+---
+
+### Batch 21 — `iris_search` (89/90 total)
+
+Full-text search via Atelier REST v2, with a sync-first / async-poll-fallback path (many IRIS servers answer `/action/search` synchronously even for slow wildcard searches; others defer via a `workId` to poll). No gate calls. Only two JSON error shapes exist — `SCOPE_REQUIRED` (no `documents` scope given) and `SEARCH_TIMEOUT` (the 5-minute poll deadline elapsed) — both extending `ToolError` with the same `query` field, so one shared struct covers both. A genuine HTTP/network failure on the async POST fallback surfaces as a real `McpError`, not a JSON body — same as other tools' `?`-propagated transport failures, and for the same reason not part of this output schema.
+
+Per-result fields (`document`/`line`/`member`/`content`) are raw passthroughs of whatever Atelier returned for that match, so they stay `serde_json::Value`. Progressive disclosure (027) adds `log_id`/`inline_count`/`total_count` only when `results` actually gets truncated — modeled as optional fields on the one success struct rather than a second variant, matching this codebase's established pattern for `apply_truncation`-backed tools.
+
+No `test_output_schema_shapes.rs` coverage — routes through `resolve_server`, needing a live connection.
+
+**Remaining**: 1 of 90 tools — `check_config`.
 
 ---
 
