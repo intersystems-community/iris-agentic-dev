@@ -99,6 +99,57 @@ async fn test_kb_recall_response_matches_declared_shape() {
     }
 }
 
+/// The four stub tools (skill_propose/skill_optimize/skill_share/skill_community_install)
+/// unconditionally return err_json("NOT_IMPLEMENTED", ...) regardless of IRIS connectivity —
+/// a real, deterministic response with no live IRIS needed and no side effects, unlike the
+/// server-config mutation tools in batch 2 that were deliberately left uncovered here.
+#[tokio::test]
+async fn test_skill_propose_response_matches_declared_shape() {
+    let body = call(&tools(), "skill_propose", serde_json::json!({})).await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "NOT_IMPLEMENTED");
+    assert!(body["error"].is_string());
+}
+
+#[tokio::test]
+async fn test_skill_optimize_response_matches_declared_shape() {
+    let body = call(
+        &tools(),
+        "skill_optimize",
+        serde_json::json!({"name": "objectscript-tdd"}),
+    )
+    .await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "NOT_IMPLEMENTED");
+    assert!(body["error"].is_string());
+}
+
+#[tokio::test]
+async fn test_skill_share_response_matches_declared_shape() {
+    let body = call(
+        &tools(),
+        "skill_share",
+        serde_json::json!({"name": "objectscript-tdd"}),
+    )
+    .await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "NOT_IMPLEMENTED");
+    assert!(body["error"].is_string());
+}
+
+#[tokio::test]
+async fn test_skill_community_install_response_matches_declared_shape() {
+    let body = call(
+        &tools(),
+        "skill_community_install",
+        serde_json::json!({"name": "some-package"}),
+    )
+    .await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "NOT_IMPLEMENTED");
+    assert!(body["error"].is_string());
+}
+
 #[tokio::test]
 async fn test_iris_symbols_local_response_matches_declared_shape() {
     // No IRIS connection needed — scans the local filesystem. workspace_path defaults to cwd.

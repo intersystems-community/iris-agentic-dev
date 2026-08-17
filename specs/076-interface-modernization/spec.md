@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (30/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (45/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -124,6 +124,18 @@ New findings from this batch:
 **No new `test_output_schema_shapes.rs` coverage this batch, and that's a deliberate, disclosed gap, not an oversight.** Every one of these 15 tools needs a live IRIS connection to produce a real response (`resolve_server`/`get_iris_reloaded`), *or* — for `iris_add_server`/`iris_remove_server`/`iris_import_servers` — would mutate the real, non-test-isolated `iad-native` server config file and OS keychain on the host running the test, which is not something a unit test should do regardless of IRIS. Neither is a batch-1-style "genuinely needs no IRIS and no side effects" case, so schema-declaration coverage (`test_output_schema.rs`) is what this batch gets; the response-shape half of Acceptance Scenario 2 for these 15 belongs in a future `--include-ignored` live test.
 
 **Remaining after batch 2**: 60 of 90 tools.
+
+**Batch 3 delivered — 15 more tools (45/90 total, halfway).** `compare_document`, `compare_namespace`, `global_preview`, `query_audit_log`, `stream_inspect`, `hl7_schema_inspect`, `mermaid_class`, `mermaid_production`, `skill_propose`, `skill_optimize`, `skill_share`, `skill_community_install`, `telemetry_query`, `telemetry_export_trace`, `iris_credential_list`.
+
+New findings from this batch:
+
+- **A real modeling mistake caught before it shipped.** `global_preview`'s one fallible step propagates via `?` as a protocol-level `McpError` (no embedded-JSON error path at all), so its response type is one flat struct, not an `Ok | Err` union — this pattern was already established by `iris_ws_exec`/`iris_ws_close`. First draft of this batch mis-modeled `mermaid_production` the same way by analogy, assuming it also had no error path; rereading its body showed it *does* call `err_json("IRIS_UNREACHABLE", ...)` on a query failure, same as almost everything else in `admin_tools.rs`. Fixed to the correct `Ok | Err(ToolError)` union before wiring the `#[tool(...)]` attribute — a reminder that "looks like the last one" isn't a substitute for reading each body; this is a fully manual, per-tool process by design (see Batch 1's opening paragraph), and skipping that step here would have shipped a schema that silently didn't cover the tool's own error path.
+- **`hl7_schema_inspect` has two distinct success shapes, not one** — segment-level lookup (`{success, schema, segment, fields}`) and whole-schema structure listing (`{success, schema, structures}`) never appear in the same response, driven by whether the caller passed a `segment` param. Modeled as a 3-variant untagged enum (`Segment | Structures | Err`), proving `oneof_output_schema`'s approach generalizes past the 2-variant `Ok | Err` case it was built for.
+- **The four `NOT_IMPLEMENTED` stub tools got a schema too** (`skill_propose`, `skill_optimize`, `skill_share`, `skill_community_install`) — each unconditionally returns `err_json("NOT_IMPLEMENTED", ...)`, so `ToolError` alone (no union) is the complete, accurate shape. Declaring it now means a future real implementation that changes the response shape without updating `output_schemas.rs` gets caught by schema-declaration coverage instead of drifting silently. These four are also pruned from every non-Baseline toolset (`stubs_to_remove`) — added to `test_output_schema.rs`'s `MERGED_REMOVED` list alongside the debug_* quartet, and its doc comment broadened to explain both exclusion reasons (iris_debug consolidation vs. stub pruning) since it's no longer only about one.
+
+**`test_output_schema_shapes.rs` gained real coverage this batch, unlike batch 2.** The four stub tools are always callable with no live IRIS and no side effects — their response is deterministic regardless of connection state — so all four got genuine `call_for_test` assertions (not mocks), the same standard as batch 1's no-IRIS-needed tools.
+
+**Remaining after batch 3**: 45 of 90 tools — exactly halfway.
 
 ---
 
