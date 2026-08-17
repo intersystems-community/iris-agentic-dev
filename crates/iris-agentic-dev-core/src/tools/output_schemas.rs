@@ -3212,3 +3212,108 @@ pub enum IrisSearchResponse {
     Ok(IrisSearchOk),
     ScopedErr(IrisSearchScopedError),
 }
+
+// ── check_config ──────────────────────────────────────────────────────────────
+//
+// The 90th and last tool. Deliberately saved for last across this spec's batches — it was
+// this suite's own "known tool without a schema yet" negative-control example (batches 10
+// through this one), picked because it genuinely never fails (no IRIS call at all — reads
+// only in-process state) yet is the single most heterogeneous response in the whole tool
+// surface: a handful of always-present base fields, two conditionally-appended top-level
+// fields, and a `server_manager` section whose own shape depends on whether Server Manager
+// settings exist at all.
+//
+// No error path exists — the tool's own description states it plainly ("Always succeeds
+// — never returns IRIS_UNREACHABLE"), confirmed by reading the full body: there is no
+// `err_json` call anywhere in `check_config`. So this is a single-shape response type, using
+// `schema_for_output` directly rather than `oneof_output_schema`, the same as any other
+// single-shape tool.
+
+/// Mirrors `ConnectionSource` (defined in `mod.rs`, without a `JsonSchema` derive) —
+/// duplicated here rather than adding the derive to the real type, consistent with this
+/// module's "output-schema-only, never constructed at runtime" design.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckConfigConnectionSource {
+    ConfigFile,
+    EnvVars,
+    IrisSelectContainer,
+    AutoDiscovered,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CheckConfigCapabilities {
+    pub private_web_server: bool,
+    pub atelier_rest: bool,
+    /// `"atelier"` or `"docker_exec"`.
+    pub compile_path: String,
+    /// Present only when Atelier REST is available and a non-default web path prefix was
+    /// detected.
+    pub webgateway_url: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CheckConfigServerManagerPolicy {
+    pub allow: Option<Vec<String>>,
+    /// `"dev"`, `"test"`, or `"live"`.
+    pub mcp_template: Option<String>,
+    /// `"block"`, `"allow"`, or `"redact"`.
+    pub data_policy: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CheckConfigServerManagerServer {
+    pub name: String,
+    pub host: String,
+    pub port: u16,
+    /// `true` if this is the currently active connection.
+    pub active: bool,
+    /// `"resolved"`, `"not_configured"`, or `"error"`.
+    pub credential_status: String,
+    pub policy: Option<CheckConfigServerManagerPolicy>,
+}
+
+/// The `server_manager` section — always present on the response, but `servers` only when
+/// InterSystems Server Manager settings actually exist (`available: true`). Modeled as one
+/// struct with an optional field rather than a 2-variant enum, since `available` and
+/// `servers` always appear or vanish together — the same "appears/disappears as a unit"
+/// reasoning behind this module's other optional-field groupings.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CheckConfigServerManager {
+    pub available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub servers: Option<Vec<CheckConfigServerManagerServer>>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CheckConfigOk {
+    pub connected: bool,
+    pub connection_source: CheckConfigConnectionSource,
+    /// Empty string when `connected` is `false`.
+    pub host: String,
+    /// `52773` (the IRIS default) even when disconnected — this is not evidence of a real
+    /// connection on that port.
+    pub port: u64,
+    /// Empty string when `connected` is `false`.
+    pub namespace: String,
+    /// Present only for a Docker-discovered connection.
+    pub container: Option<String>,
+    pub config_file: Option<String>,
+    /// ISO 8601, e.g. `"2026-08-17T12:00:00Z"`.
+    pub config_loaded_at: Option<String>,
+    pub iris_version: Option<String>,
+    pub write_tools_enabled: bool,
+    /// Where the server watches for `.iris-agentic-dev.toml` hot-reload — write a config
+    /// file to this exact path to switch connections mid-session without a restart.
+    pub config_watch_path: Option<String>,
+    pub objectscript_workspace: Option<String>,
+    pub capabilities: CheckConfigCapabilities,
+    /// Present only when the last config-file parse attempt failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_parse_error: Option<String>,
+    /// Present only when connected via fallback discovery (no explicit config file or env
+    /// vars) — a hint that the agent may be attached to the wrong IRIS instance.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback_warning: Option<String>,
+    pub server_manager: CheckConfigServerManager,
+}
