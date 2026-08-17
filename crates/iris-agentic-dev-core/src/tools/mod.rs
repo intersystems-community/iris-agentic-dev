@@ -24,12 +24,12 @@ use output_schemas::{
     DebugGetErrorLogsResponse, DebugMapIntToClsResponse, DebugSourceMapResponse,
     DocsIntrospectResponse, FindSubclassImplementationsResponse, GlobalKillResponse,
     GlobalPreviewResponse, Hl7SchemaInspectResponse, Hl7SchemaListResponse, IrisAddServerResponse,
-    IrisBusinessRuleInfoResponse, IrisCompileResponse, IrisCoverageResponse,
-    IrisCredentialListResponse, IrisCredentialManageResponse, IrisDatabaseListResponse,
-    IrisDatabaseStatsResponse, IrisDebugResponse, IrisDocResponse, IrisDocSearchResponse,
-    IrisExecuteMethodResponse, IrisExecuteResponse, IrisGenerateClassResponse,
-    IrisGenerateResponse, IrisGenerateTestResponse, IrisGetLogResponse, IrisGlobalResponse,
-    IrisImportServersResponse, IrisInfoResponse, IrisListContainersResponse,
+    IrisBusinessRuleInfoResponse, IrisCompileResponse, IrisContainersResponse,
+    IrisCoverageResponse, IrisCredentialListResponse, IrisCredentialManageResponse,
+    IrisDatabaseListResponse, IrisDatabaseStatsResponse, IrisDebugResponse, IrisDocResponse,
+    IrisDocSearchResponse, IrisExecuteMethodResponse, IrisExecuteResponse,
+    IrisGenerateClassResponse, IrisGenerateResponse, IrisGenerateTestResponse, IrisGetLogResponse,
+    IrisGlobalResponse, IrisImportServersResponse, IrisInfoResponse, IrisListContainersResponse,
     IrisLookupManageResponse, IrisLookupTransferResponse, IrisMacroResponse,
     IrisMessageBodyResponse, IrisNamespaceCreateResponse, IrisNamespaceListResponse,
     IrisProductionDiffResponse, IrisQueryResponse, IrisRemoveServerResponse,
@@ -6179,7 +6179,8 @@ Methods:
 
     #[tool(
         description = "Container lifecycle dispatcher (merged). action: list=list running IRIS containers, select=validate container connection, start=start sandbox container via iris-devtester.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisContainersResponse>()
     )]
     async fn iris_containers(
         &self,

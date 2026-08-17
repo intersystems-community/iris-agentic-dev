@@ -2625,3 +2625,22 @@ pub enum IrisSourceControlResponse {
     Err(ToolError),
     GateBlocked(serde_json::Value),
 }
+
+// ── iris_containers ──────────────────────────────────────────────────────────
+//
+// A pure dispatcher (Merged toolset only, like `iris_global`/`iris_source_control`'s
+// neighbors above) — `action: list|select|start` calls straight through to
+// `iris_list_containers`/`iris_select_container`/`iris_start_sandbox` respectively and
+// returns exactly what they return, so this response type is just those three tools' own
+// already-declared shapes, composed, plus this dispatcher's own `INVALID_ACTION` for
+// anything else. No new struct needed — reusing the real shapes here is more accurate than
+// re-describing them.
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisContainersResponse {
+    List(IrisListContainersResponse),
+    Select(IrisSelectContainerResponse),
+    Start(IrisStartSandboxResponse),
+    Err(ToolError),
+}
