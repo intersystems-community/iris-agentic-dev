@@ -2424,3 +2424,93 @@ pub enum IrisCoverageReportResult {
     Ok(IrisCoverageRunOk),
     Err(IrisCoverageError),
 }
+
+// ── iris_global ─────────────────────────────────────────────────────────────
+//
+// Read/write/kill/list on raw IRIS globals. Fires `dispatch_gate` (PHI + system-blocklist
+// checks) before any IRIS call, so has a `GateBlocked` variant. Same `message`-not-`error`
+// convention as `iris_coverage`'s own local `err_json` — a distinct type from that tool's
+// `IrisCoverageError` even though the field name matches, since neither tool's extra fields
+// apply to the other.
+//
+// Each action's success shape is genuinely different, not variations on one struct: set/kill
+// return only `{success: true}` (nothing else to report), get(subtree=false) returns a single
+// value, get(subtree=true) returns a node list, and list returns a subscript list — so these
+// stay as four separate structs rather than one with many `Option`s that would never actually
+// vary together.
+
+/// action=get, `subtree` not set (or `false`): a single node read.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGlobalGetOk {
+    pub success: bool,
+    pub defined: bool,
+    /// `null` when `defined` is `false`.
+    pub value: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGlobalSubtreeNode {
+    pub path: String,
+    pub value: String,
+}
+
+/// action=get with `subtree: true`: a descendant-node walk via `$Query`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGlobalSubtreeOk {
+    pub success: bool,
+    pub nodes: Vec<IrisGlobalSubtreeNode>,
+    pub node_count: i64,
+    /// `true` if the walk hit `max_nodes` (or its internal 5-second safety timeout — the two
+    /// are not distinguished in the response; see the ObjectScript generator's own comment on
+    /// why a time-truncated walk conservatively reports `false` unless the node cap was also
+    /// hit).
+    pub truncated: bool,
+}
+
+/// action=set or action=kill: nothing more to report than that the write landed.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGlobalWriteOk {
+    pub success: bool,
+}
+
+/// action=list: subscript values one level below the given reference.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGlobalListOk {
+    pub success: bool,
+    pub subscripts: Vec<String>,
+    pub truncated: bool,
+}
+
+/// The general error shape (`INVALID_PARAMS`, `IRIS_UNREACHABLE`, `IRIS_EXECUTE_ERROR`,
+/// `INVALID_ACTION`) — `message`, not `error` (see the module note).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGlobalError {
+    pub success: bool,
+    pub error_code: String,
+    pub message: String,
+}
+
+/// `INVALID_SUBSCRIPT`: a requested subscript failed the allowlist regex. Extends the
+/// general error shape with which subscript failed and the pattern it was checked against,
+/// so a caller can tell a rejected-input error apart from an IRIS-side failure without
+/// parsing `message`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisGlobalInvalidSubscriptError {
+    pub success: bool,
+    pub error_code: String,
+    pub message: String,
+    pub subscript: String,
+    pub pattern: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisGlobalResponse {
+    Get(IrisGlobalGetOk),
+    Subtree(IrisGlobalSubtreeOk),
+    Write(IrisGlobalWriteOk),
+    List(IrisGlobalListOk),
+    InvalidSubscript(IrisGlobalInvalidSubscriptError),
+    Err(IrisGlobalError),
+    GateBlocked(serde_json::Value),
+}

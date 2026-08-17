@@ -39,15 +39,16 @@ use output_schemas::{
     IrisCredentialListResponse, IrisCredentialManageResponse, IrisDatabaseListResponse,
     IrisDatabaseStatsResponse, IrisDebugResponse, IrisDocResponse, IrisDocSearchResponse,
     IrisExecuteMethodResponse, IrisExecuteResponse, IrisGenerateClassResponse,
-    IrisGenerateResponse, IrisGenerateTestResponse, IrisGetLogResponse, IrisImportServersResponse,
-    IrisInfoResponse, IrisListContainersResponse, IrisLookupManageResponse,
-    IrisLookupTransferResponse, IrisMacroResponse, IrisMessageBodyResponse,
-    IrisNamespaceCreateResponse, IrisNamespaceListResponse, IrisProductionDiffResponse,
-    IrisQueryResponse, IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
-    IrisStartSandboxResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse,
-    IrisTestResponse, IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse,
-    IrisWsOpenResponse, JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse,
-    MermaidClassResponse, MermaidProductionResponse, MyAccessResponse, QueryAuditLogResponse,
+    IrisGenerateResponse, IrisGenerateTestResponse, IrisGetLogResponse, IrisGlobalResponse,
+    IrisImportServersResponse, IrisInfoResponse, IrisListContainersResponse,
+    IrisLookupManageResponse, IrisLookupTransferResponse, IrisMacroResponse,
+    IrisMessageBodyResponse, IrisNamespaceCreateResponse, IrisNamespaceListResponse,
+    IrisProductionDiffResponse, IrisQueryResponse, IrisRemoveServerResponse,
+    IrisSelectContainerResponse, IrisServersResponse, IrisStartSandboxResponse,
+    IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse, IrisTestResponse,
+    IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse,
+    JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse, MermaidClassResponse,
+    MermaidProductionResponse, MyAccessResponse, QueryAuditLogResponse,
     ResolveDynamicDispatchResponse, ResolveStorageResponse, SkillCommunityListResponse,
     SkillCommunityResponse, SkillDescribeResponse, SkillForgetResponse, SkillListResponse,
     SkillResponse, SkillSearchResponse, StreamInspectResponse, TelemetryExportTraceResponse,
@@ -5927,7 +5928,8 @@ Methods:
     // ── 052: iris_global ───────────────────────────────────────────────────────
 
     #[tool(
-        description = "Read, write, kill, or list IRIS global nodes. action: get=read a node or subtree, set=write a node, kill=delete a node/subtree, list=enumerate subscripts. PHI and system-blocklist gates enforced before any IRIS call. Pass acknowledgePhi=true to bypass per-global PHI gate. Skill: iris-agentic-dev. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
+        description = "Read, write, kill, or list IRIS global nodes. action: get=read a node or subtree, set=write a node, kill=delete a node/subtree, list=enumerate subscripts. PHI and system-blocklist gates enforced before any IRIS call. Pass acknowledgePhi=true to bypass per-global PHI gate. Skill: iris-agentic-dev. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<IrisGlobalResponse>()
     )]
     async fn iris_global(
         &self,
