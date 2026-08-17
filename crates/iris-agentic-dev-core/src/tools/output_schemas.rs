@@ -3069,3 +3069,84 @@ pub enum IrisAdminResponse {
     DatabaseStatus(IrisAdminDatabaseStatusOk),
     Err(ToolError),
 }
+
+// ── extract_message_map_routing ─────────────────────────────────────────────
+//
+// Deferred in batch 4 pending closer reading — the third response path (BPL/DTL) turned
+// out to be two, not one: a compiled class is checked for BPL/DTL superclass first
+// (`detect_bpl_dtl_routing`), and only falls through to the MessageMap XData path when
+// that check finds neither (or itself fails to resolve — a query/export/parse failure
+// there is not an error condition, it just means "not BPL/DTL, try MessageMap" and control
+// continues rather than returning early).
+//
+// The MessageMap and BPL paths' route entries are structurally identical
+// (`{message_type, method, confidence}`) despite being built in two different places (raw
+// JSON assembled inside the generated ObjectScript for MessageMap; a `serde_json::json!` in
+// Rust for BPL) — one shared `ExtractMessageMapRoute` struct for both, rather than two
+// coincidentally-identical ones.
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ExtractMessageMapRoute {
+    pub message_type: String,
+    pub method: String,
+    /// `0.9` for a MessageMap route (declarative, exact), `0.8` for a BPL-derived route
+    /// (inferred from `Call` steps — inherently softer evidence).
+    pub confidence: f64,
+}
+
+/// The class is a MessageMap router (an XData block, not BPL/DTL).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ExtractMessageMapOk {
+    pub success: bool,
+    pub class_name: String,
+    pub namespace: String,
+    /// Always `true` here — the `false` case (an XData block with no message map at all)
+    /// is reported as `NOT_FOUND` instead of a success with this flag false, so it never
+    /// actually appears in a real response.
+    pub has_message_map: bool,
+    pub routes: Vec<ExtractMessageMapRoute>,
+    pub route_count: usize,
+}
+
+/// The class extends `Ens.BusinessProcessBPL` — routes are derived from `Call` steps.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ExtractMessageMapBplOk {
+    pub success: bool,
+    pub class_name: String,
+    pub namespace: String,
+    /// Always `"bpl"`.
+    pub kind: String,
+    pub routes: Vec<ExtractMessageMapRoute>,
+    pub route_count: usize,
+    /// Present only when the BPL flow used `$classmethod`-style dynamic dispatch anywhere —
+    /// a signal that the derived `routes` may be incomplete (dispatch targets resolved at
+    /// runtime aren't visible to this static `Call`-step scan).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+/// The class extends `Ens.DataTransformDTL` — DTLs have no message routing of their own,
+/// only a fixed source/target class pair, so `routes` is always empty here.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ExtractMessageMapDtlOk {
+    pub success: bool,
+    pub class_name: String,
+    pub namespace: String,
+    /// Always `"dtl"`.
+    pub kind: String,
+    pub source_class: String,
+    pub target_class: String,
+    /// Always empty.
+    pub routes: Vec<ExtractMessageMapRoute>,
+    /// Always `0`.
+    pub route_count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum ExtractMessageMapRoutingResponse {
+    MessageMap(ExtractMessageMapOk),
+    Bpl(ExtractMessageMapBplOk),
+    Dtl(ExtractMessageMapDtlOk),
+    Err(ToolError),
+}

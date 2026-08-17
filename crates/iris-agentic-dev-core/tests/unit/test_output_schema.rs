@@ -117,6 +117,8 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "iris_production",
     // batch 19
     "iris_admin",
+    // batch 20
+    "extract_message_map_routing",
 ];
 
 /// Tools legitimately absent from the Merged toolset entirely (not "present but missing a
