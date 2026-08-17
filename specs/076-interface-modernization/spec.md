@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (81/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (82/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -275,6 +275,20 @@ Each action's success shape is a genuinely different struct, not a shared one wi
 No `test_output_schema_shapes.rs` coverage — `iris_global` routes through `resolve_server`/`get_iris_for_exec_with_client`, both of which need a live connection (unlike the `self.iris_arc()`-based tools that return `None` gracefully).
 
 **Remaining**: 9 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_source_control`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`.
+
+---
+
+### Batch 14 — `iris_source_control` (82/90 total)
+
+SCM status/menu/checkout/execute via `%Studio.SourceControl.Interface`, plus a top-level elicitation-resume path mirroring `iris_doc`'s. Fires all three gate mechanisms (`dispatch_gate`, `server_manager::policy_gate`, `check_role_gate` for checkout/execute) — back on the same footing as the five core execution tools, unlike `iris_test`/`iris_doc`/`iris_coverage`/`iris_global`. Also back on `ToolError`'s own `error` convention, not the `message` variant the last two tools used — conventions vary per tool, not by chronology.
+
+action=execute's confirmation dialog has two distinct follow-up mechanisms depending on what the SCM provider's `UserAction` asked for: a yes/no confirmation (`options`) or a free-text prompt (`input_type: "text"`) — modeled as one `IrisSourceControlElicitationRequired` struct with both optional, since they're the same envelope with a different resume mechanism, not two different outcomes. action=menu never fails outright — a transport error or empty response degrades to an empty `actions` list rather than an error result, so it has no error variant of its own.
+
+One more single-purpose error type: action=status's specific `SCM_UNAVAILABLE` (no `SCMSTATUS` sentinel found, and the native-provider-notice fallback didn't match either) extends `ToolError` with the raw truncated IRIS output, so the real cause — a `<PROTECT>`, an auth banner, an empty body — stays diagnosable instead of collapsing into an opaque message.
+
+No `test_output_schema_shapes.rs` coverage — routes through `resolve_server`, needing a live connection.
+
+**Remaining**: 8 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`.
 
 ---
 

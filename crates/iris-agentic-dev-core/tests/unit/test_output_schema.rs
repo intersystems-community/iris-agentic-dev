@@ -105,6 +105,8 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "iris_coverage",
     // batch 13
     "iris_global",
+    // batch 14
+    "iris_source_control",
 ];
 
 /// Tools legitimately absent from the Merged toolset entirely (not "present but missing a

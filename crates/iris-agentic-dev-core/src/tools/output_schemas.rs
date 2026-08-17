@@ -2514,3 +2514,114 @@ pub enum IrisGlobalResponse {
     Err(IrisGlobalError),
     GateBlocked(serde_json::Value),
 }
+
+// ── iris_source_control ──────────────────────────────────────────────────────
+//
+// SCM status/menu/checkout/execute via `%Studio.SourceControl.Interface`, plus a
+// top-level elicitation-resume path (same pattern as `iris_doc`'s pre-dispatch resume).
+// Fires all three gate mechanisms (`dispatch_gate`, `server_manager::policy_gate`,
+// `check_role_gate` for checkout/execute) ahead of the real work — like the five core
+// execution tools, not like `iris_test`/`iris_doc`/`iris_coverage`. Back on `ToolError`'s
+// own `error` convention (not the `message` variant `iris_coverage`/`iris_global` use).
+//
+// action=execute has two distinct confirmation-dialog shapes depending on the SCM
+// provider's `UserAction` response: a yes/no dialog (`options`) or a free-text prompt
+// (`input_type: "text"`) — modeled as one struct with both fields optional rather than
+// two, since they're the same `elicitation_required` envelope with a different follow-up
+// mechanism, not two different outcomes.
+
+/// action=status. `owner`/`checked_out_at` are `None` when not applicable — `checked_out_at`
+/// specifically is populated only via the native-provider-notice fallback path (some SCM
+/// providers short-circuit the structured probe with their own "checked out by user 'x'…
+/// updated at …" message before the `SCMSTATUS` sentinel is ever written); the primary path
+/// never has a timestamp to report.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisSourceControlStatusOk {
+    pub success: bool,
+    pub controlled: bool,
+    pub editable: bool,
+    pub locked: bool,
+    pub checked_out_by_me: bool,
+    pub owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checked_out_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisSourceControlMenuAction {
+    pub id: String,
+    pub label: String,
+    /// Always `true` — disabled menu items are filtered out before this list is built.
+    pub enabled: bool,
+}
+
+/// action=menu. Never fails outright — a transport error or empty response degrades to
+/// an empty `actions` list rather than an error result.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisSourceControlMenuOk {
+    pub success: bool,
+    pub document: String,
+    pub actions: Vec<IrisSourceControlMenuAction>,
+}
+
+/// action=checkout, completed without needing a confirmation dialog (`UserAction` returned
+/// action code 0, and the follow-up `AfterUserAction` commit succeeded).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisSourceControlCheckoutOk {
+    pub success: bool,
+    pub document: String,
+    /// Always `true` — a checkout that didn't land is an error result, not `editable: false`.
+    pub editable: bool,
+}
+
+/// A completed action with no further confirmation needed — shared by action=execute's
+/// action-code-0 case and by the elicitation-resume path once the confirmed action commits.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisSourceControlActionOk {
+    pub success: bool,
+    pub document: String,
+    pub action_id: String,
+}
+
+/// The confirmation dialog raised by action=checkout or action=execute when the SCM
+/// provider's `UserAction` requires user input before proceeding. Resume by calling again
+/// with `elicitation_id` + `answer`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisSourceControlElicitationRequired {
+    pub success: bool,
+    pub elicitation_required: bool,
+    pub elicitation_id: String,
+    pub message: String,
+    /// Present for a yes/no confirmation dialog (`UserAction` code 1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<String>>,
+    /// Present for a free-text prompt (`UserAction` code 7) — always `"text"` — instead of
+    /// `options`, never both.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_type: Option<String>,
+}
+
+/// action=status's specific `SCM_UNAVAILABLE`: no `SCMSTATUS` sentinel was found and the
+/// native-provider-notice fallback didn't match either. Extends `ToolError` with the raw
+/// (truncated) IRIS output, so the actual cause — a `<PROTECT>`, an auth banner, an empty
+/// body — is diagnosable instead of flattened into an opaque message.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisSourceControlStatusUnavailableError {
+    pub success: bool,
+    pub error_code: String,
+    pub error: String,
+    pub raw_output: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisSourceControlResponse {
+    Status(IrisSourceControlStatusOk),
+    Menu(IrisSourceControlMenuOk),
+    Checkout(IrisSourceControlCheckoutOk),
+    Action(IrisSourceControlActionOk),
+    ElicitationRequired(IrisSourceControlElicitationRequired),
+    StatusUnavailable(IrisSourceControlStatusUnavailableError),
+    Err(ToolError),
+    GateBlocked(serde_json::Value),
+}
