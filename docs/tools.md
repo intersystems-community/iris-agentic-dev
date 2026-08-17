@@ -87,6 +87,28 @@ unless there is something non-obvious to say about it.
 
 ---
 
+## Tool catalog size
+
+This server exposes ~78–90 tools depending on toolset (`IRIS_TOOLSET=baseline|nostub|merged`),
+with full schemas and descriptions — on the order of 15–25K tokens if a client loads the whole
+catalog on every connection. Two independent ways to avoid paying that cost, and you don't have
+to pick just one:
+
+- **Client-side, zero server changes needed**: Anthropic's [Tool Search
+  Tool](https://docs.claude.com/en/docs/agents-and-tools/tool-use/tool-search-tool)
+  (`tool_search_tool_bm25_20251119`/`_regex_20251119`) lets a model discover tools on demand
+  instead of front-loading the full catalog. It already works against this server's MCP surface
+  unmodified — enabling it on the client is the whole change.
+- **Server-side**: `list_tools` supports real cursor-based pagination. A plain, unconfigured
+  `tools/list` call still returns the entire effective toolset in one response (the default page
+  size is set above every toolset's real tool count, so nothing changes for existing clients).
+  Set `IRIS_LIST_TOOLS_PAGE_SIZE` to a smaller value to page the catalog across multiple
+  `tools/list` calls instead — each response includes a `nextCursor` when more tools remain;
+  omit `cursor` on the first call and pass back whatever `nextCursor` you last received to get
+  the next page, until a response with no `nextCursor` signals the end.
+
+---
+
 ## Server Management
 
 Tools for registering, testing, and managing IRIS server connections. All other tools

@@ -178,6 +178,10 @@ path = "tests/unit/test_output_schema_shapes.rs"
 required-features = ["testing"]
 
 [[test]]
+name = "test_list_tools_pagination"
+path = "tests/unit/test_list_tools_pagination.rs"
+
+[[test]]
 name = "symbols_local_tests"
 path = "tests/symbols_local_tests.rs"
 

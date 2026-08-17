@@ -2,7 +2,7 @@
 
 **Feature Branch**: `076-interface-modernization`
 **Created**: 2026-08-16
-**Status**: In Progress — User Stories 2 (P2) and 3 (P3) delivered; User Stories 1, 4, 5 not started
+**Status**: ✅ All five user stories delivered (P1–P5)
 **Input**: User description: "Keep some things in view while we spec this: (1) MCP protocol has been updated, look into what benefits that could give us; (2) full CLI/MCP parity so iad could be used fully as just CLI tools — how much work would that be, and would it help with progressive disclosure given we now have ~90 tools; (3) research MCP alternatives — structured tool calling, and 'code mode' (models write code that calls tools instead of emitting JSON tool-call blocks)."
 
 This spec is deliberately research-heavy: three of its four threads are genuinely new information (MCP shipped a major spec revision three weeks before this was written), and the right amount of committed work depends on getting the facts right before scoping effort. Every claim below is sourced; where a source was unreachable through this session's network egress, that's noted rather than guessed around.
@@ -437,7 +437,7 @@ Implementation: `crates/iris-agentic-dev-bin/src/cmd/batch.rs`, wired into `main
 
 ---
 
-### User Story 4 - Server-side tool-catalog pagination (Priority: P4)
+### User Story 4 - Server-side tool-catalog pagination (Priority: P4) — ✅ Delivered
 
 An MCP client connecting to iris-agentic-dev with a large effective tool set (no `IRIS_ENABLED_TOOLS` allowlist configured) wants to avoid paying the full ~15–25K-token catalog cost on every connection when it only needs a handful of tools per turn.
 
@@ -450,9 +450,19 @@ An MCP client connecting to iris-agentic-dev with a large effective tool set (no
 1. **Given** a `list_tools` request, **When** the effective tool count exceeds a configured page size, **Then** the response includes a `next_cursor` instead of the full list.
 2. **Given** a `next_cursor` from a prior response, **When** it's passed to a follow-up `list_tools` call, **Then** the combined pages equal exactly the full effective tool set, each tool appearing exactly once.
 
+**Delivered as**: `list_tools`'s `ServerHandler` override now slices the full catalog through a new pure function, `paginate_tool_list(all, cursor, page_size)` (`tools/mod.rs`), using the incoming request's `cursor` (MCP's own pagination is server-paced, not a client-requested page size — there is no "page-size hint" field on `PaginatedRequestParams` to send, so the Independent Test's "page-size hint" phrasing is approximated by server-side `IRIS_LIST_TOOLS_PAGE_SIZE` configuration instead) and a page size read via the existing `log_store::read_inline_threshold` helper (same pattern already used for `IRIS_INLINE_SEARCH`/`IRIS_INLINE_COMPILE`/etc.).
+
+`DEFAULT_LIST_TOOLS_PAGE_SIZE` is set to 200 — deliberately above every current toolset's real count (Baseline 81, Nostub 77, Merged 78, measured directly) — so a plain, unconfigured `tools/list` call keeps returning the whole catalog in one response exactly as before this feature existed. Every existing client and test (including `tests/mcp_handshake.rs`'s `mcp_server_tools_list_returns_23_tools`, which asserts specific tool names are present in a single unpaginated response) keeps working with zero config changes. Pagination becomes real the moment `IRIS_LIST_TOOLS_PAGE_SIZE` is set below the effective tool count.
+
+Malformed or out-of-range cursors degrade to "start from the beginning" rather than erroring or panicking — MCP's own cursor contract treats it as an opaque continuation token, not a value clients construct, and a catalog that shrinks between requests (an `IRIS_ENABLED_TOOLS` change) must not wedge a stale cursor into a permanent empty page.
+
+**Test coverage** (SC-005): `tests/unit/test_list_tools_pagination.rs` — 9 unit tests directly against the pure `paginate_tool_list` function (first page from no cursor, full-catalog reconstruction across pages with a page size that doesn't evenly divide the total, last-page-has-no-cursor, page size larger than total, cursor exactly at the end, malformed/out-of-range cursor degradation, empty catalog, page size floored to 1) — plus one true end-to-end test over the real JSON-RPC wire, `tests/mcp_handshake.rs::mcp_server_tools_list_pagination_works`, which spawns the actual binary with `IRIS_LIST_TOOLS_PAGE_SIZE=5`, pages through real `tools/list` calls via `nextCursor`, and confirms the reassembled set has no duplicate and no omission.
+
+**FR-007/SC-007** (documented alongside, since both address the same "90 tools is a lot of context" problem): `docs/tools.md` gained a new "Tool catalog size" section covering both this pagination mechanism and Anthropic's Tool Search Tool (the zero-server-change client-side answer), so a reader sees both levers together rather than pagination alone.
+
 ---
 
-### User Story 5 - rmcp upgrade research spike (Priority: P5 — spike, not implementation)
+### User Story 5 - rmcp upgrade research spike (Priority: P5 — spike, not implementation) — ✅ Delivered
 
 The maintainers want a clear, written answer to "should we upgrade rmcp to reach the 2026-07-28 spec, and what would break" before committing engineering time to it.
 
@@ -465,6 +475,8 @@ The maintainers want a clear, written answer to "should we upgrade rmcp to reach
 1. **Given** the spike is complete, **When** it's reviewed, **Then** it states explicitly whether the SCM-checkout elicitation flow can be migrated to the `InputRequiredResult`/`resultType` MRTR pattern, and roughly how much of `elicitation.rs` that touches.
 2. **Given** the spike recommends proceeding, **When** a follow-up spec is written, **Then** it is a new, separate spec — this spec does not authorize the rmcp upgrade itself.
 
+**Delivered as**: [`rmcp-upgrade-spike.md`](./rmcp-upgrade-spike.md) — a **Conditional GO**. The headline finding reverses this spec's own prior assumption: `elicitation.rs` never calls rmcp's actual protocol-level elicitation RPC at all (confirmed by reading the full 472-line file plus a repo-wide search for `CreateElicitation`/`elicitation/create` usage — zero hits) — the SCM-checkout flow is a hand-rolled, tool-parameter-level convention that already achieves MRTR's own call-signal-call-again shape independently. **No migration of `elicitation.rs` is required for the upgrade to proceed** — it's cleanly separable and optional. The one confirmed Rust-API break found is small and mechanical (the manually-overridden `call_tool`'s return type). The spike also corrects an assumption in this very spec's Research Findings: rmcp 3.0.1 does not automatically negotiate 2026-07-28 by default even after the bump — reaching it needs one explicit `.with_protocol_version(...)` call, a decision the spike defers to a maintainer rather than deciding unilaterally. Full itemized reasoning, the "what tips this to NO-GO" counterfactual, and the fallback-if-deferred plan are in the spike document itself, not restated here.
+
 ---
 
 ### Edge Cases
@@ -472,8 +484,8 @@ The maintainers want a clear, written answer to "should we upgrade rmcp to reach
 - User Story 1 (resolved): a tool whose return shape is genuinely dynamic/heterogeneous — does it get a loose/permissive schema, or stay undeclared? Answered in practice across all 22 batches: every tool gets a schema, never left undeclared. Genuinely dynamic sub-fields (raw SQL query rows, Atelier REST passthrough bodies, container descriptors from subprocess output) are typed `serde_json::Value` at exactly that field, with a doc comment explaining why — the rest of each response gets modeled precisely. No tool needed a fully-untyped top-level schema.
 - User Story 2: what happens when a `--session-state` token from `iris_execute` is passed to a CLI invocation with a different `namespace` than the one the session was created in? (The MCP tool's own behavior here should be the source of truth — the CLI must not invent different semantics.)
 - User Story 3: what's the batch script's format (a JSON array of `{tool, args}` objects? a small DSL? literal shell-like syntax)? And critically: does a batch script's own execution model risk becoming a *fourth* parallel implementation of tool dispatch, or can it be built as a thin loop over the exact same `call_for_test` User Story 2 is already routing everything through? It must be the latter — anything else repeats the mistake User Story 2 exists to fix.
-- User Story 4: does pagination state need to survive across separate CLI-driven `tool` calls (stateless, one process per call) the way it would for a long-lived MCP client connection? A CLI consumer of a paginated `list_tools` is a different usage pattern than an MCP client and may not need pagination at all — worth confirming before building it.
-- User Story 5: if the spike recommends *against* upgrading (e.g., the elicitation migration cost outweighs the benefit right now), what's the fallback plan for eventually reaching 2026-07-28 compliance, given MCP's own deprecation notices (Roots/Sampling/Logging scheduled for removal) suggest standing still indefinitely isn't a real option?
+- User Story 4 (resolved): does pagination state need to survive across separate CLI-driven `tool` calls the way it would for a long-lived MCP client connection? No — `list_tools` pagination is a `ServerHandler` RPC concern, not something the CLI's `tool`/`compile`/`exec`/`query`/`doc`/`batch` subcommands go through at all (those dispatch tool calls directly via `call_for_test`, never `list_tools`). Confirmed by construction, not just by assumption: nothing in the CLI crate calls the paginated path, so there was nothing to build for it.
+- User Story 5 (resolved): the spike recommended GO, not against — see `rmcp-upgrade-spike.md`'s fallback section for the deferred-anyway contingency it still documents (short version: this project's rmcp-touching surface is small enough, and Roots/Sampling/Logging are unused, that deferring costs little rather than compounding).
 
 ## Requirements _(mandatory)_
 
@@ -483,9 +495,9 @@ The maintainers want a clear, written answer to "should we upgrade rmcp to reach
 - **FR-002**: `compile`/`exec`/`query`/`doc` MUST be rewritten to dispatch through `call_for_test` (or call the tool methods directly) instead of re-implementing Atelier HTTP calls, so they inherit `--server` routing, policy gates, and every other tool-level feature by construction rather than by a second hand-maintained implementation.
 - **FR-003**: `iris-agentic-dev exec` MUST expose `--use-session`/`--session-state` as real flags (the underlying mechanism already works across separate CLI invocations today — this is exposing it, not building it).
 - **FR-004**: A CLI batch/script mode MUST exist that runs a sequence of tool calls within one process, one `IrisTools` instance, so `WsSessionPool`/`ElicitationStore`/`LogStore` state set by one call in the sequence is visible to a later call in the same sequence. It MUST be implemented as a thin loop over the same dispatch mechanism FR-002 uses — not a new, independent tool-invocation path.
-- **FR-005**: `list_tools` MUST support real cursor-based pagination (respecting the incoming `PaginatedRequestParams`, returning a real `next_cursor` when the effective tool set exceeds a page size) instead of unconditionally returning everything with `next_cursor: None`.
-- **FR-006**: A written research spike MUST evaluate the rmcp 1.6.0 → 3.0.1 upgrade path, explicitly addressing: the elicitation-flow migration (MRTR/`InputRequiredResult`/`resultType`), what other transport-facing code in this project touches session/handshake concepts the 2026-07-28 spec removes, and a go/no-go recommendation — before any upgrade work is scheduled.
-- **FR-007**: Documentation (`docs/tools.md` or a new section) MUST tell users that Anthropic's Tool Search Tool already works against this server's MCP surface unmodified, as the immediately-available answer to "90 tools is a lot of context" for clients that support it.
+- **FR-005**: ✅ Done. `list_tools` supports real cursor-based pagination (respecting the incoming `PaginatedRequestParams`'s `cursor`, returning a real `next_cursor` when the effective tool set exceeds a page size) instead of unconditionally returning everything with `next_cursor: None`. See `paginate_tool_list` in `tools/mod.rs`.
+- **FR-006**: ✅ Done. Written research spike (`rmcp-upgrade-spike.md`) evaluates the rmcp 1.6.0 → 3.0.1 upgrade path — elicitation-flow migration, other transport-facing code touching removed session/handshake concepts, and an explicit go/no-go — before any upgrade work is scheduled or any dependency version changed.
+- **FR-007**: ✅ Done. `docs/tools.md`'s new "Tool catalog size" section tells users Anthropic's Tool Search Tool already works against this server's MCP surface unmodified.
 
 ### Key Entities
 
@@ -507,10 +519,10 @@ The maintainers want a clear, written answer to "should we upgrade rmcp to reach
 
 ### Measurable Outcomes
 
-- **SC-001**: Every tool with a fixed return shape has a declared `output_schema`, verifiable via `list_tools`.
+- **SC-001**: ✅ Done. All 90 registered tools have a declared `output_schema`, verifiable via `list_tools` (`tool_declares_output_schema` accessor, exercised by `tests/unit/test_output_schema.rs`).
 - **SC-002**: ✅ Done. `compile`/`query`/`doc` accept `--server` and route to a named instance; previously none could. Existing CLI argument-parsing tests for all four commands (`test_exec_args.rs`, `test_compile_args.rs`, `test_query_tsv.rs`, `test_doc_args.rs`) still pass after the delegation refactor.
 - **SC-003**: ✅ Done. `iris-agentic-dev exec --use-session`/`--session-state` round-trips `%ctx` state across two separate invocations using only documented flags, no hand-constructed `--args` JSON.
 - **SC-004**: ✅ Done. `iris-agentic-dev batch` runs a JSON script of `{tool, args}` steps within one CLI invocation, one shared `IrisTools` instance; a `{{<step-index>.<field>}}` placeholder lets a later step reference an earlier step's runtime response (e.g. a WS `session` token), proving state set by one step is visible to later steps in the same run.
-- **SC-005**: `list_tools` pagination is exercised by at least one test that proves no tool is duplicated or omitted across pages.
-- **SC-006**: The rmcp upgrade spike is written, reviewed, and has an explicit go/no-go — before any code changes toward the upgrade land.
-- **SC-007**: `docs/tools.md` (or equivalent) documents that Tool Search Tool works today, unmodified.
+- **SC-005**: ✅ Done. `list_tools` pagination is exercised by `test_list_tools_pagination.rs` (9 pure-function tests) and `mcp_handshake.rs::mcp_server_tools_list_pagination_works` (real JSON-RPC wire, forced via `IRIS_LIST_TOOLS_PAGE_SIZE=5`) — both prove no tool is duplicated or omitted across pages.
+- **SC-006**: ✅ Done. The rmcp upgrade spike (`rmcp-upgrade-spike.md`) is written and has an explicit go/no-go (Conditional GO) — no code changes toward the upgrade landed alongside it.
+- **SC-007**: ✅ Done. `docs/tools.md`'s "Tool catalog size" section documents that Tool Search Tool works today, unmodified.
