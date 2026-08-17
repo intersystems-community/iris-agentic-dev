@@ -577,6 +577,245 @@ pub enum JournalSearchResponse {
     Err(ToolError),
 }
 
+// ── compare_document / compare_namespace / global_preview ──────────────────
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CompareDocumentOk {
+    pub success: bool,
+    pub document: String,
+    pub server_a: String,
+    pub server_b: String,
+    pub namespace: String,
+    pub same: bool,
+    pub diff: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum CompareDocumentResponse {
+    Ok(CompareDocumentOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CompareNamespaceOk {
+    pub success: bool,
+    pub namespace: String,
+    pub server_a: String,
+    pub server_b: String,
+    pub only_in_a: Vec<String>,
+    pub only_in_b: Vec<String>,
+    pub different: Vec<String>,
+    pub same_count: usize,
+    pub unchecked_count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum CompareNamespaceResponse {
+    Ok(CompareNamespaceOk),
+    Err(ToolError),
+}
+
+/// `global_preview` has no embedded-JSON error path at all — its one fallible step
+/// (`execute_via_generator`) propagates via `?` as a protocol-level `McpError`, outside this
+/// schema's scope (same pattern as `iris_ws_exec`/`iris_ws_close`). One flat success shape.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct GlobalPreviewResponse {
+    pub success: bool,
+    pub global: String,
+    pub server: Option<String>,
+    pub entries: Vec<GlobalPreviewEntry>,
+    pub total_subscripts: u32,
+    pub confirm_token: String,
+    pub confirm_expires: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct GlobalPreviewEntry {
+    pub key: String,
+    pub value: String,
+}
+
+// ── query_audit_log / stream_inspect / iris_credential_list ────────────────
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct AuditLogEntry {
+    /// Raw `%SYS.Audit` SQL columns — left as JSON values rather than String since the audit
+    /// log's own columns can legitimately be null (e.g. no matching row for a filter).
+    pub event: serde_json::Value,
+    pub event_type: serde_json::Value,
+    pub username: serde_json::Value,
+    pub timestamp: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct QueryAuditLogOk {
+    pub success: bool,
+    pub entries: Vec<AuditLogEntry>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum QueryAuditLogResponse {
+    Ok(QueryAuditLogOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct StreamInspectOk {
+    pub success: bool,
+    pub oid: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub size: i64,
+    pub content: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum StreamInspectResponse {
+    Ok(StreamInspectOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CredentialEntry {
+    pub id: String,
+    pub username: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisCredentialListOk {
+    pub success: bool,
+    pub credentials: Vec<CredentialEntry>,
+    pub count: usize,
+    pub truncated: bool,
+    pub total_count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisCredentialListResponse {
+    Ok(IrisCredentialListOk),
+    Err(ToolError),
+}
+
+// ── hl7_schema_inspect / mermaid_class / mermaid_production ─────────────────
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct Hl7SegmentField {
+    pub field: String,
+    pub description: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct Hl7SchemaInspectSegmentOk {
+    pub success: bool,
+    pub schema: String,
+    pub segment: String,
+    pub fields: Vec<Hl7SegmentField>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct Hl7SchemaInspectStructuresOk {
+    pub success: bool,
+    pub schema: String,
+    pub structures: Vec<String>,
+}
+
+/// Two distinct success shapes, not one — segment-level lookup (`fields`) and message-structure
+/// listing (`structures`) never appear together. schemars renders a 3-variant untagged enum as a
+/// 3-way `oneOf`, same mechanism as the 2-variant `Ok | Err` case elsewhere in this file.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Hl7SchemaInspectResponse {
+    Segment(Hl7SchemaInspectSegmentOk),
+    Structures(Hl7SchemaInspectStructuresOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct MermaidClassOk {
+    pub success: bool,
+    pub class: String,
+    pub depth: u32,
+    /// A `classDiagram`-prefixed Mermaid string, not structured JSON — this is a diagram, not
+    /// tabular data.
+    pub diagram: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum MermaidClassResponse {
+    Ok(MermaidClassOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct MermaidProductionOk {
+    pub success: bool,
+    pub production: String,
+    pub item_count: usize,
+    /// A `flowchart TD`-prefixed Mermaid string.
+    pub diagram: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum MermaidProductionResponse {
+    Ok(MermaidProductionOk),
+    Err(ToolError),
+}
+
+// ── telemetry_query / telemetry_export_trace ────────────────────────────────
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TelemetryRecord {
+    pub tool: String,
+    pub success: bool,
+    pub duration_ms: u64,
+    pub timestamp: String,
+    pub session_id: String,
+    /// The original call's params — free-form JSON, shaped differently per tool.
+    pub params: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TelemetryQueryOk {
+    pub records: Vec<TelemetryRecord>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum TelemetryQueryResponse {
+    Ok(TelemetryQueryOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct TelemetryExportTraceOk {
+    /// `{from, to, via, count, ts}` dispatch-trace records — left as free-form JSON rather than
+    /// duplicating `trace_export::aggregate_trace`'s own record struct here.
+    pub traces: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum TelemetryExportTraceResponse {
+    Ok(TelemetryExportTraceOk),
+    Err(ToolError),
+}
+
+// ── skill_propose / skill_optimize / skill_share / skill_community_install ─
+//
+// All four are stubs — every call returns err_json("NOT_IMPLEMENTED", ...) unconditionally, so
+// `ToolError` alone (no Ok variant, no oneOf) is the complete, accurate shape. Declaring it now
+// means a future real implementation that changes the response shape without updating this file
+// gets caught by test_output_schema_shapes-style coverage, instead of silently drifting.
+
 /// `iris_ws_exec`'s only embedded-JSON shape — its error path (stale/unknown session) returns
 /// `Err(McpError)` via `?`, which becomes a protocol-level `isError` response outside this
 /// schema's scope, not an `err_json` value. Same for `iris_ws_close`.

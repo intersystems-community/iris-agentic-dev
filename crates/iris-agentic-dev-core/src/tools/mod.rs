@@ -30,15 +30,18 @@ use std::sync::Arc;
 // 076-interface-modernization User Story 1: output-schema-only response shapes. Not
 // constructed at runtime — see output_schemas.rs's module doc comment for why.
 use output_schemas::{
-    AgentHistoryResponse, AgentStatsResponse, CapabilityMatrixResponse, DebugCapturePacketResponse,
-    DebugGetErrorLogsResponse, DebugMapIntToClsResponse, DebugSourceMapResponse,
-    DocsIntrospectResponse, GlobalKillResponse, Hl7SchemaListResponse, IrisAddServerResponse,
-    IrisDatabaseListResponse, IrisDatabaseStatsResponse, IrisImportServersResponse,
-    IrisNamespaceCreateResponse, IrisNamespaceListResponse, IrisRemoveServerResponse,
-    IrisServersResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTestServerResponse,
-    IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse, JournalSearchResponse,
-    KbRecallResponse, MyAccessResponse, SkillCommunityListResponse, SkillForgetResponse,
-    SkillListResponse,
+    AgentHistoryResponse, AgentStatsResponse, CapabilityMatrixResponse, CompareDocumentResponse,
+    CompareNamespaceResponse, DebugCapturePacketResponse, DebugGetErrorLogsResponse,
+    DebugMapIntToClsResponse, DebugSourceMapResponse, DocsIntrospectResponse, GlobalKillResponse,
+    GlobalPreviewResponse, Hl7SchemaInspectResponse, Hl7SchemaListResponse, IrisAddServerResponse,
+    IrisCredentialListResponse, IrisDatabaseListResponse, IrisDatabaseStatsResponse,
+    IrisImportServersResponse, IrisNamespaceCreateResponse, IrisNamespaceListResponse,
+    IrisRemoveServerResponse, IrisServersResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse,
+    IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse,
+    JournalSearchResponse, KbRecallResponse, MermaidClassResponse, MermaidProductionResponse,
+    MyAccessResponse, QueryAuditLogResponse, SkillCommunityListResponse, SkillForgetResponse,
+    SkillListResponse, StreamInspectResponse, TelemetryExportTraceResponse, TelemetryQueryResponse,
+    ToolError,
 };
 
 tokio::task_local! {
@@ -5298,7 +5301,8 @@ Methods:
     }
 
     #[tool(
-        description = "Trigger pattern miner to synthesize new skills from recorded tool calls."
+        description = "Trigger pattern miner to synthesize new skills from recorded tool calls.",
+        output_schema = schema_for_output::<ToolError>().unwrap()
     )]
     async fn skill_propose(&self, _: Parameters<NoParams>) -> Result<CallToolResult, McpError> {
         err_json(
@@ -5307,7 +5311,10 @@ Methods:
         )
     }
 
-    #[tool(description = "Optimize a skill using DSPy. Requires OBJECTSCRIPT_DSPY=true.")]
+    #[tool(
+        description = "Optimize a skill using DSPy. Requires OBJECTSCRIPT_DSPY=true.",
+        output_schema = schema_for_output::<ToolError>().unwrap()
+    )]
     async fn skill_optimize(
         &self,
         Parameters(_p): Parameters<SkillNameParams>,
@@ -5318,7 +5325,10 @@ Methods:
         )
     }
 
-    #[tool(description = "Share a skill to the community via GitHub PR.")]
+    #[tool(
+        description = "Share a skill to the community via GitHub PR.",
+        output_schema = schema_for_output::<ToolError>().unwrap()
+    )]
     async fn skill_share(
         &self,
         Parameters(_p): Parameters<SkillNameParams>,
@@ -5370,7 +5380,10 @@ Methods:
         }))
     }
 
-    #[tool(description = "Install a community skill from the GitHub community repo.")]
+    #[tool(
+        description = "Install a community skill from the GitHub community repo.",
+        output_schema = schema_for_output::<ToolError>().unwrap()
+    )]
     async fn skill_community_install(
         &self,
         Parameters(_p): Parameters<CommunityPkgParams>,
@@ -5495,7 +5508,8 @@ Methods:
 
     #[tool(
         description = "Query the durable telemetry record (beyond the current process's in-memory agent_history) by tool name, session id, and/or time range. Reads from the IRIS-global durable sink when connected, or the local JSONL file sink when not.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<TelemetryQueryResponse>()
     )]
     async fn telemetry_query(
         &self,
@@ -5537,7 +5551,8 @@ Methods:
 
     #[tool(
         description = "Export recorded tool-call data as {from, to, via, count, ts} dispatch-trace records, aggregating repeated identical edges into a single record with an incremented count. Directly compatible with iris_graph's record_trace ingestion format.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<TelemetryExportTraceResponse>()
     )]
     async fn telemetry_export_trace(
         &self,
@@ -6476,7 +6491,8 @@ Methods:
 
     #[tool(
         description = "List all Ensemble credentials (IDs and usernames only — passwords never returned). namespace: optional.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisCredentialListResponse>()
     )]
     async fn iris_credential_list(
         &self,
@@ -7288,7 +7304,8 @@ Methods:
 
     #[tool(
         description = "Compare the source of a document (class, routine, etc.) across two registered IRIS servers. Returns {same: bool, diff: string, server_a, server_b, document, namespace}. Use iris_servers to see registered instances. Skill: iris-agentic-dev.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<CompareDocumentResponse>()
     )]
     async fn compare_document(
         &self,
@@ -7334,7 +7351,8 @@ Methods:
 
     #[tool(
         description = "Compare all classes in a namespace across two registered IRIS servers. Returns {only_in_a, only_in_b, different, same_count}. Use iris_servers to see registered instances. Skill: iris-agentic-dev.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<CompareNamespaceResponse>()
     )]
     async fn compare_namespace(
         &self,
@@ -7376,7 +7394,8 @@ Methods:
 
     #[tool(
         description = "Preview the contents of an IRIS global before deleting it. Returns the first N subscripts plus a confirm_token (valid 5 minutes) required by global_kill. global: name of the global (with or without ^). count: max entries to preview (default 20, max 100). server: optional registered instance name. Skill: iris-agentic-dev.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = schema_for_output::<GlobalPreviewResponse>().unwrap()
     )]
     async fn global_preview(
         &self,
@@ -7589,7 +7608,8 @@ Methods:
 
     #[tool(
         description = "Query the IRIS audit log (%SYS.Audit). user: filter by username. event_type: filter by event type. start/end: ISO timestamp filters. limit: max rows (default 100, max 500). server: optional registered instance name. Returns {entries: [{event, event_type, username, timestamp}]}. Skill: iris-agentic-dev.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<QueryAuditLogResponse>()
     )]
     async fn query_audit_log(
         &self,
@@ -7630,8 +7650,8 @@ Methods:
 
     #[tool(
         description = "Inspect the content of an IRIS stream object by OID. oid: the stream OID (integer string). namespace: optional namespace (defaults to the connection namespace, IRIS_NAMESPACE). server: optional registered instance name. Returns {content, type: 'text'|'binary', size, oid}. Skill: iris-agentic-dev.",
-        annotations(read_only_hint = true)
-    )]
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<StreamInspectResponse>()    )]
     async fn stream_inspect(
         &self,
         Parameters(p): Parameters<AnyParams>,
@@ -7729,7 +7749,8 @@ Methods:
 
     #[tool(
         description = "Inspect an HL7 schema's message structures or a specific segment's fields. Returns HL7_NOT_AVAILABLE if EnsLib.HL7.Schema is absent. schema: schema name (e.g. '2.5'). segment: optional segment name to inspect fields. namespace: optional. server: optional registered instance name. Skill: iris-agentic-dev.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<Hl7SchemaInspectResponse>()
     )]
     async fn hl7_schema_inspect(
         &self,
@@ -7770,7 +7791,8 @@ Methods:
 
     #[tool(
         description = "Generate a Mermaid classDiagram for an ObjectScript class, walking the superclass chain up to `depth` levels (default 3, max 5). Returns a string starting with 'classDiagram'. class: fully qualified class name. depth: optional traversal depth. namespace: optional. server: optional registered instance name. Skill: objectscript-navigation.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<MermaidClassResponse>()
     )]
     async fn mermaid_class(
         &self,
@@ -7800,7 +7822,8 @@ Methods:
 
     #[tool(
         description = "Generate a Mermaid flowchart for an Ensemble/Interoperability production, showing all configured items. production: full production class name. namespace: optional. server: optional registered instance name. Returns a Mermaid flowchart TD string. Skill: ensemble-production.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<MermaidProductionResponse>()
     )]
     async fn mermaid_production(
         &self,

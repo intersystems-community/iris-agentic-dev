@@ -43,15 +43,37 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "capability_matrix",
     "hl7_schema_list",
     "journal_search",
+    // batch 3
+    "compare_document",
+    "compare_namespace",
+    "global_preview",
+    "query_audit_log",
+    "stream_inspect",
+    "hl7_schema_inspect",
+    "mermaid_class",
+    "mermaid_production",
+    "skill_propose",
+    "skill_optimize",
+    "skill_share",
+    "skill_community_install",
+    "telemetry_query",
+    "telemetry_export_trace",
+    "iris_credential_list",
 ];
 
-/// Tools consolidated into `iris_debug` in the Merged toolset — legitimately absent there
-/// entirely (not "present but missing a schema"), so excluded from the Merged-only check.
+/// Tools legitimately absent from the Merged toolset entirely (not "present but missing a
+/// schema"), so excluded from the Merged-only check — either consolidated into `iris_debug`
+/// (the debug_* quartet) or pruned as stub tools for any non-Baseline toolset (the skill_*
+/// quartet — see `with_registry_and_toolset`'s `stubs_to_remove`).
 const MERGED_REMOVED: &[&str] = &[
     "debug_map_int_to_cls",
     "debug_source_map",
     "debug_capture_packet",
     "debug_get_error_logs",
+    "skill_propose",
+    "skill_optimize",
+    "skill_share",
+    "skill_community_install",
 ];
 
 #[test]
