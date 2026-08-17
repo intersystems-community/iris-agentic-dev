@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (15/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (30/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -109,7 +109,21 @@ Response shapes live in a new file, `crates/iris-agentic-dev-core/src/tools/outp
 
 Verified two ways: `test_output_schema.rs` (no IRIS needed — inspects the live router's `Tool.output_schema` directly, confirming all 15 declare a schema in both Baseline and Merged, correctly excluding `debug_map_int_to_cls`/`debug_source_map` from the Merged check since both are consolidated into `iris_debug` there and legitimately absent, not "present but unscheduled"). `test_output_schema_shapes.rs` covers Acceptance Scenario 2 for real — actual `call_for_test` calls (not mocks) against the 6 tools in this batch that need no live IRIS connection at all (`skill_list`, `skill_community_list`, `agent_stats`, `agent_history`, `kb_recall`, `iris_symbols_local` — bundled/disk/in-memory data, `IrisTools::new(None)` is this project's own supported disconnected mode), asserting the real response carries every field the declared schema promises. The other 9 tools in this batch need a live IRIS connection to actually call — per this project's non-negotiable testing policy (no mocked IRIS), that half of Acceptance Scenario 2 isn't exercised in this pass; it belongs in an `--include-ignored` live test against a real container, not a substitute here.
 
-**Remaining**: 75 of 90 tools still need their shape read, modeled, and declared. No shortcut across the remaining batches — same one-tool-at-a-time process.
+**Remaining after batch 1**: 75 of 90 tools still needed their shape read, modeled, and declared. No shortcut across the remaining batches — same one-tool-at-a-time process.
+
+**Batch 2 delivered — 15 more tools (30/90 total).** Grouped by delegate module rather than picked at random, since several share one impl file (`admin_tools.rs`) and reading it once yields multiple shapes cheaply: `debug_capture_packet`, `debug_get_error_logs`, `iris_add_server`, `iris_remove_server`, `iris_test_server`, `iris_import_servers`, `global_kill`, `iris_namespace_list`, `iris_database_list`, `iris_namespace_create`, `iris_database_stats`, `my_access`, `capability_matrix`, `hl7_schema_list`, `journal_search`.
+
+New findings from this batch:
+
+- **Not every tool follows the shared `ToolError` convention.** `iris_add_server`, `iris_remove_server`, and `iris_import_servers` predate it — their error branches are a bespoke `{error_code, message}` shape (`iris_remove_server`'s `REMOVE_NOT_ALLOWED` case adds a `source` field on top), never a `success` key at all. Modeled as a separate `ServerMutationError` type rather than forcing these into `ToolError` and getting the schema wrong.
+- **`iris_test_server` never calls `err_json` at all** — every outcome (network failure, non-2xx, JSON parse failure, success) goes through `ok_json` with `reachable` as the discriminant. No `Ok | Err` union needed here; it's one flat struct with most fields `Option<T>`, which is the accurate shape, not a simplification.
+- **`journal_search` was one of this session's earlier field-report bug fixes** (the `TypeName="SetKillRecord"` gate that never matched) — declaring its output schema now is a second, independent confirmation that the fixed code path's real shape is `{success, entries: [{timestamp, type, job_id, global}], returned}`, not a coincidence with the fix.
+
+`debug_capture_packet` and `debug_get_error_logs` join `debug_map_int_to_cls`/`debug_source_map` as Merged-toolset-absent (all four replaced by `iris_debug` there) — `test_output_schema.rs`'s `MERGED_REMOVED` list now covers all four, plus a new `test_merged_removed_tools_are_absent_from_merged_router` test confirming that exclusion is a real toolset fact, not papering over a bug.
+
+**No new `test_output_schema_shapes.rs` coverage this batch, and that's a deliberate, disclosed gap, not an oversight.** Every one of these 15 tools needs a live IRIS connection to produce a real response (`resolve_server`/`get_iris_reloaded`), *or* — for `iris_add_server`/`iris_remove_server`/`iris_import_servers` — would mutate the real, non-test-isolated `iad-native` server config file and OS keychain on the host running the test, which is not something a unit test should do regardless of IRIS. Neither is a batch-1-style "genuinely needs no IRIS and no side effects" case, so schema-declaration coverage (`test_output_schema.rs`) is what this batch gets; the response-shape half of Acceptance Scenario 2 for these 15 belongs in a future `--include-ignored` live test.
+
+**Remaining after batch 2**: 60 of 90 tools.
 
 ---
 
