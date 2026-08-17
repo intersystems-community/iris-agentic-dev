@@ -2724,3 +2724,65 @@ pub enum IrisProductionItemResponse {
     SetSettings(IrisProductionItemSetSettingsOk),
     Err(ToolError),
 }
+
+// ── iris_production ──────────────────────────────────────────────────────────
+//
+// An `action: status|start|stop|update|check|recover|get_autostart|set_autostart`
+// dispatcher over the whole production lifecycle. Several actions turn out to share one
+// success shape exactly rather than needing their own struct: start/stop/recover all
+// report only `{success, state}` (just a different state string — `"Running"` or
+// `"Stopped"`), and get_autostart/set_autostart both report
+// `{success, namespace, autostart_enabled, production}`. All errors funnel through
+// `ToolError` (`NO_PRODUCTION`, `INTEROP_ERROR`, `IRIS_UNREACHABLE`, `INVALID_ACTION`).
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisProductionStatusOk {
+    pub success: bool,
+    pub production: String,
+    pub state: String,
+    pub state_code: i64,
+}
+
+/// Shared by action=start, action=stop, and action=recover — each reports only which
+/// state the production landed in, nothing else.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisProductionStateOk {
+    pub success: bool,
+    /// `"Running"` (start/recover) or `"Stopped"` (stop).
+    pub state: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisProductionUpdateOk {
+    pub success: bool,
+    /// Always `"Production updated"`.
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisProductionNeedsUpdateOk {
+    pub success: bool,
+    pub needs_update: bool,
+}
+
+/// Shared by action=get_autostart and action=set_autostart — same fields either way,
+/// reflecting the resulting state after either reading or changing it.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisProductionAutostartOk {
+    pub success: bool,
+    pub namespace: String,
+    pub autostart_enabled: bool,
+    /// `null` when `autostart_enabled` is `false`.
+    pub production: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisProductionResponse {
+    Status(IrisProductionStatusOk),
+    State(IrisProductionStateOk),
+    Update(IrisProductionUpdateOk),
+    NeedsUpdate(IrisProductionNeedsUpdateOk),
+    Autostart(IrisProductionAutostartOk),
+    Err(ToolError),
+}
