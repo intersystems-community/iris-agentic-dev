@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (87/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (88/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -341,6 +341,18 @@ Several list-shaped actions pass SQL row values straight through with no Rust-si
 Resolves its connection via `self.iris_arc()` like the other admin-tier dispatchers, so it gets a real `test_output_schema_shapes.rs` test hitting the deterministic `IRIS_UNREACHABLE` response with no live IRIS needed.
 
 **Remaining**: 3 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`.
+
+---
+
+### Batch 20 — `extract_message_map_routing` (88/90 total)
+
+The tool deferred all the way back in batch 4 pending closer reading — the "third BPL/DTL response path" flagged then turned out to be two, not one, once actually read: a compiled class is checked for a BPL/DTL superclass first, and only falls through to the MessageMap XData path when that check finds neither (or itself fails to resolve — a query/export/parse failure in the BPL/DTL detection path is not an error condition, it just means "not BPL/DTL, try MessageMap" and control continues rather than returning early).
+
+The MessageMap and BPL paths' route entries turned out structurally identical (`{message_type, method, confidence}`) despite being built in two completely different places — raw JSON assembled inside the generated ObjectScript for MessageMap, a `serde_json::json!` in Rust for BPL — so one shared `ExtractMessageMapRoute` struct covers both rather than two coincidentally-identical ones. The DTL path has no routes at all (a DTL is a fixed source→target transform, not a router), so its own success struct always reports an empty `routes` and `route_count: 0`.
+
+No `test_output_schema_shapes.rs` coverage — routes through `resolve_server`, needing a live connection.
+
+**Remaining**: 2 of 90 tools — `check_config`, `iris_search`.
 
 ---
 
