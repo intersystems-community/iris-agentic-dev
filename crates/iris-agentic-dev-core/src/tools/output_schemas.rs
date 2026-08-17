@@ -2786,3 +2786,286 @@ pub enum IrisProductionResponse {
     Autostart(IrisProductionAutostartOk),
     Err(ToolError),
 }
+
+// ── iris_admin ────────────────────────────────────────────────────────────────
+//
+// The largest dispatcher of all 90 tools: 13 read/write actions in `admin.rs`
+// (namespace/database/user/role/webapp management, %SYS-scoped) plus 5 read-only
+// observability actions in `observability.rs` (view_locks/view_processes/journal_search/
+// namespace_mappings/database_status). No gate calls at all — write actions are permitted
+// or refused entirely by the `IRIS_ADMIN_TOOLS` env var (`ADMIN_WRITE_DISABLED` via
+// `ToolError`), not the shared `dispatch_gate`/`policy_gate`/`check_role_gate` machinery
+// the interop dispatchers use.
+//
+// Several list-shaped actions pass SQL row values straight through with no Rust-side type
+// coercion at all (`r["Name"]`, `r["Enabled"]`, …) — those per-entry fields stay
+// `serde_json::Value`, the same convention as `iris_interop_query`'s raw rows. Actions whose
+// Rust code does parse/coerce a value (booleans from `!= "0"`, floats via `.parse()`) get a
+// real typed field instead.
+//
+// Three of the seven write actions collapse pairwise into one shared success shape each,
+// since create/update/delete only differ in which single identifying field they report:
+// create_user/update_user/delete_user all report `{success, action, username}`;
+// create_namespace/delete_namespace report `{success, action, name}`; create_webapp/
+// delete_webapp report `{success, action, path}`.
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminNamespaceEntry {
+    pub name: serde_json::Value,
+    pub code_database: serde_json::Value,
+    pub data_database: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminListNamespacesOk {
+    pub success: bool,
+    pub namespaces: Vec<IrisAdminNamespaceEntry>,
+    pub count: usize,
+}
+
+/// action=list_databases' entry shape — distinct from action=database_status's own
+/// `IrisAdminDatabaseStatusEntry` below (same dispatcher, two different underlying IRIS
+/// queries, two different sets of columns).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminDatabaseEntry {
+    pub directory: String,
+    pub mounted: bool,
+    pub size_mb: f64,
+    pub max_size_mb: f64,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminListDatabasesOk {
+    pub success: bool,
+    pub databases: Vec<IrisAdminDatabaseEntry>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminUserEntry {
+    pub name: serde_json::Value,
+    pub full_name: serde_json::Value,
+    pub enabled: serde_json::Value,
+    pub roles: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminListUsersOk {
+    pub success: bool,
+    pub users: Vec<IrisAdminUserEntry>,
+    pub count: usize,
+    /// `true` if the real user count exceeded the 100-row cap.
+    pub truncated: bool,
+    pub total_count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminRoleEntry {
+    pub name: serde_json::Value,
+    pub description: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminListRolesOk {
+    pub success: bool,
+    pub roles: Vec<IrisAdminRoleEntry>,
+    pub count: usize,
+    pub truncated: bool,
+    pub total_count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminWebappEntry {
+    pub path: serde_json::Value,
+    pub namespace: serde_json::Value,
+    pub dispatch_class: serde_json::Value,
+    pub enabled: serde_json::Value,
+    /// `"REST"` or `"CSP"` — computed in Rust (from the `Type` column when numeric, else
+    /// inferred from whether `dispatch_class` is set), unlike the sibling fields above.
+    #[serde(rename = "type")]
+    pub type_: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminListWebappsOk {
+    pub success: bool,
+    pub webapps: Vec<IrisAdminWebappEntry>,
+    pub count: usize,
+    pub truncated: bool,
+    pub total_count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminListUserRolesOk {
+    pub success: bool,
+    pub username: String,
+    pub roles: Vec<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminGetWebappOk {
+    pub success: bool,
+    pub path: String,
+    pub namespace: String,
+    pub dispatch_class: String,
+    pub enabled: bool,
+    #[serde(rename = "type")]
+    pub type_: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminCheckPermissionOk {
+    pub success: bool,
+    pub resource: String,
+    pub permission: String,
+    pub granted: bool,
+    /// The currently connected user (`IRIS_USERNAME`), not the resource owner.
+    pub user: String,
+}
+
+/// Shared by action=create_user, action=update_user, and action=delete_user.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminUserActionOk {
+    pub success: bool,
+    /// `"create_user"`, `"update_user"`, or `"delete_user"`.
+    pub action: String,
+    pub username: String,
+}
+
+/// Shared by action=create_namespace and action=delete_namespace.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminNamespaceActionOk {
+    pub success: bool,
+    /// `"create_namespace"` or `"delete_namespace"`.
+    pub action: String,
+    pub name: String,
+}
+
+/// Shared by action=create_webapp and action=delete_webapp.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminWebappActionOk {
+    pub success: bool,
+    /// `"create_webapp"` or `"delete_webapp"`.
+    pub action: String,
+    pub path: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminLockEntry {
+    pub resource: String,
+    pub owner_pid: String,
+    pub lock_type: String,
+    pub lock_mode: String,
+    pub owner_username: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminViewLocksOk {
+    pub success: bool,
+    pub locks: Vec<IrisAdminLockEntry>,
+    pub count: usize,
+}
+
+/// action=view_processes' per-process fields are raw SQL column values with no Rust-side
+/// coercion — except when `dataPolicy=redact` replaces `username`/`client_node_name`/
+/// `client_ip` with the literal string `"[REDACTED]"` in place of whatever the column held,
+/// so those three fields can be either a raw SQL value or that literal depending on the
+/// request's `dataPolicy`. All five stay `serde_json::Value` to cover both.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminProcessEntry {
+    pub pid: serde_json::Value,
+    pub username: serde_json::Value,
+    pub namespace: serde_json::Value,
+    pub state: serde_json::Value,
+    pub client_node_name: serde_json::Value,
+    pub client_ip: serde_json::Value,
+    pub routine: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminViewProcessesOk {
+    pub success: bool,
+    pub processes: Vec<IrisAdminProcessEntry>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminJournalRecordEntry {
+    pub global_ref: String,
+    pub transaction_id: String,
+    pub operation: String,
+    pub timestamp: String,
+    pub value: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminJournalSearchOk {
+    pub success: bool,
+    pub records: Vec<IrisAdminJournalRecordEntry>,
+    pub count: usize,
+    /// `true` if the real match count reached `max_records` (capped at 1000).
+    pub truncated: bool,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminNamespaceMappingEntry {
+    pub name: serde_json::Value,
+    pub database: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminNamespaceMappings {
+    pub globals: Vec<IrisAdminNamespaceMappingEntry>,
+    pub packages: Vec<IrisAdminNamespaceMappingEntry>,
+    pub routines: Vec<IrisAdminNamespaceMappingEntry>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminNamespaceMappingsOk {
+    pub success: bool,
+    pub namespace: String,
+    pub mappings: IrisAdminNamespaceMappings,
+}
+
+/// action=database_status' entry shape — distinct from action=list_databases'
+/// `IrisAdminDatabaseEntry` above (see that struct's doc comment).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminDatabaseStatusEntry {
+    pub name: String,
+    pub directory: String,
+    pub mounted: bool,
+    pub status: String,
+    pub free_space_mb: f64,
+    pub read_only: bool,
+    /// The mirror set name, or `"none"` if not mirrored.
+    pub mirror_state: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAdminDatabaseStatusOk {
+    pub success: bool,
+    pub databases: Vec<IrisAdminDatabaseStatusEntry>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisAdminResponse {
+    ListNamespaces(IrisAdminListNamespacesOk),
+    ListDatabases(IrisAdminListDatabasesOk),
+    ListUsers(IrisAdminListUsersOk),
+    ListRoles(IrisAdminListRolesOk),
+    ListWebapps(IrisAdminListWebappsOk),
+    ListUserRoles(IrisAdminListUserRolesOk),
+    GetWebapp(IrisAdminGetWebappOk),
+    CheckPermission(IrisAdminCheckPermissionOk),
+    UserAction(IrisAdminUserActionOk),
+    NamespaceAction(IrisAdminNamespaceActionOk),
+    WebappAction(IrisAdminWebappActionOk),
+    ViewLocks(IrisAdminViewLocksOk),
+    ViewProcesses(IrisAdminViewProcessesOk),
+    JournalSearch(IrisAdminJournalSearchOk),
+    NamespaceMappings(IrisAdminNamespaceMappingsOk),
+    DatabaseStatus(IrisAdminDatabaseStatusOk),
+    Err(ToolError),
+}

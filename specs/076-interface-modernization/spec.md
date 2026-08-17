@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (86/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (87/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -329,6 +329,18 @@ An `action: status|start|stop|update|check|recover|get_autostart|set_autostart` 
 Resolves its connection via `self.iris_arc()` like the other interop dispatchers before it, so it gets a real `test_output_schema_shapes.rs` test hitting the deterministic `IRIS_UNREACHABLE` response with no live IRIS needed.
 
 **Remaining**: 4 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_admin`.
+
+---
+
+### Batch 19 — `iris_admin` (87/90 total)
+
+The largest dispatcher of all 90 tools: 13 read/write actions in `admin.rs` (namespace/database/user/role/webapp management, %SYS-scoped) plus 5 read-only observability actions in `observability.rs` (view_locks/view_processes/journal_search/namespace_mappings/database_status). No gate calls at all — write actions are permitted or refused entirely by the `IRIS_ADMIN_TOOLS` env var (`ADMIN_WRITE_DISABLED` via `ToolError`), not the shared gate machinery the interop dispatchers use. Confirmed Merged-only (`merged_only` list) — added to `BASELINE_REMOVED`, same category as `iris_global`/`iris_containers` before it.
+
+Several list-shaped actions pass SQL row values straight through with no Rust-side coercion at all — those per-entry fields stay `serde_json::Value`, the same convention as `iris_interop_query`'s raw rows — while actions whose Rust code does parse/coerce a value (booleans from `!= "0"`, floats via `.parse()`) get a real typed field instead. Three of the seven write actions collapse pairwise into one shared success shape each, since create/update/delete only differ in which single identifying field they report: create_user/update_user/delete_user all report `{success, action, username}`; create_namespace/delete_namespace report `{success, action, name}`; create_webapp/delete_webapp report `{success, action, path}`. Two separate `databases` entry shapes exist under this one dispatcher (action=list_databases vs action=database_status) — same underlying concept, two different IRIS queries with two different column sets, so two distinct entry structs rather than one loosely-typed one. `IrisAdminResponse` ends up with 17 variants — the widest of any tool in this spec.
+
+Resolves its connection via `self.iris_arc()` like the other admin-tier dispatchers, so it gets a real `test_output_schema_shapes.rs` test hitting the deterministic `IRIS_UNREACHABLE` response with no live IRIS needed.
+
+**Remaining**: 3 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`.
 
 ---
 
