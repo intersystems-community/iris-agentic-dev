@@ -71,6 +71,19 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "iris_credential_manage",
     "iris_lookup_manage",
     "iris_lookup_transfer",
+    // batch 5
+    "iris_list_containers",
+    "iris_select_container",
+    "iris_start_sandbox",
+    "iris_generate_class",
+    "iris_generate_test",
+    "resolve_storage",
+    "iris_info",
+    "iris_table_info",
+    "iris_doc_search",
+    "iris_message_body",
+    "iris_business_rule_info",
+    "iris_production_diff",
 ];
 
 /// Tools legitimately absent from the Merged toolset entirely (not "present but missing a
@@ -88,12 +101,20 @@ const MERGED_REMOVED: &[&str] = &[
     "skill_share",
     "skill_community_install",
     "agent_info",
+    "iris_list_containers",
+    "iris_select_container",
+    "iris_start_sandbox",
 ];
 
 /// The mirror image of `MERGED_REMOVED`: tools that exist only in Merged, not Baseline/Nostub
 /// (`with_registry_and_toolset`'s `merged_only` removal list) — excluded from the Baseline-only
 /// check for the same reason, just the opposite direction.
-const BASELINE_REMOVED: &[&str] = &["iris_get_log"];
+const BASELINE_REMOVED: &[&str] = &[
+    "iris_get_log",
+    "iris_message_body",
+    "iris_business_rule_info",
+    "iris_production_diff",
+];
 
 #[test]
 fn test_declared_tools_advertise_output_schema_in_baseline() {

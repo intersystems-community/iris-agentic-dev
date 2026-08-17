@@ -245,3 +245,45 @@ async fn test_iris_lookup_transfer_no_connection_response_matches_declared_shape
     assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
     assert!(body["error"].is_string());
 }
+
+// batch 5: iris_message_body/iris_business_rule_info/iris_production_diff all resolve their
+// connection via `self.iris_arc()` (never `resolve_server`/`get_iris_reloaded`, which would
+// fail via `?` instead) when no `server` param is given — with no connection, that's `None`,
+// and each impl function's own `Option<&IrisConnection>` match returns a real, deterministic
+// IRIS_UNREACHABLE error, not a mock.
+
+#[tokio::test]
+async fn test_iris_message_body_no_connection_response_matches_declared_shape() {
+    // dataPolicy defaults to "block" (PHI-gated) — must opt in past that check to reach the
+    // connection check this test is actually exercising.
+    let body = call(
+        &tools(),
+        "iris_message_body",
+        serde_json::json!({"message_id": "1", "dataPolicy": "allow", "acknowledgePhi": true}),
+    )
+    .await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
+    assert!(body["error"].is_string());
+}
+
+#[tokio::test]
+async fn test_iris_business_rule_info_no_connection_response_matches_declared_shape() {
+    let body = call(
+        &tools(),
+        "iris_business_rule_info",
+        serde_json::json!({"action": "list"}),
+    )
+    .await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
+    assert!(body["error"].is_string());
+}
+
+#[tokio::test]
+async fn test_iris_production_diff_no_connection_response_matches_declared_shape() {
+    let body = call(&tools(), "iris_production_diff", serde_json::json!({})).await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
+    assert!(body["error"].is_string());
+}

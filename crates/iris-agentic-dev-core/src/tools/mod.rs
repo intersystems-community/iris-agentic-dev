@@ -24,17 +24,20 @@ use output_schemas::{
     DebugGetErrorLogsResponse, DebugMapIntToClsResponse, DebugSourceMapResponse,
     DocsIntrospectResponse, FindSubclassImplementationsResponse, GlobalKillResponse,
     GlobalPreviewResponse, Hl7SchemaInspectResponse, Hl7SchemaListResponse, IrisAddServerResponse,
-    IrisCredentialListResponse, IrisCredentialManageResponse, IrisDatabaseListResponse,
-    IrisDatabaseStatsResponse, IrisGetLogResponse, IrisImportServersResponse,
-    IrisLookupManageResponse, IrisLookupTransferResponse, IrisNamespaceCreateResponse,
-    IrisNamespaceListResponse, IrisRemoveServerResponse, IrisServersResponse,
-    IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTestServerResponse, IrisWsCloseResponse,
-    IrisWsExecResponse, IrisWsOpenResponse, JournalSearchResponse, KbIndexResponse,
-    KbRecallResponse, KbResponse, MermaidClassResponse, MermaidProductionResponse,
-    MyAccessResponse, QueryAuditLogResponse, ResolveDynamicDispatchResponse,
-    SkillCommunityListResponse, SkillDescribeResponse, SkillForgetResponse, SkillListResponse,
-    SkillSearchResponse, StreamInspectResponse, TelemetryExportTraceResponse,
-    TelemetryQueryResponse, ToolError,
+    IrisBusinessRuleInfoResponse, IrisCredentialListResponse, IrisCredentialManageResponse,
+    IrisDatabaseListResponse, IrisDatabaseStatsResponse, IrisDocSearchResponse,
+    IrisGenerateClassResponse, IrisGenerateTestResponse, IrisGetLogResponse,
+    IrisImportServersResponse, IrisInfoResponse, IrisListContainersResponse,
+    IrisLookupManageResponse, IrisLookupTransferResponse, IrisMessageBodyResponse,
+    IrisNamespaceCreateResponse, IrisNamespaceListResponse, IrisProductionDiffResponse,
+    IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
+    IrisStartSandboxResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse,
+    IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse,
+    JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse, MermaidClassResponse,
+    MermaidProductionResponse, MyAccessResponse, QueryAuditLogResponse,
+    ResolveDynamicDispatchResponse, ResolveStorageResponse, SkillCommunityListResponse,
+    SkillDescribeResponse, SkillForgetResponse, SkillListResponse, SkillSearchResponse,
+    StreamInspectResponse, TelemetryExportTraceResponse, TelemetryQueryResponse, ToolError,
 };
 
 tokio::task_local! {
@@ -4086,7 +4089,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
     #[tool(
         description = "List running IRIS Docker containers with name-match scoring. Tries iris-devtester first, falls back to docker ps. Containers sorted by score (name similarity to workspace) descending.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = schema_for_output::<IrisListContainersResponse>().unwrap()
     )]
     async fn iris_list_containers(
         &self,
@@ -4184,7 +4188,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Switch the active IRIS connection to the specified running Docker container for this session. After a successful switch, all subsequent tool calls target the new container — no session restart required. Fixes issue #11."
+        description = "Switch the active IRIS connection to the specified running Docker container for this session. After a successful switch, all subsequent tool calls target the new container — no session restart required. Fixes issue #11.",
+        output_schema = output_schemas::oneof_output_schema::<IrisSelectContainerResponse>()
     )]
     async fn iris_select_container(
         &self,
@@ -4489,7 +4494,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Start a dedicated IRIS container for the current project via iris-devtester CLI. Idempotent — returns existing container if already running."
+        description = "Start a dedicated IRIS container for the current project via iris-devtester CLI. Idempotent — returns existing container if already running.",
+        output_schema = output_schemas::oneof_output_schema::<IrisStartSandboxResponse>()
     )]
     async fn iris_start_sandbox(
         &self,
@@ -4844,7 +4850,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Generate an ObjectScript class from a natural language description. Requires IRIS_GENERATE_CLASS_MODEL + OPENAI_API_KEY env vars. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
+        description = "Generate an ObjectScript class from a natural language description. Requires IRIS_GENERATE_CLASS_MODEL + OPENAI_API_KEY env vars. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<IrisGenerateClassResponse>()
     )]
     async fn iris_generate_class(
         &self,
@@ -4929,7 +4936,8 @@ Original: {}",
     }
 
     #[tool(
-        description = "Generate a %UnitTest.TestCase for an existing ObjectScript class. Introspects the class first. Requires IRIS_GENERATE_CLASS_MODEL + OPENAI_API_KEY. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
+        description = "Generate a %UnitTest.TestCase for an existing ObjectScript class. Introspects the class first. Requires IRIS_GENERATE_CLASS_MODEL + OPENAI_API_KEY. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<IrisGenerateTestResponse>()
     )]
     async fn iris_generate_test(
         &self,
@@ -5519,7 +5527,8 @@ Methods:
 
     #[tool(
         description = "Discover IRIS namespace contents. what=documents lists all docs, what=modified lists recently changed, what=namespace returns config, what=metadata returns IRIS version, what=jobs lists active jobs, what=csp_apps lists CSP apps, what=csp_debug returns debug ID, what=sa_schema returns SQL Analytics schema. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisInfoResponse>()
     )]
     async fn iris_info(
         &self,
@@ -5534,7 +5543,8 @@ Methods:
 
     #[tool(
         description = "Inspect a SQL table: returns whether it is a class-projected table or DDL-created, the backing data/index globals, and (optionally) an approximate row count. Works for both class-projected tables (with real storage globals from %Dictionary.CompiledStorage) and DDL tables (globals inferred by IRIS naming convention). Use include_row_count=true to add a COUNT(*) estimate. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisTableInfoResponse>()
     )]
     async fn iris_table_info(
         &self,
@@ -5882,7 +5892,8 @@ Methods:
 
     #[tool(
         description = "Search the InterSystems documentation site (docs.intersystems.com) via its Algolia index. Returns ranked hits with title, URL, content excerpt, and breadcrumbs. Use for discovery questions ('what are all the ways to run SQL in IRIS?'), API lookups ('what does SQLCODE -30 mean?'), and any question where the answer lives in official docs. Optionally filter by version (e.g. '2025.1') and product (e.g. 'InterSystems IRIS'). Returns {query, total_hits, hits:[{title, url, excerpt, breadcrumbs, version, product}]}. Note: docs.intersystems.com is a JS SPA — do NOT use WebFetch or curl on DocBook URLs; they return only nav shell. This tool uses the real Algolia search index and returns actual documentation content. Skill: iris-docs for live IRIS class reference; iris-agentic-dev for connection setup.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisDocSearchResponse>()
     )]
     async fn iris_doc_search(
         &self,
@@ -6251,7 +6262,8 @@ Methods:
 
     #[tool(
         description = "Read an Ensemble/Interoperability message body by message ID. Handles plain-text and stream-backed bodies (Ens.StreamContainer, %Stream.Object). PHI-gated: dataPolicy=block returns PHI_POLICY_BLOCKED; dataPolicy=allow requires acknowledgePhi=true; dataPolicy=redact scrubs HL7 v2 PID/MSH fields. max_bytes default 65536, clamped to 1048576. Skill: ensemble-production (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisMessageBodyResponse>()
     )]
     async fn iris_message_body(
         &self,
@@ -6316,7 +6328,8 @@ Methods:
 
     #[tool(
         description = "List or inspect Ensemble business rules (Ens.Rule.RuleSet). action=list returns all rule sets with name/description/modified. action=get with rule_name returns conditions/actions counts for that rule set. Returns INTEROP_NOT_AVAILABLE if Ensemble is not installed. Skill: ensemble-production (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisBusinessRuleInfoResponse>()
     )]
     async fn iris_business_rule_info(
         &self,
@@ -6366,7 +6379,8 @@ Methods:
 
     #[tool(
         description = "Diff the running Interoperability production config against the last source-controlled version. Returns in_sync:true with changes:[] when no drift, or a changes array of {item_name, item_type, status} where status is added/removed/modified. Returns NO_SCM if no source control is configured. Skill: ensemble-production (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisProductionDiffResponse>()
     )]
     async fn iris_production_diff(
         &self,
@@ -7771,7 +7785,8 @@ Methods:
 
     #[tool(
         description = "Resolve storage definitions for an ObjectScript class — returns global maps (data, id, index locations) from %Dictionary.CompiledStorage. class: fully qualified class name. namespace: optional. server: optional registered instance name. Returns {class, storages: [{name, type, data_location, id_location, index_location}]}. Skill: objectscript-navigation.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<ResolveStorageResponse>()
     )]
     async fn resolve_storage(
         &self,
