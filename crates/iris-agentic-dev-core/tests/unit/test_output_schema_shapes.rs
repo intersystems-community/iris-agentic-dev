@@ -359,3 +359,19 @@ async fn test_iris_production_no_connection_response_matches_declared_shape() {
     assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
     assert!(body["error"].is_string());
 }
+
+// batch 19: iris_admin resolves its connection via `self.iris_arc()` as well (only the
+// Merged toolset advertises this tool, hence Toolset::Merged in `tools()`'s own default).
+
+#[tokio::test]
+async fn test_iris_admin_no_connection_response_matches_declared_shape() {
+    let body = call(
+        &tools(),
+        "iris_admin",
+        serde_json::json!({"action": "list_namespaces"}),
+    )
+    .await;
+    assert_eq!(body["success"], false);
+    assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
+    assert!(body["error"].is_string());
+}

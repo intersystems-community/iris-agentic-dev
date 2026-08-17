@@ -35,7 +35,7 @@ use output_schemas::{
     DebugGetErrorLogsResponse, DebugMapIntToClsResponse, DebugSourceMapResponse,
     DocsIntrospectResponse, FindSubclassImplementationsResponse, GlobalKillResponse,
     GlobalPreviewResponse, Hl7SchemaInspectResponse, Hl7SchemaListResponse, IrisAddServerResponse,
-    IrisBusinessRuleInfoResponse, IrisCompileResponse, IrisContainersResponse,
+    IrisAdminResponse, IrisBusinessRuleInfoResponse, IrisCompileResponse, IrisContainersResponse,
     IrisCoverageResponse, IrisCredentialListResponse, IrisCredentialManageResponse,
     IrisDatabaseListResponse, IrisDatabaseStatsResponse, IrisDebugResponse, IrisDocResponse,
     IrisDocSearchResponse, IrisExecuteMethodResponse, IrisExecuteResponse,
@@ -6696,7 +6696,8 @@ Methods:
         user (IRIS_USERNAME). view_processes requires dataPolicy param (block/redact/allow). \
         journal_search requires dataPolicy=allow and at least one of global_pattern or time_range. \
         `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(destructive_hint = true)
+        annotations(destructive_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisAdminResponse>()
     )]
     async fn iris_admin(
         &self,
