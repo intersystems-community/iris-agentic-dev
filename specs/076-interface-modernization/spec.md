@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (89/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — ✅ Delivered (90/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -368,6 +368,20 @@ No `test_output_schema_shapes.rs` coverage — routes through `resolve_server`, 
 
 ---
 
+### Batch 22 — `check_config` (90/90 total) — User Story 1 complete
+
+The 90th and last tool. Deliberately saved for last — it was this suite's own "known tool without a schema yet" negative-control example across batches 10 through 21 (`test_a_tool_without_a_declared_schema_reports_false_not_a_panic`), picked because it genuinely never fails (no IRIS call at all — reads only in-process connection state) yet is the single most heterogeneous response in the whole tool surface: a handful of always-present base fields, two conditionally-appended top-level fields (`config_parse_error`, `fallback_warning`), and a `server_manager` section whose own shape depends on whether Server Manager settings exist at all.
+
+Confirmed by reading the full body: there is no `err_json` call anywhere in `check_config` — the tool's own description states it plainly ("Always succeeds — never returns IRIS_UNREACHABLE"). So this is a single-shape response, using `schema_for_output` directly rather than `oneof_output_schema`, same as any other single-shape tool. `connection_source` mirrors the real (non-schema) `ConnectionSource` enum as a dedicated schema-only type, consistent with this module's "output-schema-only, never constructed at runtime" design. The `server_manager` section is one struct with an optional `servers` field rather than a 2-variant enum, since `available` and `servers` always appear or vanish together.
+
+Got real `test_output_schema_shapes.rs` coverage exercising the actual (only) response shape directly — unlike every other tool in that file, there's no deterministic error path to hit instead, since there is no error path at all.
+
+This closes User Story 1: **all 90 registered tools now declare an accurate output schema.** The "known undeclared" negative-control test was retired (there's no real tool left to point it at) and replaced with a completion assertion (`TOOLS_WITH_DECLARED_OUTPUT_SCHEMA.len() == 90`) plus a narrower not-found-path check using a nonexistent tool name.
+
+**Remaining**: 0 of 90 tools.
+
+---
+
 ### User Story 2 - Stop the CLI reimplementation drift; give `iris_execute` its session flags (Priority: P2) — ✅ Delivered
 
 A developer using `compile`/`exec`/`query`/`doc` from the CLI wants the same capability the equivalent MCP tool call has — multi-instance `--server` routing, policy gates, and (for `exec` specifically) the session carrier — instead of a thinner, silently-diverging reimplementation.
@@ -455,7 +469,7 @@ The maintainers want a clear, written answer to "should we upgrade rmcp to reach
 
 ### Edge Cases
 
-- User Story 1: a tool whose return shape is genuinely dynamic/heterogeneous (varies by input in a way a single schema can't capture) — does it get a loose/permissive schema, or stay undeclared? Needs a per-tool judgment call, not a blanket rule.
+- User Story 1 (resolved): a tool whose return shape is genuinely dynamic/heterogeneous — does it get a loose/permissive schema, or stay undeclared? Answered in practice across all 22 batches: every tool gets a schema, never left undeclared. Genuinely dynamic sub-fields (raw SQL query rows, Atelier REST passthrough bodies, container descriptors from subprocess output) are typed `serde_json::Value` at exactly that field, with a doc comment explaining why — the rest of each response gets modeled precisely. No tool needed a fully-untyped top-level schema.
 - User Story 2: what happens when a `--session-state` token from `iris_execute` is passed to a CLI invocation with a different `namespace` than the one the session was created in? (The MCP tool's own behavior here should be the source of truth — the CLI must not invent different semantics.)
 - User Story 3: what's the batch script's format (a JSON array of `{tool, args}` objects? a small DSL? literal shell-like syntax)? And critically: does a batch script's own execution model risk becoming a *fourth* parallel implementation of tool dispatch, or can it be built as a thin loop over the exact same `call_for_test` User Story 2 is already routing everything through? It must be the latter — anything else repeats the mistake User Story 2 exists to fix.
 - User Story 4: does pagination state need to survive across separate CLI-driven `tool` calls (stateless, one process per call) the way it would for a long-lived MCP client connection? A CLI consumer of a paginated `list_tools` is a different usage pattern than an MCP client and may not need pagination at all — worth confirming before building it.

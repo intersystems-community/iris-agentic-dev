@@ -5,12 +5,17 @@
 //! This is a static-router check, not a live-IRIS one — it never calls a tool, so it
 //! belongs alongside the other pure-logic tests in this file's neighbors
 //! (`test_toolset.rs`, `test_tool_category_coverage.rs`), no container required.
+//!
+//! As of batch 22 (`check_config`), this list covers all 90 registered tools — User
+//! Story 1 is complete. The batch-by-batch grouping below is left as-is rather than
+//! flattened, since it's the same order-of-discovery record `output_schemas.rs`'s own
+//! comment headers keep.
 
 use iris_agentic_dev_core::tools::{IrisTools, Toolset};
 
-/// Every tool given an `output_schema` attribute so far — see
+/// Every tool given an `output_schema` attribute — see
 /// `crates/iris-agentic-dev-core/src/tools/output_schemas.rs` for the response shapes and the
-/// reasoning behind which tools are (and are not yet) covered.
+/// reasoning behind each one's design. All 90 registered tools are covered.
 const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "iris_servers",
     "skill_list",
@@ -121,6 +126,8 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "extract_message_map_routing",
     // batch 21
     "iris_search",
+    // batch 22 — the 90th and last tool
+    "check_config",
 ];
 
 /// Tools legitimately absent from the Merged toolset entirely (not "present but missing a
@@ -218,14 +225,26 @@ fn test_baseline_removed_tools_are_absent_from_baseline_router() {
 
 #[test]
 fn test_a_tool_without_a_declared_schema_reports_false_not_a_panic() {
-    // check_config hasn't been given an output_schema yet (spec 076 US1, still in progress) —
-    // confirms the accessor distinguishes "no schema" from "not found" without special-casing
-    // either. Picked deliberately as an example unlikely to get a schema soon: it's genuinely
-    // heterogeneous (conditionally-appended fields, a nested Server Manager section of its own
-    // variable shape) and intentionally uncategorized elsewhere in this codebase for the same
-    // reason. iris_compile, iris_test, then iris_execute were this test's example in turn until
-    // each got a real schema (batches 8, 9, 10).
+    // Every real, registered tool now has a declared output schema — batch 22
+    // (`check_config`) was the last one without it, and picking a fresh "known
+    // undeclared" example each batch (iris_compile → iris_test → iris_execute →
+    // check_config) finally ran out of tools. There is no longer a genuine
+    // "registered but undeclared" case to assert against, so this narrows to the
+    // accessor's not-found path alone: a name that was never a real tool must report
+    // `false`, not panic or silently default to `true`.
     let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
-    assert!(!tools.tool_declares_output_schema("check_config"));
     assert!(!tools.tool_declares_output_schema("not_a_real_tool_name"));
+}
+
+#[test]
+fn test_all_ninety_tools_are_declared() {
+    // User Story 1 (076-interface-modernization) closes here: every one of the 90
+    // registered tools across both toolsets has a real `output_schema` attribute. If this
+    // fails, either a new tool was added without a schema, or this count needs updating —
+    // check `output_schemas.rs`'s batch history before assuming either.
+    assert_eq!(
+        TOOLS_WITH_DECLARED_OUTPUT_SCHEMA.len(),
+        90,
+        "expected exactly 90 declared tools"
+    );
 }

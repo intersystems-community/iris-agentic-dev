@@ -375,3 +375,36 @@ async fn test_iris_admin_no_connection_response_matches_declared_shape() {
     assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
     assert!(body["error"].is_string());
 }
+
+// batch 22: check_config never touches IRIS at all (reads only in-process connection
+// state) — unlike every other tool in this file, its single response shape is exercised
+// directly rather than via a deterministic no-connection error, since there is no error
+// path to hit: this is the tool's one and only real shape.
+#[tokio::test]
+async fn test_check_config_response_matches_declared_shape() {
+    let body = call(&tools(), "check_config", serde_json::json!({})).await;
+    assert!(body["connected"].is_boolean());
+    assert!(body["connection_source"].is_string());
+    assert!(body["host"].is_string());
+    assert!(body["port"].is_u64());
+    assert!(body["namespace"].is_string());
+    // container/config_file/config_loaded_at/iris_version/config_watch_path/
+    // objectscript_workspace are all present but nullable — just confirm the keys exist.
+    for key in [
+        "container",
+        "config_file",
+        "config_loaded_at",
+        "iris_version",
+        "config_watch_path",
+        "objectscript_workspace",
+    ] {
+        assert!(body.get(key).is_some(), "{key} must be present (nullable)");
+    }
+    assert!(body["write_tools_enabled"].is_boolean());
+    assert!(body["capabilities"].is_object());
+    assert!(body["capabilities"]["private_web_server"].is_boolean());
+    assert!(body["capabilities"]["atelier_rest"].is_boolean());
+    assert!(body["capabilities"]["compile_path"].is_string());
+    assert!(body["server_manager"].is_object());
+    assert!(body["server_manager"]["available"].is_boolean());
+}

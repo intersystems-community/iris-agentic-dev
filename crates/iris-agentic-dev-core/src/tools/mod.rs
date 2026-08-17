@@ -31,7 +31,7 @@ use std::sync::Arc;
 // constructed at runtime — see output_schemas.rs's module doc comment for why.
 use output_schemas::{
     AgentHistoryResponse, AgentInfoResponse, AgentStatsResponse, CapabilityMatrixResponse,
-    CompareDocumentResponse, CompareNamespaceResponse, DebugCapturePacketResponse,
+    CheckConfigOk, CompareDocumentResponse, CompareNamespaceResponse, DebugCapturePacketResponse,
     DebugGetErrorLogsResponse, DebugMapIntToClsResponse, DebugSourceMapResponse,
     DocsIntrospectResponse, ExtractMessageMapRoutingResponse, FindSubclassImplementationsResponse,
     GlobalKillResponse, GlobalPreviewResponse, Hl7SchemaInspectResponse, Hl7SchemaListResponse,
@@ -4386,8 +4386,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
     #[tool(
         description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active, (4) confirm which build of this MCP server is actually running (server_version) when multiple installs/forks may be registered. To switch connection mid-session without restart: call check_config first to get config_watch_path, then write a .iris-agentic-dev.toml to that exact path, then call any tool — the reload fires automatically. Fields: server_version, connected, connection_source (http|docker|disconnected), host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled, capabilities. Skill: iris-agentic-dev.",
-        annotations(read_only_hint = true)
-    )]
+        annotations(read_only_hint = true),
+        output_schema = schema_for_output::<CheckConfigOk>().unwrap()    )]
     async fn check_config(
         &self,
         Parameters(_p): Parameters<crate::tools::NoParams>,
