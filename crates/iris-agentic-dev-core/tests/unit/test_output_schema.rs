@@ -91,6 +91,8 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "iris_generate",
     "skill",
     "skill_community",
+    // batch 7
+    "iris_query",
 ];
 
 /// Tools legitimately absent from the Merged toolset entirely (not "present but missing a

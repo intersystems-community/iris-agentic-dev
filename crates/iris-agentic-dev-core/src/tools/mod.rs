@@ -30,15 +30,15 @@ use output_schemas::{
     IrisGenerateTestResponse, IrisGetLogResponse, IrisImportServersResponse, IrisInfoResponse,
     IrisListContainersResponse, IrisLookupManageResponse, IrisLookupTransferResponse,
     IrisMacroResponse, IrisMessageBodyResponse, IrisNamespaceCreateResponse,
-    IrisNamespaceListResponse, IrisProductionDiffResponse, IrisRemoveServerResponse,
-    IrisSelectContainerResponse, IrisServersResponse, IrisStartSandboxResponse,
-    IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse, IrisTestServerResponse,
-    IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse, JournalSearchResponse,
-    KbIndexResponse, KbRecallResponse, KbResponse, MermaidClassResponse, MermaidProductionResponse,
-    MyAccessResponse, QueryAuditLogResponse, ResolveDynamicDispatchResponse,
-    ResolveStorageResponse, SkillCommunityListResponse, SkillCommunityResponse,
-    SkillDescribeResponse, SkillForgetResponse, SkillListResponse, SkillResponse,
-    SkillSearchResponse, StreamInspectResponse, TelemetryExportTraceResponse,
+    IrisNamespaceListResponse, IrisProductionDiffResponse, IrisQueryResponse,
+    IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
+    IrisStartSandboxResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse,
+    IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse,
+    JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse, MermaidClassResponse,
+    MermaidProductionResponse, MyAccessResponse, QueryAuditLogResponse,
+    ResolveDynamicDispatchResponse, ResolveStorageResponse, SkillCommunityListResponse,
+    SkillCommunityResponse, SkillDescribeResponse, SkillForgetResponse, SkillListResponse,
+    SkillResponse, SkillSearchResponse, StreamInspectResponse, TelemetryExportTraceResponse,
     TelemetryQueryResponse, ToolError,
 };
 
@@ -3892,7 +3892,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
     #[tool(
         description = "Execute SQL against IRIS via Atelier REST. mode=\"read\" (default): SELECT only, destructive SQL blocked unless force=true. mode=\"explain\": returns the IRIS query plan for a SELECT (plan_text, query_hash), no rows. mode=\"count\": returns a row count for `table` or `query` without transferring rows. mode=\"write\": executes INSERT/UPDATE/DELETE/CALL/TRUNCATE (Execute-gated, blocked on mcpTemplate=live/test); UPDATE/DELETE are pre-checked against max_rows_affected (default 1000, max 10000) before executing. Skill: objectscript-sql-patterns for IRIS SQL quirks. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisQueryResponse>()
     )]
     async fn iris_query(
         &self,

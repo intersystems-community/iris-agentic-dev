@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (74/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (75/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -178,7 +178,19 @@ Other findings from this batch:
 
 No new `test_output_schema_shapes.rs` coverage this batch — all six new tools need `resolve_server`/`get_iris_reloaded` (which fail via `?` with no connection, unlike the `Option<&IrisConnection>` tools from batches 4-5), so there's no genuine no-IRIS-needed path to test for real.
 
-**Remaining after batch 6**: 16 of 90 tools — `iris_compile`, `iris_test`, `iris_execute`, `iris_doc`, `iris_query`, `check_config`, `iris_search`, `extract_message_map_routing`, `iris_source_control`, `iris_global`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`. These are the tools this spec's batches have been implicitly triaging away from throughout: the five core execution tools (large, multi-mode, already CLI-delegated in User Story 2 — `iris_query` alone has 6 distinct response branches), `check_config` (intentionally uncategorized elsewhere in this codebase for the same reason — genuinely heterogeneous, conditionally-appended fields), `iris_search` (an async-polling implementation with a sync/async fallback path), `extract_message_map_routing` (deferred in batch 4 — a third BPL/DTL response path beyond success/failure), and the Merged-tier action-multiplexed dispatchers (`iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin` — `iris_admin` alone is ~200 lines of action-dispatch). Each remaining tool needs meaningfully more reading than this batch's per-tool budget allowed without repeating the mermaid_production-style mistake batch 3 caught, so they're left for a dedicated future pass rather than rushed.
+**Remaining after batch 6**: 16 of 90 tools — `iris_compile`, `iris_test`, `iris_execute`, `iris_doc`, `iris_query`, `check_config`, `iris_search`, `extract_message_map_routing`, `iris_source_control`, `iris_global`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`. These are the tools this spec's batches have been implicitly triaging away from throughout: the five core execution tools (large, multi-mode, already CLI-delegated in User Story 2), `check_config` (intentionally uncategorized elsewhere in this codebase for the same reason — genuinely heterogeneous, conditionally-appended fields), `iris_search` (an async-polling implementation with a sync/async fallback path), `extract_message_map_routing` (deferred in batch 4 — a third BPL/DTL response path beyond success/failure), and the Merged-tier action-multiplexed dispatchers (`iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin` — `iris_admin` alone is ~200 lines of action-dispatch). Each remaining tool needs meaningfully more reading than a normal batch's per-tool budget without repeating the mermaid_production-style mistake batch 3 caught.
+
+---
+
+### Batch 7 — `iris_query` (75/90 total)
+
+Confirmed the previous paragraph's assessment by fully reading `iris_query` — one tool, taken on its own this time rather than bundled into a 15-tool sweep, because it turned out to justify that on its own: **four modes** (default/select, `explain`, `count`, `write`), **three independent gate mechanisms** ahead of any mode-specific logic (`dispatch_gate`, `crate::iris::server_manager::policy_gate` — which carries its own `allowed_categories` field — and `workspace_config::check_role_gate`, gating SELECT-vs-write SQL separately from either), and **per-mode bespoke error shapes** beyond `ToolError` (`SQL_WRITE_BLOCKED` in select mode carries `blocked_keyword`+optional `force_ignored`; write mode's DDL-keyword case carries `blocked_keyword` with no `force_ignored`; write mode's rows-affected pre-check carries `actual_count`+`limit`). Nine variants total in `IrisQueryResponse` — the largest single-tool schema in this file so far, and unlike `iris_table_info`/`extract_message_map_routing`'s dynamic carve-outs, every branch was actually modeled here rather than left as `serde_json::Value`, because the complexity was already fully read while confirming the "these are hard" assessment above.
+
+The three gate mechanisms' own blocked-response shapes are the one deliberately dynamic part (`GateBlocked(serde_json::Value)`) — same reasoning as `IrisMessageBodyResponse`'s single-gate case from batch 6, just three gates instead of one.
+
+No `test_output_schema_shapes.rs` coverage — every mode needs `resolve_server`/`get_iris_for_exec_with_client`, both of which fail via `?` with no connection.
+
+**Remaining**: 15 of 90 tools — the same list minus `iris_query`. Given how much one tool from that list just took, the other four core execution tools (`iris_compile`, `iris_test`, `iris_execute`, `iris_doc`) should be assumed to be comparably sized rather than batched together casually.
 
 ---
 
