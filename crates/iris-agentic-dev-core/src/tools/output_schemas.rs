@@ -1897,11 +1897,14 @@ pub struct IrisTestOk {
     pub pattern: String,
     pub namespace: String,
     pub test_suites: Vec<IrisTestSuite>,
-    /// Present only when `coverage: true` was passed. `iris_coverage`'s own output schema
-    /// isn't declared yet (still on this spec's remaining-tools list), so this stays free-form
-    /// JSON rather than referencing a type that doesn't exist yet.
+    /// Present only when `coverage: true` was passed — the `mode=report` result from the
+    /// coverage monitor `iris_test` itself started/stopped around the run. Tightened from
+    /// `serde_json::Value` once `iris_coverage`'s own schema landed (batch 12) —
+    /// `IrisCoverageReportResult` deliberately narrows to just the two shapes `mode=report`
+    /// can actually produce, not the full 5-variant `IrisCoverageResponse` (which also
+    /// covers check/run/start/stop, none reachable from here).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub coverage: Option<serde_json::Value>,
+    pub coverage: Option<IrisCoverageReportResult>,
 }
 
 /// Distinct from `ToolError` — adds a `namespace` field.
@@ -2291,4 +2294,133 @@ pub enum IrisDocResponse {
     StaleContent(IrisDocStaleContentError),
     EditFailed(IrisDocEditFailedError),
     Err(ToolError),
+}
+
+// ── iris_coverage ────────────────────────────────────────────────────────────
+//
+// A fourth error-shape convention, distinct from `ToolError`: this tool's own local
+// `err_json` helper uses `message`, not `error`, as the free-text field name
+// (`{success, error_code, message}`). No gate calls. mode=check's success case is a fifth
+// convention on top of that — it has no `success` field at all, using `ok: true` instead
+// (mirrors `IrisDocSearchError`'s precedent of a tool inventing its own top-level marker).
+//
+// The ObjectScript-side output protocol is pipe-delimited text, not JSON, parsed by
+// `parse_check_output`/`parse_coverage_output` — both have a JSON-passthrough branch
+// (`trimmed.starts_with('{')`) explicitly for feeding test fixtures directly; real IRIS
+// output is never JSON-shaped, so that branch is not modeled as a schema variant.
+//
+// mode=run and mode=check both merge extra fields onto their parsed result — including
+// onto an *error* result, unconditionally, not just onto success — so `IrisCoverageError`
+// carries all of those extras as optional rather than needing a per-mode error type.
+// mode=report calls the exact same coverage-result parser as mode=run but skips the merge
+// entirely, which is why `IrisCoverageRunOk`'s run-specific fields are optional: report's
+// success case is the same shape with them simply absent.
+
+/// mode=check success: `{ok: true, ...}`, not `{success: true, ...}` — this tool's own
+/// invention, kept as-is rather than normalized, since this is documenting the real shape.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisCoverageCheckOk {
+    pub ok: bool,
+    /// Always `"ready"` when `ok` is true.
+    pub bbsiz_state: String,
+    pub testcoverage_available: bool,
+    /// Present only when `testcoverage_available` is `false`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub testcoverage_hint: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisCoverageClassEntry {
+    pub class: String,
+    pub routine: String,
+    pub hit: i64,
+    pub total: i64,
+    pub pct: f64,
+}
+
+/// mode=run and mode=report success (report's own success is this same shape with the
+/// run-only fields absent — see the module note on why they're optional here).
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisCoverageRunOk {
+    pub success: bool,
+    pub total_pct: f64,
+    pub hits: i64,
+    pub total: i64,
+    pub classes: Vec<IrisCoverageClassEntry>,
+    /// mode=run only, and only when `target_pct` was passed on the request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meets_target: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_pct: Option<f64>,
+    /// mode=run only — always present there, absent on mode=report (no merge step).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub testcoverage_available: Option<bool>,
+    /// mode=run only, and only when `cobertura_path` was requested but the TestCoverage
+    /// IPM package isn't installed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cobertura_skipped: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisCoverageStartOk {
+    pub success: bool,
+    pub started: bool,
+    pub routines: Vec<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisCoverageStopOk {
+    pub success: bool,
+    pub stopped: bool,
+}
+
+/// The one error shape shared by every mode (`MISSING_PARAM`, `NO_CLASSES`,
+/// `INVALID_ACTION`, `SQL_ERROR`, `MONITOR_IN_USE`, `BBSIZ_NOT_CONFIGURED`,
+/// `IRIS_EXECUTE_ERROR`, `PARSE_ERROR`, `IRIS_UNREACHABLE`) — note `message`, not `error`
+/// (see the module note). The trailing fields are mode-specific merge extras, all optional
+/// since which ones (if any) appear depends on which mode produced this error and whether
+/// that mode's merge step ran at all.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisCoverageError {
+    pub success: bool,
+    pub error_code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    /// mode=check's `BBSIZ_NOT_CONFIGURED` only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fix: Option<String>,
+    /// mode=run only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meets_target: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_pct: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cobertura_skipped: Option<String>,
+    /// mode=check or mode=run, when their merge step ran (a raw transport failure that
+    /// short-circuits before the merge has neither this nor `testcoverage_hint`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub testcoverage_available: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub testcoverage_hint: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisCoverageResponse {
+    CheckOk(IrisCoverageCheckOk),
+    RunOk(IrisCoverageRunOk),
+    StartOk(IrisCoverageStartOk),
+    StopOk(IrisCoverageStopOk),
+    Err(IrisCoverageError),
+}
+
+/// The narrower shape of just `mode=report`'s two possible outcomes — used as the type of
+/// `IrisTestOk::coverage`, which always calls `iris_coverage` with `mode: "report"`
+/// internally. See that field's doc comment for why this exists instead of reusing the
+/// full `IrisCoverageResponse` (whose other three variants can never appear there).
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisCoverageReportResult {
+    Ok(IrisCoverageRunOk),
+    Err(IrisCoverageError),
 }

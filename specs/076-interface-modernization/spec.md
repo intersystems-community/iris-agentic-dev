@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (79/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (80/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -245,6 +245,22 @@ No `test_output_schema_shapes.rs` coverage — every mode needs a live connectio
 This closes the five core execution tools (`iris_query`, `iris_compile`, `iris_test`, `iris_execute`, `iris_doc`) — all now schema'd.
 
 **Remaining**: 11 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_source_control`, `iris_global`, `iris_coverage`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`.
+
+---
+
+### Batch 12 — `iris_coverage` (80/90 total)
+
+Line coverage via `%Monitor.System.LineByLine`, with five modes (check/run/start/stop/report) instead of gates or session state as its source of complexity. No gate calls. Two more error-shape conventions surfaced on top of the four already known: this tool's own local `err_json` uses `message`, not `error`, as the free-text field name (`{success, error_code, message}`) — distinct from `ToolError` in the same way `ServerMutationError`/`IrisTableInfoNotFound`/`IrisDocSearchError` were — and mode=check's success case has no `success` field at all, using `ok: true` instead (mirrors `IrisDocSearchError`'s precedent of a tool inventing its own top-level marker).
+
+mode=run and mode=check both merge extra fields onto their parsed result unconditionally — including onto an *error* result, not just a success — so `IrisCoverageError` carries all of those mode-specific extras (`fix`, `meets_target`/`target_pct`/`cobertura_skipped`, `testcoverage_available`/`testcoverage_hint`) as optional fields on one shared struct, documented per-field with which mode populates it, rather than proliferating near-duplicate per-mode error types. mode=report calls the exact same coverage-result parser as mode=run but skips the merge step entirely, which is why `IrisCoverageRunOk`'s run-specific fields are optional: report's success is the identical shape with them simply absent.
+
+Also resolved a deferred TODO from batch 9: `iris_test`'s `coverage` field (present only when `coverage: true` is passed — `iris_test` runs `iris_coverage`'s own `mode=report` internally around the test run) was left as `serde_json::Value` because this tool's schema didn't exist yet. Tightened to a new `IrisCoverageReportResult` — deliberately narrower than the full 5-variant `IrisCoverageResponse`, since only `mode=report`'s two outcomes (`RunOk` | `Err`) can ever appear there.
+
+Both `parse_check_output`/`parse_coverage_output`'s JSON-passthrough branches (`trimmed.starts_with('{')`) are explicitly for feeding test fixtures directly — real IRIS output is pipe-delimited text, never JSON-shaped — so neither is modeled as a schema variant.
+
+No `test_output_schema_shapes.rs` coverage — every mode needs a live connection.
+
+**Remaining**: 10 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_source_control`, `iris_global`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`.
 
 ---
 
