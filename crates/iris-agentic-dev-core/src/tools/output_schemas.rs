@@ -3150,3 +3150,65 @@ pub enum ExtractMessageMapRoutingResponse {
     Dtl(ExtractMessageMapDtlOk),
     Err(ToolError),
 }
+
+// ── iris_search ──────────────────────────────────────────────────────────────
+//
+// Full-text search via Atelier REST v2, with a sync-first / async-poll-fallback path
+// (many IRIS servers answer `/action/search` synchronously even for slow wildcard
+// searches; others defer via a `workId` to poll). No gate calls. Only two JSON error
+// shapes exist here — `SCOPE_REQUIRED` (no `documents` scope given — a namespace-wide
+// grep would time out server-side) and `SEARCH_TIMEOUT` (the 5-minute poll deadline
+// elapsed) — both extending `ToolError` with the same `query` field, so one shared struct
+// covers both rather than `ToolError` itself. A genuine HTTP/network failure on the async
+// POST fallback surfaces as a real `McpError` (`rmcp::ErrorData::internal_error`), not a
+// JSON body — same as other tools' `?`-propagated transport failures, and for the same
+// reason not part of this output schema (the schema describes `CallToolResult` content,
+// not a protocol-level error response).
+//
+// Per-result fields (`document`/`line`/`member`/`content`) are raw passthroughs of
+// whatever Atelier returned for that match — no Rust-side type coercion — so they stay
+// `serde_json::Value`.
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisSearchResultEntry {
+    pub document: serde_json::Value,
+    pub line: serde_json::Value,
+    pub member: serde_json::Value,
+    pub content: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisSearchOk {
+    pub success: bool,
+    pub query: String,
+    pub results: Vec<IrisSearchResultEntry>,
+    /// Total match count (matches, not documents — one document with 5 matches counts as 5).
+    pub total_found: usize,
+    /// `true` if `results` exceeded the inline threshold (default 30, `IRIS_INLINE_SEARCH`)
+    /// and got truncated — retrieve the rest via `iris_get_log` using `log_id`.
+    pub truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_id: Option<String>,
+    /// Present only when `truncated` is `true` — how many of `total_count` are inline.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inline_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_count: Option<usize>,
+}
+
+/// `SCOPE_REQUIRED` or `SEARCH_TIMEOUT` — both extend `ToolError` with the original `query`,
+/// so a caller retrying after either failure doesn't have to thread it through separately.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisSearchScopedError {
+    pub success: bool,
+    pub error_code: String,
+    pub error: String,
+    pub query: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisSearchResponse {
+    Ok(IrisSearchOk),
+    ScopedErr(IrisSearchScopedError),
+}

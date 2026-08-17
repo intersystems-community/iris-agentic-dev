@@ -34,7 +34,7 @@ use output_schemas::{
     IrisLookupTransferResponse, IrisMacroResponse, IrisMessageBodyResponse,
     IrisNamespaceCreateResponse, IrisNamespaceListResponse, IrisProductionDiffResponse,
     IrisProductionItemResponse, IrisProductionResponse, IrisQueryResponse,
-    IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
+    IrisRemoveServerResponse, IrisSearchResponse, IrisSelectContainerResponse, IrisServersResponse,
     IrisSourceControlResponse, IrisStartSandboxResponse, IrisSymbolsLocalResponse,
     IrisSymbolsResponse, IrisTableInfoResponse, IrisTestResponse, IrisTestServerResponse,
     IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse, JournalSearchResponse,
@@ -5522,7 +5522,8 @@ Methods:
 
     #[tool(
         description = "Full-text search across IRIS documents via Atelier REST v2. Auto-upgrades to async polling for large namespaces. Supports regex, case sensitivity, category filter (CLS/MAC/INT/INC/ALL), and wildcard document scopes. Skill: objectscript-navigation. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisSearchResponse>()
     )]
     async fn iris_search(
         &self,
