@@ -103,6 +103,8 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "iris_doc",
     // batch 12
     "iris_coverage",
+    // batch 13
+    "iris_global",
 ];
 
 /// Tools legitimately absent from the Merged toolset entirely (not "present but missing a
@@ -135,6 +137,7 @@ const BASELINE_REMOVED: &[&str] = &[
     "iris_production_diff",
     "iris_execute_method",
     "iris_debug",
+    "iris_global",
 ];
 
 #[test]

@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (80/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (81/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -261,6 +261,20 @@ Both `parse_check_output`/`parse_coverage_output`'s JSON-passthrough branches (`
 No `test_output_schema_shapes.rs` coverage — every mode needs a live connection.
 
 **Remaining**: 10 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_source_control`, `iris_global`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`.
+
+---
+
+### Batch 13 — `iris_global` (81/90 total)
+
+Read/write/kill/list on raw IRIS globals. Fires `dispatch_gate` (PHI + system-blocklist checks) before any IRIS call, so has a `GateBlocked` variant — and turned up a toolset-membership fact worth flagging: `iris_global` is itself Merged-only (`with_registry_and_toolset`'s `merged_only` list, 052-iris-global), the same category as `iris_get_log`/`iris_message_body`/`iris_business_rule_info`/`iris_production_diff`/`iris_execute_method`/`iris_debug` before it — added to `BASELINE_REMOVED` rather than the plain declared-tools list.
+
+Same `message`-not-`error` local error convention as `iris_coverage`, but not the same type — `IrisGlobalError`'s fields don't overlap with `IrisCoverageError`'s mode-specific extras, so reusing one for the other would document fields that can never appear. `INVALID_SUBSCRIPT` (a requested subscript failing the allowlist regex) gets its own extended error type carrying which subscript failed and the pattern checked, rather than folding into the general error — this is a rejected-input error a caller should be able to tell apart from an IRIS-side failure without parsing `message`.
+
+Each action's success shape is a genuinely different struct, not a shared one with options: `get` (single value) returns `{success, defined, value}`; `get` with `subtree: true` returns a node list; `set`/`kill` return only `{success: true}` — nothing else to report; `list` returns a subscript list. Four structs, not four flavors of one.
+
+No `test_output_schema_shapes.rs` coverage — `iris_global` routes through `resolve_server`/`get_iris_for_exec_with_client`, both of which need a live connection (unlike the `self.iris_arc()`-based tools that return `None` gracefully).
+
+**Remaining**: 9 of 90 tools — `check_config`, `iris_search`, `extract_message_map_routing`, `iris_source_control`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`.
 
 ---
 
