@@ -36,19 +36,21 @@ use output_schemas::{
     DocsIntrospectResponse, FindSubclassImplementationsResponse, GlobalKillResponse,
     GlobalPreviewResponse, Hl7SchemaInspectResponse, Hl7SchemaListResponse, IrisAddServerResponse,
     IrisBusinessRuleInfoResponse, IrisCredentialListResponse, IrisCredentialManageResponse,
-    IrisDatabaseListResponse, IrisDatabaseStatsResponse, IrisDocSearchResponse,
-    IrisGenerateClassResponse, IrisGenerateTestResponse, IrisGetLogResponse,
-    IrisImportServersResponse, IrisInfoResponse, IrisListContainersResponse,
-    IrisLookupManageResponse, IrisLookupTransferResponse, IrisMessageBodyResponse,
-    IrisNamespaceCreateResponse, IrisNamespaceListResponse, IrisProductionDiffResponse,
-    IrisRemoveServerResponse, IrisSelectContainerResponse, IrisServersResponse,
-    IrisStartSandboxResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse,
-    IrisTestServerResponse, IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse,
-    JournalSearchResponse, KbIndexResponse, KbRecallResponse, KbResponse, MermaidClassResponse,
-    MermaidProductionResponse, MyAccessResponse, QueryAuditLogResponse,
-    ResolveDynamicDispatchResponse, ResolveStorageResponse, SkillCommunityListResponse,
-    SkillDescribeResponse, SkillForgetResponse, SkillListResponse, SkillSearchResponse,
-    StreamInspectResponse, TelemetryExportTraceResponse, TelemetryQueryResponse, ToolError,
+    IrisDatabaseListResponse, IrisDatabaseStatsResponse, IrisDebugResponse, IrisDocSearchResponse,
+    IrisExecuteMethodResponse, IrisGenerateClassResponse, IrisGenerateResponse,
+    IrisGenerateTestResponse, IrisGetLogResponse, IrisImportServersResponse, IrisInfoResponse,
+    IrisListContainersResponse, IrisLookupManageResponse, IrisLookupTransferResponse,
+    IrisMacroResponse, IrisMessageBodyResponse, IrisNamespaceCreateResponse,
+    IrisNamespaceListResponse, IrisProductionDiffResponse, IrisRemoveServerResponse,
+    IrisSelectContainerResponse, IrisServersResponse, IrisStartSandboxResponse,
+    IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTableInfoResponse, IrisTestServerResponse,
+    IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse, JournalSearchResponse,
+    KbIndexResponse, KbRecallResponse, KbResponse, MermaidClassResponse, MermaidProductionResponse,
+    MyAccessResponse, QueryAuditLogResponse, ResolveDynamicDispatchResponse,
+    ResolveStorageResponse, SkillCommunityListResponse, SkillCommunityResponse,
+    SkillDescribeResponse, SkillForgetResponse, SkillListResponse, SkillResponse,
+    SkillSearchResponse, StreamInspectResponse, TelemetryExportTraceResponse,
+    TelemetryQueryResponse, ToolError,
 };
 
 tokio::task_local! {
@@ -5726,6 +5728,7 @@ Methods:
 
     #[tool(
         description = "Inspect IRIS macros. action=list returns all macros, action=signature returns parameters, action=location finds definition file/line, action=definition returns text, action=expand expands with arguments. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<IrisMacroResponse>(),
         annotations(read_only_hint = true)
     )]
     async fn iris_macro(
@@ -5739,7 +5742,8 @@ Methods:
     }
 
     #[tool(
-        description = "IRIS debug tools. action=map_int maps a runtime error offset to source line, action=error_logs fetches recent error log entries, action=capture captures current error state, action=source_map builds .INT to .CLS mapping. Skill: objectscript-debugging. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
+        description = "IRIS debug tools. action=map_int maps a runtime error offset to source line, action=error_logs fetches recent error log entries, action=capture captures current error state, action=source_map builds .INT to .CLS mapping. Skill: objectscript-debugging. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<IrisDebugResponse>()
     )]
     async fn iris_debug(
         &self,
@@ -5752,7 +5756,8 @@ Methods:
     }
 
     #[tool(
-        description = "Prepare context for generating an ObjectScript class or %UnitTest. Returns a ready-to-use prompt plus IRIS namespace context (existing class names, method signatures). No API key needed — the calling AI agent does the generation using the returned prompt, then saves with iris_doc(mode=put) and compiles with iris_compile. gen_type=class for new classes, gen_type=test for %UnitTest scaffolding. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
+        description = "Prepare context for generating an ObjectScript class or %UnitTest. Returns a ready-to-use prompt plus IRIS namespace context (existing class names, method signatures). No API key needed — the calling AI agent does the generation using the returned prompt, then saves with iris_doc(mode=put) and compiles with iris_compile. gen_type=class for new classes, gen_type=test for %UnitTest scaffolding. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<IrisGenerateResponse>()
     )]
     async fn iris_generate(
         &self,
@@ -5765,7 +5770,8 @@ Methods:
     }
 
     #[tool(
-        description = "Manage the learning agent skill registry. action=list returns all skills, action=describe returns one skill, action=search finds skills by keyword, action=forget removes a skill, action=propose mines recent tool calls and synthesizes a new skill (requires ≥5 calls)."
+        description = "Manage the learning agent skill registry. action=list returns all skills, action=describe returns one skill, action=search finds skills by keyword, action=forget removes a skill, action=propose mines recent tool calls and synthesizes a new skill (requires ≥5 calls).",
+        output_schema = output_schemas::oneof_output_schema::<SkillResponse>()
     )]
     async fn skill(
         &self,
@@ -5778,7 +5784,8 @@ Methods:
     }
 
     #[tool(
-        description = "Community skill registry. action=list browses published skills from subscribed GitHub repos, action=install writes a community skill to the local ^SKILLS global."
+        description = "Community skill registry. action=list browses published skills from subscribed GitHub repos, action=install writes a community skill to the local ^SKILLS global.",
+        output_schema = output_schemas::oneof_output_schema::<SkillCommunityResponse>()
     )]
     async fn skill_community(
         &self,
@@ -6017,7 +6024,8 @@ Methods:
     // ── 053: iris_execute_method ──────────────────────────────────────────────
 
     #[tool(
-        description = "Invoke a ClassMethod directly by class+method+args without writing ObjectScript boilerplate. Returns the string return value. Execute-gated: blocked on mcpTemplate=live and mcpTemplate=test. v1 limitation: only string-returning methods. Skill: objectscript-navigation (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
+        description = "Invoke a ClassMethod directly by class+method+args without writing ObjectScript boilerplate. Returns the string return value. Execute-gated: blocked on mcpTemplate=live and mcpTemplate=test. v1 limitation: only string-returning methods. Skill: objectscript-navigation (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<IrisExecuteMethodResponse>()
     )]
     async fn iris_execute_method(
         &self,
@@ -6352,6 +6360,8 @@ Methods:
     #[tool(
         description = "Read an Ensemble/Interoperability message body by message ID. Handles plain-text and stream-backed bodies (Ens.StreamContainer, %Stream.Object). PHI-gated: dataPolicy=block returns PHI_POLICY_BLOCKED; dataPolicy=allow requires acknowledgePhi=true; dataPolicy=redact scrubs HL7 v2 PID/MSH fields. max_bytes default 65536, clamped to 1048576. Skill: ensemble-production (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         annotations(read_only_hint = true),
+        // Batch 6 correction: the wrapper's dispatch_gate short-circuit wasn't accounted for
+        // when this schema was first declared — see IrisMessageBodyResponse's doc comment.
         output_schema = output_schemas::oneof_output_schema::<IrisMessageBodyResponse>()
     )]
     async fn iris_message_body(
