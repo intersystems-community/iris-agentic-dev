@@ -30,10 +30,15 @@ use std::sync::Arc;
 // 076-interface-modernization User Story 1: output-schema-only response shapes. Not
 // constructed at runtime — see output_schemas.rs's module doc comment for why.
 use output_schemas::{
-    AgentHistoryResponse, AgentStatsResponse, DebugMapIntToClsResponse, DebugSourceMapResponse,
-    DocsIntrospectResponse, IrisServersResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse,
-    IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse, KbRecallResponse,
-    SkillCommunityListResponse, SkillForgetResponse, SkillListResponse,
+    AgentHistoryResponse, AgentStatsResponse, CapabilityMatrixResponse, DebugCapturePacketResponse,
+    DebugGetErrorLogsResponse, DebugMapIntToClsResponse, DebugSourceMapResponse,
+    DocsIntrospectResponse, GlobalKillResponse, Hl7SchemaListResponse, IrisAddServerResponse,
+    IrisDatabaseListResponse, IrisDatabaseStatsResponse, IrisImportServersResponse,
+    IrisNamespaceCreateResponse, IrisNamespaceListResponse, IrisRemoveServerResponse,
+    IrisServersResponse, IrisSymbolsLocalResponse, IrisSymbolsResponse, IrisTestServerResponse,
+    IrisWsCloseResponse, IrisWsExecResponse, IrisWsOpenResponse, JournalSearchResponse,
+    KbRecallResponse, MyAccessResponse, SkillCommunityListResponse, SkillForgetResponse,
+    SkillListResponse,
 };
 
 tokio::task_local! {
@@ -4834,7 +4839,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
     #[tool(
         description = "Capture IRIS error state and recent error log entries for debugging.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<DebugCapturePacketResponse>()
     )]
     async fn debug_capture_packet(
         &self,
@@ -4859,7 +4865,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
 
     #[tool(
         description = "Retrieve recent IRIS error log entries.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<DebugGetErrorLogsResponse>()
     )]
     async fn debug_get_error_logs(
         &self,
@@ -6935,7 +6942,8 @@ Methods:
     }
 
     #[tool(
-        description = "Add a new IRIS server to the iad-native configuration. The password is stored in the OS keychain — never written to disk. The running pool does not hot-reload; restart iad after adding a server to make it available via the `server` param. Returns {added: true, name, note}."
+        description = "Add a new IRIS server to the iad-native configuration. The password is stored in the OS keychain — never written to disk. The running pool does not hot-reload; restart iad after adding a server to make it available via the `server` param. Returns {added: true, name, note}.",
+        output_schema = output_schemas::oneof_output_schema::<IrisAddServerResponse>()
     )]
     async fn iris_add_server(
         &self,
@@ -6990,7 +6998,8 @@ Methods:
 
     #[tool(
         description = "Remove a server from the iad-native configuration. Only servers with source=iad-native can be removed (vscode, fleet, and env sources are read-only). Also removes the OS keychain entry. Returns {removed: true, name, note}. Error codes: REMOVE_NOT_ALLOWED (source is not iad-native), SERVER_NOT_FOUND (not in pool).",
-        annotations(destructive_hint = true)
+        annotations(destructive_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisRemoveServerResponse>()
     )]
     async fn iris_remove_server(
         &self,
@@ -7052,7 +7061,8 @@ Methods:
 
     #[tool(
         description = "Probe an IRIS server for reachability. Performs GET /api/atelier/ with timing. Does not modify the active connection. Returns {name, reachable, atelier_version, iris_version, latency_ms} on success, or {name, reachable: false, error} on failure. Error codes: SERVER_NOT_FOUND (not in pool).",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = schema_for_output::<IrisTestServerResponse>().unwrap()
     )]
     async fn iris_test_server(
         &self,
@@ -7111,7 +7121,8 @@ Methods:
     }
 
     #[tool(
-        description = "Import IRIS server definitions from VS Code / Cursor Server Manager into the iad-native config. Reads intersystems.servers from VS Code and Cursor settings.json. Servers already present in the iad-native config are skipped (no overwrite). Passwords are resolved from the OS keychain; servers where no keychain entry exists are imported without a password (listed in no_keychain). Returns {imported, skipped, no_keychain: [...]}. Restart iad after importing."
+        description = "Import IRIS server definitions from VS Code / Cursor Server Manager into the iad-native config. Reads intersystems.servers from VS Code and Cursor settings.json. Servers already present in the iad-native config are skipped (no overwrite). Passwords are resolved from the OS keychain; servers where no keychain entry exists are imported without a password (listed in no_keychain). Returns {imported, skipped, no_keychain: [...]}. Restart iad after importing.",
+        output_schema = output_schemas::oneof_output_schema::<IrisImportServersResponse>()
     )]
     async fn iris_import_servers(&self) -> Result<CallToolResult, McpError> {
         use crate::iris::server_manager;
@@ -7401,7 +7412,8 @@ Methods:
 
     #[tool(
         description = "Kill (delete) an entire IRIS global. WRITE-GATED. Requires a confirm_token from global_preview (valid 5 minutes). global: global name. confirm_token: token from global_preview. server: optional registered instance name. Error codes: CONFIRM_REQUIRED (call global_preview first), CONFIRM_EXPIRED (token expired), CONFIRM_MISMATCH (token for different global/server). Skill: iris-agentic-dev.",
-        annotations(destructive_hint = true)
+        annotations(destructive_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<GlobalKillResponse>()
     )]
     async fn global_kill(
         &self,
@@ -7444,7 +7456,8 @@ Methods:
 
     #[tool(
         description = "List all namespaces on an IRIS instance. server: optional registered instance name. Returns {namespaces: [...], count: N}. Skill: iris-agentic-dev.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisNamespaceListResponse>()
     )]
     async fn iris_namespace_list(
         &self,
@@ -7462,7 +7475,8 @@ Methods:
 
     #[tool(
         description = "List all databases (directories) on an IRIS instance. server: optional registered instance name. Returns {databases: [{directory, mounted, size_mb}], count: N}. Skill: iris-agentic-dev.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisDatabaseListResponse>()
     )]
     async fn iris_database_list(
         &self,
@@ -7480,7 +7494,8 @@ Methods:
 
     #[tool(
         description = "Create a new namespace on an IRIS instance. WRITE-GATED. name: namespace name. db_path: optional database directory (defaults to name). server: optional registered instance name. Skill: iris-agentic-dev.",
-        annotations(destructive_hint = true)
+        annotations(destructive_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisNamespaceCreateResponse>()
     )]
     async fn iris_namespace_create(
         &self,
@@ -7514,7 +7529,8 @@ Methods:
 
     #[tool(
         description = "Get disk usage statistics for IRIS databases. db: optional directory path to limit to one database; if omitted returns all. server: optional registered instance name. Returns {stats: [{directory, free_space_mb, free_blocks}]}. Skill: iris-agentic-dev.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<IrisDatabaseStatsResponse>()
     )]
     async fn iris_database_stats(
         &self,
@@ -7536,7 +7552,8 @@ Methods:
 
     #[tool(
         description = "Search the IRIS journal for SetKill records. start/end: optional ISO timestamp filters. global_pattern: optional substring filter on GlobalReference. max_entries: default 100, max 500. server: optional registered instance name. Returns {entries: [{timestamp, type, job_id, global}]}. Skill: iris-agentic-dev.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<JournalSearchResponse>()
     )]
     async fn journal_search(
         &self,
@@ -7643,7 +7660,8 @@ Methods:
 
     #[tool(
         description = "Show the current user's username, full name, and assigned roles on an IRIS instance. server: optional registered instance name. Returns {username, full_name, roles: [...]}. Skill: iris-agentic-dev.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<MyAccessResponse>()
     )]
     async fn my_access(
         &self,
@@ -7661,7 +7679,8 @@ Methods:
 
     #[tool(
         description = "Show the roles assigned to a user on an IRIS instance. user: optional username (default: current user). server: optional registered instance name. Returns {user, full_name, roles: [...]}. Skill: iris-agentic-dev.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<CapabilityMatrixResponse>()
     )]
     async fn capability_matrix(
         &self,
@@ -7686,7 +7705,8 @@ Methods:
 
     #[tool(
         description = "List available HL7 schemas on an IRIS/HealthShare instance. Returns HL7_NOT_AVAILABLE if EnsLib.HL7.Schema is absent. namespace: optional (defaults to the connection namespace, IRIS_NAMESPACE). server: optional registered instance name. Returns {schemas: [...], count: N}. Skill: iris-agentic-dev.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<Hl7SchemaListResponse>()
     )]
     async fn hl7_schema_list(
         &self,

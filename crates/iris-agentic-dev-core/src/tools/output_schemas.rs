@@ -288,6 +288,295 @@ pub enum IrisWsOpenResponse {
     Err(ToolError),
 }
 
+// ── debug_capture_packet / debug_get_error_logs ─────────────────────────────
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DebugCapturePacketOk {
+    pub success: bool,
+    /// `%SYSTEM.Error` query rows — free-form JSON rather than a fixed struct.
+    pub errors: serde_json::Value,
+    /// Present only on the community-edition fallback path (`%SYSTEM.Error` unavailable).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum DebugCapturePacketResponse {
+    Ok(DebugCapturePacketOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DebugGetErrorLogsOk {
+    pub success: bool,
+    /// `%SYSTEM.Error` query rows (or `[]` on the community-edition fallback) — free-form JSON.
+    pub logs: serde_json::Value,
+    /// Absent only on the community-edition fallback path, which returns before progressive
+    /// disclosure (`log_store::apply_truncation`) ever runs. Present (true or false) otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub truncated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inline_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum DebugGetErrorLogsResponse {
+    Ok(DebugGetErrorLogsOk),
+    Err(ToolError),
+}
+
+// ── iris_add_server / iris_remove_server / iris_import_servers ─────────────
+
+/// The `iad-native` server-config mutation tools (`iris_add_server`, `iris_remove_server`,
+/// `iris_import_servers`) predate this project's `err_json`/`ToolError` convention and use their
+/// own bespoke error shape instead: `{error_code, message}`, with an optional `source` field
+/// (only `iris_remove_server`'s `REMOVE_NOT_ALLOWED` case sets it) — never a `success` key at
+/// all on the error path, unlike `ToolError`.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ServerMutationError {
+    pub error_code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisAddServerOk {
+    pub added: bool,
+    pub name: String,
+    pub note: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisAddServerResponse {
+    Ok(IrisAddServerOk),
+    Err(ServerMutationError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisRemoveServerOk {
+    pub removed: bool,
+    pub name: String,
+    pub note: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisRemoveServerResponse {
+    Ok(IrisRemoveServerOk),
+    Err(ServerMutationError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisImportServersOk {
+    pub success: bool,
+    pub imported: usize,
+    pub skipped: usize,
+    pub no_keychain: Vec<String>,
+    pub note: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisImportServersResponse {
+    Ok(IrisImportServersOk),
+    Err(ServerMutationError),
+}
+
+// ── iris_test_server ─────────────────────────────────────────────────────────
+
+/// Unlike almost every other tool in this file, `iris_test_server` never calls `err_json` — every
+/// outcome (network error, non-2xx status, JSON parse failure, success) goes through `ok_json`
+/// with `reachable` as the discriminant, so this is one flat shape with optional fields rather
+/// than an `Ok | Err` union.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisTestServerResponse {
+    pub name: String,
+    pub reachable: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latency_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub atelier_version: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub iris_version: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parse_error: Option<String>,
+}
+
+// ── global_kill / iris_namespace_list / iris_database_list ─────────────────
+// ── iris_namespace_create / iris_database_stats ─────────────────────────────
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct GlobalKillOk {
+    pub success: bool,
+    pub killed: bool,
+    pub global: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum GlobalKillResponse {
+    Ok(GlobalKillOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisNamespaceListOk {
+    pub success: bool,
+    pub namespaces: Vec<String>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisNamespaceListResponse {
+    Ok(IrisNamespaceListOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DatabaseEntry {
+    pub directory: String,
+    pub mounted: bool,
+    pub size_mb: f64,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDatabaseListOk {
+    pub success: bool,
+    pub databases: Vec<DatabaseEntry>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisDatabaseListResponse {
+    Ok(IrisDatabaseListOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisNamespaceCreateOk {
+    pub success: bool,
+    pub created: bool,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisNamespaceCreateResponse {
+    Ok(IrisNamespaceCreateOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct DbStatEntry {
+    pub directory: String,
+    pub free_space_mb: f64,
+    pub free_blocks: i64,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisDatabaseStatsOk {
+    pub success: bool,
+    pub stats: Vec<DbStatEntry>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisDatabaseStatsResponse {
+    Ok(IrisDatabaseStatsOk),
+    Err(ToolError),
+}
+
+// ── my_access / capability_matrix / hl7_schema_list / journal_search ───────
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct MyAccessOk {
+    pub success: bool,
+    pub username: String,
+    pub full_name: String,
+    pub roles: Vec<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum MyAccessResponse {
+    Ok(MyAccessOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct CapabilityMatrixOk {
+    pub success: bool,
+    pub user: String,
+    /// Absent when the queried user has no `Security.Users` row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full_name: Option<String>,
+    pub roles: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum CapabilityMatrixResponse {
+    Ok(CapabilityMatrixOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct Hl7SchemaListOk {
+    pub success: bool,
+    pub schemas: Vec<String>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Hl7SchemaListResponse {
+    Ok(Hl7SchemaListOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct JournalEntry {
+    pub timestamp: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub job_id: i64,
+    pub global: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct JournalSearchOk {
+    pub success: bool,
+    pub entries: Vec<JournalEntry>,
+    pub returned: u32,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum JournalSearchResponse {
+    Ok(JournalSearchOk),
+    Err(ToolError),
+}
+
 /// `iris_ws_exec`'s only embedded-JSON shape — its error path (stale/unknown session) returns
 /// `Err(McpError)` via `?`, which becomes a protocol-level `isError` response outside this
 /// schema's scope, not an `err_json` value. Same for `iris_ws_close`.

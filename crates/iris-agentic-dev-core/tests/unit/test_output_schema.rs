@@ -27,6 +27,31 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "iris_ws_open",
     "iris_ws_exec",
     "iris_ws_close",
+    // batch 2
+    "debug_capture_packet",
+    "debug_get_error_logs",
+    "iris_add_server",
+    "iris_remove_server",
+    "iris_test_server",
+    "iris_import_servers",
+    "global_kill",
+    "iris_namespace_list",
+    "iris_database_list",
+    "iris_namespace_create",
+    "iris_database_stats",
+    "my_access",
+    "capability_matrix",
+    "hl7_schema_list",
+    "journal_search",
+];
+
+/// Tools consolidated into `iris_debug` in the Merged toolset — legitimately absent there
+/// entirely (not "present but missing a schema"), so excluded from the Merged-only check.
+const MERGED_REMOVED: &[&str] = &[
+    "debug_map_int_to_cls",
+    "debug_source_map",
+    "debug_capture_packet",
+    "debug_get_error_logs",
 ];
 
 #[test]
@@ -42,17 +67,29 @@ fn test_declared_tools_advertise_output_schema_in_baseline() {
 
 #[test]
 fn test_declared_tools_advertise_output_schema_in_merged() {
-    // debug_map_int_to_cls and debug_source_map are consolidated into iris_debug in Merged
-    // (see with_registry_and_toolset's merged_only removal list) — absent there entirely, not
-    // "present but missing a schema," so they're excluded from this toolset's check only.
     let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
     for name in TOOLS_WITH_DECLARED_OUTPUT_SCHEMA
         .iter()
-        .filter(|n| !["debug_map_int_to_cls", "debug_source_map"].contains(n))
+        .filter(|n| !MERGED_REMOVED.contains(n))
     {
         assert!(
             tools.tool_declares_output_schema(name),
             "'{name}' should declare a non-null output_schema in Merged's list_tools too"
+        );
+    }
+}
+
+/// The debug_* quartet must be legitimately absent from Merged (not silently missing a
+/// schema) — confirms MERGED_REMOVED's exclusion is real, not papering over a bug.
+#[test]
+fn test_merged_removed_tools_are_absent_from_merged_router() {
+    let merged = IrisTools::new_with_toolset(None, Toolset::Merged)
+        .expect("IrisTools::new")
+        .registered_tool_names();
+    for name in MERGED_REMOVED {
+        assert!(
+            !merged.contains(*name),
+            "'{name}' was expected to be replaced by iris_debug in Merged, but is still present"
         );
     }
 }
