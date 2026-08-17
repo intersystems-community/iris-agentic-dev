@@ -1940,3 +1940,94 @@ pub enum IrisTestResponse {
     NoTestsFound(IrisTestNoTestsFoundError),
     Err(ToolError),
 }
+
+// ── iris_execute ──────────────────────────────────────────────────────────────
+//
+// The fourth core execution tool. Same three gate mechanisms as `iris_query`/`iris_compile`.
+// Two genuinely different success shapes depending on which path actually ran (`method:
+// "http"` vs `method: "docker"`) — the HTTP path carries the service-account routing
+// diagnostics (`auth_user`/`service_account_env`) and the `%ctx` session carrier
+// (`session_state`); the docker fallback path carries neither, since it always runs as the
+// primary connection's own identity and has no session support.
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisExecuteHttpOk {
+    pub success: bool,
+    pub output: String,
+    pub namespace: String,
+    pub method: String,
+    /// The identity this call actually authenticated as — always present, distinct from
+    /// `error_code`'s absence-means-success convention, so callers can observe service-account
+    /// routing on every HTTP-path call, not just failures.
+    pub auth_user: String,
+    /// Empty string when `IRIS_SERVICE_USERNAME` isn't configured, not omitted — this is a
+    /// diagnostic field, not an optional one.
+    pub service_account_env: String,
+    /// Present only when the executed code's own output looked like an ObjectScript runtime
+    /// error (`ERROR: `/`ERROR($ZERROR): ` prefix) — `success` is `false` in that case, but the
+    /// code path is otherwise identical to a normal completion, hence no separate error type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    /// Present only when `use_session: true` was passed — the opaque Base64 `%ctx` carrier
+    /// token to round-trip on the next call.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_state: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sql_translated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub translated_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub translation_warning: Option<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisExecuteDockerOk {
+    pub success: bool,
+    pub output: String,
+    pub namespace: String,
+    pub method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sql_translated: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub translated_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub translation_warning: Option<Vec<String>>,
+}
+
+/// The `%ctx` session carrier's own fatal-error path (bad token, restore failure, serialize
+/// failure) — takes priority over normal output processing on the HTTP path, and carries the
+/// same routing diagnostics `IrisExecuteHttpOk` does, on top of `ToolError`'s three fields.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisExecuteSessionError {
+    pub success: bool,
+    pub error_code: String,
+    pub error: String,
+    pub namespace: String,
+    pub method: String,
+    pub auth_user: String,
+    pub service_account_env: String,
+}
+
+/// The docker-fallback path's `DOCKER_REQUIRED` case — reported as `HTTP_EXECUTION_FAILED`
+/// instead, since HTTP (not docker) is the primary path and its real failure is the actual
+/// cause; carries the original HTTP error as `http_error` on top of `ToolError`'s three fields.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisExecuteHttpExecutionFailedError {
+    pub success: bool,
+    pub error_code: String,
+    pub error: String,
+    pub http_error: String,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisExecuteResponse {
+    Http(IrisExecuteHttpOk),
+    Docker(IrisExecuteDockerOk),
+    SessionError(IrisExecuteSessionError),
+    HttpExecutionFailed(IrisExecuteHttpExecutionFailedError),
+    Err(ToolError),
+    GateBlocked(serde_json::Value),
+}

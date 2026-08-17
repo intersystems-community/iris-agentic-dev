@@ -87,7 +87,7 @@ Worth noting: this project does **not** use rmcp's actual protocol-level elicita
 
 ## User Scenarios & Testing _(mandatory)_
 
-### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (77/90 tools)
+### User Story 1 - Declare tool output schemas (Priority: P1) — 🔶 In Progress (78/90 tools)
 
 A developer or tooling author consuming iris-agentic-dev's MCP tools programmatically (including any code-mode-style gateway that generates a typed SDK from tool schemas) wants to know the *shape* of a tool's response without parsing prose descriptions or guessing from examples.
 
@@ -215,6 +215,18 @@ The third core execution tool. Simpler than `iris_query`/`iris_compile` in one s
 No `test_output_schema_shapes.rs` coverage — every path needs a live connection. The "known-undeclared" example in `test_a_tool_without_a_declared_schema_reports_false_not_a_panic` moved to `iris_execute` (its third home, after `iris_compile` then `iris_test`, as batches 8 and 9 gave each of them a real schema in turn).
 
 **Remaining**: 13 of 90 tools — `iris_execute`, `iris_doc`, `check_config`, `iris_search`, `extract_message_map_routing`, `iris_source_control`, `iris_global`, `iris_coverage`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`.
+
+---
+
+### Batch 10 — `iris_execute` (78/90 total)
+
+The fourth core execution tool. Same three gate mechanisms as `iris_query`/`iris_compile` ahead of the real work, plus a `SESSION_INVALID` early-return that matches `ToolError` exactly. Past the gates, its complexity comes from two structurally different execution paths rather than one: the normal Atelier HTTP path (`method: "http"`) carries `auth_user`/`service_account_env`/an optional `session_state` token that the docker-exec fallback path (`method: "docker"`) has no equivalent for at all — reusing one struct with everything `Option` would have hidden which fields actually co-occur, so this became two distinct success structs (`IrisExecuteHttpOk`/`IrisExecuteDockerOk`) rather than one loosely-typed one.
+
+Two more error shapes, both bespoke rather than plain `ToolError`: `IrisExecuteSessionError` (a session-fatal failure that still needs to report which namespace/method/auth_user/service_account_env it was attempting, so the caller can tell *which* session died) and `IrisExecuteHttpExecutionFailedError` (the case where the docker fallback's own `DOCKER_REQUIRED` path surfaces the *original* HTTP error rather than a docker-specific one, carrying it in an `http_error` field ToolError has no room for). `IrisExecuteResponse` ends up with six variants: `Http`, `Docker`, `SessionError`, `HttpExecutionFailed`, `Err(ToolError)`, `GateBlocked(serde_json::Value)`.
+
+No `test_output_schema_shapes.rs` coverage — every path needs a live connection or service-account routing; there's no side-effect-free way to exercise this one without a real IRIS instance. The "known-undeclared" example in `test_a_tool_without_a_declared_schema_reports_false_not_a_panic` moved off the execution-tool rotation entirely this time, to `check_config` — deliberately picked as unlikely to need a schema soon (genuinely heterogeneous, conditionally-appended fields, already carved out elsewhere in this codebase as intentionally uncategorized) rather than another tool that would just need swapping out again next batch.
+
+**Remaining**: 12 of 90 tools — `iris_doc`, `check_config`, `iris_search`, `extract_message_map_routing`, `iris_source_control`, `iris_global`, `iris_coverage`, `iris_production`, `iris_interop_query`, `iris_containers`, `iris_production_item`, `iris_admin`.
 
 ---
 
