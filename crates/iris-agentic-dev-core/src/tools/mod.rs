@@ -759,6 +759,11 @@ pub struct TestParams {
     /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
     #[serde(default)]
     pub server: Option<String>,
+    /// Test class type override. Values: "auto" (default), "testcase", "testproduction".
+    /// "auto" detects %UnitTest.TestProduction subclasses and uses .Run() automatically.
+    /// "testcase" forces %UnitTest.Manager::RunTest(). "testproduction" forces .Run().
+    #[serde(default)]
+    pub test_type: Option<String>,
 }
 
 fn default_test_timeout() -> u64 {
@@ -1107,6 +1112,53 @@ pub fn map_status_int(status: i64, error_action: &str) -> &'static str {
             }
         }
     }
+}
+
+/// Build the ObjectScript code to run a test class.
+/// `is_test_production=true` → uses `.Run()` (for %UnitTest.TestProduction subclasses).
+/// `is_test_production=false` → uses %UnitTest.Manager::RunTest() with `flags` and `token`.
+pub fn build_test_run_code(
+    pattern: &str,
+    flags: &str,
+    token: &str,
+    is_test_production: bool,
+) -> String {
+    let safe_pattern = pattern.replace('"', "\\\"");
+    let is_class_pattern = !safe_pattern.contains('/') && !safe_pattern.contains('\\');
+
+    if is_test_production && is_class_pattern {
+        format!(r#"do ##class({pattern}).Run()"#, pattern = safe_pattern,)
+    } else if is_class_pattern {
+        format!(
+            r#"do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
+            token = token,
+            pattern = safe_pattern,
+            flags = flags,
+        )
+    } else {
+        format!(
+            r#"set utRoot="/tmp/httest/"
+if '##class(%File).DirectoryExists(utRoot) {{ do ##class(%File).CreateDirectoryChain(utRoot) }}
+set pkgDir=utRoot_"{pattern}"_"/"
+if '##class(%File).DirectoryExists(pkgDir) {{ do ##class(%File).CreateDirectoryChain(pkgDir) }}
+set ^UnitTestRoot=utRoot
+do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
+            token = token,
+            pattern = safe_pattern,
+            flags = flags,
+        )
+    }
+}
+
+/// ObjectScript snippet to probe whether a class extends %UnitTest.TestProduction.
+/// Returns code that writes "1" if it does, "0" otherwise.
+pub fn build_superclass_probe(class_name: &str) -> String {
+    let safe = class_name.replace('"', "\\\"");
+    format!(
+        r#"set oref=##class(%Dictionary.ClassDefinition).%OpenId("{cls}")
+if $isobject(oref) {{ write $select($find(oref.Super,"%UnitTest.TestProduction"):1,1:0) }} else {{ write 0 }}"#,
+        cls = safe,
+    )
 }
 
 /// Build the compact (inline) TestRun JSON from SQL rows.
@@ -3257,7 +3309,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Run %UnitTest.Manager tests on IRIS and return structured pass/fail results. Uses pure-HTTP execution via Atelier REST — works with or without IRIS_CONTAINER. Pass a class name pattern like 'MyApp.Tests' or 'ISC.sql.TestFoo' to run already-compiled test classes (uses /noload automatically). Pass a directory path like 'MyApp/Tests' to load from disk. Returns suite-level summary inline plus log_id for per-test-case detail via iris_get_log. Skill: objectscript-unit-test for test scaffolding; objectscript-tdd for the full loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "Run %UnitTest.Manager or %UnitTest.TestProduction tests on IRIS and return structured pass/fail results. Uses pure-HTTP execution via Atelier REST — works with or without IRIS_CONTAINER. Pass a class name pattern like 'MyApp.Tests' or 'ISC.sql.TestFoo' to run already-compiled test classes (uses /noload automatically). Pass a directory path like 'MyApp/Tests' to load from disk. Returns suite-level summary inline plus log_id for per-test-case detail via iris_get_log. `test_type` (optional): 'auto' (default) auto-detects %UnitTest.TestProduction subclasses and calls .Run(); 'testcase' forces RunTest(); 'testproduction' forces .Run(). Skill: objectscript-unit-test for test scaffolding; objectscript-tdd for the full loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         output_schema = output_schemas::oneof_output_schema::<IrisTestResponse>()
     )]
     async fn iris_test(
@@ -3316,32 +3368,37 @@ impl IrisTools {
             "/verbose=1/nodelete"
         };
 
+        // Detect whether this is a %UnitTest.TestProduction subclass.
+        // Auto-detect when test_type=="auto" or None + single class pattern (no wildcards, no path).
+        let is_single_class = is_class_pattern && !safe_pattern.contains('*');
+        let force_type = p.test_type.as_deref().unwrap_or("auto");
+        let is_test_production = match force_type {
+            "testproduction" => true,
+            "testcase" => false,
+            _ => {
+                // auto: probe superclass only for single compiled class names
+                if is_single_class {
+                    let probe = build_superclass_probe(&safe_pattern);
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        iris.execute_via_generator(&probe, &namespace, client),
+                    )
+                    .await
+                    .ok()
+                    .and_then(|r| r.ok())
+                    .map(|s| s.trim().starts_with('1'))
+                    .unwrap_or(false)
+                } else {
+                    false
+                }
+            }
+        };
+
         // Run tests via execute_via_generator (HTTP path).
         // After RunTest completes, ^UnitTest.Result global IS persisted (globals bypass
         // the objectgenerator transaction boundary; SQL %Save() does not).
-        let run_code = if is_class_pattern {
-            // Class pattern: no filesystem directory needed; /noload finds compiled class directly.
-            format!(
-                r#"do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
-                token = correlation_token,
-                pattern = safe_pattern,
-                flags = flags,
-            )
-        } else {
-            // Directory path: set ^UnitTestRoot and pre-create the pattern subdirectory.
-            // iris_test preamble sets ^UnitTestRoot to /tmp/httest/ (IRIS community default).
-            format!(
-                r#"set utRoot="/tmp/httest/"
-if '##class(%File).DirectoryExists(utRoot) {{ do ##class(%File).CreateDirectoryChain(utRoot) }}
-set pkgDir=utRoot_"{pattern}"_"/"
-if '##class(%File).DirectoryExists(pkgDir) {{ do ##class(%File).CreateDirectoryChain(pkgDir) }}
-set ^UnitTestRoot=utRoot
-do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
-                token = correlation_token,
-                pattern = safe_pattern,
-                flags = flags,
-            )
-        };
+        let run_code =
+            build_test_run_code(&safe_pattern, flags, &correlation_token, is_test_production);
 
         // coverage=true: start the monitor before the test run so it instruments execution.
         // We start here (before run_output), then report+stop after parsing test results.
@@ -3577,8 +3634,8 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                 )
             } else {
                 "Pattern matched no test classes. Verify the package name is correct, \
-                 the classes extend %UnitTest.TestCase, and ^UnitTestRoot is set to \
-                 your tests directory."
+                 the classes extend %UnitTest.TestCase or %UnitTest.TestProduction, \
+                 and ^UnitTestRoot is set to your tests directory."
                     .to_string()
             };
             return err_result(serde_json::json!({

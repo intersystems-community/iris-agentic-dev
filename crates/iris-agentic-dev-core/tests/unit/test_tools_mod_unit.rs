@@ -1,7 +1,10 @@
 // Unit tests for tools/mod.rs internal helpers and public functions.
 // Targets uncovered branches identified from LCOV analysis.
 
-use iris_agentic_dev_core::tools::{map_status_int, translate_sql_macros, validate_read_only_sql};
+use iris_agentic_dev_core::tools::{
+    build_superclass_probe, build_test_run_code, map_status_int, translate_sql_macros,
+    validate_read_only_sql,
+};
 
 // ── map_status_int ────────────────────────────────────────────────────────────
 
@@ -2291,4 +2294,72 @@ async fn call_for_test_global_kill_no_iris() {
             serde_json::json!({"global_name": "MyGlobal"}),
         )
         .await;
+}
+
+// ── build_test_run_code ───────────────────────────────────────────────────────
+
+#[test]
+fn build_test_run_code_testcase_class_pattern() {
+    let code = build_test_run_code("MyApp.Tests", "/verbose=1/nodelete/noload", "tok1", false);
+    assert!(code.contains("##class(%UnitTest.Manager).RunTest("));
+    assert!(code.contains("MyApp.Tests"));
+    assert!(code.contains("tok1"));
+    assert!(!code.contains(".Run()"));
+}
+
+#[test]
+fn build_test_run_code_testproduction_class_pattern() {
+    let code = build_test_run_code(
+        "MyApp.MyProdTest",
+        "/verbose=1/nodelete/noload",
+        "tok2",
+        true,
+    );
+    assert!(code.contains("##class(MyApp.MyProdTest).Run()"));
+    assert!(!code.contains("RunTest"));
+    assert!(!code.contains("tok2"));
+}
+
+#[test]
+fn build_test_run_code_testproduction_false_for_directory_path() {
+    // is_test_production=true is ignored when pattern is a directory path (contains /)
+    let code = build_test_run_code("MyApp/Tests", "/verbose=1/nodelete", "tok3", true);
+    // falls through to directory path branch: uses RunTest
+    assert!(code.contains("##class(%UnitTest.Manager).RunTest("));
+    assert!(code.contains("^UnitTestRoot"));
+}
+
+#[test]
+fn build_test_run_code_directory_path() {
+    let code = build_test_run_code("MyApp/Tests", "/verbose=1/nodelete", "tok4", false);
+    assert!(code.contains("^UnitTestRoot"));
+    assert!(code.contains("##class(%UnitTest.Manager).RunTest("));
+    assert!(code.contains("tok4"));
+}
+
+#[test]
+fn build_test_run_code_quote_escaping() {
+    let code = build_test_run_code(
+        r#"My"App.Tests"#,
+        "/verbose=1/nodelete/noload",
+        "tok5",
+        false,
+    );
+    assert!(code.contains(r#"My\"App.Tests"#));
+}
+
+// ── build_superclass_probe ────────────────────────────────────────────────────
+
+#[test]
+fn build_superclass_probe_contains_class_name() {
+    let code = build_superclass_probe("MyApp.MyProdTest");
+    assert!(code.contains("MyApp.MyProdTest"));
+    assert!(code.contains("%UnitTest.TestProduction"));
+    assert!(code.contains("##class(%Dictionary.ClassDefinition)"));
+}
+
+#[test]
+fn build_superclass_probe_escapes_quotes() {
+    let code = build_superclass_probe(r#"My"Class"#);
+    assert!(code.contains(r#"My\"Class"#));
 }
