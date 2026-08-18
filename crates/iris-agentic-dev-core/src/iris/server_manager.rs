@@ -7,6 +7,16 @@
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
+#[cfg(target_os = "macos")]
+use apple_native_keyring_store;
+#[cfg(target_os = "windows")]
+use windows_native_keyring_store;
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+))]
+use zbus_secret_service_keyring_store;
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 /// A parsed Server Manager connection profile from VS Code settings.json.
@@ -35,6 +45,10 @@ pub enum SmCredentialError {
     Ambiguous { available: Vec<String> },
     /// Underlying keychain access error.
     KeychainError { server_name: String, detail: String },
+    /// OS keychain is not available (no daemon, headless host, Remote SSH without keychain).
+    /// Credential cannot be resolved until a keychain daemon is running or the connection is
+    /// configured via `.iris-agentic-dev.toml`.
+    KeychainUnavailable { server_name: String, detail: String },
 }
 
 impl std::fmt::Display for SmCredentialError {
@@ -57,6 +71,18 @@ impl std::fmt::Display for SmCredentialError {
             } => write!(
                 f,
                 "Keychain access error for server '{server_name}': {detail}"
+            ),
+            SmCredentialError::KeychainUnavailable {
+                server_name,
+                detail,
+            } => write!(
+                f,
+                "OS keychain is unavailable for server '{server_name}' ({detail}). \
+                 On headless hosts and Remote SSH sessions the keychain daemon is often \
+                 not accessible to out-of-process MCP clients. \
+                 Workaround: add the connection to .iris-agentic-dev.toml with host/port/\
+                 username/password — the file hot-reloads without restarting the server. \
+                 credential_status will show 'keychain_unavailable' until resolved."
             ),
         }
     }
@@ -225,11 +251,44 @@ pub fn select_server(
 /// Initialize the platform-specific OS keychain store.
 ///
 /// Must be called once at application startup before any `resolve_credential` calls.
-/// No-op if the platform store is already initialized.
-/// Tests bypass this by calling `keyring_core::set_default_store` directly.
+/// On headless Linux hosts (Remote SSH, CI, Docker without a running keychain daemon)
+/// the store init may fail gracefully — the function never panics.
+///
+/// Tests bypass this by calling `keyring_core::set_default_store` directly with a mock store.
+///
+/// Background: `keyring` v4.1.3's `v1::Entry::new` has a bug — the `AtomicBool` guard
+/// that is supposed to call `set_credential_store()` on the first invocation uses
+/// `compare_exchange(false, true) == Ok(true)`, which can never be true (the exchange
+/// returns `Ok(false)` on first success). We work around it by calling the platform
+/// store constructors directly.
 pub fn init_platform_keystore() {
-    // keyring::v1::Entry::new triggers Once-based platform store initialization.
-    let _ = keyring::Entry::new("_init_", "_init_");
+    #[cfg(target_os = "macos")]
+    {
+        match apple_native_keyring_store::keychain::Store::new() {
+            Ok(store) => keyring_core::set_default_store(store),
+            Err(e) => tracing::warn!("macOS Keychain init failed: {e}"),
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        match windows_native_keyring_store::Store::new() {
+            Ok(store) => keyring_core::set_default_store(store),
+            Err(e) => tracing::warn!("Windows Credential Manager init failed: {e}"),
+        }
+    }
+    #[cfg(all(
+        unix,
+        not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+    ))]
+    {
+        match zbus_secret_service_keyring_store::Store::new() {
+            Ok(store) => keyring_core::set_default_store(store),
+            Err(e) => tracing::warn!(
+                "Secret Service keychain init failed (headless host or no D-Bus session?): {e}. \
+                 Credential storage unavailable — use .iris-agentic-dev.toml as fallback."
+            ),
+        }
+    }
 }
 
 /// Keychain service name used by the InterSystems Server Manager VS Code extension
@@ -267,21 +326,31 @@ pub fn store_credential(
         username.to_lowercase()
     );
 
-    let entry = keyring_core::Entry::new(SM_KEYCHAIN_SERVICE, &account).map_err(
-        |e: keyring_core::Error| SmCredentialError::KeychainError {
-            server_name: server_name.to_string(),
-            detail: e.to_string(),
-        },
-    )?;
+    let entry = keyring_core::Entry::new(SM_KEYCHAIN_SERVICE, &account)
+        .map_err(|e: keyring_core::Error| map_keychain_error(server_name, e))?;
 
     entry
         .set_password(password)
-        .map_err(|e: keyring_core::Error| SmCredentialError::KeychainError {
-            server_name: server_name.to_string(),
-            detail: e.to_string(),
-        })?;
+        .map_err(|e: keyring_core::Error| map_keychain_error(server_name, e))?;
 
     Ok(())
+}
+
+fn map_keychain_error(server_name: &str, e: keyring_core::Error) -> SmCredentialError {
+    match e {
+        keyring_core::Error::NoDefaultStore => SmCredentialError::KeychainUnavailable {
+            server_name: server_name.to_string(),
+            detail: "no default keychain store".to_string(),
+        },
+        keyring_core::Error::NoStorageAccess(msg) => SmCredentialError::KeychainUnavailable {
+            server_name: server_name.to_string(),
+            detail: format!("keychain access denied: {msg}"),
+        },
+        other => SmCredentialError::KeychainError {
+            server_name: server_name.to_string(),
+            detail: other.to_string(),
+        },
+    }
 }
 
 /// Resolve a Server Manager credential from the OS keychain.
@@ -317,12 +386,26 @@ pub fn resolve_credential(server_name: &str, username: &str) -> Result<String, S
         Err(keyring_core::Error::NoEntry) => Err(SmCredentialError::CredentialNotFound {
             server_name: server_name.to_string(),
         }),
-        Err(_) => {
-            // NoStorageAccess covers headless Linux without a keychain daemon
-            Err(SmCredentialError::CredentialNotFound {
+        Err(keyring_core::Error::NoDefaultStore) => {
+            // Platform keychain store not available — headless host or D-Bus not running.
+            // Distinct from CredentialNotFound: here the entire store is inaccessible,
+            // not just this particular entry.
+            Err(SmCredentialError::KeychainUnavailable {
                 server_name: server_name.to_string(),
+                detail: "no default keychain store".to_string(),
             })
         }
+        Err(keyring_core::Error::NoStorageAccess(msg)) => {
+            // D-Bus / keychain daemon running but access denied or session unavailable.
+            Err(SmCredentialError::KeychainUnavailable {
+                server_name: server_name.to_string(),
+                detail: format!("keychain access denied: {msg}"),
+            })
+        }
+        Err(e) => Err(SmCredentialError::KeychainError {
+            server_name: server_name.to_string(),
+            detail: e.to_string(),
+        }),
     }
 }
 
@@ -342,6 +425,10 @@ impl CredentialStatus {
     pub const RESOLVED: &'static str = "resolved";
     pub const NOT_CONFIGURED: &'static str = "not_configured";
     pub const ERROR: &'static str = "error";
+    /// OS keychain daemon not running or inaccessible (headless host, Remote SSH).
+    /// The server definition is known but credentials cannot be read from the keychain.
+    /// Use `.iris-agentic-dev.toml` with host/port/username/password as fallback.
+    pub const KEYCHAIN_UNAVAILABLE: &'static str = "keychain_unavailable";
 }
 
 /// Build the `server_manager` section for `check_config` responses.

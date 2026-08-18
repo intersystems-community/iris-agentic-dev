@@ -37,6 +37,20 @@ futures-util = { version = "0.3", features = ["sink"] }
 base64 = "0.22"
 similar = "2"
 
+# Platform keychain store crates — already in the dep tree via keyring v4.
+# Direct deps needed to call Store::new() in init_platform_keystore().
+# keyring v4.1.3's v1::Entry::new has a bug (compare_exchange check is inverted)
+# so it never calls set_credential_store() — we do it ourselves.
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = "1"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-native-keyring-store = "1"
+
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
+zbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
+
 # Test dependencies
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

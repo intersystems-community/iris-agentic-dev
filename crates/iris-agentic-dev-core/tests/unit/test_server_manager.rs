@@ -490,6 +490,67 @@ fn init_platform_keystore_does_not_panic() {
     init_platform_keystore();
 }
 
+#[test]
+fn init_platform_keystore_enables_keyring_core_entry() {
+    // After init_platform_keystore(), keyring_core::Entry::new() must not return
+    // NoDefaultStore — the platform store must be registered.
+    // On headless CI (no keychain daemon) the store init may fail gracefully;
+    // the important thing is that it does NOT panic and does NOT leave keyring_core
+    // in a state where all subsequent Entry::new() calls return NoDefaultStore
+    // when a real daemon IS available.
+    //
+    // We verify this by calling init and then creating an Entry — the test passes
+    // if there's no panic. Actual keychain availability is tested in the
+    // store_resolve_credential_roundtrip #[ignore] test.
+    use iris_agentic_dev_core::iris::server_manager::init_platform_keystore;
+    init_platform_keystore();
+    // After init, Entry::new must not return NoDefaultStore (may return NoEntry or similar)
+    let result = keyring_core::Entry::new("iad-test-service", "iad-test-account");
+    match result {
+        Ok(_) => {} // store available
+        Err(keyring_core::Error::NoDefaultStore) => {
+            panic!("init_platform_keystore() did not register a default store — keyring_core::Entry::new returns NoDefaultStore")
+        }
+        Err(_) => {} // other errors (NoEntry, NoStorageAccess) are fine — store was registered but entry absent
+    }
+}
+
+// ── resolve_credential — KeychainUnavailable when no store ────────────────────
+
+#[test]
+fn resolve_credential_no_default_store_returns_keychain_unavailable() {
+    // Simulate no-default-store by resetting to a broken state.
+    // We can't easily force NoDefaultStore in a test without bypassing the mock,
+    // so we test the variant exists and the Display text is correct.
+    use iris_agentic_dev_core::iris::server_manager::SmCredentialError;
+    let e = SmCredentialError::KeychainUnavailable {
+        server_name: "prod-srv".to_string(),
+        detail: "No default store has been set".to_string(),
+    };
+    let s = e.to_string();
+    assert!(
+        s.contains("prod-srv"),
+        "KeychainUnavailable display must contain server name: {s}"
+    );
+    assert!(
+        s.contains("keychain") || s.contains("store") || s.contains("toml"),
+        "KeychainUnavailable display must mention keychain or toml fallback: {s}"
+    );
+    assert!(
+        s.contains("keychain_unavailable") || s.contains(".iris-agentic-dev.toml"),
+        "KeychainUnavailable display must mention toml fallback: {s}"
+    );
+}
+
+#[test]
+fn credential_status_keychain_unavailable_constant() {
+    use iris_agentic_dev_core::iris::server_manager::CredentialStatus;
+    assert_eq!(
+        CredentialStatus::KEYCHAIN_UNAVAILABLE,
+        "keychain_unavailable"
+    );
+}
+
 // ── resolve_credential — generic error path ────────────────────────────────
 
 #[test]

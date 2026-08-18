@@ -1355,6 +1355,7 @@ name = "iris-agentic-dev-core"
 version = "1.1.0"
 dependencies = [
  "anyhow",
+ "apple-native-keyring-store",
  "base64",
  "bollard",
  "chrono",
@@ -1382,7 +1383,9 @@ dependencies = [
  "tree-sitter-objectscript-routine",
  "urlencoding",
  "uuid",
+ "windows-native-keyring-store",
  "wiremock",
+ "zbus-secret-service-keyring-store",
 ]
 
 [[package]]

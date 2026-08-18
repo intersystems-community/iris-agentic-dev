@@ -4588,6 +4588,9 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
                                 Err(crate::iris::server_manager::SmCredentialError::CredentialNotFound { .. }) => {
                                     CredentialStatus::NOT_CONFIGURED.to_string()
                                 }
+                                Err(crate::iris::server_manager::SmCredentialError::KeychainUnavailable { .. }) => {
+                                    CredentialStatus::KEYCHAIN_UNAVAILABLE.to_string()
+                                }
                                 Err(_) => CredentialStatus::ERROR.to_string(),
                             };
                             let policy: Option<crate::iris::workspace_config::ConnectionPolicy> =
@@ -7063,10 +7066,21 @@ Methods:
 
         // Store credential in OS keychain.
         if let Err(e) = server_manager::store_credential(&p.name, &p.username, &p.password) {
+            let is_unavailable = matches!(
+                e,
+                crate::iris::server_manager::SmCredentialError::KeychainUnavailable { .. }
+            );
+            let hint = if is_unavailable {
+                "Keychain is not available on this host (headless / Remote SSH). \
+                 Add host/port/username/password to .iris-agentic-dev.toml instead — \
+                 the file hot-reloads without restarting the MCP server."
+            } else {
+                "You can reconnect via iris_import_servers after authenticating in VS Code Server Manager."
+            };
             return err_result(serde_json::json!({
                 "error_code": "KEYCHAIN_FAILED",
-                "message": format!("Server added to config but keychain storage failed: {e}. \
-                    You can reconnect via iris_import_servers after authenticating in VS Code Server Manager.")
+                "keychain_unavailable": is_unavailable,
+                "message": format!("Server added to config but keychain storage failed: {e}. {hint}")
             }));
         }
 
