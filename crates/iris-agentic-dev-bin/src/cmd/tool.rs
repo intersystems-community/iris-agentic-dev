@@ -9,8 +9,16 @@ use super::connection_args::ConnectionArgs;
 
 /// Sorted list of all tool names available in the Merged toolset.
 /// Must stay in sync with `IrisTools::registered_tool_names(Toolset::Merged)`.
-/// The T032 unit test enforces parity at compile+test time.
+/// The T032 unit test enforces that parity — but parity with the tool *registry* says
+/// nothing about whether `IrisTools::call_for_test()` (this CLI's dispatcher, distinct
+/// from the MCP tool_router) actually has an arm for each name. That second relation is
+/// covered separately by `test_all_tool_names_dispatch_in_call_for_test` in
+/// tests/unit/test_tool_dispatch.rs — added after a field report found 22 names here with
+/// no dispatch arm, so `iris-agentic-dev tool <name>` rejected them as "unknown tool" while
+/// the MCP stdio transport served them correctly.
 pub const TOOL_NAMES: &[&str] = &[
+    "agent_history",
+    "agent_stats",
     "capability_matrix",
     "check_config",
     "compare_document",
@@ -39,6 +47,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "iris_execute_method",
     "iris_generate",
     "iris_generate_class",
+    "iris_generate_test",
     "iris_get_log",
     "iris_global",
     "iris_import_servers",
@@ -68,6 +77,8 @@ pub const TOOL_NAMES: &[&str] = &[
     "iris_ws_open",
     "journal_search",
     "kb",
+    "kb_index",
+    "kb_recall",
     "mermaid_class",
     "mermaid_production",
     "my_access",
@@ -76,6 +87,11 @@ pub const TOOL_NAMES: &[&str] = &[
     "resolve_storage",
     "skill",
     "skill_community",
+    "skill_community_list",
+    "skill_describe",
+    "skill_forget",
+    "skill_list",
+    "skill_search",
     "stream_inspect",
     "telemetry_export_trace",
     "telemetry_query",

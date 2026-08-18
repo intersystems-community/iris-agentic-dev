@@ -21,6 +21,7 @@ clap.workspace = true
 which.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 urlencoding = "2"
 tracing.workspace = true
@@ -67,6 +68,10 @@ path = "tests/unit/test_doc_args.rs"
 [[test]]
 name = "test_tool_dispatch"
 path = "tests/unit/test_tool_dispatch.rs"
+
+[[test]]
+name = "test_plugin_manifest_version"
+path = "tests/unit/test_plugin_manifest_version.rs"
 
 [[test]]
 name = "test_exec_live"

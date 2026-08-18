@@ -446,6 +446,29 @@ pub fn tool_to_category_pub(
     tool_to_category(tool_name)
 }
 
+/// Tool names deliberately exempt from `ToolCategory` — not an oversight.
+///
+/// `check_env_gate` and `policy_gate` both do `tool_to_category(tool_name)?`: a `None`
+/// return means "not gated," not "blocked." Before 2026-08, that was true of every tool
+/// nobody had gotten around to categorizing — 55 of the 90 real tools, discovered while
+/// scoping a separate feature request. Two of those turned out to be live gaps in the
+/// documented guarantee that `mcpTemplate = "live"`/`"test"` blocks `Execute`: an
+/// uncategorized `iris_ws_exec` could run arbitrary ObjectScript over a WebSocket
+/// terminal, and an uncategorized `iris_test`/`iris_coverage` could run test code,
+/// completely bypassing the block that `iris_execute` itself already honored. Both are
+/// categorized below now, along with the other 52.
+///
+/// `check_config` is the one tool that stays here on purpose: it makes zero IRIS calls
+/// (it reports iad's own in-memory connection state), so there is no template or
+/// per-connection policy it could possibly violate — forcing it into `Query` or `Admin`
+/// would be less accurate than "not gated," not more.
+///
+/// `test_every_real_tool_has_a_category_or_is_exempt` (in
+/// `tests/unit/test_tool_category_coverage.rs`) enforces that every tool in the real
+/// registry is either mapped below or listed here — a new tool that is neither fails
+/// that test immediately, so this list can't silently grow by omission again.
+pub const INTENTIONALLY_UNCATEGORIZED_TOOLS: &[&str] = &["check_config"];
+
 /// Map a tool name to its `ToolCategory`.
 fn tool_to_category(tool_name: &str) -> Option<crate::iris::workspace_config::ToolCategory> {
     use crate::iris::workspace_config::ToolCategory;
@@ -465,8 +488,14 @@ fn tool_to_category(tool_name: &str) -> Option<crate::iris::workspace_config::To
         | "iris_debug" => ToolCategory::Debug,
         "iris_admin" | "iris_info" | "iris_containers" => ToolCategory::Admin,
         "skill_list" | "skill_describe" | "skill_search" | "skill_forget" | "skill_propose"
-        | "skill_optimize" | "skill_share" | "agent_history" | "agent_stats" => ToolCategory::Skill,
-        "kb_recall" | "kb_index" => ToolCategory::Kb,
+        | "skill_optimize" | "skill_share" | "agent_history" | "agent_stats"
+        // 2026-08: agent_info and the skill/skill_community dispatchers (and their
+        // Nostub-tier individual actions) join their already-categorized siblings above.
+        | "agent_info" | "skill" | "skill_community" | "skill_community_install"
+        | "skill_community_list" => ToolCategory::Skill,
+        "kb_recall" | "kb_index"
+        // 2026-08: the unified `kb` dispatcher joins its individual-action siblings.
+        | "kb" => ToolCategory::Kb,
         // 052: get/list are Query; set/kill override to Execute in check_env_gate
         "iris_global" => ToolCategory::Query,
         // 053: iris_execute_method is Execute-gated (blocked on live/test templates)
@@ -477,6 +506,62 @@ fn tool_to_category(tool_name: &str) -> Option<crate::iris::workspace_config::To
         }
         // 059-tool-telemetry-benchmark: both read-only (query/export durable telemetry)
         "telemetry_query" | "telemetry_export_trace" => ToolCategory::Query,
+
+        // ── 2026-08: the 54 tools below were uncategorized until now (see
+        // INTENTIONALLY_UNCATEGORIZED_TOOLS above for the one deliberate exception,
+        // check_config). Rule applied throughout: Execute/Compile for tools that run or
+        // compile code (the two categories env_gate actually blocks on live/test, so
+        // these are the ones worth getting right); Admin for tools that can create,
+        // delete, or otherwise mutate server/namespace/database/credential/lookup/
+        // production/container state; Query for read-only data/log/runtime-state
+        // lookups; Docs for read-only code/schema/class-structure introspection. Where
+        // a single tool mixes a safe default action with one risky one (e.g.
+        // iris_lookup_manage's read actions vs. its destructive-gated set/delete;
+        // iris_coverage's dry-run modes vs. its mode=run test execution), it gets the
+        // riskier category rather than an per-action override — iris_global and
+        // iris_query already show the alternative (see the action-aware overrides in
+        // env_gate.rs) but that's more machinery than 54 tools' worth of nuance
+        // currently justifies. Reclassify individually if one of these turns out wrong.
+
+        // Executes code — the category env_gate actually blocks on live/test, so these
+        // three matter most. iris_ws_exec runs arbitrary ObjectScript over a WebSocket
+        // terminal (same risk as iris_execute, different transport); iris_test runs
+        // %UnitTest suites; iris_coverage's mode=run does too (start→RunTest→stop→report)
+        // even though its other modes (check/start/stop/report) are inert on their own.
+        "iris_ws_exec" | "iris_test" | "iris_coverage" => ToolCategory::Execute,
+
+        // Compiles/introduces new class code.
+        "iris_generate_class" => ToolCategory::Compile,
+
+        // Administrative mutation: server registry, namespaces, databases, credentials,
+        // lookup tables, production topology/items, container lifecycle, destructive
+        // global delete. All independently write/destructive-gated at the tool-impl
+        // level already — this categorization is what makes a per-connection
+        // `policy.<server>.allow` allowlist (e.g. `allow = ["query", "search"]` for a
+        // "read-only browsing" connection) actually exclude them, which an uncategorized
+        // tool could not be excluded from.
+        "global_kill" | "iris_add_server" | "iris_remove_server" | "iris_import_servers"
+        | "iris_namespace_create" | "iris_credential_manage" | "iris_lookup_manage"
+        | "iris_lookup_transfer" | "iris_production" | "iris_production_item"
+        | "iris_select_container" | "iris_start_sandbox" | "iris_ws_open" | "iris_ws_close" => {
+            ToolCategory::Admin
+        }
+
+        // Read-only data, log, or runtime-state lookups — no code/schema structure, no
+        // mutation.
+        "capability_matrix" | "compare_document" | "compare_namespace" | "global_preview"
+        | "hl7_schema_inspect" | "hl7_schema_list" | "iris_credential_list"
+        | "iris_database_list" | "iris_database_stats" | "iris_get_log" | "iris_interop_query"
+        | "iris_list_containers" | "iris_namespace_list" | "iris_servers" | "iris_test_server"
+        | "journal_search" | "mermaid_class" | "mermaid_production" | "my_access"
+        | "query_audit_log" | "resolve_storage" | "stream_inspect" => ToolCategory::Query,
+
+        // Read-only code/schema/class-structure introspection — same bucket as
+        // docs_introspect/iris_doc above.
+        "extract_message_map_routing" | "find_subclass_implementations" | "iris_doc_search"
+        | "iris_generate" | "iris_generate_test" | "iris_macro" | "iris_table_info"
+        | "resolve_dynamic_dispatch" => ToolCategory::Docs,
+
         _ => return None, // unknown tool — not gated
     })
 }

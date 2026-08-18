@@ -1339,6 +1339,7 @@ dependencies = [
  "iris-agentic-dev-core",
  "reqwest",
  "rmcp",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",

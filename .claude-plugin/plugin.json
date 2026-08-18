@@ -1,7 +1,7 @@
 {
   "name": "iris-dev",
-  "description": "MCP server and skills for InterSystems IRIS development — 20 tools for live IRIS interaction plus 21 validated coding skills. Single binary, no Python required.",
-  "version": "0.2.0",
+  "description": "MCP server and skills for InterSystems IRIS development — live IRIS interaction tools plus validated coding skills. Single binary, no Python required.",
+  "version": "1.1.0",
   "author": {
     "name": "InterSystems Corporation"
   },

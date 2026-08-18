@@ -1,6 +1,8 @@
+pub mod batch;
 pub mod benchmark;
 pub mod compile;
 pub mod connection_args;
+pub mod dispatch;
 pub mod doc;
 pub mod exec;
 pub mod init;
