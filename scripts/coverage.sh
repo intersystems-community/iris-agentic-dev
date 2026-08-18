@@ -111,8 +111,7 @@ PATH="$HOME/.cargo/bin:$PATH" \
 "$CARGO" llvm-cov \
     --features testing \
     --no-fail-fast \
-    --lcov \
-    --output-path "$LCOV" \
+    --no-report \
     -- \
     --include-ignored \
     --test-threads=1 \
@@ -121,6 +120,14 @@ PATH="$HOME/.cargo/bin:$PATH" \
     echo "WARNING: some tests failed — coverage will be partial (see $COVERAGE_DIR/step1.log)"
     echo ""
 }
+
+# Generate the lcov report from profraw data collected above.
+# Runs even when some tests failed (--no-fail-fast + --no-report above).
+PATH="$HOME/.cargo/bin:$PATH" \
+"$CARGO" llvm-cov report \
+    --lcov \
+    --output-path "$LCOV" \
+    2>&1 | tee -a "$COVERAGE_DIR/step1.log" || true
 
 [[ -f "$LCOV" ]] || { echo "ERROR: lcov report not generated (see $COVERAGE_DIR/step1.log)"; exit 1; }
 echo "lcov report: $LCOV ($(wc -l < "$LCOV") lines)"
