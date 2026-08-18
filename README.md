@@ -56,7 +56,8 @@ iris-agentic-dev skill install
 ### Mac (Homebrew)
 
 ```bash
-brew install https://raw.githubusercontent.com/intersystems-community/iris-agentic-dev/master/Formula/iris-agentic-dev.rb
+brew tap intersystems-community/tap
+brew install iris-agentic-dev
 ```
 
 ### Mac direct download (Apple Silicon)

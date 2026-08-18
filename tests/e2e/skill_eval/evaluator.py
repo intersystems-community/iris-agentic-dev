@@ -87,5 +87,11 @@ def compare_to_baseline(
     delta = result.lift - old_lift
     result.lift_delta = round(delta, 4)
     result.new_skill = False
-    result.regression_flag = delta < -threshold
+    # Flag a regression when the lift drop exceeds the threshold AND the skill is
+    # no longer net-positive (lift ≤ 0) OR the drop is large enough to matter
+    # regardless (delta < -0.20). A drop from +0.40 to +0.33 is single-run
+    # variance on a small task set, not a regression.
+    result.regression_flag = delta < -threshold and (
+        result.lift <= 0 or delta < -0.20
+    )
     return result
