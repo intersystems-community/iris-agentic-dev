@@ -110,7 +110,18 @@ A developer or downstream packager wants an iris-agentic-dev *binary* — not ju
 ### Measurable Outcomes
 
 - **SC-001**: ✅ Done. A user can start the MCP server exposing only a caller-chosen subset of named tools and see exactly those tools — and no others — in a `list_tools` response, verified with no live IRIS container required. (`test_enabled_tools_env_restricts_to_named_subset` asserts this against `registered_tool_names()`, which is itself derived from the same router `list_tools` reads — see Dependencies.)
-- **SC-002**: Not started (User Story 2 / FR-004–005).
+- **SC-002**: ✅ Done. `Provides.tools: Vec<String>` added to the manifest schema
+  (FR-004). `Resolve::tool_subset(&manifest, &valid_names)` validates names against the
+  caller-supplied registry set and returns `Err` for any unknown name (FR-005 — stricter
+  than silent-ignore). The install→write-to-config step (wiring validated tools into
+  `.iris-agentic-dev.toml` `enabled_tools`) is deferred: no install command call-site
+  currently exists in the codebase that would invoke `Resolve::from_manifest` and then
+  write to `WorkspaceConfig`; that wiring belongs in a future CLI `install` subcommand.
+  A `TODO` comment is left in `resolve.rs` documenting this gap. All five new tests pass
+  (`test_provides_tools_field_roundtrips`, `test_provides_tools_empty_default`,
+  `test_resolve_tool_subset_valid`, `test_resolve_tool_subset_unknown_errors`,
+  `test_resolve_tool_subset_no_provides_returns_empty`), plus two additional edge-case
+  tests for empty-tools and multiple-unknowns scenarios.
 - **SC-003**: ✅ Done. No regression in existing `Toolset` behavior (`baseline`/`nostub`/`merged`) — full `cargo test` suite (`--test-threads=1`) passes with zero failures after the allowlist change, plus `cargo clippy -- -D warnings` and `cargo fmt --all -- --check` clean.
 - **SC-004**: The design evaluation for User Story 3 is written and reviewed, with an explicit go/no-go recommendation, before any code toward a modular binary is written.
 - **SC-005**: The two previously-disagreeing skill manifest files are reconciled to one, and `docs/skills.md`'s VS Code Copilot claim matches actual behavior — verified by reading the file, not by re-asking whether it's true.
