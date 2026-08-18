@@ -4,23 +4,24 @@
 
 ## Symptom table
 
-| Symptom                                                    | Likely cause                                                     | Fix                                                                                   |
-| ---------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| 404 on `/api/atelier` (Windows)                            | IIS missing `/api` web application                               | See [Windows IIS setup](connecting.md#windows-iis-api-web-application-required)       |
-| `check_config` works but compile/search fail               | Atelier web app `Recurse=0`                                      | Management Portal → Security → Web Apps → `/api/atelier` → enable **Recurse**         |
-| `Mapping not found for %Service_WebGateway//mcp/path`      | CSP application not registered in IRIS                           | See [WebGateway: CSP app registration](#webgateway-csp-application-mapping-not-found) |
-| All tools fail, `check_config` shows `atelier_rest: false` | NoPWS build (IRIS 2026.2.0AI+) or no WebGateway                  | Set `docker_only = true` in `.iris-agentic-dev.toml`                                  |
-| All tools fail, namespace listing works                    | API version mismatch                                             | Verify IRIS supports Atelier v8 (`iris-agentic-dev --verbose` shows detected version) |
-| 403 on write operations                                    | Insufficient permissions                                         | Use a user with `%DB_USER` or `%All` role                                             |
-| Connection delays on Windows                               | `localhost` DNS issue                                            | Use `host = "127.0.0.1"` in `.iris-agentic-dev.toml`                                  |
-| `SERVER_MANAGER_CREDENTIAL_ERROR`                          | Credential not in OS keychain                                    | VS Code → Server Manager → right-click server → **Reconnect**                         |
-| `SERVER_MANAGER_AMBIGUOUS`                                 | Multiple SM servers, no `IRIS_SERVER_NAME`                       | Set `IRIS_SERVER_NAME=<server-key>` (see `check_config` for available names)          |
-| `STALE_CONTENT` from `iris_doc`                            | `expected` text doesn't match current file                       | Re-fetch the document (`mode=get`) and retry with current content                     |
-| `SCOPE_REQUIRED` from `iris_search`                        | Search called with no document scope                             | Pass at least one category or document type in `scope`                                |
-| `CODE_EDIT_BLOCKED`                                        | Attempted write to `%Dictionary`, `$SYSTEM.OBJ`, or code globals | Use `iris_doc` (put) + `iris_compile` instead                                         |
-| `CHECKIN_BLOCKED` from `iris_source_control`               | CheckIn disabled by default                                      | Set `IRIS_SCM_ALLOW_CHECKIN=1` to enable                                              |
-| `HTTP_EXECUTION_FAILED` from `iris_execute`                | Atelier execution failed and no Docker fallback                  | Verify Atelier endpoint reachable; set `IRIS_CONTAINER` for Docker fallback           |
-| `IRIS_UNREACHABLE`                                         | No IRIS connection discoverable                                  | Run `check_config` to see discovery state; check host/port/credentials                |
+| Symptom                                                    | Likely cause                                                     | Fix                                                                                           |
+| ---------------------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 404 on `/api/atelier` (Windows)                            | IIS missing `/api` web application                               | See [Windows IIS setup](connecting.md#windows-iis-api-web-application-required)               |
+| `check_config` works but compile/search fail               | Atelier web app `Recurse=0`                                      | Management Portal → Security → Web Apps → `/api/atelier` → enable **Recurse**                 |
+| `Mapping not found for %Service_WebGateway//mcp/path`      | CSP application not registered in IRIS                           | See [WebGateway: CSP app registration](#webgateway-csp-application-mapping-not-found)         |
+| All tools fail, `check_config` shows `atelier_rest: false` | NoPWS build (IRIS 2026.2.0AI+) or no WebGateway                  | Set `docker_only = true` in `.iris-agentic-dev.toml`                                          |
+| All tools fail, namespace listing works                    | API version mismatch                                             | Verify IRIS supports Atelier v8 (`iris-agentic-dev --verbose` shows detected version)         |
+| 403 on write operations                                    | Insufficient permissions                                         | Use a user with `%DB_USER` or `%All` role                                                     |
+| Connection delays on Windows                               | `localhost` DNS issue                                            | Use `host = "127.0.0.1"` in `.iris-agentic-dev.toml`                                          |
+| `SERVER_MANAGER_CREDENTIAL_ERROR`                          | Credential not in OS keychain                                    | VS Code → Server Manager → right-click server → **Reconnect**                                 |
+| `SERVER_MANAGER_AMBIGUOUS`                                 | Multiple SM servers, no `IRIS_SERVER_NAME`                       | Set `IRIS_SERVER_NAME=<server-key>` (see `check_config` for available names)                  |
+| `STALE_CONTENT` from `iris_doc`                            | `expected` text doesn't match current file                       | Re-fetch the document (`mode=get`) and retry with current content                             |
+| `SCOPE_REQUIRED` from `iris_search`                        | Search called with no document scope                             | Pass at least one category or document type in `scope`                                        |
+| `CODE_EDIT_BLOCKED`                                        | Attempted write to `%Dictionary`, `$SYSTEM.OBJ`, or code globals | Use `iris_doc` (put) + `iris_compile` instead                                                 |
+| `CHECKIN_BLOCKED` from `iris_source_control`               | CheckIn disabled by default                                      | Set `IRIS_SCM_ALLOW_CHECKIN=1` to enable                                                      |
+| `HTTP_EXECUTION_FAILED` from `iris_execute`                | Atelier execution failed and no Docker fallback                  | Verify Atelier endpoint reachable; set `IRIS_CONTAINER` for Docker fallback                   |
+| `IRIS_UNREACHABLE`                                         | No IRIS connection discoverable                                  | Run `check_config` to see discovery state; check host/port/credentials                        |
+| `FILE_NOT_FOUND` from `iris_compile` or `compile`          | Local file path does not exist on disk                           | Check the file path — the compile command requires the file to exist locally before uploading |
 
 ---
 
@@ -63,6 +64,10 @@ iris-agentic-dev compile MyApp.Foo.cls   # Compile from the terminal
 iris-agentic-dev init                    # Generate .iris-agentic-dev.toml from running containers
 iris-agentic-dev install                 # Install packages from iris-dev.toml
 iris-agentic-dev benchmark --skill <path> --baseline   # Run the skill benchmark harness
+iris-agentic-dev skill install           # Install official skill pack (all agents)
+iris-agentic-dev skill install objectscript-review --agent claude-code
+iris-agentic-dev skill list              # Show install status across agents
+iris-agentic-dev skill status            # Show managed vs user-authored skill files
 iris-agentic-dev --version               # Print version
 ```
 

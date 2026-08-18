@@ -1,7 +1,7 @@
 # Ecosystem Integration Guide
 
 This guide explains how an IRIS ecosystem package integrates with
-`iris-agentic-dev` (iad). Three patterns cover the common cases.
+`iris-agentic-dev` (iad). Four patterns cover the common cases.
 
 ---
 
@@ -48,7 +48,7 @@ private web server. Set this flag so iad uses `$SYSTEM.OBJ.Compile` via
 ## Pattern B: Skills contributor
 
 A package ships its own `skills/<name>/SKILL.md` and registers with iad so
-`iris_skill` and `iris_skill_community` can surface it.
+`skill` and `skill_community` can surface it.
 
 **Step 1** — Add a skill file to your repo:
 
@@ -93,7 +93,7 @@ And add a corresponding entry to `skills-lock.json`:
 
 iad resolves `sourceType: "github"` entries by fetching the `skillPath` from the
 default branch of that repo. The lock entry can be registered before the
-`SKILL.md` exists — `iris_skill_community` will return `not_found` gracefully
+`SKILL.md` exists — `skill_community` will return `not_found` gracefully
 until the repo ships the file.
 
 ---
@@ -122,6 +122,35 @@ This installs the `iris-dev` binary. They then wire it into their MCP client
 
 ---
 
+## Pattern D: Tool subset consumer
+
+A downstream project that only needs a specific set of iad tools can declare
+that subset in its manifest. The install command validates the names and writes
+them into the local config. The next server start enforces the subset.
+
+**`iris-agentic-dev.toml`**:
+
+```toml
+[provides]
+tools = ["iris_query", "iris_search", "iris_compile"]
+```
+
+When the install command resolves this manifest:
+
+1. Each name is validated against the full tool registry. An unknown name is an
+   error — not silently ignored. Fix the typo at declaration time, not when
+   someone else runs it.
+2. The validated list is written into `.iris-agentic-dev.toml` as `enabled_tools`.
+3. The next MCP server start exposes exactly those tools.
+
+This is the declarable counterpart to setting `IRIS_ENABLED_TOOLS` by hand. It
+belongs in version control so every developer on the project gets the same tool
+surface without copying environment variables.
+
+See `docs/connecting.md` for `IRIS_ENABLED_TOOLS` and `enabled_tools` details.
+
+---
+
 ## Integration checklist
 
 Run through this before shipping or opening the iad PR.
@@ -134,7 +163,7 @@ Run through this before shipping or opening the iad PR.
       (`name`, `description` required; `managed_by: "iris-agentic-dev"`
       recommended so iad knows to keep it in sync)
 - [ ] README cross-references iad — link to the MCP server and mention
-      `iris_skill install <name>` as the install path
+      `iris-agentic-dev skill install <name>` as the install path
 
 ### iad PR (Pattern B)
 

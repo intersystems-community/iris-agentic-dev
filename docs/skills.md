@@ -3,6 +3,12 @@
 Skills are concise instruction files that teach your AI assistant ObjectScript-specific
 patterns and common mistakes. They work with or without the MCP server.
 
+Skills and the MCP server are independent. Installing the `iris-agentic-dev` binary
+installs no skills. Skills are opt-in, managed separately, and can live in any repo.
+Domain-specific skill packs (like Keshav Iyer's
+[IKO skill](https://gitlab.iscinternal.com/fschwich/isc-iko-skill)) are the intended
+pattern for opinionated or team-specific skills.
+
 ---
 
 ## Benchmark results
@@ -27,7 +33,36 @@ risk, single-run variance, and single-model validation caveats.
 
 ## Installing skills
 
-**VS Code Copilot:** Skills are included automatically when you install the extension.
+Install the full official pack to Claude Code and OpenCode:
+
+```bash
+iris-agentic-dev skill install
+```
+
+Install specific skills, target an agent, or preview first:
+
+```bash
+iris-agentic-dev skill install objectscript-review objectscript-guardrails
+iris-agentic-dev skill install --agent claude-code
+iris-agentic-dev skill install --agent opencode
+iris-agentic-dev skill install --agent copilot   # repo-scoped; run from a git repo
+iris-agentic-dev skill install --dry-run         # preview without writing
+iris-agentic-dev skill install --force           # overwrite user-authored files
+```
+
+Check what's installed:
+
+```bash
+iris-agentic-dev skill list
+iris-agentic-dev skill list --agent claude-code
+iris-agentic-dev skill status                    # managed vs user-authored
+```
+
+**VS Code Copilot**: The extension installs the binary, not the skills. Run
+`iris-agentic-dev skill install --agent copilot` from a git repo root to install skills
+into `.github/instructions/` — commit that directory to share with your team.
+
+**Manual fallback** — if you prefer not to use the CLI:
 
 **Claude Code:**
 
