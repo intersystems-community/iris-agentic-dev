@@ -3930,8 +3930,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Read/write/delete IRIS documents. mode: get (fetch source), put (write, auto SCM checkout), delete, head (existence), fragment (read lines start..end), compiled (read INT), list (glob `pattern`), insert (splice `content` before 1-based `line`; omit `line` to append), delete_lines (remove start..end). `name` is required for all single-document modes; `line`/`start`/`end` are integers. For insert with an explicit `line` and for delete_lines, pass `expected` (current text at the target lines) or the edit is refused with STALE_CONTENT. Edits return the re-numbered post-write `content` to chain from, plus a `diff` field (git-style unified diff of the change) — render it to the user inside a ```diff fenced code block. Batch via `names`; SCM dialogs resume via elicitation_id/elicitation_answer. Skill: objectscript-navigation to locate documents before editing. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        description = "Read/write/delete IRIS documents. mode: get (fetch source), put (write, auto SCM checkout), delete, head (existence), fragment (read lines start..end), compiled (read INT), list (glob `pattern`), insert (splice `content` before 1-based `line`; omit `line` to append), delete_lines (remove start..end). `name` is required for all single-document modes; `line`/`start`/`end` are integers. For insert with an explicit `line` and for delete_lines, pass `expected` (current text at the target lines) or the edit is refused with STALE_CONTENT. Edits return the re-numbered post-write `content` to chain from, plus a `diff` field (git-style unified diff of the change) — render it to the user inside a ```diff fenced code block. Batch via `names`; SCM dialogs resume via elicitation_id/elicitation_answer. Skill: objectscript-navigation to locate documents before editing. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_doc(
         &self,
@@ -3953,8 +3952,7 @@ do ##class(%UnitTest.Manager).RunTest("{pattern}","{flags}","{token}")"#,
     }
 
     #[tool(
-        description = "Execute SQL against IRIS via Atelier REST. mode=\"read\" (default): SELECT only, destructive SQL blocked unless force=true. mode=\"explain\": returns the IRIS query plan for a SELECT (plan_text, query_hash), no rows. mode=\"count\": returns a row count for `table` or `query` without transferring rows. mode=\"write\": executes INSERT/UPDATE/DELETE/CALL/TRUNCATE (Execute-gated, blocked on mcpTemplate=live/test); UPDATE/DELETE are pre-checked against max_rows_affected (default 1000, max 10000) before executing. Skill: objectscript-sql-patterns for IRIS SQL quirks. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        description = "Execute SQL against IRIS via Atelier REST. mode=\"read\" (default): SELECT only, destructive SQL blocked unless force=true. mode=\"explain\": returns the IRIS query plan for a SELECT (plan_text, query_hash), no rows. mode=\"count\": returns a row count for `table` or `query` without transferring rows. mode=\"write\": executes INSERT/UPDATE/DELETE/CALL/TRUNCATE (Execute-gated, blocked on mcpTemplate=live/test); UPDATE/DELETE are pre-checked against max_rows_affected (default 1000, max 10000) before executing. Skill: objectscript-sql-patterns for IRIS SQL quirks. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_query(
         &self,
@@ -5899,8 +5897,7 @@ Methods:
     // ── 064: iris_coverage ────────────────────────────────────────────────────
 
     #[tool(
-        description = "Measure ObjectScript line coverage using %Monitor.System.LineByLine. mode=run: start monitoring + run compiled test suite + stop + return per-class and total coverage in one call (use this for most tasks). mode=check: verify the monitor is available by doing a dry Start() — if BBSIZ_NOT_CONFIGURED is returned, increase gmheap to 256+ in Management Portal > System Administration > Configuration > Additional Settings > Advanced Memory, then restart IRIS. mode=start/stop/report: manual multi-step control. Provide either classes=['MyApp.MyClass',...] or package='MyApp' (auto-discovers concrete classes). test_path must be a compiled class pattern (e.g. 'MyApp.Tests') — /noload always used. Returns {total_pct, hits, total, classes:[{class,routine,hit,total,pct}], meets_target, target_pct}. Error codes: BBSIZ_NOT_CONFIGURED (gmheap too small), MONITOR_IN_USE, MISSING_PARAM. Skill: objectscript-coverage (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        description = "Measure ObjectScript line coverage using %Monitor.System.LineByLine. mode=run: start monitoring + run compiled test suite + stop + return per-class and total coverage in one call (use this for most tasks). mode=check: verify the monitor is available by doing a dry Start() — if BBSIZ_NOT_CONFIGURED is returned, increase gmheap to 256+ in Management Portal > System Administration > Configuration > Additional Settings > Advanced Memory, then restart IRIS. mode=start/stop/report: manual multi-step control. Provide either classes=['MyApp.MyClass',...] or package='MyApp' (auto-discovers concrete classes). test_path must be a compiled class pattern (e.g. 'MyApp.Tests') — /noload always used. Returns {total_pct, hits, total, classes:[{class,routine,hit,total,pct}], meets_target, target_pct}. Error codes: BBSIZ_NOT_CONFIGURED (gmheap too small), MONITOR_IN_USE, MISSING_PARAM. Skill: objectscript-coverage (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_coverage(
         &self,
@@ -5978,8 +5975,7 @@ Methods:
     // Note: iris_debug already exists above as a real tool — it IS the merged debug dispatcher.
 
     #[tool(
-        description = "Interoperability production lifecycle (merged). action: status=get current state, start=start named production, stop=stop production, update=hot-apply config, check=check if update needed, recover=recover troubled production. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        description = "Interoperability production lifecycle (merged). action: status=get current state, start=start named production, stop=stop production, update=hot-apply config, check=check if update needed, recover=recover troubled production. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_production(
         &self,
@@ -6182,8 +6178,7 @@ Methods:
     }
 
     #[tool(
-        description = "Container lifecycle dispatcher (merged). action: list=list running IRIS containers, select=validate container connection, start=start sandbox container via iris-devtester.",
-        annotations(read_only_hint = true)
+        description = "Container lifecycle dispatcher (merged). action: list=list running IRIS containers, select=validate container connection, start=start sandbox container via iris-devtester."
     )]
     async fn iris_containers(
         &self,
@@ -6230,8 +6225,7 @@ Methods:
     // ─── 024-interop-depth: Production item control (US1) ───
 
     #[tool(
-        description = "Enable, disable, or inspect/modify settings of an individual Interoperability production config item. action: enable|disable|get_settings|set_settings. item: exact config item name. namespace: optional. settings: key-value map (for set_settings). Works via HTTP, no Docker required. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        annotations(read_only_hint = true)
+        description = "Enable, disable, or inspect/modify settings of an individual Interoperability production config item. action: enable|disable|get_settings|set_settings. item: exact config item name. namespace: optional. settings: key-value map (for set_settings). Works via HTTP, no Docker required. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances."
     )]
     async fn iris_production_item(
         &self,
