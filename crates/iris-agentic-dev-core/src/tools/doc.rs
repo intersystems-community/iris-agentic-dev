@@ -2979,7 +2979,9 @@ Storage Default
         let p: IrisDocParams = serde_json::from_str(r#"{"mode":"insert","content":"x"}"#).unwrap();
         let es = crate::elicitation::ElicitationStore::new();
         let cc = crate::elicitation::CheckoutCache::new();
-        let result = handle_insert(&iris, &client, p, &es, &cc).await.unwrap();
+        let result = handle_insert(&iris, &client, p, "USER", &es, &cc)
+            .await
+            .unwrap();
         let text = result.content[0].raw.as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "MISSING_PARAMS");
@@ -2992,7 +2994,9 @@ Storage Default
             serde_json::from_str(r#"{"mode":"insert","name":"Foo.cls"}"#).unwrap();
         let es = crate::elicitation::ElicitationStore::new();
         let cc = crate::elicitation::CheckoutCache::new();
-        let result = handle_insert(&iris, &client, p, &es, &cc).await.unwrap();
+        let result = handle_insert(&iris, &client, p, "USER", &es, &cc)
+            .await
+            .unwrap();
         let text = result.content[0].raw.as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "MISSING_PARAMS");
@@ -3006,7 +3010,9 @@ Storage Default
                 .unwrap();
         let es = crate::elicitation::ElicitationStore::new();
         let cc = crate::elicitation::CheckoutCache::new();
-        let result = handle_insert(&iris, &client, p, &es, &cc).await.unwrap();
+        let result = handle_insert(&iris, &client, p, "USER", &es, &cc)
+            .await
+            .unwrap();
         let text = result.content[0].raw.as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(
@@ -3025,7 +3031,7 @@ Storage Default
                 .unwrap();
         let es = crate::elicitation::ElicitationStore::new();
         let cc = crate::elicitation::CheckoutCache::new();
-        let result = handle_delete_lines(&iris, &client, p, &es, &cc)
+        let result = handle_delete_lines(&iris, &client, p, "USER", &es, &cc)
             .await
             .unwrap();
         let text = result.content[0].raw.as_text().unwrap().text.clone();
@@ -3042,7 +3048,7 @@ Storage Default
         .unwrap();
         let es = crate::elicitation::ElicitationStore::new();
         let cc = crate::elicitation::CheckoutCache::new();
-        let result = handle_delete_lines(&iris, &client, p, &es, &cc)
+        let result = handle_delete_lines(&iris, &client, p, "USER", &es, &cc)
             .await
             .unwrap();
         let text = result.content[0].raw.as_text().unwrap().text.clone();
@@ -3059,7 +3065,7 @@ Storage Default
         .unwrap();
         let es = crate::elicitation::ElicitationStore::new();
         let cc = crate::elicitation::CheckoutCache::new();
-        let result = handle_delete_lines(&iris, &client, p, &es, &cc)
+        let result = handle_delete_lines(&iris, &client, p, "USER", &es, &cc)
             .await
             .unwrap();
         let text = result.content[0].raw.as_text().unwrap().text.clone();
@@ -3076,7 +3082,7 @@ Storage Default
         .unwrap();
         let es = crate::elicitation::ElicitationStore::new();
         let cc = crate::elicitation::CheckoutCache::new();
-        let result = handle_delete_lines(&iris, &client, p, &es, &cc)
+        let result = handle_delete_lines(&iris, &client, p, "USER", &es, &cc)
             .await
             .unwrap();
         let text = result.content[0].raw.as_text().unwrap().text.clone();
@@ -3096,7 +3102,7 @@ Storage Default
         .unwrap();
         let es = crate::elicitation::ElicitationStore::new();
         let cc = crate::elicitation::CheckoutCache::new();
-        let result = handle_delete_lines(&iris, &client, p, &es, &cc)
+        let result = handle_delete_lines(&iris, &client, p, "USER", &es, &cc)
             .await
             .unwrap();
         let text = result.content[0].raw.as_text().unwrap().text.clone();
@@ -3115,7 +3121,7 @@ Storage Default
                 .unwrap();
         let es = crate::elicitation::ElicitationStore::new();
         let cc = crate::elicitation::CheckoutCache::new();
-        let result = handle_delete_lines(&iris, &client, p, &es, &cc)
+        let result = handle_delete_lines(&iris, &client, p, "USER", &es, &cc)
             .await
             .unwrap();
         let text = result.content[0].raw.as_text().unwrap().text.clone();

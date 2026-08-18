@@ -2708,10 +2708,23 @@ impl IrisTools {
     /// Called at the start of every tool handler for lazy hot-reload (034).
     /// Completely silent — no error returned to caller on reload failure.
     async fn check_reload(&self) {
-        // Check if watcher says config changed
+        // Check if watcher says config changed.
+        // Also treat the file as "changed" on first call when it exists but wasn't loaded at
+        // startup (e.g. CWD was "/" when the server launched — issue #104).
         let changed = {
             let mut w = self.config_watcher.lock().unwrap();
-            w.as_mut().map(|w| w.has_changed()).unwrap_or(false)
+            if let Some(ref mut watcher) = *w {
+                let already_from_config =
+                    self.connection.lock().unwrap().source == ConnectionSource::ConfigFile;
+                let file_exists = watcher.config_path.exists();
+                // If file exists but startup didn't load it, pretend it just appeared.
+                if !already_from_config && file_exists && watcher.last_mtime.is_some() {
+                    watcher.last_mtime = None;
+                }
+                watcher.has_changed()
+            } else {
+                false
+            }
         };
         if !changed {
             return;

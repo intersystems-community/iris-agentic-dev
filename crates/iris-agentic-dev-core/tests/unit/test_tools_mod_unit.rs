@@ -124,6 +124,34 @@ fn config_watcher_has_changed_file_deleted() {
     );
 }
 
+// ── ConfigWatcher: file exists at startup but mtime reset for initial load ──────
+// Regression for #104: config not loaded when file pre-exists at MCP server start.
+
+#[test]
+fn config_watcher_existing_file_reports_changed_after_mtime_reset() {
+    use iris_agentic_dev_core::tools::ConfigWatcher;
+    use std::io::Write;
+
+    let dir = tempfile::TempDir::new().unwrap();
+    let path = dir.path().join(".iris-agentic-dev.toml");
+    {
+        let mut f = std::fs::File::create(&path).unwrap();
+        f.write_all(b"namespace = \"IRISAPP\"\n").unwrap();
+    }
+    // Simulate: server starts, ConfigWatcher::new captures mtime of existing file.
+    let mut w = ConfigWatcher::new(path.clone()).unwrap();
+    assert!(w.last_mtime.is_some(), "file exists → mtime captured");
+    // Simulate: check_reload detects the file wasn't loaded (source != ConfigFile),
+    // resets last_mtime to None so has_changed() fires.
+    w.last_mtime = None;
+    assert!(
+        w.has_changed(),
+        "after reset to None, existing file triggers has_changed"
+    );
+    // Second call: same mtime → no spurious reload
+    assert!(!w.has_changed(), "no duplicate trigger after initial load");
+}
+
 // ── check_config via call_for_test (no IRIS connection → None branch) ─────────
 
 #[cfg(feature = "testing")]
