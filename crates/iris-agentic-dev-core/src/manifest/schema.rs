@@ -36,6 +36,12 @@ pub struct Provides {
     /// iris-dev-* binary names this package provides
     #[serde(default)]
     pub plugins: Vec<String>,
+    /// Tool allowlist: when non-empty, only these named tools are exposed after install.
+    /// Written into the workspace config `enabled_tools` field by the resolve/install
+    /// command (075-modular-tool-install, FR-004). All names are validated against the
+    /// live tool registry at resolve time; an unknown name is an error (FR-005).
+    #[serde(default)]
+    pub tools: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

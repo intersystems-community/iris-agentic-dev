@@ -22,6 +22,53 @@ pub enum ResolvedSource {
 }
 
 impl Resolve {
+    /// Return the validated tool subset declared in `manifest.provides.tools`.
+    ///
+    /// - If `provides` is absent or `provides.tools` is empty, returns `Ok(vec![])` —
+    ///   no-op; the server's full toolset is unchanged.
+    /// - Otherwise validates each name against `valid_names`. An unknown name is an error
+    ///   (FR-005: stricter than silent-ignore). Returns the validated list on success.
+    ///
+    /// `valid_names` should be the complete set of registered tool names for the target
+    /// toolset, obtained cheaply without constructing a full `IrisTools` instance (e.g. from
+    /// a snapshot or injected by the caller). Passing a `HashSet<&str>` avoids a hard
+    /// coupling between the manifest module and the (very large) tools module.
+    pub fn tool_subset(
+        &self,
+        manifest: &Manifest,
+        valid_names: &std::collections::HashSet<&str>,
+    ) -> Result<Vec<String>> {
+        let tools = match &manifest.provides {
+            None => return Ok(vec![]),
+            Some(p) => &p.tools,
+        };
+        if tools.is_empty() {
+            return Ok(vec![]);
+        }
+        let mut unknown: Vec<&str> = tools
+            .iter()
+            .filter(|t| !valid_names.contains(t.as_str()))
+            .map(|t| t.as_str())
+            .collect();
+        if !unknown.is_empty() {
+            unknown.sort();
+            return Err(anyhow!(
+                "manifest provides.tools contains unknown tool name(s): {}",
+                unknown.join(", ")
+            ));
+        }
+        Ok(tools.clone())
+    }
+
+    // TODO (075-modular-tool-install, FR-004 install→write step): after calling
+    // tool_subset(), the install command should write the returned list into the workspace
+    // config file's `enabled_tools` field via WorkspaceConfig so the next server start
+    // enforces it.  This requires a CLI `iris-dev install` subcommand that (a) calls
+    // Resolve::from_manifest, (b) calls tool_subset with a valid_names snapshot from
+    // IrisTools::registered_tool_names() or an equivalent cheap static list, and (c)
+    // serialises the result back into `.iris-agentic-dev.toml`.  No such call-site exists
+    // in the codebase yet; the wiring belongs in the future `iris-dev install` CLI command.
+
     pub fn from_manifest(manifest: &Manifest) -> Result<Self> {
         let mut packages = vec![];
         let mut seen: HashSet<String> = HashSet::new();
@@ -746,6 +793,145 @@ mod tests {
         assert!(result.is_err());
         let msg = result.err().unwrap().to_string();
         assert!(msg.contains("non-GitHub"));
+    }
+
+    // ── provides.tools tests (FR-004, FR-005) ─────────────────────────────────
+
+    fn make_manifest_with_tools(tools: Vec<String>) -> Manifest {
+        Manifest {
+            package: crate::manifest::schema::PackageInfo {
+                name: "test-pkg".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                authors: vec![],
+                license: None,
+                repository: None,
+            },
+            provides: Some(crate::manifest::schema::Provides {
+                skills: vec![],
+                kb_items: vec![],
+                plugins: vec![],
+                tools,
+            }),
+            dependencies: HashMap::new(),
+        }
+    }
+
+    fn make_manifest_no_provides() -> Manifest {
+        Manifest {
+            package: crate::manifest::schema::PackageInfo {
+                name: "test-pkg".to_string(),
+                version: "1.0.0".to_string(),
+                description: None,
+                authors: vec![],
+                license: None,
+                repository: None,
+            },
+            provides: None,
+            dependencies: HashMap::new(),
+        }
+    }
+
+    /// FR-004: provides.tools field round-trips through TOML deserialization.
+    #[test]
+    fn test_provides_tools_field_roundtrips() {
+        use crate::manifest::schema::Manifest as ManifestSchema;
+        let toml = r#"
+[package]
+name = "mypkg"
+version = "1.0.0"
+
+[provides]
+tools = ["iris_query", "iris_search"]
+"#;
+        let m: ManifestSchema = toml::from_str(toml).expect("should parse");
+        let tools = m.provides.expect("provides present").tools;
+        assert_eq!(tools, vec!["iris_query", "iris_search"]);
+    }
+
+    /// provides.tools defaults to empty when the key is absent.
+    #[test]
+    fn test_provides_tools_empty_default() {
+        use crate::manifest::schema::Manifest as ManifestSchema;
+        let toml = r#"
+[package]
+name = "mypkg"
+version = "1.0.0"
+
+[provides]
+skills = []
+"#;
+        let m: ManifestSchema = toml::from_str(toml).expect("should parse");
+        let tools = m.provides.expect("provides present").tools;
+        assert!(tools.is_empty(), "tools should default to empty");
+    }
+
+    /// FR-004: tool_subset with a manifest declaring valid tools returns Ok.
+    #[test]
+    fn test_resolve_tool_subset_valid() {
+        let manifest =
+            make_manifest_with_tools(vec!["iris_query".to_string(), "iris_search".to_string()]);
+        let resolve = Resolve { packages: vec![] };
+        let valid: HashSet<&str> = ["iris_query", "iris_search", "iris_execute", "iris_compile"]
+            .iter()
+            .copied()
+            .collect();
+        let result = resolve.tool_subset(&manifest, &valid).unwrap();
+        assert_eq!(result, vec!["iris_query", "iris_search"]);
+    }
+
+    /// FR-005: tool_subset with an unknown name returns an error mentioning the bad name.
+    #[test]
+    fn test_resolve_tool_subset_unknown_errors() {
+        let manifest = make_manifest_with_tools(vec![
+            "iris_query".to_string(),
+            "totally_fake_tool".to_string(),
+        ]);
+        let resolve = Resolve { packages: vec![] };
+        let valid: HashSet<&str> = ["iris_query", "iris_search"].iter().copied().collect();
+        let result = resolve.tool_subset(&manifest, &valid);
+        assert!(result.is_err(), "unknown tool name must be an error");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("totally_fake_tool"),
+            "error should mention the unknown tool: {msg}"
+        );
+    }
+
+    /// tool_subset returns Ok(vec![]) when provides is absent.
+    #[test]
+    fn test_resolve_tool_subset_no_provides_returns_empty() {
+        let manifest = make_manifest_no_provides();
+        let resolve = Resolve { packages: vec![] };
+        let valid: HashSet<&str> = ["iris_query"].iter().copied().collect();
+        let result = resolve.tool_subset(&manifest, &valid).unwrap();
+        assert!(result.is_empty());
+    }
+
+    /// tool_subset returns Ok(vec![]) when provides.tools is empty.
+    #[test]
+    fn test_resolve_tool_subset_empty_tools_returns_empty() {
+        let manifest = make_manifest_with_tools(vec![]);
+        let resolve = Resolve { packages: vec![] };
+        let valid: HashSet<&str> = ["iris_query"].iter().copied().collect();
+        let result = resolve.tool_subset(&manifest, &valid).unwrap();
+        assert!(result.is_empty());
+    }
+
+    /// Multiple unknown names are all reported together.
+    #[test]
+    fn test_resolve_tool_subset_multiple_unknowns_all_reported() {
+        let manifest = make_manifest_with_tools(vec![
+            "iris_query".to_string(),
+            "fake_one".to_string(),
+            "fake_two".to_string(),
+        ]);
+        let resolve = Resolve { packages: vec![] };
+        let valid: HashSet<&str> = ["iris_query"].iter().copied().collect();
+        let err = resolve.tool_subset(&manifest, &valid).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("fake_one"), "should mention fake_one: {msg}");
+        assert!(msg.contains("fake_two"), "should mention fake_two: {msg}");
     }
 
     #[test]
