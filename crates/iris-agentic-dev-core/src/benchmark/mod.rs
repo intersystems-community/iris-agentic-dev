@@ -2,11 +2,23 @@
 //! task suite using iris-agentic-dev's own compile/execute/test tools in-process, and
 //! reports pass_rate/baseline_pass_rate/lift. See specs/059-tool-telemetry-benchmark/.
 
+pub mod cli_dispatch;
 pub mod container;
 pub mod llm;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+
+/// Which execution path the benchmark measures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BenchmarkMode {
+    /// MCP server path (original single-shot mode).
+    #[default]
+    Mcp,
+    /// Agentic loop via CLI subprocess invocations.
+    CliDispatch,
+}
 
 /// A single scoring unit, ported 1:1 from objectscript-coder's
 /// `bench/eval_tasks/jira_bugs/*.json` schema (unchanged — Assumption 2 requires content
@@ -147,6 +159,22 @@ pub struct TaskResult {
     pub elapsed_s: f64,
     #[serde(default)]
     pub reason: String,
+    #[serde(default)]
+    pub tokens_input: Option<u32>,
+    #[serde(default)]
+    pub tokens_output: Option<u32>,
+    #[serde(default)]
+    pub tokens_total: Option<u32>,
+}
+
+/// Comparison between two benchmark runs (e.g. CLI dispatch vs MCP baseline).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct BenchmarkComparison {
+    pub other_mode: BenchmarkMode,
+    pub pass_rate_delta: f64,
+    /// `None` when either result lacks token data.
+    pub tokens_total_delta: Option<i64>,
+    pub elapsed_s_delta: f64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -160,6 +188,16 @@ pub struct BenchmarkResult {
     pub iris_version: String,
     pub elapsed_s: f64,
     pub task_results: Vec<TaskResult>,
+    #[serde(default)]
+    pub mode: Option<BenchmarkMode>,
+    #[serde(default)]
+    pub tokens_input: Option<u64>,
+    #[serde(default)]
+    pub tokens_output: Option<u64>,
+    #[serde(default)]
+    pub tokens_total: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comparison: Option<BenchmarkComparison>,
 }
 
 impl BenchmarkResult {
@@ -189,6 +227,36 @@ impl BenchmarkResult {
         } else {
             tasks_passed as f64 / denom as f64
         };
+
+        // Aggregate token counts — None if every task has None (e.g. MCP mode).
+        let tokens_total_sum: Option<u64> =
+            task_results
+                .iter()
+                .fold(None, |acc, t| match (acc, t.tokens_total) {
+                    (None, None) => None,
+                    (Some(a), Some(b)) => Some(a + b as u64),
+                    (Some(a), None) => Some(a),
+                    (None, Some(b)) => Some(b as u64),
+                });
+        let tokens_input_sum: Option<u64> =
+            task_results
+                .iter()
+                .fold(None, |acc, t| match (acc, t.tokens_input) {
+                    (None, None) => None,
+                    (Some(a), Some(b)) => Some(a + b as u64),
+                    (Some(a), None) => Some(a),
+                    (None, Some(b)) => Some(b as u64),
+                });
+        let tokens_output_sum: Option<u64> =
+            task_results
+                .iter()
+                .fold(None, |acc, t| match (acc, t.tokens_output) {
+                    (None, None) => None,
+                    (Some(a), Some(b)) => Some(a + b as u64),
+                    (Some(a), None) => Some(a),
+                    (None, Some(b)) => Some(b as u64),
+                });
+
         Self {
             pass_rate,
             baseline_pass_rate: None,
@@ -199,6 +267,11 @@ impl BenchmarkResult {
             iris_version,
             elapsed_s,
             task_results,
+            mode: None,
+            tokens_input: tokens_input_sum,
+            tokens_output: tokens_output_sum,
+            tokens_total: tokens_total_sum,
+            comparison: None,
         }
     }
 
@@ -246,6 +319,9 @@ pub async fn run_task(
             iterations: 1,
             elapsed_s,
             reason: String::new(),
+            tokens_input: None,
+            tokens_output: None,
+            tokens_total: None,
         },
         Err(e) => TaskResult {
             task_id: task.task_id.clone(),
@@ -253,6 +329,9 @@ pub async fn run_task(
             iterations: 1,
             elapsed_s,
             reason: e.to_string(),
+            tokens_input: None,
+            tokens_output: None,
+            tokens_total: None,
         },
     }
 }
@@ -476,6 +555,9 @@ mod suite_result_tests {
             iterations: 1,
             elapsed_s: 0.1,
             reason: String::new(),
+            tokens_input: None,
+            tokens_output: None,
+            tokens_total: None,
         }
     }
 
@@ -532,5 +614,126 @@ mod suite_result_tests {
             .lift
             .expect("lift should be Some after apply_baseline");
         assert!((lift - (1.0 - 0.6)).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod benchmark_mode_tests {
+    use super::*;
+
+    // T001: BenchmarkMode serialization
+    #[test]
+    fn benchmark_mode_mcp_serializes_to_mcp() {
+        let json = serde_json::to_string(&BenchmarkMode::Mcp).unwrap();
+        assert_eq!(json, r#""mcp""#);
+    }
+
+    #[test]
+    fn benchmark_mode_cli_dispatch_serializes_to_cli_dispatch() {
+        let json = serde_json::to_string(&BenchmarkMode::CliDispatch).unwrap();
+        assert_eq!(json, r#""cli_dispatch""#);
+    }
+
+    #[test]
+    fn benchmark_result_without_mode_deserializes_with_none() {
+        let json = r#"{
+            "pass_rate": 0.5,
+            "baseline_pass_rate": null,
+            "lift": null,
+            "tasks_passed": 1,
+            "tasks_total": 2,
+            "tasks_errored": 0,
+            "iris_version": "2026.2",
+            "elapsed_s": 1.0,
+            "task_results": []
+        }"#;
+        let result: BenchmarkResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.mode, None);
+    }
+
+    // T002: TaskResult token fields
+    #[test]
+    fn task_result_token_fields_default_to_none() {
+        let json = r#"{
+            "task_id": "t1",
+            "outcome": "pass",
+            "iterations": 1,
+            "elapsed_s": 0.1
+        }"#;
+        let result: TaskResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.tokens_input, None);
+        assert_eq!(result.tokens_output, None);
+        assert_eq!(result.tokens_total, None);
+    }
+
+    #[test]
+    fn task_result_token_fields_round_trip_some() {
+        let tr = TaskResult {
+            task_id: "t1".to_string(),
+            outcome: TaskOutcome::Pass,
+            iterations: 1,
+            elapsed_s: 0.1,
+            reason: String::new(),
+            tokens_input: Some(10),
+            tokens_output: Some(20),
+            tokens_total: Some(30),
+        };
+        let json = serde_json::to_string(&tr).unwrap();
+        let de: TaskResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.tokens_input, Some(10));
+        assert_eq!(de.tokens_output, Some(20));
+        assert_eq!(de.tokens_total, Some(30));
+    }
+
+    // T003: BenchmarkResult token aggregation
+    #[test]
+    fn from_task_results_aggregates_token_totals() {
+        let results = vec![
+            TaskResult {
+                task_id: "t1".to_string(),
+                outcome: TaskOutcome::Pass,
+                iterations: 1,
+                elapsed_s: 0.1,
+                reason: String::new(),
+                tokens_input: Some(10),
+                tokens_output: Some(20),
+                tokens_total: Some(30),
+            },
+            TaskResult {
+                task_id: "t2".to_string(),
+                outcome: TaskOutcome::Pass,
+                iterations: 1,
+                elapsed_s: 0.1,
+                reason: String::new(),
+                tokens_input: Some(40),
+                tokens_output: Some(50),
+                tokens_total: Some(90),
+            },
+        ];
+        let suite = BenchmarkResult::from_task_results(results, "2026.2".to_string(), 1.0);
+        assert_eq!(suite.tokens_input, Some(50));
+        assert_eq!(suite.tokens_output, Some(70));
+        assert_eq!(suite.tokens_total, Some(120));
+        // pass_rate still correct
+        assert!((suite.pass_rate - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn benchmark_result_without_new_fields_deserializes() {
+        let json = r#"{
+            "pass_rate": 0.5,
+            "baseline_pass_rate": null,
+            "lift": null,
+            "tasks_passed": 1,
+            "tasks_total": 2,
+            "tasks_errored": 0,
+            "iris_version": "2026.2",
+            "elapsed_s": 1.0,
+            "task_results": []
+        }"#;
+        let result: BenchmarkResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.tokens_input, None);
+        assert_eq!(result.tokens_total, None);
+        assert_eq!(result.comparison, None);
     }
 }

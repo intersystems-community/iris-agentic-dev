@@ -7,6 +7,13 @@ pub struct LlmClient {
     timeout_secs: u64,
 }
 
+/// Token usage returned by LLM APIs for a single completion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TokenUsage {
+    pub input: u32,
+    pub output: u32,
+}
+
 // ── OpenAI request/response types ────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -22,8 +29,16 @@ struct OpenAiMessage {
 }
 
 #[derive(Deserialize)]
+struct OpenAiUsage {
+    prompt_tokens: u32,
+    completion_tokens: u32,
+}
+
+#[derive(Deserialize)]
 struct OpenAiResponse {
     choices: Vec<OpenAiChoice>,
+    #[serde(default)]
+    usage: Option<OpenAiUsage>,
 }
 
 #[derive(Deserialize)]
@@ -53,8 +68,16 @@ struct AnthropicMessage {
 }
 
 #[derive(Deserialize)]
+struct AnthropicUsage {
+    input_tokens: u32,
+    output_tokens: u32,
+}
+
+#[derive(Deserialize)]
 struct AnthropicResponse {
     content: Vec<AnthropicContent>,
+    #[serde(default)]
+    usage: Option<AnthropicUsage>,
 }
 
 #[derive(Deserialize)]
@@ -81,6 +104,18 @@ impl LlmClient {
         })
     }
 
+    /// Returns `true` if the model should use the Anthropic API path.
+    ///
+    /// Matches both direct Anthropic model names (`claude-*`) and Bedrock cross-region
+    /// inference profiles (`us.anthropic.*`, `eu.anthropic.*`, etc.), which use the same
+    /// Anthropic `/v1/messages` request/response format when routed through a proxy like
+    /// `ANTHROPIC_BASE_URL=http://127.0.0.1:8082`.
+    fn is_anthropic_model(&self) -> bool {
+        self.model.starts_with("claude")
+            || self.model.contains(".anthropic.")
+            || self.model.starts_with("anthropic.")
+    }
+
     pub async fn complete(&self, system: &str, user: &str) -> Result<String> {
         #[cfg(any(test, feature = "testing"))]
         if self.model == "mock" {
@@ -94,7 +129,7 @@ impl LlmClient {
             .timeout(std::time::Duration::from_secs(self.timeout_secs))
             .build()?;
 
-        if self.model.starts_with("claude") {
+        if self.is_anthropic_model() {
             // Bug 6: Anthropic API requires:
             //   - x-api-key header (not Authorization: Bearer)
             //   - anthropic-version header
@@ -174,6 +209,112 @@ impl LlmClient {
             .next()
             .map(|c| c.message.content)
             .context("empty LLM response")
+    }
+
+    /// Like `complete`, but also returns token usage from the API response.
+    /// Returns `(text, None)` for the mock model and when the API omits usage data.
+    pub async fn complete_with_usage(
+        &self,
+        system: &str,
+        user: &str,
+    ) -> Result<(String, Option<TokenUsage>)> {
+        #[cfg(any(test, feature = "testing"))]
+        if self.model == "mock" {
+            let _ = (system, user);
+            return Ok((
+                "Class Generated.MockClass Extends %RegisteredObject {\nMethod Hello() As %String { Quit \"hello\" }\n}".to_string(),
+                None,
+            ));
+        }
+
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(self.timeout_secs))
+            .build()?;
+
+        if self.is_anthropic_model() {
+            let anthropic_base = std::env::var("ANTHROPIC_BASE_URL")
+                .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
+            let resp = http
+                .post(format!("{}/v1/messages", anthropic_base))
+                .header("x-api-key", &self.api_key)
+                .header("anthropic-version", "2023-06-01")
+                .header("content-type", "application/json")
+                .json(&AnthropicRequest {
+                    model: self.model.clone(),
+                    max_tokens: 4096,
+                    system: system.to_string(),
+                    messages: vec![AnthropicMessage {
+                        role: "user".to_string(),
+                        content: user.to_string(),
+                    }],
+                })
+                .send()
+                .await
+                .context("Anthropic API request failed")?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                anyhow::bail!("Anthropic API error {}: {}", status, body);
+            }
+
+            let parsed: AnthropicResponse =
+                resp.json().await.context("parsing Anthropic response")?;
+            let usage = parsed.usage.map(|u| TokenUsage {
+                input: u.input_tokens,
+                output: u.output_tokens,
+            });
+            let text = parsed
+                .content
+                .into_iter()
+                .next()
+                .map(|c| c.text)
+                .context("empty Anthropic response")?;
+            return Ok((text, usage));
+        }
+
+        // OpenAI-compatible path
+        let openai_base = std::env::var("OPENAI_BASE_URL")
+            .unwrap_or_else(|_| "https://api.openai.com".to_string());
+        let resp = http
+            .post(format!("{}/v1/chat/completions", openai_base))
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Content-Type", "application/json")
+            .json(&OpenAiRequest {
+                model: self.model.clone(),
+                messages: vec![
+                    OpenAiMessage {
+                        role: "system".to_string(),
+                        content: system.to_string(),
+                    },
+                    OpenAiMessage {
+                        role: "user".to_string(),
+                        content: user.to_string(),
+                    },
+                ],
+            })
+            .send()
+            .await
+            .context("OpenAI API request failed")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("LLM API error {}: {}", status, body);
+        }
+
+        let parsed: OpenAiResponse = resp.json().await.context("parsing OpenAI response")?;
+        let usage = parsed.usage.map(|u| TokenUsage {
+            input: u.prompt_tokens,
+            output: u.completion_tokens,
+        });
+        let text = parsed
+            .choices
+            .into_iter()
+            .next()
+            .map(|c| c.message.content)
+            .context("empty LLM response")?;
+        Ok((text, usage))
     }
 }
 
@@ -342,5 +483,61 @@ mod tests {
     fn validate_cls_syntax_balanced_braces_returns_true() {
         let text = "Class Foo { Method Bar() { Quit 1 } }";
         assert!(validate_cls_syntax(text));
+    }
+
+    // T004: TokenUsage deserialization tests
+    #[test]
+    fn anthropic_response_deserializes_usage() {
+        let json = r#"{
+            "content": [{"text": "hello"}],
+            "usage": {"input_tokens": 10, "output_tokens": 20}
+        }"#;
+        let resp: AnthropicResponse = serde_json::from_str(json).unwrap();
+        let usage = resp.usage.unwrap();
+        assert_eq!(usage.input_tokens, 10);
+        assert_eq!(usage.output_tokens, 20);
+    }
+
+    #[test]
+    fn anthropic_response_without_usage_deserializes_none() {
+        let json = r#"{
+            "content": [{"text": "hello"}]
+        }"#;
+        let resp: AnthropicResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.usage.is_none());
+    }
+
+    #[test]
+    fn openai_response_deserializes_usage() {
+        let json = r#"{
+            "choices": [{"message": {"content": "hi"}}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 15}
+        }"#;
+        let resp: OpenAiResponse = serde_json::from_str(json).unwrap();
+        let usage = resp.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 5);
+        assert_eq!(usage.completion_tokens, 15);
+    }
+
+    #[test]
+    fn openai_response_without_usage_deserializes_none() {
+        let json = r#"{
+            "choices": [{"message": {"content": "hi"}}]
+        }"#;
+        let resp: OpenAiResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.usage.is_none());
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    #[tokio::test]
+    async fn complete_with_usage_returns_none_for_mock_model() {
+        std::env::set_var("IRIS_GENERATE_CLASS_MODEL", "mock");
+        std::env::set_var("ANTHROPIC_API_KEY", "dummy");
+        let client = LlmClient::from_env().unwrap();
+        let (text, usage) = client.complete_with_usage("sys", "user").await.unwrap();
+        assert!(text.contains("MockClass"));
+        assert!(usage.is_none());
+        std::env::remove_var("IRIS_GENERATE_CLASS_MODEL");
+        std::env::remove_var("ANTHROPIC_API_KEY");
     }
 }
