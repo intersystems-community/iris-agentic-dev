@@ -61,7 +61,7 @@ fn rt() -> tokio::runtime::Runtime {
 fn result_json(r: Result<rmcp::model::CallToolResult, rmcp::ErrorData>) -> serde_json::Value {
     let tool_result = r.expect("handler returned Err(ErrorData)");
     let text = tool_result.content[0]
-        .raw
+        
         .as_text()
         .expect("first content item is not text")
         .text
@@ -11927,7 +11927,7 @@ async fn test_search_sync_with_wiremock_null_work_id() {
     );
 
     let text = result.unwrap().content[0]
-        .raw
+        
         .as_text()
         .map(|t| t.text.clone())
         .unwrap_or_default();
@@ -12077,7 +12077,7 @@ async fn test_doc_put_returns_200_with_status_errors() {
     .await;
 
     let text = result.unwrap().content[0]
-        .raw
+        
         .as_text()
         .map(|t| t.text.clone())
         .unwrap_or_default();
@@ -12158,7 +12158,7 @@ async fn test_doc_put_compile_non_2xx_compile_request() {
     .await;
 
     let text = result.unwrap().content[0]
-        .raw
+        
         .as_text()
         .map(|t| t.text.clone())
         .unwrap_or_default();
@@ -12228,7 +12228,7 @@ async fn test_doc_delete_non_2xx_non_404() {
     .await;
 
     let text = result.unwrap().content[0]
-        .raw
+        
         .as_text()
         .map(|t| t.text.clone())
         .unwrap_or_default();
@@ -12296,7 +12296,7 @@ async fn test_doc_put_non_2xx_upload() {
     .await;
 
     let text = result.unwrap().content[0]
-        .raw
+        
         .as_text()
         .map(|t| t.text.clone())
         .unwrap_or_default();

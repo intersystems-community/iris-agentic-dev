@@ -32,6 +32,7 @@
 overall = 88
 
 # benchmark/ — task runner and LLM integration
+"src/benchmark/cli_dispatch.rs"       = 34
 "src/benchmark/container.rs"          = 43
 "src/benchmark/llm.rs"                = 85
 "src/benchmark/mod.rs"                = 52

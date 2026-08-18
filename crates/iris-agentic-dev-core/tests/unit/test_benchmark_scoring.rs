@@ -9,6 +9,9 @@ fn task(outcome: TaskOutcome) -> TaskResult {
         iterations: 1,
         elapsed_s: 1.0,
         reason: String::new(),
+        tokens_input: None,
+        tokens_output: None,
+        tokens_total: None,
     }
 }
 

@@ -130,8 +130,6 @@ extension is installed, iris-agentic-dev reads your server list from VS Code's
      This illustrates both where servers are defined and how to reconnect if credentials
      are stale. Crop to the sidebar panel only. -->
 
-![InterSystems Server Manager sidebar showing a connected server](../docs/images/server-manager-sidebar.png)
-
 **Single server configured:** auto-connects, no extra setup.
 
 **Multiple servers configured:** set `IRIS_SERVER_NAME` to the map key from
@@ -175,7 +173,7 @@ Omit the block entirely to permit everything. Available categories: `compile`, `
 `query`, `search`, `docs`, `source_control`, `debug`, `admin`, `skill`, `kb`.
 
 For multi-instance fleet workflows (`mode = "operate"`), see the
-[fleet roles spec](../specs/003-workspace-config/) for the full `[instance.*]` config
+[ecosystem integration guide](ecosystem-integration.md) for the full `[instance.*]` config
 format and role-gate behavior.
 
 ---

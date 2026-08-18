@@ -256,7 +256,7 @@ async fn live_telemetry_query_and_export_trace_reflect_recorded_calls() {
             .content
             .first()
             .unwrap()
-            .raw
+            
             .as_text()
             .unwrap()
             .text
@@ -287,7 +287,7 @@ async fn live_telemetry_query_and_export_trace_reflect_recorded_calls() {
         .content
         .first()
         .unwrap()
-        .raw
+        
         .as_text()
         .unwrap()
         .text

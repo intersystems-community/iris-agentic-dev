@@ -13,7 +13,6 @@ use iris_agentic_dev_core::tools::IrisTools;
 fn parse(result: Result<rmcp::model::CallToolResult, String>) -> serde_json::Value {
     let r = result.expect("tool call should not error");
     let text = r.content[0]
-        .raw
         .as_text()
         .expect("text content")
         .text

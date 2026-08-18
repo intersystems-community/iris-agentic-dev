@@ -16,7 +16,7 @@ fn parse_result(r: Result<rmcp::model::CallToolResult, String>) -> serde_json::V
         .content
         .first()
         .expect("result has no content")
-        .raw
+        
         .as_text()
         .expect("content is not text")
         .text
