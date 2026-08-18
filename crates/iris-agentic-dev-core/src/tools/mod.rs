@@ -2999,7 +2999,13 @@ impl IrisTools {
             || (p.target.ends_with(".cls") && std::path::Path::new(&p.target).exists());
         if is_local_path {
             let path = std::path::Path::new(&p.target);
-            if path.exists() {
+            if !path.exists() {
+                return err_json(
+                    "FILE_NOT_FOUND",
+                    &format!("Local file not found: {}", p.target),
+                );
+            }
+            {
                 let content = match std::fs::read_to_string(path) {
                     Ok(c) => c,
                     Err(e) => {
