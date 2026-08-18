@@ -2656,11 +2656,21 @@ impl IrisTools {
         let changed = {
             let mut w = self.config_watcher.lock().unwrap();
             if let Some(ref mut watcher) = *w {
-                let already_from_config =
-                    self.connection.lock().unwrap().source == ConnectionSource::ConfigFile;
+                // If startup fell back to auto-discovery with NO active connection, and the
+                // config file exists, it was present but not loaded (e.g. cwd="/" launch,
+                // issue #104). Reset mtime so has_changed() fires on the first tool call.
+                // Condition requires both AutoDiscovered AND no live IRIS — if IRIS is already
+                // connected (even via auto-discovery), don't overwrite a working connection.
+                let (source, has_iris) = {
+                    let c = self.connection.lock().unwrap();
+                    (c.source.clone(), c.iris.is_some())
+                };
                 let file_exists = watcher.config_path.exists();
-                // If file exists but startup didn't load it, pretend it just appeared.
-                if !already_from_config && file_exists && watcher.last_mtime.is_some() {
+                if source == ConnectionSource::AutoDiscovered
+                    && !has_iris
+                    && file_exists
+                    && watcher.last_mtime.is_some()
+                {
                     watcher.last_mtime = None;
                 }
                 watcher.has_changed()
