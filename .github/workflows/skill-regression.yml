@@ -13,7 +13,7 @@ on:
       runs:
         description: 'Runs per skill'
         required: false
-        default: '3'
+        default: '5'
       update_baseline:
         description: 'Update baseline after run'
         required: false
@@ -136,7 +136,7 @@ jobs:
           if [ -n "${{ github.event.inputs.skill }}" ]; then
             SKILL_ARG="--skill ${{ github.event.inputs.skill }}"
           fi
-          RUNS="${{ github.event.inputs.runs || '3' }}"
+          RUNS="${{ github.event.inputs.runs || '5' }}"
 
           python -m tests.e2e.skill_eval \
             $SKILL_ARG \

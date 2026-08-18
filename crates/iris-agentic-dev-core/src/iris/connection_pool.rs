@@ -371,6 +371,25 @@ mod tests {
         assert_eq!(pool.len(), 3);
     }
 
+    // T011.5b — default_name set but missing from instances map → IRIS_UNREACHABLE
+    #[test]
+    fn get_none_with_missing_default_returns_unreachable() {
+        // Build a pool where default_name points to a name not in instances.
+        // This exercises the Some(default) branch where instances.get() returns None.
+        let mut pool = ConnectionPool::empty();
+        pool.default_name = Some("missing".to_string());
+        let err = pool.get(None).unwrap_err();
+        let msg: &str = &err.message;
+        assert!(
+            msg.contains("IRIS_UNREACHABLE"),
+            "expected IRIS_UNREACHABLE, got: {msg}"
+        );
+        assert!(
+            msg.contains("missing"),
+            "message should name the missing default, got: {msg}"
+        );
+    }
+
     // T011.6 — cascade: first-wins dedup — "dev" added from native source wins over vscode source
     #[test]
     fn cascade_iad_native_wins_over_vscode() {

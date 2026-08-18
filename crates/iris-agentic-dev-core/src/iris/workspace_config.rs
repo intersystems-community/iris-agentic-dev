@@ -1219,4 +1219,59 @@ mod tests {
             );
         }
     }
+
+    // ── load_workspace_config_with_path tests ────────────────────────────────
+
+    #[test]
+    fn load_config_with_path_missing_file_returns_none() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        // No config file — with_path should return None
+        let result = load_workspace_config_with_path(Some(dir.path().to_str().unwrap()));
+        assert!(result.is_none(), "missing file should return None");
+    }
+
+    #[test]
+    fn load_config_with_path_valid_toml_returns_some_with_path() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        use std::io::Write;
+        let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
+        writeln!(f, "host = \"with-path-host\"\nweb_port = 52773").unwrap();
+        let result = load_workspace_config_with_path(Some(dir.path().to_str().unwrap()));
+        let (cfg, path) = result.expect("should load config with path");
+        assert_eq!(cfg.host, Some("with-path-host".to_string()));
+        assert!(
+            path.ends_with(".iris-agentic-dev.toml"),
+            "returned path should end with config filename"
+        );
+    }
+
+    #[test]
+    fn load_config_with_path_legacy_toml_returns_some() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        use std::io::Write;
+        // Only legacy .iris-dev.toml exists — exercises the legacy branch in with_path
+        let mut f = std::fs::File::create(dir.path().join(".iris-dev.toml")).unwrap();
+        writeln!(f, "host = \"legacy-host\"\nweb_port = 52773").unwrap();
+        let result = load_workspace_config_with_path(Some(dir.path().to_str().unwrap()));
+        let (cfg, path) = result.expect("should load legacy config");
+        assert_eq!(cfg.host, Some("legacy-host".to_string()));
+        assert!(
+            path.ends_with(".iris-dev.toml"),
+            "returned path should end with legacy filename"
+        );
+    }
+
+    #[test]
+    fn load_config_with_path_invalid_toml_returns_none() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        use std::io::Write;
+        let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
+        writeln!(f, "this is not valid toml ={{{{").unwrap();
+        let result = load_workspace_config_with_path(Some(dir.path().to_str().unwrap()));
+        assert!(result.is_none(), "invalid TOML should return None");
+    }
 }

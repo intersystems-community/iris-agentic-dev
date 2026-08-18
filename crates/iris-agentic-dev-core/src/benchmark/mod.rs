@@ -464,3 +464,73 @@ mod class_name_tests {
         assert_eq!(extract_class_name("just some text, no class here"), None);
     }
 }
+
+#[cfg(test)]
+mod suite_result_tests {
+    use super::*;
+
+    fn make_result(outcome: TaskOutcome) -> TaskResult {
+        TaskResult {
+            task_id: "t1".to_string(),
+            outcome,
+            iterations: 1,
+            elapsed_s: 0.1,
+            reason: String::new(),
+        }
+    }
+
+    #[test]
+    fn from_task_results_all_pass() {
+        let results = vec![
+            make_result(TaskOutcome::Pass),
+            make_result(TaskOutcome::Pass),
+        ];
+        let suite = BenchmarkResult::from_task_results(results, "2026.2".to_string(), 1.0);
+        assert_eq!(suite.tasks_passed, 2);
+        assert_eq!(suite.tasks_total, 2);
+        assert_eq!(suite.tasks_errored, 0);
+        assert!((suite.pass_rate - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn from_task_results_mixed_outcomes() {
+        let results = vec![
+            make_result(TaskOutcome::Pass),
+            make_result(TaskOutcome::Fail),
+            make_result(TaskOutcome::Error),
+        ];
+        let suite = BenchmarkResult::from_task_results(results, "2026.2".to_string(), 2.5);
+        assert_eq!(suite.tasks_passed, 1);
+        assert_eq!(suite.tasks_total, 3);
+        assert_eq!(suite.tasks_errored, 1);
+        // pass_rate = 1 / (1 passed + 1 failed) = 0.5
+        assert!((suite.pass_rate - 0.5).abs() < 1e-9);
+        assert_eq!(suite.baseline_pass_rate, None);
+        assert_eq!(suite.lift, None);
+    }
+
+    #[test]
+    fn from_task_results_all_error_gives_zero_pass_rate() {
+        let results = vec![
+            make_result(TaskOutcome::Error),
+            make_result(TaskOutcome::Error),
+        ];
+        let suite = BenchmarkResult::from_task_results(results, "2026.2".to_string(), 0.5);
+        assert_eq!(suite.tasks_passed, 0);
+        assert_eq!(suite.tasks_errored, 2);
+        // denom == 0 → pass_rate = 0.0
+        assert!((suite.pass_rate - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn apply_baseline_sets_lift() {
+        let results = vec![make_result(TaskOutcome::Pass)];
+        let mut suite = BenchmarkResult::from_task_results(results, "2026.2".to_string(), 0.5);
+        suite.apply_baseline(0.6);
+        assert_eq!(suite.baseline_pass_rate, Some(0.6));
+        let lift = suite
+            .lift
+            .expect("lift should be Some after apply_baseline");
+        assert!((lift - (1.0 - 0.6)).abs() < 1e-9);
+    }
+}

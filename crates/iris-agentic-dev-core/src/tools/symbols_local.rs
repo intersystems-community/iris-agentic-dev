@@ -1292,4 +1292,98 @@ mod tests {
         let (symbols, _) = extract_cls_symbols(src, "src/Empty.cls", "*");
         assert!(symbols.is_empty(), "empty source should yield no symbols");
     }
+
+    // ── parse_formalspec_string ──────────────────────────────────────────────
+
+    #[test]
+    fn parse_formalspec_empty() {
+        assert!(parse_formalspec_string("").is_empty());
+        assert!(parse_formalspec_string("  ").is_empty());
+    }
+
+    #[test]
+    fn parse_formalspec_single_name_only() {
+        let args = parse_formalspec_string("x");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].name, "x");
+        assert!(!args[0].byref);
+        assert!(!args[0].output);
+        assert!(args[0].type_name.is_none());
+        assert!(args[0].default.is_none());
+    }
+
+    #[test]
+    fn parse_formalspec_name_and_type() {
+        let args = parse_formalspec_string("name:%String");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].name, "name");
+        assert_eq!(args[0].type_name.as_deref(), Some("%String"));
+    }
+
+    #[test]
+    fn parse_formalspec_name_type_default() {
+        let args = parse_formalspec_string("x:%Integer=0");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].name, "x");
+        assert_eq!(args[0].type_name.as_deref(), Some("%Integer"));
+        assert_eq!(args[0].default.as_deref(), Some("0"));
+    }
+
+    #[test]
+    fn parse_formalspec_byref() {
+        let args = parse_formalspec_string("ByRef x:%String");
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].name, "x");
+        assert!(args[0].byref);
+    }
+
+    #[test]
+    fn parse_formalspec_output() {
+        let args = parse_formalspec_string("Output result:%Status");
+        assert_eq!(args.len(), 1);
+        assert!(args[0].output);
+        assert_eq!(args[0].name, "result");
+    }
+
+    #[test]
+    fn parse_formalspec_multiple_args() {
+        let args = parse_formalspec_string("a:%String, b:%Integer, c");
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[0].name, "a");
+        assert_eq!(args[1].name, "b");
+        assert_eq!(args[2].name, "c");
+    }
+
+    #[test]
+    fn parse_formalspec_quoted_default_with_comma() {
+        // Default value contains a comma inside quotes — must not split there
+        let args = parse_formalspec_string(r#"x:%String="a,b""#);
+        assert_eq!(args.len(), 1, "quoted comma should not split args");
+        assert_eq!(args[0].default.as_deref(), Some(r#""a,b""#));
+    }
+
+    // ── split_member_query ───────────────────────────────────────────────────
+
+    #[test]
+    fn split_member_query_one_dot_no_split() {
+        // fewer than 2 dots → returns full query, no member
+        let (class, member) = split_member_query("MyApp.Foo");
+        assert_eq!(class, "MyApp.Foo");
+        assert!(member.is_none());
+    }
+
+    #[test]
+    fn split_member_query_two_dots_splits_at_last() {
+        // 2 dots → splits at last dot: "MyApp.Foo" + "DoSomething"
+        let (class, member) = split_member_query("MyApp.Foo.DoSomething");
+        assert_eq!(class, "MyApp.Foo");
+        assert_eq!(member.as_deref(), Some("DoSomething"));
+    }
+
+    #[test]
+    fn split_member_query_no_dots_no_split() {
+        let (class, member) = split_member_query("Foo");
+        assert_eq!(class, "Foo");
+        assert!(member.is_none());
+    }
 }

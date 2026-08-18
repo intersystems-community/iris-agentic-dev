@@ -2729,6 +2729,236 @@ Storage Default
         );
     }
 
+    // ── stale_content_err ─────────────────────────────────────────────────────
+
+    #[test]
+    fn stale_content_err_produces_stale_content_error_code() {
+        let result = stale_content_err(
+            (2, "expected_line".to_string(), "actual_line".to_string()),
+            10,
+        )
+        .unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["success"], false);
+        assert_eq!(v["error_code"], "STALE_CONTENT");
+        assert_eq!(v["line"], 12); // block_start(10) + offset(2)
+        assert_eq!(v["expected_line"], "expected_line");
+        assert_eq!(v["actual_line"], "actual_line");
+        assert!(
+            v["error"].as_str().unwrap().contains("changed"),
+            "error message should mention document changed"
+        );
+    }
+
+    #[test]
+    fn stale_content_err_at_offset_zero() {
+        let result = stale_content_err((0, "exp".to_string(), "act".to_string()), 5).unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["line"], 5); // 5 + 0
+    }
+
+    // ── diff_expected edge cases ───────────────────────────────────────────────
+
+    #[test]
+    fn diff_expected_trailing_empty_line_ignored() {
+        // A trailing empty line in expected should be ignored per the trim logic
+        let expected = "line1\nline2\n";
+        let actual = vec!["line1".to_string(), "line2".to_string()];
+        assert_eq!(diff_expected(expected, &actual), None);
+    }
+
+    #[test]
+    fn diff_expected_detects_mismatch_at_first_diff() {
+        let expected = "line1\nWRONG\nline3";
+        let actual = vec![
+            "line1".to_string(),
+            "CORRECT".to_string(),
+            "line3".to_string(),
+        ];
+        let result = diff_expected(expected, &actual);
+        assert!(result.is_some());
+        let (off, exp_str, act_str) = result.unwrap();
+        assert_eq!(off, 1);
+        assert_eq!(exp_str, "WRONG");
+        assert_eq!(act_str, "CORRECT");
+    }
+
+    #[test]
+    fn diff_expected_actual_shorter_than_expected() {
+        let expected = "line1\nline2\nline3";
+        let actual = vec!["line1".to_string()];
+        let result = diff_expected(expected, &actual);
+        assert!(result.is_some(), "should detect that line2 is missing");
+        let (off, _, _) = result.unwrap();
+        assert_eq!(off, 1);
+    }
+
+    // ── handle_insert validation (early returns before IRIS call) ─────────────
+
+    fn make_iris() -> (IrisConnection, reqwest::Client) {
+        use crate::iris::connection::DiscoverySource;
+        let conn = IrisConnection::new(
+            "http://localhost:52780",
+            "USER",
+            "_SYSTEM",
+            "SYS",
+            DiscoverySource::EnvVar,
+        );
+        (conn, reqwest::Client::new())
+    }
+
+    #[tokio::test]
+    async fn handle_insert_missing_name_returns_missing_params() {
+        let (iris, client) = make_iris();
+        let p: IrisDocParams = serde_json::from_str(r#"{"mode":"insert","content":"x"}"#).unwrap();
+        let es = crate::elicitation::ElicitationStore::new();
+        let cc = crate::elicitation::CheckoutCache::new();
+        let result = handle_insert(&iris, &client, p, &es, &cc).await.unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["error_code"], "MISSING_PARAMS");
+    }
+
+    #[tokio::test]
+    async fn handle_insert_missing_content_returns_missing_params() {
+        let (iris, client) = make_iris();
+        let p: IrisDocParams =
+            serde_json::from_str(r#"{"mode":"insert","name":"Foo.cls"}"#).unwrap();
+        let es = crate::elicitation::ElicitationStore::new();
+        let cc = crate::elicitation::CheckoutCache::new();
+        let result = handle_insert(&iris, &client, p, &es, &cc).await.unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["error_code"], "MISSING_PARAMS");
+    }
+
+    #[tokio::test]
+    async fn handle_insert_line_without_expected_returns_missing_params() {
+        let (iris, client) = make_iris();
+        let p: IrisDocParams =
+            serde_json::from_str(r#"{"mode":"insert","name":"Foo.cls","content":"x","line":5}"#)
+                .unwrap();
+        let es = crate::elicitation::ElicitationStore::new();
+        let cc = crate::elicitation::CheckoutCache::new();
+        let result = handle_insert(&iris, &client, p, &es, &cc).await.unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            v["error_code"], "MISSING_PARAMS",
+            "line without expected: {v}"
+        );
+    }
+
+    // ── handle_delete_lines validation (early returns before IRIS call) ────────
+
+    #[tokio::test]
+    async fn handle_delete_lines_missing_name_returns_missing_params() {
+        let (iris, client) = make_iris();
+        let p: IrisDocParams =
+            serde_json::from_str(r#"{"mode":"delete_lines","start":1,"end":2,"expected":"x"}"#)
+                .unwrap();
+        let es = crate::elicitation::ElicitationStore::new();
+        let cc = crate::elicitation::CheckoutCache::new();
+        let result = handle_delete_lines(&iris, &client, p, &es, &cc)
+            .await
+            .unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["error_code"], "MISSING_PARAMS");
+    }
+
+    #[tokio::test]
+    async fn handle_delete_lines_missing_start_returns_missing_params() {
+        let (iris, client) = make_iris();
+        let p: IrisDocParams = serde_json::from_str(
+            r#"{"mode":"delete_lines","name":"Foo.cls","end":2,"expected":"x"}"#,
+        )
+        .unwrap();
+        let es = crate::elicitation::ElicitationStore::new();
+        let cc = crate::elicitation::CheckoutCache::new();
+        let result = handle_delete_lines(&iris, &client, p, &es, &cc)
+            .await
+            .unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["error_code"], "MISSING_PARAMS");
+    }
+
+    #[tokio::test]
+    async fn handle_delete_lines_missing_end_returns_missing_params() {
+        let (iris, client) = make_iris();
+        let p: IrisDocParams = serde_json::from_str(
+            r#"{"mode":"delete_lines","name":"Foo.cls","start":1,"expected":"x"}"#,
+        )
+        .unwrap();
+        let es = crate::elicitation::ElicitationStore::new();
+        let cc = crate::elicitation::CheckoutCache::new();
+        let result = handle_delete_lines(&iris, &client, p, &es, &cc)
+            .await
+            .unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["error_code"], "MISSING_PARAMS");
+    }
+
+    #[tokio::test]
+    async fn handle_delete_lines_start_less_than_1_returns_invalid_params() {
+        let (iris, client) = make_iris();
+        let p: IrisDocParams = serde_json::from_str(
+            r#"{"mode":"delete_lines","name":"Foo.cls","start":0,"end":2,"expected":"x"}"#,
+        )
+        .unwrap();
+        let es = crate::elicitation::ElicitationStore::new();
+        let cc = crate::elicitation::CheckoutCache::new();
+        let result = handle_delete_lines(&iris, &client, p, &es, &cc)
+            .await
+            .unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            v["error_code"], "INVALID_PARAMS",
+            "start=0 should be invalid: {v}"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_delete_lines_end_less_than_start_returns_invalid_params() {
+        let (iris, client) = make_iris();
+        let p: IrisDocParams = serde_json::from_str(
+            r#"{"mode":"delete_lines","name":"Foo.cls","start":5,"end":3,"expected":"x"}"#,
+        )
+        .unwrap();
+        let es = crate::elicitation::ElicitationStore::new();
+        let cc = crate::elicitation::CheckoutCache::new();
+        let result = handle_delete_lines(&iris, &client, p, &es, &cc)
+            .await
+            .unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            v["error_code"], "INVALID_PARAMS",
+            "end < start should be invalid: {v}"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_delete_lines_missing_expected_returns_missing_params() {
+        let (iris, client) = make_iris();
+        let p: IrisDocParams =
+            serde_json::from_str(r#"{"mode":"delete_lines","name":"Foo.cls","start":1,"end":2}"#)
+                .unwrap();
+        let es = crate::elicitation::ElicitationStore::new();
+        let cc = crate::elicitation::CheckoutCache::new();
+        let result = handle_delete_lines(&iris, &client, p, &es, &cc)
+            .await
+            .unwrap();
+        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["error_code"], "MISSING_PARAMS", "no expected: {v}");
+    }
+
     // ── annotate_edit ─────────────────────────────────────────────────────────
     #[test]
     fn test_annotate_edit_merges_fields() {

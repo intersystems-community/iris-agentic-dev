@@ -29,7 +29,7 @@
 # Overall line coverage floor — enforced only in merged/subprocess mode (src/ files only).
 # Baseline: 88.48% (2026-08-08, master, subprocess profraw merge, ws_session bugfix).
 # Target: reach 90% once admin_tools/comparison_tools/xdata_flow dispatch gaps are closed.
-overall = 87
+overall = 90
 
 # benchmark/ — task runner and LLM integration
 "src/benchmark/container.rs"          = 43

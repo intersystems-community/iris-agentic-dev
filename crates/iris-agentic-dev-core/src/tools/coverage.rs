@@ -677,4 +677,159 @@ mod tests {
             "must emit error on failure"
         );
     }
+
+    // ── parse_check_output ──────────────────────────────────────────────────
+
+    #[test]
+    fn parse_check_output_empty_returns_error() {
+        let v = parse_check_output("");
+        assert_eq!(v["error_code"], "IRIS_EXECUTE_ERROR");
+    }
+
+    #[test]
+    fn parse_check_output_ok() {
+        let v = parse_check_output("OK|ready");
+        assert_eq!(v["ok"], true);
+    }
+
+    #[test]
+    fn parse_check_output_bbsiz_not_configured() {
+        let v = parse_check_output("BBSIZ_NOT_CONFIGURED|increase gmheap");
+        assert_eq!(v["error_code"], "BBSIZ_NOT_CONFIGURED");
+        assert!(v["fix"].as_str().unwrap_or("").contains("gmheap"));
+    }
+
+    #[test]
+    fn parse_check_output_error_line() {
+        let v = parse_check_output("ERROR|SQL_ERROR");
+        assert_eq!(v["error_code"], "SQL_ERROR");
+    }
+
+    #[test]
+    fn parse_check_output_unknown_returns_parse_error() {
+        let v = parse_check_output("XYZZY|something");
+        assert_eq!(v["error_code"], "PARSE_ERROR");
+    }
+
+    #[test]
+    fn parse_check_output_json_passthrough() {
+        let v = parse_check_output(r#"{"ok":true,"bbsiz_state":"ready"}"#);
+        assert_eq!(v["ok"], true);
+    }
+
+    // ── parse_coverage_output ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_coverage_output_empty_returns_error() {
+        let v = parse_coverage_output("");
+        assert_eq!(v["error_code"], "IRIS_EXECUTE_ERROR");
+    }
+
+    #[test]
+    fn parse_coverage_output_error_line() {
+        let v = parse_coverage_output("ERROR|MONITOR_NOT_RUNNING|monitor was not started");
+        assert_eq!(v["error_code"], "MONITOR_NOT_RUNNING");
+    }
+
+    #[test]
+    fn parse_coverage_output_total_zero_exec() {
+        let v = parse_coverage_output("TOTAL|0|0");
+        assert_eq!(v["success"], true);
+        assert_eq!(v["total_pct"], 0.0);
+    }
+
+    #[test]
+    fn parse_coverage_output_with_class_lines() {
+        let output = "Demo.MyClass|Demo.MyClass.1|8|10\nTOTAL|8|10";
+        let v = parse_coverage_output(output);
+        assert_eq!(v["success"], true);
+        assert_eq!(v["hits"], 8);
+        assert_eq!(v["total"], 10);
+        let classes = v["classes"].as_array().unwrap();
+        assert_eq!(classes.len(), 1);
+        assert_eq!(classes[0]["class"], "Demo.MyClass");
+    }
+
+    #[test]
+    fn parse_coverage_output_coverage_data_start_sentinel() {
+        let output = "RunTest stdout noise\nCOVERAGE_DATA_START\nDemo.A|Demo.A.1|5|10\nTOTAL|5|10";
+        let v = parse_coverage_output(output);
+        assert_eq!(v["success"], true);
+        assert_eq!(v["hits"], 5);
+    }
+
+    #[test]
+    fn parse_coverage_output_json_with_error_code_passthrough() {
+        let json = r#"{"error_code":"MONITOR_NOT_RUNNING","success":false}"#;
+        let v = parse_coverage_output(json);
+        assert_eq!(v["error_code"], "MONITOR_NOT_RUNNING");
+    }
+
+    #[test]
+    fn parse_coverage_output_json_without_error_code_parse_error() {
+        // JSON that doesn't have error_code or success → PARSE_ERROR
+        let v = parse_coverage_output(r#"{"foo":"bar"}"#);
+        assert_eq!(v["error_code"], "PARSE_ERROR");
+    }
+
+    #[test]
+    fn parse_coverage_output_no_data_no_total() {
+        // Output with no valid lines → PARSE_ERROR
+        let v = parse_coverage_output("some|garbage");
+        assert_eq!(v["error_code"], "PARSE_ERROR");
+    }
+
+    // ── parse_package_expand_output ─────────────────────────────────────────
+
+    #[test]
+    fn parse_package_expand_output_empty_returns_error() {
+        assert!(parse_package_expand_output("").is_err());
+    }
+
+    #[test]
+    fn parse_package_expand_output_error_line() {
+        let result = parse_package_expand_output("ERROR|SQL_ERROR|table not found");
+        let err = result.unwrap_err();
+        assert_eq!(err["error_code"], "SQL_ERROR");
+    }
+
+    #[test]
+    fn parse_package_expand_output_done_stops_collection() {
+        let output = "Demo.A\nDemo.B\nDONE|2\nDemo.C";
+        let classes = parse_package_expand_output(output).unwrap();
+        assert_eq!(classes, vec!["Demo.A", "Demo.B"]);
+    }
+
+    #[test]
+    fn parse_package_expand_output_normal() {
+        let output = "Demo.A\nDemo.B\nDemo.C\nDONE|3";
+        let classes = parse_package_expand_output(output).unwrap();
+        assert_eq!(classes.len(), 3);
+    }
+
+    // ── build_routine_name / strip_routine_suffix ───────────────────────────
+
+    #[test]
+    fn build_routine_name_dotted_class() {
+        assert_eq!(build_routine_name("Demo.MyClass"), "Demo.MyClass.1");
+    }
+
+    #[test]
+    fn strip_routine_suffix_removes_dot_one() {
+        assert_eq!(strip_routine_suffix("Demo.MyClass.1"), "Demo.MyClass");
+    }
+
+    #[test]
+    fn strip_routine_suffix_no_suffix() {
+        assert_eq!(strip_routine_suffix("Demo.MyClass"), "Demo.MyClass");
+    }
+
+    // ── build_coverage_check_code ───────────────────────────────────────────
+
+    #[test]
+    fn build_coverage_check_code_contains_namespace() {
+        let code = build_coverage_check_code("USER");
+        assert!(code.contains("USER"));
+        assert!(code.contains("$NAMESPACE"));
+    }
 }

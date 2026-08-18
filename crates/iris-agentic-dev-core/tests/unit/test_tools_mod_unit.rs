@@ -1959,3 +1959,308 @@ fn connection_source_is_env_vars_when_iris_host_set() {
         "IRIS_HOST absent → source must be AutoDiscovered"
     );
 }
+
+// ── No-IRIS tests for tools missing coverage (072-multi-instance-pool +
+//    072-b/c: server management, WebSocket, comparison, namespace/db admin,
+//    observability, security, HL7, Mermaid, storage, global ops) ──────────────
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_iris_servers_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("iris_servers", serde_json::json!({}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_iris_add_server_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test(
+            "iris_add_server",
+            serde_json::json!({"name": "dev", "host": "localhost", "port": 52780, "namespace": "USER", "username": "_SYSTEM", "password": "SYS"}),
+        )
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_iris_remove_server_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("iris_remove_server", serde_json::json!({"name": "dev"}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_iris_test_server_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("iris_test_server", serde_json::json!({"name": "dev"}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_iris_import_servers_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("iris_import_servers", serde_json::json!({}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_iris_ws_open_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("iris_ws_open", serde_json::json!({}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_iris_ws_exec_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test(
+            "iris_ws_exec",
+            serde_json::json!({"session_id": "test-session", "code": "write 1"}),
+        )
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_iris_ws_close_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test(
+            "iris_ws_close",
+            serde_json::json!({"session_id": "test-session"}),
+        )
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_compare_document_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test(
+            "compare_document",
+            serde_json::json!({"document": "MyClass.cls"}),
+        )
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_compare_namespace_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("compare_namespace", serde_json::json!({}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_iris_namespace_list_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("iris_namespace_list", serde_json::json!({}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_iris_database_list_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("iris_database_list", serde_json::json!({}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_iris_namespace_create_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test(
+            "iris_namespace_create",
+            serde_json::json!({"namespace": "TEST"}),
+        )
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_iris_database_stats_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("iris_database_stats", serde_json::json!({}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_journal_search_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("journal_search", serde_json::json!({"query": "error"}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_query_audit_log_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("query_audit_log", serde_json::json!({}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_stream_inspect_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("stream_inspect", serde_json::json!({"stream_id": "1"}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_my_access_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("my_access", serde_json::json!({}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_capability_matrix_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("capability_matrix", serde_json::json!({}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_hl7_schema_list_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("hl7_schema_list", serde_json::json!({}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_hl7_schema_inspect_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("hl7_schema_inspect", serde_json::json!({"schema": "2.5"}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_mermaid_class_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("mermaid_class", serde_json::json!({"class": "MyClass"}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_mermaid_production_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("mermaid_production", serde_json::json!({}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_resolve_storage_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("resolve_storage", serde_json::json!({"class": "MyClass"}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_iris_coverage_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("iris_coverage", serde_json::json!({"action": "list"}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_iris_doc_search_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test("iris_doc_search", serde_json::json!({"query": "Patient"}))
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_global_preview_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test(
+            "global_preview",
+            serde_json::json!({"global_name": "MyGlobal"}),
+        )
+        .await;
+}
+
+#[cfg(feature = "testing")]
+#[tokio::test]
+async fn call_for_test_global_kill_no_iris() {
+    use iris_agentic_dev_core::tools::IrisTools;
+    let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
+    let _result = tools
+        .call_for_test(
+            "global_kill",
+            serde_json::json!({"global_name": "MyGlobal"}),
+        )
+        .await;
+}

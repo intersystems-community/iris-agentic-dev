@@ -9651,6 +9651,35 @@ impl IrisTools {
             server_tools::TestServerParams,
             iris_test_server
         );
+        // 072-b: WebSocket terminal sessions
+        dispatch!("iris_ws_open", ws_tools::WsOpenParams, iris_ws_open);
+        dispatch!("iris_ws_exec", ws_tools::WsExecParams, iris_ws_exec);
+        dispatch!("iris_ws_close", ws_tools::WsCloseParams, iris_ws_close);
+        // 072-c: comparison, namespace/db admin, observability, security, HL7, mermaid, storage
+        dispatch_any!("compare_document", compare_document);
+        dispatch_any!("compare_namespace", compare_namespace);
+        dispatch_any!("global_preview", global_preview);
+        dispatch_any!("global_kill", global_kill);
+        dispatch_any!("iris_namespace_list", iris_namespace_list);
+        dispatch_any!("iris_database_list", iris_database_list);
+        dispatch_any!("iris_namespace_create", iris_namespace_create);
+        dispatch_any!("iris_database_stats", iris_database_stats);
+        dispatch_any!("journal_search", journal_search);
+        dispatch_any!("query_audit_log", query_audit_log);
+        dispatch_any!("stream_inspect", stream_inspect);
+        dispatch_any!("my_access", my_access);
+        dispatch_any!("capability_matrix", capability_matrix);
+        dispatch_any!("hl7_schema_list", hl7_schema_list);
+        dispatch_any!("hl7_schema_inspect", hl7_schema_inspect);
+        dispatch_any!("mermaid_class", mermaid_class);
+        dispatch_any!("mermaid_production", mermaid_production);
+        dispatch_any!("resolve_storage", resolve_storage);
+        // 065: doc search
+        dispatch!(
+            "iris_doc_search",
+            doc_search::IrisDocSearchParams,
+            iris_doc_search
+        );
         Err(format!("unknown tool: {tool}"))
     }
 }

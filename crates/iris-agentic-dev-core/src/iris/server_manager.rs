@@ -486,9 +486,65 @@ fn tool_to_category(tool_name: &str) -> Option<crate::iris::workspace_config::To
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
-    /// Round-trip test for `store_credential` + `resolve_credential`.
-    ///
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn make_profile(name: &str) -> ServerManagerProfile {
+        ServerManagerProfile {
+            name: name.to_string(),
+            host: "localhost".to_string(),
+            port: 52773,
+            scheme: "http".to_string(),
+            path_prefix: None,
+            username: "_SYSTEM".to_string(),
+            password_deprecated: None,
+        }
+    }
+
+    #[test]
+    fn select_server_empty_profiles_returns_ambiguous() {
+        let result = select_server(&[]);
+        assert!(matches!(result, Err(SmCredentialError::Ambiguous { .. })));
+    }
+
+    #[test]
+    fn select_server_single_profile_returns_it() {
+        let profiles = vec![make_profile("dev")];
+        let p = select_server(&profiles).expect("single profile should be returned");
+        assert_eq!(p.name, "dev");
+    }
+
+    #[test]
+    fn select_server_multiple_no_env_returns_ambiguous() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("IRIS_SERVER_NAME");
+        let profiles = vec![make_profile("dev"), make_profile("prod")];
+        let result = select_server(&profiles);
+        assert!(matches!(result, Err(SmCredentialError::Ambiguous { .. })));
+    }
+
+    #[test]
+    fn select_server_multiple_env_matches() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("IRIS_SERVER_NAME", "prod");
+        let profiles = vec![make_profile("dev"), make_profile("prod")];
+        let result = select_server(&profiles);
+        std::env::remove_var("IRIS_SERVER_NAME");
+        let p = result.expect("matching env var should return the profile");
+        assert_eq!(p.name, "prod");
+    }
+
+    #[test]
+    fn select_server_multiple_env_no_match_returns_ambiguous() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("IRIS_SERVER_NAME", "nonexistent");
+        let profiles = vec![make_profile("dev"), make_profile("prod")];
+        let result = select_server(&profiles);
+        std::env::remove_var("IRIS_SERVER_NAME");
+        assert!(matches!(result, Err(SmCredentialError::Ambiguous { .. })));
+    }
+
     /// Marked `#[ignore]` because it requires a live OS keychain (macOS Keychain,
     /// Windows Credential Manager, or a running Linux Secret Service daemon).
     /// Run with: `cargo test -- --ignored store_resolve_credential_roundtrip`

@@ -404,3 +404,184 @@ pub async fn handle_iris_global(
         ),
     }
 }
+
+// ── Unit tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── validate_subscripts ────────────────────────────────────────────────
+
+    #[test]
+    fn validate_subscripts_valid() {
+        assert!(validate_subscripts(&["hello".to_string(), "world-1".to_string()]).is_ok());
+    }
+
+    #[test]
+    fn validate_subscripts_empty_list() {
+        assert!(validate_subscripts(&[]).is_ok());
+    }
+
+    #[test]
+    fn validate_subscripts_invalid_char() {
+        let result = validate_subscripts(&["bad$char".to_string()]);
+        let err = result.unwrap_err();
+        assert_eq!(err["error_code"], "INVALID_SUBSCRIPT");
+    }
+
+    // ── normalize_global_name ──────────────────────────────────────────────
+
+    #[test]
+    fn normalize_strips_caret() {
+        assert_eq!(normalize_global_name("^MyGlobal"), "MyGlobal");
+    }
+
+    #[test]
+    fn normalize_no_caret_unchanged() {
+        assert_eq!(normalize_global_name("MyGlobal"), "MyGlobal");
+    }
+
+    // ── build_global_ref ───────────────────────────────────────────────────
+
+    #[test]
+    fn build_global_ref_no_subscripts() {
+        assert_eq!(build_global_ref("MyGlobal", &[]), "^MyGlobal");
+    }
+
+    #[test]
+    fn build_global_ref_with_subscripts() {
+        let subs = vec!["a".to_string(), "b".to_string()];
+        assert_eq!(build_global_ref("MyGlobal", &subs), r#"^MyGlobal("a","b")"#);
+    }
+
+    // ── parse_execute_output ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_execute_output_ok() {
+        assert_eq!(parse_execute_output("ok\n"), Ok("ok".to_string()));
+    }
+
+    #[test]
+    fn parse_execute_output_error() {
+        let result = parse_execute_output("ERROR: <UNDEFINED>x");
+        let err = result.unwrap_err();
+        assert_eq!(err["error_code"], "IRIS_EXECUTE_ERROR");
+    }
+
+    // ── parse_get_output ───────────────────────────────────────────────────
+
+    #[test]
+    fn parse_get_output_defined() {
+        let v = parse_get_output("1|hello");
+        assert_eq!(v["defined"], true);
+        assert_eq!(v["value"], "hello");
+    }
+
+    #[test]
+    fn parse_get_output_undefined() {
+        let v = parse_get_output("0|");
+        assert_eq!(v["defined"], false);
+        assert!(v["value"].is_null());
+    }
+
+    #[test]
+    fn parse_get_output_unexpected() {
+        let v = parse_get_output("garbage");
+        assert_eq!(v["error_code"], "IRIS_EXECUTE_ERROR");
+    }
+
+    // ── parse_subtree_output ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_subtree_output_with_nodes() {
+        let raw = "^Global(\"a\")|val1\n^Global(\"b\")|val2\nDONE|2|0\n";
+        let v = parse_subtree_output(raw);
+        assert_eq!(v["node_count"], 2);
+        assert_eq!(v["truncated"], false);
+        let nodes = v["nodes"].as_array().unwrap();
+        assert_eq!(nodes.len(), 2);
+    }
+
+    #[test]
+    fn parse_subtree_output_truncated() {
+        let raw = "^G(\"a\")|v\nDONE|1|1\n";
+        let v = parse_subtree_output(raw);
+        assert_eq!(v["truncated"], true);
+    }
+
+    // ── parse_list_output ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_list_output_with_subscripts() {
+        let raw = "a\nb\nc\nDONE|3|0\n";
+        let v = parse_list_output(raw);
+        let subs = v["subscripts"].as_array().unwrap();
+        assert_eq!(subs.len(), 3);
+        assert_eq!(v["truncated"], false);
+    }
+
+    #[test]
+    fn parse_list_output_truncated() {
+        let raw = "a\nDONE|1|1\n";
+        let v = parse_list_output(raw);
+        assert_eq!(v["truncated"], true);
+    }
+
+    // ── clamp helpers ──────────────────────────────────────────────────────
+
+    #[test]
+    fn clamp_max_nodes_enforces_bounds() {
+        assert_eq!(clamp_max_nodes(0), 1);
+        assert_eq!(clamp_max_nodes(500), 500);
+        assert_eq!(clamp_max_nodes(9999), 1000);
+    }
+
+    #[test]
+    fn clamp_max_subscripts_enforces_bounds() {
+        assert_eq!(clamp_max_subscripts(0), 1);
+        assert_eq!(clamp_max_subscripts(200), 200);
+        assert_eq!(clamp_max_subscripts(999), 500);
+    }
+
+    // ── code builders ─────────────────────────────────────────────────────
+
+    #[test]
+    fn build_get_code_references_gref() {
+        let code = build_get_code("^MyGlobal");
+        assert!(code.contains("^MyGlobal"));
+        assert!(code.contains("$Get"));
+    }
+
+    #[test]
+    fn build_set_objectscript_escapes_quotes() {
+        let code = build_set_objectscript("^G", r#"say "hi""#);
+        assert!(code.contains(r#""""hi"""#) || code.contains("\"\"hi\"\""));
+    }
+
+    #[test]
+    fn build_kill_code_references_gref() {
+        let code = build_kill_code("^MyGlobal");
+        assert!(code.contains("Kill ^MyGlobal"));
+    }
+
+    #[test]
+    fn build_list_code_unsubscripted_ref() {
+        let code = build_list_code("^MyGlobal", 50);
+        assert!(code.contains("^MyGlobal"));
+        assert!(code.contains("$Order"));
+    }
+
+    #[test]
+    fn build_list_code_subscripted_ref() {
+        let code = build_list_code(r#"^MyGlobal("a")"#, 50);
+        assert!(code.contains("$Order"));
+    }
+
+    #[test]
+    fn build_subtree_get_code_references_gref() {
+        let code = build_subtree_get_code("^MyGlobal", 100);
+        assert!(code.contains("^MyGlobal"));
+        assert!(code.contains("$Query"));
+    }
+}
