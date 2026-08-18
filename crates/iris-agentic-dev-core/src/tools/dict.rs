@@ -166,16 +166,16 @@ pub struct ExtractMessageMapParams {
 }
 
 fn build_message_map_code(cls: &str) -> String {
-    let cls_esc = cls.replace('\\', "\\\\").replace('"', "\\\"");
+    let cls_expr = crate::objectscript::os_str_expr(cls);
     let mut lines: Vec<String> = vec!["Set q=$CHAR(34)".into()];
     lines.push(format!(
-        r#"Set clsObj=##class(%Dictionary.CompiledClass).%OpenId("{}")"#,
-        cls_esc
+        r#"Set clsObj=##class(%Dictionary.CompiledClass).%OpenId({})"#,
+        cls_expr
     ));
     lines.push(r#"If '$IsObject(clsObj) { Write "NOT_FOUND",! Quit }"#.into());
     lines.push(format!(
-        r#"Set xd=##class(%Dictionary.CompiledXData).%OpenId("{}||MessageMap")"#,
-        cls_esc
+        r#"Set xd=##class(%Dictionary.CompiledXData).%OpenId({}_"||MessageMap")"#,
+        cls_expr
     ));
     lines.push(r#"If '$IsObject(xd) { Write "{"_q_"has_message_map"_q_":false,"_q_"routes"_q_":[]}", ! Quit }"#.into());
     lines.push("Do xd.Data.Rewind()".into());
@@ -587,7 +587,7 @@ mod tests {
     fn test_build_message_map_code_contains_key_fragments() {
         let code = build_message_map_code("HS.Flash.Router");
         assert!(
-            code.contains("HS.Flash.Router||MessageMap"),
+            code.contains(r#""HS.Flash.Router"_"||MessageMap""#),
             "must use || key"
         );
         assert!(
