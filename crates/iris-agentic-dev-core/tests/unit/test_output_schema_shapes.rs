@@ -24,7 +24,7 @@ async fn call(tools: &IrisTools, tool: &str, args: serde_json::Value) -> serde_j
         .await
         .unwrap_or_else(|e| panic!("{tool} call failed: {e}"));
     for content in &result.content {
-        if let Some(text) = content.raw.as_text() {
+        if let Some(text) = content.as_text() {
             return serde_json::from_str(&text.text)
                 .unwrap_or_else(|e| panic!("{tool} returned non-JSON text: {e}"));
         }

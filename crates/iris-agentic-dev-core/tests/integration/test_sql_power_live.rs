@@ -29,7 +29,7 @@ static SQL_POWER_TABLE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn parse_call_result(r: Result<rmcp::model::CallToolResult, String>) -> serde_json::Value {
     let r = r.expect("call_for_test returned Err");
-    let text = r.content[0].raw.as_text().unwrap().text.clone();
+    let text = r.content[0].as_text().unwrap().text.clone();
     serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({"raw": text}))
 }
 

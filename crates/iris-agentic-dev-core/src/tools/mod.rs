@@ -1287,14 +1287,18 @@ pub fn telemetry_config_dir() -> std::path::PathBuf {
         .join(".iris-agentic-dev")
 }
 fn ok_json(v: serde_json::Value) -> Result<CallToolResult, McpError> {
-    Ok(CallToolResult::success(vec![Content::text(v.to_string())]))
+    Ok(CallToolResult::success(vec![ContentBlock::text(
+        v.to_string(),
+    )]))
 }
 /// Wrap a genuine tool-failure envelope: same JSON body as before, but with the
 /// MCP protocol-level `isError` flag set (issue #95). Dialog/soft responses
 /// (elicitation prompts, empty-result notes) must NOT go through this — they are
 /// normal outcomes and stay `CallToolResult::success`.
 pub(crate) fn err_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
-    Ok(CallToolResult::error(vec![Content::text(v.to_string())]))
+    Ok(CallToolResult::error(vec![ContentBlock::text(
+        v.to_string(),
+    )]))
 }
 /// Wrap a handler-produced JSON value whose error-ness is only known at runtime:
 /// a body carrying a top-level `error_code` without `success: true` is a genuine
@@ -1640,7 +1644,7 @@ fn is_success(result: &CallToolResult) -> bool {
     result
         .content
         .first()
-        .and_then(|c| c.raw.as_text())
+        .and_then(|c| c.as_text())
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t.text).ok())
         .and_then(|v| v.get("success").and_then(|s| s.as_bool()))
         .unwrap_or(false)
@@ -4267,7 +4271,7 @@ impl IrisTools {
     #[tool(
         description = "List running IRIS Docker containers with name-match scoring. Tries iris-devtester first, falls back to docker ps. Containers sorted by score (name similarity to workspace) descending.",
         annotations(read_only_hint = true),
-        output_schema = schema_for_output::<IrisListContainersResponse>().unwrap()
+        output_schema = schema_for_output::<IrisListContainersResponse>()
     )]
     async fn iris_list_containers(
         &self,
@@ -4460,7 +4464,7 @@ impl IrisTools {
     #[tool(
         description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active, (4) confirm which build of this MCP server is actually running (server_version) when multiple installs/forks may be registered. To switch connection mid-session without restart: call check_config first to get config_watch_path, then write a .iris-agentic-dev.toml to that exact path, then call any tool — the reload fires automatically. Fields: server_version, connected, connection_source (http|docker|disconnected), host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled, capabilities. Skill: iris-agentic-dev.",
         annotations(read_only_hint = true),
-        output_schema = schema_for_output::<CheckConfigOk>().unwrap()    )]
+        output_schema = schema_for_output::<CheckConfigOk>()    )]
     async fn check_config(
         &self,
         Parameters(_p): Parameters<crate::tools::NoParams>,
@@ -4847,7 +4851,7 @@ impl IrisTools {
     #[tool(
         description = "Introspect an ObjectScript class — returns methods, properties, and type information. Methods include FormalSpec as a structured array of {name, type, byref, output, default} objects and a ReturnType field. For BPL and DTL classes, an xdata_flow field describes the process steps (BPL: kind=bpl, steps array with Call/Code/If/Other entries, has_dynamic_dispatch flag; DTL: kind=dtl, source_class, target_class, subtransforms, assign_count). Skill: objectscript-navigation. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         annotations(read_only_hint = true),
-        output_schema = schema_for_output::<DocsIntrospectResponse>().unwrap()
+        output_schema = schema_for_output::<DocsIntrospectResponse>()
     )]
     async fn docs_introspect(
         &self,
@@ -5222,7 +5226,7 @@ Methods:
     #[tool(
         description = "List every available skill — both the skills bundled with this server (on disk, no IRIS needed) and any synthesized skills in the IRIS ^SKILLS global. Each result carries a `source` field: `bundled` or `synthesized`.",
         annotations(read_only_hint = true),
-        output_schema = schema_for_output::<SkillListResponse>().unwrap()
+        output_schema = schema_for_output::<SkillListResponse>()
     )]
     async fn skill_list(&self, _: Parameters<NoParams>) -> Result<CallToolResult, McpError> {
         use crate::skills::bundled;
@@ -5295,7 +5299,7 @@ Methods:
     #[tool(
         description = "Search all skills by name, description AND frontmatter tags. Covers both the skills bundled with this server (on disk, works with no IRIS connection) and synthesized skills in the IRIS ^SKILLS global. Each result carries a `source` field (`bundled`/`synthesized`); the response always reports how many skills were available in each source, so a zero result never means 'only one place was checked'.",
         annotations(read_only_hint = true),
-        output_schema = schema_for_output::<SkillSearchResponse>().unwrap()
+        output_schema = schema_for_output::<SkillSearchResponse>()
     )]
     async fn skill_search(
         &self,
@@ -5402,7 +5406,7 @@ Methods:
 
     #[tool(
         description = "Trigger pattern miner to synthesize new skills from recorded tool calls.",
-        output_schema = schema_for_output::<ToolError>().unwrap()
+        output_schema = schema_for_output::<ToolError>()
     )]
     async fn skill_propose(&self, _: Parameters<NoParams>) -> Result<CallToolResult, McpError> {
         err_json(
@@ -5413,7 +5417,7 @@ Methods:
 
     #[tool(
         description = "Optimize a skill using DSPy. Requires OBJECTSCRIPT_DSPY=true.",
-        output_schema = schema_for_output::<ToolError>().unwrap()
+        output_schema = schema_for_output::<ToolError>()
     )]
     async fn skill_optimize(
         &self,
@@ -5427,7 +5431,7 @@ Methods:
 
     #[tool(
         description = "Share a skill to the community via GitHub PR.",
-        output_schema = schema_for_output::<ToolError>().unwrap()
+        output_schema = schema_for_output::<ToolError>()
     )]
     async fn skill_share(
         &self,
@@ -5442,7 +5446,7 @@ Methods:
     #[tool(
         description = "List all skills loaded from --subscribe packages. Use --subscribe owner/repo when starting iris-agentic-dev mcp to load community skills.",
         annotations(read_only_hint = true),
-        output_schema = schema_for_output::<SkillCommunityListResponse>().unwrap()
+        output_schema = schema_for_output::<SkillCommunityListResponse>()
     )]
     async fn skill_community_list(
         &self,
@@ -5482,7 +5486,7 @@ Methods:
 
     #[tool(
         description = "Install a community skill from the GitHub community repo.",
-        output_schema = schema_for_output::<ToolError>().unwrap()
+        output_schema = schema_for_output::<ToolError>()
     )]
     async fn skill_community_install(
         &self,
@@ -5519,7 +5523,7 @@ Methods:
     #[tool(
         description = "Search the knowledge base for relevant guidance. Searches subscribed KB packages and any indexed content.",
         annotations(read_only_hint = true),
-        output_schema = schema_for_output::<KbRecallResponse>().unwrap()
+        output_schema = schema_for_output::<KbRecallResponse>()
     )]
     async fn kb_recall(
         &self,
@@ -5581,7 +5585,7 @@ Methods:
     #[tool(
         description = "Return recent tool call history for this session.",
         annotations(read_only_hint = true),
-        output_schema = schema_for_output::<AgentHistoryResponse>().unwrap()
+        output_schema = schema_for_output::<AgentHistoryResponse>()
     )]
     async fn agent_history(
         &self,
@@ -5685,7 +5689,7 @@ Methods:
     #[tool(
         description = "Return learning agent status: skill count, pattern count, KB size.",
         annotations(read_only_hint = true),
-        output_schema = schema_for_output::<AgentStatsResponse>().unwrap()
+        output_schema = schema_for_output::<AgentStatsResponse>()
     )]
     async fn agent_stats(&self, _: Parameters<NoParams>) -> Result<CallToolResult, McpError> {
         let skill_count = self.registry.list_skills().len();
@@ -7090,7 +7094,7 @@ Methods:
     #[tool(
         description = "List all IRIS server instances registered in the connection pool. Returns an array of {name, host, port, namespace, username, source, reachable} objects. `source` values: iad-native (added via iris_add_server), vscode (from VS Code/Cursor Server Manager), fleet (from workspace TOML), env (from IRIS_HOST env var). `reachable` is null — call iris_test_server to probe connectivity.",
         annotations(read_only_hint = true),
-        output_schema = schema_for_output::<IrisServersResponse>().unwrap()
+        output_schema = schema_for_output::<IrisServersResponse>()
     )]
     async fn iris_servers(&self) -> Result<CallToolResult, McpError> {
         let entries: Vec<serde_json::Value> = self
@@ -7253,7 +7257,7 @@ Methods:
     #[tool(
         description = "Probe an IRIS server for reachability. Performs GET /api/atelier/ with timing. Does not modify the active connection. Returns {name, reachable, atelier_version, iris_version, latency_ms} on success, or {name, reachable: false, error} on failure. Error codes: SERVER_NOT_FOUND (not in pool).",
         annotations(read_only_hint = true),
-        output_schema = schema_for_output::<IrisTestServerResponse>().unwrap()
+        output_schema = schema_for_output::<IrisTestServerResponse>()
     )]
     async fn iris_test_server(
         &self,
@@ -7442,7 +7446,7 @@ Methods:
 
     #[tool(
         description = "Execute ObjectScript code in a persistent WebSocket terminal session. Variables and state persist across calls within the same session. Returns the terminal output.",
-        output_schema = schema_for_output::<IrisWsExecResponse>().unwrap()
+        output_schema = schema_for_output::<IrisWsExecResponse>()
     )]
     async fn iris_ws_exec(
         &self,
@@ -7460,7 +7464,7 @@ Methods:
 
     #[tool(
         description = "Close a WebSocket terminal session and release server resources.",
-        output_schema = schema_for_output::<IrisWsCloseResponse>().unwrap()
+        output_schema = schema_for_output::<IrisWsCloseResponse>()
     )]
     async fn iris_ws_close(
         &self,
@@ -7570,7 +7574,7 @@ Methods:
     #[tool(
         description = "Preview the contents of an IRIS global before deleting it. Returns the first N subscripts plus a confirm_token (valid 5 minutes) required by global_kill. global: name of the global (with or without ^). count: max entries to preview (default 20, max 100). server: optional registered instance name. Skill: iris-agentic-dev.",
         annotations(read_only_hint = true),
-        output_schema = schema_for_output::<GlobalPreviewResponse>().unwrap()
+        output_schema = schema_for_output::<GlobalPreviewResponse>()
     )]
     async fn global_preview(
         &self,
@@ -8067,7 +8071,7 @@ impl ServerHandler for IrisTools {
         &self,
         request: rmcp::model::CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
-    ) -> Result<CallToolResult, McpError> {
+    ) -> Result<rmcp::model::CallToolResponse, McpError> {
         let start = std::time::Instant::now();
         CALL_START
             .scope(start, async move {
@@ -8132,11 +8136,9 @@ impl ServerHandler for IrisTools {
         );
         let cursor = request.and_then(|r| r.cursor);
         let (page, next_cursor) = paginate_tool_list(tools, cursor.as_deref(), page_size);
-        Ok(rmcp::model::ListToolsResult {
-            tools: page,
-            next_cursor,
-            meta: None,
-        })
+        let mut result = rmcp::model::ListToolsResult::with_all_items(page);
+        result.next_cursor = next_cursor;
+        Ok(result)
     }
 }
 

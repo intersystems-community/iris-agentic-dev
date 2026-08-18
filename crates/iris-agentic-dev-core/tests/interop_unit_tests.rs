@@ -22,7 +22,7 @@ mod interop_production_status {
             },
         ));
         let result = r.unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["success"], false);
         assert_eq!(v["error_code"], "IRIS_UNREACHABLE");
@@ -42,7 +42,7 @@ mod interop_production_start {
             },
         ));
         let result = r.unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "IRIS_UNREACHABLE");
     }
@@ -63,7 +63,7 @@ mod interop_production_stop {
             },
         ));
         let result = r.unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "IRIS_UNREACHABLE");
     }
@@ -83,7 +83,7 @@ mod interop_production_update {
             },
         ));
         let result = r.unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "IRIS_UNREACHABLE");
     }
@@ -101,7 +101,7 @@ mod interop_production_needs_update {
             },
         ));
         let result = r.unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "IRIS_UNREACHABLE");
     }
@@ -119,7 +119,7 @@ mod interop_production_recover {
             },
         ));
         let result = r.unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "IRIS_UNREACHABLE");
     }
@@ -139,7 +139,7 @@ mod interop_logs {
             },
         ));
         let result = r.unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "IRIS_UNREACHABLE");
     }
@@ -152,7 +152,7 @@ mod interop_queues {
     fn iris_unreachable() {
         let r = rt().block_on(interop_queues_impl(None));
         let result = r.unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "IRIS_UNREACHABLE");
     }
@@ -180,7 +180,7 @@ mod interop_message_search {
             },
         ));
         let result = r.unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "IRIS_UNREACHABLE");
     }
@@ -1035,7 +1035,7 @@ mod json_response_validation {
             },
         ));
         let result = r.unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["success"], false);
         assert!(v["error_code"].is_string());
@@ -1052,7 +1052,7 @@ mod json_response_validation {
             },
         ));
         let result = r.unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert!(!v["success"].as_bool().unwrap_or(true));
         assert!(v.get("error_code").is_some());

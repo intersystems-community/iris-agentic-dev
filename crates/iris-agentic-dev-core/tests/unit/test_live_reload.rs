@@ -190,7 +190,7 @@ async fn test_check_config_disconnected_returns_not_connected() {
         .call_for_test("check_config", serde_json::json!({}))
         .await;
     let r = result.expect("call_for_test returned Err");
-    let text = r.content[0].raw.as_text().unwrap().text.clone();
+    let text = r.content[0].as_text().unwrap().text.clone();
     let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
     assert_eq!(
         v.get("connected").and_then(|c| c.as_bool()),

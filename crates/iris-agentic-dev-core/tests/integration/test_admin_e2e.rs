@@ -32,7 +32,7 @@ fn parse_json(r: rmcp::model::CallToolResult) -> serde_json::Value {
     let text = r
         .content
         .first()
-        .map(|c| c.raw.as_text().unwrap().text.clone())
+        .map(|c| c.as_text().unwrap().text.clone())
         .expect("no text content");
     serde_json::from_str(&text).expect("json parse failed")
 }

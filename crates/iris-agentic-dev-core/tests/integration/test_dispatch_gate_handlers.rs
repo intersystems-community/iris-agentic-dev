@@ -68,7 +68,7 @@ fn make_tools_with_live_policy(server_name: &str) -> Option<(IrisTools, tempfile
 fn parse_result(r: Result<rmcp::model::CallToolResult, String>) -> serde_json::Value {
     match r {
         Ok(result) => {
-            let text = result.content[0].raw.as_text().unwrap().text.clone();
+            let text = result.content[0].as_text().unwrap().text.clone();
             serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({"raw": text}))
         }
         Err(e) => serde_json::json!({"error": e}),

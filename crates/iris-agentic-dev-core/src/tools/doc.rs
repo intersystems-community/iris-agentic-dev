@@ -156,7 +156,7 @@ use crate::iris::connection::IrisConnection;
 
 fn ok_json(v: serde_json::Value) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     Ok(rmcp::model::CallToolResult::success(vec![
-        rmcp::model::Content::text(v.to_string()),
+        rmcp::model::ContentBlock::text(v.to_string()),
     ]))
 }
 fn err_json(code: &str, msg: &str) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
@@ -174,7 +174,7 @@ fn require_name(p: &IrisDocParams, mode: &str) -> Result<String, rmcp::model::Ca
     match p.name.as_deref().map(str::trim) {
         Some(n) if !n.is_empty() => Ok(n.to_string()),
         _ => Err(rmcp::model::CallToolResult::error(vec![
-            rmcp::model::Content::text(
+            rmcp::model::ContentBlock::text(
                 serde_json::json!({
                     "success": false,
                     "error_code": "MISSING_PARAMS",
@@ -745,7 +745,7 @@ fn write_result_succeeded(result: &rmcp::model::CallToolResult) -> bool {
     result
         .content
         .first()
-        .and_then(|c| c.raw.as_text())
+        .and_then(|c| c.as_text())
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t.text).ok())
         .map(|v| v["success"] == serde_json::Value::Bool(true))
         .unwrap_or(false)
@@ -1418,7 +1418,7 @@ async fn finalize_edit(
     let succeeded = result
         .content
         .first()
-        .and_then(|c| c.raw.as_text())
+        .and_then(|c| c.as_text())
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t.text).ok())
         .map(|v| v["success"] == serde_json::Value::Bool(true))
         .unwrap_or(false);
@@ -1441,7 +1441,7 @@ fn annotate_edit(
     result: rmcp::model::CallToolResult,
     extra: serde_json::Value,
 ) -> rmcp::model::CallToolResult {
-    let text = match result.content.first().and_then(|c| c.raw.as_text()) {
+    let text = match result.content.first().and_then(|c| c.as_text()) {
         Some(t) => t.text.clone(),
         None => return result,
     };
@@ -1454,7 +1454,7 @@ fn annotate_edit(
             obj.insert(k.clone(), val.clone());
         }
     }
-    rmcp::model::CallToolResult::success(vec![rmcp::model::Content::text(v.to_string())])
+    rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(v.to_string())])
 }
 
 // ── Phase 3: mode=fragment ────────────────────────────────────────────────────
@@ -2027,21 +2027,21 @@ mod tests {
     #[test]
     fn test_http_err_json_404_returns_not_found() {
         let result = http_err_json(reqwest::StatusCode::NOT_FOUND, "").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         assert!(text.contains("NOT_FOUND"), "{text}");
     }
 
     #[test]
     fn test_http_err_json_401_returns_auth_error() {
         let result = http_err_json(reqwest::StatusCode::UNAUTHORIZED, "").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         assert!(text.contains("AUTH_ERROR"), "{text}");
     }
 
     #[test]
     fn test_http_err_json_500_returns_server_error() {
         let result = http_err_json(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "boom").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         assert!(text.contains("SERVER_ERROR"), "{text}");
         assert!(text.contains("boom"), "{text}");
     }
@@ -2049,7 +2049,7 @@ mod tests {
     #[test]
     fn test_http_err_json_409_returns_conflict() {
         let result = http_err_json(reqwest::StatusCode::CONFLICT, "locked").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         assert!(text.contains("CONFLICT"), "{text}");
     }
 
@@ -2106,7 +2106,7 @@ mod tests {
     #[test]
     fn test_http_err_json_400_returns_bad_request() {
         let result = http_err_json(reqwest::StatusCode::BAD_REQUEST, "").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "BAD_REQUEST");
         assert_eq!(v["success"], false);
@@ -2115,7 +2115,7 @@ mod tests {
     #[test]
     fn test_http_err_json_403_returns_auth_error() {
         let result = http_err_json(reqwest::StatusCode::FORBIDDEN, "forbidden").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "AUTH_ERROR");
         assert!(v["error"].as_str().unwrap().contains("forbidden"));
@@ -2125,7 +2125,7 @@ mod tests {
     fn test_http_err_json_423_returns_locked() {
         let result =
             http_err_json(reqwest::StatusCode::from_u16(423).unwrap(), "file locked").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "LOCKED");
     }
@@ -2134,7 +2134,7 @@ mod tests {
     fn test_http_err_json_unknown_status_returns_http_error() {
         // 418 I'm a teapot — not explicitly mapped
         let result = http_err_json(reqwest::StatusCode::from_u16(418).unwrap(), "teapot").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "HTTP_ERROR");
     }
@@ -2142,7 +2142,7 @@ mod tests {
     #[test]
     fn test_http_err_json_empty_hint_omits_colon() {
         let result = http_err_json(reqwest::StatusCode::NOT_FOUND, "").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         // When no body hint, message should be "HTTP 404 Not Found" without a colon suffix
         assert!(!v["error"].as_str().unwrap().contains(": "));
@@ -2151,7 +2151,7 @@ mod tests {
     #[test]
     fn test_http_err_json_with_hint_includes_colon() {
         let result = http_err_json(reqwest::StatusCode::NOT_FOUND, "gone away").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert!(v["error"].as_str().unwrap().contains(": gone away"));
     }
@@ -2562,7 +2562,7 @@ mod tests {
     fn test_ok_json_creates_success_response() {
         let val = serde_json::json!({"data": "test"});
         let result = ok_json(val).unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["data"], "test");
     }
@@ -2571,7 +2571,7 @@ mod tests {
     fn test_err_json_creates_error_response() {
         let result = err_json("TEST_ERROR", "Test message").unwrap();
         assert_eq!(result.is_error, Some(true));
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["success"], false);
         assert_eq!(v["error_code"], "TEST_ERROR");
@@ -2581,7 +2581,7 @@ mod tests {
     #[test]
     fn test_err_json_empty_message() {
         let result = err_json("CODE", "").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error"], "");
     }
@@ -2591,7 +2591,7 @@ mod tests {
         let p: IrisDocParams = serde_json::from_str(json).unwrap();
         match require_name(&p, mode) {
             Ok(_) => None,
-            Err(r) => Some(r.content[0].raw.as_text().unwrap().text.clone()),
+            Err(r) => Some(r.content[0].as_text().unwrap().text.clone()),
         }
     }
 
@@ -2902,7 +2902,7 @@ Storage Default
             10,
         )
         .unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["success"], false);
         assert_eq!(v["error_code"], "STALE_CONTENT");
@@ -2918,7 +2918,7 @@ Storage Default
     #[test]
     fn stale_content_err_at_offset_zero() {
         let result = stale_content_err((0, "exp".to_string(), "act".to_string()), 5).unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["line"], 5); // 5 + 0
     }
@@ -2982,7 +2982,7 @@ Storage Default
         let result = handle_insert(&iris, &client, p, "USER", &es, &cc)
             .await
             .unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "MISSING_PARAMS");
     }
@@ -2997,7 +2997,7 @@ Storage Default
         let result = handle_insert(&iris, &client, p, "USER", &es, &cc)
             .await
             .unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "MISSING_PARAMS");
     }
@@ -3013,7 +3013,7 @@ Storage Default
         let result = handle_insert(&iris, &client, p, "USER", &es, &cc)
             .await
             .unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(
             v["error_code"], "MISSING_PARAMS",
@@ -3034,7 +3034,7 @@ Storage Default
         let result = handle_delete_lines(&iris, &client, p, "USER", &es, &cc)
             .await
             .unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "MISSING_PARAMS");
     }
@@ -3051,7 +3051,7 @@ Storage Default
         let result = handle_delete_lines(&iris, &client, p, "USER", &es, &cc)
             .await
             .unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "MISSING_PARAMS");
     }
@@ -3068,7 +3068,7 @@ Storage Default
         let result = handle_delete_lines(&iris, &client, p, "USER", &es, &cc)
             .await
             .unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "MISSING_PARAMS");
     }
@@ -3085,7 +3085,7 @@ Storage Default
         let result = handle_delete_lines(&iris, &client, p, "USER", &es, &cc)
             .await
             .unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(
             v["error_code"], "INVALID_PARAMS",
@@ -3105,7 +3105,7 @@ Storage Default
         let result = handle_delete_lines(&iris, &client, p, "USER", &es, &cc)
             .await
             .unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(
             v["error_code"], "INVALID_PARAMS",
@@ -3124,7 +3124,7 @@ Storage Default
         let result = handle_delete_lines(&iris, &client, p, "USER", &es, &cc)
             .await
             .unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "MISSING_PARAMS", "no expected: {v}");
     }
@@ -3137,7 +3137,7 @@ Storage Default
             base,
             serde_json::json!({"edit": "insert", "lines_added": 2}),
         );
-        let text = merged.content[0].raw.as_text().unwrap().text.clone();
+        let text = merged.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["success"], true);
         assert_eq!(v["name"], "Foo.cls");

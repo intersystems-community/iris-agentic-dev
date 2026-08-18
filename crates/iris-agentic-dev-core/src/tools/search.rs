@@ -33,7 +33,7 @@ pub struct SearchParams {
 
 fn ok_json(v: serde_json::Value) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     Ok(rmcp::model::CallToolResult::success(vec![
-        rmcp::model::Content::text(v.to_string()),
+        rmcp::model::ContentBlock::text(v.to_string()),
     ]))
 }
 
@@ -441,7 +441,7 @@ mod tests {
     fn parse(body: serde_json::Value) -> serde_json::Value {
         let log = Arc::new(Mutex::new(log_store::LogStore::new(200, 60)));
         let r = parse_search_results(body, "q", true, &log).unwrap();
-        let text = r.content[0].raw.as_text().unwrap().text.clone();
+        let text = r.content[0].as_text().unwrap().text.clone();
         serde_json::from_str(&text).unwrap()
     }
 

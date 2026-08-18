@@ -12,7 +12,7 @@ fn rt() -> tokio::runtime::Runtime {
 }
 
 fn result_text(r: &rmcp::model::CallToolResult) -> serde_json::Value {
-    let text = r.content[0].raw.as_text().unwrap().text.clone();
+    let text = r.content[0].as_text().unwrap().text.clone();
     serde_json::from_str(&text).unwrap_or_default()
 }
 

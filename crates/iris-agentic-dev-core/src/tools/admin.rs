@@ -7,7 +7,9 @@ use crate::objectscript::os_str_expr;
 use rmcp::{model::*, ErrorData as McpError};
 
 fn ok_json(v: serde_json::Value) -> Result<CallToolResult, McpError> {
-    Ok(CallToolResult::success(vec![Content::text(v.to_string())]))
+    Ok(CallToolResult::success(vec![ContentBlock::text(
+        v.to_string(),
+    )]))
 }
 fn err_json(code: &str, msg: &str) -> Result<CallToolResult, McpError> {
     crate::tools::err_result(
@@ -767,14 +769,14 @@ mod tests {
     fn test_ok_json_shape() {
         let v = serde_json::json!({"success": true, "count": 3});
         let result = ok_json(v).unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         assert!(text.contains("success"));
     }
 
     #[test]
     fn test_err_json_shape() {
         let result = err_json("NOT_FOUND", "Resource not found").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         assert!(text.contains("NOT_FOUND"));
         assert!(text.contains("Resource not found"));
     }
@@ -789,7 +791,7 @@ mod tests {
     #[test]
     fn test_write_disabled_response() {
         let result = write_disabled().unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "ADMIN_WRITE_DISABLED");
     }
@@ -800,7 +802,7 @@ mod tests {
     fn test_ok_json_empty_object() {
         let v = serde_json::json!({});
         let result = ok_json(v).unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         assert!(text.contains("{}"), "ok_json should preserve empty object");
     }
 
@@ -814,7 +816,7 @@ mod tests {
             }
         });
         let result = ok_json(v).unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(parsed["data"]["nested"], "value");
         assert_eq!(parsed["data"]["count"], 42);
@@ -824,7 +826,7 @@ mod tests {
     fn test_ok_json_array() {
         let v = serde_json::json!([1, 2, 3, 4, 5]);
         let result = ok_json(v).unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert!(parsed.is_array());
         assert_eq!(parsed.as_array().unwrap().len(), 5);
@@ -834,7 +836,7 @@ mod tests {
     fn test_err_json_code_and_message() {
         let result = err_json("TEST_ERROR", "This is a test error message").unwrap();
         assert_eq!(result.is_error, Some(true));
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "TEST_ERROR");
         assert_eq!(v["error"], "This is a test error message");
@@ -844,7 +846,7 @@ mod tests {
     #[test]
     fn test_err_json_with_special_chars() {
         let result = err_json("ENCODE_TEST", "Error with \"quotes\" and 'apostrophes'").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "ENCODE_TEST");
         assert!(v["error"].as_str().unwrap().contains("quotes"));
@@ -853,7 +855,7 @@ mod tests {
     #[test]
     fn test_err_json_empty_message() {
         let result = err_json("EMPTY_ERROR", "").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "EMPTY_ERROR");
         assert_eq!(v["error"], "");
@@ -870,7 +872,7 @@ mod tests {
     #[test]
     fn test_write_disabled_has_correct_message() {
         let result = write_disabled().unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["success"], false);
         assert_eq!(v["error_code"], "ADMIN_WRITE_DISABLED");
@@ -912,7 +914,7 @@ mod tests {
             "zero": 0
         });
         let result = ok_json(v).unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(parsed["int_val"], 42);
         assert!(parsed["float_val"].as_f64().is_some());
@@ -927,7 +929,7 @@ mod tests {
             "disabled": false
         });
         let result = ok_json(v).unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(parsed["enabled"], true);
         assert_eq!(parsed["disabled"], false);
@@ -936,7 +938,7 @@ mod tests {
     #[test]
     fn test_err_json_multi_word_code() {
         let result = err_json("COMPLEX_ERROR_CODE_123", "Multi-code test").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "COMPLEX_ERROR_CODE_123");
     }
@@ -944,7 +946,7 @@ mod tests {
     #[test]
     fn test_err_json_unicode_message() {
         let result = err_json("UNICODE_ERROR", "Error with émojis and ümlaut").unwrap();
-        let text = result.content[0].raw.as_text().unwrap().text.clone();
+        let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["error_code"], "UNICODE_ERROR");
         assert!(v["error"].as_str().unwrap().contains("moji"));
@@ -956,7 +958,7 @@ mod tests {
         let result = ok_json(v).unwrap();
         assert!(!result.content.is_empty());
         let content = &result.content[0];
-        assert!(content.raw.as_text().is_some());
+        assert!(content.as_text().is_some());
     }
 
     #[test]
@@ -964,7 +966,7 @@ mod tests {
         let cases = vec![("CODE1", "msg1"), ("CODE2", "msg2"), ("", "")];
         for (code, msg) in cases {
             let result = err_json(code, msg).unwrap();
-            let text = result.content[0].raw.as_text().unwrap().text.clone();
+            let text = result.content[0].as_text().unwrap().text.clone();
             let v: serde_json::Value = serde_json::from_str(&text).unwrap();
             assert_eq!(
                 v["success"], false,

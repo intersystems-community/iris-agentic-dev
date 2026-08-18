@@ -174,7 +174,7 @@ async fn check_config_with_no_iris_returns_not_connected() {
             let text = r
                 .content
                 .first()
-                .and_then(|c| c.raw.as_text())
+                .and_then(|c| c.as_text())
                 .map(|t| t.text.clone())
                 .unwrap_or_default();
             let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
@@ -1905,7 +1905,7 @@ async fn check_config_returns_capabilities_field() {
             let text = r
                 .content
                 .first()
-                .and_then(|c| c.raw.as_text())
+                .and_then(|c| c.as_text())
                 .map(|t| t.text.clone())
                 .unwrap_or_default();
             let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();

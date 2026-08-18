@@ -11,7 +11,7 @@ fn parse_result(result: rmcp::model::CallToolResult) -> serde_json::Value {
     let text = result
         .content
         .first()
-        .map(|c| c.raw.as_text().unwrap().text.clone())
+        .map(|c| c.as_text().unwrap().text.clone())
         .expect("text content");
     serde_json::from_str(&text).expect("valid JSON")
 }
