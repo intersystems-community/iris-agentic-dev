@@ -101,12 +101,33 @@ pub struct QueuesParams {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct MessageSearchParams {
+    #[serde(default)]
+    pub namespace: Option<String>,
     pub source: Option<String>,
     pub target: Option<String>,
     pub class_name: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<i64>,
+    #[serde(default)]
+    pub since_id: Option<i64>,
     #[serde(default = "default_msg_limit")]
     pub limit: u32,
+    pub body_class: Option<String>,
+    pub body_where: Option<String>,
+    #[serde(default)]
+    pub body_select: Vec<String>,
+    pub search_table: Option<SearchTableFilter>,
 }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SearchTableFilter {
+    pub class: Option<String>,
+    pub extent: Option<String>,
+    pub prop: String,
+    pub value: Option<String>,
+    pub value_like: Option<String>,
+}
+
 fn default_msg_limit() -> u32 {
     20
 }
@@ -433,6 +454,161 @@ pub async fn interop_queues_impl(
     }
 }
 
+// ─── issue #97: message body content search helpers ─────────────────────────
+
+const HEADER_COLS: &str =
+    "ID, TimeCreated, SourceConfigName, TargetConfigName, MessageBodyClassName, SessionId, Status";
+
+pub fn header_filters(params: &MessageSearchParams, pfx: &str) -> Vec<String> {
+    let mut filters = vec![];
+    if let Some(src) = &params.source {
+        filters.push(format!(
+            "{pfx}SourceConfigName = '{}'",
+            src.replace('\'', "''")
+        ));
+    }
+    if let Some(tgt) = &params.target {
+        filters.push(format!(
+            "{pfx}TargetConfigName = '{}'",
+            tgt.replace('\'', "''")
+        ));
+    }
+    if let Some(cls) = &params.class_name {
+        filters.push(format!(
+            "{pfx}MessageBodyClassName = '{}'",
+            cls.replace('\'', "''")
+        ));
+    }
+    if let Some(sid) = params.session_id {
+        filters.push(format!("{pfx}SessionId = {}", sid));
+    }
+    if let Some(since) = params.since_id {
+        filters.push(format!("{pfx}ID > {}", since));
+    }
+    filters
+}
+
+pub fn is_sql_identifier(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '%')
+}
+
+pub fn build_body_join_sql(
+    limit: u32,
+    mut filters: Vec<String>,
+    body_class: &str,
+    body_table: &str,
+    body_where: Option<&str>,
+    body_select: &[String],
+) -> String {
+    filters.push(format!(
+        "h.MessageBodyClassName = '{}'",
+        body_class.replace('\'', "''")
+    ));
+    if let Some(w) = body_where {
+        filters.push(format!("({w})"));
+    }
+    let header_cols = HEADER_COLS
+        .split(", ")
+        .map(|c| format!("h.{c}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let body_cols = body_select
+        .iter()
+        .map(|c| format!(", r.{c}"))
+        .collect::<String>();
+    format!(
+        "SELECT TOP {limit} {header_cols}{body_cols} FROM Ens.MessageHeader h JOIN {body_table} r ON h.MessageBodyId = r.ID WHERE {} ORDER BY h.ID DESC",
+        filters.join(" AND ")
+    )
+}
+
+pub fn build_search_table_sql(
+    limit: u32,
+    mut filters: Vec<String>,
+    extent_table: &str,
+    prop_ids: &[i64],
+    value: Option<&str>,
+    value_like: Option<&str>,
+) -> String {
+    let ids = prop_ids
+        .iter()
+        .map(|i| i.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    filters.push(format!("st.PropId IN ({ids})"));
+    if let Some(v) = value {
+        filters.push(format!("st.PropValue = '{}'", v.replace('\'', "''")));
+    } else if let Some(v) = value_like {
+        filters.push(format!("st.PropValue LIKE '{}'", v.replace('\'', "''")));
+    }
+    let header_cols = HEADER_COLS
+        .split(", ")
+        .map(|c| format!("h.{c}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "SELECT TOP {limit} {header_cols}, st.PropValue FROM Ens.MessageHeader h JOIN {extent_table} st ON st.DocId = h.MessageBodyId WHERE {} ORDER BY h.ID DESC",
+        filters.join(" AND ")
+    )
+}
+
+async fn resolve_sql_table(
+    iris: &IrisConnection,
+    ns: &str,
+    client: &reqwest::Client,
+    class: &str,
+) -> Result<Option<String>, String> {
+    let sql = format!(
+        "SELECT SqlSchemaName, SqlTableName FROM %Dictionary.CompiledClass WHERE Name = '{}'",
+        class.replace('\'', "''")
+    );
+    let resp = iris
+        .query(&sql, vec![], ns, client)
+        .await
+        .map_err(|e| e.to_string())?;
+    let row = &resp["result"]["content"][0];
+    match (row["SqlSchemaName"].as_str(), row["SqlTableName"].as_str()) {
+        (Some(s), Some(t)) if !s.is_empty() && !t.is_empty() => Ok(Some(format!("{s}.{t}"))),
+        _ => Ok(None),
+    }
+}
+
+async fn list_body_classes(
+    iris: &IrisConnection,
+    ns: &str,
+    client: &reqwest::Client,
+) -> Option<Vec<String>> {
+    let sql = "SELECT DISTINCT TOP 20 %EXACT(MessageBodyClassName) AS MessageBodyClassName FROM Ens.MessageHeader WHERE MessageBodyClassName IS NOT NULL ORDER BY 1";
+    let resp = iris.query(sql, vec![], ns, client).await.ok()?;
+    let names: Vec<String> = resp["result"]["content"]
+        .as_array()?
+        .iter()
+        .filter_map(|r| r["MessageBodyClassName"].as_str())
+        .map(str::to_string)
+        .collect();
+    if names.is_empty() {
+        None
+    } else {
+        Some(names)
+    }
+}
+
+fn fail_with_extra(
+    code: &str,
+    msg: &str,
+    extra: serde_json::Value,
+) -> Result<CallToolResult, McpError> {
+    let mut v = serde_json::json!({"success": false, "error_code": code, "error": msg});
+    if let (Some(obj), Some(ext)) = (v.as_object_mut(), extra.as_object()) {
+        for (k, val) in ext {
+            obj.insert(k.clone(), val.clone());
+        }
+    }
+    crate::tools::err_result(v)
+}
+
 pub async fn interop_message_search_impl(
     iris: Option<&IrisConnection>,
     params: MessageSearchParams,
@@ -442,40 +618,262 @@ pub async fn interop_message_search_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
-    let mut filters = vec![];
-    if let Some(src) = &params.source {
-        filters.push(format!("SourceConfigName = '{}'", src.replace('\'', "''")));
+    let ns = params
+        .namespace
+        .as_deref()
+        .unwrap_or(iris.namespace.as_str());
+    let net_err = |e: &str| {
+        if is_network_error(e) {
+            "IRIS_UNREACHABLE"
+        } else {
+            "INTEROP_ERROR"
+        }
+    };
+
+    let body_mode = params.body_class.is_some()
+        || params.body_where.is_some()
+        || !params.body_select.is_empty();
+    if body_mode && params.search_table.is_some() {
+        return err_json(
+            "INVALID_PARAMS",
+            "body_class/body_where and search_table are separate search modes — pass one or the other",
+        );
     }
-    if let Some(tgt) = &params.target {
-        filters.push(format!("TargetConfigName = '{}'", tgt.replace('\'', "''")));
+
+    // ── Mode 1: body-class join ──────────────────────────────────────────
+    if body_mode {
+        let body_class = match &params.body_class {
+            Some(c) => c.clone(),
+            None => {
+                let known = list_body_classes(iris, ns, &client).await;
+                let hint = match known {
+                    Some(names) => format!(
+                        "body_where/body_select need body_class. Body classes present in '{}': {}.",
+                        ns,
+                        names.join(", ")
+                    ),
+                    None => format!(
+                        "body_where/body_select need body_class (no messages found in '{}' to list candidates from).",
+                        ns
+                    ),
+                };
+                return fail_with_extra(
+                    "INVALID_PARAMS",
+                    "body_where/body_select require body_class",
+                    serde_json::json!({"hint": hint}),
+                );
+            }
+        };
+        if let Some(w) = &params.body_where {
+            if w.contains(';') {
+                return err_json(
+                    "INVALID_PARAMS",
+                    "body_where must be a WHERE fragment, not a statement (no ';')",
+                );
+            }
+        }
+        if let Some(bad) = params.body_select.iter().find(|c| !is_sql_identifier(c)) {
+            return err_json(
+                "INVALID_PARAMS",
+                &format!("body_select entries must be plain column names; '{bad}' is not"),
+            );
+        }
+        let body_table = match resolve_sql_table(iris, ns, &client, &body_class).await {
+            Err(e) => return err_json(net_err(&e), &e),
+            Ok(Some(t)) => t,
+            Ok(None) => {
+                let known = list_body_classes(iris, ns, &client).await;
+                let hint = match known {
+                    Some(names) => format!(
+                        "Body classes actually present in '{}': {}. Class names are case-sensitive and must be compiled in the namespace.",
+                        ns,
+                        names.join(", ")
+                    ),
+                    None => "Class names are case-sensitive and must be compiled in the namespace."
+                        .to_string(),
+                };
+                return fail_with_extra(
+                    "BODY_CLASS_NOT_FOUND",
+                    &format!(
+                        "Class '{}' is not compiled in namespace '{}'",
+                        body_class, ns
+                    ),
+                    serde_json::json!({"hint": hint, "body_class": body_class, "namespace": ns}),
+                );
+            }
+        };
+        let sql = build_body_join_sql(
+            params.limit,
+            header_filters(&params, "h."),
+            &body_class,
+            &body_table,
+            params.body_where.as_deref(),
+            &params.body_select,
+        );
+        return match iris.query(&sql, vec![], ns, &client).await {
+            Ok(resp) => ok_json(serde_json::json!({
+                "success": true,
+                "messages": resp["result"]["content"],
+                "count": resp["result"]["content"].as_array().map(|a| a.len()).unwrap_or(0),
+                "body_table": body_table,
+                "sql": sql,
+            })),
+            Err(e) => fail_with_extra(
+                net_err(&e.to_string()),
+                &e.to_string(),
+                serde_json::json!({"hint": format!(
+                    "body_where/body_select must use the SQL column names of {} (the SQL projection of {}). Check them with iris_table_info.",
+                    body_table, body_class
+                ), "sql": sql}),
+            ),
+        };
     }
-    if let Some(cls) = &params.class_name {
-        filters.push(format!(
-            "MessageBodyClassName = '{}'",
-            cls.replace('\'', "''")
-        ));
+
+    // ── Mode 2: Search-Table filter ──────────────────────────────────────
+    if let Some(st) = &params.search_table {
+        if st.value.is_some() == st.value_like.is_some() {
+            return err_json(
+                "INVALID_PARAMS",
+                "search_table needs exactly one of value (exact) or value_like (LIKE pattern)",
+            );
+        }
+        let extent = match (&st.extent, &st.class) {
+            (Some(e), _) => e.clone(),
+            (None, Some(class)) => {
+                let c = class.replace('\'', "''");
+                let sql = format!(
+                    "SELECT TOP 1 ClassExtent FROM Ens_Config.SearchTableProp WHERE ClassDerivation = '{c}' OR ClassDerivation LIKE '{c}~%'"
+                );
+                match iris.query(&sql, vec![], ns, &client).await {
+                    Err(e) => return err_json(net_err(&e.to_string()), &e.to_string()),
+                    Ok(resp) => match resp["result"]["content"][0]["ClassExtent"].as_str() {
+                        Some(e) => e.to_string(),
+                        None => {
+                            return fail_with_extra(
+                                "SEARCH_TABLE_NOT_FOUND",
+                                &format!(
+                                    "No Search Table class '{}' is registered in namespace '{}'",
+                                    class, ns
+                                ),
+                                serde_json::json!({"hint": "The class must extend a search-table family (EnsLib.HL7.SearchTable, …) and be compiled; registration happens on first index build. Check Ens_Config.SearchTableProp."}),
+                            );
+                        }
+                    },
+                }
+            }
+            (None, None) => "EnsLib.HL7.SearchTable".to_string(),
+        };
+        let e_esc = extent.replace('\'', "''");
+        let scope = match &st.class {
+            Some(class) => {
+                let c = class.replace('\'', "''");
+                format!(" AND (ClassDerivation = '{c}' OR ClassDerivation LIKE '{c}~%')")
+            }
+            None => String::new(),
+        };
+        let prop_sql = format!(
+            "SELECT PropId FROM Ens_Config.SearchTableProp WHERE ClassExtent = '{e_esc}' AND Name = '{}'{scope}",
+            st.prop.replace('\'', "''")
+        );
+        let prop_ids: Vec<i64> = match iris.query(&prop_sql, vec![], ns, &client).await {
+            Err(e) => return err_json(net_err(&e.to_string()), &e.to_string()),
+            Ok(resp) => resp["result"]["content"]
+                .as_array()
+                .map(|rows| rows.iter().filter_map(|r| r["PropId"].as_i64()).collect())
+                .unwrap_or_default(),
+        };
+        if prop_ids.is_empty() {
+            let names_sql = format!(
+                "SELECT DISTINCT Name FROM Ens_Config.SearchTableProp WHERE ClassExtent = '{e_esc}' ORDER BY Name"
+            );
+            let names = iris
+                .query(&names_sql, vec![], ns, &client)
+                .await
+                .ok()
+                .and_then(|resp| {
+                    resp["result"]["content"].as_array().map(|rows| {
+                        rows.iter()
+                            .filter_map(|r| r["Name"].as_str().map(str::to_string))
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .unwrap_or_default();
+            return fail_with_extra(
+                "SEARCH_PROP_NOT_FOUND",
+                &format!(
+                    "No Search Table property '{}' in extent '{}'",
+                    st.prop, extent
+                ),
+                serde_json::json!({
+                    "hint": if names.is_empty() {
+                        format!("Extent '{}' has no registered properties in namespace '{}' — is a SearchTableClass configured on any item?", extent, ns)
+                    } else {
+                        format!("Searchable properties of '{}': {}.", extent, names.join(", "))
+                    },
+                    "available_props": names,
+                }),
+            );
+        }
+        let extent_table = match resolve_sql_table(iris, ns, &client, &extent).await {
+            Err(e) => return err_json(net_err(&e), &e),
+            Ok(Some(t)) => t,
+            Ok(None) => {
+                return err_json(
+                    "SEARCH_TABLE_NOT_FOUND",
+                    &format!(
+                        "Extent class '{}' is not compiled in namespace '{}'",
+                        extent, ns
+                    ),
+                )
+            }
+        };
+        let sql = build_search_table_sql(
+            params.limit,
+            header_filters(&params, "h."),
+            &extent_table,
+            &prop_ids,
+            st.value.as_deref(),
+            st.value_like.as_deref(),
+        );
+        return match iris.query(&sql, vec![], ns, &client).await {
+            Ok(resp) => {
+                let rows = resp["result"]["content"].clone();
+                let count = rows.as_array().map(|a| a.len()).unwrap_or(0);
+                let mut out = serde_json::json!({
+                    "success": true,
+                    "messages": rows,
+                    "count": count,
+                    "extent": extent,
+                    "prop_ids": prop_ids,
+                    "sql": sql,
+                });
+                if count == 0 {
+                    out["hint"] = serde_json::Value::String(
+                        "A Search Table indexes only messages received AFTER SearchTableClass was configured on the item — existing messages are not back-indexed. Also check the value: PropValue matching is exact unless value_like is used.".into(),
+                    );
+                }
+                ok_json(out)
+            }
+            Err(e) => err_json(net_err(&e.to_string()), &e.to_string()),
+        };
     }
+
+    // ── Plain header search ──────────────────────────────────────────────
+    let filters = header_filters(&params, "");
     let where_clause = if filters.is_empty() {
         String::new()
     } else {
         format!("WHERE {}", filters.join(" AND "))
     };
-    let sql = format!("SELECT TOP {} ID, TimeCreated, SourceConfigName, TargetConfigName, MessageBodyClassName, Status FROM Ens.MessageHeader {} ORDER BY ID DESC", params.limit, where_clause);
-    match iris
-        .query(&sql, vec![], &iris.namespace.clone(), &client)
-        .await
-    {
+    let sql = format!(
+        "SELECT TOP {} {HEADER_COLS} FROM Ens.MessageHeader {} ORDER BY ID DESC",
+        params.limit, where_clause
+    );
+    match iris.query(&sql, vec![], ns, &client).await {
         Ok(resp) => ok_json(
             serde_json::json!({"success": true, "messages": resp["result"]["content"], "count": resp["result"]["content"].as_array().map(|a| a.len()).unwrap_or(0)}),
         ),
-        Err(e) => err_json(
-            if is_network_error(&e.to_string()) {
-                "IRIS_UNREACHABLE"
-            } else {
-                "INTEROP_ERROR"
-            },
-            &e.to_string(),
-        ),
+        Err(e) => err_json(net_err(&e.to_string()), &e.to_string()),
     }
 }
 
@@ -2314,10 +2712,17 @@ mod tests {
         let r = interop_message_search_impl(
             None,
             MessageSearchParams {
+                namespace: None,
                 source: None,
                 target: None,
                 class_name: None,
+                session_id: None,
+                since_id: None,
                 limit: 5,
+                body_class: None,
+                body_where: None,
+                body_select: vec![],
+                search_table: None,
             },
         )
         .await
@@ -2659,27 +3064,30 @@ mod tests {
         assert_eq!(conditions.len(), 3);
     }
 
+    fn msg_params_plain(
+        source: Option<&str>,
+        target: Option<&str>,
+        class_name: Option<&str>,
+    ) -> MessageSearchParams {
+        MessageSearchParams {
+            namespace: None,
+            source: source.map(str::to_string),
+            target: target.map(str::to_string),
+            class_name: class_name.map(str::to_string),
+            session_id: None,
+            since_id: None,
+            limit: 20,
+            body_class: None,
+            body_where: None,
+            body_select: vec![],
+            search_table: None,
+        }
+    }
+
     #[test]
     fn message_search_filters_empty_when_all_none() {
-        let params = MessageSearchParams {
-            source: None,
-            target: None,
-            class_name: None,
-            limit: 20,
-        };
-        let mut filters = vec![];
-        if let Some(src) = &params.source {
-            filters.push(format!("SourceConfigName = '{}'", src.replace('\'', "''")));
-        }
-        if let Some(tgt) = &params.target {
-            filters.push(format!("TargetConfigName = '{}'", tgt.replace('\'', "''")));
-        }
-        if let Some(cls) = &params.class_name {
-            filters.push(format!(
-                "MessageBodyClassName = '{}'",
-                cls.replace('\'', "''")
-            ));
-        }
+        let params = msg_params_plain(None, None, None);
+        let filters = header_filters(&params, "");
         let where_clause = if filters.is_empty() {
             String::new()
         } else {
@@ -2690,25 +3098,8 @@ mod tests {
 
     #[test]
     fn message_search_filters_sql_with_all_fields() {
-        let params = MessageSearchParams {
-            source: Some("Router".to_string()),
-            target: Some("Sink".to_string()),
-            class_name: Some("Ens.StringRequest".to_string()),
-            limit: 20,
-        };
-        let mut filters = vec![];
-        if let Some(src) = &params.source {
-            filters.push(format!("SourceConfigName = '{}'", src.replace('\'', "''")));
-        }
-        if let Some(tgt) = &params.target {
-            filters.push(format!("TargetConfigName = '{}'", tgt.replace('\'', "''")));
-        }
-        if let Some(cls) = &params.class_name {
-            filters.push(format!(
-                "MessageBodyClassName = '{}'",
-                cls.replace('\'', "''")
-            ));
-        }
+        let params = msg_params_plain(Some("Router"), Some("Sink"), Some("Ens.StringRequest"));
+        let filters = header_filters(&params, "");
         let where_clause = if filters.is_empty() {
             String::new()
         } else {
@@ -2723,25 +3114,8 @@ mod tests {
 
     #[test]
     fn message_search_filters_partial() {
-        let params = MessageSearchParams {
-            source: Some("Router".to_string()),
-            target: None,
-            class_name: None,
-            limit: 20,
-        };
-        let mut filters = vec![];
-        if let Some(src) = &params.source {
-            filters.push(format!("SourceConfigName = '{}'", src.replace('\'', "''")));
-        }
-        if let Some(tgt) = &params.target {
-            filters.push(format!("TargetConfigName = '{}'", tgt.replace('\'', "''")));
-        }
-        if let Some(cls) = &params.class_name {
-            filters.push(format!(
-                "MessageBodyClassName = '{}'",
-                cls.replace('\'', "''")
-            ));
-        }
+        let params = msg_params_plain(Some("Router"), None, None);
+        let filters = header_filters(&params, "");
         let where_clause = if filters.is_empty() {
             String::new()
         } else {

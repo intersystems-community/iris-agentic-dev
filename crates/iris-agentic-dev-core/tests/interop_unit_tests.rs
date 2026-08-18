@@ -166,10 +166,17 @@ mod interop_message_search {
         let r = rt().block_on(interop_message_search_impl(
             None,
             MessageSearchParams {
+                namespace: None,
                 source: None,
                 target: None,
                 class_name: None,
+                session_id: None,
+                since_id: None,
                 limit: 20,
+                body_class: None,
+                body_where: None,
+                body_select: vec![],
+                search_table: None,
             },
         ));
         let result = r.unwrap();
@@ -1158,5 +1165,127 @@ mod autostart_params {
         )
         .unwrap();
         assert_eq!(p.namespace, "CUSTOM");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Issue #97: message body content search — pure SQL shape tests
+// ─────────────────────────────────────────────────────────────
+
+mod message_content_search {
+    use iris_agentic_dev_core::tools::interop::*;
+
+    fn base_params(source: Option<&str>) -> MessageSearchParams {
+        MessageSearchParams {
+            namespace: None,
+            source: source.map(str::to_string),
+            target: None,
+            class_name: None,
+            session_id: None,
+            since_id: None,
+            limit: 20,
+            body_class: None,
+            body_where: None,
+            body_select: vec![],
+            search_table: None,
+        }
+    }
+
+    #[test]
+    fn body_join_sql_shape() {
+        let p = base_params(Some("Router.Censo"));
+        let sql = build_body_join_sql(
+            5,
+            header_filters(&p, "h."),
+            "Ejercicio3.MSG.MenuReq",
+            "Ejercicio3_MSG.MenuReq",
+            Some("PacienteId = '4003'"),
+            &["PacienteId".to_string(), "FechaNacimiento".to_string()],
+        );
+        assert!(sql.starts_with("SELECT TOP 5 h.ID, h.TimeCreated"), "{sql}");
+        assert!(sql.contains(", r.PacienteId, r.FechaNacimiento"), "{sql}");
+        assert!(
+            sql.contains("JOIN Ejercicio3_MSG.MenuReq r ON h.MessageBodyId = r.ID"),
+            "{sql}"
+        );
+        assert!(sql.contains("h.SourceConfigName = 'Router.Censo'"), "{sql}");
+        assert!(
+            sql.contains("h.MessageBodyClassName = 'Ejercicio3.MSG.MenuReq'"),
+            "{sql}"
+        );
+        assert!(sql.contains("(PacienteId = '4003')"), "{sql}");
+        assert!(sql.ends_with("ORDER BY h.ID DESC"), "{sql}");
+    }
+
+    #[test]
+    fn search_table_sql_shape_exact() {
+        let sql = build_search_table_sql(
+            10,
+            header_filters(&base_params(None), "h."),
+            "EnsLib_HL7.SearchTable",
+            &[4],
+            Some("16284718"),
+            None,
+        );
+        assert!(
+            sql.contains("JOIN EnsLib_HL7.SearchTable st ON st.DocId = h.MessageBodyId"),
+            "{sql}"
+        );
+        assert!(sql.contains("st.PropId IN (4)"), "{sql}");
+        assert!(sql.contains("st.PropValue = '16284718'"), "{sql}");
+        assert!(sql.contains(", st.PropValue FROM"), "{sql}");
+    }
+
+    #[test]
+    fn search_table_sql_shape_like_multi_prop() {
+        let sql = build_search_table_sql(
+            10,
+            vec![],
+            "EnsLib_HL7.SearchTable",
+            &[12, 14],
+            None,
+            Some("AMOX%"),
+        );
+        assert!(sql.contains("st.PropId IN (12,14)"), "{sql}");
+        assert!(sql.contains("st.PropValue LIKE 'AMOX%'"), "{sql}");
+    }
+
+    #[test]
+    fn sql_identifier_gate() {
+        assert!(is_sql_identifier("PacienteId"));
+        assert!(is_sql_identifier("%ID"));
+        assert!(!is_sql_identifier("a b"));
+        assert!(!is_sql_identifier("x; DROP"));
+        assert!(!is_sql_identifier(""));
+    }
+
+    #[test]
+    fn message_search_params_deserialize_body_fields() {
+        let p: MessageSearchParams = serde_json::from_str(
+            r#"{"body_class":"E.MSG.R","body_where":"X=1","body_select":["X"],
+                "search_table":{"prop":"PatientID","value":"1"}}"#,
+        )
+        .unwrap();
+        assert_eq!(p.body_class.as_deref(), Some("E.MSG.R"));
+        assert_eq!(p.body_where.as_deref(), Some("X=1"));
+        assert_eq!(p.body_select, vec!["X"]);
+        let st = p.search_table.unwrap();
+        assert_eq!(st.prop, "PatientID");
+        assert_eq!(st.value.as_deref(), Some("1"));
+        assert!(st.extent.is_none());
+        assert!(st.class.is_none());
+    }
+
+    #[test]
+    fn message_search_params_defaults() {
+        let p: MessageSearchParams = serde_json::from_str("{}").unwrap();
+        assert!(p.namespace.is_none());
+        assert!(p.session_id.is_none());
+        assert!(p.since_id.is_none());
+        assert!(p.body_class.is_none());
+        assert!(p.body_where.is_none());
+        assert!(p.body_select.is_empty());
+        assert!(p.search_table.is_none());
+        assert_eq!(p.limit, 20);
     }
 }

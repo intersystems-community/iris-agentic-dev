@@ -6271,7 +6271,7 @@ Methods:
     }
 
     #[tool(
-        description = "Interoperability query dispatcher (merged). what: logs=recent log entries, queues=message queue depths, messages=search message archive. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "Interoperability query dispatcher (merged). what (REQUIRED): logs=Event Log entries, queues=message queue depths, messages=message archive (Ens.MessageHeader), trace=ALL of one session by session_id, partners=Ens.Config.BusinessPartner rows. Filters: component=<config item> and session_id=<n> narrow logs/messages; since_id=<n> tails after a watermark. what=messages can also search message CONTENT: (a) body_class=<msg class> + body_where=<SQL fragment on body table> + body_select=[cols] joins the body table server-side (SQL name resolved for you); (b) search_table={prop, value|value_like, class?, extent?} searches an indexed Search Table field (extent default EnsLib.HL7.SearchTable; errors list searchable props). Pass namespace=<ns> for a non-default interop namespace. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<IrisInteropQueryResponse>()
     )]
@@ -6311,6 +6311,10 @@ Methods:
                 interop::interop_message_search_impl(
                     iris_opt,
                     interop::MessageSearchParams {
+                        namespace: p
+                            .get("namespace")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
                         source: p
                             .get("source")
                             .and_then(|v| v.as_str())
@@ -6323,7 +6327,36 @@ Methods:
                             .get("message_class")
                             .and_then(|v| v.as_str())
                             .map(|s| s.to_string()),
+                        session_id: p.get("session_id").and_then(|v| {
+                            v.as_i64()
+                                .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+                        }),
+                        since_id: p.get("since_id").and_then(|v| {
+                            v.as_i64()
+                                .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+                        }),
                         limit: p.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as u32,
+                        body_class: p
+                            .get("body_class")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        body_where: p
+                            .get("body_where")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        body_select: p
+                            .get("body_select")
+                            .and_then(|v| v.as_array())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                        search_table: p
+                            .get("search_table")
+                            .cloned()
+                            .and_then(|v| serde_json::from_value(v).ok()),
                     },
                 )
                 .await

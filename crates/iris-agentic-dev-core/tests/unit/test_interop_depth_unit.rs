@@ -1277,10 +1277,17 @@ async fn interop_queues_none_iris_returns_unreachable() {
 #[tokio::test]
 async fn interop_message_search_none_iris_returns_unreachable() {
     let params = MessageSearchParams {
+        namespace: None,
         source: None,
         target: None,
         class_name: None,
+        session_id: None,
+        since_id: None,
         limit: 20,
+        body_class: None,
+        body_where: None,
+        body_select: vec![],
+        search_table: None,
     };
     let result = interop_message_search_impl(None, params).await.expect("Ok");
     let v = parse_result(result);
@@ -1290,10 +1297,17 @@ async fn interop_message_search_none_iris_returns_unreachable() {
 #[tokio::test]
 async fn interop_message_search_none_iris_with_source() {
     let params = MessageSearchParams {
+        namespace: None,
         source: Some("MySource".to_string()),
         target: None,
         class_name: None,
+        session_id: None,
+        since_id: None,
         limit: 30,
+        body_class: None,
+        body_where: None,
+        body_select: vec![],
+        search_table: None,
     };
     let result = interop_message_search_impl(None, params).await.expect("Ok");
     let v = parse_result(result);
@@ -1303,10 +1317,17 @@ async fn interop_message_search_none_iris_with_source() {
 #[tokio::test]
 async fn interop_message_search_none_iris_with_all_filters() {
     let params = MessageSearchParams {
+        namespace: None,
         source: Some("Source".to_string()),
         target: Some("Target".to_string()),
         class_name: Some("ClassName".to_string()),
+        session_id: None,
+        since_id: None,
         limit: 50,
+        body_class: None,
+        body_where: None,
+        body_select: vec![],
+        search_table: None,
     };
     let result = interop_message_search_impl(None, params).await.expect("Ok");
     let v = parse_result(result);
