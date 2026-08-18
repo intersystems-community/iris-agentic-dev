@@ -60,7 +60,7 @@ async fn e2e_compare_document_same() {
     let text = result
         .content
         .first()
-        .map(|c| c.raw.as_text().unwrap().text.clone())
+        .map(|c| c.as_text().unwrap().text.clone())
         .expect("no text content");
     let v: serde_json::Value = serde_json::from_str(&text).expect("json parse");
     assert!(
@@ -166,7 +166,7 @@ async fn e2e_compare_namespace_same_server() {
     let text = result
         .content
         .first()
-        .map(|c| c.raw.as_text().unwrap().text.clone())
+        .map(|c| c.as_text().unwrap().text.clone())
         .expect("no text content");
     let v: serde_json::Value = serde_json::from_str(&text).expect("json parse");
 
@@ -222,7 +222,7 @@ async fn e2e_compare_document_nonexistent() {
     let text = result
         .content
         .first()
-        .map(|c| c.raw.as_text().unwrap().text.clone())
+        .map(|c| c.as_text().unwrap().text.clone())
         .expect("no text content");
     let v: serde_json::Value = serde_json::from_str(&text).expect("json parse");
 

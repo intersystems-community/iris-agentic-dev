@@ -30,7 +30,9 @@ impl ConfirmEntry {
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 fn ok_json(v: serde_json::Value) -> Result<CallToolResult, McpError> {
-    Ok(CallToolResult::success(vec![Content::text(v.to_string())]))
+    Ok(CallToolResult::success(vec![ContentBlock::text(
+        v.to_string(),
+    )]))
 }
 
 fn err_json(code: &str, msg: &str) -> Result<CallToolResult, McpError> {
@@ -1212,7 +1214,7 @@ mod tests {
         let text = result
             .content
             .first()
-            .map(|c| c.raw.as_text().unwrap().text.clone())
+            .map(|c| c.as_text().unwrap().text.clone())
             .expect("no text content");
         let v: serde_json::Value = serde_json::from_str(&text).expect("json parse");
         assert_eq!(
@@ -1254,7 +1256,7 @@ mod tests {
         let text = result
             .content
             .first()
-            .map(|c| c.raw.as_text().unwrap().text.clone())
+            .map(|c| c.as_text().unwrap().text.clone())
             .expect("no text content");
         let v: serde_json::Value = serde_json::from_str(&text).expect("json parse");
         assert_eq!(
@@ -1308,7 +1310,7 @@ mod tests {
         let text = result
             .content
             .first()
-            .map(|c| c.raw.as_text().unwrap().text.clone())
+            .map(|c| c.as_text().unwrap().text.clone())
             .expect("no text content");
         let v: serde_json::Value = serde_json::from_str(&text).expect("json parse");
         assert_eq!(
@@ -1361,7 +1363,7 @@ mod tests {
         let text = result
             .content
             .first()
-            .map(|c| c.raw.as_text().unwrap().text.clone())
+            .map(|c| c.as_text().unwrap().text.clone())
             .expect("no text content");
         let v: serde_json::Value = serde_json::from_str(&text).expect("json parse");
         assert_eq!(
@@ -1391,7 +1393,7 @@ mod tests {
         let text = result
             .content
             .first()
-            .map(|c| c.raw.as_text().unwrap().text.clone())
+            .map(|c| c.as_text().unwrap().text.clone())
             .expect("no text content");
         let v: serde_json::Value = serde_json::from_str(&text).expect("json parse");
         assert_eq!(

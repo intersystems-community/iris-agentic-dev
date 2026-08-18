@@ -152,7 +152,7 @@ impl ToolCommand {
             Ok(result) => {
                 let mut tool_success = true;
                 for content in &result.content {
-                    if let Some(text) = content.raw.as_text() {
+                    if let Some(text) = content.as_text() {
                         println!("{}", text.text);
                         // Exit 1 when the tool itself reports failure so shell/CI can gate on exit code.
                         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text.text) {

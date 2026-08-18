@@ -36,7 +36,7 @@ fn make_log_store() -> Arc<Mutex<log_store::LogStore>> {
 }
 
 fn result_json(r: Result<rmcp::model::CallToolResult, rmcp::ErrorData>) -> serde_json::Value {
-    let text = r.unwrap().content[0].raw.as_text().unwrap().text.clone();
+    let text = r.unwrap().content[0].as_text().unwrap().text.clone();
     serde_json::from_str(&text).unwrap()
 }
 

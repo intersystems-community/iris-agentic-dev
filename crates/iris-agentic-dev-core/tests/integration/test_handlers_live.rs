@@ -831,7 +831,7 @@ fn make_iris_tools() -> Option<iris_agentic_dev_core::tools::IrisTools> {
 
 fn parse_result(r: Result<rmcp::model::CallToolResult, String>) -> serde_json::Value {
     let r = r.expect("call_for_test returned Err");
-    let text = r.content[0].raw.as_text().unwrap().text.clone();
+    let text = r.content[0].as_text().unwrap().text.clone();
     serde_json::from_str(&text).unwrap_or_else(|_| serde_json::json!({"raw": text}))
 }
 
@@ -1057,7 +1057,7 @@ async fn test_dispatch_iris_source_control_menu() {
     // SCM may not be configured — success or error are both acceptable
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("scm menu: {text}");
         }
         Err(e) => eprintln!("scm menu error (ok): {e}"),
@@ -1082,7 +1082,7 @@ async fn test_dispatch_iris_symbols_local() {
     // symbols_local may return empty results — just confirm no panic
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
             eprintln!(
                 "symbols_local: {} symbols",
@@ -1406,7 +1406,7 @@ async fn test_dispatch_iris_test_unit_test_manager() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!(
                 "iris_test %UnitTest.TestSuite result: {}",
                 &text[..text.len().min(200)]
@@ -1784,7 +1784,7 @@ async fn test_dispatch_iris_doc_list() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("doc list: {}", &text[..text.len().min(100)]);
         }
         Err(e) => eprintln!("doc list error (ok if mode unsupported): {e}"),
@@ -1925,7 +1925,7 @@ async fn test_dispatch_iris_macro_signature_system_macro() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("macro signature: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("macro signature error (ok): {e}"),
@@ -1950,7 +1950,7 @@ async fn test_dispatch_iris_macro_definition() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("macro definition: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("macro definition error (ok): {e}"),
@@ -1975,7 +1975,7 @@ async fn test_dispatch_iris_macro_location() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("macro location: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("macro location error (ok): {e}"),
@@ -2001,7 +2001,7 @@ async fn test_dispatch_iris_macro_expand() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("macro expand: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("macro expand error (ok): {e}"),
@@ -2027,7 +2027,7 @@ async fn test_dispatch_iris_table_info_class_dict() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!(
                 "table_info SQLUser.Person: {}",
                 &text[..text.len().min(200)]
@@ -2217,7 +2217,7 @@ async fn test_dispatch_iris_debug_error_logs() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("debug error_logs: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("debug error_logs error (ok): {e}"),
@@ -2242,7 +2242,7 @@ async fn test_dispatch_iris_debug_source_map() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("debug source_map: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("debug source_map error (ok): {e}"),
@@ -2269,7 +2269,7 @@ async fn test_dispatch_iris_production_item_list() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!(
                 "production_item get_settings: {}",
                 &text[..text.len().min(200)]
@@ -2321,7 +2321,7 @@ async fn test_dispatch_iris_scm_status() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("scm status: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("scm status error (ok): {e}"),
@@ -2346,7 +2346,7 @@ async fn test_dispatch_iris_scm_get() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("scm get: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("scm get error (ok): {e}"),
@@ -2494,7 +2494,7 @@ async fn test_dispatch_symbols_local_deep_search() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("symbols_local *.mac: {}", &text[..text.len().min(100)]);
         }
         Err(e) => eprintln!("symbols_local *.mac error (ok): {e}"),
@@ -2518,7 +2518,7 @@ async fn test_dispatch_symbols_local_inc_pattern() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("symbols_local *.inc: {}", &text[..text.len().min(100)]);
         }
         Err(e) => eprintln!("symbols_local *.inc error (ok): {e}"),
@@ -2569,7 +2569,7 @@ async fn test_dispatch_iris_doc_batch_head() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("doc batch_head: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("doc batch_head error (ok): {e}"),
@@ -2648,7 +2648,7 @@ async fn test_dispatch_symbols_local_with_workspace() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
             let count = v["symbols"].as_array().map(|a| a.len()).unwrap_or(0);
             eprintln!("symbols_local with workspace: {count} symbols");
@@ -2677,7 +2677,7 @@ async fn test_dispatch_symbols_local_method_query() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!(
                 "symbols_local ProductionHelper: {}",
                 &text[..text.len().min(200)]
@@ -2790,7 +2790,7 @@ async fn test_dispatch_iris_lookup_set_delete() {
         .await;
     match set_result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("lookup set: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("lookup set error (ok): {e}"),
@@ -2810,7 +2810,7 @@ async fn test_dispatch_iris_lookup_set_delete() {
         .await;
     match del_result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("lookup delete: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("lookup delete error (ok): {e}"),
@@ -2836,7 +2836,7 @@ async fn test_dispatch_iris_production_check() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("production check: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("production check error (ok): {e}"),
@@ -2860,7 +2860,7 @@ async fn test_dispatch_iris_production_needs_update() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("production needs_update: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("production needs_update error (ok): {e}"),
@@ -2939,7 +2939,7 @@ async fn test_dispatch_resolve_dynamic_dispatch() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("resolve_dynamic_dispatch: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("resolve_dynamic_dispatch error (ok): {e}"),
@@ -2963,7 +2963,7 @@ async fn test_dispatch_extract_message_map_routing() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!(
                 "extract_message_map_routing: {}",
                 &text[..text.len().min(200)]
@@ -2991,7 +2991,7 @@ async fn test_dispatch_find_subclass_implementations_dict() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!(
                 "find_subclass_implementations: {}",
                 &text[..text.len().min(300)]
@@ -3018,7 +3018,7 @@ async fn test_dispatch_resolve_dynamic_dispatch_nonexistent_class() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!(
                 "resolve_dynamic_dispatch nonexistent: {}",
                 &text[..text.len().min(200)]
@@ -4790,7 +4790,7 @@ async fn test_dispatch_iris_compile_local_file_no_class_decl() {
     // Will fail compilation — but we exercised the fallback doc_name path
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!(
                 "iris_compile no-class-decl: {}",
                 &text[..text.len().min(200)]
@@ -5683,7 +5683,7 @@ async fn test_dispatch_extract_message_map_cache_hit() {
             .await;
         match result {
             Ok(r) => {
-                let text = r.content[0].raw.as_text().unwrap().text.clone();
+                let text = r.content[0].as_text().unwrap().text.clone();
                 eprintln!(
                     "extract_message_map cache: {}",
                     &text[..text.len().min(200)]
@@ -8052,7 +8052,7 @@ async fn test_dispatch_iris_source_control_bare_classname() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("scm status bare classname: {text}");
         }
         Err(e) => eprintln!("scm status bare classname error (ok): {e}"),
@@ -8078,7 +8078,7 @@ async fn test_dispatch_iris_source_control_checkout() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("scm checkout: {text}");
         }
         Err(e) => eprintln!("scm checkout error (ok): {e}"),
@@ -8105,7 +8105,7 @@ async fn test_dispatch_iris_source_control_execute_action() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("scm execute: {text}");
         }
         Err(e) => eprintln!("scm execute error (ok): {e}"),
@@ -8131,7 +8131,7 @@ async fn test_dispatch_iris_source_control_menu_with_doc() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("scm menu with doc: {text}");
         }
         Err(e) => eprintln!("scm menu with doc error (ok): {e}"),
@@ -8214,7 +8214,7 @@ async fn test_generate_coverage_extract_class_name_via_dispatch() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("iris_generate_class: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("iris_generate_class error (ok without LLM): {e}"),
@@ -9042,7 +9042,7 @@ async fn test_dispatch_iris_info_check_config_invalid_host() {
     // Should succeed (returns config status whether connected or not)
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("check_config: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("check_config error (ok): {e}"),
@@ -9069,7 +9069,7 @@ async fn test_dispatch_iris_execute_merge_sql_macro() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!("iris_execute MERGE: {}", &text[..text.len().min(200)]);
         }
         Err(e) => eprintln!("iris_execute MERGE error (ok): {e}"),
@@ -9102,7 +9102,7 @@ async fn test_dispatch_skill_propose_with_history() {
         .await;
     match result {
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             eprintln!(
                 "skill propose with history: {}",
                 &text[..text.len().min(200)]
@@ -16905,7 +16905,7 @@ async fn test_iris_generate_class_no_llm_returns_error() {
         ),
         Ok(r) => {
             // If somehow it returned Ok, check for error JSON
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
             assert!(
                 v.get("error_code").is_some() || v.get("error").is_some(),
@@ -16946,7 +16946,7 @@ async fn test_iris_generate_test_no_llm_returns_error() {
             "iris_generate_test without LLM must return LLM_UNAVAILABLE: {e}"
         ),
         Ok(r) => {
-            let text = r.content[0].raw.as_text().unwrap().text.clone();
+            let text = r.content[0].as_text().unwrap().text.clone();
             let v: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
             assert!(
                 v.get("error_code").is_some() || v.get("error").is_some(),

@@ -60,7 +60,7 @@ pub async fn call(
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     for content in &result.content {
-        if let Some(text) = content.raw.as_text() {
+        if let Some(text) = content.as_text() {
             return serde_json::from_str(&text.text)
                 .with_context(|| format!("parsing {tool_name} response"));
         }

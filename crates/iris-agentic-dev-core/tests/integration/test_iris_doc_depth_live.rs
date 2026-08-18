@@ -84,7 +84,7 @@ async fn test_fragment_live_library_integer() {
     let result = handle_iris_doc(&iris, &client, p, &store, &cache)
         .await
         .unwrap();
-    let text = result.content[0].raw.as_text().unwrap().text.clone();
+    let text = result.content[0].as_text().unwrap().text.clone();
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
     println!("fragment result: {v}");
     assert_eq!(v["success"], true, "{v}");
@@ -110,7 +110,7 @@ async fn test_compiled_live_library_integer() {
     let result = handle_iris_doc(&iris, &client, p, &store, &cache)
         .await
         .unwrap();
-    let text = result.content[0].raw.as_text().unwrap().text.clone();
+    let text = result.content[0].as_text().unwrap().text.clone();
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
     println!(
         "compiled result: success={}, category={}",
@@ -149,7 +149,7 @@ async fn test_list_live_library_cls() {
     let result = handle_iris_doc(&iris, &client, p, &store, &cache)
         .await
         .unwrap();
-    let text = result.content[0].raw.as_text().unwrap().text.clone();
+    let text = result.content[0].as_text().unwrap().text.clone();
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
     println!("list result: {v}");
     assert_eq!(v["success"], true, "{v}");
@@ -173,7 +173,7 @@ async fn test_execute_method_live_get_version() {
     let result = handle_iris_execute_method(&iris, &client, &p)
         .await
         .unwrap();
-    let text = result.content[0].raw.as_text().unwrap().text.clone();
+    let text = result.content[0].as_text().unwrap().text.clone();
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
     println!("execute_method GetVersion(): {v}");
     assert_eq!(v["success"], true, "{v}");
@@ -198,7 +198,7 @@ async fn test_execute_method_live_integer_isvalid_numeric() {
     let result = handle_iris_execute_method(&iris, &client, &p)
         .await
         .unwrap();
-    let text = result.content[0].raw.as_text().unwrap().text.clone();
+    let text = result.content[0].as_text().unwrap().text.clone();
     let v: serde_json::Value = serde_json::from_str(&text).unwrap();
     println!("execute_method IsValid(42): {v}");
     assert_eq!(v["success"], true, "{v}");
