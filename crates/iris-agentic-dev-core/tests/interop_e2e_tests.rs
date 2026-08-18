@@ -453,8 +453,8 @@ fn test_message_content_search() {
         parse_tool_text(&find_response(&responses, 2).expect("no response"))
     };
 
-    // Seed a header+body fixture (no production running needed).
-    let needle = "e2e-content-search-needle";
+    // Use the process ID as part of the needle so concurrent/re-runs don't collide.
+    let needle = format!("e2e-csearch-{}", std::process::id());
     let seed = format!(
         "Set body=##class(Ens.StringContainer).%New()\n\
          Set body.StringValue=\"{needle}\"\n\
@@ -477,7 +477,7 @@ fn test_message_content_search() {
     let ids: Vec<&str> = out.trim_start_matches("OK:").split(':').collect();
     let (hdr_id, body_id) = (ids[0].to_string(), ids[1].to_string());
 
-    // 1. body-class join finds the needle.
+    // 1. body-class join finds exactly the needle row.
     let r = call(
         "iris_interop_query",
         serde_json::json!({"what":"messages","namespace":ns,
@@ -486,8 +486,8 @@ fn test_message_content_search() {
             "body_select":["StringValue"]}),
     );
     assert_eq!(r["success"], true, "body join failed: {r}");
-    assert_eq!(r["count"], 1, "expected exactly the fixture: {r}");
-    assert_eq!(r["messages"][0]["StringValue"], needle, "{r}");
+    assert_eq!(r["count"], 1, "expected exactly one fixture row: {r}");
+    assert_eq!(r["messages"][0]["StringValue"], needle.as_str(), "{r}");
     assert!(r["messages"][0]["SourceConfigName"].is_string(), "{r}");
 
     // 2. body_where without body_class → error listing real classes.
