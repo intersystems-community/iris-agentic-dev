@@ -85,6 +85,121 @@ print(f\"Lift:     {d.get('lift',0):+.0%}\")
 
 ---
 
+## CLI Dispatch Mode
+
+In addition to the standard single-shot MCP mode, the benchmark supports a second
+execution path: **CLI dispatch**. In this mode an agentic loop runs where the model
+calls `iris-agentic-dev tool <name> --args '<json>'` as shell subprocesses, reads the
+output, and iterates until it believes the task is solved. This mirrors how a developer
+might wire `iris-agentic-dev` into a shell-based agent.
+
+### When to use CLI dispatch
+
+Use CLI dispatch benchmarking when:
+
+- You are building an agent that shells out to `iris-agentic-dev` rather than connecting
+  to it via MCP
+- You want to compare subprocess-per-tool-call overhead against the MCP path
+- You are measuring token cost difference between the two execution patterns
+
+### Running CLI dispatch
+
+```bash
+iris-agentic-dev benchmark \
+  --mode cli-dispatch \
+  --skill path/to/your/SKILL.md \
+  --output cli-dispatch-results.json
+```
+
+Additional flags:
+
+| Flag                  | Default | Description                                             |
+| --------------------- | ------- | ------------------------------------------------------- |
+| `--max-iterations N`  | 10      | Maximum turns per task before recording `fail`          |
+| `--max-task-tokens N` | 50000   | Stop if accumulated tokens per task exceed this         |
+| `--compare path`      | —       | Load a prior result JSON and add a `comparison` section |
+
+### CLI dispatch output
+
+The result JSON includes the same `pass_rate`, `tasks_passed`, `tasks_total` fields
+plus token counts and a mode discriminator:
+
+```json
+{
+  "mode": "cli_dispatch",
+  "pass_rate": 0.68,
+  "tasks_passed": 15,
+  "tasks_total": 22,
+  "tasks_errored": 0,
+  "tokens_input": 142000,
+  "tokens_output": 38000,
+  "tokens_total": 180000,
+  "elapsed_s": 312.4,
+  "task_results": [
+    {
+      "task_id": "jira-001",
+      "outcome": "pass",
+      "iterations": 3,
+      "elapsed_s": 14.2,
+      "tokens_input": 6200,
+      "tokens_output": 1800,
+      "tokens_total": 8000,
+      "reason": ""
+    }
+  ]
+}
+```
+
+`iterations` counts turns in the agentic loop (each turn is one LLM call). Token
+fields are `null` when the model does not return usage data.
+
+### Comparing modes
+
+```bash
+# 1. Run MCP mode first (this is the default)
+iris-agentic-dev benchmark \
+  --skill path/to/SKILL.md \
+  --output mcp-results.json
+
+# 2. Run CLI dispatch and compare
+iris-agentic-dev benchmark \
+  --mode cli-dispatch \
+  --skill path/to/SKILL.md \
+  --compare mcp-results.json \
+  --output cli-results.json
+```
+
+The `--compare` flag appends a `comparison` section:
+
+```json
+{
+  "comparison": {
+    "other_mode": "mcp",
+    "pass_rate_delta": -0.045,
+    "tokens_total_delta": 158000,
+    "elapsed_s_delta": 124.8
+  }
+}
+```
+
+### Interpreting CLI dispatch results
+
+**Token cost**: CLI dispatch typically uses 5–15× more tokens than MCP single-shot mode
+because each turn includes the full conversation history and tool results. The trade-off
+is that the agent can gather information iteratively rather than working from static
+context.
+
+**Latency**: subprocess-per-tool-call adds process-spawn overhead per invocation (10–50ms
+on a local machine). For tasks requiring 5–10 tool calls, expect 2–5 seconds of overhead
+per task versus the network round-trip cost of MCP.
+
+**Pass rate gap**: if CLI dispatch pass rate is significantly lower than MCP single-shot,
+the most common causes are: (1) the skill is too short to guide multi-turn reasoning,
+(2) the model is spending early turns on exploration rather than the fix, or (3) the
+default `--max-iterations 10` is too low for complex tasks.
+
+---
+
 ## Detailed Setup
 
 ### Step 1: Configure IRIS
