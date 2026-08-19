@@ -96,3 +96,7 @@ path = "tests/integration/test_tool_live.rs"
 [[test]]
 name = "test_http_transport"
 path = "tests/integration/test_http_transport.rs"
+
+[[test]]
+name = "test_mcp_binary_config"
+path = "tests/integration/test_mcp_binary_config.rs"

@@ -45,6 +45,15 @@ jobs:
         env:
           RUST_LOG: warn
           RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
+      # Binary invocation tests (spec 081): spawn the built binary over stdio and assert
+      # on JSON-RPC responses. Marked #[ignore] so they don't run in the broad --all-targets
+      # sweep above (which would re-build every crate). The binary was already built by the
+      # `cargo build --workspace` step above, so CARGO_BIN_EXE_iris-agentic-dev is valid.
+      - name: Binary config integration tests
+        run: cargo test -j1 --test test_mcp_binary_config --features testing -- --include-ignored --test-threads=1
+        env:
+          RUST_LOG: warn
+          RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
 
   benchmark-lint:
     runs-on: ubuntu-latest
