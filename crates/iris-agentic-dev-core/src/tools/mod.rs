@@ -190,12 +190,18 @@ pub struct ConnectionState {
 
 impl ConnectionState {
     pub fn new_disconnected(source: ConnectionSource) -> Self {
+        // Respect IRIS_WRITE_TOOLS_ENABLED even when no connection is active, so that
+        // check_config reports the configured value when running without live IRIS.
+        let write_tools_enabled = std::env::var("IRIS_WRITE_TOOLS_ENABLED")
+            .ok()
+            .map(|v| v != "0")
+            .unwrap_or(true);
         Self {
             iris: None,
             source,
             config_file: None,
             loaded_at: std::time::SystemTime::now(),
-            write_tools_enabled: true,
+            write_tools_enabled,
             config_parse_error: None,
         }
     }
@@ -2534,7 +2540,11 @@ impl IrisTools {
                 };
                 ConnectionState::from_iris(c, source, file)
             }
-            None => ConnectionState::new_disconnected(ConnectionSource::EnvVars),
+            None => {
+                let mut state = ConnectionState::new_disconnected(ConnectionSource::EnvVars);
+                state.config_file = config_path;
+                state
+            }
         };
 
         let log_max = std::env::var("IRIS_LOG_STORE_MAX")
