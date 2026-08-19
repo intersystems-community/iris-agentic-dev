@@ -2621,24 +2621,45 @@ impl IrisTools {
                 .filter(|s| !s.is_empty()),
         };
 
-        for (name, inst) in &fleet.instance {
-            let matches = if let Some(ref ic) = inst.container {
-                // Match by container name if the instance declares one.
-                active_container.as_deref() == Some(ic.as_str())
-            } else {
-                // No container in instance config — match by host in base_url.
-                // Use scheme-stripped prefix match ("://host:") to avoid "iris" matching
-                // "my-iris-dev" or a hostname that is a substring of another.
-                inst.host
+        let active_ns = iris.namespace.to_uppercase();
+
+        // Two-pass match to handle shared-gateway fleets (#114):
+        //   Pass 1: host (or container) AND namespace — most specific.
+        //   Pass 2: host (or container) only, ignoring namespace — fallback for
+        //           instances that omit namespace in their config.
+        // This prevents a subject-role entry on the same host from shadowing a
+        // workspace-role entry that also declares the active namespace.
+        for pass in 0..2u8 {
+            for (name, inst) in &fleet.instance {
+                let host_matches = if let Some(ref ic) = inst.container {
+                    active_container.as_deref() == Some(ic.as_str())
+                } else {
+                    inst.host
+                        .as_deref()
+                        .map(|h| {
+                            let needle = format!("://{h}:");
+                            iris.base_url.contains(&needle)
+                        })
+                        .unwrap_or(false)
+                };
+                if !host_matches {
+                    continue;
+                }
+                let ns_matches = inst
+                    .namespace
                     .as_deref()
-                    .map(|h| {
-                        let needle = format!("://{h}:");
-                        iris.base_url.contains(&needle)
-                    })
-                    .unwrap_or(false)
-            };
-            if matches {
-                return (inst.role.clone(), name.clone());
+                    .map(|ns| ns.to_uppercase() == active_ns)
+                    .unwrap_or(false);
+                let matches = if pass == 0 {
+                    // Pass 1: require namespace declared AND matching.
+                    ns_matches && inst.namespace.is_some()
+                } else {
+                    // Pass 2: accept any host match regardless of namespace.
+                    true
+                };
+                if matches {
+                    return (inst.role.clone(), name.clone());
+                }
             }
         }
         (ConnectionRole::Workspace, String::new())

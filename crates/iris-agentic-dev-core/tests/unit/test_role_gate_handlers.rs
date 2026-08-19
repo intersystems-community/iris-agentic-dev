@@ -363,3 +363,185 @@ fn test_develop_mode_flat_config_no_gate() {
         "flat develop config must not gate anything"
     );
 }
+
+// ── #114: shared-gateway namespace disambiguation ─────────────────────────────
+
+/// Two fleet instances share the same host/port (shared HTTPS gateway).
+/// One has namespace=CHANNELS (workspace role), the other namespace=PROD (subject).
+/// Active connection is CHANNELS — must resolve to workspace, not subject.
+#[test]
+fn test_instance_role_namespace_disambiguates_shared_gateway() {
+    use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    write_fleet_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.dev]
+host = "gateway.example.com"
+web_port = 443
+namespace = "CHANNELS"
+role = "workspace"
+
+[instance.prod]
+host = "gateway.example.com"
+web_port = 443
+namespace = "PROD"
+role = "subject"
+"#,
+    );
+
+    let tools = IrisTools::new(None).expect("IrisTools::new");
+    {
+        let mut conn = tools.connection.lock().unwrap();
+        conn.config_file = Some(dir.path().join(".iris-agentic-dev.toml"));
+        conn.iris = Some(std::sync::Arc::new(IrisConnection::new(
+            "https://gateway.example.com:443",
+            "CHANNELS",
+            "_SYSTEM",
+            "SYS",
+            DiscoverySource::EnvVar,
+        )));
+    }
+
+    let (role, name) = tools.instance_role();
+    assert_eq!(
+        role,
+        ConnectionRole::Workspace,
+        "active namespace CHANNELS should match dev (workspace), not prod (subject)"
+    );
+    assert_eq!(name, "dev");
+}
+
+/// Same fleet as above but active connection is PROD — must resolve to subject.
+#[test]
+fn test_instance_role_namespace_shared_gateway_prod_is_subject() {
+    use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    write_fleet_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.dev]
+host = "gateway.example.com"
+web_port = 443
+namespace = "CHANNELS"
+role = "workspace"
+
+[instance.prod]
+host = "gateway.example.com"
+web_port = 443
+namespace = "PROD"
+role = "subject"
+"#,
+    );
+
+    let tools = IrisTools::new(None).expect("IrisTools::new");
+    {
+        let mut conn = tools.connection.lock().unwrap();
+        conn.config_file = Some(dir.path().join(".iris-agentic-dev.toml"));
+        conn.iris = Some(std::sync::Arc::new(IrisConnection::new(
+            "https://gateway.example.com:443",
+            "PROD",
+            "_SYSTEM",
+            "SYS",
+            DiscoverySource::EnvVar,
+        )));
+    }
+
+    let (role, name) = tools.instance_role();
+    assert_eq!(
+        role,
+        ConnectionRole::Subject,
+        "active namespace PROD should match prod (subject)"
+    );
+    assert_eq!(name, "prod");
+}
+
+/// Instance without namespace declared — host-only match still works (no regression).
+#[test]
+fn test_instance_role_host_only_match_still_works_without_namespace() {
+    use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    write_fleet_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.prod]
+host = "prod.example.com"
+web_port = 52773
+role = "subject"
+"#,
+    );
+
+    let tools = IrisTools::new(None).expect("IrisTools::new");
+    {
+        let mut conn = tools.connection.lock().unwrap();
+        conn.config_file = Some(dir.path().join(".iris-agentic-dev.toml"));
+        conn.iris = Some(std::sync::Arc::new(IrisConnection::new(
+            "http://prod.example.com:52773",
+            "USER",
+            "_SYSTEM",
+            "SYS",
+            DiscoverySource::EnvVar,
+        )));
+    }
+
+    let (role, name) = tools.instance_role();
+    assert_eq!(
+        role,
+        ConnectionRole::Subject,
+        "no namespace on instance → host match alone should still work"
+    );
+    assert_eq!(name, "prod");
+}
+
+/// Namespace match is case-insensitive (IRIS namespaces are case-insensitive).
+#[test]
+fn test_instance_role_namespace_match_is_case_insensitive() {
+    use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    write_fleet_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.dev]
+host = "gateway.example.com"
+web_port = 443
+namespace = "channels"
+role = "workspace"
+
+[instance.prod]
+host = "gateway.example.com"
+web_port = 443
+namespace = "PROD"
+role = "subject"
+"#,
+    );
+
+    let tools = IrisTools::new(None).expect("IrisTools::new");
+    {
+        let mut conn = tools.connection.lock().unwrap();
+        conn.config_file = Some(dir.path().join(".iris-agentic-dev.toml"));
+        // Active connection namespace uppercase, fleet config lowercase
+        conn.iris = Some(std::sync::Arc::new(IrisConnection::new(
+            "https://gateway.example.com:443",
+            "CHANNELS",
+            "_SYSTEM",
+            "SYS",
+            DiscoverySource::EnvVar,
+        )));
+    }
+
+    let (role, name) = tools.instance_role();
+    assert_eq!(
+        role,
+        ConnectionRole::Workspace,
+        "namespace comparison must be case-insensitive"
+    );
+    assert_eq!(name, "dev");
+}
