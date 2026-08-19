@@ -6151,12 +6151,8 @@ fn e2e_server_param_named() {
 #[test]
 fn e2e_iris_production_status_defaults_to_connection_namespace() {
     require_iris!();
-    let conn_ns =
-        std::env::var("IRIS_NAMESPACE").unwrap_or_else(|_| "USER".to_string());
-    let result = call_tool(
-        "iris_production",
-        serde_json::json!({"action": "status"}),
-    );
+    let conn_ns = std::env::var("IRIS_NAMESPACE").unwrap_or_else(|_| "USER".to_string());
+    let result = call_tool("iris_production", serde_json::json!({"action": "status"}));
     // Must return structured response — error_code is acceptable (e.g. no production),
     // but the namespace in the response (when present) must match the connection namespace.
     assert!(

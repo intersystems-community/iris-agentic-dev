@@ -482,7 +482,7 @@ fn get_tool_schema(
     let req = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\n";
     stdin.write_all(req.as_bytes()).ok();
     let name = tool_name.to_string();
-    read_until(stdout, 5000, move |v| {
+    read_until(stdout, 10000, move |v| {
         let tools = v.get("result")?.get("tools")?.as_array()?;
         tools
             .iter()
