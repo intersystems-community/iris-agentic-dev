@@ -499,6 +499,45 @@ role = "subject"
     assert_eq!(name, "prod");
 }
 
+/// Namespace-specific fleet entry must not match on host alone in pass 2 (#114).
+#[test]
+fn test_instance_role_namespace_specific_instance_not_matched_by_host_only() {
+    use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
+
+    let dir = tempfile::TempDir::new().unwrap();
+    write_fleet_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.prod]
+host = "gateway.example.com"
+namespace = "PROD"
+role = "subject"
+"#,
+    );
+
+    let tools = IrisTools::new(None).expect("IrisTools::new");
+    {
+        let mut conn = tools.connection.lock().unwrap();
+        conn.config_file = Some(dir.path().join(".iris-agentic-dev.toml"));
+        conn.iris = Some(std::sync::Arc::new(IrisConnection::new(
+            "https://gateway.example.com:443",
+            "CHANNELS",
+            "_SYSTEM",
+            "SYS",
+            DiscoverySource::EnvVar,
+        )));
+    }
+
+    let (role, name) = tools.instance_role();
+    assert_eq!(
+        role,
+        ConnectionRole::Workspace,
+        "namespace-specific prod must not match a different active namespace"
+    );
+    assert!(name.is_empty());
+}
+
 /// Namespace match is case-insensitive (IRIS namespaces are case-insensitive).
 #[test]
 fn test_instance_role_namespace_match_is_case_insensitive() {

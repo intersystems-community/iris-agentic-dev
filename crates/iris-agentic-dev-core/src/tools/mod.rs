@@ -2575,12 +2575,14 @@ impl IrisTools {
     /// Returns the `ConnectionRole` and instance name for the currently-active connection.
     ///
     /// In operate mode (`mode = "operate"` in `.iris-agentic-dev.toml`), matches the active
-    /// `IrisConnection` against declared `[instance.*]` blocks by container name or host.
-    /// Returns `(Workspace, "")` when no fleet config is present, mode is not "operate",
-    /// or no instance block matches — i.e., the default / dev-mode case is always permitted.
+    /// `IrisConnection` against declared `[instance.*]` blocks by container name, or by
+    /// host plus namespace when `namespace` is set on the block, or by host alone when it
+    /// is not. Returns `(Workspace, "")` when no fleet config is present, mode is not
+    /// "operate", or no instance block matches — i.e., the default / dev-mode case is
+    /// always permitted.
     pub fn instance_role(&self) -> (crate::iris::workspace_config::ConnectionRole, String) {
         use crate::iris::connection::DiscoverySource;
-        use crate::iris::workspace_config::{load_fleet_config, ConnectionRole};
+        use crate::iris::workspace_config::{load_fleet_config, ConnectionRole, InstanceConfig};
 
         let (workspace_path, iris_arc) = {
             // Prefer config_watcher path (set at startup from OBJECTSCRIPT_WORKSPACE / --workspace).
@@ -2621,45 +2623,58 @@ impl IrisTools {
                 .filter(|s| !s.is_empty()),
         };
 
-        let active_ns = iris.namespace.to_uppercase();
+        fn instance_matches_container(
+            inst: &InstanceConfig,
+            active_container: Option<&str>,
+        ) -> bool {
+            inst.container
+                .as_deref()
+                .is_some_and(|ic| active_container == Some(ic))
+        }
 
-        // Two-pass match to handle shared-gateway fleets (#114):
-        //   Pass 1: host (or container) AND namespace — most specific.
-        //   Pass 2: host (or container) only, ignoring namespace — fallback for
-        //           instances that omit namespace in their config.
-        // This prevents a subject-role entry on the same host from shadowing a
-        // workspace-role entry that also declares the active namespace.
-        for pass in 0..2u8 {
-            for (name, inst) in &fleet.instance {
-                let host_matches = if let Some(ref ic) = inst.container {
-                    active_container.as_deref() == Some(ic.as_str())
-                } else {
-                    inst.host
-                        .as_deref()
-                        .map(|h| {
-                            let needle = format!("://{h}:");
-                            iris.base_url.contains(&needle)
-                        })
-                        .unwrap_or(false)
-                };
-                if !host_matches {
-                    continue;
-                }
-                let ns_matches = inst
-                    .namespace
-                    .as_deref()
-                    .map(|ns| ns.to_uppercase() == active_ns)
-                    .unwrap_or(false);
-                let matches = if pass == 0 {
-                    // Pass 1: require namespace declared AND matching.
-                    ns_matches && inst.namespace.is_some()
-                } else {
-                    // Pass 2: accept any host match regardless of namespace.
-                    true
-                };
-                if matches {
-                    return (inst.role.clone(), name.clone());
-                }
+        fn instance_matches_host(inst: &InstanceConfig, base_url: &str) -> bool {
+            inst.host.as_deref().is_some_and(|h| {
+                let needle = format!("://{h}:");
+                base_url.contains(&needle)
+            })
+        }
+
+        fn instance_matches_operate(
+            inst: &InstanceConfig,
+            iris: &crate::iris::connection::IrisConnection,
+            active_container: Option<&str>,
+            require_namespace: bool,
+        ) -> bool {
+            if instance_matches_container(inst, active_container) {
+                return true;
+            }
+            if inst.container.is_some() {
+                return false;
+            }
+            if !instance_matches_host(inst, &iris.base_url) {
+                return false;
+            }
+            match inst.namespace.as_deref() {
+                Some(ns) if require_namespace => iris.namespace.eq_ignore_ascii_case(ns),
+                Some(_) => false,
+                None if !require_namespace => true,
+                None => false,
+            }
+        }
+
+        // Pass 1: namespace-specific fleet entries (shared gateway hosts).
+        for (name, inst) in &fleet.instance {
+            if instance_matches_operate(inst, &iris, active_container.as_deref(), true) {
+                return (inst.role.clone(), name.clone());
+            }
+        }
+        // Pass 2: legacy host/container-only entries without namespace.
+        for (name, inst) in &fleet.instance {
+            if inst.namespace.is_some() {
+                continue;
+            }
+            if instance_matches_operate(inst, &iris, active_container.as_deref(), false) {
+                return (inst.role.clone(), name.clone());
             }
         }
         (ConnectionRole::Workspace, String::new())
