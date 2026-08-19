@@ -14709,20 +14709,13 @@ async fn test_generator_compile_error_via_wiremock() {
 
 // ── WireMock: info.rs and iris_debug coverage ─────────────────────────────────
 
-/// iris_debug action=map_int → DOCKER_REQUIRED (info.rs lines 222-224).
-/// iris.execute() fails with DOCKER_REQUIRED when no IRIS_CONTAINER is set.
+/// iris_debug action=map_int → uses execute_via_generator (HTTP path, no Docker required).
+/// WireMock has no stub for the execute endpoint, so it returns EXECUTION_FAILED.
 #[tokio::test]
-async fn test_iris_debug_map_int_docker_required_via_wiremock() {
+async fn test_iris_debug_map_int_uses_http_path_via_wiremock() {
     use wiremock::MockServer;
     let server = MockServer::start().await;
 
-    let _docker_guard = DOCKER_REQUIRED_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let saved = std::env::var("IRIS_CONTAINER").ok();
-    unsafe {
-        std::env::remove_var("IRIS_CONTAINER");
-    }
     let tools = make_wiremock_tools(&server);
     let result = tools
         .call_for_test(
@@ -14730,32 +14723,21 @@ async fn test_iris_debug_map_int_docker_required_via_wiremock() {
             serde_json::json!({"action": "map_int", "error_string": "<UNDEFINED>x", "namespace": "USER"}),
         )
         .await;
-    unsafe {
-        if let Some(v) = saved {
-            std::env::set_var("IRIS_CONTAINER", v);
-        }
-    }
     let v = parse_result(result);
     assert_eq!(
         v["error_code"].as_str(),
-        Some("DOCKER_REQUIRED"),
-        "debug map_int: {v}"
+        Some("EXECUTION_FAILED"),
+        "debug map_int should reach HTTP path, not DOCKER_REQUIRED: {v}"
     );
 }
 
-/// iris_debug action=capture → DOCKER_REQUIRED (info.rs lines 245-247).
+/// iris_debug action=capture → uses execute_via_generator (HTTP path, no Docker required).
+/// WireMock has no stub for the execute endpoint, so it returns EXECUTION_FAILED.
 #[tokio::test]
-async fn test_iris_debug_capture_docker_required_via_wiremock() {
+async fn test_iris_debug_capture_uses_http_path_via_wiremock() {
     use wiremock::MockServer;
     let server = MockServer::start().await;
 
-    let _docker_guard = DOCKER_REQUIRED_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let saved = std::env::var("IRIS_CONTAINER").ok();
-    unsafe {
-        std::env::remove_var("IRIS_CONTAINER");
-    }
     let tools = make_wiremock_tools(&server);
     let result = tools
         .call_for_test(
@@ -14763,32 +14745,21 @@ async fn test_iris_debug_capture_docker_required_via_wiremock() {
             serde_json::json!({"action": "capture", "namespace": "USER"}),
         )
         .await;
-    unsafe {
-        if let Some(v) = saved {
-            std::env::set_var("IRIS_CONTAINER", v);
-        }
-    }
     let v = parse_result(result);
     assert_eq!(
         v["error_code"].as_str(),
-        Some("DOCKER_REQUIRED"),
-        "debug capture: {v}"
+        Some("EXECUTION_FAILED"),
+        "debug capture should reach HTTP path, not DOCKER_REQUIRED: {v}"
     );
 }
 
-/// iris_debug action=source_map → DOCKER_REQUIRED (info.rs lines 262-264).
+/// iris_debug action=source_map → uses execute_via_generator (HTTP path, no Docker required).
+/// WireMock has no stub for the execute endpoint, so it returns EXECUTION_FAILED.
 #[tokio::test]
-async fn test_iris_debug_source_map_docker_required_via_wiremock() {
+async fn test_iris_debug_source_map_uses_http_path_via_wiremock() {
     use wiremock::MockServer;
     let server = MockServer::start().await;
 
-    let _docker_guard = DOCKER_REQUIRED_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
-    let saved = std::env::var("IRIS_CONTAINER").ok();
-    unsafe {
-        std::env::remove_var("IRIS_CONTAINER");
-    }
     let tools = make_wiremock_tools(&server);
     let result = tools
         .call_for_test(
@@ -14796,16 +14767,11 @@ async fn test_iris_debug_source_map_docker_required_via_wiremock() {
             serde_json::json!({"action": "source_map", "class_name": "My.Class", "namespace": "USER"}),
         )
         .await;
-    unsafe {
-        if let Some(v) = saved {
-            std::env::set_var("IRIS_CONTAINER", v);
-        }
-    }
     let v = parse_result(result);
     assert_eq!(
         v["error_code"].as_str(),
-        Some("DOCKER_REQUIRED"),
-        "debug source_map: {v}"
+        Some("EXECUTION_FAILED"),
+        "debug source_map should reach HTTP path, not DOCKER_REQUIRED: {v}"
     );
 }
 
