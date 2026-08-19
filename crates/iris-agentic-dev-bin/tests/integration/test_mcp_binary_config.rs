@@ -419,3 +419,97 @@ fn tools_list_response_omits_output_schema() {
         tools_with_schema
     );
 }
+
+// ---------------------------------------------------------------------------
+// T-083-01: iris_debug capture never returns DOCKER_REQUIRED (#98)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore]
+fn iris_debug_capture_no_docker_required() {
+    // With no IRIS_CONTAINER set, iris_debug(action="capture") must not return
+    // DOCKER_REQUIRED. It will fail with a connection error (IRIS_UNREACHABLE or
+    // similar), but the DOCKER_REQUIRED bail-out must be gone.
+    let dir = tempfile::tempdir().unwrap();
+    let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
+    let mut child = Command::new(bin)
+        .args(["mcp", "--workspace", &dir.path().to_string_lossy()])
+        .env_remove("IRIS_CONTAINER")
+        .env_remove("IRIS_HOST")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn iris-agentic-dev");
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    send_initialize(&mut stdin);
+
+    let req = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"iris_debug","arguments":{"action":"capture"}}}"#;
+    stdin.write_all(req.as_bytes()).ok();
+    stdin.write_all(b"\n").ok();
+
+    let result = read_until::<serde_json::Value, _>(stdout, 8000, |v| {
+        if v.get("id")?.as_u64()? == 2 {
+            Some(v.clone())
+        } else {
+            None
+        }
+    });
+
+    child.kill().ok();
+    let _ = child.wait();
+
+    let response = result.expect("no tools/call response received");
+    let body = serde_json::to_string(&response).unwrap();
+    assert!(
+        !body.contains("DOCKER_REQUIRED"),
+        "iris_debug capture must not return DOCKER_REQUIRED on HTTP-only spawn (#98 regression): {body}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// T-082-01: iris_production inputSchema includes `namespace` (#103)
+// ---------------------------------------------------------------------------
+
+/// Send `tools/list` and return the full tool object for the given name.
+fn get_tool_schema(
+    stdin: &mut ChildStdin,
+    stdout: ChildStdout,
+    tool_name: &str,
+) -> Option<serde_json::Value> {
+    let req = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\n";
+    stdin.write_all(req.as_bytes()).ok();
+    let name = tool_name.to_string();
+    read_until(stdout, 5000, move |v| {
+        let tools = v.get("result")?.get("tools")?.as_array()?;
+        tools
+            .iter()
+            .find(|t| t.get("name").and_then(|n| n.as_str()) == Some(name.as_str()))
+            .cloned()
+    })
+}
+
+#[test]
+#[ignore]
+fn iris_production_input_schema_has_namespace() {
+    let (mut child, mut stdin, stdout) = spawn_mcp(None);
+    send_initialize(&mut stdin);
+    let tool = get_tool_schema(&mut stdin, stdout, "iris_production");
+    child.kill().ok();
+    let _ = child.wait();
+
+    let tool = tool.expect("iris_production not found in tools/list");
+    let props = tool
+        .get("inputSchema")
+        .and_then(|s| s.get("properties"))
+        .and_then(|p| p.as_object())
+        .expect("iris_production inputSchema must have properties");
+
+    assert!(
+        props.contains_key("namespace"),
+        "iris_production inputSchema must document 'namespace' (#103); got keys: {:?}",
+        props.keys().collect::<Vec<_>>()
+    );
+}

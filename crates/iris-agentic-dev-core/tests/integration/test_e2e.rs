@@ -3472,6 +3472,102 @@ fn e2e_debug_source_map_nonexistent_class() {
     );
 }
 
+// ── #98: iris_debug HTTP-only path (no DOCKER_REQUIRED) ──────────────────────
+
+#[test]
+fn e2e_debug_capture_http_only_no_docker_required() {
+    require_iris!();
+    // Call with IRIS_CONTAINER="" to force the HTTP-only code path.
+    // Must NOT return DOCKER_REQUIRED — capture runs via execute_via_generator.
+    let mut env = iris_env();
+    for e in &mut env {
+        if e.0 == "IRIS_CONTAINER" {
+            e.1 = "".to_string();
+        }
+    }
+    let mut msgs = init_msgs();
+    msgs.push(serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"iris_debug","arguments":{"action":"capture","namespace":"USER"}}
+    }));
+    let responses = mcp_call_timeout(&env, &msgs, 15);
+    let result = tool_result(&responses, 2);
+    assert_ne!(
+        result["error_code"].as_str(),
+        Some("DOCKER_REQUIRED"),
+        "iris_debug capture must not return DOCKER_REQUIRED on HTTP-only connection (#98): {}",
+        result
+    );
+    assert!(
+        result["success"] == true || result["error_code"].is_string(),
+        "iris_debug capture must return structured response on HTTP path: {}",
+        result
+    );
+    if result["success"] == true {
+        assert!(
+            result["capture"].is_string(),
+            "capture field must be a string: {}",
+            result
+        );
+    }
+}
+
+#[test]
+fn e2e_debug_map_int_http_only_no_docker_required() {
+    require_iris!();
+    let mut env = iris_env();
+    for e in &mut env {
+        if e.0 == "IRIS_CONTAINER" {
+            e.1 = "".to_string();
+        }
+    }
+    let mut msgs = init_msgs();
+    msgs.push(serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"iris_debug","arguments":{
+            "action":"map_int",
+            "error_string":"<UNDEFINED>x+1^Unknown.Foo.1",
+            "namespace":"USER"
+        }}
+    }));
+    let responses = mcp_call_timeout(&env, &msgs, 15);
+    let result = tool_result(&responses, 2);
+    assert_ne!(
+        result["error_code"].as_str(),
+        Some("DOCKER_REQUIRED"),
+        "iris_debug map_int must not return DOCKER_REQUIRED on HTTP-only connection (#98): {}",
+        result
+    );
+}
+
+#[test]
+fn e2e_debug_source_map_http_only_no_docker_required() {
+    require_iris!();
+    let mut env = iris_env();
+    for e in &mut env {
+        if e.0 == "IRIS_CONTAINER" {
+            e.1 = "".to_string();
+        }
+    }
+    let mut msgs = init_msgs();
+    msgs.push(serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name":"iris_debug","arguments":{
+            "action":"source_map",
+            "class_name":"Unknown.DoesNotExist",
+            "namespace":"USER"
+        }}
+    }));
+    let responses = mcp_call_timeout(&env, &msgs, 15);
+    let result = tool_result(&responses, 2);
+    assert_ne!(
+        result["error_code"].as_str(),
+        Some("DOCKER_REQUIRED"),
+        "iris_debug source_map must not return DOCKER_REQUIRED on HTTP-only connection (#98): {}",
+        result
+    );
+}
+
 // ── iris_doc extended ─────────────────────────────────────────────────────────
 
 #[test]

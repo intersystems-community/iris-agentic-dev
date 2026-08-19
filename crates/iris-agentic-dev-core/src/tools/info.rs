@@ -213,7 +213,7 @@ pub struct DebugParams {
 
 pub async fn handle_iris_debug(
     iris: &IrisConnection,
-    _client: &reqwest::Client,
+    client: &reqwest::Client,
     p: DebugParams,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     let ns = crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace);
@@ -226,16 +226,10 @@ pub async fn handle_iris_debug(
                 "set err=\"{}\" set routine=$piece($piece(err,\"^\",2),\".\",1) set offset=$piece(err,\"+\",2) set offset=$piece(offset,\"^\",1) write ##class(%Studio.Debugger).SourceLine(routine,+offset)",
                 err.replace('"', "\\\"")
             );
-            match iris.execute(&code, ns).await {
+            match iris.execute_via_generator(&code, ns, client).await {
                 Ok(output) => ok_json(
                     serde_json::json!({"success": true, "error_string": err, "source_location": output.trim()}),
                 ),
-                Err(e) if e.to_string() == "DOCKER_REQUIRED" => {
-                    crate::tools::err_result(serde_json::json!({
-                        "success": false, "error_code": "DOCKER_REQUIRED",
-                        "error": "iris_debug map_int requires docker exec. Set IRIS_CONTAINER=<container_name>.",
-                    }))
-                }
                 Err(e) => err_json("EXECUTION_FAILED", &e.to_string()),
             }
         }
@@ -246,20 +240,14 @@ pub async fn handle_iris_debug(
             ok_json(serde_json::json!({
                 "success": true,
                 "logs": [],
-                "note": "IRIS error log is not accessible via Atelier REST SQL. Set IRIS_CONTAINER to enable docker exec access to the full error log."
+                "note": "IRIS error log is not accessible via Atelier REST SQL."
             }))
         }
         "capture" => {
             let code = "set err=$ZERROR write \"error:\"_err,! set loc=$ZPOSITION write \"position:\"_loc,!";
-            match iris.execute(code, ns).await {
+            match iris.execute_via_generator(code, ns, client).await {
                 Ok(output) => {
                     ok_json(serde_json::json!({"success": true, "capture": output.trim()}))
-                }
-                Err(e) if e.to_string() == "DOCKER_REQUIRED" => {
-                    crate::tools::err_result(serde_json::json!({
-                        "success": false, "error_code": "DOCKER_REQUIRED",
-                        "error": "iris_debug capture requires docker exec. Set IRIS_CONTAINER=<container_name>.",
-                    }))
                 }
                 Err(e) => err_json("EXECUTION_FAILED", &e.to_string()),
             }
@@ -270,16 +258,10 @@ pub async fn handle_iris_debug(
                 "set map=\"\" set line=1 do {{set int=##class(%Studio.Debugger).MapToINT(\"{cls}\",line,.intline) if int=\"\" quit set map=map_line_\"->\"_intline_\",\" set line=line+1 }} while 1 write map",
                 cls = cls.replace('"', "\\\"")
             );
-            match iris.execute(&code, ns).await {
+            match iris.execute_via_generator(&code, ns, client).await {
                 Ok(output) => ok_json(
                     serde_json::json!({"success": true, "class": cls, "mapping": output.trim()}),
                 ),
-                Err(e) if e.to_string() == "DOCKER_REQUIRED" => {
-                    crate::tools::err_result(serde_json::json!({
-                        "success": false, "error_code": "DOCKER_REQUIRED",
-                        "error": "iris_debug source_map requires docker exec. Set IRIS_CONTAINER=<container_name>.",
-                    }))
-                }
                 Err(e) => err_json("EXECUTION_FAILED", &e.to_string()),
             }
         }
