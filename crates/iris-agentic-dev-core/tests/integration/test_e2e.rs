@@ -6143,3 +6143,55 @@ fn e2e_server_param_named() {
         output
     );
 }
+
+// ── T-082: iris_production namespace parameter (#103) ─────────────────────────
+
+/// T-082-02: iris_production(action=status) with no namespace param returns a result
+/// scoped to the connection namespace — not always USER.
+#[test]
+fn e2e_iris_production_status_defaults_to_connection_namespace() {
+    require_iris!();
+    let conn_ns =
+        std::env::var("IRIS_NAMESPACE").unwrap_or_else(|_| "USER".to_string());
+    let result = call_tool(
+        "iris_production",
+        serde_json::json!({"action": "status"}),
+    );
+    // Must return structured response — error_code is acceptable (e.g. no production),
+    // but the namespace in the response (when present) must match the connection namespace.
+    assert!(
+        result["success"].is_boolean() || result["error_code"].is_string(),
+        "T-082-02: iris_production status must return structured response: {}",
+        result
+    );
+    if let Some(ns) = result.get("namespace").and_then(|n| n.as_str()) {
+        assert_eq!(
+            ns.to_uppercase(),
+            conn_ns.to_uppercase(),
+            "T-082-02: namespace in response must match connection namespace when no namespace param given"
+        );
+    }
+}
+
+/// T-082-03: iris_production(action=status, namespace=USER) with an explicit namespace
+/// returns a result scoped to USER — verifies the explicit override path.
+#[test]
+fn e2e_iris_production_status_explicit_namespace_override() {
+    require_iris!();
+    let result = call_tool(
+        "iris_production",
+        serde_json::json!({"action": "status", "namespace": "USER"}),
+    );
+    assert!(
+        result["success"].is_boolean() || result["error_code"].is_string(),
+        "T-082-03: iris_production status with explicit namespace must return structured response: {}",
+        result
+    );
+    if let Some(ns) = result.get("namespace").and_then(|n| n.as_str()) {
+        assert_eq!(
+            ns.to_uppercase(),
+            "USER",
+            "T-082-03: namespace in response must be USER when explicitly passed"
+        );
+    }
+}

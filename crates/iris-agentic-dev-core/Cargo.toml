@@ -521,3 +521,8 @@ path = "tests/integration/test_comparison_e2e.rs"
 [[test]]
 name = "test_admin_e2e"
 path = "tests/integration/test_admin_e2e.rs"
+
+[[test]]
+name = "test_iris_production_params"
+path = "tests/unit/test_iris_production_params.rs"
+required-features = ["testing"]

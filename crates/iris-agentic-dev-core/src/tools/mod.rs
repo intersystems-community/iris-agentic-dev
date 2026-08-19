@@ -956,6 +956,47 @@ pub struct IrisExecuteMethodParams {
     pub server: Option<String>,
 }
 
+/// Typed parameters for `iris_production`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct IrisProductionParams {
+    /// Action to perform: status, start, stop, update, check, recover, get_autostart, set_autostart.
+    #[serde(default = "default_production_action")]
+    pub action: String,
+    /// Production class name (used by start/stop).
+    #[serde(default)]
+    pub production_name: Option<String>,
+    /// Return full production config detail (status action only).
+    #[serde(default)]
+    pub full: bool,
+    /// Force stop even if production is busy (stop action only).
+    #[serde(default)]
+    pub force: bool,
+    /// Stop timeout in seconds (stop action only, default 30).
+    #[serde(default = "default_production_timeout")]
+    pub timeout: u32,
+    /// Enable autostart for a production (set_autostart action only).
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    /// Production to configure for autostart (set_autostart action only).
+    #[serde(default)]
+    pub production: Option<String>,
+    /// IRIS namespace for production operations. Defaults to the connection namespace.
+    /// Use when the interop production lives in a different namespace than the default connection.
+    #[serde(default)]
+    pub namespace: Option<String>,
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
+    #[serde(default)]
+    pub server: Option<String>,
+}
+
+fn default_production_action() -> String {
+    "status".to_string()
+}
+
+fn default_production_timeout() -> u32 {
+    30
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExecuteParams {
     pub code: String,
@@ -2311,6 +2352,25 @@ impl IrisTools {
             .is_some_and(|t| t.output_schema.is_some())
     }
 
+    /// Returns the `inputSchema` for `tool_name` if it is registered, otherwise `None`.
+    /// Used by tests to assert that a tool's schema documents specific parameters.
+    pub fn tool_input_schema(&self, tool_name: &str) -> Option<serde_json::Value> {
+        self.tool_router
+            .list_all()
+            .into_iter()
+            .find(|t| t.name == tool_name)
+            .map(|t| serde_json::to_value(&t.input_schema).unwrap_or(serde_json::Value::Null))
+    }
+
+    /// Returns the description for `tool_name` if it is registered, otherwise `None`.
+    pub fn tool_description(&self, tool_name: &str) -> Option<String> {
+        self.tool_router
+            .list_all()
+            .into_iter()
+            .find(|t| t.name == tool_name)
+            .and_then(|t| t.description.map(|d| d.to_string()))
+    }
+
     pub fn with_registry(
         iris: Option<IrisConnection>,
         registry: crate::skills::SkillRegistry,
@@ -3284,16 +3344,6 @@ impl IrisTools {
         let open_uri = if single_target {
             write_open_hint(&namespace, &p.target);
             Some(format!("isfs://{}/{}", namespace, p.target))
-        } else {
-            None
-        };
-        // Atelier parity: the compiler can rewrite content beyond what was submitted
-        // (e.g. auto-mapping a new property into Storage) — re-fetch so the caller
-        // can sync a local copy without a separate get, same as the local-path branch
-        // above. Only for a genuine single-document compile — a wildcard/package
-        // compile has no single "the content" to hand back.
-        let content = if single_target {
-            doc::fetch_doc_content(&iris, client, &targets_with_ext[0], &namespace).await
         } else {
             None
         };
@@ -6193,28 +6243,27 @@ Methods:
     // Note: iris_debug already exists above as a real tool — it IS the merged debug dispatcher.
 
     #[tool(
-        description = "Interoperability production lifecycle (merged). action: status=get current state, start=start named production, stop=stop production, update=hot-apply config, check=check if update needed, recover=recover troubled production. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "Interoperability production lifecycle (merged). action: status=get current state, start=start named production, stop=stop production, update=hot-apply config, check=check if update needed, recover=recover troubled production. `namespace` (optional): IRIS namespace for production operations. Defaults to the connection namespace. Use when the interop production lives in a different namespace than the default connection. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         output_schema = output_schemas::oneof_output_schema::<IrisProductionResponse>()    )]
     async fn iris_production(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(p): Parameters<IrisProductionParams>,
     ) -> Result<CallToolResult, McpError> {
-        let action = p.get("action").and_then(|v| v.as_str()).unwrap_or("status");
-        let _iris_arc_hold: Option<Arc<IrisConnection>> =
-            match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool.get(Some(s))?),
-                None => self.iris_arc(),
-            };
+        let action = p.action.as_str();
+        let _iris_arc_hold: Option<Arc<IrisConnection>> = match p.server.as_deref() {
+            Some(s) => Some(self.pool.get(Some(s))?),
+            None => self.iris_arc(),
+        };
         let iris_opt = _iris_arc_hold.as_deref();
         let conn_ns = iris_opt.map(|i| i.namespace.as_str()).unwrap_or("USER");
-        let ns_param = p.get("namespace").and_then(|v| v.as_str());
+        let ns_param = p.namespace.as_deref();
         let result = match action {
             "status" => {
                 interop::interop_production_status_impl(
                     iris_opt,
                     interop::ProductionStatusParams {
                         namespace: resolve_namespace(ns_param, conn_ns).to_string(),
-                        full_status: p.get("full").and_then(|v| v.as_bool()).unwrap_or(false),
+                        full_status: p.full,
                     },
                 )
                 .await
@@ -6223,10 +6272,7 @@ Methods:
                 interop::interop_production_start_impl(
                     iris_opt,
                     interop::ProductionNameParams {
-                        production: p
-                            .get("production_name")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string()),
+                        production: p.production_name.clone(),
                         namespace: resolve_namespace(ns_param, conn_ns).to_string(),
                     },
                 )
@@ -6236,13 +6282,10 @@ Methods:
                 interop::interop_production_stop_impl(
                     iris_opt,
                     interop::ProductionStopParams {
-                        production: p
-                            .get("production_name")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string()),
+                        production: p.production_name.clone(),
                         namespace: resolve_namespace(ns_param, conn_ns).to_string(),
-                        timeout: p.get("timeout").and_then(|v| v.as_u64()).unwrap_or(30) as u32,
-                        force: p.get("force").and_then(|v| v.as_bool()).unwrap_or(false),
+                        timeout: p.timeout,
+                        force: p.force,
                     },
                 )
                 .await
@@ -6285,7 +6328,8 @@ Methods:
                         enabled: None,
                         production: None,
                     },
-                ).await
+                )
+                .await
             }
             "set_autostart" => {
                 interop::interop_autostart_set_impl(
@@ -6293,10 +6337,11 @@ Methods:
                     &interop::ProductionAutostartParams {
                         action: "set_autostart".into(),
                         namespace: resolve_namespace(ns_param, conn_ns).to_string(),
-                        enabled: p.get("enabled").and_then(|v| v.as_bool()),
-                        production: p.get("production").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                        enabled: p.enabled,
+                        production: p.production.clone(),
                     },
-                ).await
+                )
+                .await
             }
             _ => err_json(
                 "INVALID_ACTION",
@@ -9900,7 +9945,7 @@ impl IrisTools {
             };
         }
         dispatch_any!("iris_admin", iris_admin);
-        dispatch_any!("iris_production", iris_production);
+        dispatch!("iris_production", IrisProductionParams, iris_production);
         dispatch_any!("iris_interop_query", iris_interop_query);
         dispatch_any!("iris_production_item", iris_production_item);
         dispatch_any!("iris_credential_list", iris_credential_list);
