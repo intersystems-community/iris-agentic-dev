@@ -1,24 +1,24 @@
 class IrisAgenticDev < Formula
   desc "MCP server connecting AI assistants to InterSystems IRIS — compile, test, debug ObjectScript without leaving the chat"
   homepage "https://github.com/intersystems-community/iris-agentic-dev"
-  version "1.0.0"
+  version "1.2.0"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.0.0/iris-agentic-dev-macos-arm64"
-      sha256 "83b71c7e92acb64adc6e853362c6fdadd1472a3d43cfa1f0a7c58934d02b5473"
+      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.2.0/iris-agentic-dev-macos-arm64"
+      sha256 "84049e73ab8ef42b76beb840f61b0ad7ac261df1faf8536d64c896bbd4c57f05"
     end
     on_intel do
-      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.0.0/iris-agentic-dev-macos-x86_64"
-      sha256 "e7a4fbaebb810fbf6713034bc5d086ac9ab799f846726937bd53e12e058ab3b5"
+      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.2.0/iris-agentic-dev-macos-x86_64"
+      sha256 "abb9a8d2f4ba638887184ea7bac709072a08c3322bdac68026a98cb2cd8d11a5"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.0.0/iris-agentic-dev-linux-x86_64"
-      sha256 "b9d45e5459e00198faffe599c1477c2c89049d3014b428d341d87391bd6b23da"
+      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.2.0/iris-agentic-dev-linux-x86_64"
+      sha256 "0359fbfdc6b3b33f842a5d511b326f0a719ea3422ac0870405a7427d1f456a07"
     end
   end
 
