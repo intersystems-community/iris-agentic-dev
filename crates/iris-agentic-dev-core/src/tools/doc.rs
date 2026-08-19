@@ -155,9 +155,7 @@ fn default_mode() -> String {
 use crate::iris::connection::IrisConnection;
 
 fn ok_json(v: serde_json::Value) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
-    Ok(rmcp::model::CallToolResult::success(vec![
-        rmcp::model::ContentBlock::text(v.to_string()),
-    ]))
+    Ok(rmcp::model::CallToolResult::structured(v))
 }
 fn err_json(code: &str, msg: &str) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     crate::tools::err_result(
@@ -173,19 +171,16 @@ fn err_json(code: &str, msg: &str) -> Result<rmcp::model::CallToolResult, rmcp::
 fn require_name(p: &IrisDocParams, mode: &str) -> Result<String, rmcp::model::CallToolResult> {
     match p.name.as_deref().map(str::trim) {
         Some(n) if !n.is_empty() => Ok(n.to_string()),
-        _ => Err(rmcp::model::CallToolResult::error(vec![
-            rmcp::model::ContentBlock::text(
-                serde_json::json!({
-                    "success": false,
-                    "error_code": "MISSING_PARAMS",
-                    "error": format!(
-                        "name (document) is required for mode={mode} and was empty — no request \
-                         was sent. If a previous call lost its arguments, resend with `name` set."
-                    ),
-                })
-                .to_string(),
-            ),
-        ])),
+        _ => Err(rmcp::model::CallToolResult::structured_error(
+            serde_json::json!({
+                "success": false,
+                "error_code": "MISSING_PARAMS",
+                "error": format!(
+                    "name (document) is required for mode={mode} and was empty — no request \
+                     was sent. If a previous call lost its arguments, resend with `name` set."
+                ),
+            }),
+        )),
     }
 }
 /// Map a non-2xx HTTP status to an accurate error code.
@@ -1454,7 +1449,7 @@ fn annotate_edit(
             obj.insert(k.clone(), val.clone());
         }
     }
-    rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(v.to_string())])
+    rmcp::model::CallToolResult::structured(v)
 }
 
 // ── Phase 3: mode=fragment ────────────────────────────────────────────────────

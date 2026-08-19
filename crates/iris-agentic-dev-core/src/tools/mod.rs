@@ -1287,18 +1287,14 @@ pub fn telemetry_config_dir() -> std::path::PathBuf {
         .join(".iris-agentic-dev")
 }
 fn ok_json(v: serde_json::Value) -> Result<CallToolResult, McpError> {
-    Ok(CallToolResult::success(vec![ContentBlock::text(
-        v.to_string(),
-    )]))
+    Ok(CallToolResult::structured(v))
 }
 /// Wrap a genuine tool-failure envelope: same JSON body as before, but with the
 /// MCP protocol-level `isError` flag set (issue #95). Dialog/soft responses
 /// (elicitation prompts, empty-result notes) must NOT go through this — they are
 /// normal outcomes and stay `CallToolResult::success`.
 pub(crate) fn err_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
-    Ok(CallToolResult::error(vec![ContentBlock::text(
-        v.to_string(),
-    )]))
+    Ok(CallToolResult::structured_error(v))
 }
 /// Wrap a handler-produced JSON value whose error-ness is only known at runtime:
 /// a body carrying a top-level `error_code` without `success: true` is a genuine

@@ -5,9 +5,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 
 fn ok_json(v: serde_json::Value) -> Result<CallToolResult, McpError> {
-    Ok(CallToolResult::success(vec![ContentBlock::text(
-        v.to_string(),
-    )]))
+    Ok(CallToolResult::structured(v))
 }
 fn err_json(code: &str, msg: &str) -> Result<CallToolResult, McpError> {
     crate::tools::err_result(
@@ -3205,6 +3203,11 @@ mod tests {
         let text = result.content[0].as_text().unwrap().text.clone();
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(v["test"], "data");
+        let structured = result
+            .structured_content
+            .as_ref()
+            .expect("structured_content must be set for JSON tool results");
+        assert_eq!(structured["test"], "data");
     }
 
     #[test]
@@ -3216,6 +3219,11 @@ mod tests {
         assert_eq!(v["success"], false);
         assert_eq!(v["error_code"], "TEST_ERROR");
         assert_eq!(v["error"], "Something went wrong");
+        let structured = result
+            .structured_content
+            .as_ref()
+            .expect("structured_content must be set for JSON tool errors");
+        assert_eq!(structured["error_code"], "TEST_ERROR");
     }
 
     #[test]
