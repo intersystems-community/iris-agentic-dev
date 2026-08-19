@@ -533,4 +533,89 @@ mod tests {
             "wss://myserver:443/api/atelier/v7/%25SYS/terminal"
         );
     }
+
+    #[test]
+    fn build_ws_url_no_scheme_falls_back_to_ws() {
+        assert_eq!(
+            build_ws_url("localhost:52780", "/path"),
+            "ws://localhost:52780/path"
+        );
+    }
+
+    #[test]
+    fn base64_basic_auth_encodes_correctly() {
+        // "user:pass" base64 = "dXNlcjpwYXNz"
+        assert_eq!(base64_basic_auth("user", "pass"), "dXNlcjpwYXNz");
+    }
+
+    #[test]
+    fn base64_basic_auth_special_chars() {
+        // "SuperUser:SYS" base64 = "U3VwZXJVc2VyOlNZUw=="
+        assert_eq!(
+            base64_basic_auth("SuperUser", "SYS"),
+            "U3VwZXJVc2VyOlNZUw=="
+        );
+    }
+
+    #[test]
+    fn pool_new_and_default_are_empty() {
+        let p1 = WsSessionPool::new();
+        let p2 = WsSessionPool::default();
+        // Both start with zero sessions — verify by checking that exec on a
+        // well-formed token returns SESSION_STALE (not a lock panic).
+        let arc1 = Arc::new(p1);
+        let arc2 = Arc::new(p2);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let token = WsSessionPool::make_token("s", "NS", "uuid-x");
+        let e1 = rt
+            .block_on(WsSessionPool::exec(&arc1, &token, "W 1"))
+            .unwrap_err();
+        let e2 = rt
+            .block_on(WsSessionPool::exec(&arc2, &token, "W 1"))
+            .unwrap_err();
+        assert!(e1.message.contains(SESSION_STALE));
+        assert!(e2.message.contains(SESSION_STALE));
+    }
+
+    #[test]
+    fn exec_invalid_token_returns_stale() {
+        let pool = Arc::new(WsSessionPool::new());
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt
+            .block_on(WsSessionPool::exec(&pool, "not-a-token", "W 1"))
+            .unwrap_err();
+        assert!(err.message.contains(SESSION_STALE), "got: {}", err.message);
+    }
+
+    #[test]
+    fn exec_unknown_token_returns_stale() {
+        let pool = Arc::new(WsSessionPool::new());
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let token = WsSessionPool::make_token("srv", "USER", "no-such-uuid");
+        let err = rt
+            .block_on(WsSessionPool::exec(&pool, &token, "W 1"))
+            .unwrap_err();
+        assert!(err.message.contains(SESSION_STALE), "got: {}", err.message);
+    }
+
+    #[test]
+    fn close_invalid_token_returns_stale() {
+        let pool = Arc::new(WsSessionPool::new());
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt
+            .block_on(WsSessionPool::close(&pool, "garbage"))
+            .unwrap_err();
+        assert!(err.message.contains(SESSION_STALE), "got: {}", err.message);
+    }
+
+    #[test]
+    fn close_unknown_token_returns_stale() {
+        let pool = Arc::new(WsSessionPool::new());
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let token = WsSessionPool::make_token("srv", "USER", "no-such-uuid");
+        let err = rt
+            .block_on(WsSessionPool::close(&pool, &token))
+            .unwrap_err();
+        assert!(err.message.contains(SESSION_STALE), "got: {}", err.message);
+    }
 }
