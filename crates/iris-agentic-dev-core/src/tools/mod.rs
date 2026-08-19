@@ -2884,7 +2884,8 @@ impl IrisTools {
 
     #[tool(
         description = "Compile an ObjectScript class, routine, or wildcard package on IRIS via Atelier REST. Supports 'MyApp.*.cls' for package-level compilation. Also accepts a local file path as `target` — uploads it first, then compiles. Returns structured errors with line numbers, columns, and severity. On a successful single-document compile, `content` carries the post-compile source (the compiler can rewrite it beyond what was submitted, e.g. auto-mapping a new property into Storage) — use it to sync a local file without a separate `iris_doc(get)`; `content` is omitted for wildcard/package compiles. No Python required. Skill: objectscript-tdd for the compile-test-fix loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
-        output_schema = output_schemas::oneof_output_schema::<IrisCompileResponse>()    )]
+        output_schema = output_schemas::oneof_output_schema::<IrisCompileResponse>()
+    )]
     async fn iris_compile(
         &self,
         Parameters(p): Parameters<CompileParams>,
@@ -3283,16 +3284,6 @@ impl IrisTools {
         let open_uri = if single_target {
             write_open_hint(&namespace, &p.target);
             Some(format!("isfs://{}/{}", namespace, p.target))
-        } else {
-            None
-        };
-        // Atelier parity: the compiler can rewrite content beyond what was submitted
-        // (e.g. auto-mapping a new property into Storage) — re-fetch so the caller
-        // can sync a local copy without a separate get, same as the local-path branch
-        // above. Only for a genuine single-document compile — a wildcard/package
-        // compile has no single "the content" to hand back.
-        let content = if single_target {
-            doc::fetch_doc_content(&iris, client, &targets_with_ext[0], &namespace).await
         } else {
             None
         };
