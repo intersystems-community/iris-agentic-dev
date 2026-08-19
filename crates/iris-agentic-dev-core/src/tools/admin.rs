@@ -7,9 +7,7 @@ use crate::objectscript::os_str_expr;
 use rmcp::{model::*, ErrorData as McpError};
 
 fn ok_json(v: serde_json::Value) -> Result<CallToolResult, McpError> {
-    Ok(CallToolResult::success(vec![ContentBlock::text(
-        v.to_string(),
-    )]))
+    Ok(CallToolResult::structured(v))
 }
 fn err_json(code: &str, msg: &str) -> Result<CallToolResult, McpError> {
     crate::tools::err_result(

@@ -32,9 +32,7 @@ pub struct SearchParams {
 }
 
 fn ok_json(v: serde_json::Value) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
-    Ok(rmcp::model::CallToolResult::success(vec![
-        rmcp::model::ContentBlock::text(v.to_string()),
-    ]))
+    Ok(rmcp::model::CallToolResult::structured(v))
 }
 
 /// Resolve the Atelier `files` scope for a search.

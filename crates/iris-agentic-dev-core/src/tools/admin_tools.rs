@@ -30,9 +30,7 @@ impl ConfirmEntry {
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 fn ok_json(v: serde_json::Value) -> Result<CallToolResult, McpError> {
-    Ok(CallToolResult::success(vec![ContentBlock::text(
-        v.to_string(),
-    )]))
+    Ok(CallToolResult::structured(v))
 }
 
 fn err_json(code: &str, msg: &str) -> Result<CallToolResult, McpError> {

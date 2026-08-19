@@ -222,7 +222,7 @@ fn s008_max_iterations_config_respected() {
 
     // parse_tool_invocations should return an invocation on a tool line, so
     // simulating N calls to it would produce N invocations — capped at max_iterations.
-    let tool_line = "iris-agentic-dev tool iris_compile --args '{\"doc\":\"Foo.cls\"}'".repeat(1);
+    let tool_line = "iris-agentic-dev tool iris_compile --args '{\"doc\":\"Foo.cls\"}'".to_string();
     let inv = cli_dispatch::parse_tool_invocations(&tool_line);
     assert!(!inv.is_empty()); // would trigger a loop iteration
 }

@@ -192,6 +192,11 @@ path = "tests/unit/test_output_schema_shapes.rs"
 required-features = ["testing"]
 
 [[test]]
+name = "test_structured_content"
+path = "tests/unit/test_structured_content.rs"
+required-features = ["testing"]
+
+[[test]]
 name = "test_list_tools_pagination"
 path = "tests/unit/test_list_tools_pagination.rs"
 
