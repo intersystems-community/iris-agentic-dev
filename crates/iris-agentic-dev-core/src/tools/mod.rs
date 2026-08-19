@@ -8125,6 +8125,11 @@ impl ServerHandler for IrisTools {
         for tool in tools.iter_mut() {
             let schema = std::sync::Arc::make_mut(&mut tool.input_schema);
             normalize_schema_openapi3(schema);
+            // Strip outputSchema from tools/list — clients (Cursor, VS Code) do not use it
+            // for tool registration, and including it inflates the payload from ~30KB to ~220KB.
+            // Large payloads trigger Cursor's silent toolCount:0 bug (#113). outputSchema is
+            // still returned in structured tool call responses via structuredContent (#112).
+            tool.output_schema = None;
         }
         let page_size = log_store::read_inline_threshold(
             "IRIS_LIST_TOOLS_PAGE_SIZE",

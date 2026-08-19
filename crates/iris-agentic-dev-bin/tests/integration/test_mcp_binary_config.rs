@@ -361,3 +361,61 @@ fn no_config_returns_default_toolset() {
         names
     );
 }
+
+// ---------------------------------------------------------------------------
+// T-113-01: tools/list response omits outputSchema (#113 Cursor fix)
+// ---------------------------------------------------------------------------
+
+#[test]
+#[ignore]
+fn tools_list_response_omits_output_schema() {
+    // The full tools/list payload was ~220KB with outputSchema included, which caused
+    // Cursor to silently register 0 tools (toolCount:0 bug, issue #113). The fix strips
+    // outputSchema from the wire response; clients don't use it for tool registration.
+    let dir = tempfile::tempdir().unwrap();
+
+    let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
+    let mut child = Command::new(bin)
+        .args(["mcp", "--workspace", &dir.path().to_string_lossy()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn iris-agentic-dev");
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    send_initialize(&mut stdin);
+
+    let req = "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\",\"params\":{}}\n";
+    stdin.write_all(req.as_bytes()).ok();
+
+    let result = read_until(stdout, 5000, |v| {
+        let tools = v.get("result")?.get("tools")?.as_array()?;
+        let with_schema: Vec<String> = tools
+            .iter()
+            .filter_map(|t| {
+                if t.get("outputSchema").is_some() {
+                    t.get("name")?.as_str().map(String::from)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        Some((tools.len(), with_schema))
+    });
+
+    child.kill().ok();
+    let _ = child.wait();
+
+    let (tool_count, tools_with_schema) = result.expect("no tools/list response received");
+    assert!(
+        tool_count >= 70,
+        "expected 70+ tools in tools/list, got {tool_count}"
+    );
+    assert!(
+        tools_with_schema.is_empty(),
+        "tools/list must not include outputSchema (Cursor #113 regression): {:?}",
+        tools_with_schema
+    );
+}
