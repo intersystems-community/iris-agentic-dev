@@ -40,4 +40,6 @@ fn main() {
     };
 
     println!("cargo:rustc-env=IRIS_AGENTIC_DEV_BUILD_SUFFIX={suffix}");
+    println!("cargo:rerun-if-changed=.git/HEAD");
+    println!("cargo:rerun-if-changed=.git/refs");
 }
