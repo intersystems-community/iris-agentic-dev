@@ -29,6 +29,10 @@ comment before starting so we can align on approach.
   See the testing philosophy in [CLAUDE.md](CLAUDE.md) — live container tests are preferred over mocks.
 - **Benchmarks:** ideally included for skill and tool contributions. See the skill section below.
 - `cargo fmt --all` and `cargo clippy -- -D warnings` must pass before submitting.
+- **Coverage:** `bash scripts/check-coverage-floors.sh` must exit 0. If you add a new
+  `.rs` file, register its floor in `coverage-floors.toml` (set it at `measured% - 2`).
+  The project targets **90%+ overall line coverage** (currently ~89%); the release gate
+  enforces 88% minimum via `scripts/coverage.sh` against a live IRIS container.
 - Keep PRs focused. One logical change per PR.
 
 ## Contributing a skill

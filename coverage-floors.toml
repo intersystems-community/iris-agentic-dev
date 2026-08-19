@@ -27,8 +27,9 @@
 
 [floors]
 # Overall line coverage floor — enforced only in merged/subprocess mode (src/ files only).
-# Baseline: 89.87% (2026-08-18, master, after #97 body content search implementation).
-# Target: reach 90% once admin_tools/comparison_tools/xdata_flow dispatch gaps are closed.
+# Baseline: 88.68% (2026-08-19, master, post-#109/#112 ws_session + structured content).
+# Target: 90%+. Raise this floor as the gap closes (admin_tools/comparison_tools/xdata_flow
+# dispatch layers are the main drag — they only hit in subprocess/MCP mode).
 overall = 88
 
 # benchmark/ — task runner and LLM integration
