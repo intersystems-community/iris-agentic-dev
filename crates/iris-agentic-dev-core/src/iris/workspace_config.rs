@@ -402,12 +402,16 @@ pub fn apply_workspace_config_with_path(
     workspace_path: Option<&str>,
     namespace: &str,
 ) -> (Option<IrisConnection>, Option<std::path::PathBuf>) {
-    if explicit.is_some() {
-        return (explicit, None);
-    }
     match load_workspace_config_with_path(workspace_path) {
-        Some((cfg, path)) => (workspace_config_to_connection(&cfg, namespace), Some(path)),
-        None => (None, None),
+        Some((cfg, path)) => {
+            // Always apply tool-list and gate settings from the workspace config,
+            // even when a connection is already established via env vars or CLI flags.
+            // explicit connection wins for connectivity; TOML wins for tool-list settings.
+            let conn_from_cfg = workspace_config_to_connection(&cfg, namespace);
+            let conn = explicit.or(conn_from_cfg);
+            (conn, Some(path))
+        }
+        None => (explicit, None),
     }
 }
 

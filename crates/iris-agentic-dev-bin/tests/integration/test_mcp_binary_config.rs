@@ -304,6 +304,7 @@ fn workspace_flag_applies_enabled_tools_from_toml() {
         .env_remove("IRIS_WRITE_TOOLS_ENABLED")
         .env_remove("IRIS_ENABLED_TOOLS")
         .env_remove("IRIS_DISABLED_TOOLS")
+        .env_remove("OBJECTSCRIPT_WORKSPACE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
