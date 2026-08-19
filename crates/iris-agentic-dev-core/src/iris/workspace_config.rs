@@ -43,6 +43,14 @@ pub struct WorkspaceConfig {
     /// match any real tool is silently ignored, same as `disabled_tools` today.
     #[serde(default)]
     pub enabled_tools: Vec<String>,
+    /// Override the write-tools gate. When `false`, all tools that mutate IRIS state
+    /// (iris_doc put/delete, iris_compile, etc.) are removed from the tool list.
+    /// When unset, the gate is derived from SystemMode / namespace heuristics.
+    pub write_tools_enabled: Option<bool>,
+    /// When `true`, the destructive-tools gate is unlocked (tools that can delete data,
+    /// drop globals, etc.). Requires `write_tools_enabled = true` — setting this `true`
+    /// while `write_tools_enabled = false` is refused at startup with DESTRUCTIVE_REQUIRES_WRITES.
+    pub destructive_tools_enabled: Option<bool>,
 }
 
 /// Connection role for fleet/operate mode instances.
@@ -403,6 +411,47 @@ pub fn apply_workspace_config_with_path(
     }
 }
 
+/// Like [`apply_workspace_config_with_path`] but loads from an explicit config file path
+/// rather than searching the workspace directory. Used when `--config <path>` is passed
+/// on the command line (issue #111).
+///
+/// If `explicit` connection is already set (from CLI flags), that takes precedence but
+/// the config file is still parsed for tool-list and gate settings.
+pub fn apply_explicit_config_file(
+    explicit: Option<IrisConnection>,
+    config_path: &std::path::Path,
+    namespace: &str,
+) -> (Option<IrisConnection>, Option<std::path::PathBuf>) {
+    match std::fs::read_to_string(config_path) {
+        Err(e) => {
+            tracing::warn!(
+                "Could not read --config file at {}: {}",
+                config_path.display(),
+                e
+            );
+            (explicit, None)
+        }
+        Ok(contents) => match toml::from_str::<WorkspaceConfig>(&contents) {
+            Err(e) => {
+                tracing::warn!(
+                    "Could not parse --config file at {}: {}",
+                    config_path.display(),
+                    e
+                );
+                (explicit, None)
+            }
+            Ok(cfg) => {
+                tracing::debug!("Loaded --config file from {}", config_path.display());
+                // Always apply tool-list and gate settings from the explicit config,
+                // even when CLI flags already provided a connection.
+                let conn_from_cfg = workspace_config_to_connection(&cfg, namespace);
+                let conn = explicit.or(conn_from_cfg);
+                (conn, Some(config_path.to_path_buf()))
+            }
+        },
+    }
+}
+
 /// Load `.iris-agentic-dev.toml` as a `FleetConfig` (Amendment 001).
 /// Returns `None` if the file does not exist or fails to parse (with a warning).
 pub fn load_fleet_config(workspace_path: Option<&str>) -> Option<FleetConfig> {
@@ -635,6 +684,29 @@ pub fn workspace_config_to_connection(
     }
     if !cfg.enabled_tools.is_empty() && std::env::var("IRIS_ENABLED_TOOLS").is_err() {
         std::env::set_var("IRIS_ENABLED_TOOLS", cfg.enabled_tools.join(","));
+    }
+
+    // Validate and export write/destructive gate overrides (issues #110).
+    // destructive=true + write=false is refused immediately — it can never take effect.
+    if cfg.destructive_tools_enabled == Some(true) && cfg.write_tools_enabled == Some(false) {
+        tracing::error!(
+            "DESTRUCTIVE_REQUIRES_WRITES: destructive_tools_enabled=true requires \
+             write_tools_enabled=true — refusing to start with this configuration"
+        );
+        // Return None so the caller falls through to IRIS_UNREACHABLE; the error is
+        // in the log. Callers that need to surface this as a hard error can inspect the
+        // log or check the combination before calling this function.
+        return None;
+    }
+    if let Some(w) = cfg.write_tools_enabled {
+        if std::env::var("IRIS_WRITE_TOOLS_ENABLED").is_err() {
+            std::env::set_var("IRIS_WRITE_TOOLS_ENABLED", if w { "1" } else { "0" });
+        }
+    }
+    if let Some(d) = cfg.destructive_tools_enabled {
+        if std::env::var("IRIS_DESTRUCTIVE_TOOLS_ENABLED").is_err() {
+            std::env::set_var("IRIS_DESTRUCTIVE_TOOLS_ENABLED", if d { "1" } else { "0" });
+        }
     }
 
     // host + web_port → explicit HTTP/HTTPS connection (highest priority, no docker needed)
@@ -1000,6 +1072,8 @@ mod tests {
             docker_only: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
+            write_tools_enabled: None,
+            destructive_tools_enabled: None,
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
         assert!(conn.is_some(), "host config should produce connection");
@@ -1021,6 +1095,8 @@ mod tests {
             docker_only: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
+            write_tools_enabled: None,
+            destructive_tools_enabled: None,
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
         let container_env = std::env::var("IRIS_CONTAINER").ok();
@@ -1043,6 +1119,8 @@ mod tests {
             docker_only: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
+            write_tools_enabled: None,
+            destructive_tools_enabled: None,
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
         assert!(conn.is_none());
@@ -1085,6 +1163,8 @@ mod tests {
             docker_only: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
+            write_tools_enabled: None,
+            destructive_tools_enabled: None,
         };
         let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
         assert!(
@@ -1110,6 +1190,8 @@ mod tests {
             docker_only: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
+            write_tools_enabled: None,
+            destructive_tools_enabled: None,
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
         let container_env = std::env::var("IRIS_CONTAINER").ok();
@@ -1141,6 +1223,8 @@ mod tests {
             docker_only: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
+            write_tools_enabled: None,
+            destructive_tools_enabled: None,
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
         let ns_env = std::env::var("IRIS_NAMESPACE").ok();
@@ -1171,6 +1255,8 @@ mod tests {
             docker_only: true,
             disabled_tools: vec![],
             enabled_tools: vec![],
+            write_tools_enabled: None,
+            destructive_tools_enabled: None,
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
         std::env::remove_var("IRIS_CONTAINER");
@@ -1439,5 +1525,119 @@ memory-home = "local"
             ..Default::default()
         };
         assert_eq!(instance_base_url(&inst), "https://h.example.com:443/hspi");
+    }
+
+    // ── write_tools_enabled / destructive_tools_enabled tests (#110) ─────────
+
+    #[test]
+    fn write_tools_enabled_false_sets_env_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
+        let cfg = WorkspaceConfig {
+            host: Some("localhost".to_string()),
+            web_port: Some(52773),
+            write_tools_enabled: Some(false),
+            ..Default::default()
+        };
+        let _ = workspace_config_to_connection(&cfg, "USER");
+        assert_eq!(std::env::var("IRIS_WRITE_TOOLS_ENABLED").unwrap(), "0");
+        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
+    }
+
+    #[test]
+    fn write_tools_enabled_true_sets_env_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
+        let cfg = WorkspaceConfig {
+            host: Some("localhost".to_string()),
+            web_port: Some(52773),
+            write_tools_enabled: Some(true),
+            ..Default::default()
+        };
+        let _ = workspace_config_to_connection(&cfg, "USER");
+        assert_eq!(std::env::var("IRIS_WRITE_TOOLS_ENABLED").unwrap(), "1");
+        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
+    }
+
+    #[test]
+    fn write_tools_enabled_none_does_not_set_env_var() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
+        let cfg = WorkspaceConfig {
+            host: Some("localhost".to_string()),
+            web_port: Some(52773),
+            write_tools_enabled: None,
+            ..Default::default()
+        };
+        let _ = workspace_config_to_connection(&cfg, "USER");
+        assert!(std::env::var("IRIS_WRITE_TOOLS_ENABLED").is_err());
+    }
+
+    #[test]
+    fn destructive_requires_writes_returns_none() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
+        std::env::remove_var("IRIS_DESTRUCTIVE_TOOLS_ENABLED");
+        let cfg = WorkspaceConfig {
+            host: Some("localhost".to_string()),
+            web_port: Some(52773),
+            write_tools_enabled: Some(false),
+            destructive_tools_enabled: Some(true),
+            ..Default::default()
+        };
+        // DESTRUCTIVE_REQUIRES_WRITES — must refuse
+        let conn = workspace_config_to_connection(&cfg, "USER");
+        assert!(
+            conn.is_none(),
+            "expected None for destructive=true + write=false"
+        );
+        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
+        std::env::remove_var("IRIS_DESTRUCTIVE_TOOLS_ENABLED");
+    }
+
+    #[test]
+    fn apply_explicit_config_file_sets_enabled_tools_env() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("IRIS_ENABLED_TOOLS");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".iris-agentic-dev.toml");
+        std::fs::write(
+            &path,
+            r#"host="localhost"
+web_port=52773
+enabled_tools=["iris_query","check_config"]
+"#,
+        )
+        .unwrap();
+        let (conn, cfg_path) = apply_explicit_config_file(None, &path, "USER");
+        assert!(
+            conn.is_some(),
+            "should build connection from explicit config"
+        );
+        assert_eq!(cfg_path.unwrap(), path);
+        assert_eq!(
+            std::env::var("IRIS_ENABLED_TOOLS").unwrap(),
+            "iris_query,check_config"
+        );
+        std::env::remove_var("IRIS_ENABLED_TOOLS");
+    }
+
+    #[test]
+    fn apply_explicit_config_file_missing_returns_explicit_unchanged() {
+        use crate::iris::connection::DiscoverySource;
+        let explicit = IrisConnection::new(
+            "http://cli-host:52773",
+            "USER",
+            "_SYSTEM",
+            "SYS",
+            DiscoverySource::EnvVar,
+        );
+        let (conn, path) = apply_explicit_config_file(
+            Some(explicit.clone()),
+            std::path::Path::new("/nonexistent/path/no-such-file.toml"),
+            "USER",
+        );
+        assert_eq!(conn.unwrap().base_url, explicit.base_url);
+        assert!(path.is_none());
     }
 }

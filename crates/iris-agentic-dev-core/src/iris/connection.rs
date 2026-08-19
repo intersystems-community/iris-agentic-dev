@@ -124,8 +124,16 @@ impl IrisConnection {
     }
 
     /// Returns true if write-capable tools should be registered.
-    /// Checks SystemMode, namespace heuristics, and IRIS_ALLOW_PROD override (issue #26).
+    ///
+    /// Priority order (highest wins):
+    /// 1. `IRIS_WRITE_TOOLS_ENABLED=0` or `=1` — set by workspace_config from
+    ///    `write_tools_enabled` in `.iris-agentic-dev.toml` (issue #110).
+    /// 2. `IRIS_ALLOW_PROD=1` / `true` — legacy override (issue #26).
+    /// 3. SystemMode / namespace heuristics.
     pub fn is_write_allowed(&self) -> bool {
+        if let Ok(v) = std::env::var("IRIS_WRITE_TOOLS_ENABLED") {
+            return v == "1" || v.eq_ignore_ascii_case("true");
+        }
         if std::env::var("IRIS_ALLOW_PROD")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false)
@@ -997,6 +1005,42 @@ mod system_mode_tests {
         assert!(!is_production_namespace("USER"));
         assert!(!is_production_namespace("DEV"));
         assert!(!is_production_namespace("MYAPP"));
+    }
+
+    // T0xx: IRIS_WRITE_TOOLS_ENABLED overrides SystemMode (#110)
+    #[test]
+    fn iris_write_tools_enabled_0_blocks_writes_on_dev_instance() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("IRIS_ALLOW_PROD");
+        std::env::set_var("IRIS_WRITE_TOOLS_ENABLED", "0");
+        let c = conn("USER", SystemMode::Development);
+        assert!(
+            !c.is_write_allowed(),
+            "IRIS_WRITE_TOOLS_ENABLED=0 must block even Development mode"
+        );
+        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
+    }
+
+    #[test]
+    fn iris_write_tools_enabled_1_allows_writes_on_live_instance() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("IRIS_ALLOW_PROD");
+        std::env::set_var("IRIS_WRITE_TOOLS_ENABLED", "1");
+        let c = conn("USER", SystemMode::Live);
+        assert!(
+            c.is_write_allowed(),
+            "IRIS_WRITE_TOOLS_ENABLED=1 must allow even Live mode"
+        );
+        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
+    }
+
+    #[test]
+    fn iris_write_tools_enabled_absent_falls_through_to_system_mode() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("IRIS_ALLOW_PROD");
+        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
+        assert!(!conn("USER", SystemMode::Live).is_write_allowed());
+        assert!(conn("USER", SystemMode::Development).is_write_allowed());
     }
 }
 

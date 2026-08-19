@@ -126,14 +126,23 @@ impl McpCommand {
                 ws_root.display()
             );
         }
-        // apply_workspace_config_with_path returns the loaded config path so we can record it
-        // in ConnectionState at startup (not just after hot-reload). Fixes issue #82.
-        let (explicit, startup_config_path) =
+        // When --config is given, load connection + tool settings from that explicit file.
+        // Otherwise walk the workspace directory as before. Fixes issue #111.
+        let (explicit, startup_config_path) = if let Some(ref cfg_path) = self.config {
+            iris_agentic_dev_core::iris::workspace_config::apply_explicit_config_file(
+                explicit,
+                std::path::Path::new(cfg_path),
+                &self.namespace,
+            )
+        } else {
+            // apply_workspace_config_with_path returns the loaded config path so we can record
+            // it in ConnectionState at startup (not just after hot-reload). Fixes issue #82.
             iris_agentic_dev_core::iris::workspace_config::apply_workspace_config_with_path(
                 explicit,
                 Some(&self.workspace),
                 &self.namespace,
-            );
+            )
+        };
 
         tokio::spawn(async move {
             let conn = match discover_iris(explicit).await {
