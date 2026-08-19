@@ -12,18 +12,19 @@ fn tools() -> IrisTools {
 }
 
 fn structured_body(result: &rmcp::model::CallToolResult, tool: &str) -> serde_json::Value {
-    let structured = result
-        .structured_content
-        .as_ref()
-        .unwrap_or_else(|| panic!("{tool} must return structuredContent when outputSchema is declared"));
+    let structured = result.structured_content.as_ref().unwrap_or_else(|| {
+        panic!("{tool} must return structuredContent when outputSchema is declared")
+    });
     let text = result
         .content
         .first()
         .and_then(|c| c.as_text())
         .map(|t| t.text.as_str())
-        .unwrap_or_else(|| panic!("{tool} must still return text content for backward compatibility"));
-    let from_text: serde_json::Value =
-        serde_json::from_str(text).unwrap_or_else(|e| panic!("{tool} text content must be JSON: {e}"));
+        .unwrap_or_else(|| {
+            panic!("{tool} must still return text content for backward compatibility")
+        });
+    let from_text: serde_json::Value = serde_json::from_str(text)
+        .unwrap_or_else(|e| panic!("{tool} text content must be JSON: {e}"));
     assert_eq!(
         structured, &from_text,
         "{tool}: structuredContent must match serialized text content"
@@ -31,7 +32,11 @@ fn structured_body(result: &rmcp::model::CallToolResult, tool: &str) -> serde_js
     structured.clone()
 }
 
-async fn call_raw(tools: &IrisTools, tool: &str, args: serde_json::Value) -> rmcp::model::CallToolResult {
+async fn call_raw(
+    tools: &IrisTools,
+    tool: &str,
+    args: serde_json::Value,
+) -> rmcp::model::CallToolResult {
     tools
         .call_for_test(tool, args)
         .await
