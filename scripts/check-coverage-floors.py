@@ -46,18 +46,31 @@ def load_floors(path):
 
 
 def load_coverage(path):
-    """Parse llvm-cov --summary-only output. Returns dict: rel_path -> float line coverage %."""
+    """Parse llvm-cov --summary-only output. Returns dict: rel_path -> float line coverage %.
+
+    cargo-llvm-cov --summary-only emits short paths relative to the crate src/
+    directory (e.g. "iris/workspace_config.rs" or full abs paths depending on
+    version). We normalise both forms to "src/<subpath>" to match coverage-floors.toml.
+    """
     actual = {}
     with open(path) as f:
         for line in f:
-            # Match lines containing our crate's src path.
-            # Format: <abs-path>  <total> <missed> <pct>%  ...
+            # Long-form: .../crates/iris-agentic-dev-core/src/foo/bar.rs  ...
             m = re.search(
                 r"crates/iris-agentic-dev-core/(src/\S+\.rs)\s+\d+\s+\d+\s+([\d.]+)%",
                 line,
             )
             if m:
                 actual[m.group(1)] = float(m.group(2))
+                continue
+            # Short-form (common with --summary-only): "iris/foo.rs  123  45  63.41%  ..."
+            # These are src-relative paths without the "src/" prefix.
+            m = re.match(
+                r"^([a-z_][a-z0-9_/]*\.rs)\s+\d+\s+\d+\s+([\d.]+)%",
+                line.strip(),
+            )
+            if m:
+                actual["src/" + m.group(1)] = float(m.group(2))
     return actual
 
 

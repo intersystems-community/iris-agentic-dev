@@ -1352,4 +1352,92 @@ mod tests {
         let result = load_workspace_config_with_path(Some(dir.path().to_str().unwrap()));
         assert!(result.is_none(), "invalid TOML should return None");
     }
+
+    // ── load_fleet_config_from_str ───────────────────────────────────────────
+
+    #[test]
+    fn load_fleet_config_from_str_parses_instance_snake_case() {
+        let fleet = load_fleet_config_from_str(
+            r#"mode = "operate"
+[instance.prod]
+host = "prod.example.com"
+web_port = 52773
+namespace = "MYAPP"
+username = "admin"
+password = "secret"
+"#,
+        )
+        .unwrap();
+        assert_eq!(fleet.mode.as_deref(), Some("operate"));
+        let inst = &fleet.instance["prod"];
+        assert_eq!(inst.host.as_deref(), Some("prod.example.com"));
+        assert_eq!(inst.web_port, Some(52773));
+        assert_eq!(inst.namespace.as_deref(), Some("MYAPP"));
+        assert_eq!(inst.username.as_deref(), Some("admin"));
+        assert_eq!(inst.password.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn load_fleet_config_from_str_parses_instance_kebab_aliases() {
+        let fleet = load_fleet_config_from_str(
+            r#"mode = "operate"
+[instance.gw]
+host = "gw.example.com"
+web-port = 443
+web-prefix = "/csp/sys"
+scheme = "https"
+memory-home = "local"
+"#,
+        )
+        .unwrap();
+        let inst = &fleet.instance["gw"];
+        assert_eq!(inst.web_port, Some(443));
+        assert_eq!(inst.web_prefix.as_deref(), Some("/csp/sys"));
+        assert_eq!(inst.scheme.as_deref(), Some("https"));
+        assert_eq!(inst.memory_home.as_deref(), Some("local"));
+        assert_eq!(
+            instance_base_url(inst),
+            "https://gw.example.com:443/csp/sys"
+        );
+    }
+
+    #[test]
+    fn load_fleet_config_from_str_invalid_toml_returns_error() {
+        let result = load_fleet_config_from_str("not valid toml = {{{{");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn instance_base_url_scheme_strips_trailing_slashes() {
+        let inst = InstanceConfig {
+            host: Some("h.example.com".into()),
+            web_port: Some(443),
+            scheme: Some("https/".into()),
+            ..Default::default()
+        };
+        assert_eq!(instance_base_url(&inst), "https://h.example.com:443");
+    }
+
+    #[test]
+    fn instance_base_url_empty_scheme_falls_back_to_http() {
+        let inst = InstanceConfig {
+            host: Some("h.example.com".into()),
+            web_port: Some(80),
+            scheme: Some("".into()),
+            ..Default::default()
+        };
+        assert_eq!(instance_base_url(&inst), "http://h.example.com:80");
+    }
+
+    #[test]
+    fn instance_base_url_prefix_strips_surrounding_slashes() {
+        let inst = InstanceConfig {
+            host: Some("h.example.com".into()),
+            web_port: Some(443),
+            scheme: Some("https".into()),
+            web_prefix: Some("/hspi/".into()),
+            ..Default::default()
+        };
+        assert_eq!(instance_base_url(&inst), "https://h.example.com:443/hspi");
+    }
 }

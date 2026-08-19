@@ -12,11 +12,7 @@ use iris_agentic_dev_core::tools::IrisTools;
 
 fn parse(result: Result<rmcp::model::CallToolResult, String>) -> serde_json::Value {
     let r = result.expect("tool call should not error");
-    let text = r.content[0]
-        .as_text()
-        .expect("text content")
-        .text
-        .clone();
+    let text = r.content[0].as_text().expect("text content").text.clone();
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("not JSON: {e}\n{text}"))
 }
 

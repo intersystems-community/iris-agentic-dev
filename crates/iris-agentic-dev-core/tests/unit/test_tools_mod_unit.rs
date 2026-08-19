@@ -724,7 +724,6 @@ async fn telemetry_query_returns_empty_records_when_no_calls_made() {
         .content
         .first()
         .unwrap()
-        
         .as_text()
         .unwrap()
         .text
@@ -751,7 +750,6 @@ async fn telemetry_query_rejects_invalid_session_id() {
         .content
         .first()
         .unwrap()
-        
         .as_text()
         .unwrap()
         .text
@@ -802,7 +800,6 @@ async fn telemetry_export_trace_returns_empty_when_no_calls_made() {
         .content
         .first()
         .unwrap()
-        
         .as_text()
         .unwrap()
         .text
@@ -828,7 +825,6 @@ async fn telemetry_export_trace_rejects_invalid_session_id() {
         .content
         .first()
         .unwrap()
-        
         .as_text()
         .unwrap()
         .text
@@ -1535,7 +1531,6 @@ async fn agent_history_includes_duration_ms_and_session_id() {
         .content
         .first()
         .unwrap()
-        
         .as_text()
         .unwrap()
         .text
