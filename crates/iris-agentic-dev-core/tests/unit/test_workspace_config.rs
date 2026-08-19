@@ -1,8 +1,9 @@
 // Tests for workspace_config module: TOML loading, priority ordering, path resolution.
 
 use iris_agentic_dev_core::iris::workspace_config::{
-    build_workspace_config_json, load_fleet_config, load_workspace_config, validate_fleet_config,
-    workspace_config_to_connection, workspace_root, ConnectionRole, FleetConfig,
+    build_workspace_config_json, instance_base_url, load_fleet_config, load_fleet_config_from_str,
+    load_workspace_config, validate_fleet_config, workspace_config_to_connection, workspace_root,
+    ConnectionRole, FleetConfig,
 };
 use std::io::Write;
 
@@ -754,6 +755,107 @@ role = "subject"
         Some("myapp-iris")
     );
     assert_eq!(fleet.instance["prod"].role, ConnectionRole::Subject);
+    assert_eq!(
+        fleet.instance["prod"].web_port,
+        Some(52773),
+        "snake_case web_port on [instance.*] must parse (SKILL.md / init template)"
+    );
+}
+
+#[test]
+fn test_instance_web_port_snake_and_kebab_aliases() {
+    let snake = load_fleet_config_from_str(
+        r#"mode = "operate"
+[instance.a]
+host = "a.example.com"
+web_port = 443
+scheme = "https"
+"#,
+    )
+    .unwrap();
+    assert_eq!(snake.instance["a"].web_port, Some(443));
+    assert_eq!(
+        instance_base_url(&snake.instance["a"]),
+        "https://a.example.com:443"
+    );
+
+    let kebab = load_fleet_config_from_str(
+        r#"mode = "operate"
+[instance.b]
+host = "b.example.com"
+web-port = 443
+scheme = "https"
+"#,
+    )
+    .unwrap();
+    assert_eq!(kebab.instance["b"].web_port, Some(443));
+    assert_eq!(
+        instance_base_url(&kebab.instance["b"]),
+        "https://b.example.com:443"
+    );
+
+    let port_alias = load_fleet_config_from_str(
+        r#"mode = "operate"
+[instance.c]
+host = "c.example.com"
+port = 80
+"#,
+    )
+    .unwrap();
+    assert_eq!(port_alias.instance["c"].web_port, Some(80));
+    assert_eq!(
+        instance_base_url(&port_alias.instance["c"]),
+        "http://c.example.com:80"
+    );
+}
+
+#[test]
+fn test_instance_base_url_https_and_web_prefix() {
+    let fleet = load_fleet_config_from_str(
+        r#"mode = "operate"
+[instance.hspi]
+host = "exchange.staging.connect2.org"
+web_port = 443
+scheme = "https"
+web_prefix = "hspi"
+namespace = "EGCOMMUNITYPARTNERS"
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        instance_base_url(&fleet.instance["hspi"]),
+        "https://exchange.staging.connect2.org:443/hspi"
+    );
+
+    let kebab_prefix = load_fleet_config_from_str(
+        r#"mode = "operate"
+[instance.hspi]
+host = "example.com"
+web-port = 443
+web-prefix = "/hspi/"
+scheme = "https"
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        instance_base_url(&kebab_prefix.instance["hspi"]),
+        "https://example.com:443/hspi"
+    );
+}
+
+#[test]
+fn test_instance_base_url_defaults_http_52773() {
+    let fleet = load_fleet_config_from_str(
+        r#"mode = "operate"
+[instance.prod]
+host = "prod.example.com"
+"#,
+    )
+    .unwrap();
+    assert_eq!(
+        instance_base_url(&fleet.instance["prod"]),
+        "http://prod.example.com:52773"
+    );
 }
 
 // T004-c: ConnectionRole defaults to Workspace when absent

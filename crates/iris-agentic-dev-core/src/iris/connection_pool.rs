@@ -267,9 +267,7 @@ pub fn load_pool(config_file: Option<&std::path::Path>) -> ConnectionPool {
     if let Some(fleet) = workspace_config::load_fleet_config(workspace_path_str) {
         if fleet.mode.as_deref() == Some("operate") {
             for (name, inst) in &fleet.instance {
-                let host = inst.host.as_deref().unwrap_or("localhost");
-                let port = inst.web_port.unwrap_or(52773);
-                let base_url = format!("http://{}:{}", host, port);
+                let base_url = workspace_config::instance_base_url(inst);
                 let ns = inst.namespace.as_deref().unwrap_or("USER");
                 let user = inst.username.as_deref().unwrap_or("_SYSTEM");
                 let pw = inst.password.as_deref().unwrap_or("");
