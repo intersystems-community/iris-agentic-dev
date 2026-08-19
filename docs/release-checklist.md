@@ -7,11 +7,13 @@ Run this before tagging any release. Each item is a gate — don't move on if it
 - [ ] Bump `[workspace.package] version` in `Cargo.toml`
 - [ ] Bump `"irisAgenticDev.serverVersion"` in `vscode-iris-agentic-dev/package.json`
 - [ ] Bump `"version"` (VS Code extension semver) in `vscode-iris-agentic-dev/package.json`
-- [ ] Verify all three agree — `serverVersion` must match the workspace version and the tag
+- [ ] Bump `"version"` in `.claude-plugin/plugin.json`
+- [ ] Verify all four agree — `serverVersion` must match the workspace version and the tag
 
 ```bash
 grep '^version' Cargo.toml
 node -e "const p=require('./vscode-iris-agentic-dev/package.json'); console.log(p.version, p.irisAgenticDev.serverVersion)"
+node -e "const p=require('./.claude-plugin/plugin.json'); console.log(p.version)"
 ```
 
 ## 2. Tests
