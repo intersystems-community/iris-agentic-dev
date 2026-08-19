@@ -25,8 +25,14 @@ comment before starting so we can align on approach.
 ## Pull requests
 
 - Open an issue first for anything non-trivial so the approach can be agreed before code is written.
-- **Tests:** ideally included for any code change, especially anything that touches IRIS behaviour.
-  See the testing philosophy in [CLAUDE.md](CLAUDE.md) — live container tests are preferred over mocks.
+- **Tests:** required for every new feature, tool, CLI flag, config field, and skill. Three layers:
+  - _Unit / TOML round-trip_ — parse config from a TOML string (not a struct literal) and assert
+    struct fields and env vars are correct. Catches serde silent-drop bugs.
+  - _Binary invocation_ — spawn `iris-agentic-dev` as a subprocess and assert on the JSON-RPC
+    response over stdio. Required for any CLI flag or `mcp.rs` wiring. No live IRIS needed.
+  - _Live IRIS integration_ — `#[ignore]` test against the real container for anything that calls IRIS.
+    See [CLAUDE.md](CLAUDE.md) for the full testing policy and the "if I changed this silently, would
+    any test fail?" rule.
 - **Benchmarks:** ideally included for skill and tool contributions. See the skill section below.
 - `cargo fmt --all` and `cargo clippy -- -D warnings` must pass before submitting.
 - **Coverage:** `bash scripts/check-coverage-floors.sh` must exit 0. If you add a new

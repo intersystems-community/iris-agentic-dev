@@ -50,6 +50,35 @@ IRIS is the only valid test object.
 - **`--test-threads=1`** is required for all IRIS integration/e2e test runs to prevent
   env-var race conditions across test binaries.
 
+## Test Coverage Policy — NON-NEGOTIABLE
+
+Every new feature, tool, CLI flag, config field, and skill must have tests at the
+right layer before the PR is considered done. "It compiles" is not enough.
+
+**Three required layers:**
+
+1. **Unit / TOML round-trip** — parse the config string (not a struct literal) and
+   assert the resulting struct fields and env vars are correct. Catches serde silent-drop
+   (the #110 pattern: field missing from struct, TOML key silently ignored).
+
+2. **Binary invocation** (for any CLI flag or `mcp.rs` wiring) — spawn
+   `iris-agentic-dev` as a subprocess, send `initialize` + `tools/list` or
+   `tools/call` over stdio, assert on the JSON-RPC response. No live IRIS needed.
+   Catches "flag exists but was never wired" (the #111 pattern: `self.config` ignored).
+   Use `IAD_BINARY=./target/debug/iris-agentic-dev` and `#[ignore]`; CI builds the
+   binary first and passes the env var.
+
+3. **Live IRIS integration** (for any tool that calls IRIS) — `#[ignore]` test against
+   `iris-dev-iris` (localhost:52780). Covers actual IRIS behavior, not just wiring.
+
+**Version consistency:** every file that must agree with the workspace version
+(`Cargo.toml`, `package.json`, `.claude-plugin/plugin.json`, etc.) must have an
+explicit cross-file assertion test. Adding a new version-bearing file without adding
+a test for it is a bug waiting to ship.
+
+**When in doubt:** ask "if I changed this flag/field/file silently, would any test
+fail?" If the answer is no, the test is missing.
+
 ## Release Notes & Changelog — NON-NEGOTIABLE
 
 Before closing any release (tagging, publishing, merging release branch):
@@ -78,6 +107,7 @@ Before closing any release (tagging, publishing, merging release branch):
 - 068-windows-docker: Added Dockerfile (no specific version), Bash (GHA steps), Markdown + `gcr.io/distroless/static-debian12` (base image), `docker/build-push-action@v6`, `docker/metadata-action@v5`
 
 <!-- codebase-memory-mcp: Code Discovery Protocol -->
+
 ## Code Discovery Protocol (codebase-memory-mcp)
 
 **ALWAYS use `codebase-memory-mcp` tools FIRST for any code exploration:**
