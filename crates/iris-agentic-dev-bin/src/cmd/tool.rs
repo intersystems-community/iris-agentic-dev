@@ -138,8 +138,29 @@ impl ToolCommand {
             })
             .unwrap();
 
+        // Named `server=` / pool-only tools can run from `[instance.*]` even when
+        // there is no top-level host (operate-mode fleet). check_config / iris_servers
+        // never need a live default connection.
+        let allow_no_default = name == "check_config"
+            || name == "iris_servers"
+            || args_json
+                .get("server")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.is_empty())
+                .unwrap_or(false)
+            || (name == "iris_test_server"
+                && args_json
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| !s.is_empty())
+                    .unwrap_or(false));
+
         let iris: Option<IrisConnection> = match self.conn.resolve().await {
             Ok(c) => Some(c),
+            Err(e) if allow_no_default => {
+                eprintln!("warning: no default IRIS connection ({e}); using connection pool");
+                None
+            }
             Err(e) => {
                 eprintln!("error: {}", e);
                 std::process::exit(1);

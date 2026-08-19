@@ -56,19 +56,52 @@ pub enum ConnectionRole {
 }
 
 /// Per-instance config block for `mode = "operate"` fleet configs.
+///
+/// Connection fields match top-level `WorkspaceConfig` (`web_port`, `scheme`,
+/// `web_prefix`) so SKILL.md / `iris-agentic-dev init --mode operate` snippets
+/// work. `web-port`, `web-prefix`, and `memory-home` remain accepted aliases.
 #[derive(Debug, Deserialize, Default, Clone)]
-#[serde(rename_all = "kebab-case")]
 pub struct InstanceConfig {
     pub container: Option<String>,
     pub namespace: Option<String>,
     pub host: Option<String>,
+    #[serde(alias = "port", alias = "web-port")]
     pub web_port: Option<u16>,
+    /// URL path prefix for the IRIS web gateway (same meaning as top-level `web_prefix`).
+    #[serde(alias = "web-prefix")]
+    pub web_prefix: Option<String>,
+    /// `"http"` or `"https"`. Defaults to `"http"` when building the pool URL.
+    pub scheme: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
     #[serde(default)]
     pub role: ConnectionRole,
+    #[serde(alias = "memory-home")]
     pub memory_home: Option<String>,
     pub subject: Option<String>,
+}
+
+/// Build the Atelier base URL for a fleet `[instance.*]` block.
+///
+/// Defaults: host `localhost`, port `52773`, scheme `http`, no path prefix.
+pub fn instance_base_url(inst: &InstanceConfig) -> String {
+    let host = inst.host.as_deref().unwrap_or("localhost");
+    let port = inst.web_port.unwrap_or(52773);
+    let scheme = inst
+        .scheme
+        .as_deref()
+        .map(|s| s.trim_matches('/'))
+        .filter(|s| !s.is_empty())
+        .unwrap_or("http");
+    match inst
+        .web_prefix
+        .as_deref()
+        .map(|p| p.trim_matches('/'))
+        .filter(|p| !p.is_empty())
+    {
+        Some(prefix) => format!("{scheme}://{host}:{port}/{prefix}"),
+        None => format!("{scheme}://{host}:{port}"),
+    }
 }
 
 /// Environment template gate: controls which tool categories are available on a connection.
@@ -791,7 +824,11 @@ role = "workspace"            # "workspace" or "control-plane": no write gating
 # [instance.subject]
 # host = "subject-iris.example.com"
 # web_port = 52773
+# scheme = "https"             # omit for http (default)
+# web_prefix = ""              # gateway path prefix, if any
 # namespace = "USER"
+# username = "_SYSTEM"
+# password = "SYS"
 # role = "subject"            # destructive ops require explicit confirm: true
 # memory-home = "local"       # route AI memory writes to the 'local' instance
 # subject = "MyCustomer"      # free-form label identifying this subject
@@ -810,7 +847,26 @@ mod tests {
     // Serialize tests that mutate global env vars to avoid parallel interference.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    // ── workspace_root tests ─────────────────────────────────────────────────
+    #[test]
+    fn instance_base_url_https_with_prefix() {
+        let inst = InstanceConfig {
+            host: Some("ex.example.com".into()),
+            web_port: Some(443),
+            scheme: Some("https".into()),
+            web_prefix: Some("/hspi/".into()),
+            ..Default::default()
+        };
+        assert_eq!(instance_base_url(&inst), "https://ex.example.com:443/hspi");
+    }
+
+    #[test]
+    fn instance_base_url_defaults() {
+        let inst = InstanceConfig {
+            host: Some("prod.example.com".into()),
+            ..Default::default()
+        };
+        assert_eq!(instance_base_url(&inst), "http://prod.example.com:52773");
+    }
 
     #[test]
     fn workspace_root_env_var_overrides_all() {
