@@ -2988,6 +2988,12 @@ impl IrisTools {
         &self,
         Parameters(p): Parameters<CompileParams>,
     ) -> Result<CallToolResult, McpError> {
+        if !self.write_tools_enabled() {
+            return err_json(
+                admin_tools::ERR_WRITE_GATE,
+                "Write tools are disabled. Set write_tools_enabled = true in .iris-agentic-dev.toml.",
+            );
+        }
         let iris = self.resolve_server(p.server.as_deref()).await?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace).to_string();
         let (sm_server, policy) = self.active_server_manager_policy();
@@ -3880,6 +3886,12 @@ impl IrisTools {
         &self,
         Parameters(p): Parameters<ExecuteParams>,
     ) -> Result<CallToolResult, McpError> {
+        if !self.write_tools_enabled() {
+            return err_json(
+                admin_tools::ERR_WRITE_GATE,
+                "Write tools are disabled. Set write_tools_enabled = true in .iris-agentic-dev.toml.",
+            );
+        }
         // Route arbitrary execution through the restricted service account when configured, so it
         // runs under a least-privilege IRIS identity that cannot edit code (see get_iris_for_exec).
         // The paired client carries the matching (isolated) cookie jar — see
@@ -4160,6 +4172,17 @@ impl IrisTools {
         &self,
         Parameters(p): Parameters<IrisDocParams>,
     ) -> Result<CallToolResult, McpError> {
+        let mode_lower = p.mode.to_lowercase();
+        if matches!(
+            mode_lower.as_str(),
+            "put" | "delete" | "insert" | "delete_lines"
+        ) && !self.write_tools_enabled()
+        {
+            return err_json(
+                admin_tools::ERR_WRITE_GATE,
+                "Write tools are disabled. Set write_tools_enabled = true in .iris-agentic-dev.toml.",
+            );
+        }
         let iris = self.resolve_server(p.server.as_deref()).await?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         tracing::info!(namespace = %namespace, "iris_doc");
@@ -4294,6 +4317,13 @@ impl IrisTools {
                 return result;
             }
             "write" => {
+                if !self.write_tools_enabled() {
+                    self.record_call("iris_query", false);
+                    return err_json(
+                        admin_tools::ERR_WRITE_GATE,
+                        "Write tools are disabled. Set write_tools_enabled = true in .iris-agentic-dev.toml.",
+                    );
+                }
                 // DML runs under the restricted service account when configured (least-privilege).
                 // Use the paired client so the service-account identity isn't overridden by the
                 // primary user's CSP session cookie (see get_iris_for_exec_with_client).

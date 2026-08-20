@@ -620,3 +620,128 @@ fn no_skills_env_var_removes_skill_tools() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// T-write-gate-01: write_tools_enabled=false blocks iris_compile, iris_execute,
+//                  iris_doc put, and iris_query write.
+// No live IRIS required — the write gate fires before any connection is used.
+// ---------------------------------------------------------------------------
+
+/// Call a tool with the given JSON arguments and return the first text content.
+fn call_tool(stdin: &mut ChildStdin, stdout: ChildStdout, name: &str, args: &str) -> String {
+    let req = format!(
+        "{{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{{\"name\":\"{name}\",\"arguments\":{args}}}}}\n"
+    );
+    stdin.write_all(req.as_bytes()).ok();
+    let result = read_until(stdout, 8000, |v| {
+        let content = v.get("result")?.get("content")?.as_array()?;
+        for c in content {
+            if let Some(text) = c.get("text").and_then(|t| t.as_str()) {
+                return Some(text.to_string());
+            }
+        }
+        None
+    });
+    result.unwrap_or_default()
+}
+
+fn assert_write_gate_error(text: &str, tool: &str) {
+    let v: serde_json::Value = serde_json::from_str(text)
+        .unwrap_or_else(|_| panic!("{tool}: response not valid JSON: {text}"));
+    assert_eq!(
+        v["error_code"].as_str().unwrap_or(""),
+        "WRITE_TOOLS_DISABLED",
+        "{tool}: expected WRITE_TOOLS_DISABLED, got: {v}"
+    );
+}
+
+#[test]
+#[ignore]
+fn write_tools_disabled_blocks_iris_compile() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg_path = dir.path().join("cfg.toml");
+    std::fs::write(
+        &cfg_path,
+        "enabled_tools = [\"iris_compile\"]\nwrite_tools_enabled = false\n",
+    )
+    .unwrap();
+
+    let (mut child, mut stdin, stdout) = spawn_mcp(Some(&cfg_path.to_string_lossy()));
+    send_initialize(&mut stdin);
+    let text = call_tool(
+        &mut stdin,
+        stdout,
+        "iris_compile",
+        r#"{"target":"App.Foo.cls"}"#,
+    );
+    child.kill().ok();
+    let _ = child.wait();
+    assert_write_gate_error(&text, "iris_compile");
+}
+
+#[test]
+#[ignore]
+fn write_tools_disabled_blocks_iris_execute() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg_path = dir.path().join("cfg.toml");
+    std::fs::write(
+        &cfg_path,
+        "enabled_tools = [\"iris_execute\"]\nwrite_tools_enabled = false\n",
+    )
+    .unwrap();
+
+    let (mut child, mut stdin, stdout) = spawn_mcp(Some(&cfg_path.to_string_lossy()));
+    send_initialize(&mut stdin);
+    let text = call_tool(&mut stdin, stdout, "iris_execute", r#"{"code":"Write 1"}"#);
+    child.kill().ok();
+    let _ = child.wait();
+    assert_write_gate_error(&text, "iris_execute");
+}
+
+#[test]
+#[ignore]
+fn write_tools_disabled_blocks_iris_doc_put() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg_path = dir.path().join("cfg.toml");
+    std::fs::write(
+        &cfg_path,
+        "enabled_tools = [\"iris_doc\"]\nwrite_tools_enabled = false\n",
+    )
+    .unwrap();
+
+    let (mut child, mut stdin, stdout) = spawn_mcp(Some(&cfg_path.to_string_lossy()));
+    send_initialize(&mut stdin);
+    let text = call_tool(
+        &mut stdin,
+        stdout,
+        "iris_doc",
+        r#"{"mode":"put","name":"App.Foo.cls","content":"Class App.Foo {}"}"#,
+    );
+    child.kill().ok();
+    let _ = child.wait();
+    assert_write_gate_error(&text, "iris_doc put");
+}
+
+#[test]
+#[ignore]
+fn write_tools_disabled_blocks_iris_query_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg_path = dir.path().join("cfg.toml");
+    std::fs::write(
+        &cfg_path,
+        "enabled_tools = [\"iris_query\"]\nwrite_tools_enabled = false\n",
+    )
+    .unwrap();
+
+    let (mut child, mut stdin, stdout) = spawn_mcp(Some(&cfg_path.to_string_lossy()));
+    send_initialize(&mut stdin);
+    let text = call_tool(
+        &mut stdin,
+        stdout,
+        "iris_query",
+        r#"{"mode":"write","query":"INSERT INTO Sample.Person (Name) VALUES ('Test')"}"#,
+    );
+    child.kill().ok();
+    let _ = child.wait();
+    assert_write_gate_error(&text, "iris_query write");
+}
