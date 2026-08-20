@@ -520,3 +520,103 @@ fn iris_production_input_schema_has_namespace() {
         props.keys().collect::<Vec<_>>()
     );
 }
+
+// ---------------------------------------------------------------------------
+// T-no-skills-01: --no-skills removes all skill/KB/agent tools from tools/list
+// T-no-skills-02: IRIS_NO_SKILLS=1 env var has the same effect
+// ---------------------------------------------------------------------------
+
+const SKILL_TOOLS: &[&str] = &[
+    "skill",
+    "skill_list",
+    "skill_describe",
+    "skill_search",
+    "skill_forget",
+    "skill_propose",
+    "skill_optimize",
+    "skill_share",
+    "skill_community",
+    "skill_community_list",
+    "skill_community_install",
+    "kb_index",
+    "kb_recall",
+    "agent_history",
+    "agent_stats",
+];
+
+/// Spawn the binary in stdio MCP mode with extra arguments appended after `mcp`.
+fn spawn_mcp_extra(
+    extra_args: &[&str],
+    extra_env: &[(&str, &str)],
+) -> (Child, ChildStdin, ChildStdout) {
+    let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
+    let mut cmd = Command::new(bin);
+    cmd.arg("mcp");
+    for a in extra_args {
+        cmd.arg(a);
+    }
+    cmd.env_remove("IRIS_WRITE_TOOLS_ENABLED")
+        .env_remove("IRIS_DESTRUCTIVE_TOOLS_ENABLED")
+        .env_remove("IRIS_ALLOW_PROD")
+        .env_remove("IRIS_ENABLED_TOOLS")
+        .env_remove("IRIS_DISABLED_TOOLS")
+        .env_remove("IRIS_NO_SKILLS");
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let mut child = cmd.spawn().expect("failed to spawn iris-agentic-dev");
+    let stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    (child, stdin, stdout)
+}
+
+#[test]
+#[ignore]
+fn no_skills_flag_removes_skill_tools() {
+    let (mut child, mut stdin, stdout) = spawn_mcp_extra(&["--no-skills"], &[]);
+    send_initialize(&mut stdin);
+    let names = get_tool_names(&mut stdin, stdout);
+    child.kill().ok();
+    let _ = child.wait();
+
+    assert!(
+        !names.is_empty(),
+        "tools/list returned empty — server likely failed to start"
+    );
+    for tool in SKILL_TOOLS {
+        assert!(
+            !names.contains(&tool.to_string()),
+            "--no-skills: tool '{}' should be absent from tools/list",
+            tool
+        );
+    }
+    assert!(
+        names.contains(&"check_config".to_string()),
+        "--no-skills: check_config should still be present"
+    );
+}
+
+#[test]
+#[ignore]
+fn no_skills_env_var_removes_skill_tools() {
+    let (mut child, mut stdin, stdout) = spawn_mcp_extra(&[], &[("IRIS_NO_SKILLS", "true")]);
+    send_initialize(&mut stdin);
+    let names = get_tool_names(&mut stdin, stdout);
+    child.kill().ok();
+    let _ = child.wait();
+
+    assert!(
+        !names.is_empty(),
+        "tools/list returned empty — server likely failed to start"
+    );
+    for tool in SKILL_TOOLS {
+        assert!(
+            !names.contains(&tool.to_string()),
+            "IRIS_NO_SKILLS=1: tool '{}' should be absent from tools/list",
+            tool
+        );
+    }
+}

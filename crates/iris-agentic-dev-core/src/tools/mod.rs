@@ -2318,6 +2318,7 @@ impl IrisTools {
             toolset,
             None,
             None,
+            false,
         )
     }
 
@@ -2381,7 +2382,7 @@ impl IrisTools {
         iris: Option<IrisConnection>,
         registry: crate::skills::SkillRegistry,
     ) -> anyhow::Result<Self> {
-        Self::with_registry_and_toolset(iris, registry, Toolset::Baseline, None, None)
+        Self::with_registry_and_toolset(iris, registry, Toolset::Baseline, None, None, false)
     }
     pub fn with_registry_and_toolset(
         iris: Option<IrisConnection>,
@@ -2389,6 +2390,7 @@ impl IrisTools {
         toolset: Toolset,
         config_watcher: Option<ConfigWatcher>,
         config_path: Option<std::path::PathBuf>,
+        no_skills: bool,
     ) -> anyhow::Result<Self> {
         // Clone config_path for load_pool before it may be moved into conn_state (072).
         let pool_config_path = config_path.clone();
@@ -2452,6 +2454,32 @@ impl IrisTools {
                 "iris_production_diff",
             ];
             for name in merged_only {
+                router.remove_route(name);
+            }
+        }
+
+        // --no-skills: remove all skill management and learning-agent tools so the server
+        // exposes only IRIS tools. Useful when the caller wants a clean, minimal surface
+        // with no skill/KB management surface at all (e.g. Keshav-style tools-only installs).
+        if no_skills {
+            let skill_tools: &[&str] = &[
+                "skill",
+                "skill_list",
+                "skill_describe",
+                "skill_search",
+                "skill_forget",
+                "skill_propose",
+                "skill_optimize",
+                "skill_share",
+                "skill_community",
+                "skill_community_list",
+                "skill_community_install",
+                "kb_index",
+                "kb_recall",
+                "agent_history",
+                "agent_stats",
+            ];
+            for name in skill_tools {
                 router.remove_route(name);
             }
         }
@@ -8663,8 +8691,14 @@ mod tests {
     fn toolset_nostub_removes_stub_tools() {
         // Line 1551-1558: Nostub/Merged removes skill_propose etc from router
         let registry = crate::skills::SkillRegistry::default();
-        let result =
-            IrisTools::with_registry_and_toolset(None, registry, Toolset::Nostub, None, None);
+        let result = IrisTools::with_registry_and_toolset(
+            None,
+            registry,
+            Toolset::Nostub,
+            None,
+            None,
+            false,
+        );
         assert!(result.is_ok());
     }
 

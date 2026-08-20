@@ -1953,6 +1953,7 @@ fn connection_source_is_env_vars_when_iris_host_set() {
         Toolset::Merged,
         None,
         None,
+        false,
     )
     .unwrap();
     let source_with = {
@@ -1973,6 +1974,7 @@ fn connection_source_is_env_vars_when_iris_host_set() {
         Toolset::Merged,
         None,
         None,
+        false,
     )
     .unwrap();
     let source_without = {

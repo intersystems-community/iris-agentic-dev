@@ -75,6 +75,11 @@ pub struct McpCommand {
     /// or merged (stubs removed + consolidated tools). Also read from IRIS_TOOLSET env var.
     #[arg(long, env = "IRIS_TOOLSET", default_value = "merged")]
     pub toolset: String,
+    /// Remove all skill and learning-agent tools (skill, skill_community, agent_history,
+    /// agent_stats, kb_*) from the server. Also skips --subscribe fetching.
+    /// Use when you want IRIS tools only with no skill management surface.
+    #[arg(long, env = "IRIS_NO_SKILLS")]
+    pub no_skills: bool,
 }
 
 impl McpCommand {
@@ -168,10 +173,12 @@ impl McpCommand {
         });
 
         let mut registry = SkillRegistry::new();
-        for owner_repo in &self.subscribe {
-            match registry.load_from_github(owner_repo).await {
-                Ok(()) => tracing::info!("Subscribed to {}", owner_repo),
-                Err(e) => tracing::warn!("Failed to subscribe to {}: {}", owner_repo, e),
+        if !self.no_skills {
+            for owner_repo in &self.subscribe {
+                match registry.load_from_github(owner_repo).await {
+                    Ok(()) => tracing::info!("Subscribed to {}", owner_repo),
+                    Err(e) => tracing::warn!("Failed to subscribe to {}: {}", owner_repo, e),
+                }
             }
         }
 
@@ -217,6 +224,7 @@ impl McpCommand {
             toolset,
             config_watcher,
             startup_config_path,
+            self.no_skills,
         )?;
 
         // FR-007: periodically sweep expired elicitation entries.
@@ -338,6 +346,7 @@ mod tests {
             Toolset::Merged,
             watcher,
             None,
+            false,
         )
         .unwrap()
     }
@@ -359,6 +368,7 @@ mod tests {
             subscribe: vec![],
             workspace: ".".into(),
             toolset: "merged".into(),
+            no_skills: false,
         }
     }
 
@@ -511,6 +521,7 @@ mod tests {
             subscribe: vec![],
             workspace: ".".into(),
             toolset: "merged".into(),
+            no_skills: false,
         };
 
         let handle = tokio::spawn(cmd.run());
@@ -541,6 +552,7 @@ mod tests {
             subscribe: vec![],
             workspace: ".".into(),
             toolset: "merged".into(),
+            no_skills: false,
         };
         assert_eq!(cmd.transport, "grpc");
     }

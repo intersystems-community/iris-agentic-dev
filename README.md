@@ -19,6 +19,14 @@ by name. Works with Claude Code, GitHub Copilot, OpenCode, or any MCP client.
 iris-agentic-dev mcp
 ```
 
+To expose only the IRIS tools without the skill/KB/learning-agent surface, pass
+`--no-skills` (or set `IRIS_NO_SKILLS=true`). Useful when skills are installed
+separately and you want to avoid duplicate tool names in the MCP client:
+
+```bash
+iris-agentic-dev mcp --no-skills
+```
+
 → [Quick start: VS Code + Copilot](#quick-start-vs-code--github-copilot) |
 [Quick start: Claude Code / OpenCode](#quick-start-claude-code--opencode) |
 [Full connection docs](docs/connecting.md)
