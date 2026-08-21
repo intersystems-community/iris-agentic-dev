@@ -99,6 +99,7 @@ fn vscode_state_db_path() -> Result<std::path::PathBuf, String> {
 
 #[cfg(target_os = "windows")]
 fn read_from_db(db_path: &std::path::Path, key: &str) -> Result<Vec<u8>, String> {
+    use rusqlite::OptionalExtension;
     let conn =
         rusqlite::Connection::open(db_path).map_err(|e| format!("cannot open state.vscdb: {e}"))?;
 
