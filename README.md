@@ -68,6 +68,12 @@ brew tap intersystems-community/tap
 brew install iris-agentic-dev
 ```
 
+`brew upgrade iris-agentic-dev` updates the binary only — installed skills are
+not touched by Homebrew. Run `iris-agentic-dev skill install` after upgrading to
+pick up new skills. Files installed before the `managed_by` marker was introduced
+(or installed by other means) will be skipped as unrecognized; pass `--force` to
+overwrite them and stamp them for automatic updates going forward.
+
 ### Mac direct download (Apple Silicon)
 
 ```bash

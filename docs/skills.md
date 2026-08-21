@@ -58,6 +58,13 @@ iris-agentic-dev skill list --agent claude-code
 iris-agentic-dev skill status                    # managed vs user-authored
 ```
 
+**Upgrading**: `brew upgrade iris-agentic-dev` (or replacing the binary directly)
+updates the binary only — installed skills are not touched. After upgrading, run
+`iris-agentic-dev skill install` to pick up new skills. Files that lack the
+`managed_by: "iris-agentic-dev"` marker (installed before it was introduced, or
+installed by other means) are skipped as unrecognized; pass `--force` once to
+overwrite them and stamp them for automatic updates going forward.
+
 **VS Code Copilot**: The extension installs the binary, not the skills. Run
 `iris-agentic-dev skill install --agent copilot` from a git repo root to install skills
 into `.github/instructions/` — commit that directory to share with your team.

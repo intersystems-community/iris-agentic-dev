@@ -30,6 +30,14 @@ hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
 tower-service = "0.3"
 
+[[example]]
+name = "windows_sm_credential"
+path = "examples/windows_sm_credential.rs"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
+windows = { version = "0.58", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
+
 [dev-dependencies]
 tempfile = "3"
 

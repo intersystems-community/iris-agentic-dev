@@ -145,6 +145,12 @@ VS Code Insiders). If a credential is missing, iris-agentic-dev fails fast with 
 directing you to reconnect in VS Code (right-click the server → **Reconnect**) rather than
 silently falling through to other discovery sources.
 
+> **Windows limitation:** VS Code's `SecretStorage` on Windows uses DPAPI-encrypted blobs
+> stored inside VS Code's own process. Those blobs are not accessible to external processes,
+> so iris-agentic-dev cannot read Server Manager credentials on Windows regardless of whether
+> they are stored. Use `.iris-agentic-dev.toml` instead — see
+> [Native IRIS on Windows or Linux](#native-iris-on-windows-or-linux-no-docker) above.
+
 Use `check_config` to see which servers were detected and whether credentials resolved:
 
 ```json

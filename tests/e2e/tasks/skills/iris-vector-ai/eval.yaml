@@ -4,6 +4,7 @@ fire_rate_prompt: |
   Use the iris-vector-ai skill to write Python iris.dbapi code that performs cosine similarity search on a VECTOR(DOUBLE, 384) column named 'embedding' in a table called RAG.Documents, using TO_VECTOR() to convert a query string, returning the top 5 results.
 benchmark_tasks:
   - VECTOR-PYTHON-SEARCH
+  - VECTOR-TOVECTOR-MISMATCH
 domain_skill: true
 isolation_prompt: |
   Fix the bug in this ObjectScript method — it uses Return inside a For loop when it should use Quit:

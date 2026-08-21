@@ -1,5 +1,6 @@
 pub mod batch;
 pub mod benchmark;
+pub mod check_sm_credential;
 pub mod compile;
 pub mod connection_args;
 pub mod dispatch;
