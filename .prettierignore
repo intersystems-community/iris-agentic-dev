@@ -1,0 +1,5 @@
+# spec-gates: projected/vendored enforcement runtime — upgrade
+# overwrites these, so formatting them locally is lost work.
+.specify/gates/
+.specify/extensions/
+.claude/hooks/gates/

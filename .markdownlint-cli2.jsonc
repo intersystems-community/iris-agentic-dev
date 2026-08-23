@@ -1,5 +1,6 @@
 {
   // Project markdownlint config — matches global ~/.markdownlint-cli2.jsonc rules.
+  "ignores": [".specify/gates/**", ".specify/extensions/**", ".claude/hooks/gates/**"],
   "config": {
     "default": true,
     "MD003": { "style": "atx" },
