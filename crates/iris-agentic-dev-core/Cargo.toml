@@ -36,7 +36,7 @@ tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots", "
 futures-util = { version = "0.3", features = ["sink"] }
 base64 = "0.22"
 similar = "2"
-iris-client-rs = { path = "../../../ipm/iris-client-rs", features = ["atelier"] }
+
 
 # Platform keychain store crates — already in the dep tree via keyring v4.
 # Direct deps needed to call Store::new() in init_platform_keystore().
