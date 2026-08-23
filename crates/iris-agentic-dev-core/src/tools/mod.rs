@@ -8222,7 +8222,10 @@ impl ServerHandler for IrisTools {
     }
 
     fn get_info(&self) -> ServerInfo {
+        // Cap to 2025-11-25: the 2026-07-28 draft requires per-tool cache metadata that
+        // clients using that version will reject when absent. Pin until we opt into caching.
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_protocol_version(ProtocolVersion::V_2025_11_25)
             .with_server_info(Implementation::new(
                 "iris-agentic-dev".to_string(),
                 env!("CARGO_PKG_VERSION").to_string(),
@@ -8238,6 +8241,22 @@ impl ServerHandler for IrisTools {
                  compile=true) before considering the change saved."
                     .to_string(),
             )
+    }
+
+    /// Cap negotiated protocol at 2025-11-25.
+    ///
+    /// rmcp 3.1.3 includes 2026-07-28 in KNOWN_VERSIONS, so without this override the
+    /// server echoes it back to any client that requests it. The 2026-07-28 spec requires
+    /// `cache: {ttlMs, cacheScope}` on every tool in `tools/list` — rmcp doesn't add those
+    /// fields automatically, so clients that enforce the spec reject all tools. Cap to
+    /// 2025-11-25 until we explicitly implement the cache-annotation contract. (#117)
+    fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
+        std::borrow::Cow::Borrowed(&[
+            ProtocolVersion::V_2024_11_05,
+            ProtocolVersion::V_2025_03_26,
+            ProtocolVersion::V_2025_06_18,
+            ProtocolVersion::V_2025_11_25,
+        ])
     }
 
     /// Override list_tools to (1) rewrite JSON Schema 2020-12 nullable types to OpenAPI 3.0

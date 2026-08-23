@@ -432,3 +432,60 @@ fn web_prefix_in_connection_url() {
         "http://localhost:80/irisaicore/api/atelier/v8/USER/action/compile"
     );
 }
+
+/// Issue #117: server caps protocol negotiation at 2025-11-25.
+///
+/// The 2026-07-28 draft requires per-tool `cache: {ttlMs, cacheScope}` fields in
+/// tools/list. rmcp doesn't add these automatically, so we exclude 2026-07-28 from
+/// the server's supported list. A client requesting 2026-07-28 falls back to 2025-11-25.
+/// Clients requesting a version we do support (≤ 2025-11-25) get that version echoed back.
+#[test]
+fn mcp_server_caps_protocol_version_to_2025_11_25() {
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let bin = iris_dev_bin();
+    if !bin.exists() {
+        eprintln!("Skipping: iris-agentic-dev binary not found");
+        return;
+    }
+
+    // (client_requested, expected_server_response)
+    let cases = &[
+        ("2026-07-28", "2025-11-25"), // unsupported → fall back to LATEST
+        ("2025-11-25", "2025-11-25"), // supported → echoed
+        ("2024-11-05", "2024-11-05"), // supported → echoed
+    ];
+
+    for (client_version, expected) in cases {
+        let mut child = Command::new(&bin)
+            .arg("mcp")
+            .env("IRIS_WEB_PORT", "9")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("failed to spawn iris-agentic-dev mcp");
+
+        let mut stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let mut reader = BufReader::new(stdout);
+
+        let params = format!(
+            r#"{{"protocolVersion":"{}","capabilities":{{}},"clientInfo":{{"name":"test","version":"0.1"}}}}"#,
+            client_version
+        );
+        send_jsonrpc(&mut stdin, 1, "initialize", &params);
+        let response = read_jsonrpc(&mut reader);
+
+        let server_version = response["result"]["protocolVersion"]
+            .as_str()
+            .unwrap_or("missing");
+
+        assert_eq!(
+            server_version, *expected,
+            "client sent {client_version}, server replied {server_version}, expected {expected}"
+        );
+
+        child.kill().ok();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}

@@ -4,7 +4,7 @@
   "description": "Wires iris-agentic-dev MCP tools into VS Code Copilot agent mode — automatically picks up your objectscript.conn connection. Requires the iris-agentic-dev binary on PATH or in `iris-agentic-dev.serverPath` setting.",
   "version": "0.4.29",
   "irisAgenticDev": {
-    "serverVersion": "1.2.3"
+    "serverVersion": "1.2.4"
   },
   "publisher": "intersystems-community",
   "icon": "icon.png",
@@ -65,7 +65,11 @@
         "iris-agentic-dev.scheme": {
           "type": "string",
           "default": "",
-          "enum": ["", "http", "https"],
+          "enum": [
+            "",
+            "http",
+            "https"
+          ],
           "enumDescriptions": [
             "Auto-detect from objectscript.conn / intersystems.servers (default).",
             "Force HTTP.",
@@ -76,7 +80,11 @@
         "iris-agentic-dev.toolset": {
           "type": "string",
           "default": "baseline",
-          "enum": ["baseline", "nostub", "merged"],
+          "enum": [
+            "baseline",
+            "nostub",
+            "merged"
+          ],
           "enumDescriptions": [
             "Standard tool set for ObjectScript development.",
             "Excludes stub/preview tools. Use when you want a stable, production-ready tool set.",
