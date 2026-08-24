@@ -116,13 +116,19 @@ jobs:
           # --db-path overrides the VS Code default location; positional args are server_name and username
           $output = & "target\debug\iris-agentic-dev.exe" check-sm-credential ci-server ci-user --db-path $dbPath 2>&1
           Write-Host "Output: $output"
-          # DB read succeeds; DPAPI decryption fails on CI (no real ciphertext) — that's expected.
-          # A "query failed" error means the TEXT column type fix regressed.
+          # Exact failure sequence we expect:
+          #   1. DB read succeeds (TEXT column accepted)
+          #   2. CryptUnprotectData fails on the garbage value — "CryptUnprotectData failed"
+          # If we see "query failed" instead, the TEXT column fix has regressed (Robbie's bug).
           if ($output -match "query failed") {
-            Write-Host "FAIL: DB read failed — TEXT column type fix is broken"
+            Write-Host "FAIL: DB read failed with column type error — TEXT fix regressed"
             exit 1
           }
-          Write-Host "PASS: DB read succeeded (DPAPI failure on CI is expected)"
+          if (-not ($output -match "CryptUnprotectData failed")) {
+            Write-Host "FAIL: expected CryptUnprotectData failure after successful read, got: $output"
+            exit 1
+          }
+          Write-Host "PASS: DB read succeeded, DPAPI attempted and failed as expected on CI"
 
   sign-windows:
     runs-on: windows-latest
