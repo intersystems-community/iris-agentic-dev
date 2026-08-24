@@ -7,6 +7,9 @@ pub struct CheckSmCredentialCommand {
     pub server_name: String,
     /// IRIS username stored with this server
     pub username: String,
+    /// Override the path to state.vscdb (for testing; omit to use the VS Code default location)
+    #[arg(long)]
+    pub db_path: Option<std::path::PathBuf>,
 }
 
 impl CheckSmCredentialCommand {
@@ -25,7 +28,7 @@ impl CheckSmCredentialCommand {
         #[cfg(target_os = "windows")]
         {
             let username = self.username.to_lowercase();
-            match resolve_vscode_secret(&self.server_name, &username) {
+            match resolve_vscode_secret(&self.server_name, &username, self.db_path.as_deref()) {
                 Ok(password) => {
                     println!("OK: resolved password for {}/{username}", self.server_name);
                     println!("Password length: {} chars", password.len());
@@ -41,8 +44,15 @@ impl CheckSmCredentialCommand {
 }
 
 #[cfg(target_os = "windows")]
-fn resolve_vscode_secret(server_name: &str, username: &str) -> Result<String, String> {
-    let db_path = vscode_state_db_path()?;
+fn resolve_vscode_secret(
+    server_name: &str,
+    username: &str,
+    db_path_override: Option<&std::path::Path>,
+) -> Result<String, String> {
+    let db_path = match db_path_override {
+        Some(p) => p.to_path_buf(),
+        None => vscode_state_db_path()?,
+    };
     eprintln!("state.vscdb: {}", db_path.display());
 
     let secret_key = format!(
@@ -88,11 +98,25 @@ fn read_from_db(db_path: &std::path::Path, key: &str) -> Result<Vec<u8>, String>
     let conn =
         rusqlite::Connection::open(db_path).map_err(|e| format!("cannot open state.vscdb: {e}"))?;
 
+    // VS Code stores the value as BLOB (DPAPI ciphertext) on some versions and as TEXT
+    // (JSON-encoded) on others. Accept both: BLOB is returned as-is; TEXT is decoded
+    // from UTF-8 so the caller can attempt DPAPI decryption on the raw bytes.
     let result: Option<Vec<u8>> = conn
         .query_row(
             "SELECT value FROM ItemTable WHERE key = ?1",
             rusqlite::params![key],
-            |row| row.get(0),
+            |row| {
+                use rusqlite::types::ValueRef;
+                match row.get_ref(0)? {
+                    ValueRef::Blob(b) => Ok(b.to_vec()),
+                    ValueRef::Text(t) => Ok(t.to_vec()),
+                    other => Err(rusqlite::Error::InvalidColumnType(
+                        0,
+                        "value".to_string(),
+                        other.data_type(),
+                    )),
+                }
+            },
         )
         .optional()
         .map_err(|e| format!("query failed: {e}"))?;
