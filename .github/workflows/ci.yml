@@ -103,23 +103,28 @@ jobs:
       - name: check-sm-credential DB read smoke test
         shell: pwsh
         run: |
-          # Create a minimal state.vscdb with a TEXT value to verify the DB read path
-          # works without a real VS Code installation. sqlite3 is available on windows-latest.
+          # Python's sqlite3 module is always available on windows-latest — no CLI needed.
           $dbPath = "$env:TEMP\state-test.vscdb"
-          # The command constructs the key from server_name + username; match that format
+          $key = 'secret://{"extensionId":"intersystems-community.servermanager","key":"credentialProvider:ci-server/ci-user"}'
           $val = 'not-real-dpapi-data'
-          & sqlite3 $dbPath "CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB NOT NULL); INSERT INTO ItemTable VALUES ('secret://{\""extensionId\"":\""intersystems-community.servermanager\"",\""key\"":\""credentialProvider:ci-server/ci-user\""}', '$val');"
+          python -c "
+import sqlite3, sys
+db = sqlite3.connect(sys.argv[1])
+db.execute('CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB NOT NULL)')
+db.execute('INSERT INTO ItemTable VALUES (?, ?)', (sys.argv[2], sys.argv[3]))
+db.commit()
+" $dbPath $key $val
           if ($LASTEXITCODE -ne 0) {
-            Write-Host "SKIP: sqlite3 not available"
+            Write-Host "SKIP: could not create test DB"
             exit 0
           }
-          # --db-path overrides the VS Code default location; positional args are server_name and username
+          # --db-path overrides the VS Code default; positional args are server_name and username
           $output = & "target\debug\iris-agentic-dev.exe" check-sm-credential ci-server ci-user --db-path $dbPath 2>&1
           Write-Host "Output: $output"
-          # Exact failure sequence we expect:
-          #   1. DB read succeeds (TEXT column accepted)
-          #   2. CryptUnprotectData fails on the garbage value — "CryptUnprotectData failed"
-          # If we see "query failed" instead, the TEXT column fix has regressed (Robbie's bug).
+          # Exact failure sequence expected:
+          #   1. DB read succeeds (TEXT column accepted) — no "query failed"
+          #   2. CryptUnprotectData called and fails on garbage bytes — "CryptUnprotectData failed"
+          # "query failed" = the TEXT column fix regressed (Robbie's original error).
           if ($output -match "query failed") {
             Write-Host "FAIL: DB read failed with column type error — TEXT fix regressed"
             exit 1
