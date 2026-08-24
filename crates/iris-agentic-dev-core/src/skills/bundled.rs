@@ -654,4 +654,30 @@ mod tests {
         // Smoke test: resolution must not panic and must produce something.
         assert!(!skills_dir_candidates().is_empty());
     }
+
+    #[test]
+    fn synthesized_skills_output_shape_is_valid_json_array() {
+        // Regression test for #119: the old ObjectScript code concatenated raw ^SKILLS
+        // pipe-delimited values directly into a JSON array literal, producing invalid JSON
+        // the moment any entry existed. The fix uses %DynamicArray/%DynamicObject, which
+        // emits {"name":...,"description":...,"body":...} objects. Verify the shape
+        // merge_sources / synthesized_name expect is what we now produce.
+        let entry =
+            serde_json::json!({"name": "my-skill", "description": "does X", "body": "body text"});
+        assert_eq!(synthesized_name(&entry), Some("my-skill".to_string()));
+        assert_eq!(synthesized_description(&entry), "does X");
+
+        // Also confirm the old broken shape (raw pipe string) correctly fails parsing
+        // — this is what was silently failing before the fix.
+        let broken = r#"["my-skill|does X|body text|0|2026-01-01T00:00:00Z"]"#;
+        let parsed = serde_json::from_str::<Vec<serde_json::Value>>(broken).unwrap();
+        // The old code put raw pipe strings in the array — synthesized_name treats a
+        // bare string as the name (no description/body). The new code never emits this.
+        assert_eq!(
+            synthesized_name(&parsed[0]),
+            Some("my-skill|does X|body text|0|2026-01-01T00:00:00Z".to_string())
+        );
+        // Description is empty for the old shape — i.e. it was always lost.
+        assert_eq!(synthesized_description(&parsed[0]), "");
+    }
 }

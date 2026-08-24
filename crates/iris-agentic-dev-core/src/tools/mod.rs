@@ -5355,7 +5355,10 @@ Methods:
         let Some(iris) = self.iris_arc() else {
             return (Vec::new(), false);
         };
-        let code = "Set key=\"\" Set result=\"[\" Set sep=\"\" For { Set key=$Order(^SKILLS(key)) Quit:key=\"\" Set skill=$Get(^SKILLS(key)) Set result=result_sep_skill Set sep=\",\" } Set result=result_\"]\" Write result";
+        // Build a JSON array of {name, description, body} objects via %DynamicArray so
+        // skill names and descriptions are properly escaped — raw string concatenation
+        // produced invalid JSON the moment any entry existed (#119).
+        let code = r#"Set arr=##class(%DynamicArray).%New() Set key="" For { Set key=$Order(^SKILLS(key)) Quit:key=""  Set val=$Get(^SKILLS(key)) Set obj=##class(%DynamicObject).%New() Do obj.%Set("name",key) Do obj.%Set("description",$Piece(val,"|",1)) Do obj.%Set("body",$Piece(val,"|",2)) Do arr.%Push(obj) } Write arr.%ToJSON()"#;
         match iris
             .execute(code, &crate::tools::skills_tools::skills_namespace())
             .await
