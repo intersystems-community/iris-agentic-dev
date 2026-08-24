@@ -5736,6 +5736,67 @@ fn e2e_skill_search_returns_results() {
     );
 }
 
+/// Regression test: `synthesized_skills()` (tools/mod.rs) used to build its
+/// `^SKILLS` JSON by concatenating the raw pipe-delimited global value straight
+/// into an array literal with no quoting and no `key` — unparseable the moment
+/// any `^SKILLS` entry existed, so `skill_list` never saw a single synthesized
+/// skill and incorrectly reported `sources.synthesized.searched: false` even
+/// though IRIS had been reached and read successfully. Seeds a real `^SKILLS`
+/// entry via `iris_global`, then asserts `skill_list` (the bundled+synthesized
+/// aware tool, not the IRIS-only `skill` tool above) actually surfaces it.
+#[test]
+fn e2e_skill_list_surfaces_a_synthesized_skill_from_skills_global() {
+    require_iris!();
+    let set = call_tool(
+        "iris_global",
+        serde_json::json!({
+            "action": "set",
+            "global_name": "^SKILLS",
+            "subscripts": ["iad-e2e-synth-skill-test"],
+            "value": "e2e synthesized skill description|some body text|0|2026-01-01T00:00:00Z",
+            "namespace": "USER"
+        }),
+    );
+    if set["error_code"].as_str() == Some("IRIS_UNREACHABLE")
+        || set["error_code"].as_str() == Some("ENV_GATE_BLOCKED")
+    {
+        return;
+    }
+    assert_eq!(set["success"], true, "seeding ^SKILLS: {}", set);
+
+    let list = call_tool("skill_list", serde_json::json!({}));
+
+    let cleanup = call_tool(
+        "iris_global",
+        serde_json::json!({
+            "action": "kill",
+            "global_name": "^SKILLS",
+            "subscripts": ["iad-e2e-synth-skill-test"],
+            "namespace": "USER"
+        }),
+    );
+    assert_eq!(cleanup["success"], true, "cleanup ^SKILLS: {}", cleanup);
+
+    assert_eq!(
+        list["sources"]["synthesized"]["searched"], true,
+        "^SKILLS was read successfully — synthesized.searched must be true: {}",
+        list
+    );
+    let skills = list["skills"].as_array().expect("skills array");
+    let found = skills
+        .iter()
+        .find(|s| s["name"] == "iad-e2e-synth-skill-test")
+        .unwrap_or_else(|| {
+            panic!("synthesized skill from ^SKILLS must appear in skill_list: {list}")
+        });
+    assert_eq!(found["source"], "synthesized", "{}", found);
+    assert_eq!(
+        found["description"], "e2e synthesized skill description",
+        "{}",
+        found
+    );
+}
+
 // ── kb ────────────────────────────────────────────────────────────────────────
 
 #[test]
