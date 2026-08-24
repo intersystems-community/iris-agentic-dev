@@ -1378,7 +1378,7 @@ dependencies = [
 
 [[package]]
 name = "iris-agentic-dev"
-version = "1.2.4"
+version = "1.2.5"
 dependencies = [
  "anyhow",
  "clap",
@@ -1402,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "iris-agentic-dev-core"
-version = "1.2.4"
+version = "1.2.5"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",

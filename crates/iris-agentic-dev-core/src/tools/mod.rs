@@ -8243,20 +8243,12 @@ impl ServerHandler for IrisTools {
             )
     }
 
-    /// Cap negotiated protocol at 2025-11-25.
+    /// Explicitly enumerate all supported protocol versions including 2026-07-28.
     ///
-    /// rmcp 3.1.3 includes 2026-07-28 in KNOWN_VERSIONS, so without this override the
-    /// server echoes it back to any client that requests it. The 2026-07-28 spec requires
-    /// `cache: {ttlMs, cacheScope}` on every tool in `tools/list` — rmcp doesn't add those
-    /// fields automatically, so clients that enforce the spec reject all tools. Cap to
-    /// 2025-11-25 until we explicitly implement the cache-annotation contract. (#117)
+    /// 2026-07-28 requires `ttlMs`/`cacheScope` on the `tools/list` response (SEP-2549).
+    /// We set those in `list_tools` above, so advertising this version is now correct. (#117)
     fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
-        std::borrow::Cow::Borrowed(&[
-            ProtocolVersion::V_2024_11_05,
-            ProtocolVersion::V_2025_03_26,
-            ProtocolVersion::V_2025_06_18,
-            ProtocolVersion::V_2025_11_25,
-        ])
+        std::borrow::Cow::Borrowed(ProtocolVersion::KNOWN_VERSIONS)
     }
 
     /// Override list_tools to (1) rewrite JSON Schema 2020-12 nullable types to OpenAPI 3.0
@@ -8302,6 +8294,10 @@ impl ServerHandler for IrisTools {
         let (page, next_cursor) = paginate_tool_list(tools, cursor.as_deref(), page_size);
         let mut result = rmcp::model::ListToolsResult::with_all_items(page);
         result.next_cursor = next_cursor;
+        // SEP-2549 / MCP 2026-07-28: cache annotation required when server negotiates that
+        // version. ttlMs=0 means "do not cache" — correct for tools that query live IRIS state.
+        result.ttl_ms = Some(0);
+        result.cache_scope = Some(rmcp::model::CacheScope::Public);
         Ok(result)
     }
 }

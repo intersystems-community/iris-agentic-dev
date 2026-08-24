@@ -433,14 +433,13 @@ fn web_prefix_in_connection_url() {
     );
 }
 
-/// Issue #117: server caps protocol negotiation at 2025-11-25.
+/// Issue #117: server negotiates all known protocol versions including 2026-07-28.
 ///
-/// The 2026-07-28 draft requires per-tool `cache: {ttlMs, cacheScope}` fields in
-/// tools/list. rmcp doesn't add these automatically, so we exclude 2026-07-28 from
-/// the server's supported list. A client requesting 2026-07-28 falls back to 2025-11-25.
-/// Clients requesting a version we do support (≤ 2025-11-25) get that version echoed back.
+/// 2026-07-28 requires `ttlMs`/`cacheScope` on the `tools/list` response (SEP-2549).
+/// We set those fields in list_tools, so the server can legitimately advertise and
+/// echo 2026-07-28. All known versions are echoed back to clients that request them.
 #[test]
-fn mcp_server_caps_protocol_version_to_2025_11_25() {
+fn mcp_server_negotiates_all_known_protocol_versions() {
     std::thread::sleep(std::time::Duration::from_millis(500));
     let bin = iris_dev_bin();
     if !bin.exists() {
@@ -448,14 +447,8 @@ fn mcp_server_caps_protocol_version_to_2025_11_25() {
         return;
     }
 
-    // (client_requested, expected_server_response)
-    let cases = &[
-        ("2026-07-28", "2025-11-25"), // unsupported → fall back to LATEST
-        ("2025-11-25", "2025-11-25"), // supported → echoed
-        ("2024-11-05", "2024-11-05"), // supported → echoed
-    ];
-
-    for (client_version, expected) in cases {
+    // All known protocol versions should be echoed back
+    for client_version in &["2026-07-28", "2025-11-25", "2024-11-05"] {
         let mut child = Command::new(&bin)
             .arg("mcp")
             .env("IRIS_WEB_PORT", "9")
@@ -481,11 +474,73 @@ fn mcp_server_caps_protocol_version_to_2025_11_25() {
             .unwrap_or("missing");
 
         assert_eq!(
-            server_version, *expected,
-            "client sent {client_version}, server replied {server_version}, expected {expected}"
+            server_version, *client_version,
+            "client sent {client_version}, server replied {server_version} — should echo known versions"
         );
 
         child.kill().ok();
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+}
+
+/// Issue #117: tools/list response carries cache annotation when negotiating 2026-07-28.
+///
+/// SEP-2549 requires ttlMs and cacheScope on the ListToolsResult for 2026-07-28 peers.
+/// ttlMs=0 means "do not cache" — correct for tools that query live IRIS state.
+#[test]
+fn mcp_server_tools_list_includes_cache_annotation_for_2026_07_28() {
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let bin = iris_dev_bin();
+    if !bin.exists() {
+        eprintln!("Skipping: iris-agentic-dev binary not found");
+        return;
+    }
+
+    let mut child = Command::new(&bin)
+        .arg("mcp")
+        .env("IRIS_WEB_PORT", "9")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn iris-agentic-dev mcp");
+
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout);
+
+    send_jsonrpc(
+        &mut stdin,
+        1,
+        "initialize",
+        r#"{"protocolVersion":"2026-07-28","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}"#,
+    );
+    let _init = read_jsonrpc(&mut reader);
+    let init_notif = concat!(
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}"#,
+        "\n"
+    );
+    stdin.write_all(init_notif.as_bytes()).unwrap();
+    stdin.flush().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    send_jsonrpc(&mut stdin, 2, "tools/list", "{}");
+    let response = read_jsonrpc(&mut reader);
+
+    let ttl_ms = &response["result"]["ttlMs"];
+    let cache_scope = &response["result"]["cacheScope"];
+
+    assert!(
+        !ttl_ms.is_null(),
+        "tools/list response missing ttlMs for 2026-07-28 peer: {}",
+        response
+    );
+    assert_eq!(ttl_ms, 0, "ttlMs should be 0 (do not cache): {}", response);
+    assert!(
+        !cache_scope.is_null(),
+        "tools/list response missing cacheScope for 2026-07-28 peer: {}",
+        response
+    );
+
+    child.kill().ok();
 }
