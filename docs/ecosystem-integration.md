@@ -117,8 +117,11 @@ pip install your-package[ai]
 ```
 
 This installs the `iris-dev` binary. They then wire it into their MCP client
-(Claude Code, VS Code Copilot, OpenCode) following the
+(Claude Code, VS Code Copilot, OpenCode, or [Cursor](cursor-quickstart.md))
+following the
 [getting-started guide](https://github.com/intersystems-community/iris-agentic-dev#install).
+For Cursor-specific MCP wiring and limitations vs Copilot, see
+[cursor-quickstart.md](cursor-quickstart.md).
 
 ---
 
