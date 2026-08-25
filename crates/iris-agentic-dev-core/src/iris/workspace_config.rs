@@ -458,9 +458,23 @@ pub fn apply_explicit_config_file(
 
 /// Load `.iris-agentic-dev.toml` as a `FleetConfig` (Amendment 001).
 /// Returns `None` if the file does not exist or fails to parse (with a warning).
+///
+/// `workspace_path` may be either:
+/// - a workspace **directory** containing `.iris-agentic-dev.toml`, or
+/// - a path to the **config file itself** (e.g. what `load_pool` receives as
+///   `config_file`). Passing the file path used to silently skip fleet loading
+///   because this function joined `.iris-agentic-dev.toml` onto the file path.
 pub fn load_fleet_config(workspace_path: Option<&str>) -> Option<FleetConfig> {
     let root = workspace_root(workspace_path);
-    let config_path = if root.join(".iris-agentic-dev.toml").exists() {
+    let config_path = if root.is_file()
+        || root
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("toml"))
+    {
+        // Caller passed the toml path directly (common from `load_pool`).
+        root
+    } else if root.join(".iris-agentic-dev.toml").exists() {
         root.join(".iris-agentic-dev.toml")
     } else if root.join(".iris-dev.toml").exists() {
         root.join(".iris-dev.toml")
