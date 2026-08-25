@@ -30,15 +30,40 @@ Cursor is optional and **untested** as a substitute for `mcp.json`.
 
 ## 1. Install the binary
 
-Pick one:
+Same options as the [main install section](../README.md#install). Homebrew when
+available; otherwise curl the release binary (common on Linux / shared hosts).
+
+### Mac (Homebrew)
 
 ```bash
-# Homebrew (macOS / Linux)
-brew install intersystems-community/tap/iris-agentic-dev
-
-# Or download the latest release for your OS from:
-# https://github.com/intersystems-community/iris-agentic-dev/releases/latest
+brew tap intersystems-community/tap
+brew install iris-agentic-dev
 ```
+
+### Mac direct download (Apple Silicon)
+
+```bash
+curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-macos-arm64 \
+  -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
+xattr -d com.apple.quarantine /usr/local/bin/iris-agentic-dev 2>/dev/null
+```
+
+### Linux x86_64
+
+```bash
+curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-linux-x86_64 \
+  -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
+```
+
+If `/usr/local/bin` is not writable, install under your home directory instead
+(for example `~/.local/bin/iris-agentic-dev`) and point `command` in `mcp.json`
+at that absolute path.
+
+### Windows
+
+Download `iris-agentic-dev-windows-x86_64.exe` from the
+[releases page](https://github.com/intersystems-community/iris-agentic-dev/releases/latest)
+and place it on your PATH.
 
 Confirm:
 
