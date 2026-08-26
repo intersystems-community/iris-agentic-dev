@@ -1,0 +1,24 @@
+id: ENSEMBLE-APPROACH-CHOICE
+category: targeted
+description: |
+  A developer asks: "I need to define an IRIS Interoperability production with two business
+  services and a routing process, and also write a script to start and stop it from a CI
+  pipeline. Should I use Python (pyprod) or ObjectScript (Ens.Director / BPL)? Explain your
+  recommendation."
+expected_behavior: |
+  Recommends Python pyprod for both tasks (production definition + CI lifecycle management)
+  because the caller is an external script context.
+  Explains that pyprod Production/ServiceItem/ProcessItem gives a declarative, version-
+  controllable definition in Python — no raw XML required.
+  Explains that pyprod director.start_production() / director.get_production_status() handle
+  lifecycle from Python without entering ObjectScript.
+  Mentions that ObjectScript Ens.Director + BPL is the right choice when the orchestration
+  logic must live INSIDE IRIS (e.g., a BP that reacts to messages at runtime), not in an
+  external script.
+  Does NOT recommend writing a BPL class for CI pipeline lifecycle management.
+  Does NOT recommend calling Ens.Director directly from Python via the iris module when
+  pyprod director already wraps it correctly.
+  Does NOT conflate "defining the production" (structure) with "orchestrating messages"
+  (runtime BP logic) — these are separate concerns that may use different approaches.
+fixtures: []
+tags: [ensemble, python, pyprod, objectscript, approach-choice]

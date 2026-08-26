@@ -77,6 +77,16 @@ jobs:
         # and a Marketplace publish cannot be undone.
         run: python -m pytest tests/e2e/test_release_workflow.py -q
 
+      - name: Verify every workflow file parses and declares jobs
+        # An unparseable workflow shows up as a 0-second run with no jobs, which
+        # is why ci.yml sat dead on master for two days after 4dec14f.
+        run: python -m pytest tests/e2e/test_workflow_files.py -q
+
+      - name: Verify the task corpus is self-consistent and committed
+        # An eval.yaml referencing a task file that exists on disk but is not
+        # tracked by git is green locally and red in CI, every time.
+        run: python -m pytest tests/e2e/skill_eval/test_task_corpus.py -q
+
   windows-handshake:
     runs-on: windows-latest
     steps:

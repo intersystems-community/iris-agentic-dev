@@ -118,3 +118,7 @@ path = "tests/integration/test_mcp_binary_config.rs"
 [[test]]
 name = "test_reporter_repro"
 path = "tests/integration/test_reporter_repro.rs"
+
+[[test]]
+name = "test_workflow_files"
+path = "tests/unit/test_workflow_files.rs"

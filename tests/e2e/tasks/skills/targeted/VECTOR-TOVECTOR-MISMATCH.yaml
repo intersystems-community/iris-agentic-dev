@@ -1,0 +1,6 @@
+id: VECTOR-TOVECTOR-MISMATCH
+category: targeted
+description: "Write a Python function using iris.dbapi that searches a Docs.Chunks table for the 10 nearest neighbors to a query vector. The table schema is: CREATE TABLE Docs.Chunks (id INT, content VARCHAR(1000), embedding VECTOR(DOUBLE, 768)). The function receives the query as a comma-separated string of 768 floats. Return only id and content columns, not the embedding."
+expected_behavior: "Uses `VECTOR_COSINE` for similarity. Uses `TO_VECTOR(?, DOUBLE, 768)` — 3-argument form with DOUBLE type and dimension 768 matching the column definition. Uses `TOP 10` — NOT `LIMIT`. Does NOT select the `embedding` column in the result set. Does NOT use `TO_VECTOR(?)` 1-argument form. Does NOT use `<=>` or `::vector`."
+fixtures: []
+tags: [vector, python, dbapi, to-vector-3-arg, dimension-768]
