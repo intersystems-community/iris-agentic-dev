@@ -69,3 +69,6 @@ __pycache__/
 
 # Browser-automation capture dumps (console logs + page snapshots, machine-specific)
 .playwright-mcp/
+
+# Mermaid VS Code extension output — machine-specific, not repo guidance
+.github/instructions/mermaid.instructions.md

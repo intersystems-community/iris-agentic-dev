@@ -42,7 +42,8 @@ iris-agentic-dev tool iris_compile '{"target":"MyApp.Foo.cls"}'
 iris-agentic-dev tool iris_execute '{"code":"Write ##class(%SYS.ProcessQuery).GetInfo()"}'
 ```
 
-→ [Tool reference](docs/tools.md)
+→ [Tool reference](docs/tools.md) |
+[Annotated session: tracing an ADT^A03 through a production](docs/examples/adt-a03-discharge-flow.txt)
 
 ### Mode 3 — Skills only
 
@@ -113,7 +114,7 @@ setup needed.
 
 ![iris-agentic-dev tools visible in the Copilot Configure Tools panel](docs/images/copilot-tools-panel.png)
 
-To verify the connection, ask Copilot: *"Call check_config and show me the result."*
+To verify the connection, ask Copilot: _"Call check_config and show me the result."_
 
 ![check_config result showing connected: true, auto-discovered connection, and IRIS version](docs/images/check-config-result.png)
 
@@ -327,16 +328,16 @@ iris-agentic-dev resolves the IRIS connection in this order — first match wins
 | `IRIS_HOST`             | `localhost`  | IRIS web gateway hostname                             |
 | `IRIS_WEB_PORT`         | `52773`      | Web gateway port                                      |
 | `IRIS_SCHEME`           | `http`       | `http` or `https`                                     |
-| `IRIS_WEB_PREFIX`       | *(empty)*    | URL path prefix for non-root gateway installs         |
+| `IRIS_WEB_PREFIX`       | _(empty)_    | URL path prefix for non-root gateway installs         |
 | `IRIS_USERNAME`         | `_SYSTEM`    | IRIS username                                         |
 | `IRIS_PASSWORD`         | `SYS`        | IRIS password                                         |
-| `IRIS_SERVICE_USERNAME` | *(empty)*    | Least-privilege account for execute/query/write tools |
-| `IRIS_SERVICE_PASSWORD` | *(empty)*    | Password for `IRIS_SERVICE_USERNAME`                  |
+| `IRIS_SERVICE_USERNAME` | _(empty)_    | Least-privilege account for execute/query/write tools |
+| `IRIS_SERVICE_PASSWORD` | _(empty)_    | Password for `IRIS_SERVICE_USERNAME`                  |
 | `IRIS_NAMESPACE`        | `USER`       | Default namespace                                     |
-| `IRIS_CONTAINER`        | *(empty)*    | Docker container name (required for ✦ tools)          |
-| `IRIS_SERVER_NAME`      | *(empty)*    | Server Manager server name (multiple servers)         |
+| `IRIS_CONTAINER`        | _(empty)_    | Docker container name (required for ✦ tools)          |
+| `IRIS_SERVER_NAME`      | _(empty)_    | Server Manager server name (multiple servers)         |
 | `OBJECTSCRIPT_WORKSPACE`| `$PWD`       | Workspace root for `.iris-agentic-dev.toml` lookup    |
-| `IRIS_ENABLED_TOOLS`    | *(empty)*    | Comma-separated allowlist — expose only these tools   |
+| `IRIS_ENABLED_TOOLS`    | _(empty)_    | Comma-separated allowlist — expose only these tools   |
 
 ### Privilege separation for arbitrary execution
 

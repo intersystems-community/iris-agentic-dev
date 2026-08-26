@@ -1,0 +1,241 @@
+Prompt: "How does an ADT A03 discharge message flow through the IRISDemo production?"
+Target: irisdemo-demo-readmission (IRISDemo namespace, irishealth-community:2026.1)
+Tool: iris-agentic-dev v0.9.9
+
+One prompt. Every tool call and response shown as they happened. The AI interpreted
+each result before deciding the next call.
+
+================================================================================
+
+I'll trace an ADT A03 discharge message through the IRISDemo production. Starting
+with the production structure.
+
+─── Tool call: iris_production ──────────────────────────────────────────────────
+Input:
+{
+  "action": "status"
+}
+
+Result:
+IRISDemo.Production — RUNNING
+Items: HIS HL7v2 TCP Feed, HIS HL7v2 File Feed Router, Readmission Risk Process,
+HisDB Encounter Update Operation, LACE SOAP Operation, Readmission ML Model Consumer,
+Care Team, Risk Alert Email Operation
+
+Good — IRISDemo.Production is running. Now let me get the full production config to
+see all components.
+
+─── Tool call: iris_query ───────────────────────────────────────────────────────
+Input:
+{
+  "query": "SELECT Name, ClassName FROM Ens_Config.Item WHERE Production = 'IRISDemo.Production' ORDER BY Name",
+  "namespace": "USER"
+}
+
+Result:
+Care Team                         EnsLib.Workflow.Operation
+HIS HL7v2 File Feed Router        EnsLib.HL7.MsgRouter.RoutingEngine
+HIS HL7v2 TCP Feed                EnsLib.HL7.Service.TCPService
+HisDB Encounter Update Operation  IRISDemo.BO.EncounterUpdate.Operation
+LACE SOAP Operation               RRLACESrv.BO.LACESoap
+Readmission ML Model Consumer     ML.Model.BO.Executor.ServiceConsumer
+Readmission Risk Process          IRISDemo.BP.ReadmissionRisk.Process
+Risk Alert Email Operation        IRISDemo.BO.Email.Operation
+
+Now I have the full component map. An ADT A03 arrives via TCP, hits the routing
+engine. The key question is: what routing rules does "HIS HL7v2 File Feed Router"
+apply? Let me pull its settings and extract the BPL routing in parallel.
+
+─── Tool call: iris_query ───────────────────────────────────────────────────────
+Input:
+{
+  "query": "SELECT TOP 5 * FROM Ens_Config.Item",
+  "namespace": "USER"
+}
+
+Result: (settings blob reveals)
+BusinessRuleName = IRISDemo.HISHL7v2FileFeedRoutingRule
+TCP port = 9999, schema = 2.5
+
+─── Tool call: extract_message_map_routing ──────────────────────────────────────
+Input:
+{
+  "class_name": "IRISDemo.HISHL7v2FileFeedRoutingRule",
+  "namespace": "USER"
+}
+
+Result:
+{"error": "Class has no routing (not a MessageMap, BPL, or DTL class)", "error_code": "NOT_FOUND"}
+
+─── Tool call: extract_message_map_routing ──────────────────────────────────────
+Input:
+{
+  "class_name": "IRISDemo.BP.ReadmissionRisk.Process",
+  "namespace": "USER"
+}
+
+Result:
+{
+  "kind": "bpl",
+  "routes": [
+    {"message_type": "Update Encounter",         "method": "LACE SOAP Operation"},
+    {"message_type": "Calculate Risk with LACE", "method": "LACE SOAP Operation"},
+    {"message_type": "Calculate Risk with ML",   "method": "Readmission ML Model Consumer"},
+    {"message_type": "EMR Readmission Update",   "method": "HisDB Encounter Update Operation"}
+  ]
+}
+
+The routing rule is a Ens.Rule.Definition subclass — not a MessageMap/BPL/DTL, so the
+tool can't map it structurally. The BPL result is revealing. Let me search the rule
+source directly for A03 logic, and read all the relevant class sources in parallel.
+
+─── Tool call: iris_search ──────────────────────────────────────────────────────
+Input:
+{
+  "query": "A03",
+  "documents": ["IRISDemo.*.cls"],
+  "namespace": "USER",
+  "inline": true
+}
+
+Result:
+IRISDemo.HISHL7v2FileFeedRoutingRule — constraint: docName=ADT_A03, action: transform
+  IRISDemo.DTL.HL7Update, target: Readmission Risk Process
+IRISDemo.DTL.HL7Update — maps MSH:MessageType.TriggerEvent → UpdateMessageType ("A03")
+IRISDemo.DTL.HL7Discharge — maps A03 fields, but to DischargeRequest (different target type)
+IRISDemo.BP.ReadmissionRisk.Process — conditional gate: request.UpdateMessageType = "A03"
+
+─── Tool call: iris_doc ─────────────────────────────────────────────────────────
+Input: {"mode": "get", "name": "IRISDemo.HISHL7v2FileFeedRoutingRule.cls", "namespace": "USER"}
+
+Result: (XData block, two rules)
+Rule 1: source=HIS HL7v2 TCP Feed, docCategory=2.5, docName=ADT_A01 OR ADT_A08
+  → transform IRISDemo.DTL.HL7Update, target Readmission Risk Process
+
+Rule 2: source=HIS HL7v2 TCP Feed, docCategory=2.5, docName=ADT_A03
+  → transform IRISDemo.DTL.HL7Update, target Readmission Risk Process
+
+─── Tool call: iris_doc ─────────────────────────────────────────────────────────
+Input: {"mode": "get", "name": "IRISDemo.DTL.HL7Update.cls", "namespace": "USER"}
+
+Result: (DTL source)
+source:  EnsLib.HL7.Message
+target:  RRLACESrv.BO.UpdateEncounterRequest
+assigns:
+  PID:PatientID.IDNumber           → PatientID
+  PV1:VisitNumber.IDNumber         → EncounterNumber
+  PV1:AdmissionType                → EncounterType
+  PV1:AdmitDateTime                → EncounterStart
+  PV1:DischargeDateTime            → EncounterEnd
+  PV1:AdmitSource                  → AdmissionSource
+  PV1:DischargedtoLocation         → DischargeLocation (default "H" if blank)
+  MSH:MessageType.TriggerEvent     → UpdateMessageType  ← "A03" stamped here
+
+─── Tool call: iris_doc ─────────────────────────────────────────────────────────
+Input: {"mode": "get", "name": "IRISDemo.DTL.HL7Discharge.cls", "namespace": "USER"}
+
+Result: (DTL source)
+source:  EnsLib.HL7.Message
+target:  RRLACESrv.BO.DischargeRequest
+assigns: 9 field mappings
+
+Note: this class exists but the routing rule sends A03 through DTL.HL7Update, not
+DTL.HL7Discharge. HL7Discharge appears to be dead code.
+
+─── Tool call: iris_doc ─────────────────────────────────────────────────────────
+Input: {"mode": "get", "name": "IRISDemo.BP.ReadmissionRisk.Process.cls", "namespace": "USER"}
+
+Result: (BPL source, xdata flow)
+steps:
+  call  Update Encounter         → LACE SOAP Operation          [sync]
+  call  Calculate Risk with LACE → LACE SOAP Operation          [sync]
+  call  Calculate Risk with ML   → Readmission ML Model Consumer [sync]
+  call  EMR Readmission Update   → HisDB Encounter Update Op    [async]
+  if    Discharge OK?
+        (request.UpdateMessageType = "A03") && (context.UpdateEncounterResult = 1)
+    if  Risk Alert?
+        (context.RiskScore > 11) || (context.MLReadmissionRisk > 0.15)
+      assign  Compose Alert Message
+      call    Add Patient to Risk Program → Care Team            [async]
+      call    Alert Care Team            → Risk Alert Email Op   [sync]
+      sync    Follow up SLA 2 days       (172800s timeout)
+      if      No follow up?  (synctimedout)
+                → raise alert "Follow up of patient id ... pending."
+
+I now have the complete picture.
+
+================================================================================
+FULL TRACE
+================================================================================
+
+1. INGRESS — HIS HL7v2 TCP Feed (EnsLib.HL7.Service.TCPService)
+
+   Listens on port 9999, schema 2.5. Forwards all HL7 messages to the router.
+   No filtering at this stage.
+
+2. ROUTING — HIS HL7v2 File Feed Router → IRISDemo.HISHL7v2FileFeedRoutingRule
+
+   Two rules. Rule 2 fires for ADT_A03:
+     constraint: source=HIS HL7v2 TCP Feed, docCategory=2.5, docName=ADT_A03
+     action:     transform IRISDemo.DTL.HL7Update → send to Readmission Risk Process
+
+3. TRANSFORM — IRISDemo.DTL.HL7Update
+
+   EnsLib.HL7.Message → RRLACESrv.BO.UpdateEncounterRequest
+   Critical field: MSH:MessageType.TriggerEvent → UpdateMessageType = "A03"
+   This is what lets the BPL branch differently from A01/A08.
+
+4. BUSINESS PROCESS — IRISDemo.BP.ReadmissionRisk.Process
+
+   Steps 1–4 run for every message type (A01, A03, A08):
+     [sync]  Update Encounter         → LACE SOAP Operation
+     [sync]  Calculate Risk with LACE → LACE SOAP Operation       → RiskScore
+     [sync]  Calculate Risk with ML   → Readmission ML Model Consumer → MLReadmissionRisk
+     [async] EMR Readmission Update   → HisDB Encounter Update Operation
+
+   Step 5 — gate: UpdateMessageType="A03" && UpdateEncounterResult=1
+   (A01/A08 fall through here and stop)
+
+   Step 5a — gate: RiskScore>11 OR MLReadmissionRisk>0.15
+     [async] Add Patient to Risk Program → Care Team (workflow task)
+     [sync]  Alert Care Team            → Risk Alert Email Operation
+     [sync/wait 48h] Follow up SLA
+       → if timed out: raise alert "Follow up of patient id ... pending."
+
+================================================================================
+FLOW DIAGRAM
+================================================================================
+
+TCP :9999
+    │ EnsLib.HL7.Service.TCPService
+    ↓
+HIS HL7v2 File Feed Router
+    │ rule: docName=ADT_A03 → transform DTL.HL7Update (stamps UpdateMessageType="A03")
+    ↓
+Readmission Risk Process (BPL)
+    ├─[1]─ LACE SOAP Operation           (UpdateEncounter — sync)
+    ├─[2]─ LACE SOAP Operation           (CalculateRisk — sync)   → RiskScore
+    ├─[3]─ Readmission ML Model Consumer (ML score — sync)        → MLReadmissionRisk
+    ├─[4]─ HisDB Encounter Update Op     (write back — async)
+    └─[5]─ if UpdateMessageType="A03" && UpdateEncounterResult=OK
+               └─ if RiskScore>11 OR MLRisk>0.15
+                      ├─ Care Team (workflow task — async)
+                      ├─ Risk Alert Email Operation (email — sync)
+                      └─ sync/wait 48h → alert if no follow-up
+
+================================================================================
+KEY OBSERVATIONS
+================================================================================
+
+1. IRISDemo.DTL.HL7Discharge is dead code — exists, maps A03 fields to
+   DischargeRequest, but the routing rule only uses DTL.HL7Update.
+
+2. A03 and A01/A08 share the same BPL — the UpdateMessageType="A03" gate
+   inside the process is what makes discharge special. The first four steps
+   run for every message type.
+
+3. Risk threshold is dual-track: LACE>11 OR ML>15%. Either signal alone triggers
+   the care team path.
+
+4. The 48h SLA on care team follow-up is enforced by BPL sync/timeout — unresolved
+   workflow tasks escalate to an Ensemble alert automatically.
