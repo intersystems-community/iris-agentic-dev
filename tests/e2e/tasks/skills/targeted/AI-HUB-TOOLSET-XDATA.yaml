@@ -1,0 +1,26 @@
+id: AI-HUB-TOOLSET-XDATA
+category: targeted
+description: |
+  Write an IRIS AI Hub class EHR.Tools.PatientToolSet that extends %AI.ToolSet and defines
+  one tool called GetPatientSummary. The tool takes a patientId string parameter and returns
+  a text summary. Implement the corresponding ObjectScript method.
+expected_behavior: |
+  Class extends `%AI.ToolSet`.
+  Defines `XData Definition [MimeType = application/xml]` containing a `<ToolSet>` root element
+  with a `Name` attribute and a `<Description>` child.
+  Inside `<ToolSet>`, defines `<Tool Name="GetPatientSummary" Method="GetPatientSummary">` with
+  a `<Description>` child describing what the tool does and its parameters in plain text.
+  Defines a corresponding `ClassMethod GetPatientSummary(patientId As %String) As %String`.
+  The `Method` attribute in the XData `<Tool>` element matches the ClassMethod name exactly (case-sensitive).
+  Parameter types are auto-inferred from the ObjectScript method signature — no explicit
+  `<Parameters>` block is required (and using one may cause compile errors in some builds).
+  Does NOT use per-tool JSON XData blocks (that format does not exist in %AI.ToolSet).
+  Does NOT define a `MessageMap` XData block (MessageMap is for Ens.BusinessOperation, not ToolSet).
+  Does NOT use `Parameter TOOLS` or `Parameter SKILLS` to declare the tool.
+  Alternative valid pattern: extend `%AI.Tool` instead of `%AI.ToolSet` — in that case no XData
+  is needed; every public ClassMethod becomes a tool automatically, with parameter types
+  inferred from the method signature and descriptions from class doc comments above each method.
+  The class compiles without errors and `%Discover()` returns a tools array with the correct
+  tool name, description, and parameter schema.
+fixtures: []
+tags: [ai-hub, toolset, xdata, tool-definition]

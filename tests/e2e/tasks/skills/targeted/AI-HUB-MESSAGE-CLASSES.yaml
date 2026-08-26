@@ -1,0 +1,22 @@
+id: AI-HUB-MESSAGE-CLASSES
+category: targeted
+description: |
+  Write the request and response message class pair for an AI-assisted clinical assessment
+  workflow in the EHR.Workflow package:
+  - EHR.Workflow.AssessmentRequest: carries a patient ID and free-text clinical notes
+    from the nurse
+  - EHR.Workflow.AssessmentResponse: carries the AI recommendation (text), suggested
+    medication name (text), and urgency level (integer 1-5)
+expected_behavior: |
+  Both classes are in the `EHR.Workflow` package — NOT at the root package level, NOT in `EHR` directly, and NOT in `EHR.Msg` (workflow message classes may live alongside their process).
+  `EHR.Workflow.AssessmentRequest` extends `Ens.Request` — NOT `%Persistent`, NOT `%RegisteredObject`.
+  `EHR.Workflow.AssessmentResponse` extends `Ens.Response` — NOT `%Persistent`.
+  `PatientId` property is `%String` with a MAXLEN parameter (e.g. MAXLEN=50).
+  `Notes` property is `%String(MAXLEN="")` or `%String(MAXLEN=32000)` — not a bare `%String` with default MAXLEN=50.
+  `Recommendation` property is `%String(MAXLEN="")` or similar long string.
+  `Medication` property is `%String`.
+  `UrgencyLevel` property is `%Integer` — NOT `%String`, NOT `%Numeric`.
+  No property uses `%Stream` unless the notes are explicitly modeled as a stream (not required here).
+  Both classes compile as valid Ens message classes (correct Extends, no missing semicolons).
+fixtures: []
+tags: [ai-hub, messages, ens-request, ens-response]

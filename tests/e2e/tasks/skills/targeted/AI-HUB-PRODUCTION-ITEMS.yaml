@@ -1,0 +1,22 @@
+id: AI-HUB-PRODUCTION-ITEMS
+category: targeted
+description: |
+  Write the Production XData ProductionDefinition <Item> entries for an EHR AI workflow
+  production with these components:
+  - A business service that receives nurse input (use EnsLib.MsgRouter.RoutingEngine or a
+    custom BS class EHR.Workflow.PatientUnwellService)
+  - A business process EHR.Workflow.PatientUnwellProcessBPL
+  - A business operation EHR.Workflow.AssessmentAgentOperation
+  - A built-in workflow operation for physician review (EnsLib.Workflow.Operation)
+  - A business operation EHR.Workflow.MedicationWriteOperation for writing approved medication
+expected_behavior: |
+  Each component appears as an `<Item Name="..." ClassName="..." ...>` element.
+  `EnsLib.Workflow.Operation` is used directly as a ClassName — no custom subclass needed.
+  All new custom business operations (`AssessmentAgentOperation`, `MedicationWriteOperation`) have `Enabled="false"`.
+  No `<Setting>` entries invent or guess IP addresses, TCP ports, file paths, or URLs — leave environment-specific settings absent or empty.
+  PoolSize is set to a reasonable value (1 for operations, 1-5 for processes/services).
+  The production class itself extends `Ens.Production` and contains an `XData ProductionDefinition` block.
+  Does NOT set `Enabled="true"` on any operation that connects to an external system without explicit configuration.
+  Does NOT invent class names like `EnsLib.Workflow.HTTPOperation` or `AI.AgentBO` — uses the exact built-in class names.
+fixtures: []
+tags: [ai-hub, production, interoperability, enabled-false]

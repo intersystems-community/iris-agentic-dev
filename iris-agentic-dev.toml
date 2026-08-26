@@ -29,6 +29,7 @@ skills = [
     # iris-vector-graph and iris-vector-rag moved to their own repos (commit 1fb7a8c) —
     # do not re-add here, the paths 404 on install.
     "skills/skills/iris-vector-ai",
+    "skills/skills/iris-ai-hub",
     # Interoperability
     "skills/skills/ensemble-production",
     "skills/skills/iris-objectscript-eval",

@@ -1,0 +1,34 @@
+id: AI-HUB-WORKFLOW-SUSPEND
+category: targeted
+description: |
+  Write the XData BPL block for a business process class EHR.Workflow.PatientUnwellProcessBPL
+  (extending Ens.BusinessProcessBPL) that:
+  1. Receives an EHR.Workflow.PatientUnwellMessage request.
+  2. Calls EHR.Workflow.AssessmentAgentOperation asynchronously.
+  3. Suspends until the agent response arrives, storing the result in a context property.
+  4. Sends a EnsLib.Workflow.TaskRequest to EHR.Workflow.PhysicianReviewOperation and
+     suspends waiting for physician approval.
+  5. On approval, forwards a medication write request to EHR.Workflow.MedicationWriteOperation.
+expected_behavior: |
+  Class extends `Ens.BusinessProcessBPL`, NOT `Ens.BusinessProcess`.
+  XData BPL block has `XMLNamespace = "http://www.intersystems.com/bpl"`.
+  `<process>` element sets `request='EHR.Workflow.PatientUnwellMessage'`.
+  `<context>` block declares at least one property to hold the agent BO response between
+  suspension points — type should be the actual response message class (e.g.
+  `EHR.Workflow.AssessmentResponse`) or `%String` for a text result, not an invented
+  `%AI.Message.AgentResponse` type.
+  Agent BO call uses `<call name='...' target='AssessmentAgentOperation' async='true'>` — NOT
+  `SendRequestSync`, NOT a `<code>` block calling `..SendRequestSync`.
+  A `<sync>` element appears after the async agent call to resume when the response arrives.
+  Workflow call uses `<call name='...' target='PhysicianReviewOperation' async='true'>` or
+  `sync='false'` followed by another `<sync>`.
+  `EnsLib.Workflow.TaskRequest` is used as the request type for the physician review call —
+  setting at minimum `%Subject`, `%Priority`, and `%Actions` properties via `<assign>` before
+  the call.
+  Does NOT use `initialExpression` as a `<property>` attribute in `<context>` — uses `<assign>`
+  to set initial values instead.
+  Does NOT call `..SendRequestSync` or `..SendRequestAsync` directly inside a `<code>` block
+  — `SendRequestSync` does not exist in the BPL thread context and causes a compile error
+  (`Method or Property 'SendRequestSync' does not exist in this class`), not just a runtime problem.
+fixtures: []
+tags: [ai-hub, bpl, workflow, async, suspend, enslib-workflow]

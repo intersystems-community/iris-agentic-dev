@@ -1,0 +1,25 @@
+id: AI-HUB-AGENT-OPERATION
+category: targeted
+description: |
+  Write an ObjectScript class EHR.Workflow.AssessmentAgentOperation that acts as an IRIS
+  Interoperability Business Operation wrapping the EHR.AI.AssessmentAgent. When it receives
+  an EHR.Workflow.AssessmentRequest message, it should: create an %AI.Provider, instantiate
+  an %AI.Agent, add the agent's toolset, create a session, call Chat() with the patient notes
+  from the request, and return the response text in an EHR.Workflow.AssessmentResponse.
+expected_behavior: |
+  Class extends `Ens.BusinessOperation` — NOT `%AI.Agent`, NOT `%AI.AgentOperation` (which does not exist).
+  Declares `Parameter ADAPTER = "Ens.OutboundAdapter"` and `Parameter INVOCATION = "Queue"`.
+  Defines a `MessageMap` XData block mapping `EHR.Workflow.AssessmentRequest` to a handler method.
+  Handler method creates a provider with `##class(%AI.Provider).Create("openai", settings)` where settings contains `api_key`.
+  Instantiates agent with `##class(%AI.Agent).%New(provider)` — NOT `%New()` without provider arg.
+  Sets `agent.Model` and `agent.SystemPrompt` properties.
+  Calls `Do agent.%Init()` before using the agent.
+  Creates session with `agent.CreateSession()`.
+  Calls `agent.Chat(session, userMessage)` and reads `response.Content` for the result.
+  Stores result in `EHR.Workflow.AssessmentResponse` and sets it as the output `pResponse`.
+  Returns `$$$OK` on success, proper `%Status` error on failure.
+  Does NOT define `Parameter AgentName` (that parameter does not exist on any real base class).
+  Does NOT call `BuildRequest()` (no such override exists in %AI.Agent).
+  Does NOT use `OnRequest()` in a BPL style — this is a code-based BO with MessageMap.
+fixtures: []
+tags: [ai-hub, agent-operation, interoperability, business-operation]

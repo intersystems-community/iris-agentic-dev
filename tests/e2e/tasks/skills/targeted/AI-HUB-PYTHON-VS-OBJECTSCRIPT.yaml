@@ -1,0 +1,26 @@
+id: AI-HUB-PYTHON-VS-OBJECTSCRIPT
+category: targeted
+description: |
+  A developer is building a new IRIS AI Hub integration and asks: "I need to invoke an AI
+  agent as part of a workflow. I have a Python microservice that orchestrates the steps and
+  calls IRIS via embedded Python. Should I use %AI.AgentOperation in a production, or
+  iris_llm.Agent from Python?"
+
+  Recommend the right approach and explain why. Also note how the production structure
+  would be defined in each case.
+expected_behavior: |
+  Recommends `iris_llm.Agent` (Python) for the described scenario — the caller is already a
+  Python microservice/embedded Python BO, so a native Python agent is the natural fit.
+  Explains that `%AI.AgentOperation` is the right choice when the agent must run as a native
+  IRIS Interoperability business operation inside a production (ObjectScript-first, no Python runtime dependency).
+  Does NOT conflate the two by suggesting to wrap `iris_llm.Agent` inside an `%AI.AgentOperation`
+  or to call `%AI.AgentOperation` from Python via ObjectScript bridge when a pure Python path exists.
+  Mentions that `pyprod` (intersystems_pyprod) can define the production structure (ServiceItem,
+  ProcessItem, OperationItem) in either case — it is not specific to one approach.
+  Identifies the key tradeoff: Python path offers faster iteration and richer Python ecosystem
+  access; ObjectScript/%AI.AgentOperation path integrates natively with production trace,
+  message viewer, and Ens.Director lifecycle management.
+  Does NOT claim one approach is universally better — the answer depends on where the
+  orchestration lives (Python caller vs. IRIS production).
+fixtures: []
+tags: [ai-hub, python, iris_llm, agent-operation, architecture-decision]

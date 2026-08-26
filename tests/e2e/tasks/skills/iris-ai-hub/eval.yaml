@@ -1,0 +1,22 @@
+skill: iris-ai-hub
+description: "IRIS AI Hub production patterns — %AI.AgentOperation, %AI.ToolSet, EnsLib.Workflow.Operation human-in-the-loop, BPL async suspend. Load-on-demand for AI Hub development."
+fire_rate_prompt: |
+  Use the iris-ai-hub skill to write an %AI.AgentOperation subclass that invokes an agent named EHR.AI.AssessmentAgent and returns its response.
+benchmark_tasks:
+  - AI-HUB-AGENT-OPERATION
+  - AI-HUB-TOOLSET-XDATA
+  - AI-HUB-MESSAGE-CLASSES
+  - AI-HUB-PYTHON-VS-OBJECTSCRIPT
+  - AI-HUB-PRODUCTION-ITEMS
+  - AI-HUB-WORKFLOW-SUSPEND
+domain_skill: true
+isolation_prompt: |
+  Fix this ObjectScript SQL query — the table name is wrong (should use underscore, not dot for the SQL table name):
+
+  ClassMethod GetPatients() As %DynamicArray
+  {
+    Set tSQL = "SELECT ID, Name FROM Bench.Patient WHERE Name %STARTSWITH 'A'"
+    Set tRS = ##class(%SQL.Statement).%ExecDirect(,tSQL)
+  }
+targeted_tasks_dir: tests/e2e/tasks/skills/targeted
+no_mcp_for_benchmark: true

@@ -84,6 +84,7 @@ const EMBEDDED_SKILLS: &[(&str, &str)] = &[
     embedded_skill!("aihub-eap"),
     embedded_skill!("ensemble-production"),
     embedded_skill!("iris-agentic-dev"),
+    embedded_skill!("iris-ai-hub"),
     embedded_skill!("iris-connectivity"),
     embedded_skill!("iris-container-graceful-shutdown"),
     embedded_skill!("iris-cpf-merge"),
