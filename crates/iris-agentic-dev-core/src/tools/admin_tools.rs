@@ -11,6 +11,10 @@ pub const ERR_CONFIRM_REQUIRED: &str = "CONFIRM_REQUIRED";
 pub const ERR_CONFIRM_EXPIRED: &str = "CONFIRM_EXPIRED";
 pub const ERR_CONFIRM_MISMATCH: &str = "CONFIRM_MISMATCH";
 pub const ERR_WRITE_GATE: &str = "WRITE_TOOLS_DISABLED";
+/// Destructive-tier refusal: writes are on, the tier is off (085 FR-018). Documented since
+/// v1.0.0 and, until spec 085, never present in source. Same string as
+/// [`crate::tools::write_gate::ERR_DESTRUCTIVE_GATE`], which enforcement emits.
+pub const ERR_DESTRUCTIVE_GATE: &str = "DESTRUCTIVE_TOOLS_DISABLED";
 
 // ── ConfirmEntry ─────────────────────────────────────────────────────────────
 
@@ -122,7 +126,7 @@ Write "DONE|"_cnt,!"#
     }))
 }
 
-// ── global_kill (T079) — write-gated ─────────────────────────────────────────
+// ── global_kill (T079) — gated in call_tool, not here (085) ──────────────────
 
 pub struct GlobalKillParams {
     pub global: String,
@@ -130,21 +134,12 @@ pub struct GlobalKillParams {
     pub confirm_token: String,
     pub iris: Arc<IrisConnection>,
     pub client: Arc<reqwest::Client>,
-    pub write_tools_enabled: bool,
 }
 
 pub async fn global_kill_impl(
     params: GlobalKillParams,
     confirm_tokens: &tokio::sync::Mutex<std::collections::HashMap<String, ConfirmEntry>>,
 ) -> Result<CallToolResult, McpError> {
-    // Write gate (T079b)
-    if !params.write_tools_enabled {
-        return err_json(
-            ERR_WRITE_GATE,
-            "Write tools are disabled. Set write_tools = true in .iris-agentic-dev.toml.",
-        );
-    }
-
     use crate::tools::global::normalize_global_name;
     let name = normalize_global_name(&params.global);
 
@@ -326,22 +321,14 @@ While tRS.Next() {
     }
 }
 
-// ── iris_namespace_create (T084) — write-gated ────────────────────────────────
+// ── iris_namespace_create (T084) — gated in call_tool, not here (085) ─────────
 
 pub async fn iris_namespace_create_impl(
     iris: &IrisConnection,
     client: &reqwest::Client,
     name: &str,
     db_path: Option<&str>,
-    write_tools_enabled: bool,
 ) -> Result<CallToolResult, McpError> {
-    if !write_tools_enabled {
-        return err_json(
-            ERR_WRITE_GATE,
-            "Write tools are disabled. Set write_tools = true in .iris-agentic-dev.toml.",
-        );
-    }
-
     let db = db_path.unwrap_or(name);
     let code = format!(
         r#"Set props("Name")="{name}"
@@ -1180,47 +1167,12 @@ mod tests {
         );
     }
 
-    // T079b: global_kill write-gate returns WRITE_TOOLS_DISABLED (logic only — no IRIS call)
-    #[tokio::test]
-    async fn global_kill_write_gate_disabled() {
-        use crate::iris::connection::DiscoverySource;
-        let conn = Arc::new(IrisConnection::new(
-            "http://localhost:52780",
-            "USER",
-            "_SYSTEM",
-            "SYS",
-            DiscoverySource::EnvVar,
-        ));
-        let client = Arc::new(reqwest::Client::new());
-        let tokens: tokio::sync::Mutex<HashMap<String, ConfirmEntry>> =
-            tokio::sync::Mutex::new(HashMap::new());
-
-        let result = global_kill_impl(
-            GlobalKillParams {
-                global: "TestGlobal".to_string(),
-                server: None,
-                confirm_token: "any-token".to_string(),
-                iris: conn,
-                client,
-                write_tools_enabled: false,
-            },
-            &tokens,
-        )
-        .await
-        .expect("global_kill_impl returned MCP error");
-
-        let text = result
-            .content
-            .first()
-            .map(|c| c.as_text().unwrap().text.clone())
-            .expect("no text content");
-        let v: serde_json::Value = serde_json::from_str(&text).expect("json parse");
-        assert_eq!(
-            v["error_code"].as_str().unwrap_or(""),
-            ERR_WRITE_GATE,
-            "write-gated kill should return {ERR_WRITE_GATE}, got: {v}"
-        );
-    }
+    // 085: the write-gate test that used to live here is gone. `global_kill_impl` no longer
+    // decides the gate — `ServerHandler::call_tool` does, for every tool at once — so a unit test
+    // that passed `write_tools_enabled: false` into this function was asserting a guard whose
+    // absence in eight other write tools is the defect 085 exists to fix. The refusal is now
+    // asserted where it is enforced, in `tests/integration/test_gate_enforcement_live.rs`, against
+    // a real MCP session and with the negative side effect checked.
 
     // T075b: global_kill_impl with no token in map → CONFIRM_REQUIRED
     #[tokio::test]
@@ -1244,7 +1196,6 @@ mod tests {
                 confirm_token: "nonexistent-token".to_string(),
                 iris: conn,
                 client,
-                write_tools_enabled: true,
             },
             &tokens,
         )
@@ -1298,7 +1249,6 @@ mod tests {
                 confirm_token: token,
                 iris: conn,
                 client,
-                write_tools_enabled: true,
             },
             &tokens,
         )
@@ -1351,7 +1301,6 @@ mod tests {
                 confirm_token: token,
                 iris: conn,
                 client,
-                write_tools_enabled: true,
             },
             &tokens,
         )
@@ -1371,33 +1320,8 @@ mod tests {
         );
     }
 
-    // T084b: iris_namespace_create write-gate returns WRITE_TOOLS_DISABLED (logic only)
-    #[tokio::test]
-    async fn iris_namespace_create_write_gate_disabled() {
-        use crate::iris::connection::DiscoverySource;
-        let conn = IrisConnection::new(
-            "http://localhost:52780",
-            "USER",
-            "_SYSTEM",
-            "SYS",
-            DiscoverySource::EnvVar,
-        );
-        let client = reqwest::Client::new();
-
-        let result = iris_namespace_create_impl(&conn, &client, "TestNS", None, false)
-            .await
-            .expect("iris_namespace_create_impl returned MCP error");
-
-        let text = result
-            .content
-            .first()
-            .map(|c| c.as_text().unwrap().text.clone())
-            .expect("no text content");
-        let v: serde_json::Value = serde_json::from_str(&text).expect("json parse");
-        assert_eq!(
-            v["error_code"].as_str().unwrap_or(""),
-            ERR_WRITE_GATE,
-            "write-gated namespace create should return {ERR_WRITE_GATE}, got: {v}"
-        );
-    }
+    // 085: the T084b write-gate test is gone for the same reason as the global_kill one above —
+    // `iris_namespace_create_impl` no longer decides the gate, so asserting a refusal here would
+    // test a guard that no longer exists at this layer while saying nothing about the eight tools
+    // that never had one.
 }

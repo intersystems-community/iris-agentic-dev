@@ -338,6 +338,82 @@ fn embedded_catalog_matches_the_skills_directory_on_disk() {
     );
 }
 
+/// Every tool a bundled skill tells the agent to call must actually exist.
+///
+/// `ensemble-production` shipped for months instructing agents to call
+/// `interop_production_status`, `interop_queues`, `interop_message_search`, and
+/// four more names that were consolidated into `iris_production` /
+/// `iris_interop_query` by spec 036. A skill that names a tool which does not
+/// exist is worse than a skill with no tool guidance: the agent burns turns on
+/// calls that can only fail. Nothing caught it because no test read the skill
+/// text against the tool registry.
+#[test]
+fn skills_only_reference_tools_that_exist() {
+    use iris_agentic_dev_core::tools::{IrisTools, Toolset};
+
+    // Baseline ∪ Merged is every real tool; Nostub is a subset of Baseline.
+    let mut registered = IrisTools::new_with_toolset(None, Toolset::Baseline)
+        .expect("IrisTools::new")
+        .registered_tool_names();
+    registered.extend(
+        IrisTools::new_with_toolset(None, Toolset::Merged)
+            .expect("IrisTools::new")
+            .registered_tool_names(),
+    );
+
+    // Only tool-call shapes count: `name(` in prose or a fenced block. Bare
+    // mentions and Python identifiers (`iris_package_name = ...`) are not calls.
+    let call_shape = regex::Regex::new(r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\(").unwrap();
+
+    // Prefixes that indicate the author meant an MCP tool. Without this, every
+    // ObjectScript or Python helper in a code sample would be flagged.
+    let tool_prefixes = [
+        "iris_",
+        "interop_",
+        "skill_",
+        "global_",
+        "kb_",
+        "telemetry_",
+    ];
+
+    // Real callables that collide with the tool naming convention. Listed one
+    // by one on purpose — widening the regex instead would blind the test to
+    // whole families of phantom tool names.
+    let not_our_tools = [
+        // Helper from the `intersystems-irispython` package (iris-pgwire),
+        // used to decode a `%List` in Python. Not an MCP tool.
+        "iris_list_to_python",
+    ];
+
+    let mut bad: Vec<String> = Vec::new();
+    for skill in bundled::load_bundled_skills() {
+        let body = match skill.content() {
+            Some(c) => c,
+            None => continue,
+        };
+        for caps in call_shape.captures_iter(&body) {
+            let name = caps.get(1).unwrap().as_str();
+            if !tool_prefixes.iter().any(|p| name.starts_with(p)) {
+                continue;
+            }
+            if registered.contains(name) || not_our_tools.contains(&name) {
+                continue;
+            }
+            let entry = format!("{}: {name}", skill.name);
+            if !bad.contains(&entry) {
+                bad.push(entry);
+            }
+        }
+    }
+    bad.sort();
+
+    assert!(
+        bad.is_empty(),
+        "bundled skills reference tools that are not registered:\n  {}",
+        bad.join("\n  ")
+    );
+}
+
 // ── directory resolution (must not depend on build-time paths) ────────────────
 
 /// `IRIS_AGENTIC_DEV_SKILLS_DIR` is process-global; the tests that set it must

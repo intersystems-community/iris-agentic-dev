@@ -235,7 +235,6 @@ async fn e2e_global_kill_confirm() {
             confirm_token: token,
             iris: Arc::clone(&iris),
             client: Arc::clone(&client),
-            write_tools_enabled: true,
         },
         &confirm_tokens,
     )
@@ -312,11 +311,17 @@ async fn e2e_database_stats() {
     );
 }
 
-// T110: iris_namespace_create — write-gate blocks without flag, succeeds with flag
+// T110: iris_namespace_create reaches IRIS and returns a decodable answer.
+//
+// 085: the "blocks without the flag" half of this test is gone — the flag is gone. The gate is
+// decided once in `ServerHandler::call_tool` and the refusal is asserted through a real MCP session
+// in `test_gate_enforcement_live.rs`, which also checks that the namespace was not created. What is
+// left here is the half that still needs IRIS: that the create path itself talks to %SYS and comes
+// back with something parseable.
 #[tokio::test]
 #[ignore]
 async fn e2e_namespace_create_write_gate() {
-    use iris_agentic_dev_core::tools::admin_tools::{iris_namespace_create_impl, ERR_WRITE_GATE};
+    use iris_agentic_dev_core::tools::admin_tools::iris_namespace_create_impl;
 
     let (conn, client) = match make_conn() {
         Some(c) => c,
@@ -326,19 +331,8 @@ async fn e2e_namespace_create_write_gate() {
         }
     };
 
-    // Without write gate: must return WRITE_TOOLS_DISABLED
-    let blocked = iris_namespace_create_impl(&conn, &client, "IADTESTNS", None, false)
-        .await
-        .expect("iris_namespace_create_impl failed");
-    let bv = parse_json(blocked);
-    assert_eq!(
-        bv["error_code"].as_str().unwrap_or(""),
-        ERR_WRITE_GATE,
-        "expected WRITE_TOOLS_DISABLED without write gate, got: {bv}"
-    );
-
-    // With write gate: should succeed or return a meaningful error (e.g. already exists)
-    let result = iris_namespace_create_impl(&conn, &client, "IADTESTNS", None, true)
+    // Should succeed or return a meaningful error (e.g. already exists).
+    let result = iris_namespace_create_impl(&conn, &client, "IADTESTNS", None)
         .await
         .expect("iris_namespace_create_impl failed");
     let v = parse_json(result);

@@ -6,7 +6,7 @@ on:
     # full binary + Docker + Homebrew release from an extension-only version
     # bump, publishing binaries under a tag in neither version sequence.
     # Glob, not regex: [0-9] is a character class but + is literal.
-    tags: ['v[0-9]*']
+    tags: ["v[0-9]*"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -40,7 +40,12 @@ jobs:
           key: ${{ matrix.target }}
       - uses: mlugg/setup-zig@v2
       - run: cargo install cargo-zigbuild
-      - run: cargo zigbuild --release --target ${{ matrix.target }} -p iris-agentic-dev
+      # --locked is load-bearing, not hygiene. Cargo reconciles a stale lockfile during
+      # resolution, which happens before build.rs runs `git describe --dirty` — so drift
+      # made every published 1.2.6 asset advertise `1.2.6+v1.2.6-dirty`. Failing here is
+      # the point: a release must not silently build from a different dependency graph
+      # than the one committed.
+      - run: cargo zigbuild --locked --release --target ${{ matrix.target }} -p iris-agentic-dev
       - name: Stage artifact
         shell: bash
         run: |
@@ -61,7 +66,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: "22"
       - name: Check the extension ships this release's binary version
         run: |
           # The extension downloads irisAgenticDev.serverVersion from the
@@ -92,7 +97,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
-          pattern: '{iris-agentic-dev-*,vsix}'
+          pattern: "{iris-agentic-dev-*,vsix}"
       - name: Write release body
         run: |
           cat > release-body.md << 'EOF'
@@ -128,7 +133,7 @@ jobs:
           name: vsix
       - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: "22"
       - name: Publish to VS Code Marketplace
         # Not allowed to sink the release, which has already succeeded by now.
         # The most common failure is "version already published" — the
@@ -199,7 +204,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           merge-multiple: true
-          pattern: 'iris-agentic-dev-*'
+          pattern: "iris-agentic-dev-*"
       - name: Compute SHA256s and update Formula/iris-agentic-dev.rb
         run: |
           ARM64=$(shasum -a 256 iris-agentic-dev-macos-arm64 | awk '{print $1}')

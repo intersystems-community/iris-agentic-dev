@@ -370,6 +370,7 @@ pub fn extract_class_name(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     #[test]
     fn test_anthropic_request_serializes() {
@@ -423,8 +424,17 @@ mod tests {
         assert_eq!(result, Some("MyApp.Test".to_string()));
     }
 
+    /// Serializes the tests that mutate the LLM env vars.
+    ///
+    /// `LlmClient::from_env` reads process-global state, so two tests racing on
+    /// `IRIS_GENERATE_CLASS_MODEL` and the API-key vars intermittently see each
+    /// other's teardown: one test's `remove_var` lands between the other's
+    /// `set_var` and its `from_env`, and `from_env` returns `None`.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn test_llm_client_needs_both_model_and_key() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("IRIS_GENERATE_CLASS_MODEL");
         std::env::remove_var("OPENAI_API_KEY");
         std::env::remove_var("ANTHROPIC_API_KEY");
@@ -531,13 +541,21 @@ mod tests {
     #[cfg(any(test, feature = "testing"))]
     #[tokio::test]
     async fn complete_with_usage_returns_none_for_mock_model() {
-        std::env::set_var("IRIS_GENERATE_CLASS_MODEL", "mock");
-        std::env::set_var("ANTHROPIC_API_KEY", "dummy");
-        let client = LlmClient::from_env().unwrap();
+        // Only the env-var read needs the lock. Build the client inside it, then
+        // release before awaiting — holding a std::sync guard across an await
+        // would block the runtime thread and trips clippy.
+        let client = {
+            let _guard = ENV_LOCK.lock().unwrap();
+            std::env::set_var("IRIS_GENERATE_CLASS_MODEL", "mock");
+            std::env::set_var("ANTHROPIC_API_KEY", "dummy");
+            let client = LlmClient::from_env().unwrap();
+            std::env::remove_var("IRIS_GENERATE_CLASS_MODEL");
+            std::env::remove_var("ANTHROPIC_API_KEY");
+            client
+        };
+
         let (text, usage) = client.complete_with_usage("sys", "user").await.unwrap();
         assert!(text.contains("MockClass"));
         assert!(usage.is_none());
-        std::env::remove_var("IRIS_GENERATE_CLASS_MODEL");
-        std::env::remove_var("ANTHROPIC_API_KEY");
     }
 }

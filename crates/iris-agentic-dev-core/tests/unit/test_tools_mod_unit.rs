@@ -1548,6 +1548,25 @@ async fn agent_history_includes_duration_ms_and_session_id() {
 // ────────────────────────────────────────────────────────────────────────────────
 
 // ── ConnectionState::new_disconnected (L124) ──────────────────────────────────
+//
+// These used to assert `state.write_tools_enabled` was `true` on a disconnected state, which
+// was the FR-012 defect written down as an expectation: the field was re-derived from
+// `IRIS_WRITE_TOOLS_ENABLED` with `unwrap_or(true)`, so a declared `false` was ignored whenever
+// there was no connection. The resolution is now an argument, and the state's job is to carry it
+// unchanged — asserted in both directions.
+
+/// Writes on, attributed to the config file. Deliberately not `fail_closed()`, so a state that
+/// silently substituted its own answer would show up as the wrong `write_source`, not just the
+/// wrong boolean.
+fn gates_on() -> iris_agentic_dev_core::tools::write_gate::GateResolution {
+    use iris_agentic_dev_core::tools::write_gate::{GateResolution, GateSource};
+    GateResolution {
+        write_enabled: true,
+        write_source: GateSource::ConfigFile,
+        destructive_enabled: false,
+        destructive_source: GateSource::InferredDefault,
+    }
+}
 
 #[test]
 fn connection_state_new_disconnected_config_file() {
@@ -1555,15 +1574,17 @@ fn connection_state_new_disconnected_config_file() {
 
     let state = ConnectionState::new_disconnected(
         iris_agentic_dev_core::tools::ConnectionSource::ConfigFile,
+        gates_on(),
     );
     assert!(state.iris.is_none(), "iris must be None");
     assert_eq!(
         state.source,
         iris_agentic_dev_core::tools::ConnectionSource::ConfigFile
     );
-    assert!(
-        state.write_tools_enabled,
-        "write_tools_enabled should be true"
+    assert_eq!(
+        state.gates,
+        gates_on(),
+        "the state must carry the resolution it was handed, verbatim"
     );
     assert!(
         state.config_parse_error.is_none(),
@@ -1571,18 +1592,37 @@ fn connection_state_new_disconnected_config_file() {
     );
 }
 
+/// The direction that used to be impossible: writes declared off with no connection. The old
+/// field re-read the env var with `unwrap_or(true)` and answered `true` here.
+#[test]
+fn connection_state_new_disconnected_honours_writes_off() {
+    use iris_agentic_dev_core::tools::write_gate::GateResolution;
+    use iris_agentic_dev_core::tools::ConnectionState;
+
+    let state = ConnectionState::new_disconnected(
+        iris_agentic_dev_core::tools::ConnectionSource::ConfigFile,
+        GateResolution::fail_closed(),
+    );
+    assert!(
+        !state.gates.write_enabled,
+        "a disconnected state must not widen the gate — the answer cannot depend on connectivity"
+    );
+}
+
 #[test]
 fn connection_state_new_disconnected_env_vars() {
     use iris_agentic_dev_core::tools::ConnectionState;
 
-    let state =
-        ConnectionState::new_disconnected(iris_agentic_dev_core::tools::ConnectionSource::EnvVars);
+    let state = ConnectionState::new_disconnected(
+        iris_agentic_dev_core::tools::ConnectionSource::EnvVars,
+        gates_on(),
+    );
     assert!(state.iris.is_none());
     assert_eq!(
         state.source,
         iris_agentic_dev_core::tools::ConnectionSource::EnvVars
     );
-    assert!(state.write_tools_enabled);
+    assert!(state.gates.write_enabled);
     assert!(state.config_parse_error.is_none());
 }
 
@@ -1592,13 +1632,14 @@ fn connection_state_new_disconnected_iris_select_container() {
 
     let state = ConnectionState::new_disconnected(
         iris_agentic_dev_core::tools::ConnectionSource::IrisSelectContainer,
+        gates_on(),
     );
     assert!(state.iris.is_none());
     assert_eq!(
         state.source,
         iris_agentic_dev_core::tools::ConnectionSource::IrisSelectContainer
     );
-    assert!(state.write_tools_enabled);
+    assert!(state.gates.write_enabled);
 }
 
 #[test]
@@ -1607,13 +1648,14 @@ fn connection_state_new_disconnected_auto_discovered() {
 
     let state = ConnectionState::new_disconnected(
         iris_agentic_dev_core::tools::ConnectionSource::AutoDiscovered,
+        gates_on(),
     );
     assert!(state.iris.is_none());
     assert_eq!(
         state.source,
         iris_agentic_dev_core::tools::ConnectionSource::AutoDiscovered
     );
-    assert!(state.write_tools_enabled);
+    assert!(state.gates.write_enabled);
     assert!(state.config_parse_error.is_none());
 }
 
@@ -1631,15 +1673,43 @@ fn connection_state_from_iris_explicit_flag_source() {
         "SYS",
         DiscoverySource::ExplicitFlag,
     );
-    let state = ConnectionState::from_iris(iris_conn, ConnectionSource::ConfigFile, None);
+    let state =
+        ConnectionState::from_iris(iris_conn, ConnectionSource::ConfigFile, None, gates_on());
     assert!(state.iris.is_some(), "iris should be Some");
     assert_eq!(state.source, ConnectionSource::ConfigFile);
     assert!(state.config_file.is_none());
-    assert!(
-        state.write_tools_enabled,
-        "write_tools_enabled should reflect connection"
-    );
+    assert_eq!(state.gates, gates_on());
     assert!(state.config_parse_error.is_none());
+}
+
+/// `with_declared` is what keeps the config declaration alive across a later namespace or
+/// `SystemMode` change (`iris_select_container` re-resolves), so it must survive the builder.
+#[test]
+fn connection_state_carries_the_declaration_for_later_reresolution() {
+    use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
+    use iris_agentic_dev_core::tools::write_gate::DeclaredGates;
+    use iris_agentic_dev_core::tools::{ConnectionSource, ConnectionState};
+
+    let iris_conn = IrisConnection::new(
+        "http://localhost:1972",
+        "USER",
+        "_SYSTEM",
+        "SYS",
+        DiscoverySource::ExplicitFlag,
+    );
+    let declared = DeclaredGates {
+        write_tools_enabled: Some(false),
+        destructive_tools_enabled: None,
+    };
+    let state =
+        ConnectionState::from_iris(iris_conn, ConnectionSource::ConfigFile, None, gates_on())
+            .with_declared(declared);
+    assert_eq!(state.declared, declared);
+    assert_eq!(
+        state.gates,
+        gates_on(),
+        "with_declared records the declaration; it does not re-resolve on its own"
+    );
 }
 
 #[test]
@@ -1660,6 +1730,7 @@ fn connection_state_from_iris_with_config_file() {
         iris_conn,
         ConnectionSource::ConfigFile,
         Some(config_path.clone()),
+        gates_on(),
     );
     assert!(state.iris.is_some());
     assert_eq!(state.config_file, Some(config_path));
@@ -1954,6 +2025,7 @@ fn connection_source_is_env_vars_when_iris_host_set() {
         None,
         None,
         false,
+        Default::default(),
     )
     .unwrap();
     let source_with = {
@@ -1975,6 +2047,7 @@ fn connection_source_is_env_vars_when_iris_host_set() {
         None,
         None,
         false,
+        Default::default(),
     )
     .unwrap();
     let source_without = {

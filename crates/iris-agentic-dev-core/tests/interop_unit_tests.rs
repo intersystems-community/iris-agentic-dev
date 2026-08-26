@@ -713,21 +713,26 @@ mod env_guard {
         c
     }
 
+    /// Spec 085 T023 replaced removal with refusal: `iris_production_item` and
+    /// `iris_credential_manage` used to be dropped from the router in Live mode, which left an
+    /// agent to infer why a documented tool did not exist, was invisible to a later config
+    /// reload, and made the gate-completeness test pass for the wrong reason (research.md D3).
+    /// They stay advertised now and refuse in `call_tool`; the refusal itself is asserted in
+    /// `tests/integration/test_gate_enforcement_live.rs`.
     #[test]
-    fn write_tools_absent_when_live() {
+    fn write_tools_stay_registered_when_live() {
         std::env::remove_var("IRIS_ALLOW_PROD");
         let tools =
             IrisTools::new_with_toolset(Some(conn_with_mode(SystemMode::Live)), Toolset::Merged)
                 .unwrap();
         let names = tools.registered_tool_names();
-        // Write-gated tools must not appear when Live
         assert!(
-            !names.contains("iris_credential_manage"),
-            "iris_credential_manage must be absent in Live mode"
+            names.contains("iris_credential_manage"),
+            "iris_credential_manage must stay registered in Live mode and refuse at call time"
         );
         assert!(
-            !names.contains("iris_production_item"),
-            "iris_production_item must be absent in Live mode"
+            names.contains("iris_production_item"),
+            "iris_production_item must stay registered in Live mode and refuse at call time"
         );
         // Read tools must still be present
         assert!(

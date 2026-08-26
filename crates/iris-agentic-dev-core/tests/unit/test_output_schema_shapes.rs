@@ -408,3 +408,103 @@ async fn test_check_config_response_matches_declared_shape() {
     assert!(body["server_manager"].is_object());
     assert!(body["server_manager"]["available"].is_boolean());
 }
+
+/// T027 (085). `check_config` is how an operator finds out what the gate is, so its four gate
+/// fields have to be in the payload *and* in the declared schema. Those are two different places
+/// and they have already disagreed: `server_version` has been in the body since v1.0.0, is
+/// advertised first in the tool's own description, and was never in `CheckConfigOk` — a declared
+/// contract that omits the field it tells you to read. Asserting the body alone would let the same
+/// gap open again for the gate fields.
+#[tokio::test]
+async fn test_check_config_reports_the_gate_and_its_source() {
+    let body = call(&tools(), "check_config", serde_json::json!({})).await;
+
+    assert!(
+        body["server_version"].is_string(),
+        "server_version is how an operator identifies the running build: {body}"
+    );
+    assert!(
+        body["write_tools_enabled"].is_boolean(),
+        "write_tools_enabled must stay a bool — existing probes parse it: {body}"
+    );
+    assert!(
+        body["destructive_tools_enabled"].is_boolean(),
+        "destructive_tools_enabled: the key has been accepted since v1.0.0 and never reported: \
+         {body}"
+    );
+
+    // The source fields are the whole point of FR-004: a future mismatch between what the operator
+    // declared and what the server decided has to be diagnosable from one call, not from four
+    // rounds of issue comments. So an empty or absent string is a failure, and the value has to be
+    // one the data model actually defines.
+    const SOURCES: &[&str] = &[
+        "operator_env",
+        "config_file",
+        "legacy_allow_prod",
+        "inferred_system_mode",
+        "inferred_namespace",
+        "inferred_default",
+        "fail_closed",
+    ];
+    for key in ["write_tools_source", "destructive_tools_source"] {
+        let got = body[key]
+            .as_str()
+            .unwrap_or_else(|| panic!("{key} must be a non-null string: {body}"));
+        assert!(
+            SOURCES.contains(&got),
+            "{key} = {got:?} is not a GateSource wire value; expected one of {SOURCES:?}"
+        );
+    }
+
+    // The data-model invariant, from the response an operator actually sees.
+    if body["destructive_tools_enabled"] == serde_json::json!(true) {
+        assert_eq!(
+            body["write_tools_enabled"],
+            serde_json::json!(true),
+            "the destructive tier cannot be on with writes off: {body}"
+        );
+    }
+}
+
+/// The declared half of the same contract. The payload says nothing about what the schema promises,
+/// so this reads the `outputSchema` the router actually serves on `tools/list`. A field in the body
+/// but not the schema is the `server_version` defect; a field in the schema but not the body is the
+/// inverse and just as wrong, so both directions are checked against the live payload.
+#[tokio::test]
+async fn test_check_config_declared_schema_carries_the_gate_fields() {
+    let tools = tools();
+    let schema = tools
+        .tool_output_schema("check_config")
+        .expect("check_config must declare an output schema");
+    let props = schema["properties"]
+        .as_object()
+        .expect("check_config's output schema must have properties");
+
+    for field in [
+        "server_version",
+        "write_tools_enabled",
+        "write_tools_source",
+        "destructive_tools_enabled",
+        "destructive_tools_source",
+    ] {
+        assert!(
+            props.contains_key(field),
+            "check_config's declared schema omits {field}, so the schema and the payload disagree. \
+             Declared: {:?}",
+            props.keys().collect::<Vec<_>>()
+        );
+    }
+
+    // And the other direction: nothing the response carries may be missing from the schema.
+    let body = call(&tools, "check_config", serde_json::json!({})).await;
+    let undeclared: Vec<&String> = body
+        .as_object()
+        .expect("check_config must return an object")
+        .keys()
+        .filter(|k| !props.contains_key(*k))
+        .collect();
+    assert!(
+        undeclared.is_empty(),
+        "check_config returns fields its declared schema never mentions: {undeclared:?}"
+    );
+}

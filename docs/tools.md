@@ -211,7 +211,7 @@ iris_doc(mode="list", pattern="MyApp.*.cls")
 
 **Storage block guard.** IRIS 2025.1+ rejects Storage XML in a PUT request (upstream
 bug). `iris_doc` strips it before writing and refuses by default with
-`STORAGE_STRIP_BLOCKED`. Pass `allow_storage_regeneration: true` to proceed — but
+`STORAGE_RESET_REQUIRES_CONFIRMATION`. Pass `allow_storage_regeneration: true` to proceed — but
 understand that recompiling without Storage forces IRIS to regenerate global layout,
 which can change the extent for `%Persistent` classes. Use `mode=insert` or
 `mode=delete_lines` when the edit does not touch the Storage block.
@@ -775,15 +775,15 @@ iris_generate_test(class_name="MyApp.Service")
 
 Start, stop, update, check, or recover a production.
 
-| Parameter     | Type   | Default  | Notes                                                                                                                                                     |
-| ------------- | ------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `action`      | string | —        | **Required.** `"status"` \| `"start"` \| `"stop"` \| `"update"` \| `"check"` \| `"recover"` \| `"get_autostart"` \| `"set_autostart"` \| `"needs_update"` |
-| `production`  | string | —        | Production class name; defaults to the currently running production                                                                                       |
-| `timeout`     | int    | `30`     | Seconds; for `stop`/`update`                                                                                                                              |
-| `force`       | bool   | `false`  | For `stop`/`update`                                                                                                                                       |
-| `full_status` | bool   | `false`  | `status` only: include per-item state                                                                                                                     |
-| `enabled`     | bool   | —        | `set_autostart` only                                                                                                                                      |
-| `namespace`   | string | `"USER"` |                                                                                                                                                           |
+| Parameter    | Type   | Default  | Notes                                                                                                                                                     |
+| ------------ | ------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `action`     | string | —        | **Required.** `"status"` \| `"start"` \| `"stop"` \| `"update"` \| `"check"` \| `"recover"` \| `"get_autostart"` \| `"set_autostart"` \| `"needs_update"` |
+| `production` | string | —        | Production class name; defaults to the currently running production                                                                                       |
+| `timeout`    | int    | `30`     | Seconds; for `stop`/`update`                                                                                                                              |
+| `force`      | bool   | `false`  | For `stop`/`update`                                                                                                                                       |
+| `full`       | bool   | `false`  | `status` only: include per-item state                                                                                                                     |
+| `enabled`    | bool   | —        | `set_autostart` only                                                                                                                                      |
+| `namespace`  | string | `"USER"` |                                                                                                                                                           |
 
 Actions that modify production state require `IRIS_CONTAINER`.
 
@@ -799,16 +799,16 @@ iris_production(action="start", production="MyApp.Production")
 
 Query production logs, queue depths, or message archive.
 
-| Parameter    | Type   | Default           | Notes                                                |
-| ------------ | ------ | ----------------- | ---------------------------------------------------- |
-| `what`       | string | —                 | **Required.** `"logs"` \| `"queues"` \| `"messages"` |
-| `item_name`  | string | —                 | `logs`: filter by business host name                 |
-| `log_type`   | string | `"error,warning"` | `logs` only                                          |
-| `limit`      | int    | `10`/`20`         | 10 for logs, 20 for messages                         |
-| `source`     | string | —                 | `messages`: filter by source                         |
-| `target`     | string | —                 | `messages`: filter by target                         |
-| `class_name` | string | —                 | `messages`: filter by message class                  |
-| `namespace`  | string | `"USER"`          |                                                      |
+| Parameter       | Type   | Default           | Notes                                                |
+| --------------- | ------ | ----------------- | ---------------------------------------------------- |
+| `what`          | string | —                 | **Required.** `"logs"` \| `"queues"` \| `"messages"` |
+| `component`     | string | —                 | `logs`: filter by business host name                 |
+| `log_type`      | string | `"error,warning"` | `logs` only                                          |
+| `limit`         | int    | `50`              | Applies to `logs` and `messages`                     |
+| `source`        | string | —                 | `messages`: filter by source                         |
+| `target`        | string | —                 | `messages`: filter by target                         |
+| `message_class` | string | —                 | `messages`: filter by message class                  |
+| `namespace`     | string | `"USER"`          |                                                      |
 
 ```text
 iris_interop_query(what="logs", log_type="error", limit=50)
@@ -860,16 +860,16 @@ iris_production_diff(production="MyApp.Production")
 
 Read a message body by ID. Gated — see [Data safety gates](#data-safety-gates).
 
-| Parameter         | Type   | Default  | Notes                                |
-| ----------------- | ------ | -------- | ------------------------------------ |
-| `message_id`      | string | —        | **Required.**                        |
-| `max_bytes`       | int    | `65536`  | Max 1 MB (1048576)                   |
-| `acknowledge_phi` | bool   | `false`  | Required when `dataPolicy = "allow"` |
-| `namespace`       | string | `"USER"` |                                      |
+| Parameter        | Type   | Default  | Notes                                |
+| ---------------- | ------ | -------- | ------------------------------------ |
+| `message_id`     | string | —        | **Required.**                        |
+| `max_bytes`      | int    | `65536`  | Max 1 MB (1048576)                   |
+| `acknowledgePhi` | bool   | `false`  | Required when `dataPolicy = "allow"` |
+| `namespace`      | string | `"USER"` |                                      |
 
 ```text
 iris_message_body(message_id="123456")
-iris_message_body(message_id="123456", acknowledge_phi=true)
+iris_message_body(message_id="123456", acknowledgePhi=true)
 ```
 
 ---
@@ -1011,7 +1011,7 @@ Show size, free space, and block stats for a specific database directory.
 
 | Parameter | Type   | Default | Notes                                 |
 | --------- | ------ | ------- | ------------------------------------- |
-| `db_path` | string | —       | **Required.** Database directory path |
+| `db`      | string | —       | **Required.** Database directory path |
 | `server`  | string | —       | Named server; omit for default        |
 
 ### `journal_search`
@@ -1034,21 +1034,21 @@ Query the `%SYS_Audit.Log` table for recent events.
 | Parameter    | Type   | Default | Notes                              |
 | ------------ | ------ | ------- | ---------------------------------- |
 | `event_type` | string | —       | Filter by `Event` column substring |
-| `username`   | string | —       | Filter by `SystemID` substring     |
-| `limit`      | number | `50`    | Max rows (1–200)                   |
+| `user`       | string | —       | Filter by `SystemID` substring     |
+| `limit`      | number | `100`   | Max rows (1–200)                   |
 | `server`     | string | —       | Named server; omit for default     |
 
 ### `stream_inspect`
 
 Inspect a `%Stream.GlobalBinary` or `%Stream.GlobalCharacter` object by OID.
-Returns the first N characters and the total size.
+Returns the whole stream and its size — there is no length cap, so a large stream
+produces a large response.
 
-| Parameter   | Type   | Default  | Notes                               |
-| ----------- | ------ | -------- | ----------------------------------- |
-| `oid`       | string | —        | **Required.** Stream OID            |
-| `namespace` | string | `"USER"` | Namespace that contains the stream  |
-| `max_chars` | number | `2000`   | Max characters to return (1–10 000) |
-| `server`    | string | —        | Named server; omit for default      |
+| Parameter   | Type   | Default  | Notes                              |
+| ----------- | ------ | -------- | ---------------------------------- |
+| `oid`       | string | —        | **Required.** Stream OID           |
+| `namespace` | string | `"USER"` | Namespace that contains the stream |
+| `server`    | string | —        | Named server; omit for default     |
 
 ### `my_access`
 
@@ -1060,13 +1060,13 @@ Show current user, roles, and privileges for the connected session.
 
 ### `capability_matrix`
 
-Show which role grants which privilege across a list of namespaces. Useful for auditing
-access before a release.
+Show the roles assigned to one user. Returns `{user, full_name, roles}` from
+`Security.Users` — one user, not a namespace-by-privilege matrix.
 
-| Parameter    | Type     | Default | Notes                              |
-| ------------ | -------- | ------- | ---------------------------------- |
-| `namespaces` | string[] | `[]`    | Namespaces to include; empty = all |
-| `server`     | string   | —       | Named server; omit for default     |
+| Parameter | Type   | Default     | Notes                          |
+| --------- | ------ | ----------- | ------------------------------ |
+| `user`    | string | `$USERNAME` | Username to look up            |
+| `server`  | string | —           | Named server; omit for default |
 
 ### `hl7_schema_list`
 
@@ -1085,20 +1085,21 @@ and optional segment filter.
 
 | Parameter | Type   | Default | Notes                                        |
 | --------- | ------ | ------- | -------------------------------------------- |
-| `version` | string | —       | **Required.** e.g. `"2.6"`                   |
+| `schema`  | string | —       | **Required.** e.g. `"2.6"`                   |
 | `segment` | string | —       | Segment name filter, e.g. `"PID"` (optional) |
 | `server`  | string | —       | Named server; omit for default               |
 
 ### `mermaid_class`
 
-Generate a Mermaid class diagram showing inheritance for one or more classes. Walks the
-`Super` hierarchy up to 3 levels deep and strips `%`-prefixed system class names.
+Generate a Mermaid class diagram showing inheritance for one class. Walks the `Super`
+hierarchy and strips `%`-prefixed system class names.
 
-| Parameter   | Type     | Default  | Notes                              |
-| ----------- | -------- | -------- | ---------------------------------- |
-| `classes`   | string[] | —        | **Required.** Starting class names |
-| `namespace` | string   | `"USER"` | Namespace to query                 |
-| `server`    | string   | —        | Named server; omit for default     |
+| Parameter   | Type   | Default  | Notes                          |
+| ----------- | ------ | -------- | ------------------------------ |
+| `class`     | string | —        | **Required.** Starting class   |
+| `depth`     | number | `3`      | Levels of `Super` to walk      |
+| `namespace` | string | `"USER"` | Namespace to query             |
+| `server`    | string | —        | Named server; omit for default |
 
 ### `mermaid_production`
 
@@ -1253,27 +1254,16 @@ iris_admin(action="journal_search", global_pattern="^MyApp.*",
 
 List, select, or start IRIS Docker containers.
 
-**`action=list`**
+| Parameter | Type   | Default | Notes                                                       |
+| --------- | ------ | ------- | ----------------------------------------------------------- |
+| `action`  | string | —       | **Required.** `"list"` \| `"select"` \| `"start"`           |
+| `name`    | string | `""`    | Container name; required for `select`, optional for `start` |
 
-| Parameter        | Type   | Default | Notes                             |
-| ---------------- | ------ | ------- | --------------------------------- |
-| `workspace_root` | string | —       | Root path for container discovery |
-
-**`action=select`**
-
-| Parameter   | Type   | Default     | Notes                        |
-| ----------- | ------ | ----------- | ---------------------------- |
-| `name`      | string | —           | **Required.** Container name |
-| `namespace` | string | `"USER"`    |                              |
-| `username`  | string | `"_SYSTEM"` |                              |
-| `password`  | string | `"SYS"`     |                              |
-
-**`action=start`**
-
-| Parameter | Type   | Default       | Notes          |
-| --------- | ------ | ------------- | -------------- |
-| `name`    | string | `""`          | Container name |
-| `edition` | string | `"community"` |                |
+Those two are the only parameters this tool reads. `list` scans
+`$OBJECTSCRIPT_WORKSPACE` (falling back to the process working directory) — there is no
+`workspace_root` override. `select` and `start` connect as `_SYSTEM`/`SYS` on the
+`community` edition and take the namespace from the container, so passing `namespace`,
+`username`, `password`, or `edition` has no effect.
 
 ```text
 iris_containers(action="list")
@@ -1292,7 +1282,7 @@ Session tokens have the form `ws:{server}:{NAMESPACE}:{uuid}`.
 
 ### `iris_ws_open`
 
-Open a new WebSocket terminal session. Returns a `session_token` to pass to subsequent
+Open a new WebSocket terminal session. Returns a `session` token to pass to subsequent
 calls.
 
 | Parameter   | Type   | Default  | Notes                          |
@@ -1305,20 +1295,22 @@ calls.
 Execute ObjectScript in an existing session. The session context (variables, open
 devices) persists across calls.
 
-| Parameter       | Type   | Default | Notes                                   |
-| --------------- | ------ | ------- | --------------------------------------- |
-| `session_token` | string | —       | **Required.** Token from `iris_ws_open` |
-| `code`          | string | —       | **Required.** ObjectScript to run       |
-| `timeout_secs`  | number | `30`    | Per-call execution timeout              |
+| Parameter | Type   | Default | Notes                                   |
+| --------- | ------ | ------- | --------------------------------------- |
+| `session` | string | —       | **Required.** Token from `iris_ws_open` |
+| `code`    | string | —       | **Required.** ObjectScript to run       |
+
+The per-frame timeout is a fixed 30 seconds, not a parameter. On timeout the session
+stays open; call `iris_ws_close` to release it.
 
 ### `iris_ws_close`
 
 Close a WebSocket session and free its resources. Passing an already-closed or expired
 token returns `already_closed: true` rather than an error.
 
-| Parameter       | Type   | Default | Notes                                   |
-| --------------- | ------ | ------- | --------------------------------------- |
-| `session_token` | string | —       | **Required.** Token from `iris_ws_open` |
+| Parameter | Type   | Default | Notes                                   |
+| --------- | ------ | ------- | --------------------------------------- |
+| `session` | string | —       | **Required.** Token from `iris_ws_open` |
 
 ---
 
@@ -1465,7 +1457,7 @@ can act on before calling the tool.
 
 | Annotation         | Set on                                                                                                                                               | What it means                                      |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `read_only_hint`   | 57 tools — all query, inspect, list, history, and comparison tools                                                                                   | The tool makes no changes to IRIS state            |
+| `read_only_hint`   | 51 tools — all query, inspect, list, history, and comparison tools                                                                                   | The tool makes no changes to IRIS state            |
 | `destructive_hint` | 7 tools — `global_kill`, `iris_admin`, `iris_credential_manage`, `iris_lookup_manage`, `iris_namespace_create`, `iris_remove_server`, `skill_forget` | The tool can irreversibly delete or overwrite data |
 
 MCP clients that respect `read_only_hint` can run read-only tools in parallel or in
@@ -1478,17 +1470,24 @@ These are hints, not enforcement. Enforcement comes from the config gates descri
 
 ## Write protection
 
-Three config keys control which servers and which tools can perform writes. They form a
-stack — each layer can only further restrict, never expand.
+Two config keys control which tools can write. They form a stack — the destructive tier can
+only further restrict the write tier, never expand it.
 
 ### `write_tools_enabled`
 
-All write tools return `WRITE_TOOLS_DISABLED` when this is `false` (the default for
-connections detected as Live). Set it in `.iris-agentic-dev.toml`:
+Every write-capable tool returns `WRITE_TOOLS_DISABLED` when this is `false`. Set it in
+`.iris-agentic-dev.toml`:
 
 ```toml
 write_tools_enabled = true
 ```
+
+Editing the file changes the gate on the next tool call, in both directions — no restart.
+
+Environment variable: `IRIS_WRITE_TOOLS_ENABLED=1`. An operator who exported it before
+starting iad outranks the file; the file wins over everything else. With neither declared,
+IRIS `SystemMode` decides, then the namespace. `check_config` reports which of those decided
+in `write_tools_source`, so an unexpected answer names its own cause.
 
 ### `destructive_tools_enabled`
 
@@ -1499,8 +1498,10 @@ they return `DESTRUCTIVE_TOOLS_DISABLED` unless you also set:
 destructive_tools_enabled = true
 ```
 
-Default: `false`. Setting `destructive_tools_enabled = true` with `write_tools_enabled = false`
-is an error — iad refuses to start with `DESTRUCTIVE_REQUIRES_WRITES`.
+Default: `false`, and never inferred — the destructive tier stays off until you declare it.
+Declaring `destructive_tools_enabled = true` with `write_tools_enabled = false` is a
+contradiction, so iad logs `DESTRUCTIVE_REQUIRES_WRITES` and exits 2 rather than serving
+requests with one of the two answers silently discarded.
 
 **Why a separate flag?** A compile-test workflow needs `write_tools_enabled = true`, but
 there's no reason for that same session to be able to kill globals or delete namespaces.
@@ -1509,39 +1510,23 @@ data even if it constructs a destructive call.
 
 Environment variable: `IRIS_DESTRUCTIVE_TOOLS_ENABLED=1`
 
-### `write_allowed_servers`
-
-With a multi-instance pool, writes can be directed to any registered server by name.
-`write_allowed_servers` restricts which names are valid write targets:
-
-```toml
-write_allowed_servers = ["dev", "staging"]
-```
-
-Any write-capable tool call with `server: "prod"` (or any other name not in the list)
-returns `WRITE_SERVER_NOT_ALLOWED`. Read-only tools (`read_only_hint = true`) are
-unaffected — they work against any server regardless of this setting.
-
-When `server` is omitted, the active (default) connection is checked. If the default
-connection has no registered name (env-var or bare toml), the allowlist check is skipped.
-
-An empty list `write_allowed_servers = []` blocks writes to every named server. Omitting
-the key entirely disables the filter.
-
-Environment variable: `IRIS_WRITE_ALLOWED_SERVERS=dev,staging` (comma-separated)
+There is no per-server write allowlist. Restricting writes to particular named servers is
+designed in `specs/074-write-server-allowlist/` and not implemented; until it ships, a write
+allowed on this instance is allowed against every server in the pool. Use separate
+workspaces with their own `.iris-agentic-dev.toml` if you need different answers per server.
 
 ### Check order for write tool calls
 
 ```text
 1. write_tools_enabled        — if false, WRITE_TOOLS_DISABLED
-2. write_allowed_servers      — if set and server not listed, WRITE_SERVER_NOT_ALLOWED
-3. destructive_tools_enabled  — if false and tool is ☠, DESTRUCTIVE_TOOLS_DISABLED
-4. policy.<server>.allow      — category gate (POLICY_GATE)
-5. data safety gates          — PHI, system globals, env template
-6. Execute
+2. destructive_tools_enabled  — if false and tool is ☠, DESTRUCTIVE_TOOLS_DISABLED
+3. policy.<server>.allow      — category gate (POLICY_GATE)
+4. data safety gates          — PHI, system globals, env template
+5. Execute
 ```
 
-Read-only tools skip steps 1–3.
+Steps 1 and 2 run once, in `call_tool`, before the request reaches the tool — so a tool
+cannot be added without passing through them. Read-only tools skip steps 1 and 2.
 
 ---
 
@@ -1590,29 +1575,30 @@ comes back as-is, so `redact` is not a safe default for XML or custom message bo
 
 ## Common error codes
 
-| Code                          | Meaning                                                                                              |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `POLICY_GATE`                 | Call blocked by per-connection policy — see `allow` in `.iris-agentic-dev.toml`                      |
-| `ENV_GATE_BLOCKED`            | Tool not permitted by this connection's `mcpTemplate` — see [gates](#data-safety-gates)              |
-| `DATA_POLICY_BLOCKED`         | Bulk-PHI tool called without `dataPolicy = "allow"`                                                  |
-| `SYSTEM_BLOCKLIST`            | Global is on the system blocklist — not bypassable                                                   |
-| `PHI_GATE_BLOCKED`            | Global name matches a PHI pattern — pass `acknowledgePhi: true`                                      |
-| `SCOPE_REQUIRED`              | `iris_search` called without a document scope — pass a `documents` wildcard list                     |
-| `STALE_CONTENT`               | `iris_doc` insert/delete_lines `expected` field didn't match stored content                          |
-| `STORAGE_STRIP_BLOCKED`       | `iris_doc mode=put` would strip a Storage block — pass `allow_storage_regeneration: true` to proceed |
-| `CODE_EDIT_BLOCKED`           | `iris_execute` call matched a code-editing pattern — use `iris_doc` + `iris_compile`                 |
-| `CHECKIN_BLOCKED`             | SCM CheckIn called without `IRIS_SCM_ALLOW_CHECKIN=1`                                                |
-| `HTTP_EXECUTION_FAILED`       | Atelier HTTP call failed — check host, port, credentials                                             |
-| `IRIS_UNREACHABLE`            | No IRIS connection discoverable — run `check_config`                                                 |
-| `INTEROP_ERROR`               | Ensemble/interop HTTP call failed — check production state and container access                      |
-| `WS_TERMINAL_NOT_SUPPORTED`   | Atelier API version is below V7 — WebSocket terminal requires IRIS 2023.2+                           |
-| `WS_SESSION_NOT_FOUND`        | Session token is invalid or already closed — call `iris_ws_open` to get a new token                  |
-| `CONFIRM_REQUIRED`            | `global_kill` requires a `confirm_token` from `global_preview`                                       |
-| `CONFIRM_EXPIRED`             | Confirmation token is older than 5 minutes — call `global_preview` again                             |
-| `CONFIRM_MISMATCH`            | Token was issued for a different global or server                                                    |
-| `WRITE_TOOLS_DISABLED`        | Write tool called without `write_tools_enabled = true` in `.iris-agentic-dev.toml`                   |
-| `DESTRUCTIVE_TOOLS_DISABLED`  | Destructive tool (☠) called without `destructive_tools_enabled = true`                               |
-| `DESTRUCTIVE_REQUIRES_WRITES` | `destructive_tools_enabled = true` set while `write_tools_enabled = false` — invalid config          |
-| `WRITE_SERVER_NOT_ALLOWED`    | Write directed to a server not in `write_allowed_servers`                                            |
-| `FETCH_FAILED`                | `compare_document` could not fetch source from one or both servers                                   |
-| `HL7_NOT_AVAILABLE`           | `EnsLib.HL7.Schema` not installed on this instance                                                   |
+| Code                                  | Meaning                                                                                                        |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `POLICY_GATE`                         | Call blocked by per-connection policy — see `allow` in `.iris-agentic-dev.toml`                                |
+| `ENV_GATE_BLOCKED`                    | Tool not permitted by this connection's `mcpTemplate` — see [gates](#data-safety-gates)                        |
+| `DATA_POLICY_BLOCKED`                 | Bulk-PHI tool called without `dataPolicy = "allow"`                                                            |
+| `SYSTEM_BLOCKLIST`                    | Global is on the system blocklist — not bypassable                                                             |
+| `PHI_GATE_BLOCKED`                    | Global name matches a PHI pattern — pass `acknowledgePhi: true`                                                |
+| `SCOPE_REQUIRED`                      | `iris_search` called without a document scope — pass a `documents` wildcard list                               |
+| `STALE_CONTENT`                       | `iris_doc` insert/delete_lines `expected` field didn't match stored content                                    |
+| `STORAGE_RESET_REQUIRES_CONFIRMATION` | `iris_doc mode=put` would reset an existing Storage block — pass `allow_storage_regeneration: true` to proceed |
+| `CODE_EDIT_BLOCKED`                   | `iris_execute` call matched a code-editing pattern — use `iris_doc` + `iris_compile`                           |
+| `CHECKIN_BLOCKED`                     | SCM CheckIn called without `IRIS_SCM_ALLOW_CHECKIN=1`                                                          |
+| `HTTP_EXECUTION_FAILED`               | Atelier HTTP call failed — check host, port, credentials                                                       |
+| `IRIS_UNREACHABLE`                    | No IRIS connection discoverable — run `check_config`                                                           |
+| `INTEROP_ERROR`                       | Ensemble/interop HTTP call failed — check production state and container access                                |
+| `SESSION_WS_UNAVAILABLE`              | The instance does not serve the WebSocket terminal endpoint — requires IRIS 2023.2+                            |
+| `SESSION_WS_DISCONNECTED`             | Session token is invalid or already closed — call `iris_ws_open` to get a new token                            |
+| `SESSION_STALE`                       | Session outlived its idle window and was reaped — open a new one                                               |
+| `SESSION_TIMEOUT`                     | IRIS sent no frame within 30 seconds — the statement is still running on the server                            |
+| `CONFIRM_REQUIRED`                    | `global_kill` requires a `confirm_token` from `global_preview`                                                 |
+| `CONFIRM_EXPIRED`                     | Confirmation token is older than 5 minutes — call `global_preview` again                                       |
+| `CONFIRM_MISMATCH`                    | Token was issued for a different global or server                                                              |
+| `WRITE_TOOLS_DISABLED`                | Write tool called without `write_tools_enabled = true` in `.iris-agentic-dev.toml`                             |
+| `DESTRUCTIVE_TOOLS_DISABLED`          | Destructive tool (☠) called without `destructive_tools_enabled = true`                                         |
+| `DESTRUCTIVE_REQUIRES_WRITES`         | `destructive_tools_enabled = true` set while `write_tools_enabled = false` — invalid config                    |
+| `FETCH_FAILED`                        | `compare_document` could not fetch source from one or both servers                                             |
+| `HL7_NOT_AVAILABLE`                   | `EnsLib.HL7.Schema` not installed on this instance                                                             |

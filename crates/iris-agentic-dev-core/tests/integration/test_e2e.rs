@@ -219,6 +219,25 @@ fn call_tool_timeout(name: &str, args: serde_json::Value, timeout_secs: u64) -> 
     tool_result(&responses, 2)
 }
 
+/// Call a single tool with the destructive tier declared in the operator environment.
+///
+/// Spec 085 put `iris_global` set/kill and `iris_lookup_manage` set/delete in the destructive
+/// tier, which defaults to off. A round-trip test that does not declare the tier measures the
+/// gate refusing, not the round trip — so the tier is declared here rather than the assertion
+/// being relaxed to accept `DESTRUCTIVE_TOOLS_DISABLED`.
+fn call_tool_destructive(name: &str, args: serde_json::Value) -> serde_json::Value {
+    let mut env = iris_env();
+    env.push(("IRIS_WRITE_TOOLS_ENABLED", "1".to_string()));
+    env.push(("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "1".to_string()));
+    let mut msgs = init_msgs();
+    msgs.push(serde_json::json!({
+        "jsonrpc":"2.0","id":2,"method":"tools/call",
+        "params":{"name": name, "arguments": args}
+    }));
+    let responses = mcp_call_timeout(&env, &msgs, 10);
+    tool_result(&responses, 2)
+}
+
 // ── iris_execute ──────────────────────────────────────────────────────────────
 
 #[test]
@@ -5084,7 +5103,7 @@ fn e2e_global_list_returns_structured_response() {
 #[test]
 fn e2e_global_set_get_kill_roundtrip() {
     require_iris!();
-    let result = call_tool(
+    let result = call_tool_destructive(
         "iris_global",
         serde_json::json!({
             "action": "set",
@@ -5101,7 +5120,7 @@ fn e2e_global_set_get_kill_roundtrip() {
     }
     assert_eq!(result["success"], true, "global set: {}", result);
 
-    let get = call_tool(
+    let get = call_tool_destructive(
         "iris_global",
         serde_json::json!({
             "action": "get",
@@ -5118,7 +5137,7 @@ fn e2e_global_set_get_kill_roundtrip() {
         get
     );
 
-    let kill = call_tool(
+    let kill = call_tool_destructive(
         "iris_global",
         serde_json::json!({
             "action": "kill",
@@ -5553,7 +5572,7 @@ fn e2e_lookup_manage_list_tables_returns_structured_response() {
 #[test]
 fn e2e_lookup_manage_set_get_delete_roundtrip() {
     require_iris!();
-    let set = call_tool(
+    let set = call_tool_destructive(
         "iris_lookup_manage",
         serde_json::json!({
             "action": "set",
@@ -5570,7 +5589,7 @@ fn e2e_lookup_manage_set_get_delete_roundtrip() {
     }
     assert_eq!(set["success"], true, "lookup set: {}", set);
 
-    let get = call_tool(
+    let get = call_tool_destructive(
         "iris_lookup_manage",
         serde_json::json!({
             "action": "get",
@@ -5587,7 +5606,7 @@ fn e2e_lookup_manage_set_get_delete_roundtrip() {
         get
     );
 
-    let del = call_tool(
+    let del = call_tool_destructive(
         "iris_lookup_manage",
         serde_json::json!({
             "action": "delete",

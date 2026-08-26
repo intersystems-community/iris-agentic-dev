@@ -24,6 +24,8 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 urlencoding = "2"
+base64 = "0.22"
+aes-gcm = "0.10"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 hyper = { version = "1", features = ["http1", "server"] }
@@ -82,6 +84,10 @@ name = "test_plugin_manifest_version"
 path = "tests/unit/test_plugin_manifest_version.rs"
 
 [[test]]
+name = "test_vscode_payload"
+path = "tests/unit/test_vscode_payload.rs"
+
+[[test]]
 name = "test_exec_live"
 path = "tests/integration/test_exec_live.rs"
 
@@ -108,3 +114,7 @@ path = "tests/integration/test_http_transport.rs"
 [[test]]
 name = "test_mcp_binary_config"
 path = "tests/integration/test_mcp_binary_config.rs"
+
+[[test]]
+name = "test_reporter_repro"
+path = "tests/integration/test_reporter_repro.rs"

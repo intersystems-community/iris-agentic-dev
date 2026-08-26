@@ -3302,7 +3302,22 @@ pub struct CheckConfigOk {
     /// ISO 8601, e.g. `"2026-08-17T12:00:00Z"`.
     pub config_loaded_at: Option<String>,
     pub iris_version: Option<String>,
+    /// Which build of this server is answering. Written into the response body since v1.0.0 and
+    /// advertised first in the tool's own description, but absent from this struct until 085 —
+    /// the declared contract omitted the field it told you to read.
+    pub server_version: String,
+    /// The effective write gate. Read from the same `GateResolution` enforcement reads, so this
+    /// field and an actual write attempt cannot disagree.
     pub write_tools_enabled: bool,
+    /// What decided `write_tools_enabled` (085 FR-004). An operator who sees a value they did not
+    /// declare gets the reason from one field instead of from a bug report.
+    pub write_tools_source: crate::tools::write_gate::GateSource,
+    /// The effective destructive tier. Accepted as a config key since v1.0.0 and never reported
+    /// until 085.
+    pub destructive_tools_enabled: bool,
+    /// What decided `destructive_tools_enabled`. `inferred_default` means nothing declared it —
+    /// the tier is off until asked for, and is never inferred from `SystemMode` or the namespace.
+    pub destructive_tools_source: crate::tools::write_gate::GateSource,
     /// Where the server watches for `.iris-agentic-dev.toml` hot-reload — write a config
     /// file to this exact path to switch connections mid-session without a restart.
     pub config_watch_path: Option<String>,

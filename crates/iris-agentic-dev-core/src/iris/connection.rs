@@ -4,7 +4,7 @@ use std::fmt;
 
 /// Whether the connected IRIS instance is a production (Live) system.
 /// Detected at probe time via `^%SYS("SystemMode")` SQL query.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SystemMode {
     Live,        // "Live" — lock write tools
     Development, // "Development" — allow write tools
@@ -123,28 +123,22 @@ impl IrisConnection {
         }
     }
 
-    /// Returns true if write-capable tools should be registered.
+    /// Returns true if write-capable calls are allowed against *this* connection, judged from the
+    /// operator's environment and the instance's own `SystemMode` / namespace.
     ///
-    /// Priority order (highest wins):
-    /// 1. `IRIS_WRITE_TOOLS_ENABLED=0` or `=1` — set by workspace_config from
-    ///    `write_tools_enabled` in `.iris-agentic-dev.toml` (issue #110).
-    /// 2. `IRIS_ALLOW_PROD=1` / `true` — legacy override (issue #26).
-    /// 3. SystemMode / namespace heuristics.
+    /// Delegates to [`crate::tools::write_gate::resolve_declared`] so the precedence chain has one
+    /// implementation (085 FR-019). A connection knows nothing about a config file, so nothing is
+    /// declared here — callers that hold a `.iris-agentic-dev.toml` declaration must resolve
+    /// through `write_gate::resolve_for_connection`, which is what `ConnectionState` does. Reading
+    /// the declaration back out of an environment variable is the #110 defect.
     pub fn is_write_allowed(&self) -> bool {
-        if let Ok(v) = std::env::var("IRIS_WRITE_TOOLS_ENABLED") {
-            return v == "1" || v.eq_ignore_ascii_case("true");
-        }
-        if std::env::var("IRIS_ALLOW_PROD")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
-        {
-            return true;
-        }
-        match &self.system_mode {
-            SystemMode::Live => false,
-            SystemMode::Development | SystemMode::Test => true,
-            SystemMode::Unknown => !is_production_namespace(&self.namespace),
-        }
+        crate::tools::write_gate::resolve_declared(
+            crate::tools::write_gate::operator_env_gates(),
+            crate::tools::write_gate::DeclaredGates::default(),
+            self.system_mode,
+            &self.namespace,
+        )
+        .write_enabled
     }
 
     /// Return a clone of this connection authenticating as the restricted service account
@@ -685,13 +679,6 @@ impl IrisConnection {
     }
 }
 
-/// Returns true if the namespace name looks like a production namespace.
-/// Used as fallback when SystemMode is Unknown (community edition or unconfigured).
-fn is_production_namespace(ns: &str) -> bool {
-    let upper = ns.to_uppercase();
-    matches!(upper.as_str(), "PROD" | "PRODUCTION" | "LIVE" | "PRD")
-}
-
 /// FR-006: Strip IRIS session banner and prompt lines from docker exec stdout.
 ///
 /// IRIS session output looks like:
@@ -931,71 +918,104 @@ mod system_mode_tests {
         assert_ne!(SystemMode::Development, SystemMode::Live);
     }
 
-    // T006 — is_write_allowed()
+    // ── The inference chain (085 T013) ───────────────────────────────────────
+    //
+    // These used to mutate `IRIS_ALLOW_PROD` / `IRIS_WRITE_TOOLS_ENABLED` and call
+    // `is_write_allowed()`. The operator environment is now a process-start snapshot behind a
+    // `OnceLock`, so `set_var` inside a test is a no-op against whatever the first test in the
+    // binary captured — a test that passes or fails depending on execution order. They drive the
+    // pure resolver with an explicit `OperatorEnvGates` instead, which is what that parameter is
+    // for.
+    use crate::tools::write_gate::{resolve_declared, DeclaredGates, GateSource, OperatorEnvGates};
+
+    /// Nothing declared, nothing in the operator's environment: pure inference.
+    fn inferred(ns: &str, mode: SystemMode) -> bool {
+        resolve_declared(
+            &OperatorEnvGates::default(),
+            DeclaredGates::default(),
+            mode,
+            ns,
+        )
+        .write_enabled
+    }
+
     #[test]
     fn write_blocked_for_live() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let c = conn("USER", SystemMode::Live);
-        // No IRIS_ALLOW_PROD set in this test
-        std::env::remove_var("IRIS_ALLOW_PROD");
-        assert!(!c.is_write_allowed());
+        assert!(!inferred("USER", SystemMode::Live));
     }
 
     #[test]
     fn write_allowed_for_development() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("IRIS_ALLOW_PROD");
-        assert!(conn("USER", SystemMode::Development).is_write_allowed());
+        assert!(inferred("USER", SystemMode::Development));
     }
 
     #[test]
     fn write_allowed_for_test_mode() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("IRIS_ALLOW_PROD");
-        assert!(conn("USER", SystemMode::Test).is_write_allowed());
+        assert!(inferred("USER", SystemMode::Test));
     }
 
     #[test]
     fn write_blocked_for_unknown_with_prod_namespace() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("IRIS_ALLOW_PROD");
-        assert!(!conn("PROD", SystemMode::Unknown).is_write_allowed());
-        assert!(!conn("PRODUCTION", SystemMode::Unknown).is_write_allowed());
-        assert!(!conn("LIVE", SystemMode::Unknown).is_write_allowed());
-        assert!(!conn("PRD", SystemMode::Unknown).is_write_allowed());
+        assert!(!inferred("PROD", SystemMode::Unknown));
+        assert!(!inferred("PRODUCTION", SystemMode::Unknown));
+        assert!(!inferred("LIVE", SystemMode::Unknown));
+        assert!(!inferred("PRD", SystemMode::Unknown));
     }
 
     #[test]
     fn write_allowed_for_unknown_with_dev_namespace() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("IRIS_ALLOW_PROD");
-        assert!(conn("USER", SystemMode::Unknown).is_write_allowed());
-        assert!(conn("DEV", SystemMode::Unknown).is_write_allowed());
-        assert!(conn("MYAPP", SystemMode::Unknown).is_write_allowed());
+        assert!(inferred("USER", SystemMode::Unknown));
+        assert!(inferred("DEV", SystemMode::Unknown));
+        assert!(inferred("MYAPP", SystemMode::Unknown));
     }
 
     #[test]
     fn iris_allow_prod_overrides_live_mode() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("IRIS_ALLOW_PROD", "1");
-        assert!(conn("USER", SystemMode::Live).is_write_allowed());
-        std::env::remove_var("IRIS_ALLOW_PROD");
+        let op = OperatorEnvGates {
+            allow_prod: true,
+            ..Default::default()
+        };
+        let r = resolve_declared(&op, DeclaredGates::default(), SystemMode::Live, "USER");
+        assert!(r.write_enabled);
+        assert_eq!(r.write_source, GateSource::LegacyAllowProd);
     }
 
     #[test]
     fn is_write_allowed_logic_direct() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("IRIS_ALLOW_PROD");
-        // Test the override logic directly without touching process env vars.
-        // The env var branch is: if IRIS_ALLOW_PROD is "1" or "true" → return true.
-        // We verify the non-override paths only (env-based override tested manually).
-        assert!(!conn("LIVE", SystemMode::Unknown).is_write_allowed());
-        assert!(!conn("PROD", SystemMode::Live).is_write_allowed());
-        assert!(conn("DEV", SystemMode::Development).is_write_allowed());
+        assert!(!inferred("LIVE", SystemMode::Unknown));
+        assert!(!inferred("PROD", SystemMode::Live));
+        assert!(inferred("DEV", SystemMode::Development));
+    }
+
+    /// `is_write_allowed()` must be the resolver, not a second copy of the chain. Compares
+    /// against the resolver under whatever the process snapshot happens to be, so it asserts
+    /// delegation without depending on the environment the test binary inherited.
+    #[test]
+    fn is_write_allowed_delegates_to_resolver() {
+        for (ns, mode) in [
+            ("USER", SystemMode::Development),
+            ("USER", SystemMode::Live),
+            ("PROD", SystemMode::Unknown),
+            ("MYAPP", SystemMode::Unknown),
+        ] {
+            let expected = resolve_declared(
+                crate::tools::write_gate::operator_env_gates(),
+                DeclaredGates::default(),
+                mode,
+                ns,
+            )
+            .write_enabled;
+            assert_eq!(
+                conn(ns, mode).is_write_allowed(),
+                expected,
+                "is_write_allowed disagreed with the resolver for {ns}/{mode:?}"
+            );
+        }
     }
 
     #[test]
     fn is_production_namespace_case_insensitive() {
+        use crate::tools::write_gate::is_production_namespace;
         assert!(is_production_namespace("prod"));
         assert!(is_production_namespace("PROD"));
         assert!(is_production_namespace("Production"));
@@ -1007,40 +1027,44 @@ mod system_mode_tests {
         assert!(!is_production_namespace("MYAPP"));
     }
 
-    // T0xx: IRIS_WRITE_TOOLS_ENABLED overrides SystemMode (#110)
+    // The #110 override: an operator-set `IRIS_WRITE_TOOLS_ENABLED` beats SystemMode either way.
     #[test]
-    fn iris_write_tools_enabled_0_blocks_writes_on_dev_instance() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("IRIS_ALLOW_PROD");
-        std::env::set_var("IRIS_WRITE_TOOLS_ENABLED", "0");
-        let c = conn("USER", SystemMode::Development);
+    fn operator_env_0_blocks_writes_on_dev_instance() {
+        let op = OperatorEnvGates {
+            write_tools_enabled: Some(false),
+            ..Default::default()
+        };
+        let r = resolve_declared(
+            &op,
+            DeclaredGates::default(),
+            SystemMode::Development,
+            "USER",
+        );
         assert!(
-            !c.is_write_allowed(),
+            !r.write_enabled,
             "IRIS_WRITE_TOOLS_ENABLED=0 must block even Development mode"
         );
-        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
+        assert_eq!(r.write_source, GateSource::OperatorEnv);
     }
 
     #[test]
-    fn iris_write_tools_enabled_1_allows_writes_on_live_instance() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("IRIS_ALLOW_PROD");
-        std::env::set_var("IRIS_WRITE_TOOLS_ENABLED", "1");
-        let c = conn("USER", SystemMode::Live);
+    fn operator_env_1_allows_writes_on_live_instance() {
+        let op = OperatorEnvGates {
+            write_tools_enabled: Some(true),
+            ..Default::default()
+        };
+        let r = resolve_declared(&op, DeclaredGates::default(), SystemMode::Live, "USER");
         assert!(
-            c.is_write_allowed(),
+            r.write_enabled,
             "IRIS_WRITE_TOOLS_ENABLED=1 must allow even Live mode"
         );
-        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
+        assert_eq!(r.write_source, GateSource::OperatorEnv);
     }
 
     #[test]
-    fn iris_write_tools_enabled_absent_falls_through_to_system_mode() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("IRIS_ALLOW_PROD");
-        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
-        assert!(!conn("USER", SystemMode::Live).is_write_allowed());
-        assert!(conn("USER", SystemMode::Development).is_write_allowed());
+    fn operator_env_absent_falls_through_to_system_mode() {
+        assert!(!inferred("USER", SystemMode::Live));
+        assert!(inferred("USER", SystemMode::Development));
     }
 }
 

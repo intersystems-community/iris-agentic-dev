@@ -58,6 +58,7 @@ tokio = { workspace = true, features = ["full"] }
 tempfile = "3"
 serde_json.workspace = true
 reqwest.workspace = true
+regex.workspace = true
 wiremock = "0.6"
 [[test]]
 name = "discovery_tests"
@@ -526,4 +527,29 @@ path = "tests/integration/test_admin_e2e.rs"
 [[test]]
 name = "test_iris_production_params"
 path = "tests/unit/test_iris_production_params.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_gate_resolution"
+path = "tests/unit/test_gate_resolution.rs"
+
+[[test]]
+name = "test_gate_classification"
+path = "tests/unit/test_gate_classification.rs"
+
+[[test]]
+name = "test_gate_check"
+path = "tests/unit/test_gate_check.rs"
+
+[[test]]
+name = "test_docs_contract"
+path = "tests/unit/test_docs_contract.rs"
+
+[[test]]
+name = "test_lockfile_sync"
+path = "tests/unit/test_lockfile_sync.rs"
+
+[[test]]
+name = "test_gate_enforcement_live"
+path = "tests/integration/test_gate_enforcement_live.rs"
 required-features = ["testing"]

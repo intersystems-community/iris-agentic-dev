@@ -10067,6 +10067,7 @@ async fn test_config_hot_reload_on_change() {
         Some(watcher),
         None,
         false,
+        Default::default(),
     )
     .expect("IrisTools created");
 
@@ -18032,6 +18033,7 @@ allow = ["query"]
         Some(watcher),
         None,
         false,
+        Default::default(),
     )
     .expect("IrisTools::with_registry_and_toolset")
 }

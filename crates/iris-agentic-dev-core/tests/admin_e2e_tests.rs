@@ -302,12 +302,20 @@ fn test_admin_list_webapps_filter() {
 }
 
 // ── T031: write CRUD round-trips ──────────────────────────────────────────────
+//
+// `iris_admin` is in the destructive tier (spec 085), which defaults to off, so every one of
+// these round-trips declares both gates. `IRIS_ADMIN_TOOLS=1` on its own only opens the tool;
+// it says nothing about writes.
 
 #[test]
 #[ignore = "requires live IRIS with IRIS_ADMIN_TOOLS=1"]
 fn test_admin_user_crud() {
     assert!(iris_available());
-    let env = &[("IRIS_ADMIN_TOOLS", "1")];
+    let env = &[
+        ("IRIS_ADMIN_TOOLS", "1"),
+        ("IRIS_WRITE_TOOLS_ENABLED", "1"),
+        ("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "1"),
+    ];
 
     // Create
     let r = admin_call(
@@ -364,7 +372,11 @@ fn test_admin_user_crud() {
 #[ignore = "requires live IRIS with IRIS_ADMIN_TOOLS=1"]
 fn test_admin_namespace_crud() {
     assert!(iris_available());
-    let env = &[("IRIS_ADMIN_TOOLS", "1")];
+    let env = &[
+        ("IRIS_ADMIN_TOOLS", "1"),
+        ("IRIS_WRITE_TOOLS_ENABLED", "1"),
+        ("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "1"),
+    ];
 
     // Create (reuse USER database for both code and data)
     let r = admin_call(
@@ -430,7 +442,11 @@ fn test_admin_webapp_crud() {
         return;
     }
     assert!(iris_available());
-    let env = &[("IRIS_ADMIN_TOOLS", "1")];
+    let env = &[
+        ("IRIS_ADMIN_TOOLS", "1"),
+        ("IRIS_WRITE_TOOLS_ENABLED", "1"),
+        ("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "1"),
+    ];
 
     // Create
     let r = admin_call(

@@ -20,12 +20,12 @@ jobs:
         run: sudo apt-get install -y mold
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo clippy --locked --all-targets -- -D warnings
         env:
           RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
       # Build binary first (required for mcp_handshake/plugin_dispatch/benchmark_relocated
       # tests, which spawn it as a subprocess).
-      - run: cargo build --workspace
+      - run: cargo build --locked --workspace
         env:
           RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
       # Runs EVERY declared test target across both crates — no hardcoded --test list.
@@ -41,7 +41,7 @@ jobs:
       # within each binary sequentially. Both are needed: cargo spawns each binary as a
       # separate OS process, and process env vars are inherited/shared, so concurrent
       # binaries race on the same vars. -j1 is the only reliable cross-binary guard.
-      - run: cargo test -j1 --workspace --all-targets --features testing --no-fail-fast -- --test-threads=1
+      - run: cargo test --locked -j1 --workspace --all-targets --features testing --no-fail-fast -- --test-threads=1
         env:
           RUST_LOG: warn
           RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
@@ -50,7 +50,7 @@ jobs:
       # sweep above (which would re-build every crate). The binary was already built by the
       # `cargo build --workspace` step above, so CARGO_BIN_EXE_iris-agentic-dev is valid.
       - name: Binary config integration tests
-        run: cargo test -j1 --test test_mcp_binary_config --features testing -- --include-ignored --test-threads=1
+        run: cargo test --locked -j1 --test test_mcp_binary_config --features testing -- --include-ignored --test-threads=1
         env:
           RUST_LOG: warn
           RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
@@ -83,7 +83,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.92.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build -p iris-agentic-dev
+      - run: cargo build --locked -p iris-agentic-dev
       - name: MCP handshake smoke test on Windows
         shell: pwsh
         run: |
@@ -100,40 +100,78 @@ jobs:
             Write-Host "FAIL: no capabilities in response. Got: $result"
             exit 1
           }
-      - name: check-sm-credential DB read smoke test
+      - name: check-sm-credential round-trip against real Windows crypto
+        # The only place the real CryptUnprotectData success path runs. The fixture
+        # reproduces what VS Code actually writes: Buffer JSON around a v10 AES-GCM
+        # envelope, with the AES key DPAPI-sealed in Local State. Format handling and
+        # the AES-GCM open are covered cross-platform by test_vscode_payload; this
+        # step is what proves the Windows key-unseal half works.
         shell: pwsh
         run: |
-          # Python's sqlite3 module is always available on windows-latest — no CLI needed.
-          $dbPath = "$env:TEMP\state-test.vscdb"
-          $key = 'secret://{"extensionId":"intersystems-community.servermanager","key":"credentialProvider:ci-server/ci-user"}'
-          $val = 'not-real-dpapi-data'
-          python -c "
-import sqlite3, sys
-db = sqlite3.connect(sys.argv[1])
-db.execute('CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value BLOB NOT NULL)')
-db.execute('INSERT INTO ItemTable VALUES (?, ?)', (sys.argv[2], sys.argv[3]))
-db.commit()
-" $dbPath $key $val
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "SKIP: could not create test DB"
-            exit 0
+          python -m pip install --quiet cryptography
+          $fixture = ".github/scripts/make_sm_credential_fixture.py"
+          $password = "ci-test-password"
+          python $fixture --self-test
+          if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: fixture self-test failed"; exit 1 }
+
+          # Case 1 — the shape current VS Code writes, and the shape behind the
+          # field report. Before this fix the value was handed to DPAPI unchanged,
+          # which cannot work: DPAPI applies to the Local State key, not the value.
+          $root = "$env:TEMP\vscode-safestorage"
+          Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+          python $fixture --root $root --mode safestorage --password $password
+          if ($LASTEXITCODE -ne 0) { Write-Host "FAIL: could not build safestorage fixture"; exit 1 }
+          $out = & "target\debug\iris-agentic-dev.exe" check-sm-credential ci-server ci-user `
+            --db-path "$root\User\globalStorage\state.vscdb" 2>&1 | Out-String
+          Write-Host "--- safeStorage case ---`n$out"
+          if ($out -match "query failed") {
+            Write-Host "FAIL: TEXT column read regressed"; exit 1
           }
-          # --db-path overrides the VS Code default; positional args are server_name and username
-          $output = & "target\debug\iris-agentic-dev.exe" check-sm-credential ci-server ci-user --db-path $dbPath 2>&1
-          Write-Host "Output: $output"
-          # Exact failure sequence expected:
-          #   1. DB read succeeds (TEXT column accepted) — no "query failed"
-          #   2. CryptUnprotectData called and fails on garbage bytes — "CryptUnprotectData failed"
-          # "query failed" = the TEXT column fix regressed (Robbie's original error).
-          if ($output -match "query failed") {
-            Write-Host "FAIL: DB read failed with column type error — TEXT fix regressed"
-            exit 1
+          if (-not ($out -match "Value encoding: BufferJson")) {
+            Write-Host "FAIL: Buffer JSON was not detected"; exit 1
           }
-          if (-not ($output -match "CryptUnprotectData failed")) {
-            Write-Host "FAIL: expected CryptUnprotectData failure after successful read, got: $output"
-            exit 1
+          if (-not ($out -match "safeStorage AES-GCM envelope")) {
+            Write-Host "FAIL: v10 envelope was not recognised inside the Buffer JSON"; exit 1
           }
-          Write-Host "PASS: DB read succeeded, DPAPI attempted and failed as expected on CI"
+          if (-not ($out -match "OK: resolved password")) {
+            Write-Host "FAIL: safeStorage credential did not decrypt"; exit 1
+          }
+          if (-not ($out -match "Password length: $($password.Length) chars")) {
+            Write-Host "FAIL: decrypted password has the wrong length"; exit 1
+          }
+
+          # Case 2 — legacy shape: raw DPAPI ciphertext in a BLOB column.
+          $root = "$env:TEMP\vscode-rawdpapi"
+          Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+          python $fixture --root $root --mode rawdpapi --password $password
+          $out = & "target\debug\iris-agentic-dev.exe" check-sm-credential ci-server ci-user `
+            --db-path "$root\User\globalStorage\state.vscdb" 2>&1 | Out-String
+          Write-Host "--- raw DPAPI case ---`n$out"
+          if (-not ($out -match "Value encoding: RawDpapi")) {
+            Write-Host "FAIL: raw blob was not detected as RawDpapi"; exit 1
+          }
+          if (-not ($out -match "OK: resolved password")) {
+            Write-Host "FAIL: raw DPAPI credential did not decrypt"; exit 1
+          }
+
+          # Case 3 — an unrecognised value must be named as a format problem and
+          # must NOT blame the user's Windows account. That wrong message is what
+          # sent the original field diagnosis down a dead end, so it is asserted
+          # against explicitly.
+          $root = "$env:TEMP\vscode-junk"
+          Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+          python $fixture --root $root --mode junk
+          $out = & "target\debug\iris-agentic-dev.exe" check-sm-credential ci-server ci-user `
+            --db-path "$root\User\globalStorage\state.vscdb" 2>&1 | Out-String
+          Write-Host "--- unrecognised case ---`n$out"
+          if ($out -match "different user than VS Code") {
+            Write-Host "FAIL: reintroduced the misleading 'different user' diagnosis"; exit 1
+          }
+          if (-not ($out -match "unrecognized format")) {
+            Write-Host "FAIL: expected an unrecognized-format error, got: $out"; exit 1
+          }
+
+          Write-Host "PASS: safeStorage and raw DPAPI both resolve; junk reports a format error"
 
   sign-windows:
     runs-on: windows-latest
@@ -149,7 +187,7 @@ db.commit()
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.92.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release -p iris-agentic-dev
+      - run: cargo build --locked --release -p iris-agentic-dev
       - uses: azure/login@v3
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -198,7 +236,7 @@ db.commit()
           # Separate cache per IRIS version so a binary built against one version
           # doesn't silently run against another.
           key: "iris-${{ matrix.iris_version }}"
-      - run: cargo build -p iris-agentic-dev
+      - run: cargo build --locked -p iris-agentic-dev
       - name: Start IRIS container
         run: |
           docker run -d --name iris-e2e \
@@ -325,7 +363,7 @@ db.commit()
           curl -s -u "$USER:$PASS" "http://$HOST:52773/api/atelier/" | head -c 500
       - name: Run full test suite against live IRIS (Rust)
         run: |
-          cargo test -j1 --workspace --all-targets --features testing --no-fail-fast -- \
+          cargo test --locked -j1 --workspace --all-targets --features testing --no-fail-fast -- \
             --include-ignored --nocapture --test-threads=1 \
             --skip discover_iris_reads_env_vars \
             --skip discover_iris_returns_none_when_nothing_found \
@@ -387,7 +425,7 @@ db.commit()
       - name: Install mold linker
         run: sudo apt-get install -y mold
       - name: Build binary (required for mcp_handshake and plugin_dispatch tests)
-        run: cargo build -p iris-agentic-dev
+        run: cargo build --locked -p iris-agentic-dev
         env:
           RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
       - name: Check per-file coverage floors
@@ -487,6 +525,15 @@ db.commit()
           print(f"OK: {validated} complete JSON blocks valid (schema-checked), {skipped} fragment(s) skipped")
           PYEOF
 
+      # Everything above this line only ever looked at README.md. docs/tools.md and
+      # docs/connecting.md — where the error codes, config keys, env vars, and tool
+      # parameters are documented — had no CI check at all, which is how a per-server
+      # allowlist that was never implemented stayed documented for two releases.
+      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Docs contract (docs/tools.md, docs/connecting.md, iad SKILL.md)
+        run: cargo test --locked -p iris-agentic-dev-core --test test_docs_contract
+
   cross-compile-check:
     runs-on: ubuntu-latest
     steps:
@@ -497,7 +544,7 @@ db.commit()
       - uses: mlugg/setup-zig@v2
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-zigbuild
-      - run: cargo zigbuild --release --target x86_64-unknown-linux-musl -p iris-agentic-dev
+      - run: cargo zigbuild --locked --release --target x86_64-unknown-linux-musl -p iris-agentic-dev
       - run: file target/x86_64-unknown-linux-musl/release/iris-agentic-dev
       - run: |
           ldd target/x86_64-unknown-linux-musl/release/iris-agentic-dev 2>&1 | grep -q "not a dynamic executable" && echo "SC-002 PASS: static binary confirmed" || echo "NOTE: may have dynamic deps on musl"
@@ -514,7 +561,7 @@ db.commit()
       - name: Build static musl binary
         run: |
           cargo install cargo-zigbuild
-          cargo zigbuild --release --target x86_64-unknown-linux-musl -p iris-agentic-dev
+          cargo zigbuild --locked --release --target x86_64-unknown-linux-musl -p iris-agentic-dev
           cp target/x86_64-unknown-linux-musl/release/iris-agentic-dev iris-agentic-dev
       - name: Build Docker image
         run: docker build -t iris-agentic-dev-smoke .
