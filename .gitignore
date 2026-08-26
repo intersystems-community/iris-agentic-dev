@@ -66,3 +66,6 @@ skills-lock.json
 tarpaulin-report.json
 __pycache__/
 *.pyc
+
+# Browser-automation capture dumps (console logs + page snapshots, machine-specific)
+.playwright-mcp/
