@@ -19,16 +19,29 @@ async fn probe_atelier_returns_connection_on_iris_response() {
     assert!(result.is_none(), "Non-IRIS port should return None");
 }
 
-/// probe_atelier respects the timeout — 100ms must not block longer than 250ms.
+/// probe_atelier respects the timeout: a blackhole address must not block past it.
+///
+/// The first call is a warm-up and is deliberately not measured. `probe_atelier`
+/// builds its own `reqwest::Client`, and building the first one in a process
+/// initialises the TLS backend — on macOS that means reading root certificates
+/// out of the keychain, which costs about a second. That cost is process setup,
+/// not request time, so timing it here measured the wrong thing and the
+/// assertion failed on any macOS dev machine.
 #[tokio::test]
 async fn probe_atelier_respects_timeout() {
+    let warmup = std::time::Instant::now();
+    let _ = probe_atelier("10.255.255.1", 52773, "_SYSTEM", "SYS", "USER", 100).await;
+    let warmup_ms = warmup.elapsed().as_millis();
+
     let start = std::time::Instant::now();
     let _result = probe_atelier("10.255.255.1", 52773, "_SYSTEM", "SYS", "USER", 100).await;
     let elapsed = start.elapsed();
+
     assert!(
         elapsed < std::time::Duration::from_millis(500),
-        "probe_atelier took {}ms, expected <500ms with 100ms timeout",
-        elapsed.as_millis()
+        "probe_atelier took {}ms with a 100ms timeout (warm-up call took {}ms)",
+        elapsed.as_millis(),
+        warmup_ms
     );
 }
 

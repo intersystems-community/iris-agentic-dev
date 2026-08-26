@@ -395,23 +395,32 @@ pub fn load_workspace_config_with_path(
     }
 }
 
-/// Like [`apply_workspace_config`] but also returns the path of the config file that was loaded,
-/// so callers can record it in [`ConnectionState`] at startup (not just after hot-reload).
+/// Like [`apply_workspace_config`] but also returns the path of the config file that was loaded
+/// and what it declared about the write/destructive gates, so callers can record both in
+/// `ConnectionState` at startup (not just after hot-reload).
+///
+/// The gate declaration is returned rather than exported to the environment (085 FR-001): it
+/// belongs to the config load that produced it, and the next load must be able to change it.
 pub fn apply_workspace_config_with_path(
     explicit: Option<IrisConnection>,
     workspace_path: Option<&str>,
     namespace: &str,
-) -> (Option<IrisConnection>, Option<std::path::PathBuf>) {
+) -> (
+    Option<IrisConnection>,
+    Option<std::path::PathBuf>,
+    crate::tools::write_gate::DeclaredGates,
+) {
     match load_workspace_config_with_path(workspace_path) {
         Some((cfg, path)) => {
             // Always apply tool-list and gate settings from the workspace config,
             // even when a connection is already established via env vars or CLI flags.
             // explicit connection wins for connectivity; TOML wins for tool-list settings.
+            let declared = crate::tools::write_gate::DeclaredGates::from_config(&cfg);
             let conn_from_cfg = workspace_config_to_connection(&cfg, namespace);
             let conn = explicit.or(conn_from_cfg);
-            (conn, Some(path))
+            (conn, Some(path), declared)
         }
-        None => (explicit, None),
+        None => (explicit, None, Default::default()),
     }
 }
 
@@ -425,7 +434,11 @@ pub fn apply_explicit_config_file(
     explicit: Option<IrisConnection>,
     config_path: &std::path::Path,
     namespace: &str,
-) -> (Option<IrisConnection>, Option<std::path::PathBuf>) {
+) -> (
+    Option<IrisConnection>,
+    Option<std::path::PathBuf>,
+    crate::tools::write_gate::DeclaredGates,
+) {
     match std::fs::read_to_string(config_path) {
         Err(e) => {
             tracing::warn!(
@@ -433,7 +446,7 @@ pub fn apply_explicit_config_file(
                 config_path.display(),
                 e
             );
-            (explicit, None)
+            (explicit, None, Default::default())
         }
         Ok(contents) => match toml::from_str::<WorkspaceConfig>(&contents) {
             Err(e) => {
@@ -442,15 +455,16 @@ pub fn apply_explicit_config_file(
                     config_path.display(),
                     e
                 );
-                (explicit, None)
+                (explicit, None, Default::default())
             }
             Ok(cfg) => {
                 tracing::debug!("Loaded --config file from {}", config_path.display());
                 // Always apply tool-list and gate settings from the explicit config,
                 // even when CLI flags already provided a connection.
+                let declared = crate::tools::write_gate::DeclaredGates::from_config(&cfg);
                 let conn_from_cfg = workspace_config_to_connection(&cfg, namespace);
                 let conn = explicit.or(conn_from_cfg);
-                (conn, Some(config_path.to_path_buf()))
+                (conn, Some(config_path.to_path_buf()), declared)
             }
         },
     }
@@ -690,28 +704,14 @@ pub fn workspace_config_to_connection(
         std::env::set_var("IRIS_ENABLED_TOOLS", cfg.enabled_tools.join(","));
     }
 
-    // Validate and export write/destructive gate overrides (issues #110).
-    // destructive=true + write=false is refused immediately — it can never take effect.
-    if cfg.destructive_tools_enabled == Some(true) && cfg.write_tools_enabled == Some(false) {
-        tracing::error!(
-            "DESTRUCTIVE_REQUIRES_WRITES: destructive_tools_enabled=true requires \
-             write_tools_enabled=true — refusing to start with this configuration"
-        );
-        // Return None so the caller falls through to IRIS_UNREACHABLE; the error is
-        // in the log. Callers that need to surface this as a hard error can inspect the
-        // log or check the combination before calling this function.
-        return None;
-    }
-    if let Some(w) = cfg.write_tools_enabled {
-        if std::env::var("IRIS_WRITE_TOOLS_ENABLED").is_err() {
-            std::env::set_var("IRIS_WRITE_TOOLS_ENABLED", if w { "1" } else { "0" });
-        }
-    }
-    if let Some(d) = cfg.destructive_tools_enabled {
-        if std::env::var("IRIS_DESTRUCTIVE_TOOLS_ENABLED").is_err() {
-            std::env::set_var("IRIS_DESTRUCTIVE_TOOLS_ENABLED", if d { "1" } else { "0" });
-        }
-    }
+    // The two gate keys are NOT exported to the environment (085 FR-001/FR-002). They used to be
+    // written to IRIS_WRITE_TOOLS_ENABLED / IRIS_DESTRUCTIVE_TOOLS_ENABLED, and only when the
+    // variable was absent — write-once per process, so a config edited from true to false kept
+    // serving writes forever, and the second variable had no reader at all. The declaration now
+    // travels as data: read it with `write_gate::DeclaredGates::from_config`, resolve it with
+    // `write_gate::resolve_for_connection`. The contradictory combination is rejected by
+    // `write_gate::validate_gate_config` before startup gets this far (exit 2), rather than by a
+    // `return None` here that dropped the caller into the permissive namespace heuristic.
 
     // host + web_port → explicit HTTP/HTTPS connection (highest priority, no docker needed)
     if let Some(ref host) = cfg.host {
@@ -1318,7 +1318,7 @@ mod tests {
         use std::io::Write;
         writeln!(f, "host = \"path-host\"\nweb_port = 52773").unwrap();
         std::env::set_var("OBJECTSCRIPT_WORKSPACE", dir.path().to_str().unwrap());
-        let (conn, path) = apply_workspace_config_with_path(None, None, "USER");
+        let (conn, path, _declared) = apply_workspace_config_with_path(None, None, "USER");
         std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
         assert!(conn.is_some(), "should build connection from config");
         assert!(conn.unwrap().base_url.contains("path-host"));
@@ -1329,9 +1329,20 @@ mod tests {
         );
     }
 
+    /// With no config anywhere, an explicit connection passes through untouched
+    /// and there is no config path to report.
+    ///
+    /// Point OBJECTSCRIPT_WORKSPACE at an empty directory rather than passing
+    /// `None`: `workspace_root` walks up from the current directory, so on a
+    /// developer machine with a `~/.iris-agentic-dev.toml` this test would
+    /// otherwise pick up the real home-directory config and fail.
     #[test]
-    fn apply_workspace_config_with_path_returns_none_path_when_explicit() {
+    fn apply_workspace_config_with_path_returns_none_path_when_no_config_exists() {
         use crate::iris::connection::DiscoverySource;
+        let _guard = ENV_LOCK.lock().unwrap();
+        let empty = tempfile::tempdir().unwrap();
+        std::env::set_var("OBJECTSCRIPT_WORKSPACE", empty.path().to_str().unwrap());
+
         let explicit = IrisConnection::new(
             "http://explicit:52773",
             "EXPLICIT",
@@ -1339,12 +1350,61 @@ mod tests {
             "SYS",
             DiscoverySource::EnvVar,
         );
-        let (conn, path) = apply_workspace_config_with_path(Some(explicit.clone()), None, "USER");
+        let (conn, path, declared) =
+            apply_workspace_config_with_path(Some(explicit.clone()), None, "USER");
+        std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+
         assert!(conn.is_some());
         assert_eq!(conn.unwrap().base_url, explicit.base_url);
+        assert!(path.is_none(), "no config found, so no path to report");
+        assert_eq!(
+            declared,
+            crate::tools::write_gate::DeclaredGates::default(),
+            "no config file means nothing was declared — an absent key is not a declaration"
+        );
+    }
+
+    /// An explicit connection wins for connectivity, but the config path is
+    /// still reported so the caller can watch that file for tool-list and gate
+    /// settings. Pinned here because it reads as a contradiction otherwise.
+    #[test]
+    fn explicit_connection_still_reports_the_config_path_it_found() {
+        use crate::iris::connection::DiscoverySource;
+        use std::io::Write;
+        let _guard = ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
+        writeln!(
+            f,
+            "host = \"toml-host\"\nweb_port = 52773\nwrite_tools_enabled = false"
+        )
+        .unwrap();
+        std::env::set_var("OBJECTSCRIPT_WORKSPACE", dir.path().to_str().unwrap());
+
+        let explicit = IrisConnection::new(
+            "http://explicit:52773",
+            "EXPLICIT",
+            "_SYSTEM",
+            "SYS",
+            DiscoverySource::EnvVar,
+        );
+        let (conn, path, declared) = apply_workspace_config_with_path(Some(explicit), None, "USER");
+        std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+
         assert!(
-            path.is_none(),
-            "explicit connection should not return a config path"
+            conn.unwrap().base_url.contains("explicit"),
+            "explicit connection must win over the TOML host"
+        );
+        assert!(
+            path.expect("config path should be reported")
+                .ends_with(".iris-agentic-dev.toml"),
+            "the loaded config path is what the caller watches for tool-list settings"
+        );
+        assert_eq!(
+            declared.write_tools_enabled,
+            Some(false),
+            "the TOML gate declaration must survive the explicit connection winning \
+             connectivity — that split is exactly what the env var used to hide"
         );
     }
 
@@ -1531,72 +1591,105 @@ memory-home = "local"
         assert_eq!(instance_base_url(&inst), "https://h.example.com:443/hspi");
     }
 
-    // ── write_tools_enabled / destructive_tools_enabled tests (#110) ─────────
+    // ── write_tools_enabled / destructive_tools_enabled (#110, 085 T014) ─────
+    //
+    // These used to assert that `workspace_config_to_connection` exported
+    // `IRIS_WRITE_TOOLS_ENABLED`, from a struct literal, after `remove_var` — so they only ever
+    // exercised the clean-env branch while the #110 defect lived exclusively in the other one.
+    // The config loader no longer touches the environment at all: it hands the declaration back
+    // as data. Each test below parses a config *string* (constitution test layer 1, so a serde
+    // silent-drop fails here) and asserts what the resolver does with the declaration.
 
-    #[test]
-    fn write_tools_enabled_false_sets_env_var() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
-        let cfg = WorkspaceConfig {
-            host: Some("localhost".to_string()),
-            web_port: Some(52773),
-            write_tools_enabled: Some(false),
-            ..Default::default()
-        };
-        let _ = workspace_config_to_connection(&cfg, "USER");
-        assert_eq!(std::env::var("IRIS_WRITE_TOOLS_ENABLED").unwrap(), "0");
-        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
+    use crate::tools::write_gate::{resolve_declared, DeclaredGates, GateSource, OperatorEnvGates};
+
+    /// Resolve a config string the way startup does, against a dev instance in USER — the context
+    /// where inference would say `true`, so a declared `false` that is honoured is unambiguous.
+    fn resolve_toml(toml_src: &str) -> crate::tools::write_gate::GateResolution {
+        let cfg: WorkspaceConfig = toml::from_str(toml_src).expect("config string must parse");
+        resolve_declared(
+            &OperatorEnvGates::default(),
+            DeclaredGates::from_config(&cfg),
+            crate::iris::connection::SystemMode::Development,
+            "USER",
+        )
     }
 
     #[test]
-    fn write_tools_enabled_true_sets_env_var() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
-        let cfg = WorkspaceConfig {
-            host: Some("localhost".to_string()),
-            web_port: Some(52773),
-            write_tools_enabled: Some(true),
-            ..Default::default()
-        };
-        let _ = workspace_config_to_connection(&cfg, "USER");
-        assert_eq!(std::env::var("IRIS_WRITE_TOOLS_ENABLED").unwrap(), "1");
-        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
-    }
-
-    #[test]
-    fn write_tools_enabled_none_does_not_set_env_var() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
-        let cfg = WorkspaceConfig {
-            host: Some("localhost".to_string()),
-            web_port: Some(52773),
-            write_tools_enabled: None,
-            ..Default::default()
-        };
-        let _ = workspace_config_to_connection(&cfg, "USER");
-        assert!(std::env::var("IRIS_WRITE_TOOLS_ENABLED").is_err());
-    }
-
-    #[test]
-    fn destructive_requires_writes_returns_none() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
-        std::env::remove_var("IRIS_DESTRUCTIVE_TOOLS_ENABLED");
-        let cfg = WorkspaceConfig {
-            host: Some("localhost".to_string()),
-            web_port: Some(52773),
-            write_tools_enabled: Some(false),
-            destructive_tools_enabled: Some(true),
-            ..Default::default()
-        };
-        // DESTRUCTIVE_REQUIRES_WRITES — must refuse
-        let conn = workspace_config_to_connection(&cfg, "USER");
+    fn write_tools_enabled_false_is_honoured_over_inference() {
+        let r = resolve_toml("host = \"localhost\"\nweb_port = 52773\nwrite_tools_enabled = false");
         assert!(
-            conn.is_none(),
-            "expected None for destructive=true + write=false"
+            !r.write_enabled,
+            "a declared false must win over a Development instance in USER"
         );
+        assert_eq!(r.write_source, GateSource::ConfigFile);
+    }
+
+    #[test]
+    fn write_tools_enabled_true_is_attributed_to_the_config_file() {
+        let r = resolve_toml("host = \"localhost\"\nweb_port = 52773\nwrite_tools_enabled = true");
+        assert!(r.write_enabled);
+        assert_eq!(
+            r.write_source,
+            GateSource::ConfigFile,
+            "reported source must be the declaration, not the inference that agrees with it"
+        );
+    }
+
+    #[test]
+    fn write_tools_enabled_absent_falls_through_to_inference() {
+        let r = resolve_toml("host = \"localhost\"\nweb_port = 52773");
+        assert!(r.write_enabled, "Development in USER infers writes on");
+        assert_eq!(
+            r.write_source,
+            GateSource::InferredSystemMode,
+            "an absent key is not a declaration"
+        );
+    }
+
+    /// The env exports are gone. Pinned as a test because the whole #110 defect was invisible
+    /// process-global state, and a well-meaning re-export would restore it silently.
+    #[test]
+    fn config_load_does_not_export_the_gate_to_the_environment() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
         std::env::remove_var("IRIS_DESTRUCTIVE_TOOLS_ENABLED");
+        let cfg: WorkspaceConfig = toml::from_str(
+            "host = \"localhost\"\nweb_port = 52773\nwrite_tools_enabled = false\n\
+             destructive_tools_enabled = false",
+        )
+        .unwrap();
+        let _ = workspace_config_to_connection(&cfg, "USER");
+        assert!(
+            std::env::var("IRIS_WRITE_TOOLS_ENABLED").is_err(),
+            "the gate must not travel through the environment (085 FR-001)"
+        );
+        assert!(
+            std::env::var("IRIS_DESTRUCTIVE_TOOLS_ENABLED").is_err(),
+            "the destructive key had no reader for its whole documented life; do not re-export it"
+        );
+    }
+
+    /// `destructive = true` + `write = false` used to log `DESTRUCTIVE_REQUIRES_WRITES`, then
+    /// `return None` *before* the env export — so the gate was never set, `is_write_allowed()` fell
+    /// through to the USER-namespace heuristic, and the server came up with writes ON. It is now
+    /// rejected as a config error, and the resolver clamps the tier regardless.
+    #[test]
+    fn destructive_requires_writes_is_rejected_and_never_widens() {
+        let src = "host = \"localhost\"\nweb_port = 52773\nwrite_tools_enabled = false\n\
+                   destructive_tools_enabled = true";
+        let cfg: WorkspaceConfig = toml::from_str(src).unwrap();
+
+        let err = crate::tools::write_gate::validate_gate_config(&cfg)
+            .expect_err("the contradictory combination must be a config error");
+        assert_eq!(
+            err.code(),
+            crate::tools::write_gate::ERR_DESTRUCTIVE_REQUIRES_WRITES
+        );
+
+        // Belt and braces: even if a caller ignores the error, resolution must not fail open.
+        let r = resolve_toml(src);
+        assert!(!r.write_enabled, "must not fall through to the heuristic");
+        assert!(!r.destructive_enabled);
     }
 
     #[test]
@@ -1613,7 +1706,7 @@ enabled_tools=["iris_query","check_config"]
 "#,
         )
         .unwrap();
-        let (conn, cfg_path) = apply_explicit_config_file(None, &path, "USER");
+        let (conn, cfg_path, _declared) = apply_explicit_config_file(None, &path, "USER");
         assert!(
             conn.is_some(),
             "should build connection from explicit config"
@@ -1636,12 +1729,17 @@ enabled_tools=["iris_query","check_config"]
             "SYS",
             DiscoverySource::EnvVar,
         );
-        let (conn, path) = apply_explicit_config_file(
+        let (conn, path, declared) = apply_explicit_config_file(
             Some(explicit.clone()),
             std::path::Path::new("/nonexistent/path/no-such-file.toml"),
             "USER",
         );
         assert_eq!(conn.unwrap().base_url, explicit.base_url);
         assert!(path.is_none());
+        assert_eq!(
+            declared,
+            crate::tools::write_gate::DeclaredGates::default(),
+            "an unreadable config declares nothing"
+        );
     }
 }

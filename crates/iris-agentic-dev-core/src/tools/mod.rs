@@ -106,6 +106,7 @@ pub mod server_tools;
 pub mod skills_tools;
 pub mod storage_guard;
 pub mod symbols_local;
+pub mod write_gate;
 pub mod ws_tools;
 pub mod xdata_flow;
 
@@ -184,24 +185,28 @@ pub struct ConnectionState {
     pub source: ConnectionSource,
     pub config_file: Option<std::path::PathBuf>,
     pub loaded_at: std::time::SystemTime,
-    pub write_tools_enabled: bool,
+    /// Both gates plus the input that decided each, resolved once by the caller (085 FR-012).
+    /// Replaced wholesale on reload — never mutated in place, which is what makes a config edit
+    /// take effect in both directions.
+    pub gates: write_gate::GateResolution,
+    /// What the config file declared, kept so a later namespace/`SystemMode` change
+    /// (`iris_select_container`) can re-resolve without losing the declaration.
+    pub declared: write_gate::DeclaredGates,
     pub config_parse_error: Option<String>,
 }
 
 impl ConnectionState {
-    pub fn new_disconnected(source: ConnectionSource) -> Self {
-        // Respect IRIS_WRITE_TOOLS_ENABLED even when no connection is active, so that
-        // check_config reports the configured value when running without live IRIS.
-        let write_tools_enabled = std::env::var("IRIS_WRITE_TOOLS_ENABLED")
-            .ok()
-            .map(|v| v != "0")
-            .unwrap_or(true);
+    /// No live connection. Takes the resolution rather than deriving one: this path used to read
+    /// `IRIS_WRITE_TOOLS_ENABLED` with `unwrap_or(true)` — the opposite default from `from_iris` —
+    /// so a server that could not reach IRIS answered permissively (085 FR-012).
+    pub fn new_disconnected(source: ConnectionSource, gates: write_gate::GateResolution) -> Self {
         Self {
             iris: None,
             source,
             config_file: None,
             loaded_at: std::time::SystemTime::now(),
-            write_tools_enabled,
+            gates,
+            declared: write_gate::DeclaredGates::default(),
             config_parse_error: None,
         }
     }
@@ -210,16 +215,23 @@ impl ConnectionState {
         iris: IrisConnection,
         source: ConnectionSource,
         config_file: Option<std::path::PathBuf>,
+        gates: write_gate::GateResolution,
     ) -> Self {
-        let write_tools_enabled = iris.is_write_allowed();
         Self {
             iris: Some(Arc::new(iris)),
             source,
             config_file,
             loaded_at: std::time::SystemTime::now(),
-            write_tools_enabled,
+            gates,
+            declared: write_gate::DeclaredGates::default(),
             config_parse_error: None,
         }
+    }
+
+    /// Attach the config-file declaration to a state built by either constructor.
+    pub fn with_declared(mut self, declared: write_gate::DeclaredGates) -> Self {
+        self.declared = declared;
+        self
     }
 }
 
@@ -2273,9 +2285,18 @@ impl IrisTools {
     pub fn new(iris: Option<IrisConnection>) -> anyhow::Result<Self> {
         let client = Arc::new(IrisConnection::http_client()?);
         let exec_client = Arc::new(IrisConnection::http_client()?);
+        // No config file on this path, so the gate resolves from the operator's environment and
+        // the connection's own SystemMode/namespace.
+        let declared = write_gate::DeclaredGates::default();
         let conn_state = match iris {
-            Some(c) => ConnectionState::from_iris(c, ConnectionSource::EnvVars, None),
-            None => ConnectionState::new_disconnected(ConnectionSource::EnvVars),
+            Some(c) => {
+                let gates = write_gate::resolve_for_connection(declared, Some(&c), &c.namespace);
+                ConnectionState::from_iris(c, ConnectionSource::EnvVars, None, gates)
+            }
+            None => ConnectionState::new_disconnected(
+                ConnectionSource::EnvVars,
+                write_gate::resolve_for_connection(declared, None, "USER"),
+            ),
         };
         let log_max = std::env::var("IRIS_LOG_STORE_MAX")
             .ok()
@@ -2319,6 +2340,7 @@ impl IrisTools {
             None,
             None,
             false,
+            write_gate::DeclaredGates::default(),
         )
     }
 
@@ -2359,6 +2381,35 @@ impl IrisTools {
             .is_some_and(|t| t.output_schema.is_some())
     }
 
+    /// Returns the `outputSchema` for `tool_name` if it is registered and declares one, otherwise
+    /// `None`. The companion to `tool_input_schema`, and the schema a real `tools/list` serves —
+    /// which is the one that matters. A test that reads the Rust struct instead can pass while the
+    /// tool advertises something else entirely (085: `server_version` sat in `check_config`'s
+    /// payload and its description for five minor versions without ever being in its schema).
+    pub fn tool_output_schema(&self, tool_name: &str) -> Option<serde_json::Value> {
+        self.tool_router
+            .list_all()
+            .into_iter()
+            .find(|t| t.name == tool_name)
+            .and_then(|t| t.output_schema)
+            .map(|s| serde_json::to_value(&s).unwrap_or(serde_json::Value::Null))
+    }
+
+    /// Returns the MCP `annotations` object for `tool_name` if it is registered and declares any,
+    /// otherwise `None`. Read off the router, so this is what a client sees on `tools/list` — the
+    /// hints a caller decides on. 085 uses it to cross-check `read_only_hint` and
+    /// `destructive_hint` against `write_gate::CLASSIFICATION`: two independent declarations, so
+    /// mislabelling a mutating tool read-only has to be done twice to escape CI. #94 (`c641d79`)
+    /// is why — six mutating tools shipped advertising `read_only_hint = true`.
+    pub fn tool_annotations(&self, tool_name: &str) -> Option<serde_json::Value> {
+        self.tool_router
+            .list_all()
+            .into_iter()
+            .find(|t| t.name == tool_name)
+            .and_then(|t| t.annotations)
+            .map(|a| serde_json::to_value(&a).unwrap_or(serde_json::Value::Null))
+    }
+
     /// Returns the `inputSchema` for `tool_name` if it is registered, otherwise `None`.
     /// Used by tests to assert that a tool's schema documents specific parameters.
     pub fn tool_input_schema(&self, tool_name: &str) -> Option<serde_json::Value> {
@@ -2382,8 +2433,20 @@ impl IrisTools {
         iris: Option<IrisConnection>,
         registry: crate::skills::SkillRegistry,
     ) -> anyhow::Result<Self> {
-        Self::with_registry_and_toolset(iris, registry, Toolset::Baseline, None, None, false)
+        Self::with_registry_and_toolset(
+            iris,
+            registry,
+            Toolset::Baseline,
+            None,
+            None,
+            false,
+            write_gate::DeclaredGates::default(),
+        )
     }
+    /// `declared` carries what the `.iris-agentic-dev.toml` said about the two gates. It arrives
+    /// as data rather than through `IRIS_WRITE_TOOLS_ENABLED`, so a second config load can change
+    /// the answer in either direction (085 FR-001).
+    #[allow(clippy::too_many_arguments)]
     pub fn with_registry_and_toolset(
         iris: Option<IrisConnection>,
         registry: crate::skills::SkillRegistry,
@@ -2391,6 +2454,7 @@ impl IrisTools {
         config_watcher: Option<ConfigWatcher>,
         config_path: Option<std::path::PathBuf>,
         no_skills: bool,
+        declared: write_gate::DeclaredGates,
     ) -> anyhow::Result<Self> {
         // Clone config_path for load_pool before it may be moved into conn_state (072).
         let pool_config_path = config_path.clone();
@@ -2539,21 +2603,24 @@ impl IrisTools {
 
         let conn_state = match iris {
             Some(c) => {
-                let write_tools_enabled = c.is_write_allowed();
+                let gates = write_gate::resolve_for_connection(declared, Some(&c), &c.namespace);
                 tracing::info!(
                     system_mode = ?c.system_mode,
-                    write_tools_enabled,
+                    write_tools_enabled = gates.write_enabled,
+                    write_tools_source = gates.write_source.as_str(),
+                    destructive_tools_enabled = gates.destructive_enabled,
+                    destructive_tools_source = gates.destructive_source.as_str(),
                     namespace = %c.namespace,
                     "iris-agentic-dev: write tool gate evaluated"
                 );
-                // Remove write-capable tools if not allowed (issue #26 env guard).
-                // iris_production_item is write-capable; available in all tiers but gated on prod.
-                if !write_tools_enabled {
-                    let write_gated: &[&str] = &["iris_production_item", "iris_credential_manage"];
-                    for name in write_gated {
-                        router.remove_route(name);
-                    }
-                }
+                // 085: `iris_production_item` and `iris_credential_manage` used to be stripped from
+                // the router here when writes were off. Removal is not enforcement. It is invisible
+                // to a later reload (the router is built once, the gate re-resolves on every config
+                // change), and it made the completeness test pass for the wrong reason — the two
+                // tools were absent rather than gated. Both are classified in `write_gate` and
+                // refused by the single check in `call_tool`, so they now stay visible and answer
+                // with WRITE_TOOLS_DISABLED, which is also what tells the caller *why*.
+                //
                 // Use ConfigFile source (and record the path) when the connection came from
                 // a .iris-agentic-dev.toml — so check_config can show config_file at startup,
                 // not just after the first hot-reload cycle (issue #82).
@@ -2566,10 +2633,12 @@ impl IrisTools {
                 } else {
                     (ConnectionSource::AutoDiscovered, None)
                 };
-                ConnectionState::from_iris(c, source, file)
+                ConnectionState::from_iris(c, source, file, gates).with_declared(declared)
             }
             None => {
-                let mut state = ConnectionState::new_disconnected(ConnectionSource::EnvVars);
+                let gates = write_gate::resolve_for_connection(declared, None, "USER");
+                let mut state = ConnectionState::new_disconnected(ConnectionSource::EnvVars, gates)
+                    .with_declared(declared);
                 state.config_file = config_path;
                 state
             }
@@ -2667,7 +2736,7 @@ impl IrisTools {
 
     /// Returns the active write_tools_enabled flag from connection state.
     fn write_tools_enabled(&self) -> bool {
-        self.connection.lock().unwrap().write_tools_enabled
+        self.connection.lock().unwrap().gates.write_enabled
     }
 
     /// Returns the `ConnectionRole` and instance name for the currently-active connection.
@@ -2824,7 +2893,7 @@ impl IrisTools {
         // Check if watcher says config changed.
         // Also treat the file as "changed" on first call when it exists but wasn't loaded at
         // startup (e.g. CWD was "/" when the server launched — issue #104).
-        let changed = {
+        let (changed, deleted) = {
             let mut w = self.config_watcher.lock().unwrap();
             if let Some(ref mut watcher) = *w {
                 // If startup fell back to auto-discovery with NO active connection, and the
@@ -2844,11 +2913,40 @@ impl IrisTools {
                 {
                     watcher.last_mtime = None;
                 }
-                watcher.has_changed()
+                // A deletion is a change to the gate even though it is not a change to load.
+                // `has_changed()` answers false here by design — it clears its own mtime so the
+                // file coming back is still detected — so the deletion has to be read off the
+                // watcher before that call consumes the state (085 edge case 2).
+                let deleted = watcher.last_mtime.is_some() && !file_exists;
+                (watcher.has_changed(), deleted)
             } else {
-                false
+                (false, false)
             }
         };
+        if deleted {
+            // Only the declaration is gone, not the connection, so keep the live connection and
+            // re-resolve the gate from an empty declaration: operator env, then the inference
+            // tiers, then the documented default — exactly what a fresh start with no config file
+            // would decide. Leaving the old value in place would let a declaration outlive the
+            // file that made it, which is the same stale-gate defect as the env-var latch.
+            let mut conn = self.connection.lock().unwrap();
+            let declared = write_gate::DeclaredGates::default();
+            let ns = conn
+                .iris
+                .as_ref()
+                .map(|c| c.namespace.clone())
+                .unwrap_or_default();
+            conn.gates = write_gate::resolve_for_connection(declared, conn.iris.as_deref(), &ns);
+            conn.declared = declared;
+            conn.config_parse_error = None;
+            tracing::info!(
+                "iris-agentic-dev: .iris-agentic-dev.toml removed — gate re-resolved without it \
+                 (write_tools_enabled={}, source={})",
+                conn.gates.write_enabled,
+                conn.gates.write_source.as_str()
+            );
+            return;
+        }
         if !changed {
             return;
         }
@@ -2870,7 +2968,7 @@ impl IrisTools {
         // Parse the new config
         let cfg = crate::iris::workspace_config::load_workspace_config(config_file_str.as_deref());
 
-        let conn_result = match cfg {
+        let (conn_result, declared) = match cfg {
             None => {
                 // File parse error or missing — set error in state, keep old connection
                 let mut conn = self.connection.lock().unwrap();
@@ -2879,7 +2977,19 @@ impl IrisTools {
                 return;
             }
             Some(cfg) => {
-                crate::iris::workspace_config::workspace_config_to_connection(&cfg, "USER")
+                // A contradictory declaration is refused with exit 2 at startup. Mid-session the
+                // only safe answer is the last known-good gate plus the reason — never a widened
+                // one, which is what the old code did by returning before its env export.
+                if let Err(e) = write_gate::validate_gate_config(&cfg) {
+                    let mut conn = self.connection.lock().unwrap();
+                    conn.config_parse_error = Some(format!("{}: {}", e.code(), e));
+                    return;
+                }
+                let declared = write_gate::DeclaredGates::from_config(&cfg);
+                (
+                    crate::iris::workspace_config::workspace_config_to_connection(&cfg, "USER"),
+                    declared,
+                )
             }
         };
 
@@ -2904,9 +3014,17 @@ impl IrisTools {
 
         new_conn.probe().await;
 
-        // Atomically swap connection
-        let new_state =
-            ConnectionState::from_iris(new_conn, ConnectionSource::ConfigFile, Some(config_path));
+        // Atomically swap connection. The gate is resolved from the config that was just read, so
+        // an edit in either direction takes effect on this reload (085 FR-002).
+        let gates =
+            write_gate::resolve_for_connection(declared, Some(&new_conn), &new_conn.namespace);
+        let new_state = ConnectionState::from_iris(
+            new_conn,
+            ConnectionSource::ConfigFile,
+            Some(config_path),
+            gates,
+        )
+        .with_declared(declared);
         let mut conn = self.connection.lock().unwrap();
         *conn = new_state;
         conn.config_parse_error = None;
@@ -2988,12 +3106,6 @@ impl IrisTools {
         &self,
         Parameters(p): Parameters<CompileParams>,
     ) -> Result<CallToolResult, McpError> {
-        if !self.write_tools_enabled() {
-            return err_json(
-                admin_tools::ERR_WRITE_GATE,
-                "Write tools are disabled. Set write_tools_enabled = true in .iris-agentic-dev.toml.",
-            );
-        }
         let iris = self.resolve_server(p.server.as_deref()).await?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace).to_string();
         let (sm_server, policy) = self.active_server_manager_policy();
@@ -3886,12 +3998,6 @@ impl IrisTools {
         &self,
         Parameters(p): Parameters<ExecuteParams>,
     ) -> Result<CallToolResult, McpError> {
-        if !self.write_tools_enabled() {
-            return err_json(
-                admin_tools::ERR_WRITE_GATE,
-                "Write tools are disabled. Set write_tools_enabled = true in .iris-agentic-dev.toml.",
-            );
-        }
         // Route arbitrary execution through the restricted service account when configured, so it
         // runs under a least-privilege IRIS identity that cannot edit code (see get_iris_for_exec).
         // The paired client carries the matching (isolated) cookie jar — see
@@ -4172,17 +4278,6 @@ impl IrisTools {
         &self,
         Parameters(p): Parameters<IrisDocParams>,
     ) -> Result<CallToolResult, McpError> {
-        let mode_lower = p.mode.to_lowercase();
-        if matches!(
-            mode_lower.as_str(),
-            "put" | "delete" | "insert" | "delete_lines"
-        ) && !self.write_tools_enabled()
-        {
-            return err_json(
-                admin_tools::ERR_WRITE_GATE,
-                "Write tools are disabled. Set write_tools_enabled = true in .iris-agentic-dev.toml.",
-            );
-        }
         let iris = self.resolve_server(p.server.as_deref()).await?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         tracing::info!(namespace = %namespace, "iris_doc");
@@ -4317,13 +4412,6 @@ impl IrisTools {
                 return result;
             }
             "write" => {
-                if !self.write_tools_enabled() {
-                    self.record_call("iris_query", false);
-                    return err_json(
-                        admin_tools::ERR_WRITE_GATE,
-                        "Write tools are disabled. Set write_tools_enabled = true in .iris-agentic-dev.toml.",
-                    );
-                }
                 // DML runs under the restricted service account when configured (least-privilege).
                 // Use the paired client so the service-account identity isn't overridden by the
                 // primary user's CSP session cookie (see get_iris_for_exec_with_client).
@@ -4582,11 +4670,22 @@ impl IrisTools {
         }
 
         let version = new_conn.version.clone();
-        let write_tools_enabled = new_conn.is_write_allowed();
+
+        // Re-resolve against the new container's SystemMode/namespace, in the declaration context
+        // the session already had — switching containers must not discard what the config declared.
+        let declared = self.connection.lock().unwrap().declared;
+        let gates =
+            write_gate::resolve_for_connection(declared, Some(&new_conn), &new_conn.namespace);
+        let write_tools_enabled = gates.write_enabled;
 
         // Atomically swap the active connection (fixes issue #11).
-        let new_state =
-            ConnectionState::from_iris(new_conn, ConnectionSource::IrisSelectContainer, None);
+        let new_state = ConnectionState::from_iris(
+            new_conn,
+            ConnectionSource::IrisSelectContainer,
+            None,
+            gates,
+        )
+        .with_declared(declared);
         {
             let mut conn = self.connection.lock().unwrap();
             *conn = new_state;
@@ -4607,7 +4706,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active, (4) confirm which build of this MCP server is actually running (server_version) when multiple installs/forks may be registered. To switch connection mid-session without restart: call check_config first to get config_watch_path, then write a .iris-agentic-dev.toml to that exact path, then call any tool — the reload fires automatically. Fields: server_version, connected, connection_source (http|docker|disconnected), host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled, capabilities. Skill: iris-agentic-dev.",
+        description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active, (4) confirm which build of this MCP server is actually running (server_version) when multiple installs/forks may be registered. To switch connection mid-session without restart: call check_config first to get config_watch_path, then write a .iris-agentic-dev.toml to that exact path, then call any tool — the reload fires automatically. Fields: server_version, connected, connection_source (http|docker|disconnected), host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled, write_tools_source, destructive_tools_enabled, destructive_tools_source, capabilities. The two *_source fields say what decided each gate (operator_env|config_file|legacy_allow_prod|inferred_system_mode|inferred_namespace|inferred_default|fail_closed), so a gate you did not ask for is one field lookup rather than a guess. Skill: iris-agentic-dev.",
         annotations(read_only_hint = true),
         output_schema = schema_for_output::<CheckConfigOk>()    )]
     async fn check_config(
@@ -4722,7 +4821,14 @@ impl IrisTools {
             "config_file": config_file,
             "config_loaded_at": config_loaded_at,
             "iris_version": iris_version,
-            "write_tools_enabled": conn.write_tools_enabled,
+            // All four gate fields come off the one `GateResolution` that `call_tool` enforces, so
+            // the report and the enforcement cannot drift apart (085 FR-004). Reporting a gate that
+            // enforcement did not read is exactly how `write_tools_enabled: true` survived an
+            // operator turning writes off.
+            "write_tools_enabled": conn.gates.write_enabled,
+            "write_tools_source": conn.gates.write_source.as_str(),
+            "destructive_tools_enabled": conn.gates.destructive_enabled,
+            "destructive_tools_source": conn.gates.destructive_source.as_str(),
             "config_watch_path": config_watcher_path,
             "objectscript_workspace": objectscript_workspace,
             "capabilities": capabilities,
@@ -7784,7 +7890,6 @@ Methods:
                 confirm_token,
                 iris,
                 client: Arc::clone(&self.client),
-                write_tools_enabled: self.write_tools_enabled(),
             },
             &self.confirm_tokens,
         )
@@ -7856,14 +7961,9 @@ Methods:
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         let iris = self.resolve_server(server.as_deref()).await?;
-        let result = admin_tools::iris_namespace_create_impl(
-            &iris,
-            &self.client,
-            &name,
-            db_path.as_deref(),
-            self.write_tools_enabled(),
-        )
-        .await;
+        let result =
+            admin_tools::iris_namespace_create_impl(&iris, &self.client, &name, db_path.as_deref())
+                .await;
         self.record_call("iris_namespace_create", result.is_ok());
         result
     }
@@ -8210,6 +8310,12 @@ impl ServerHandler for IrisTools {
     /// (called from within each tool handler) can compute an accurate `duration_ms`
     /// without changing the signature of any existing `self.record_call(tool, success)`
     /// call site (059-tool-telemetry-benchmark).
+    ///
+    /// Also the one place the write/destructive gate is enforced (085 FR-008). It goes here
+    /// because this is the only point every tool passes through: a per-handler guard is a guard a
+    /// new tool can silently miss, which is exactly how `iris_ws_exec`, `iris_global` set/kill,
+    /// `iris_lookup_manage` set/delete and `iris_execute_method` shipped ungated while
+    /// `check_config` reported the gate as active.
     async fn call_tool(
         &self,
         request: rmcp::model::CallToolRequestParams,
@@ -8218,6 +8324,21 @@ impl ServerHandler for IrisTools {
         let start = std::time::Instant::now();
         CALL_START
             .scope(start, async move {
+                // Reload before resolving the gate, not after. Reload used to happen only inside
+                // the handlers that call `get_iris_reloaded`, so a gate resolved ahead of dispatch
+                // would answer from the *previous* load and let one more write through after the
+                // operator turned writes off. FR-002 has to hold on the very next call, in both
+                // directions. `has_changed()` is an mtime stat, so this costs nothing when the
+                // file is untouched.
+                self.check_reload().await;
+                let gates = self.connection.lock().unwrap().gates;
+                if let Some(refusal) =
+                    write_gate::gate_check(&request.name, request.arguments.as_ref(), &gates)
+                {
+                    self.record_call(&request.name, false);
+                    return refusal.map(Into::into);
+                }
+
                 let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
                 self.tool_router.call(tcc).await
             })
@@ -8746,6 +8867,7 @@ mod tests {
             None,
             None,
             false,
+            write_gate::DeclaredGates::default(),
         );
         assert!(result.is_ok());
     }
@@ -9098,14 +9220,22 @@ mod pure_fn_tests {
     }
 
     // ── default_execute_timeout ───────────────────────────────────────────────
+
+    /// These two tests read and write the same process-wide variable, so running them in parallel
+    /// (cargo's default) lets one's `remove_var` land between the other's `set_var` and its read.
+    /// That was a live flake in the default `cargo test` run, not a theoretical one.
+    static TIMEOUT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn test_default_execute_timeout_default_value() {
+        let _guard = TIMEOUT_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("OBJECTSCRIPT_TEST_TIMEOUT");
         let t = default_execute_timeout();
         assert_eq!(t, 120, "default timeout must be 120s");
     }
     #[test]
     fn test_default_execute_timeout_env_override() {
+        let _guard = TIMEOUT_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("OBJECTSCRIPT_TEST_TIMEOUT", "60");
         let t = default_execute_timeout();
         std::env::remove_var("OBJECTSCRIPT_TEST_TIMEOUT");

@@ -2,7 +2,9 @@
 
 use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection, SystemMode};
 
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+// 085: the ENV_LOCK that used to serialise these tests is gone with the tests that needed it. The
+// gate is resolved as data by `write_gate::resolve_gates`, so nothing in this file mutates the
+// process environment any more and nothing needs to take a turn.
 
 fn make_conn(password: &str) -> IrisConnection {
     IrisConnection::new(
@@ -317,58 +319,82 @@ fn test_scratch_package_is_not_user() {
     );
 }
 
-// ── is_write_allowed: IRIS_ALLOW_PROD override (issue #26) ───────────────────
+// ── is_write_allowed: the inference chain (issue #26, reworked by 085) ────────
+//
+// `is_write_allowed()` now delegates to `write_gate::resolve_declared`, and the operator's
+// environment is a process-start snapshot behind a `OnceLock`. A `set_var` inside a test is
+// therefore invisible to the resolver — whichever of these tests ran first decided
+// `IRIS_ALLOW_PROD` for the whole binary, which made the two "must block" cases fail depending on
+// execution order. They pass an explicit `OperatorEnvGates` instead.
+
+use iris_agentic_dev_core::tools::write_gate::{
+    resolve_declared, DeclaredGates, GateSource, OperatorEnvGates,
+};
+
+/// Resolve for a namespace/mode with a clean operator environment and nothing declared.
+fn inferred(ns: &str, mode: SystemMode) -> bool {
+    resolve_declared(
+        &OperatorEnvGates::default(),
+        DeclaredGates::default(),
+        mode,
+        ns,
+    )
+    .write_enabled
+}
+
+/// Resolve with `IRIS_ALLOW_PROD` set by the operator.
+fn with_allow_prod(
+    ns: &str,
+    mode: SystemMode,
+) -> iris_agentic_dev_core::tools::write_gate::GateResolution {
+    let op = OperatorEnvGates {
+        allow_prod: true,
+        ..Default::default()
+    };
+    resolve_declared(&op, DeclaredGates::default(), mode, ns)
+}
 
 #[test]
 fn test_is_write_allowed_allow_prod_overrides_live() {
-    // IRIS_ALLOW_PROD=1 must return true even on a Live system.
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe { std::env::set_var("IRIS_ALLOW_PROD", "1") };
-    let conn = make_conn_with_ns_and_mode("USER", SystemMode::Live);
-    let result = conn.is_write_allowed();
-    unsafe { std::env::remove_var("IRIS_ALLOW_PROD") };
-    assert!(result, "IRIS_ALLOW_PROD=1 must allow writes on Live system");
+    let r = with_allow_prod("USER", SystemMode::Live);
+    assert!(
+        r.write_enabled,
+        "IRIS_ALLOW_PROD=1 must allow writes on Live system"
+    );
+    assert_eq!(r.write_source, GateSource::LegacyAllowProd);
 }
 
 #[test]
 fn test_is_write_allowed_live_blocks_without_override() {
-    // Without override, Live mode must block writes.
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe { std::env::remove_var("IRIS_ALLOW_PROD") };
-    let conn = make_conn_with_ns_and_mode("USER", SystemMode::Live);
-    assert!(!conn.is_write_allowed(), "Live mode must block writes");
+    assert!(
+        !inferred("USER", SystemMode::Live),
+        "Live mode must block writes"
+    );
 }
 
 #[test]
 fn test_is_write_allowed_development_allows() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe { std::env::remove_var("IRIS_ALLOW_PROD") };
-    let conn = make_conn_with_ns_and_mode("USER", SystemMode::Development);
     assert!(
-        conn.is_write_allowed(),
+        inferred("USER", SystemMode::Development),
         "Development mode must allow writes"
     );
 }
 
 #[test]
 fn test_is_write_allowed_test_mode_allows() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe { std::env::remove_var("IRIS_ALLOW_PROD") };
-    let conn = make_conn_with_ns_and_mode("USER", SystemMode::Test);
-    assert!(conn.is_write_allowed(), "Test mode must allow writes");
+    assert!(
+        inferred("USER", SystemMode::Test),
+        "Test mode must allow writes"
+    );
 }
 
 // ── is_write_allowed: Unknown mode delegates to is_production_namespace ───────
 
 #[test]
 fn test_is_write_allowed_unknown_non_prod_namespace_allows() {
-    // Unknown + non-production namespace (USER, DEV, STAGING) → writes allowed.
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe { std::env::remove_var("IRIS_ALLOW_PROD") };
     for ns in ["USER", "DEV", "STAGING", "TEST", "SANDBOX"] {
-        let conn = make_conn_with_ns_and_mode(ns, SystemMode::Unknown);
         assert!(
-            conn.is_write_allowed(),
+            inferred(ns, SystemMode::Unknown),
             "Unknown mode + namespace {ns} should allow writes"
         );
     }
@@ -376,13 +402,9 @@ fn test_is_write_allowed_unknown_non_prod_namespace_allows() {
 
 #[test]
 fn test_is_write_allowed_unknown_prod_namespace_blocks() {
-    // Unknown + production namespace name (PROD, PRODUCTION, LIVE, PRD) → writes blocked.
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe { std::env::remove_var("IRIS_ALLOW_PROD") };
     for ns in ["PROD", "PRODUCTION", "LIVE", "PRD", "prod", "Prod"] {
-        let conn = make_conn_with_ns_and_mode(ns, SystemMode::Unknown);
         assert!(
-            !conn.is_write_allowed(),
+            !inferred(ns, SystemMode::Unknown),
             "Unknown mode + namespace {ns} should block writes"
         );
     }
@@ -390,11 +412,35 @@ fn test_is_write_allowed_unknown_prod_namespace_blocks() {
 
 #[test]
 fn test_is_write_allowed_allow_prod_true_string() {
-    // IRIS_ALLOW_PROD=true (case-insensitive) also overrides.
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe { std::env::set_var("IRIS_ALLOW_PROD", "true") };
-    let conn = make_conn_with_ns_and_mode("PROD", SystemMode::Live);
-    let result = conn.is_write_allowed();
-    unsafe { std::env::remove_var("IRIS_ALLOW_PROD") };
-    assert!(result, "IRIS_ALLOW_PROD=true must allow writes");
+    // `IRIS_ALLOW_PROD=true` parses to the same `allow_prod: true` as `=1`; string parsing is
+    // covered by the OperatorEnvGates tests, the override behaviour here.
+    assert!(
+        with_allow_prod("PROD", SystemMode::Live).write_enabled,
+        "IRIS_ALLOW_PROD=true must allow writes"
+    );
+}
+
+/// The delegation itself: `is_write_allowed()` must be the resolver, not a second copy of the
+/// chain. Compared under whatever snapshot the binary captured, so it does not depend on the
+/// environment the test run inherited.
+#[test]
+fn test_is_write_allowed_delegates_to_the_resolver() {
+    for (ns, mode) in [
+        ("USER", SystemMode::Live),
+        ("USER", SystemMode::Development),
+        ("PROD", SystemMode::Unknown),
+    ] {
+        let expected = resolve_declared(
+            iris_agentic_dev_core::tools::write_gate::operator_env_gates(),
+            DeclaredGates::default(),
+            mode,
+            ns,
+        )
+        .write_enabled;
+        assert_eq!(
+            make_conn_with_ns_and_mode(ns, mode).is_write_allowed(),
+            expected,
+            "is_write_allowed disagreed with the resolver for {ns}/{mode:?}"
+        );
+    }
 }

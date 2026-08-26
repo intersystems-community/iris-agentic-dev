@@ -133,21 +133,41 @@ impl McpCommand {
         }
         // When --config is given, load connection + tool settings from that explicit file.
         // Otherwise walk the workspace directory as before. Fixes issue #111.
-        let (explicit, startup_config_path) = if let Some(ref cfg_path) = self.config {
-            iris_agentic_dev_core::iris::workspace_config::apply_explicit_config_file(
-                explicit,
-                std::path::Path::new(cfg_path),
-                &self.namespace,
-            )
-        } else {
-            // apply_workspace_config_with_path returns the loaded config path so we can record
-            // it in ConnectionState at startup (not just after hot-reload). Fixes issue #82.
-            iris_agentic_dev_core::iris::workspace_config::apply_workspace_config_with_path(
-                explicit,
-                Some(&self.workspace),
-                &self.namespace,
-            )
-        };
+        let (explicit, startup_config_path, declared_gates) =
+            if let Some(ref cfg_path) = self.config {
+                iris_agentic_dev_core::iris::workspace_config::apply_explicit_config_file(
+                    explicit,
+                    std::path::Path::new(cfg_path),
+                    &self.namespace,
+                )
+            } else {
+                // apply_workspace_config_with_path returns the loaded config path so we can record
+                // it in ConnectionState at startup (not just after hot-reload). Fixes issue #82.
+                iris_agentic_dev_core::iris::workspace_config::apply_workspace_config_with_path(
+                    explicit,
+                    Some(&self.workspace),
+                    &self.namespace,
+                )
+            };
+
+        // FR-005/FR-006: refuse a gate declaration that can never mean what it says, before
+        // anything is served. `destructive_tools_enabled = true` with `write_tools_enabled = false`
+        // asks for a tier that is a subset of a gate the same file turns off.
+        //
+        // 1.2.6 logged DESTRUCTIVE_REQUIRES_WRITES from inside the config loader and then started
+        // *with writes on*: the log sat above a `return None`, which skipped the gate export and
+        // dropped the server into the permissive namespace heuristic. The operator got the warning
+        // they asked for and the opposite of the configuration they asked for. Exiting here is what
+        // docs/tools.md and specs/073-destructive-gate have promised since 1.2.1.
+        if let Err(e) =
+            iris_agentic_dev_core::tools::write_gate::validate_declared_gates(&declared_gates)
+        {
+            tracing::error!("{}", e);
+            // Also on bare stderr: the exit happens before the MCP handshake, so a client sees a
+            // process that died without speaking. `RUST_LOG` can silence tracing; this it cannot.
+            eprintln!("error: {}", e);
+            std::process::exit(2);
+        }
 
         tokio::spawn(async move {
             let conn = match discover_iris(explicit).await {
@@ -225,6 +245,7 @@ impl McpCommand {
             config_watcher,
             startup_config_path,
             self.no_skills,
+            declared_gates,
         )?;
 
         // FR-007: periodically sweep expired elicitation entries.
@@ -347,6 +368,7 @@ mod tests {
             watcher,
             None,
             false,
+            Default::default(),
         )
         .unwrap()
     }

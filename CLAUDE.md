@@ -97,6 +97,8 @@ Before closing any release (tagging, publishing, merging release branch):
 
 ## Active Technologies
 
+- Rust 2021 + `rmcp`, `tokio`, `serde`/`serde_json`/`toml`; config in `.iris-agentic-dev.toml`, no database (085-write-gate-integrity)
+
 - Dockerfile (no specific version), Bash (GHA steps), Markdown + `gcr.io/distroless/static-debian12` (base image), `docker/build-push-action@v6`, `docker/metadata-action@v5` (068-windows-docker)
 - GHCR (`ghcr.io/intersystems-community/iris-agentic-dev`) (068-windows-docker)
 - TypeScript 5, Node.js (VS Code extension host runtime) + VS Code API (`vscode`), Node built-ins (`https`, `fs`, (069-vscode-binary-install)
@@ -104,6 +106,7 @@ Before closing any release (tagging, publishing, merging release branch):
 
 ## Recent Changes
 
+- 085-write-gate-integrity: write/destructive gates resolved as data and enforced once in `call_tool`; plan at `specs/085-write-gate-integrity/plan.md`
 - 068-windows-docker: Added Dockerfile (no specific version), Bash (GHA steps), Markdown + `gcr.io/distroless/static-debian12` (base image), `docker/build-push-action@v6`, `docker/metadata-action@v5`
 
 <!-- codebase-memory-mcp: Code Discovery Protocol -->

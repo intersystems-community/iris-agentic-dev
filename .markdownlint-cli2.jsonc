@@ -9,7 +9,10 @@
     "MD024": { "siblings_only": true },
     "MD033": false,
     "MD041": false,
-    "MD049": { "style": "asterisk" },
+    // Underscore, not asterisk: prettier always emits `_em_` and has no option to
+    // change it, so "asterisk" here made the two mandated commands permanently
+    // contradict each other — prettier --write then markdownlint --fix looped.
+    "MD049": { "style": "underscore" },
     "MD050": { "style": "asterisk" },
     "MD060": false
   }

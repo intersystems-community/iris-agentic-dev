@@ -1,6 +1,7 @@
 // Unit tests for live connection hot-reload (034-live-connection-reload).
 // Tests make no IRIS connections.
 
+use iris_agentic_dev_core::tools::write_gate::GateResolution;
 use iris_agentic_dev_core::tools::{
     ConfigWatcher, ConnectionSource, ConnectionState, IrisTools, Toolset,
 };
@@ -9,11 +10,15 @@ use iris_agentic_dev_core::tools::{
 
 #[test]
 fn test_connection_state_new_disconnected_defaults() {
-    let state = ConnectionState::new_disconnected(ConnectionSource::EnvVars);
+    // 085: the gate is an argument now, not a field re-derived from the environment. A
+    // disconnected state carries what it was handed — including "off", which the old
+    // `unwrap_or(true)` re-read could never represent.
+    let state =
+        ConnectionState::new_disconnected(ConnectionSource::EnvVars, GateResolution::fail_closed());
     assert!(state.iris.is_none());
     assert_eq!(state.source, ConnectionSource::EnvVars);
     assert!(state.config_file.is_none());
-    assert!(state.write_tools_enabled); // default true when no connection
+    assert!(!state.gates.write_enabled);
     assert!(state.config_parse_error.is_none());
 }
 
@@ -101,7 +106,14 @@ fn test_iris_tools_none_iris_has_null_connection() {
     let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).unwrap();
     let conn = tools.connection.lock().unwrap();
     assert!(conn.iris.is_none());
-    assert!(conn.write_tools_enabled); // default true when no connection
+    // No connection and nothing declared: resolution still happens, against SystemMode::Unknown
+    // and the "USER" namespace hint, so the answer stays attributable rather than defaulting to
+    // an unexplained `true` (085 FR-012).
+    assert!(conn.gates.write_enabled);
+    assert_eq!(
+        conn.gates.write_source,
+        iris_agentic_dev_core::tools::write_gate::GateSource::InferredNamespace
+    );
 }
 
 // ── T020: check_reload with config watcher None is no-op ─────────────────────
@@ -130,7 +142,10 @@ fn test_no_config_watcher_means_no_reload() {
 
 #[test]
 fn test_connection_state_iris_is_none_for_disconnected() {
-    let state = ConnectionState::new_disconnected(ConnectionSource::IrisSelectContainer);
+    let state = ConnectionState::new_disconnected(
+        ConnectionSource::IrisSelectContainer,
+        GateResolution::fail_closed(),
+    );
     assert!(state.iris.is_none());
     assert_eq!(state.source, ConnectionSource::IrisSelectContainer);
 }
@@ -154,9 +169,9 @@ fn test_connection_state_source_after_swap() {
 
 #[test]
 fn test_connection_state_for_check_config_no_iris() {
-    let state = ConnectionState::new_disconnected(ConnectionSource::EnvVars);
+    let state =
+        ConnectionState::new_disconnected(ConnectionSource::EnvVars, GateResolution::fail_closed());
     assert!(state.iris.is_none());
-    assert!(!state.write_tools_enabled || state.iris.is_none()); // when no iris, connected=false
     assert!(state.config_file.is_none());
     assert!(state.config_parse_error.is_none());
     // Verify source serializes correctly

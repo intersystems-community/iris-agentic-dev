@@ -39,6 +39,12 @@ fn mcp_exchange(messages: &[serde_json::Value]) -> Vec<serde_json::Value> {
             "IRIS_NAMESPACE",
             std::env::var("IRIS_NAMESPACE").unwrap_or_else(|_| "USER".to_string()),
         )
+        // Spec 085: this file drives lookup-table and credential CRUD, both of which are
+        // destructive-tier tools (docs/tools.md marks them ☠). The tier is off unless declared, so
+        // the harness declares it — the same way an operator would. Without this the CRUD tests
+        // fail on the refusal, which is the gate working, not a bug.
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "1")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

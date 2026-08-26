@@ -4,24 +4,25 @@
 
 ## Symptom table
 
-| Symptom                                                    | Likely cause                                                     | Fix                                                                                           |
-| ---------------------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| 404 on `/api/atelier` (Windows)                            | IIS missing `/api` web application                               | See [Windows IIS setup](connecting.md#windows-iis-api-web-application-required)               |
-| `check_config` works but compile/search fail               | Atelier web app `Recurse=0`                                      | Management Portal → Security → Web Apps → `/api/atelier` → enable **Recurse**                 |
-| `Mapping not found for %Service_WebGateway//mcp/path`      | CSP application not registered in IRIS                           | See [WebGateway: CSP app registration](#webgateway-csp-application-mapping-not-found)         |
-| All tools fail, `check_config` shows `atelier_rest: false` | NoPWS build (IRIS 2026.2.0AI+) or no WebGateway                  | Set `docker_only = true` in `.iris-agentic-dev.toml`                                          |
-| All tools fail, namespace listing works                    | API version mismatch                                             | Verify IRIS supports Atelier v8 (`iris-agentic-dev --verbose` shows detected version)         |
-| 403 on write operations                                    | Insufficient permissions                                         | Use a user with `%DB_USER` or `%All` role                                                     |
-| Connection delays on Windows                               | `localhost` DNS issue                                            | Use `host = "127.0.0.1"` in `.iris-agentic-dev.toml`                                          |
-| `SERVER_MANAGER_CREDENTIAL_ERROR`                          | Credential not in OS keychain                                    | VS Code → Server Manager → right-click server → **Reconnect**                                 |
-| `SERVER_MANAGER_AMBIGUOUS`                                 | Multiple SM servers, no `IRIS_SERVER_NAME`                       | Set `IRIS_SERVER_NAME=<server-key>` (see `check_config` for available names)                  |
-| `STALE_CONTENT` from `iris_doc`                            | `expected` text doesn't match current file                       | Re-fetch the document (`mode=get`) and retry with current content                             |
-| `SCOPE_REQUIRED` from `iris_search`                        | Search called with no document scope                             | Pass at least one category or document type in `scope`                                        |
-| `CODE_EDIT_BLOCKED`                                        | Attempted write to `%Dictionary`, `$SYSTEM.OBJ`, or code globals | Use `iris_doc` (put) + `iris_compile` instead                                                 |
-| `CHECKIN_BLOCKED` from `iris_source_control`               | CheckIn disabled by default                                      | Set `IRIS_SCM_ALLOW_CHECKIN=1` to enable                                                      |
-| `HTTP_EXECUTION_FAILED` from `iris_execute`                | Atelier execution failed and no Docker fallback                  | Verify Atelier endpoint reachable; set `IRIS_CONTAINER` for Docker fallback                   |
-| `IRIS_UNREACHABLE`                                         | No IRIS connection discoverable                                  | Run `check_config` to see discovery state; check host/port/credentials                        |
-| `FILE_NOT_FOUND` from `iris_compile` or `compile`          | Local file path does not exist on disk                           | Check the file path — the compile command requires the file to exist locally before uploading |
+| Symptom                                                       | Likely cause                                                     | Fix                                                                                           |
+| ------------------------------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 404 on `/api/atelier` (Windows)                               | IIS missing `/api` web application                               | See [Windows IIS setup](connecting.md#windows-iis-api-web-application-required)               |
+| `check_config` works but compile/search fail                  | Atelier web app `Recurse=0`                                      | Management Portal → Security → Web Apps → `/api/atelier` → enable **Recurse**                 |
+| `Mapping not found for %Service_WebGateway//mcp/path`         | CSP application not registered in IRIS                           | See [WebGateway: CSP app registration](#webgateway-csp-application-mapping-not-found)         |
+| All tools fail, `check_config` shows `atelier_rest: false`    | NoPWS build (IRIS 2026.2.0AI+) or no WebGateway                  | Set `docker_only = true` in `.iris-agentic-dev.toml`                                          |
+| All tools fail, namespace listing works                       | API version mismatch                                             | Verify IRIS supports Atelier v8 (`iris-agentic-dev --verbose` shows detected version)         |
+| 403 on write operations                                       | Insufficient permissions                                         | Use a user with `%DB_USER` or `%All` role                                                     |
+| Connection delays on Windows                                  | `localhost` DNS issue                                            | Use `host = "127.0.0.1"` in `.iris-agentic-dev.toml`                                          |
+| `SERVER_MANAGER_CREDENTIAL_ERROR`                             | Credential not in OS keychain                                    | VS Code → Server Manager → right-click server → **Reconnect**                                 |
+| `SERVER_MANAGER_CREDENTIAL_ERROR` on Windows, after Reconnect | Secret storage unseal failed                                     | See [Windows: Server Manager credentials](#windows-server-manager-credentials-cannot-be-read) |
+| `SERVER_MANAGER_AMBIGUOUS`                                    | Multiple SM servers, no `IRIS_SERVER_NAME`                       | Set `IRIS_SERVER_NAME=<server-key>` (see `check_config` for available names)                  |
+| `STALE_CONTENT` from `iris_doc`                               | `expected` text doesn't match current file                       | Re-fetch the document (`mode=get`) and retry with current content                             |
+| `SCOPE_REQUIRED` from `iris_search`                           | Search called with no document scope                             | Pass at least one category or document type in `scope`                                        |
+| `CODE_EDIT_BLOCKED`                                           | Attempted write to `%Dictionary`, `$SYSTEM.OBJ`, or code globals | Use `iris_doc` (put) + `iris_compile` instead                                                 |
+| `CHECKIN_BLOCKED` from `iris_source_control`                  | CheckIn disabled by default                                      | Set `IRIS_SCM_ALLOW_CHECKIN=1` to enable                                                      |
+| `HTTP_EXECUTION_FAILED` from `iris_execute`                   | Atelier execution failed and no Docker fallback                  | Verify Atelier endpoint reachable; set `IRIS_CONTAINER` for Docker fallback                   |
+| `IRIS_UNREACHABLE`                                            | No IRIS connection discoverable                                  | Run `check_config` to see discovery state; check host/port/credentials                        |
+| `FILE_NOT_FOUND` from `iris_compile` or `compile`             | Local file path does not exist on disk                           | Check the file path — the compile command requires the file to exist locally before uploading |
 
 ---
 
@@ -167,6 +168,59 @@ container = "your-container-name"
 ```
 
 Community IRIS images (`iris-community:*`) still have PWS on 52773 — unaffected.
+
+---
+
+## Windows: Server Manager credentials cannot be read
+
+Symptom: tools fail with `SERVER_MANAGER_CREDENTIAL_ERROR` on Windows even though the
+server connects fine inside VS Code, and Reconnect does not help.
+
+Start with the diagnostic — it prints every step of the unseal and stops at the one that
+fails:
+
+```powershell
+iris-agentic-dev check-sm-credential <server-name> <username>
+```
+
+A healthy run looks like this:
+
+```text
+state.vscdb: C:\Users\you\AppData\Roaming\Code\User\globalStorage\state.vscdb
+Value encoding: BufferJson
+Payload is a safeStorage AES-GCM envelope (45 bytes)
+Local State: C:\Users\you\AppData\Roaming\Code\Local State
+OK: resolved password for iservice-base/_system
+```
+
+### How the secret is actually stored
+
+Worth knowing, because the obvious mental model is wrong. VS Code stores
+`JSON.stringify(safeStorage.encryptString(password))`, so `ItemTable.value` holds TEXT of
+the form `{"type":"Buffer","data":[…]}`. The bytes inside are a Chromium OSCrypt envelope:
+`v10` + a 12-byte nonce + AES-256-GCM ciphertext + a 16-byte tag. The AES-256 key lives in
+`%APPDATA%\Code\Local State` under `os_crypt.encrypted_key`, base64-encoded and prefixed
+with `DPAPI`.
+
+DPAPI protects the **key**, one level in — never the stored value. Calling
+`CryptUnprotectData` on the value fails for every user on every machine, which is why
+older builds reported a bogus "running as a different Windows user" error here.
+
+### What each failure means
+
+| Diagnostic output                                      | Cause                                                            | Fix                                                                             |
+| ------------------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `key not found in state.vscdb`                         | Password was never saved for this server/user pair               | Reconnect the server in VS Code and choose to save the password                 |
+| `Value encoding: Unknown`                              | A VS Code storage format this build does not recognise           | Open an issue with the printed encoding and hex prefix                          |
+| `cannot read …\Local State`                            | Non-standard install layout (portable mode, a VS Code fork)      | Pass `--db-path` pointing at the real `state.vscdb`                             |
+| `CryptUnprotectData failed on the Local State AES key` | Profile copied from another machine, or a different Windows user | Reconnect in VS Code as the account that runs the agent, so the key is resealed |
+| `AES-GCM authentication failed`                        | Local State key and `state.vscdb` are out of sync                | Reconnect the server in VS Code to rewrite both                                 |
+
+The username is lower-cased before lookup, matching what Server Manager writes. `_SYSTEM`
+and `_system` resolve to the same key.
+
+Cursor and other VS Code forks work the same way; `check-sm-credential` falls back to
+`%APPDATA%\Cursor` and derives `Local State` from whichever database it opened.
 
 ---
 

@@ -14,3 +14,4 @@ pub mod query;
 pub mod skill;
 pub mod tool;
 pub mod tsv;
+pub mod vscode_payload;

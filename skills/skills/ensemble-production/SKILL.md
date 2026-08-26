@@ -213,26 +213,33 @@ Set state = ##class(Ens.Director).GetProductionState(.sc)
 
 ## MCP Tool Process Flow
 
+Two tools cover all of interop: `iris_production` for lifecycle (an `action` argument
+selects the operation) and `iris_interop_query` for reading traffic (a `what` argument
+selects logs, queues, or messages).
+
 ### Investigating a production problem
 
-1. **Check status first** — call `interop_production_status` with `full_status=true`
-   to see which components are running, faulted, or disabled.
+1. **Check status first** — `iris_production(action="status", full=true)` to see which
+   components are running, faulted, or disabled.
 
-2. **Check queues** — call `interop_queues` if you suspect backlog or blocked messages.
-   High queue depth on a specific component indicates a bottleneck or fault in that component.
+2. **Check queues** — `iris_interop_query(what="queues")` if you suspect backlog or blocked
+   messages. High queue depth on one component indicates a bottleneck or fault there.
 
-3. **Search messages** — call `interop_message_search` to find specific messages by body
-   content, session ID, sender, or time range. This is the fastest way to trace a failed
-   transaction end-to-end.
+3. **Search messages** — `iris_interop_query(what="messages", ...)` to trace a transaction
+   by `source`, `target`, `message_class`, `session_id`, or body content (`body_class` +
+   `body_where`). Fastest way to follow a failed transaction end-to-end.
 
-4. **Check logs** — call `interop_logs` filtered to the component and time window of interest.
-   Look for `ERROR` or `WARNING` severity entries.
+4. **Check logs** — `iris_interop_query(what="logs", component="FileRouter",
+log_type="error,warning")`.
 
 ### Making a configuration change
 
-1. Call `interop_production_needs_update` — if it returns `false`, no action needed.
-2. If update needed, call `interop_production_update` (hot-apply, no downtime).
-3. Confirm with `interop_production_status` that all components are still running.
+1. `iris_production(action="check")` — if no update is pending, no action needed.
+2. If an update is pending, `iris_production(action="update")` (hot-apply, no downtime).
+3. Confirm with `iris_production(action="status")` that all components are still running.
+
+To enable, disable, or reconfigure a single item without touching the rest of the
+production, use `iris_production_item(action="enable"|"disable"|"get_settings"|"set_settings")`.
 
 ### Restarting a production
 
@@ -240,33 +247,41 @@ Only restart if status shows the production is stopped or stuck:
 
 ```text
 # Graceful stop (waits for in-flight messages)
-interop_production_stop(timeout=30, force=false)
+iris_production(action="stop", timeout=30, force=false)
 
 # Start with the production class name
-interop_production_start(production="MyApp.Productions.Main", namespace="MYNS")
+iris_production(action="start", production_name="MyApp.Productions.Main", namespace="MYNS")
 
 # Confirm
-interop_production_status(full_status=true)
+iris_production(action="status", full=true)
 ```
 
 ### Recovering a faulted production
 
-If the production is in an error state (stuck, partially started), call `interop_production_recover`.
-This performs the equivalent of the Management Portal "Recover" button.
+If the production is stuck or partially started, `iris_production(action="recover")` —
+the equivalent of the Management Portal "Recover" button.
 
 ## Tool Reference
 
-| Tool                              | When to use                                                  |
-| --------------------------------- | ------------------------------------------------------------ |
-| `interop_production_status`       | Always first — baseline state before any action              |
-| `interop_production_start`        | Start a stopped production                                   |
-| `interop_production_stop`         | Graceful or forced stop                                      |
-| `interop_production_update`       | Hot-apply config changes (no restart needed)                 |
-| `interop_production_needs_update` | Check before deciding whether to update                      |
-| `interop_production_recover`      | Un-stick a faulted/partially-started production              |
-| `interop_logs`                    | Component-level log entries (filter by component + severity) |
-| `interop_queues`                  | Queue depth per component — spot bottlenecks                 |
-| `interop_message_search`          | Trace specific messages by content, session, or time         |
+| Call                                          | When to use                                               |
+| --------------------------------------------- | --------------------------------------------------------- |
+| `iris_production(action="status", full=true)` | Always first — baseline state before any action           |
+| `iris_production(action="start")`             | Start a stopped production (`production_name`)            |
+| `iris_production(action="stop")`              | Graceful or forced stop (`timeout`, `force`)              |
+| `iris_production(action="update")`            | Hot-apply config changes (no restart needed)              |
+| `iris_production(action="check")`             | Check before deciding whether to update                   |
+| `iris_production(action="recover")`           | Un-stick a faulted/partially-started production           |
+| `iris_production(action="get_autostart")`     | Read the autostart production for the namespace           |
+| `iris_production(action="set_autostart")`     | Set autostart (`production`, `enabled`)                   |
+| `iris_production_item(action="enable")`       | Enable or disable one business host                       |
+| `iris_production_item(action="set_settings")` | Change one item's settings without a full update          |
+| `iris_interop_query(what="logs")`             | Component-level log entries (`component`, `log_type`)     |
+| `iris_interop_query(what="queues")`           | Queue depth per component — spot bottlenecks              |
+| `iris_interop_query(what="messages")`         | Trace messages by source, target, class, session, or body |
+
+Message _status_ is not a filter on `iris_interop_query`. To find discarded or errored
+messages, query the header table:
+`iris_query(sql="SELECT TOP 50 ID, Status, TargetConfigName FROM Ens.MessageHeader WHERE Status = 5 ORDER BY ID DESC")`.
 
 ## Interop depth tools
 

@@ -168,25 +168,32 @@ iris_import_servers()                 # pull VS Code Server Manager entries into
 `iris_servers` shows `reachable: null` until you call `iris_test_server` — reachability
 is not probed at startup.
 
-### Write protection — three tiers
+### Write protection — two tiers
 
 **Tier 1** (`write_tools_enabled = true`) — compile, execute, source control, routine
-writes. Default: respects `mcpTemplate`; `live` template sets it false.
+writes. Default: respects `mcpTemplate`; `live` template sets it false. With it off,
+every write-capable tool returns `WRITE_TOOLS_DISABLED` before it reaches IRIS.
 
-**Tier 2** (`destructive_tools_enabled = true`) — `global_kill`, `iris_admin` writes,
-`iris_credential_manage`, `iris_lookup_manage` (write/delete), `iris_namespace_create`,
-`iris_remove_server`, `skill_forget`. Default: **false** regardless of tier 1.
-Setting this without tier 1 is an error.
-
-**Tier 3** (`write_allowed_servers = ["dev", "staging"]`) — name-based allowlist. Write
-calls targeting any server not in the list return `WRITE_SERVER_NOT_ALLOWED`. Read-only
-tools (`iris_query`, `iris_search`, etc.) are unaffected.
+**Tier 2** (`destructive_tools_enabled = true`) — `global_kill`, `iris_global(kill)`,
+`iris_admin` writes, `iris_credential_manage`, `iris_lookup_manage` (write/delete),
+`iris_namespace_create`, `iris_remove_server`, `skill_forget`. Default: **false**
+regardless of tier 1. Declaring it with `write_tools_enabled = false` is a startup
+error: the server logs `DESTRUCTIVE_REQUIRES_WRITES` and exits 2.
 
 ```toml
 write_tools_enabled       = true
 destructive_tools_enabled = true          # only needed for ☠ tools
-write_allowed_servers     = ["dev"]       # block accidental writes to prod
 ```
+
+Both gates are resolved once per config load and checked once per tool call, so a tool
+cannot be write-capable and ungated. Precedence: an env var the operator exported before
+the process started beats the toml, which beats IRIS `SystemMode`, which beats the
+namespace heuristic. `check_config` reports which one decided, as `write_tools_source`
+and `destructive_tools_source`.
+
+There is no per-server allowlist. `specs/074-write-server-allowlist/` is the design of
+record for one; it is not implemented, and nothing in the config accepts a list of
+server names.
 
 ### Fleet / operate mode (multi-instance)
 
@@ -233,11 +240,13 @@ on the `prod` Server Manager connection. Categories: `compile`, `execute`, `quer
   `check_config` and expect `credential_status: "resolved"`.
 - **Several Server Manager servers and none selected** — set `IRIS_SERVER_NAME` to the
   map key from `intersystems.servers`.
-- **`WRITE_SERVER_NOT_ALLOWED`** — `write_allowed_servers` is set and the `server:`
-  parameter names an instance not in the list. Add the server name to the list, or omit
-  `server:` to use the default connection.
+- **`WRITE_TOOLS_DISABLED`** — a 🔒 tool was called with tier 1 off. `check_config`'s
+  `write_tools_source` names what decided it; fix that input, not the toml, if the source
+  is `operator_env` or `inferred_system_mode`.
 - **`DESTRUCTIVE_TOOLS_DISABLED`** — a ☠ tool was called without
   `destructive_tools_enabled = true`. Add that key to the toml for this connection.
+- **`DESTRUCTIVE_REQUIRES_WRITES`** — the toml declares `destructive_tools_enabled = true`
+  with `write_tools_enabled = false`. The server refuses to start. Set both or neither.
 
 ## Atelier REST requirement
 
