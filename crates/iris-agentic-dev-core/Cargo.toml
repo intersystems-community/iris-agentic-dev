@@ -534,6 +534,18 @@ name = "test_gate_resolution"
 path = "tests/unit/test_gate_resolution.rs"
 
 [[test]]
+name = "test_user_agent"
+path = "tests/unit/test_user_agent.rs"
+
+[[test]]
+name = "test_mcp_peer_identity"
+path = "tests/unit/test_mcp_peer_identity.rs"
+
+[[test]]
+name = "test_attribution_live"
+path = "tests/integration/test_attribution_live.rs"
+
+[[test]]
 name = "test_gate_classification"
 path = "tests/unit/test_gate_classification.rs"
 
@@ -553,3 +565,20 @@ path = "tests/unit/test_lockfile_sync.rs"
 name = "test_gate_enforcement_live"
 path = "tests/integration/test_gate_enforcement_live.rs"
 required-features = ["testing"]
+
+[[test]]
+name = "test_policy_audit_config"
+path = "tests/unit/test_policy_audit_config.rs"
+
+[[test]]
+name = "test_iris_audit"
+path = "tests/unit/test_iris_audit.rs"
+
+[[test]]
+name = "test_iris_audit_live"
+path = "tests/integration/test_iris_audit_live.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_environment_restriction_live"
+path = "tests/integration/test_environment_restriction_live.rs"

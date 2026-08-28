@@ -254,6 +254,7 @@ fn test_gate_latency_under_1ms() {
         data_policy: Some(DataPolicy::Allow),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
     let params = serde_json::json!({});
     let start = std::time::Instant::now();

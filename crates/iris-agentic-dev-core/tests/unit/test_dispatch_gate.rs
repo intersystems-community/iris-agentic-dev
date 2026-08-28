@@ -16,6 +16,7 @@ fn policy_live() -> ConnectionPolicy {
         data_policy: Some(DataPolicy::Block),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     }
 }
 
@@ -27,6 +28,7 @@ fn policy_test() -> ConnectionPolicy {
         data_policy: Some(DataPolicy::Block),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     }
 }
 
@@ -38,6 +40,7 @@ fn policy_dev_allow() -> ConnectionPolicy {
         data_policy: Some(DataPolicy::Allow),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     }
 }
 
@@ -49,6 +52,7 @@ fn policy_dev_block() -> ConnectionPolicy {
         data_policy: Some(DataPolicy::Block),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     }
 }
 
@@ -60,6 +64,7 @@ fn policy_custom_blocklist() -> ConnectionPolicy {
         data_policy: Some(DataPolicy::Block),
         global_blocklist: vec!["^Secret*".to_string()],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     }
 }
 
@@ -251,6 +256,7 @@ fn gate3_kill_action_on_kill_allowlist_permitted() {
         data_policy: Some(DataPolicy::Allow),
         global_blocklist: vec!["^TempCache*".to_string()],
         data_policy_kill_allowlist: vec!["^TempCache*".to_string()],
+        iris_audit: false,
     };
     let params = serde_json::json!({"global_name": "TempCache.Work", "action": "kill"});
     let r = dispatch_gate("iris_query", "iris-dev", Some(&policy), &params);
@@ -345,6 +351,7 @@ fn default_template_is_dev_all_permitted() {
         data_policy: None,
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
     let r = dispatch_gate("iris_execute", "iris-default", Some(&policy), &no_params());
     assert!(
@@ -363,6 +370,7 @@ fn default_data_policy_is_block() {
         data_policy: None,
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
     let r = dispatch_gate(
         "journal_search",
@@ -387,6 +395,7 @@ fn dispatch_gate_does_not_check_policy_allow_list() {
         data_policy: Some(DataPolicy::Allow),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
     // dispatch_gate permits compile (policy.allow is not its concern)
     let r = dispatch_gate("iris_compile", "iris-dev", Some(&policy), &no_params());

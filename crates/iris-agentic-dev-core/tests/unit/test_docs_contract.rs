@@ -68,7 +68,11 @@ fn walk(dir: &Path, keep: &dyn Fn(&Path) -> bool, out: &mut Vec<PathBuf>) {
 /// every bundled skill.
 fn all_doc_files() -> Vec<PathBuf> {
     let root = repo_root();
-    let mut files = vec![root.join("docs/tools.md"), root.join("docs/connecting.md")];
+    let mut files = vec![
+        root.join("docs/tools.md"),
+        root.join("docs/connecting.md"),
+        root.join("docs/agent-attribution.md"),
+    ];
     let mut skills = Vec::new();
     walk(
         &root.join("skills"),
@@ -140,6 +144,7 @@ fn the_contract_scope_is_stated_out_loud() {
         vec![
             "docs/tools.md".to_string(),
             "docs/connecting.md".to_string(),
+            "docs/agent-attribution.md".to_string(),
             "skills/skills/iris-agentic-dev/SKILL.md".to_string(),
         ],
         "the identifier contract covers iad's own surfaces; if one was renamed the extractors below \
@@ -1111,4 +1116,91 @@ fn the_planned_exemption_parses_and_must_cite_a_real_spec() {
         dangling.join("\n  ")
     );
     eprintln!("note: {used} PLANNED(spec-NNN) exemption(s) in use across the shipped docs");
+}
+
+/// T022 (spec-086) — every `docs/<file>.md` path cited in `crates/*/src` must resolve
+/// to an actual file. A dangling reference in a doc comment (like the `docs/agent-attribution.md`
+/// reference in `connection.rs:51` before the guide existed) is a broken promise to the reader.
+#[test]
+fn doc_links_in_source_resolve() {
+    let root = repo_root();
+    let src_root = root.join("crates");
+
+    // Collect all source files under crates/*/src.
+    let mut src_files = Vec::new();
+    walk(
+        &src_root,
+        &|p| {
+            p.extension().is_some_and(|e| e == "rs")
+                && p.components().any(|c| c.as_os_str() == "src")
+        },
+        &mut src_files,
+    );
+
+    let doc_link_re = Regex::new(r"docs/([a-z0-9_-]+\.md)").unwrap();
+    let mut dangling: Vec<String> = Vec::new();
+
+    for src in &src_files {
+        let Ok(text) = std::fs::read_to_string(src) else {
+            continue;
+        };
+        for (lineno, line) in text.lines().enumerate() {
+            for cap in doc_link_re.captures_iter(line) {
+                let rel_path = cap.get(0).unwrap().as_str();
+                let full = root.join(rel_path);
+                if !full.is_file() {
+                    dangling.push(format!(
+                        "{}:{} → {} (file missing)",
+                        src.strip_prefix(&root).unwrap_or(src).display(),
+                        lineno + 1,
+                        rel_path
+                    ));
+                }
+            }
+        }
+    }
+
+    assert!(
+        dangling.is_empty(),
+        "{} dangling docs/ reference(s) in crates/*/src — a doc comment that points at a missing \
+         file breaks the reader's trust:\n  {}",
+        dangling.len(),
+        dangling.join("\n  ")
+    );
+}
+
+/// T044 (spec-086) — `docs/agent-attribution.md` must contain the required headings for US4:
+/// a "Restricting agents" section and an explicit disclaimer about client-side gates.
+///
+/// The section heading anchors the promise; the disclaimer text ensures nobody reads the
+/// write/destructive gates as "limit agents on an environment" (they can't — they run in the
+/// agent's own process and are ignored by any other caller).
+#[test]
+fn agent_attribution_doc_has_required_us4_content() {
+    let root = repo_root();
+    let doc_path = root.join("docs/agent-attribution.md");
+    let text = std::fs::read_to_string(&doc_path)
+        .unwrap_or_else(|e| panic!("cannot read docs/agent-attribution.md: {e}"));
+
+    // Required heading: the "Restricting agents" section must exist.
+    assert!(
+        text.contains("## Restricting agents"),
+        "docs/agent-attribution.md must contain a '## Restricting agents' section (US4 T045)"
+    );
+
+    // Required disclaimer: the guide must explicitly state that client-side gates run
+    // in the agent's own process and are bypassed by other callers (FR-014).
+    assert!(
+        text.contains("agent's own process") || text.contains("agent process"),
+        "docs/agent-attribution.md must state that write/destructive gates run in the agent's own \
+         process and cannot enforce environment-level restrictions (FR-014)"
+    );
+
+    // Required: the guide must lead with IRIS-side controls (credentials/roles) before
+    // or alongside any mention of client-side options.
+    assert!(
+        text.contains("credentials") && text.contains("roles"),
+        "docs/agent-attribution.md must describe IRIS credentials and roles as the primary \
+         enforcement mechanism (US4 T044)"
+    );
 }

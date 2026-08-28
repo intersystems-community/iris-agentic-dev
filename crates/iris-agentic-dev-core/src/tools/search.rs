@@ -1,6 +1,6 @@
 //! iris_search — full-text search via Atelier REST v2 with sync→async fallback.
 
-use crate::iris::connection::IrisConnection;
+use crate::iris::connection::{iris_http_client, IrisConnection};
 use crate::tools::log_store;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -106,11 +106,12 @@ pub async fn handle_iris_search(
         .and_then(|v| v.parse::<u64>().ok())
         .filter(|&v| v > 0)
         .unwrap_or(30);
-    let sync_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(sync_timeout_secs))
-        .danger_accept_invalid_certs(true)
-        .build()
-        .unwrap_or_else(|_| client.clone());
+    let sync_client = iris_http_client(
+        Some(std::time::Duration::from_secs(sync_timeout_secs)),
+        true,
+        false,
+    )
+    .unwrap_or_else(|_| client.clone());
 
     let sync_result = sync_client
         .get(&sync_url)

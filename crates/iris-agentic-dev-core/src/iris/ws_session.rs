@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-use crate::iris::connection::IrisConnection;
+use crate::iris::connection::{caller_mode, iris_http_client, user_agent, IrisConnection};
 
 // ── Error codes ───────────────────────────────────────────────────────────────
 
@@ -122,7 +122,8 @@ impl WsSessionPool {
             .map_err(|e| McpError::internal_error(format!("invalid WS URL: {e}"), None))?;
         let request = ClientRequestBuilder::new(uri)
             .with_header("Cookie", &cookie_string)
-            .with_header("Authorization", format!("Basic {}", credentials));
+            .with_header("Authorization", format!("Basic {}", credentials))
+            .with_header("User-Agent", user_agent(caller_mode()));
 
         let (ws_stream, _response) = connect_async(request).await.map_err(|e| {
             let msg = e.to_string();
@@ -332,13 +333,10 @@ impl Default for WsSessionPool {
 /// `"k=v; k2=v2"` cookie string for use in the WS handshake.
 async fn get_csp_session_cookie(conn: &IrisConnection) -> Result<String, McpError> {
     // Use a fresh client without cookie_store so we can see raw Set-Cookie headers.
-    let client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(
-            std::env::var("IRIS_INSECURE")
-                .map(|v| v == "1" || v == "true")
-                .unwrap_or(false),
-        )
-        .build()
+    let insecure = std::env::var("IRIS_INSECURE")
+        .map(|v| v == "1" || v == "true")
+        .unwrap_or(false);
+    let client = iris_http_client(None, insecure, false)
         .map_err(|e| McpError::internal_error(format!("HTTP client build failed: {e}"), None))?;
 
     let url = format!("{}/api/atelier/", conn.base_url.trim_end_matches('/'));

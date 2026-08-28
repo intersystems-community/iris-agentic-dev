@@ -122,3 +122,7 @@ path = "tests/integration/test_reporter_repro.rs"
 [[test]]
 name = "test_workflow_files"
 path = "tests/unit/test_workflow_files.rs"
+
+[[test]]
+name = "test_attribution_stdio"
+path = "tests/integration/test_attribution_stdio.rs"

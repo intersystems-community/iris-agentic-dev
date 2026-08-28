@@ -584,6 +584,7 @@ fn check_config_sm_with_policy_allow_serialized() {
             data_policy: None,
             global_blocklist: vec![],
             data_policy_kill_allowlist: vec![],
+            iris_audit: false,
         }),
     }];
     let json = build_server_manager_config_json(&profiles, Some("dev-local"), &cred_entries);
@@ -625,6 +626,7 @@ fn policy_gate_unknown_tool_not_gated() {
         data_policy: None,
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
     let gate = policy_gate("unknown_future_tool", "prod", Some(&policy));
     assert!(
@@ -654,6 +656,7 @@ fn check_config_sm_policy_includes_mcp_template_and_data_policy() {
             data_policy: Some(DataPolicy::Block),
             global_blocklist: vec![],
             data_policy_kill_allowlist: vec![],
+            iris_audit: false,
         }),
     }];
     let json = build_server_manager_config_json(&profiles, Some("dev-local"), &cred_entries);
@@ -1081,6 +1084,7 @@ fn build_config_policy_data_policy_dev_template() {
             data_policy: Some(DataPolicy::Allow),
             global_blocklist: vec![],
             data_policy_kill_allowlist: vec![],
+            iris_audit: false,
         }),
     }];
     let json = build_server_manager_config_json(&profiles, Some("dev-local"), &cred_entries);
@@ -1117,6 +1121,7 @@ fn build_config_policy_test_template_redact() {
             data_policy: Some(DataPolicy::Redact),
             global_blocklist: vec![],
             data_policy_kill_allowlist: vec![],
+            iris_audit: false,
         }),
     }];
     let json = build_server_manager_config_json(&profiles, Some("dev-local"), &cred_entries);
@@ -1151,6 +1156,7 @@ fn build_config_policy_null_when_allow_none() {
             data_policy: None,
             global_blocklist: vec![],
             data_policy_kill_allowlist: vec![],
+            iris_audit: false,
         }),
     }];
     let json = build_server_manager_config_json(&profiles, Some("dev-local"), &cred_entries);
@@ -1194,6 +1200,7 @@ fn build_config_multiple_servers_each_with_policy() {
                 data_policy: None,
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                iris_audit: false,
             }),
         },
         ServerManagerCredentialEntry {
@@ -1206,6 +1213,7 @@ fn build_config_multiple_servers_each_with_policy() {
                 data_policy: None,
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                iris_audit: false,
             }),
         },
     ];
@@ -1242,6 +1250,7 @@ fn policy_gate_permitted_category_returns_none() {
         data_policy: None,
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
     let gate = policy_gate("iris_query", "prod", Some(&policy));
     assert!(
@@ -1261,6 +1270,7 @@ fn policy_gate_blocked_category_returns_error() {
         data_policy: None,
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
     let gate = policy_gate("iris_compile", "prod", Some(&policy));
     assert!(
@@ -1291,6 +1301,7 @@ fn policy_gate_allow_none_permits_all() {
         data_policy: None,
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
     let gate = policy_gate("iris_execute", "prod", Some(&policy));
     assert!(
@@ -1310,6 +1321,7 @@ fn policy_gate_tool_suffix_ignored() {
         data_policy: None,
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
     // Tool with action suffix — source control tools map to SourceControl category
     let gate = policy_gate("iris_source_control:commit", "prod", Some(&policy));

@@ -178,6 +178,33 @@ Blocked calls return `error_code: "POLICY_GATE"` with the list of allowed catego
 Omit the block entirely to permit everything. Available categories: `compile`, `execute`,
 `query`, `search`, `docs`, `source_control`, `debug`, `admin`, `skill`, `kb`.
 
+### `irisAudit` — opt-in `%SYS.Audit` emission
+
+Set `irisAudit = true` in a `[policy.<server>]` block to emit one `%SYS.Audit` record
+per tool call. Off by default. The event definition must exist in `%SYS` before emission
+can succeed — see [docs/agent-attribution.md](agent-attribution.md) for the one-time setup
+command and the trust model.
+
+```toml
+[policy.prod]
+irisAudit = true
+```
+
+For flat single-server configs (no Server Manager), use `[policy.default]` as the
+catchall key:
+
+```toml
+host = "localhost"
+web_port = 52780
+
+[policy.default]
+irisAudit = true
+```
+
+When emission fails (event definition absent or disabled), the tool warns once and
+counts subsequent failures. The failure count appears in `check_config` as
+`iris_audit_failures` when it is non-zero.
+
 For multi-instance fleet workflows (`mode = "operate"`), see the
 [ecosystem integration guide](ecosystem-integration.md) for the full `[instance.*]` config
 format and role-gate behavior.

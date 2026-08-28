@@ -311,6 +311,7 @@ fn dispatch_gate_system_blocklist_blocks_pct_sys() {
         data_policy: Some(DataPolicy::Allow), // allow data policy — blocklist still fires
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
     let params = serde_json::json!({"action": "get", "global_name": "%SYS"});
     let result = dispatch_gate("iris_global", "test-server", Some(&policy), &params);
@@ -330,6 +331,7 @@ fn dispatch_gate_phi_gate_blocks_papmi_without_ack() {
         data_policy: Some(DataPolicy::Allow),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
     let params = serde_json::json!({"action": "get", "global_name": "PAPMI"});
     let result = dispatch_gate("iris_global", "test-server", Some(&policy), &params);
@@ -349,6 +351,7 @@ fn dispatch_gate_phi_gate_passes_papmi_with_ack() {
         data_policy: Some(DataPolicy::Allow),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
     let params =
         serde_json::json!({"action": "get", "global_name": "PAPMI", "acknowledgePhi": true});
@@ -368,6 +371,7 @@ fn dispatch_gate_non_phi_global_passes() {
         data_policy: Some(DataPolicy::Allow),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
     let params = serde_json::json!({"action": "get", "global_name": "MyAppData"});
     let result = dispatch_gate("iris_global", "test-server", Some(&policy), &params);
@@ -387,6 +391,7 @@ fn dispatch_gate_kill_non_blocklisted_passes() {
         data_policy: Some(DataPolicy::Allow),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
     let params = serde_json::json!({"action": "kill", "global_name": "IrisDevTest"});
     let result = dispatch_gate("iris_global", "test-server", Some(&policy), &params);

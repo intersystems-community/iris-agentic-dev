@@ -168,6 +168,7 @@ fn policy_connection_should_write_returns_true() {
         data_policy: None,
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
     assert!(
         AuditLog::should_write(Some(&policy)),

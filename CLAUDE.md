@@ -94,6 +94,7 @@ Before closing any release (tagging, publishing, merging release branch):
 - `docs/tools.md` — tool reference
 - `docs/skills.md` — skill system
 - `docs/troubleshooting.md` — common issues
+- `docs/agent-attribution.md` — caller attribution, User-Agent marker, IRIS audit guide
 
 ## Active Technologies
 
@@ -106,6 +107,7 @@ Before closing any release (tagging, publishing, merging release branch):
 
 ## Recent Changes
 
+- 086-agent-attribution-audit: caller marker in `User-Agent` on every IRIS-bound request, opt-in `%SYS.Audit` emission via `[policy.<server>].irisAudit`, `docs/agent-attribution.md`; plan at `specs/086-agent-attribution-audit/plan.md`
 - 085-write-gate-integrity: write/destructive gates resolved as data and enforced once in `call_tool`; plan at `specs/085-write-gate-integrity/plan.md`
 - 068-windows-docker: Added Dockerfile (no specific version), Bash (GHA steps), Markdown + `gcr.io/distroless/static-debian12` (base image), `docker/build-push-action@v6`, `docker/metadata-action@v5`
 

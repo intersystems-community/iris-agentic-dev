@@ -9,7 +9,7 @@
 //!
 //! Each step fails silently and falls through to the next.
 
-use crate::iris::connection::{DiscoverySource, IrisConnection};
+use crate::iris::connection::{iris_http_client, DiscoverySource, IrisConnection};
 use std::time::Duration;
 
 /// The ports we scan on localhost for IRIS web servers.
@@ -131,11 +131,7 @@ pub async fn probe_atelier(
 ) -> Option<IrisConnection> {
     // Bug 24: for the public API we still create a client here, but internal callers
     // (localhost scan, docker probe) reuse a shared client via probe_atelier_with_client.
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(timeout_ms))
-        .danger_accept_invalid_certs(true)
-        .build()
-        .ok()?;
+    let client = iris_http_client(Some(Duration::from_millis(timeout_ms)), true, false).ok()?;
     probe_atelier_with_client(&client, host, port, username, password, namespace).await
 }
 
@@ -220,11 +216,7 @@ pub async fn discover_iris(explicit: Option<IrisConnection>) -> IrisDiscovery {
     let password = std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".to_string());
     let namespace = std::env::var("IRIS_NAMESPACE").unwrap_or_else(|_| "USER".to_string());
 
-    let scan_client = match reqwest::Client::builder()
-        .timeout(Duration::from_millis(100))
-        .danger_accept_invalid_certs(true)
-        .build()
-    {
+    let scan_client = match iris_http_client(Some(Duration::from_millis(100)), true, false) {
         Ok(c) => std::sync::Arc::new(c),
         Err(_) => return IrisDiscovery::NotFound,
     };
@@ -426,11 +418,7 @@ async fn probe_atelier_for_container(
     namespace: &str,
     port_ss: Option<u16>,
 ) -> DiscoveryResult {
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_millis(2000))
-        .danger_accept_invalid_certs(true)
-        .build()
-    {
+    let client = match iris_http_client(Some(Duration::from_millis(2000)), true, false) {
         Ok(c) => c,
         Err(_) => {
             return DiscoveryResult::FoundUnhealthy(FailureMode::AtelierNotResponding { port })
@@ -579,11 +567,7 @@ pub async fn discover_via_docker() -> Option<IrisConnection> {
     let password = std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".to_string());
 
     // Bug 24: create a single shared HTTP client for all docker probes.
-    let probe_client = match reqwest::Client::builder()
-        .timeout(Duration::from_millis(500))
-        .danger_accept_invalid_certs(true)
-        .build()
-    {
+    let probe_client = match iris_http_client(Some(Duration::from_millis(500)), true, false) {
         Ok(c) => c,
         Err(_) => return None,
     };

@@ -104,3 +104,40 @@ fn test_exec_namespace_flag() {
         stdout
     );
 }
+
+/// IRIS must be able to tell that a call came from this tool rather than from a developer's
+/// IDE. The only place that shows up is the `User-Agent` header, which the Web Gateway (or
+/// IIS/Apache) writes to its access log and which ObjectScript can read from
+/// `%request.CgiEnvs`. Asserting it end to end is the point: a unit test on the string
+/// cannot catch a client that was built without the header attached.
+#[test]
+#[ignore]
+fn test_user_agent_visible_to_iris() {
+    let out = iris_dev()
+        .env("IRIS_AGENT_LABEL", "live-test-label")
+        .args([
+            "exec",
+            "write $Get(%request.CgiEnvs(\"HTTP_USER_AGENT\"),\"<none>\"),!",
+        ])
+        .output()
+        .expect("failed to run iris-agentic-dev");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "expected exit 0\nstdout: {}", stdout);
+    let ua = stdout.trim();
+    assert!(
+        ua.starts_with("iris-agentic-dev/"),
+        "IRIS saw User-Agent {:?}; an operator filtering agent traffic out of a production \
+         environment has nothing to filter on unless this is set",
+        ua
+    );
+    assert!(
+        ua.contains("cli"),
+        "expected the one-shot CLI caller mode in {:?}",
+        ua
+    );
+    assert!(
+        ua.contains("live-test-label"),
+        "expected IRIS_AGENT_LABEL to reach IRIS in {:?}",
+        ua
+    );
+}

@@ -25,6 +25,7 @@ fn policy_allow(cats: &[&str]) -> ConnectionPolicy {
         data_policy: None,
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     }
 }
 

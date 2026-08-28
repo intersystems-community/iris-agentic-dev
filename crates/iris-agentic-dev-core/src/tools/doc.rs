@@ -152,7 +152,7 @@ where
 fn default_mode() -> String {
     "get".to_string()
 }
-use crate::iris::connection::IrisConnection;
+use crate::iris::connection::{iris_http_client, IrisConnection};
 
 fn ok_json(v: serde_json::Value) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     Ok(rmcp::model::CallToolResult::structured(v))
@@ -356,15 +356,12 @@ async fn handle_get(
     if !p.names.is_empty() {
         // Build a fresh client for batch gets with a shorter timeout so concurrent
         // requests fail fast and the handler returns within the MCP response deadline.
-        let batch_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(5))
-            .danger_accept_invalid_certs(
-                std::env::var("IRIS_INSECURE")
-                    .map(|v| v == "true" || v == "1")
-                    .unwrap_or(false),
-            )
-            .build()
-            .unwrap_or_else(|_| client.clone());
+        let insecure = std::env::var("IRIS_INSECURE")
+            .map(|v| v == "true" || v == "1")
+            .unwrap_or(false);
+        let batch_client =
+            iris_http_client(Some(std::time::Duration::from_secs(5)), insecure, false)
+                .unwrap_or_else(|_| client.clone());
         let mut set = tokio::task::JoinSet::new();
         for name in &p.names {
             let url = iris.versioned_ns_url(ns, &format!("/doc/{}", urlencoding::encode(name)));

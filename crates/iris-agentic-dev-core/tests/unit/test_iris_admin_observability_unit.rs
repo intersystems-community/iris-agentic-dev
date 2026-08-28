@@ -27,6 +27,7 @@ fn live_policy() -> ConnectionPolicy {
         data_policy: Some(DataPolicy::Block),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     }
 }
 

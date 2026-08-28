@@ -277,6 +277,7 @@ async fn test_phi_gate_blocks_papmi() {
         data_policy: Some(DataPolicy::Allow),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
 
     let params_no_ack = serde_json::json!({"action": "get", "global_name": "PAPMI"});
@@ -314,6 +315,7 @@ async fn test_system_blocklist_blocks_pct_sys_live() {
         data_policy: Some(DataPolicy::Allow),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        iris_audit: false,
     };
 
     let params = serde_json::json!({"action": "get", "global_name": "%SYS"});

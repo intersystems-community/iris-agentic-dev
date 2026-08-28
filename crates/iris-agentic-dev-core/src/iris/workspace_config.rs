@@ -224,6 +224,11 @@ pub struct ConnectionPolicyRaw {
     pub global_blocklist: Vec<String>,
     #[serde(rename = "dataPolicyKillAllowlist", default)]
     pub data_policy_kill_allowlist: Vec<String>,
+    /// Emit a `%SYS.Audit` record for every tool call on this connection. Off by default.
+    /// Requires the event definition to exist on the target IRIS instance — see
+    /// `docs/agent-attribution.md` for the one-time setup command.
+    #[serde(rename = "irisAudit", default)]
+    pub iris_audit: bool,
 }
 
 /// Per-connection policy config from `[policy.<server-name>]` in `.iris-agentic-dev.toml`.
@@ -244,6 +249,8 @@ pub struct ConnectionPolicy {
     pub global_blocklist: Vec<String>,
     /// Patterns exempted from kill-operation blocklist check only.
     pub data_policy_kill_allowlist: Vec<String>,
+    /// Emit a `%SYS.Audit` record for every tool call on this connection. Off by default.
+    pub iris_audit: bool,
 }
 
 /// Top-level fleet config. Wraps WorkspaceConfig for backward-compatible develop mode.
@@ -529,6 +536,7 @@ pub fn load_fleet_config_from_str(contents: &str) -> Result<FleetConfig, toml::d
                 data_policy: raw.data_policy.clone(),
                 global_blocklist: raw.global_blocklist.clone(),
                 data_policy_kill_allowlist: raw.data_policy_kill_allowlist.clone(),
+                iris_audit: raw.iris_audit,
             },
         );
     }

@@ -77,6 +77,14 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Tell IRIS which kind of caller this is before anything opens a connection. `mcp` is an
+    // agent session; every other subcommand is a one-shot dispatch from a script, hook, or CI
+    // step. It reaches IRIS in the User-Agent header (see `connection::user_agent`).
+    iris_agentic_dev_core::iris::connection::set_caller_mode(match cli.command {
+        Some(Commands::Mcp(_)) => iris_agentic_dev_core::iris::connection::CallerMode::Mcp,
+        _ => iris_agentic_dev_core::iris::connection::CallerMode::Cli,
+    });
+
     match cli.command {
         Some(Commands::Mcp(cmd)) => cmd.run().await,
         Some(Commands::Compile(cmd)) => cmd.run().await,

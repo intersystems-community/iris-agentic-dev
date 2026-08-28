@@ -2,6 +2,172 @@
 
 use std::fmt;
 
+/// How this process is being driven, as reported to IRIS in the `User-Agent` header.
+///
+/// An operator asking "was that an agent or a person?" has only the request itself to go on:
+/// Atelier REST arrives through the Web Gateway, so every caller looks like `CSPa24.so` from
+/// the gateway's IP, and `$Username` is whatever credential was configured. The header is the
+/// one field the caller controls and the access log records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CallerMode {
+    /// Long-running MCP server — an agent session.
+    #[default]
+    Mcp,
+    /// One-shot `iris-agentic-dev tool|exec …` dispatch — a script, hook, or CI step.
+    Cli,
+}
+
+impl CallerMode {
+    fn marker(self) -> &'static str {
+        match self {
+            CallerMode::Mcp => "mcp",
+            CallerMode::Cli => "cli",
+        }
+    }
+}
+
+tokio::task_local! {
+    /// The MCP client that initiated this tool call, captured from `context.client_info()`
+    /// at `call_tool` entry. `(name, version)` when the client sent `clientInfo` at
+    /// `initialize`; `None` when it did not or when we are not inside a tool call.
+    ///
+    /// Task-scoped, not global: the HTTP transport clones one `IrisTools` across sessions,
+    /// so a global would let session A's peer bleed into session B's `User-Agent` (R3).
+    pub static MCP_PEER: Option<(String, String)>;
+}
+
+/// The MCP client that identified itself for the current tool call.
+///
+/// Returns `None` outside a `call_tool` scope, and `None` when the client sent no
+/// `clientInfo`. Reads from the task-local set by `call_tool`.
+pub fn mcp_peer() -> Option<(String, String)> {
+    MCP_PEER.try_with(|p| p.clone()).unwrap_or(None)
+}
+
+/// Process-wide caller mode, set once by the binary before it opens any connection.
+static CALLER_MODE: std::sync::OnceLock<CallerMode> = std::sync::OnceLock::new();
+
+/// Record how this process is being driven. First call wins; later calls are ignored, so a
+/// library embedding this cannot have its mode changed out from under it mid-run.
+pub fn set_caller_mode(mode: CallerMode) {
+    let _ = CALLER_MODE.set(mode);
+}
+
+/// The caller mode recorded by [`set_caller_mode`], defaulting to [`CallerMode::Mcp`].
+pub fn caller_mode() -> CallerMode {
+    *CALLER_MODE.get().unwrap_or(&CallerMode::Mcp)
+}
+
+/// Longest `IRIS_AGENT_LABEL` that reaches IRIS. The label lands in every access-log line,
+/// so it is capped rather than trusted.
+const MAX_LABEL_LEN: usize = 64;
+
+/// The `User-Agent` sent on every IRIS-facing request.
+///
+/// Format: `iris-agentic-dev/<version> (<mode>[; <label>][; <client>/<version>])`.
+///
+/// Operators filter on this to tell agent traffic from a developer's IDE traffic — see
+/// `docs/agent-attribution.md`. `IRIS_AGENT_LABEL` is a free-text tag (which agent, which
+/// team, which pipeline) that is stripped of non-ASCII and control characters and
+/// length-capped. The MCP client part (`<name>/<version>`) is appended when a peer
+/// identified itself at `initialize`; it is read from the task-local set by `call_tool`.
+pub fn user_agent(mode: CallerMode) -> String {
+    let mut ua = format!(
+        "iris-agentic-dev/{} ({}",
+        env!("CARGO_PKG_VERSION"),
+        mode.marker()
+    );
+    if let Some(label) = sanitized_agent_label() {
+        ua.push_str("; ");
+        ua.push_str(&label);
+    }
+    // Append connected MCP client identity when inside a tool call scope (task-local).
+    // This is what lets an operator distinguish "claude-code" from "cursor" from a
+    // custom harness, rather than knowing only that some agent acted.
+    if let Some((name, version)) = mcp_peer() {
+        ua.push_str("; ");
+        ua.push_str(&name);
+        ua.push('/');
+        ua.push_str(&version);
+    }
+    ua.push(')');
+    ua
+}
+
+/// Like [`user_agent`] but accepts an explicit MCP peer rather than reading the task-local.
+/// Used by `iris_audit` to build `EventData` outside of a task-local scope.
+pub fn user_agent_with_peer(mode: CallerMode, peer: Option<&(String, String)>) -> String {
+    let mut ua = format!(
+        "iris-agentic-dev/{} ({}",
+        env!("CARGO_PKG_VERSION"),
+        mode.marker()
+    );
+    if let Some(label) = sanitized_agent_label() {
+        ua.push_str("; ");
+        ua.push_str(&label);
+    }
+    if let Some((name, version)) = peer {
+        ua.push_str("; ");
+        ua.push_str(name);
+        ua.push('/');
+        ua.push_str(version);
+    }
+    ua.push(')');
+    ua
+}
+
+/// `IRIS_AGENT_LABEL` reduced to something safe to put in a header: control characters
+/// (CR/LF above all — a bare CRLF in a header value is request splitting) become spaces,
+/// Non-ASCII is stripped (DP-446307), control chars become spaces, runs of whitespace collapse,
+/// and the result is capped at [`MAX_LABEL_LEN`].
+fn sanitized_agent_label() -> Option<String> {
+    let raw = std::env::var("IRIS_AGENT_LABEL").ok()?;
+    // Strip non-ASCII (DP-446307: a single Unicode char anywhere in %SYS.Audit::Export throws
+    // <ILLEGAL VALUE>) and replace control chars with space; collapse runs of whitespace.
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| c.is_ascii())
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let cleaned = cleaned.trim();
+    if cleaned.is_empty() {
+        return None;
+    }
+    Some(match cleaned.char_indices().nth(MAX_LABEL_LEN) {
+        Some((cut, _)) => cleaned[..cut].to_string(),
+        None => cleaned.to_string(),
+    })
+}
+
+/// Build a `reqwest::Client` that identifies this tool on every IRIS-bound request.
+///
+/// Every client that sends requests to an IRIS Atelier REST endpoint MUST go through this
+/// constructor so the `User-Agent` is applied in exactly one place (FR-001, FR-009). A
+/// client built without calling this function will be anonymous — an operator greping the
+/// web-server access log would see no marker for it.
+///
+/// `timeout_secs`: wall-clock request timeout. Pass `None` to inherit reqwest's default.
+/// `insecure`: skip TLS certificate validation (e.g. for self-signed dev certs).
+/// `cookie_store`: retain CSP session cookies across requests on the same client.
+pub fn iris_http_client(
+    timeout: Option<std::time::Duration>,
+    insecure: bool,
+    cookie_store: bool,
+) -> anyhow::Result<reqwest::Client> {
+    let mut b = reqwest::Client::builder()
+        .user_agent(user_agent(caller_mode()))
+        .danger_accept_invalid_certs(insecure)
+        .cookie_store(cookie_store)
+        .tcp_keepalive(std::time::Duration::from_secs(20));
+    if let Some(t) = timeout {
+        b = b.timeout(t);
+    }
+    Ok(b.build()?)
+}
+
 /// Whether the connected IRIS instance is a production (Live) system.
 /// Detected at probe time via `^%SYS("SystemMode")` SQL query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -353,6 +519,11 @@ impl IrisConnection {
         let sql_func = format!("IrisDevTmp.IrisDevRun{}_Execute", id);
         let content = Self::build_exec_class(&class_name, code);
 
+        // Compute the per-request User-Agent now (inside call_tool task scope so mcp_peer()
+        // returns the connected client's name/version). This overrides the static default
+        // set on the reqwest::Client at build time (which predates any tool call).
+        let ua = user_agent(caller_mode());
+
         // 1. PUT the class document
         let put_url = self.versioned_ns_url(
             namespace,
@@ -360,6 +531,7 @@ impl IrisConnection {
         );
         let put_resp = client
             .put(&put_url)
+            .header(reqwest::header::USER_AGENT, &ua)
             .basic_auth(&self.username, Some(&self.password))
             .json(&serde_json::json!({"enc": false, "content": content}))
             .send()
@@ -372,6 +544,7 @@ impl IrisConnection {
         let compile_url = self.versioned_ns_url(namespace, "/action/compile?flags=cuk");
         let compile_resp = client
             .post(&compile_url)
+            .header(reqwest::header::USER_AGENT, &ua)
             .basic_auth(&self.username, Some(&self.password))
             .json(&serde_json::json!([doc_name]))
             .send()
@@ -403,6 +576,7 @@ impl IrisConnection {
         let query_url = self.versioned_ns_url(namespace, "/action/query");
         let query_resp = client
             .post(&query_url)
+            .header(reqwest::header::USER_AGENT, &ua)
             .basic_auth(&self.username, Some(&self.password))
             .json(&serde_json::json!({"query": sql}))
             .send()
@@ -646,6 +820,7 @@ impl IrisConnection {
                     .unwrap_or(false)
             });
         Ok(reqwest::Client::builder()
+            .user_agent(user_agent(caller_mode()))
             .connect_timeout(std::time::Duration::from_secs(5))
             .timeout(std::time::Duration::from_secs(10))
             .danger_accept_invalid_certs(insecure)
@@ -665,6 +840,10 @@ impl IrisConnection {
                     .unwrap_or(false)
             });
         Ok(reqwest::Client::builder()
+            // Identifies agent traffic in Web Gateway / IIS / Apache access logs and to
+            // `%request.CgiEnvs("HTTP_USER_AGENT")`. Without it IRIS sees an empty
+            // User-Agent and an operator has nothing to filter on.
+            .user_agent(user_agent(caller_mode()))
             .timeout(std::time::Duration::from_secs(30))
             .danger_accept_invalid_certs(insecure)
             .cookie_store(true) // reuse CSP sessions to avoid license slot exhaustion (#43)

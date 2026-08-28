@@ -457,6 +457,7 @@ mod server_manager_coverage {
                 data_policy: None,
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                iris_audit: false,
             }),
         }];
         let json = build_server_manager_config_json(&profiles, Some("local"), &cred_entries);
@@ -477,6 +478,7 @@ mod server_manager_coverage {
                 data_policy: None,
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                iris_audit: false,
             }),
         }];
         let json = build_server_manager_config_json(&profiles, Some("staging"), &cred_entries);
@@ -497,6 +499,7 @@ mod server_manager_coverage {
                 data_policy: None,
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                iris_audit: false,
             }),
         }];
         let json = build_server_manager_config_json(&profiles, Some("prod"), &cred_entries);
@@ -517,6 +520,7 @@ mod server_manager_coverage {
                 data_policy: Some(DataPolicy::Block),
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                iris_audit: false,
             }),
         }];
         let json = build_server_manager_config_json(&profiles, Some("prod"), &cred_entries);
@@ -537,6 +541,7 @@ mod server_manager_coverage {
                 data_policy: Some(DataPolicy::Allow),
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                iris_audit: false,
             }),
         }];
         let json = build_server_manager_config_json(&profiles, Some("dev"), &cred_entries);
@@ -557,6 +562,7 @@ mod server_manager_coverage {
                 data_policy: Some(DataPolicy::Redact),
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                iris_audit: false,
             }),
         }];
         let json = build_server_manager_config_json(&profiles, Some("staging"), &cred_entries);
@@ -577,6 +583,7 @@ mod server_manager_coverage {
                 data_policy: Some(DataPolicy::Block),
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                iris_audit: false,
             }),
         }];
         let json = build_server_manager_config_json(&profiles, Some("prod"), &cred_entries);

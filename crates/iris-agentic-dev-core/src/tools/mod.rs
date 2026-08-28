@@ -64,6 +64,11 @@ tokio::task_local! {
     static CALL_START: std::time::Instant;
 }
 
+// Re-export the MCP peer task-local and its accessor so tests and downstream code can use
+// `iris_agentic_dev_core::tools::MCP_PEER` / `tools::mcp_peer()` without reaching into the
+// iris module directly.
+pub use crate::iris::connection::{mcp_peer, MCP_PEER};
+
 /// Wrapper for tools that accept free-form JSON parameters.
 /// Uses a manual JsonSchema impl to emit `{"type":"object"}` instead of
 /// schemars' default `{"title":"AnyValue"}`, which Claude Code rejects.
@@ -2276,6 +2281,12 @@ pub struct IrisTools {
     /// One MCP server process lifetime (059-tool-telemetry-benchmark). Stamped onto
     /// every `ToolCallRecord` produced during this process's life.
     pub session: crate::telemetry::Session,
+    /// Set to true after the first docker_only attribution warning has been emitted so
+    /// it fires at most once per server instance (T019).
+    pub docker_only_attr_warned: Arc<std::sync::atomic::AtomicBool>,
+    /// Failure counter for %SYS.Audit emission (T036). First failure warns; subsequent
+    /// failures increment the counter rather than repeating the warning.
+    pub iris_audit_counter: Arc<crate::iris::iris_audit::AuditEmitCounter>,
     #[allow(dead_code)] // used by #[tool_router] macro-generated code
     tool_router: ToolRouter<IrisTools>,
 }
@@ -2325,6 +2336,8 @@ impl IrisTools {
             confirm_tokens: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             toolset: Toolset::Baseline,
             session: crate::telemetry::Session::new(),
+            docker_only_attr_warned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            iris_audit_counter: crate::iris::iris_audit::AuditEmitCounter::new(),
             tool_router: Self::tool_router(),
         })
     }
@@ -2673,6 +2686,8 @@ impl IrisTools {
             confirm_tokens: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             toolset,
             session: crate::telemetry::Session::new(),
+            docker_only_attr_warned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            iris_audit_counter: crate::iris::iris_audit::AuditEmitCounter::new(),
             tool_router: router,
         })
     }
@@ -2867,12 +2882,23 @@ impl IrisTools {
             Some(i) => i,
             None => return (None, None),
         };
-        let server_name = match &iris.source {
-            DiscoverySource::ServerManager { server_name } => server_name.clone(),
-            _ => return (None, None),
-        };
 
         let fleet = load_fleet_config(workspace_path.as_deref());
+
+        // For ServerManager connections, look up by the registered server name.
+        // For all other sources (EnvVar, Docker), fall back to the "default" policy key
+        // — a catchall that lets single-server flat configs use `[policy.default]`.
+        let server_name = match &iris.source {
+            DiscoverySource::ServerManager { server_name } => server_name.clone(),
+            _ => {
+                let policy = fleet
+                    .as_ref()
+                    .and_then(|fc| fc.policies.get("default"))
+                    .cloned();
+                return (Some("default".to_string()), policy);
+            }
+        };
+
         let policy = fleet
             .as_ref()
             .and_then(|fc| fc.policies.get(&server_name))
@@ -3071,6 +3097,53 @@ impl IrisTools {
         params: serde_json::Value,
     ) {
         use crate::iris::audit_log::{AuditLog, AuditLogEntry};
+
+        // T037: Opt-in %SYS.Audit emission when irisAudit = true on the connection policy.
+        // Checked BEFORE the should_write guard so env-var connections (policy=None or no
+        // audit_log path) can still emit when irisAudit=true on a [policy.*] section.
+        if policy.map(|p| p.iris_audit).unwrap_or(false) {
+            use crate::iris::connection::{caller_mode, mcp_peer};
+            use crate::iris::iris_audit::{
+                build_audit_os, build_event_data, refuse_and_instruct_text,
+            };
+            let tool_name = tool.to_string();
+            let mode = caller_mode();
+            let peer = mcp_peer();
+            let event_data = build_event_data(&tool_name, mode, peer);
+            let os_code = build_audit_os(&event_data, "iris-agentic-dev tool call");
+            let conn = self.connection.lock().ok().and_then(|c| c.iris.clone());
+            let counter = self.iris_audit_counter.clone();
+            if let Some(iris_conn) = conn {
+                tokio::task::spawn(async move {
+                    let client = match crate::iris::connection::iris_http_client(None, true, false)
+                    {
+                        Ok(c) => c,
+                        Err(e) => {
+                            tracing::warn!("iris_audit: failed to build HTTP client: {e}");
+                            return;
+                        }
+                    };
+                    let ns = iris_conn.namespace.clone();
+                    match iris_conn
+                        .execute_via_generator(&os_code, &ns, &client)
+                        .await
+                    {
+                        Ok(out) if out.trim().starts_with('1') => {}
+                        Ok(_) => {
+                            if counter.record_failure() {
+                                tracing::warn!("{}", refuse_and_instruct_text());
+                            }
+                        }
+                        Err(e) => {
+                            if counter.record_failure() {
+                                tracing::warn!("iris_audit: emission failed: {e}");
+                            }
+                        }
+                    }
+                });
+            }
+        }
+
         if !AuditLog::should_write(policy) {
             return;
         }
@@ -4844,6 +4917,12 @@ impl IrisTools {
 
         if let Some(ref err) = conn.config_parse_error {
             response["config_parse_error"] = serde_json::Value::String(err.clone());
+        }
+
+        // T038: surface iris_audit emission failure count so operators know emission is working.
+        let audit_failures = self.iris_audit_counter.failure_count();
+        if audit_failures > 0 {
+            response["iris_audit_failures"] = serde_json::Value::Number(audit_failures.into());
         }
 
         // Warn when connected via fallback discovery with no config file — the agent
@@ -8330,26 +8409,60 @@ impl ServerHandler for IrisTools {
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::CallToolResponse, McpError> {
         let start = std::time::Instant::now();
+        let peer = context
+            .client_info()
+            .map(|info| (info.name.clone(), info.version.clone()));
         CALL_START
-            .scope(start, async move {
-                // Reload before resolving the gate, not after. Reload used to happen only inside
-                // the handlers that call `get_iris_reloaded`, so a gate resolved ahead of dispatch
-                // would answer from the *previous* load and let one more write through after the
-                // operator turned writes off. FR-002 has to hold on the very next call, in both
-                // directions. `has_changed()` is an mtime stat, so this costs nothing when the
-                // file is untouched.
-                self.check_reload().await;
-                let gates = self.connection.lock().unwrap().gates;
-                if let Some(refusal) =
-                    write_gate::gate_check(&request.name, request.arguments.as_ref(), &gates)
-                {
-                    self.record_call(&request.name, false);
-                    return refusal.map(Into::into);
-                }
+            .scope(
+                start,
+                crate::iris::connection::MCP_PEER.scope(peer, async move {
+                    // Reload before resolving the gate, not after. Reload used to happen only inside
+                    // the handlers that call `get_iris_reloaded`, so a gate resolved ahead of dispatch
+                    // would answer from the *previous* load and let one more write through after the
+                    // operator turned writes off. FR-002 has to hold on the very next call, in both
+                    // directions. `has_changed()` is an mtime stat, so this costs nothing when the
+                    // file is untouched.
+                    self.check_reload().await;
+                    let gates = self.connection.lock().unwrap().gates;
+                    if let Some(refusal) =
+                        write_gate::gate_check(&request.name, request.arguments.as_ref(), &gates)
+                    {
+                        self.record_call(&request.name, false);
+                        return refusal.map(Into::into);
+                    }
 
-                let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-                self.tool_router.call(tcc).await
-            })
+                    // T019: warn once when the connection is docker_only so operators know
+                    // that HTTP headers (including User-Agent) cannot be set on this transport.
+                    {
+                        let is_docker_only = self
+                            .connection
+                            .lock()
+                            .unwrap()
+                            .iris
+                            .as_ref()
+                            .map(|i| {
+                                i.base_url == "http://127.0.0.1:1"
+                                    || i.base_url.starts_with("http://127.0.0.1:1/")
+                            })
+                            .unwrap_or(false);
+                        if is_docker_only
+                            && !self
+                                .docker_only_attr_warned
+                                .swap(true, std::sync::atomic::Ordering::Relaxed)
+                        {
+                            tracing::warn!(
+                                "attribution unavailable: docker_only connection uses docker exec \
+                             rather than HTTP, so no User-Agent header is sent to IRIS. \
+                             To make agent traffic identifiable, use an HTTP connection."
+                            );
+                        }
+                    }
+
+                    let tcc =
+                        rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+                    self.tool_router.call(tcc).await
+                }),
+            )
             .await
     }
 
