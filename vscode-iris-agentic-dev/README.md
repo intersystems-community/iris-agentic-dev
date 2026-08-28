@@ -137,10 +137,20 @@ Set `iris-agentic-dev.tlsVerify: false` in your workspace settings.
 
 ---
 
+## Using Cursor instead of VS Code + Copilot?
+
+This extension targets **GitHub Copilot in VS Code**. Cursor’s agent uses
+`~/.cursor/mcp.json` and does not follow the same auto-registration path. Prefer the
+manual MCP setup in
+[docs/cursor-quickstart.md](https://github.com/intersystems-community/iris-agentic-dev/blob/master/docs/cursor-quickstart.md).
+
+---
+
 ## Links
 
 - [GitHub repository](https://github.com/intersystems-community/iris-agentic-dev)
 - [Full tool reference](https://github.com/intersystems-community/iris-agentic-dev/blob/master/docs/tools.md)
 - [Connection configuration](https://github.com/intersystems-community/iris-agentic-dev/blob/master/docs/connecting.md)
+- [Cursor quick start](https://github.com/intersystems-community/iris-agentic-dev/blob/master/docs/cursor-quickstart.md)
 - [Release notes](https://github.com/intersystems-community/iris-agentic-dev/releases)
 - [Report an issue](https://github.com/intersystems-community/iris-agentic-dev/issues)

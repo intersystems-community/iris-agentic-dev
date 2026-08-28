@@ -185,6 +185,17 @@ or invoke the Linux binary via `wsl.exe`:
 
 ---
 
+## Quick start: Cursor IDE / Cursor CLI
+
+Cursor is configured like other stdio MCP clients (`~/.cursor/mcp.json`), **not** like the
+VS Code Copilot extension auto-registration path. Server Manager keychain and the Marketplace
+extension behave differently (or not at all) in many Cursor setups.
+
+See **[docs/cursor-quickstart.md](docs/cursor-quickstart.md)** for install, `mcp.json`, fleet
+`server=` routing, and an explicit **Cursor vs VS Code + Copilot** comparison.
+
+---
+
 ## Connecting to IRIS
 
 ### Native IRIS on Windows or Linux (no Docker)
