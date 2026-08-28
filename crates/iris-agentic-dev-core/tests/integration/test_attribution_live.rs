@@ -212,11 +212,17 @@ async fn ws_handshake_carries_user_agent_marker() {
 /// calls. We verify by calling `iris_execute` twice via the CLI with `--docker-only` and
 /// checking that the warning appears exactly once in the combined output.
 ///
-/// Note: this test requires IRIS_CONTAINER to be set. If not set, it skips gracefully.
+/// T019: warn-once on docker_only connection — MCP path.
+///
+/// The attribution-unavailable warning fires inside `call_tool` (the MCP handler),
+/// not in the CLI exec path.  Two tool calls in the same MCP session share one
+/// `docker_only_attr_warned` AtomicBool, so the warning must appear on the first
+/// call and be absent on the second.
+///
+/// Requires IRIS_CONTAINER and IAD_BINARY to be set.  If either is absent, skips.
 #[test]
 #[ignore]
 fn docker_only_attribution_warn_once() {
-    // docker_only requires IRIS_CONTAINER to be set.
     let container = match std::env::var("IRIS_CONTAINER") {
         Ok(c) if !c.is_empty() => c,
         _ => {
@@ -225,41 +231,112 @@ fn docker_only_attribution_warn_once() {
         }
     };
 
-    let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.pop();
-    p.pop();
-    p.push("target/debug/iris-agentic-dev");
+    let bin = if let Ok(p) = std::env::var("IAD_BINARY") {
+        std::path::PathBuf::from(p)
+    } else {
+        let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        p.pop();
+        p.pop();
+        p.push("target/debug/iris-agentic-dev");
+        p
+    };
+    if !bin.exists() {
+        eprintln!("T019: IAD_BINARY not found at {:?} — skipping", bin);
+        return;
+    }
 
-    // docker_only is a config key, not a CLI flag — write a temp toml.
+    // docker_only is a config key — write a temp toml.
     let dir = tempfile::tempdir().expect("tempdir");
     let cfg =
         format!("docker_only = true\ncontainer_name = \"{container}\"\nnamespace = \"USER\"\n");
     std::fs::write(dir.path().join(".iris-agentic-dev.toml"), &cfg).unwrap();
 
-    // First call — expect the warn to appear.
-    let out1 = std::process::Command::new(&p)
+    // Spawn in MCP mode so tool calls flow through call_tool where T019 fires.
+    let mut child = std::process::Command::new(&bin)
+        .arg("mcp")
         .current_dir(dir.path())
         .env("RUST_LOG", "warn")
-        .args(["exec", "write 1,!"])
-        .output()
-        .expect("run iad first call");
-    let stderr1 = String::from_utf8_lossy(&out1.stderr);
-    // The warn message from T019 contains "attribution unavailable".
-    assert!(
-        stderr1.contains("attribution unavailable") || stderr1.contains("User-Agent"),
-        "expected attribution-unavailable warning on first docker_only call; stderr: {stderr1}"
-    );
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn iad mcp");
 
-    // Second call on the same logical connection type — the warn-once guard prevents repeat.
-    let out2 = std::process::Command::new(&p)
-        .current_dir(dir.path())
-        .env("RUST_LOG", "warn")
-        .args(["exec", "write 2,!"])
-        .output()
-        .expect("run iad second call");
-    let stderr2 = String::from_utf8_lossy(&out2.stderr);
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let stderr_handle = child.stderr.take().unwrap();
+
+    // Collect stderr in a background thread.
+    let stderr_lines: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let stderr_lines_clone = stderr_lines.clone();
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        let reader = std::io::BufReader::new(stderr_handle);
+        for line in reader.lines().flatten() {
+            stderr_lines_clone.lock().unwrap().push(line);
+        }
+    });
+
+    use std::io::Write as IoWrite;
+    let init = concat!(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"#,
+        r#""protocolVersion":"2025-03-26","capabilities":{},"#,
+        r#""clientInfo":{"name":"t019-client","version":"1.0.0"}}}"#,
+        "\n"
+    );
+    let notif = "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":{}}\n";
+    // Two exec calls in the same session — warning should appear once.
+    let call1 = concat!(
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{",
+        "\"name\":\"iris_execute\",\"arguments\":{\"code\":\"Write 1,!\"}",
+        "}}\n"
+    );
+    let call2 = concat!(
+        "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{",
+        "\"name\":\"iris_execute\",\"arguments\":{\"code\":\"Write 2,!\"}",
+        "}}\n"
+    );
+    stdin.write_all(init.as_bytes()).ok();
+    stdin.write_all(notif.as_bytes()).ok();
+    stdin.write_all(call1.as_bytes()).ok();
+    stdin.write_all(call2.as_bytes()).ok();
+    drop(stdin);
+
+    // Wait up to 30s for the process to finish (docker exec can be slow).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            _ => {
+                let _ = child.kill();
+                break;
+            }
+        }
+    }
+    // Give the stderr thread a moment to drain.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    // Read stdout (not strictly needed for the assertion, but useful for debug).
+    let all_stderr = stderr_lines.lock().unwrap().join("\n");
+    let warn_count = all_stderr
+        .lines()
+        .filter(|l| l.contains("attribution unavailable"))
+        .count();
+
+    eprintln!("T019 stderr:\n{all_stderr}");
+
     assert!(
-        !stderr2.contains("attribution unavailable") && !stderr2.contains("User-Agent"),
-        "expected no repeat of attribution-unavailable warning on second docker_only call; stderr: {stderr2}"
+        warn_count >= 1,
+        "T019: expected at least one 'attribution unavailable' warning in MCP session; \
+         stderr:\n{all_stderr}"
+    );
+    assert!(
+        warn_count <= 1,
+        "T019: warn-once guard broken — 'attribution unavailable' appeared {warn_count} times; \
+         expected exactly 1; stderr:\n{all_stderr}"
     );
 }

@@ -127,8 +127,8 @@ pub fn check_compile_time_code_mode(content: &str, doc_name: &str) -> Option<ser
         // Skip whitespace and `=` after CODEMODE
         let rest = &upper[after_keyword..];
         let trimmed = rest.trim_start();
-        let trimmed = if trimmed.starts_with('=') {
-            trimmed[1..].trim_start()
+        let trimmed = if let Some(after_eq) = trimmed.strip_prefix('=') {
+            after_eq.trim_start()
         } else {
             search = after_keyword;
             continue;
@@ -139,7 +139,7 @@ pub fn check_compile_time_code_mode(content: &str, doc_name: &str) -> Option<ser
         for mode in DANGEROUS_MODES {
             if trimmed.starts_with(mode) {
                 // Verify it's a whole token (followed by non-alphanumeric or EOF)
-                let after_mode = &trimmed[mode.len()..];
+                let after_mode = trimmed.strip_prefix(*mode).unwrap_or("");
                 if after_mode.is_empty()
                     || !after_mode.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
                 {
