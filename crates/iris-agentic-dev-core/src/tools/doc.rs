@@ -766,6 +766,14 @@ async fn do_write(
              If a previous call lost its arguments, resend with name/content set explicitly.",
         );
     }
+    // Compile-time code execution gate: block CodeMode = objectgenerator/expression/call.
+    // Fires on the FULL assembled content, so multi-call assembly tricks are moot.
+    if let Some(err) =
+        crate::policy::code_edit_gate::check_compile_time_code_mode(content, name)
+    {
+        return ok_json(err);
+    }
+
     // Write content verbatim, exactly as supplied — matching the Atelier REST
     // contract, and never stripping/second-guessing Storage (see `tools::storage_guard`).
     let lines: Vec<&str> = content.lines().collect();
