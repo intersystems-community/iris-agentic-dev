@@ -1422,7 +1422,7 @@ dependencies = [
 
 [[package]]
 name = "iris-agentic-dev"
-version = "1.2.6"
+version = "1.2.7"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1448,7 +1448,7 @@ dependencies = [
 
 [[package]]
 name = "iris-agentic-dev-core"
-version = "1.2.6"
+version = "1.2.7"
 dependencies = [
  "anyhow",
  "apple-native-keyring-store",

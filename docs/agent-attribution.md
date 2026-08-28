@@ -283,3 +283,26 @@ private web server (DPP-1192). On those instances, agent attribution depends ent
 | `docker exec` (docker_only)       | No — no HTTP request exists       |
 | LLM provider calls                | No — not IRIS-bound               |
 | Registry / package downloads      | No — not IRIS-bound               |
+
+## FAQ
+
+**I run multiple agent instances against the same IRIS server. Can I tell them apart?**
+
+Set a unique `IRIS_AGENT_LABEL` per instance — the label appears in the marker and in every
+`irisAudit` record. Fleet configs can stamp each agent with its container name, job ID, or
+environment tier so their lines in the access log and audit table are distinguishable even when
+they share credentials.
+
+**Can an attacker spoof the User-Agent to impersonate iris-agentic-dev?**
+
+Yes. Any HTTP client can send any `User-Agent` string. Treat the marker as an audit and
+filtering aid, not a security boundary. For genuine enforcement — blocking a class of caller
+that a motivated attacker cannot bypass — use distinct IRIS credentials and roles per
+environment, and consider network-level controls (firewall rules, mTLS) at the Web Gateway.
+
+**The `irisAudit` records aren't appearing in `%SYS.Audit` immediately after a tool call.**
+
+`%SYS.Audit` has a known replication lag (DP-449511) — records are written asynchronously.
+Wait a few seconds and re-query. If records never appear, confirm the `Security.Events` entry
+exists (`Do ##class(Security.Events).Exists("iris-agentic-dev","Tool","ToolCall",.e,.s) Write e`)
+and that `irisAudit = true` is set on the correct server key in `[policy.<server>]`.
