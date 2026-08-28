@@ -765,9 +765,7 @@ async fn do_write(
     }
     // Compile-time code execution gate: block CodeMode = objectgenerator/expression/call.
     // Fires on the FULL assembled content, so multi-call assembly tricks are moot.
-    if let Some(err) =
-        crate::policy::code_edit_gate::check_compile_time_code_mode(content, name)
-    {
+    if let Some(err) = crate::policy::code_edit_gate::check_compile_time_code_mode(content, name) {
         return ok_json(err);
     }
 

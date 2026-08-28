@@ -45,6 +45,7 @@ overall = 88
 
 # iris/ — connection and config logic
 "src/iris/audit_log.rs"               = 92
+"src/iris/iris_audit.rs"              = 98
 "src/iris/connection.rs"              = 55
 "src/iris/connection_pool.rs"         = 74
 "src/iris/discovery.rs"               = 32
@@ -107,5 +108,6 @@ overall = 88
 "src/tools/server_tools.rs"           = 90
 "src/tools/skills_tools.rs"           = 37
 "src/tools/symbols_local.rs"          = 57
+"src/tools/write_gate.rs"             = 93
 "src/tools/ws_tools.rs"               = 84
 "src/tools/xdata_flow.rs"             = 58

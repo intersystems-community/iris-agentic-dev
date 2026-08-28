@@ -3339,9 +3339,7 @@ impl IrisTools {
                     });
                 // Compile-time code execution gate
                 if let Some(err) =
-                    crate::policy::code_edit_gate::check_compile_time_code_mode(
-                        &content, &doc_name,
-                    )
+                    crate::policy::code_edit_gate::check_compile_time_code_mode(&content, &doc_name)
                 {
                     return ok_json(err);
                 }

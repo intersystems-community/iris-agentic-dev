@@ -99,10 +99,7 @@ pub fn check_objectscript_code_edit(code: &str, server_name: &str) -> Option<ser
 /// Only `.cls` documents are scanned; routines (`.mac`/`.inc`) don't support CodeMode.
 ///
 /// Returns `Some(error_json)` when blocked, `None` when safe.
-pub fn check_compile_time_code_mode(
-    content: &str,
-    doc_name: &str,
-) -> Option<serde_json::Value> {
+pub fn check_compile_time_code_mode(content: &str, doc_name: &str) -> Option<serde_json::Value> {
     // Only applies to class definitions.
     if !doc_name.to_lowercase().ends_with(".cls") {
         return None;
@@ -482,7 +479,8 @@ Method Hack() [ CodeMode = objectgenerator ]
     #[test]
     fn does_not_match_partial_word() {
         // "OBJECTGENERATORS" (with trailing S) should not match
-        let cls = "Class My.X {\n/// CodeMode = objectgenerators is not a thing\nMethod G()\n{\n}\n}";
+        let cls =
+            "Class My.X {\n/// CodeMode = objectgenerators is not a thing\nMethod G()\n{\n}\n}";
         assert!(check_compile_time_code_mode(cls, "My.X.cls").is_none());
     }
 

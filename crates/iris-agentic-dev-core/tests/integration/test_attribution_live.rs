@@ -230,12 +230,17 @@ fn docker_only_attribution_warn_once() {
     p.pop();
     p.push("target/debug/iris-agentic-dev");
 
+    // docker_only is a config key, not a CLI flag — write a temp toml.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let cfg =
+        format!("docker_only = true\ncontainer_name = \"{container}\"\nnamespace = \"USER\"\n");
+    std::fs::write(dir.path().join(".iris-agentic-dev.toml"), &cfg).unwrap();
+
     // First call — expect the warn to appear.
     let out1 = std::process::Command::new(&p)
-        .env("IRIS_CONTAINER", &container)
-        .env("IRIS_NAMESPACE", "USER")
+        .current_dir(dir.path())
         .env("RUST_LOG", "warn")
-        .args(["exec", "--docker-only", "write 1,!"])
+        .args(["exec", "write 1,!"])
         .output()
         .expect("run iad first call");
     let stderr1 = String::from_utf8_lossy(&out1.stderr);
@@ -247,10 +252,9 @@ fn docker_only_attribution_warn_once() {
 
     // Second call on the same logical connection type — the warn-once guard prevents repeat.
     let out2 = std::process::Command::new(&p)
-        .env("IRIS_CONTAINER", &container)
-        .env("IRIS_NAMESPACE", "USER")
+        .current_dir(dir.path())
         .env("RUST_LOG", "warn")
-        .args(["exec", "--docker-only", "write 2,!"])
+        .args(["exec", "write 2,!"])
         .output()
         .expect("run iad second call");
     let stderr2 = String::from_utf8_lossy(&out2.stderr);
