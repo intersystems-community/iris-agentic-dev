@@ -5762,7 +5762,6 @@ fn e2e_skill_list_surfaces_a_synthesized_skill_from_skills_global() {
     {
         return;
     }
-    assert_eq!(set["success"], true, "seeding ^SKILLS: {}", set);
 
     let list = call_tool("skill_list", serde_json::json!({}));
 
@@ -5775,8 +5774,11 @@ fn e2e_skill_list_surfaces_a_synthesized_skill_from_skills_global() {
             "namespace": "USER"
         }),
     );
-    assert_eq!(cleanup["success"], true, "cleanup ^SKILLS: {}", cleanup);
 
+    // Kill the entry before asserting — a failed assert unwinds the test and would
+    // otherwise leave ^SKILLS("iad-e2e-synth-skill-test") in the shared container.
+    assert_eq!(set["success"], true, "seeding ^SKILLS: {}", set);
+    assert_eq!(cleanup["success"], true, "cleanup ^SKILLS: {}", cleanup);
     assert_eq!(
         list["sources"]["synthesized"]["searched"], true,
         "^SKILLS was read successfully — synthesized.searched must be true: {}",
