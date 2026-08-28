@@ -762,6 +762,32 @@ role = "subject"
     );
 }
 
+/// Passing the toml *file* path (not the parent directory) must still load fleet.
+/// `load_pool` passes `config_file` this way — without this, server= fleet routing breaks.
+#[test]
+fn test_load_fleet_config_accepts_toml_file_path() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"mode = "operate"
+
+[instance.iad-dev]
+host = "dev.example.com"
+web_port = 443
+scheme = "https"
+namespace = "DEVNS"
+"#,
+    );
+    let file = dir.path().join(".iris-agentic-dev.toml");
+    let fleet =
+        load_fleet_config(Some(file.to_str().unwrap())).expect("fleet config loads from file path");
+    assert_eq!(fleet.mode.as_deref(), Some("operate"));
+    assert!(fleet.instance.contains_key("iad-dev"));
+    let inst = &fleet.instance["iad-dev"];
+    assert_eq!(inst.host.as_deref(), Some("dev.example.com"));
+    assert_eq!(inst.namespace.as_deref(), Some("DEVNS"));
+}
+
 #[test]
 fn test_instance_web_port_snake_and_kebab_aliases() {
     let snake = load_fleet_config_from_str(

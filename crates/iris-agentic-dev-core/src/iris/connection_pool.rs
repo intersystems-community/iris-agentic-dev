@@ -263,6 +263,8 @@ pub fn load_pool(config_file: Option<&std::path::Path>) -> ConnectionPool {
     }
 
     // ── Source 3: [instance.*] blocks from workspace TOML ────────────────────
+    // `config_file` is typically the path to `.iris-agentic-dev.toml` (a file).
+    // `load_fleet_config` accepts either a workspace directory or that file path.
     let workspace_path_str = config_file.and_then(|p| p.to_str());
     if let Some(fleet) = workspace_config::load_fleet_config(workspace_path_str) {
         if fleet.mode.as_deref() == Some("operate") {
@@ -408,5 +410,71 @@ mod tests {
             conn.base_url, "http://localhost:52780",
             "native source should win over vscode source"
         );
+    }
+
+    // Fleet [instance.*] must load when callers pass the toml *file* path (not only
+    // the parent directory). Regression: load_pool used to pass config_file into
+    // load_fleet_config, which joined `.iris-agentic-dev.toml` onto the file path
+    // and silently skipped operate-mode instances — so server="<fleet-name>" failed.
+    #[test]
+    fn load_pool_includes_fleet_instances_from_config_file_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = dir.path().join(".iris-agentic-dev.toml");
+        std::fs::write(
+            &cfg,
+            r#"mode = "operate"
+
+[instance.iad-dev]
+host = "dev.example.com"
+web_port = 443
+scheme = "https"
+namespace = "DEVNS"
+username = "u"
+password = "p"
+
+[instance.iad-prod]
+host = "prod.example.com"
+web_port = 443
+scheme = "https"
+namespace = "PROD"
+role = "subject"
+"#,
+        )
+        .unwrap();
+
+        let pool = load_pool(Some(&cfg));
+        assert_eq!(
+            pool.source_of("iad-dev"),
+            "fleet",
+            "iad-dev must come from fleet toml"
+        );
+        assert_eq!(pool.source_of("iad-prod"), "fleet");
+        let dev = pool.get(Some("iad-dev")).expect("iad-dev in pool");
+        assert_eq!(dev.base_url, "https://dev.example.com:443");
+        assert_eq!(dev.namespace, "DEVNS");
+        let prod = pool.get(Some("iad-prod")).expect("iad-prod in pool");
+        assert_eq!(prod.base_url, "https://prod.example.com:443");
+        assert_eq!(prod.namespace, "PROD");
+    }
+
+    #[test]
+    fn load_pool_includes_fleet_instances_from_workspace_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".iris-agentic-dev.toml"),
+            r#"mode = "operate"
+
+[instance.iad-only]
+host = "only.example.com"
+web_port = 52773
+namespace = "USER"
+"#,
+        )
+        .unwrap();
+
+        let pool = load_pool(Some(dir.path()));
+        assert_eq!(pool.source_of("iad-only"), "fleet");
+        let conn = pool.get(Some("iad-only")).expect("iad-only in pool");
+        assert_eq!(conn.base_url, "http://only.example.com:52773");
     }
 }
