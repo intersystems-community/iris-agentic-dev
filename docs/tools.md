@@ -523,10 +523,10 @@ iris_symbols_local(query="GetStatus", workspace_path="/home/user/myapp")
 Deep class inspection: methods, properties, parameters, XData blocks, superclasses.
 Returns `xdata_flow` for BPL and DTL classes showing the step tree.
 
-| Parameter    | Type   | Default  |
+| Parameter    | Type   | Default  | Notes         |
 | ------------ | ------ | -------- | ------------- |
 | `class_name` | string | —        | **Required.** |
-| `namespace`  | string | `"USER"` |
+| `namespace`  | string | `"USER"` |               |
 
 ```text
 docs_introspect(class_name="MyApp.BP.PatientProcess")
@@ -636,10 +636,10 @@ resolve_dynamic_dispatch(method_name="ProcessRequest", package_prefix="MyApp")
 
 Extract a compiled Ensemble `MessageMap` routing table from a BusinessProcess or Router.
 
-| Parameter    | Type   | Default  |
+| Parameter    | Type   | Default  | Notes         |
 | ------------ | ------ | -------- | ------------- |
 | `class_name` | string | —        | **Required.** |
-| `namespace`  | string | `"USER"` |
+| `namespace`  | string | `"USER"` |               |
 
 ```text
 extract_message_map_routing(class_name="MyApp.BP.PatientProcess")
@@ -758,10 +758,10 @@ iris_generate_class(description="A %Persistent class storing patient visit recor
 
 Generate `%UnitTest` scaffolding for an existing class.
 
-| Parameter    | Type   | Default  |
+| Parameter    | Type   | Default  | Notes         |
 | ------------ | ------ | -------- | ------------- |
 | `class_name` | string | —        | **Required.** |
-| `namespace`  | string | `"USER"` |
+| `namespace`  | string | `"USER"` |               |
 
 ```text
 iris_generate_test(class_name="MyApp.Service")
@@ -844,10 +844,10 @@ iris_production_item(action="disable", item="MyApp.BS.HL7Listener")
 
 Diff the running production config against the last source-controlled version.
 
-| Parameter    | Type   | Default  |
+| Parameter    | Type   | Default  | Notes                                    |
 | ------------ | ------ | -------- | ---------------------------------------- |
 | `production` | string | —        | Defaults to currently running production |
-| `namespace`  | string | `"USER"` |
+| `namespace`  | string | `"USER"` |                                          |
 
 ```text
 iris_production_diff()
@@ -878,11 +878,11 @@ iris_message_body(message_id="123456", acknowledgePhi=true)
 
 List or inspect Ensemble business rules.
 
-| Parameter   | Type   | Default  |
+| Parameter   | Type   | Default  | Notes                             |
 | ----------- | ------ | -------- | --------------------------------- |
 | `action`    | string | —        | **Required.** `"list"` \| `"get"` |
-| `rule_name` | string | —        |
-| `namespace` | string | `"USER"` |
+| `rule_name` | string | —        |                                   |
+| `namespace` | string | `"USER"` |                                   |
 
 ```text
 iris_business_rule_info(action="list")
@@ -898,6 +898,8 @@ List Ensemble credentials. Passwords are never returned.
 | Parameter   | Type   | Default  |
 | ----------- | ------ | -------- |
 | `namespace` | string | `"USER"` |
+
+No other parameters.
 
 ---
 
