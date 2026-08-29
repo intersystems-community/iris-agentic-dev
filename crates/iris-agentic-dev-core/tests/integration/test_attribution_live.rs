@@ -247,8 +247,7 @@ fn docker_only_attribution_warn_once() {
 
     // docker_only is a config key — write a temp toml.
     let dir = tempfile::tempdir().expect("tempdir");
-    let cfg =
-        format!("docker_only = true\ncontainer_name = \"{container}\"\nnamespace = \"USER\"\n");
+    let cfg = format!("docker_only = true\ncontainer = \"{container}\"\nnamespace = \"USER\"\n");
     std::fs::write(dir.path().join(".iris-agentic-dev.toml"), &cfg).unwrap();
 
     // Spawn in MCP mode so tool calls flow through call_tool where T019 fires.
