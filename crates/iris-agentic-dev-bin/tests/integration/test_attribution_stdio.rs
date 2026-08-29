@@ -183,6 +183,7 @@ fn mcp_mode_marker_names_connected_client() {
     // we were looking for tool-call content, not initialize result). The reader thread
     // from that read_until ran to EOF or timeout. Let's use a cleaner design:
     let _ = child.kill();
+    let _ = child.wait();
 
     // Restart with a fresh process and a single-pass approach.
     let (mut child2, mut stdin2, stdout2) = match spawn_mcp_live() {
@@ -236,6 +237,7 @@ fn mcp_mode_marker_names_connected_client() {
     });
 
     let _ = child2.kill();
+    let _ = child2.wait();
 
     let ua = match ua {
         Some(u) => u,
@@ -328,7 +330,8 @@ fn iris_audit_emission_wiring() {
         std::thread::spawn(move || {
             let reader = BufReader::new(stderr_handle);
             let mut buf = String::new();
-            for line in reader.lines().flatten() {
+            let mut lines = reader.lines();
+            while let Some(Ok(line)) = lines.next() {
                 buf.push_str(&line);
                 buf.push('\n');
             }
@@ -365,6 +368,7 @@ fn iris_audit_emission_wiring() {
         std::thread::sleep(Duration::from_millis(500));
         drop(stdin);
         let _ = child.kill();
+        let _ = child.wait();
 
         rx.recv_timeout(Duration::from_secs(5)).unwrap_or_default()
     };
@@ -467,6 +471,7 @@ fn iris_audit_failures_surfaced_in_check_config() {
         // We need a fresh process-stdout handle for the check_config read.
         // Since stdout was consumed, we restart with a two-call approach.
         let _ = child.kill();
+        let _ = child.wait();
 
         // Restart: initialize + exec (triggers failure) + check_config — read check_config response.
         let dir2 = tempfile::tempdir().ok()?;
@@ -509,6 +514,7 @@ fn iris_audit_failures_surfaced_in_check_config() {
         });
 
         let _ = child2.kill();
+        let _ = child2.wait();
         result
     };
 

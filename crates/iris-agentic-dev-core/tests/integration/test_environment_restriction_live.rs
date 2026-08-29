@@ -280,7 +280,8 @@ async fn code_edit_blocked_carries_message_and_remediation() {
     std::thread::spawn(move || {
         use std::io::BufRead;
         let reader = std::io::BufReader::new(stdout);
-        for line in reader.lines().flatten() {
+        let mut lines = reader.lines();
+        while let Some(Ok(line)) = lines.next() {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) {
                 if v.get("id").and_then(|i| i.as_u64()) == Some(2) {
                     let _ = tx.send(line);
@@ -294,6 +295,7 @@ async fn code_edit_blocked_carries_message_and_remediation() {
         .recv_timeout(std::time::Duration::from_secs(15))
         .unwrap_or_default();
     let _ = child.kill();
+    let _ = child.wait();
 
     eprintln!("T043 response: {resp_line}");
     let resp_str = resp_line;
