@@ -196,7 +196,7 @@ fn user_agent_label_non_ascii_stripped() {
     let label = "café résumé naïve";
     let ua = with_label(Some(label), || user_agent(CallerMode::Cli));
     assert!(
-        ua.chars().all(|c| c.is_ascii()),
+        ua.is_ascii(),
         "non-ASCII chars must be stripped from the label; got: {ua:?}"
     );
     assert!(

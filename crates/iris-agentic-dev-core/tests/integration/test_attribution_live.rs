@@ -251,10 +251,15 @@ fn docker_only_attribution_warn_once() {
     std::fs::write(dir.path().join(".iris-agentic-dev.toml"), &cfg).unwrap();
 
     // Spawn in MCP mode so tool calls flow through call_tool where T019 fires.
+    // Clear IRIS_HOST / IRIS_WEB_PORT so the binary cannot fall back to the CI HTTP
+    // endpoint — docker_only must force it to use docker exec (base_url=127.0.0.1:1).
     let mut child = std::process::Command::new(&bin)
         .arg("mcp")
         .current_dir(dir.path())
         .env("RUST_LOG", "warn")
+        .env_remove("IRIS_HOST")
+        .env_remove("IRIS_WEB_PORT")
+        .env("IRIS_CONTAINER", &container)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
