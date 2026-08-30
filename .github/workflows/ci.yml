@@ -402,6 +402,11 @@ jobs:
           IRIS_PASSWORD: ${{ env.IRIS_PASSWORD }}
           IRIS_NAMESPACE: USER
           IRIS_CONTAINER: iris-e2e
+          # e2e container is a throwaway — enable both write tiers so tests that exercise
+          # destructive paths (iris_global kill, iris_namespace_create, etc.) can run
+          # without routing around the gates via iris_execute.
+          IRIS_WRITE_TOOLS_ENABLED: "1"
+          IRIS_DESTRUCTIVE_TOOLS_ENABLED: "1"
           # Exposed so tests can skip/adjust for known version-specific behavior
           IRIS_MATRIX_VERSION: ${{ matrix.iris_version }}
 
