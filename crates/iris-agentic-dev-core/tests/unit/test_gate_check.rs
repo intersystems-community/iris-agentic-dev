@@ -12,7 +12,7 @@
 // under test here is what `gate_check` does with an answer once it has one.
 
 use iris_agentic_dev_core::tools::write_gate::{
-    classify, gate_check, GateResolution, GateSource, WriteClass,
+    classify, contains_global_kill, gate_check, GateResolution, GateSource, WriteClass,
 };
 
 /// The refusal payload, or a panic. `gate_check` returns `Some(Ok(..))` for a refusal; anything
@@ -225,4 +225,73 @@ fn args_without_an_action_key_use_the_default() {
     let a = args(serde_json::json!({"namespace": "USER"}));
     assert_eq!(classify("iris_compile", Some(&a)), Some(WriteClass::Write));
     assert_eq!(classify("iris_info", Some(&a)), Some(WriteClass::ReadOnly));
+}
+
+// ── Spec 087: contains_global_kill ───────────────────────────────────────────
+
+/// Exact keyword + caret — the simplest kill.
+#[test]
+fn kill_caret_global_detected() {
+    assert!(contains_global_kill("Kill ^Foo"));
+}
+
+/// ObjectScript keywords are case-insensitive.
+#[test]
+fn kill_all_caps_detected() {
+    assert!(contains_global_kill("KILL ^Foo"));
+}
+
+/// One-letter abbreviated form.
+#[test]
+fn kill_abbreviated_k_detected() {
+    assert!(contains_global_kill("K ^Foo"));
+}
+
+/// Extra whitespace between keyword and caret.
+#[test]
+fn kill_extra_whitespace_detected() {
+    assert!(contains_global_kill("Kill  ^Foo(\"bar\")"));
+}
+
+/// Kill appearing on a later line in multiline code.
+#[test]
+fn kill_on_non_first_line_detected() {
+    let code = "Set x=1\nKill ^Foo\nWrite \"done\"";
+    assert!(contains_global_kill(code));
+}
+
+/// Bare caret only (edge case — still a global reference).
+#[test]
+fn kill_bare_caret_detected() {
+    assert!(contains_global_kill("Kill ^"));
+}
+
+/// A kill comment line: treated as detected (false positive is safer than false negative).
+#[test]
+fn kill_in_comment_counts_as_detected() {
+    assert!(contains_global_kill("; Kill ^Foo"));
+}
+
+/// Kill of a local variable — no caret, must NOT fire.
+#[test]
+fn kill_local_variable_not_detected() {
+    assert!(!contains_global_kill("Kill localvar"));
+}
+
+/// Set to a global is a write, not a kill — must NOT fire.
+#[test]
+fn set_global_not_detected() {
+    assert!(!contains_global_kill("Set ^Foo=1"));
+}
+
+/// Empty string — must NOT fire.
+#[test]
+fn empty_string_not_detected() {
+    assert!(!contains_global_kill(""));
+}
+
+/// Code with no Kill at all.
+#[test]
+fn no_kill_not_detected() {
+    assert!(!contains_global_kill("Write \"hello world\""));
 }

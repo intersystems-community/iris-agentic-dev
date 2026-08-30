@@ -4151,6 +4151,31 @@ impl IrisTools {
         ) {
             return err_result(gate);
         }
+        // Spec 087: content-sensitive destructive gate. `iris_execute` is write-gated via
+        // CLASSIFICATION (so write_tools_enabled=false is already refused by call_tool dispatch),
+        // but the destructive tier is not detectable statically for the general case. This check
+        // catches the obvious literal form — `Kill ^<global>` — before any IRIS call.
+        // Indirect vectors (Kill @var, Xecute, ##class dispatch, &sql) are not detected here;
+        // the error message says so explicitly so callers cannot mistake this for a full block.
+        if crate::tools::write_gate::contains_global_kill(&p.code) {
+            let gates = self.connection.lock().unwrap().gates.clone();
+            if !gates.destructive_enabled {
+                return err_result(serde_json::json!({
+                    "success": false,
+                    "error_code": crate::tools::write_gate::ERR_DESTRUCTIVE_GATE,
+                    "error": format!(
+                        "iris_execute contains a Kill ^<global> expression and the destructive \
+                         tier is disabled (source: {}). Set destructive_tools_enabled = true in \
+                         .iris-agentic-dev.toml to allow destructive operations. Note: this check \
+                         applies to literal Kill ^ patterns in the code string only. Indirect kill \
+                         operations (via variables, Xecute, or class methods) are not detected \
+                         here — IRIS-side credentials and the mcpTemplate env gate are the \
+                         appropriate controls for those.",
+                        gates.destructive_source.as_str()
+                    ),
+                }));
+            }
+        }
         tracing::info!(namespace = %namespace, translate_sql = p.translate_sql, use_session = p.use_session, "iris_execute");
         let client = exec_client.as_ref();
         let timeout = std::time::Duration::from_secs(p.timeout);

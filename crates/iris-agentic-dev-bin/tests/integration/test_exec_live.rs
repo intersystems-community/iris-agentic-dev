@@ -141,3 +141,123 @@ fn test_user_agent_visible_to_iris() {
         ua
     );
 }
+
+// ── Spec 087: iris_execute destructive gate ───────────────────────────────────
+
+/// T087-binary: `Kill ^global` in the code string is refused when the destructive gate is off.
+/// No live IRIS required — the gate fires before any IRIS network call.
+#[test]
+#[ignore]
+fn test_exec_kill_global_blocked_when_destructive_gate_off() {
+    let out = iris_dev()
+        .args(["exec", "Kill ^IadGateTest"])
+        // Write gate on, destructive gate off.
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "0")
+        // Point at a non-existent host — the gate check must fire before any IRIS call.
+        .env("IRIS_HOST", "127.0.0.1")
+        .env("IRIS_WEB_PORT", "19999")
+        .output()
+        .expect("failed to run iris-agentic-dev");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{stdout}{stderr}");
+    // The CLI prints the error message text, not the error_code field. Check for the
+    // distinctive phrase that appears in the 087 destructive-gate refusal message.
+    assert!(
+        combined.contains("destructive tier is disabled"),
+        "expected destructive-gate refusal for Kill ^IadGateTest with destructive gate off, got:\n\
+         stdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+/// T087-binary-pass: with both gates on, `Kill ^<global>` is not refused by the gate
+/// (it may fail for other reasons without live IRIS, which is fine — no DESTRUCTIVE_TOOLS_DISABLED).
+#[test]
+#[ignore]
+fn test_exec_kill_global_not_blocked_when_destructive_gate_on() {
+    let out = iris_dev()
+        .args(["exec", "Kill ^IadGateTest"])
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "1")
+        .env("IRIS_HOST", "127.0.0.1")
+        .env("IRIS_WEB_PORT", "19999")
+        .output()
+        .expect("failed to run iris-agentic-dev");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        !combined.contains("destructive tier is disabled"),
+        "destructive-gate refusal must not fire when the destructive gate is on:\n\
+         stdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+/// T087-live-block: with live IRIS, `Kill ^IadGateTest` with destructive gate off returns the
+/// refusal before IRIS is called.
+#[test]
+#[ignore]
+fn test_exec_kill_global_blocked_live() {
+    let out = iris_dev()
+        .args(["exec", "Kill ^IadGateTest"])
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "0")
+        .output()
+        .expect("failed to run iris-agentic-dev");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        combined.contains("destructive tier is disabled"),
+        "expected destructive-gate refusal with live IRIS and destructive gate off:\n\
+         stdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+/// T087-live-allow: with live IRIS and both gates on, `Kill ^IadGateTest` succeeds (or errors
+/// for legitimate IRIS reasons — but NOT DESTRUCTIVE_TOOLS_DISABLED).
+/// Sets the global first so the kill has something to remove.
+#[test]
+#[ignore]
+fn test_exec_kill_global_allowed_live() {
+    // Set up: create the global node so the kill is meaningful.
+    let setup = iris_dev()
+        .args(["exec", "Set ^IadGateTest=\"iad-087-probe\""])
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "1")
+        .output()
+        .expect("failed to run iris-agentic-dev (setup)");
+    assert!(
+        setup.status.success(),
+        "setup Set ^IadGateTest failed: {}",
+        String::from_utf8_lossy(&setup.stdout)
+    );
+
+    // Exercise: kill it with the destructive gate on.
+    let out = iris_dev()
+        .args(["exec", "Kill ^IadGateTest"])
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "1")
+        .output()
+        .expect("failed to run iris-agentic-dev");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        !combined.contains("DESTRUCTIVE_TOOLS_DISABLED"),
+        "DESTRUCTIVE_TOOLS_DISABLED must not fire when both gates are on:\n\
+         stdout: {stdout}\nstderr: {stderr}"
+    );
+
+    // Verify: global is gone.
+    let verify = iris_dev()
+        .args(["exec", "Write $Data(^IadGateTest)"])
+        .output()
+        .expect("failed to run iris-agentic-dev (verify)");
+    let vstdout = String::from_utf8_lossy(&verify.stdout);
+    assert!(
+        vstdout.trim() == "0",
+        "^IadGateTest should be gone after Kill, $Data returned: {vstdout}"
+    );
+}

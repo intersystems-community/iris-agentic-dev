@@ -47,23 +47,39 @@ globals that would be blocked if called via `iris_global`.
 Three options for where to enforce:
 
 1. **Static analysis before execution** — scan the code string for `Set ^`, `Kill ^`,
-   `Merge ^` patterns before sending to IRIS. Fragile: misses indirection
-   (`Do ##class(X).Y()` that internally kills a global), multi-line strings, and
-   obfuscated code.
+   `Merge ^` patterns before sending to IRIS. Catches the obvious literal cases only.
+   Does NOT catch:
+   - `Kill @variable` — indirect global reference via `@` sigil
+   - `Set code = "Kill ^Foo"  Xecute code` — double indirection via `Xecute`
+   - `Do ##class(MyApp.Util).Cleanup()` — method call that internally kills a global
+   - `&sql(DELETE FROM MyApp.Patient WHERE 1=1)` — SQL DML, no `^` visible
+   - `$XECUTE` with a computed string
+     Any of these bypasses the scan trivially. The check is defense-in-depth against
+     unsophisticated/accidental cases, not a security boundary.
 
 2. **Gate on write_tools_enabled/destructive_tools_enabled at call_tool level** —
    declare `iris_execute` as write-gated. Any `iris_execute` call requires
-   `write_tools_enabled = true`. Kills (matching `Kill ^` pattern) additionally require
-   `destructive_tools_enabled`. This is coarse but honest: if writes are off, running
-   arbitrary ObjectScript that might write is also off.
+   `write_tools_enabled = true`. Kills (matching `Kill ^` pattern in the literal code
+   string) additionally require `destructive_tools_enabled`. This is coarse but honest:
+   if writes are off, running arbitrary ObjectScript that might write is also off.
 
 3. **Hybrid** — declare `iris_execute` write-gated always (option 2), and additionally
    apply the PHI and system-globals static checks from `iris_global` to detect obvious
-   global name matches in the code string before sending.
+   global name matches in the code string before sending. Static check covers
+   unsophisticated/accidental cases only; the gate declaration is the real enforcement.
 
-Option 2 is the minimum viable fix. Option 3 adds defence-in-depth without false
-negatives (a static check that can be bypassed is still better than none for the obvious
-cases). Recommend option 3.
+Recommendation: option 3. The gate declaration (option 2) is the minimum viable fix
+and the honest enforcement boundary. The static check (option 1, added on top) catches
+inadvertent sloppiness — a well-intentioned model writing `Kill ^Foo` literally without
+thinking through the gate implications. It does not catch deliberate indirection and
+should not be presented as doing so.
+
+`iris_ws_exec` has the same gap and needs the same fix in a follow-on (see Out of
+scope).
+
+The real enforcement for adversarial scenarios is IRIS-native: credentials with
+restricted privileges, resource-based access control, and the `mcpTemplate` env gate
+which already blocks `iris_execute` on `test`/`live` instances.
 
 ## Trust asymmetry
 

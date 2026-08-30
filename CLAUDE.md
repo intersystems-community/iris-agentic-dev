@@ -107,6 +107,7 @@ Before closing any release (tagging, publishing, merging release branch):
 
 ## Recent Changes
 
+- 087-execute-gate-bypass: `iris_execute` now enforces the destructive gate when `Kill ^<global>` appears literally in the code string; `contains_global_kill` in `write_gate.rs`; 22 unit tests + 4 live IRIS tests; indirection gap documented in spec and error message
 - 086-agent-attribution-audit: caller marker in `User-Agent` on every IRIS-bound request, opt-in `%SYS.Audit` emission via `[policy.<server>].irisAudit`, `docs/agent-attribution.md`; plan at `specs/086-agent-attribution-audit/plan.md`
 - 085-write-gate-integrity: write/destructive gates resolved as data and enforced once in `call_tool`; plan at `specs/085-write-gate-integrity/plan.md`
 - 068-windows-docker: Added Dockerfile (no specific version), Bash (GHA steps), Markdown + `gcr.io/distroless/static-debian12` (base image), `docker/build-push-action@v6`, `docker/metadata-action@v5`

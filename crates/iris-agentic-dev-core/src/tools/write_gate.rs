@@ -734,6 +734,48 @@ pub fn gate_check(
     }
 }
 
+/// Returns `true` when the code string contains a literal kill-of-a-global expression:
+/// `Kill ^`, `KILL ^`, `k ^`, or any case variant of `kill` followed by optional whitespace
+/// and a `^` character.
+///
+/// This is defense-in-depth against inadvertent sloppiness — a well-intentioned model writing
+/// `Kill ^Foo` literally without considering the destructive gate. It does NOT catch indirect
+/// vectors (`Kill @var`, `Xecute`, `##class` dispatch, `&sql`). The spec says so plainly and
+/// the error message repeats it, so callers cannot mistake this check for a comprehensive block.
+///
+/// False positives (e.g. a kill in a comment line) are acceptable: blocking a comment that
+/// looks like a kill is safer than missing a kill that looks like a comment.
+pub fn contains_global_kill(code: &str) -> bool {
+    // Scan each line for a `kill` keyword (case-insensitive) or its single-letter
+    // abbreviation `k`, followed by optional whitespace and `^`. Searches within the
+    // line so comment lines containing a kill expression are also caught — a false
+    // positive beats a false negative.
+    for line in code.lines() {
+        let lower = line.to_ascii_lowercase();
+        // Check every position where 'k' occurs.
+        for (i, _) in lower.match_indices('k') {
+            let rest = &lower[i..];
+            let after = if rest.starts_with("kill") {
+                // "kill" keyword — consume 4 bytes.
+                &rest[4..]
+            } else {
+                // Single-letter `k`, but not the start of "kill".
+                let tail = &rest[1..];
+                if tail.starts_with("ill") {
+                    // "kill" will be handled at this same index on a later iteration.
+                    continue;
+                }
+                tail
+            };
+            let trimmed = after.trim_start_matches(|c: char| c == ' ' || c == '\t');
+            if trimmed.starts_with('^') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// The refusal envelope: a normal tool result in the existing `err_json` shape, not an
 /// `McpError`, so the reporter's probes keep parsing the same response shape (Principle V).
 ///

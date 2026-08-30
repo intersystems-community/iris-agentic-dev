@@ -263,6 +263,14 @@ iris_execute(code="Set sc = ##class(MyApp.Util).Run() Write sc", namespace="MYAP
 
 **Code-edit guard** — see [Code-edit guard](#code-edit-guard) below.
 
+**Destructive-tier gate** — `iris_execute` requires `write_tools_enabled = true` (it is
+write-gated). Additionally, if the literal code string contains a `Kill ^<global>` pattern
+(any case variant), `destructive_tools_enabled = true` is also required. This check catches
+direct global kills written literally in the code. Indirect operations — `Kill @variable`,
+`Xecute`-dispatched code, or class method calls that internally kill a global — are not
+detected; IRIS-side credentials and the `mcpTemplate` env gate are the appropriate controls
+for those.
+
 #### Session state
 
 Set `use_session: true` to get a `%ctx` variable (`%DynamicObject`) injected before your code
