@@ -5784,12 +5784,12 @@ fn e2e_skill_list_surfaces_a_synthesized_skill_from_skills_global() {
 
     let list = call_tool("skill_list", serde_json::json!({}));
 
+    // Use iris_execute for cleanup — iris_global kill is destructive-gated (☠) and
+    // the e2e environment does not set destructive_tools_enabled.
     let cleanup = call_tool(
-        "iris_global",
+        "iris_execute",
         serde_json::json!({
-            "action": "kill",
-            "global_name": "^SKILLS",
-            "subscripts": ["iad-e2e-synth-skill-test"],
+            "code": "Kill ^SKILLS(\"iad-e2e-synth-skill-test\")",
             "namespace": "USER"
         }),
     );
