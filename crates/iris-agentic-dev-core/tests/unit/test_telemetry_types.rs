@@ -1,6 +1,8 @@
 //! Unit tests for telemetry core types (T007). No live IRIS required.
 
-use iris_agentic_dev_core::telemetry::{ago_secs, now_rfc3339, Session, ToolCallRecord};
+use iris_agentic_dev_core::telemetry::{
+    ago_secs, eval_session_from_env, now_rfc3339, Session, ToolCallRecord,
+};
 use uuid::Uuid;
 
 #[test]
@@ -58,4 +60,73 @@ fn tool_call_record_with_params_serializes() {
     let json = serde_json::to_string(&record).unwrap();
     let back: ToolCallRecord = serde_json::from_str(&json).unwrap();
     assert_eq!(back.params.unwrap()["query"], "SELECT 1");
+}
+
+#[test]
+fn test_eval_session_absent_when_env_not_set() {
+    // Remove env vars if set by a parent process
+    std::env::remove_var("GAUNTLET_RUN_ID");
+    std::env::remove_var("GAUNTLET_TASK_ID");
+    std::env::remove_var("GAUNTLET_CONDITION");
+    let (run_id, task_id, condition) = eval_session_from_env();
+    assert!(
+        run_id.is_none(),
+        "run_id should be None when env var absent"
+    );
+    assert!(
+        task_id.is_none(),
+        "task_id should be None when env var absent"
+    );
+    assert!(
+        condition.is_none(),
+        "condition should be None when env var absent"
+    );
+}
+
+#[test]
+fn test_eval_session_present_when_env_set() {
+    // Serialize env mutations — env is process-global state
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = ENV_MUTEX.lock().unwrap();
+
+    std::env::set_var("GAUNTLET_RUN_ID", "run-abc123");
+    std::env::set_var("GAUNTLET_TASK_ID", "task-42");
+    std::env::set_var("GAUNTLET_CONDITION", "harness");
+    let (run_id, task_id, condition) = eval_session_from_env();
+    std::env::remove_var("GAUNTLET_RUN_ID");
+    std::env::remove_var("GAUNTLET_TASK_ID");
+    std::env::remove_var("GAUNTLET_CONDITION");
+
+    assert_eq!(run_id.as_deref(), Some("run-abc123"));
+    assert_eq!(task_id.as_deref(), Some("task-42"));
+    assert_eq!(condition.as_deref(), Some("harness"));
+}
+
+#[test]
+fn test_eval_session_fields_round_trip_serde() {
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = ENV_MUTEX.lock().unwrap();
+
+    std::env::set_var("GAUNTLET_RUN_ID", "run-serde-test");
+    std::env::set_var("GAUNTLET_TASK_ID", "task-serde");
+    std::env::set_var("GAUNTLET_CONDITION", "test-condition");
+    let record = ToolCallRecord::now("iris_execute", true, 10, Uuid::new_v4());
+    std::env::remove_var("GAUNTLET_RUN_ID");
+    std::env::remove_var("GAUNTLET_TASK_ID");
+    std::env::remove_var("GAUNTLET_CONDITION");
+
+    let json = serde_json::to_string(&record).unwrap();
+    let back: ToolCallRecord = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.eval_run_id.as_deref(), Some("run-serde-test"));
+    assert_eq!(back.eval_task_id.as_deref(), Some("task-serde"));
+    assert_eq!(back.eval_condition.as_deref(), Some("test-condition"));
+
+    // Verify absent fields do not appear in serialized output when None
+    let sid = Uuid::new_v4();
+    let no_env = ToolCallRecord::now("iris_info", true, 1, sid);
+    let no_env_json = serde_json::to_string(&no_env).unwrap();
+    assert!(
+        !no_env_json.contains("eval_run_id"),
+        "eval_run_id should be absent from JSON when None"
+    );
 }

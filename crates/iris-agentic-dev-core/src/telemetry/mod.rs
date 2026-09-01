@@ -44,10 +44,31 @@ pub struct ToolCallRecord {
     /// caller simply didn't capture parameters for this call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<serde_json::Value>,
+    /// Gauntlet eval session identity — populated from GAUNTLET_RUN_ID env var when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_run_id: Option<String>,
+    /// Gauntlet task identifier — populated from GAUNTLET_TASK_ID env var when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_task_id: Option<String>,
+    /// Gauntlet experiment condition (harness/tool_surface/model) — from GAUNTLET_CONDITION.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eval_condition: Option<String>,
+}
+
+/// Read Gauntlet eval session identity from environment variables.
+/// Returns `(run_id, task_id, condition)`, each `None` if the var is absent or empty.
+pub fn eval_session_from_env() -> (Option<String>, Option<String>, Option<String>) {
+    let read = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
+    (
+        read("GAUNTLET_RUN_ID"),
+        read("GAUNTLET_TASK_ID"),
+        read("GAUNTLET_CONDITION"),
+    )
 }
 
 impl ToolCallRecord {
     pub fn now(tool: &str, success: bool, duration_ms: u64, session_id: Uuid) -> Self {
+        let (eval_run_id, eval_task_id, eval_condition) = eval_session_from_env();
         Self {
             tool: tool.to_string(),
             success,
@@ -55,6 +76,9 @@ impl ToolCallRecord {
             timestamp: now_rfc3339(),
             session_id,
             params: None,
+            eval_run_id,
+            eval_task_id,
+            eval_condition,
         }
     }
 }
@@ -415,5 +439,53 @@ mod tests {
         let (out2, truncated2) = filter_records(&records, None, None, None, None, 10);
         assert_eq!(out2.len(), 5);
         assert!(!truncated2);
+    }
+
+    #[test]
+    fn eval_session_fields_round_trip_serde() {
+        let sid = Uuid::new_v4();
+        let mut record = ToolCallRecord::now("iris_execute", true, 5, sid);
+        record.eval_run_id = Some("gauntlet-ab12cd34".to_string());
+        record.eval_task_id = Some("G05".to_string());
+        record.eval_condition = Some("raw_api/none/claude-opus-4-8".to_string());
+        let json = serde_json::to_string(&record).unwrap();
+        let back: ToolCallRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.eval_run_id.as_deref(), Some("gauntlet-ab12cd34"));
+        assert_eq!(back.eval_task_id.as_deref(), Some("G05"));
+        assert_eq!(back.eval_condition.as_deref(), Some("raw_api/none/claude-opus-4-8"));
+    }
+
+    #[test]
+    fn eval_session_absent_in_json_when_not_set() {
+        let sid = Uuid::new_v4();
+        let record = ToolCallRecord::now("iris_compile", true, 1, sid);
+        // Fields default to None — must not appear in serialized JSON
+        assert!(record.eval_run_id.is_none());
+        assert!(record.eval_task_id.is_none());
+        assert!(record.eval_condition.is_none());
+        let json = serde_json::to_string(&record).unwrap();
+        assert!(!json.contains("eval_run_id"));
+        assert!(!json.contains("eval_task_id"));
+        assert!(!json.contains("eval_condition"));
+    }
+
+    #[test]
+    fn eval_session_from_env_reads_gauntlet_vars() {
+        // Use a temp env scope to avoid contaminating other tests.
+        // Safety: single-threaded test binary.
+        unsafe {
+            std::env::set_var("GAUNTLET_RUN_ID", "gauntlet-test1234");
+            std::env::set_var("GAUNTLET_TASK_ID", "G06");
+            std::env::set_var("GAUNTLET_CONDITION", "claude_code/iad_mcp/opus");
+        }
+        let (run_id, task_id, condition) = eval_session_from_env();
+        unsafe {
+            std::env::remove_var("GAUNTLET_RUN_ID");
+            std::env::remove_var("GAUNTLET_TASK_ID");
+            std::env::remove_var("GAUNTLET_CONDITION");
+        }
+        assert_eq!(run_id.as_deref(), Some("gauntlet-test1234"));
+        assert_eq!(task_id.as_deref(), Some("G06"));
+        assert_eq!(condition.as_deref(), Some("claude_code/iad_mcp/opus"));
     }
 }

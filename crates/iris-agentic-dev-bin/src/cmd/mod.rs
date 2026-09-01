@@ -1,5 +1,6 @@
 pub mod batch;
 pub mod benchmark;
+pub mod capability_matrix;
 pub mod check_sm_credential;
 pub mod compile;
 pub mod connection_args;
@@ -12,6 +13,7 @@ pub mod mcp;
 pub mod plugin;
 pub mod query;
 pub mod skill;
+pub mod telemetry;
 pub mod tool;
 pub mod tsv;
 pub mod vscode_payload;

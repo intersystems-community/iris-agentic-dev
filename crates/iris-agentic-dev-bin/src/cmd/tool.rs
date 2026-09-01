@@ -4,6 +4,7 @@ use iris_agentic_dev_core::{
     iris::connection::IrisConnection,
     tools::{IrisTools, Toolset},
 };
+use std::time::Instant;
 
 use super::connection_args::ConnectionArgs;
 
@@ -112,6 +113,10 @@ pub struct ToolCommand {
     #[arg(long, short = 'a', value_name = "JSON", default_value = "{}")]
     pub args: String,
 
+    /// Wrap output in a stable JSON envelope {ok, tool, run_id, elapsed_ms, result, error}
+    #[arg(long)]
+    pub envelope: bool,
+
     #[command(flatten)]
     pub conn: ConnectionArgs,
 }
@@ -119,13 +124,29 @@ pub struct ToolCommand {
 impl ToolCommand {
     pub async fn run(self) -> Result<()> {
         let name = self.name.clone();
+        let envelope = self.envelope;
+        let run_id = std::env::var("GAUNTLET_RUN_ID").ok().filter(|v| !v.is_empty());
 
         // Validate tool name before connecting
         if !TOOL_NAMES.contains(&name.as_str()) {
-            eprintln!("error: unknown tool '{}'", name);
-            eprintln!("available tools:");
-            for t in TOOL_NAMES {
-                eprintln!("  {}", t);
+            if envelope {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "ok": false,
+                        "tool": name,
+                        "run_id": run_id,
+                        "elapsed_ms": 0,
+                        "result": null,
+                        "error": format!("unknown tool '{name}'")
+                    })
+                );
+            } else {
+                eprintln!("error: unknown tool '{}'", name);
+                eprintln!("available tools:");
+                for t in TOOL_NAMES {
+                    eprintln!("  {}", t);
+                }
             }
             std::process::exit(1);
         }
@@ -133,7 +154,21 @@ impl ToolCommand {
         // Parse args JSON
         let args_json: serde_json::Value = serde_json::from_str(&self.args)
             .map_err(|e| {
-                eprintln!("error: --args is not valid JSON: {}", e);
+                if envelope {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "ok": false,
+                            "tool": name,
+                            "run_id": run_id,
+                            "elapsed_ms": 0,
+                            "result": null,
+                            "error": format!("--args is not valid JSON: {e}")
+                        })
+                    );
+                } else {
+                    eprintln!("error: --args is not valid JSON: {}", e);
+                }
                 std::process::exit(1);
             })
             .unwrap();
@@ -158,37 +193,100 @@ impl ToolCommand {
         let iris: Option<IrisConnection> = match self.conn.resolve().await {
             Ok(c) => Some(c),
             Err(e) if allow_no_default => {
-                eprintln!("warning: no default IRIS connection ({e}); using connection pool");
+                if !envelope {
+                    eprintln!("warning: no default IRIS connection ({e}); using connection pool");
+                }
                 None
             }
             Err(e) => {
-                eprintln!("error: {}", e);
+                if envelope {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "ok": false,
+                            "tool": name,
+                            "run_id": run_id,
+                            "elapsed_ms": 0,
+                            "result": null,
+                            "error": e.to_string()
+                        })
+                    );
+                } else {
+                    eprintln!("error: {}", e);
+                }
                 std::process::exit(1);
             }
         };
 
         let tools = IrisTools::new_with_toolset(iris, Toolset::Merged)?;
+        let t0 = Instant::now();
 
         match tools.call_for_test(&name, args_json).await {
             Ok(result) => {
-                let mut tool_success = true;
-                for content in &result.content {
-                    if let Some(text) = content.as_text() {
-                        println!("{}", text.text);
-                        // Exit 1 when the tool itself reports failure so shell/CI can gate on exit code.
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text.text) {
-                            if v.get("success") == Some(&serde_json::Value::Bool(false)) {
-                                tool_success = false;
+                let elapsed_ms = t0.elapsed().as_millis() as u64;
+                if envelope {
+                    // Collect all text content into a single JSON value
+                    let parts: Vec<serde_json::Value> = result
+                        .content
+                        .iter()
+                        .filter_map(|c| c.as_text())
+                        .filter_map(|t| serde_json::from_str::<serde_json::Value>(&t.text).ok())
+                        .collect();
+                    let result_value = if parts.len() == 1 {
+                        parts.into_iter().next().unwrap()
+                    } else {
+                        serde_json::Value::Array(parts)
+                    };
+                    let tool_ok = result_value.get("success") != Some(&serde_json::Value::Bool(false));
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "ok": tool_ok,
+                            "tool": name,
+                            "run_id": run_id,
+                            "elapsed_ms": elapsed_ms,
+                            "result": result_value,
+                            "error": null
+                        })
+                    );
+                    if !tool_ok {
+                        std::process::exit(1);
+                    }
+                } else {
+                    let mut tool_success = true;
+                    for content in &result.content {
+                        if let Some(text) = content.as_text() {
+                            println!("{}", text.text);
+                            // Exit 1 when the tool itself reports failure so shell/CI can gate on exit code.
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text.text) {
+                                if v.get("success") == Some(&serde_json::Value::Bool(false)) {
+                                    tool_success = false;
+                                }
                             }
                         }
                     }
-                }
-                if !tool_success {
-                    std::process::exit(1);
+                    if !tool_success {
+                        std::process::exit(1);
+                    }
                 }
             }
             Err(e) => {
-                eprintln!("error: {}", e);
+                let elapsed_ms = t0.elapsed().as_millis() as u64;
+                if envelope {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "ok": false,
+                            "tool": name,
+                            "run_id": run_id,
+                            "elapsed_ms": elapsed_ms,
+                            "result": null,
+                            "error": e.to_string()
+                        })
+                    );
+                } else {
+                    eprintln!("error: {}", e);
+                }
                 std::process::exit(1);
             }
         }

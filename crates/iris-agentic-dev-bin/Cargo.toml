@@ -26,6 +26,7 @@ serde_json.workspace = true
 urlencoding = "2"
 base64 = "0.22"
 aes-gcm = "0.10"
+dirs = "5"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 hyper = { version = "1", features = ["http1", "server"] }
@@ -42,6 +43,7 @@ windows = { version = "0.58", features = ["Win32_Security_Cryptography", "Win32_
 
 [dev-dependencies]
 tempfile = "3"
+serde_json.workspace = true
 
 [[test]]
 name = "plugin_dispatch_tests"
@@ -126,3 +128,7 @@ path = "tests/unit/test_workflow_files.rs"
 [[test]]
 name = "test_attribution_stdio"
 path = "tests/integration/test_attribution_stdio.rs"
+
+[[test]]
+name = "test_eval_session_binary"
+path = "tests/unit/test_eval_session_binary.rs"

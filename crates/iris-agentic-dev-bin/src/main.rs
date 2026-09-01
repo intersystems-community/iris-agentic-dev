@@ -50,6 +50,10 @@ enum Commands {
     Batch(cmd::batch::BatchCommand),
     /// Diagnose VS Code Server Manager credential resolution (Windows: reads state.vscdb via DPAPI)
     CheckSmCredential(cmd::check_sm_credential::CheckSmCredentialCommand),
+    /// Show IRIS capability matrix for the current user (roles, grants, policies)
+    CapabilityMatrix(cmd::capability_matrix::CapabilityMatrixCommand),
+    /// Export or inspect tool-call telemetry records
+    Telemetry(cmd::telemetry::TelemetryCommand),
     /// Any unrecognized subcommand — dispatched to an `iris-agentic-dev-<name>` plugin on
     /// PATH if one exists (regression: clap rejects unknown subcommands with exit code 2
     /// before main()'s own dispatch logic ever runs, so plugin dispatch was dead code
@@ -98,6 +102,8 @@ async fn main() -> Result<()> {
         Some(Commands::Skill(cmd)) => cmd.run().await,
         Some(Commands::Batch(cmd)) => cmd.run().await,
         Some(Commands::CheckSmCredential(cmd)) => cmd.run().await,
+        Some(Commands::CapabilityMatrix(cmd)) => cmd.run().await,
+        Some(Commands::Telemetry(cmd)) => cmd.run().await,
         Some(Commands::External(args)) => {
             let name = args
                 .first()

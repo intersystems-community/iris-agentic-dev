@@ -1428,6 +1428,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "clap",
+ "dirs",
  "hyper",
  "hyper-util",
  "iris-agentic-dev-core",
