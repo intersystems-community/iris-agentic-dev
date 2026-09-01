@@ -132,8 +132,8 @@ fn test_baseline_tool_count() {
     let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
     let count = tools.registered_tool_names().len();
     assert_eq!(
-        count, 81,
-        "Baseline toolset must have exactly 81 tools (90 total #[tool] methods - 9 \
+        count, 83,
+        "Baseline toolset must have exactly 83 tools (92 total #[tool] methods - 9 \
          Merged-tier-only dispatchers), got {}. If this changed on purpose, update this \
          number — do not just silence the assertion.",
         count

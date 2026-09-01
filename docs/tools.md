@@ -1497,7 +1497,7 @@ can act on before calling the tool.
 
 | Annotation         | Set on                                                                                                                                               | What it means                                      |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `read_only_hint`   | 53 tools — all query, inspect, list, history, and comparison tools                                                                                   | The tool makes no changes to IRIS state            |
+| `read_only_hint`   | 52 tools — all query, inspect, list, history, and comparison tools                                                                                   | The tool makes no changes to IRIS state            |
 | `destructive_hint` | 7 tools — `global_kill`, `iris_admin`, `iris_credential_manage`, `iris_lookup_manage`, `iris_namespace_create`, `iris_remove_server`, `skill_forget` | The tool can irreversibly delete or overwrite data |
 
 MCP clients that respect `read_only_hint` can run read-only tools in parallel or in
