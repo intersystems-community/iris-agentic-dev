@@ -20,12 +20,12 @@ Import from `intersystems_pyprod` — not `grongier.pex` or any other package.
 
 Import only what your component needs — do not copy-paste the full import list into every file:
 
-| Component           | Typical imports                                                              |
-| ------------------- | ---------------------------------------------------------------------------- |
-| Message             | `Column, JsonSerialize` (or `PickleSerialize`)                               |
-| BusinessService     | `IRISParameter, IRISProperty, BusinessService, IRISLog, Status`              |
-| BusinessProcess     | `IRISProperty, BusinessProcess, IRISLog, Status`                             |
-| BusinessOperation   | `IRISParameter, IRISProperty, BusinessOperation, IRISLog, Status`            |
+| Component         | Typical imports                                                   |
+| ----------------- | ----------------------------------------------------------------- |
+| Message           | `Column, JsonSerialize` (or `PickleSerialize`)                    |
+| BusinessService   | `IRISParameter, IRISProperty, BusinessService, IRISLog, Status`   |
+| BusinessProcess   | `IRISProperty, BusinessProcess, IRISLog, Status`                  |
+| BusinessOperation | `IRISParameter, IRISProperty, BusinessOperation, IRISLog, Status` |
 
 Set the IRIS package name at module level (applies to all classes in the file):
 
@@ -181,16 +181,16 @@ IRISLog.Error("message")
 
 ## Common Mistakes
 
-| Mistake                                    | Effect                                | Fix                                                          |
-| ------------------------------------------ | ------------------------------------- | ------------------------------------------------------------ |
-| Plain attribute instead of `Column()`      | Field not SQL-queryable               | Use `Column(datatype=...)`                                   |
-| `response_required=True` (bool)            | Runtime error                         | Use integer `1`                                              |
-| `send_request_async(response_required=1)` without `on_response` | `NotImplementedError` at runtime | Always implement `on_response` alongside the async call |
-| `IRISParameter` for UI-editable value      | Not visible in production UI          | Use `IRISProperty`                                           |
-| `IRISProperty` on BusinessProcess          | State lost (new instance per message) | Use only on adapters, services, operations                   |
-| Wrong MessageMap key package               | Messages not dispatched               | Key must match `iris_package_name` of the **message** module |
-| `pool_size=1` for adapterless service      | Hangs                                 | Use `pool_size=0`                                            |
-| Import from `grongier.pex`                 | Wrong library                         | Import from `intersystems_pyprod`                            |
+| Mistake                                                         | Effect                                | Fix                                                          |
+| --------------------------------------------------------------- | ------------------------------------- | ------------------------------------------------------------ |
+| Plain attribute instead of `Column()`                           | Field not SQL-queryable               | Use `Column(datatype=...)`                                   |
+| `response_required=True` (bool)                                 | Runtime error                         | Use integer `1`                                              |
+| `send_request_async(response_required=1)` without `on_response` | `NotImplementedError` at runtime      | Always implement `on_response` alongside the async call      |
+| `IRISParameter` for UI-editable value                           | Not visible in production UI          | Use `IRISProperty`                                           |
+| `IRISProperty` on BusinessProcess                               | State lost (new instance per message) | Use only on adapters, services, operations                   |
+| Wrong MessageMap key package                                    | Messages not dispatched               | Key must match `iris_package_name` of the **message** module |
+| `pool_size=1` for adapterless service                           | Hangs                                 | Use `pool_size=0`                                            |
+| Import from `grongier.pex`                                      | Wrong library                         | Import from `intersystems_pyprod`                            |
 
 ---
 

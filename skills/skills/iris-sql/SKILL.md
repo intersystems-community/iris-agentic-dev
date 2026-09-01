@@ -1,35 +1,37 @@
 ---
 author: tdyar
-benchmark_date: '2026-04-08'
-benchmark_iris_version: '2025.1'
+benchmark_date: "2026-04-08"
+benchmark_iris_version: "2025.1"
 benchmark_tasks:
-- sql-001
-- sql-002
-- sql-003
-- sql-004
-- sql-005
-- sql-006
-- sql-007
-- sql-008
-description: Use when writing, debugging, or optimizing SQL queries in IRIS — table
+  - sql-001
+  - sql-002
+  - sql-003
+  - sql-004
+  - sql-005
+  - sql-006
+  - sql-007
+  - sql-008
+description:
+  Use when writing, debugging, or optimizing SQL queries in IRIS — table
   naming, reserved words, NULL semantics, SQLCODE, IN clause limits, procedures, DDL
   quirks, and date handling. Load explicitly for SQL work; do NOT load globally for
   general ObjectScript repair tasks.
-iris_version: '>=2024.1'
+iris_version: ">=2024.1"
 metadata:
   baseline_pass_rate: 0.625
-  benchmark_note: Negative lift (-27%) on single-function repair benchmark (most tasks
+  benchmark_note:
+    Negative lift (-27%) on single-function repair benchmark (most tasks
     not SQL). Load explicitly for SQL tasks only.
   lift: 0.125
 name: iris-sql
 pass_rate: 0.75
 state: reviewed
 tags:
-- iris
-- sql
-- quirks
-- ddl
-- dbapi
+  - iris
+  - sql
+  - quirks
+  - ddl
+  - dbapi
 trigger: Use for tdyar/iris-sql
 ---
 
@@ -64,6 +66,7 @@ SELECT FROM pkg.isc.genai.Router -- ✗ table not found
 ```
 
 Verify for any class:
+
 ```objectscript
 Set cls = ##class(%Dictionary.ClassDefinition).%OpenId("My.Package.Class")
 Write cls.SqlSchemaName, ".", cls.SqlTableName
@@ -91,9 +94,10 @@ If SQLCODE < 0   { Write "error: ", %msg }
 ## 3. Reserved Words — Complete Reference
 
 ### Full IRIS SQL reserved word list
+
 Check any word: `$SYSTEM.SQL.IsReservedWord("word")` → 1 = reserved.
 
-```
+```text
 ABSOLUTE ADD ALL ALTER AND ANY AS ASC AT AUTHORIZATION AVG BEGIN BETWEEN BY
 CASCADE CASE CAST CHAR CHARACTER CHECK CLOSE COALESCE COLLATE COMMIT CONNECT
 CONSTRAINT CONTINUE CONVERT COUNT CREATE CROSS CURRENT CURSOR DATE DEALLOCATE
@@ -111,7 +115,8 @@ USER USING VALUES VARCHAR WHEN WHERE WITH WORK WRITE
 ```
 
 **IRIS-specific reserved words** (% prefix — never use as identifiers):
-```
+
+```text
 %ID %ROWCOUNT %TABLENAME %CLASSNAME %STARTSWITH %INLIST %MATCHES %EXACT
 %DLIST %UPPER %SQLUPPER %SQLSTRING %VALUE %KEY %VID %PARALLEL %NOLOCK
 ```
@@ -177,6 +182,7 @@ Property FirstName As %String [ SqlFieldName = first_name ];   // OK
 ```
 
 Check actual projected column names:
+
 ```objectscript
 Set rs = ##class(%SQL.Statement).%ExecDirect(,"SELECT * FROM MyTable WHERE 1=0")
 Set meta = rs.%GetMetadata()
@@ -231,6 +237,7 @@ While start <= ids.Count() {
 ```
 
 For Python iris.dbapi, same limit applies:
+
 ```python
 CHUNK = 499
 for i in range(0, len(ids), CHUNK):
@@ -344,6 +351,7 @@ While rs.%Next() {
 ```
 
 SQL function restrictions on stream columns:
+
 ```sql
 -- ✗ SQLCODE -37: SQL scalar/aggregate not supported for stream fields
 SELECT LENGTH(description) FROM Articles
@@ -380,6 +388,7 @@ If no ELEMENTS index, use `? %INLIST Col` for exact membership testing.
 `LIKE` on a `%List` column never works correctly — never use it.
 
 **CSV string columns** (tags stored as "iris,sql,python"): use `$LISTFROMSTRING`:
+
 ```sql
 -- Tags is VARCHAR: "iris,sql,objectscript"
 -- WRONG: LIKE '%iris%' matches 'iris2' via substring
@@ -483,6 +492,7 @@ WHERE Status %MATCHES '(OPEN|CLOSED|PENDING)'          -- alternation
 **%MATCHES is full-string anchored** — the pattern must match the entire string, not just a substring. `'[A-Z].*'` matches strings that start with a letter (the `.*` covers the rest).
 
 **Common patterns:**
+
 ```sql
 -- Package prefix (dots escaped):
 WHERE Name %MATCHES 'pkg\\.isc\\..*'
@@ -520,7 +530,8 @@ cur.execute("INSERT INTO Graph_KG.docs (id, text) VALUES (?, ?)", (doc_id, text)
 
 ### Handling duplicates in IRIS
 
-**Option 1: Pre-filter with a Python set (best for bulk loads)**
+#### Option 1: Pre-filter with a Python set (best for bulk loads)
+
 ```python
 # Load existing IDs first, then skip before inserting
 cur.execute("SELECT id FROM MyTable")
@@ -533,7 +544,8 @@ for row in data:
     existing.add(row["id"])
 ```
 
-**Option 2: Catch the duplicate key error**
+#### Option 2: Catch the duplicate key error
+
 ```python
 for row in data:
     try:
@@ -544,14 +556,16 @@ for row in data:
         raise  # re-raise unexpected errors
 ```
 
-**Option 3: DELETE + INSERT (upsert)**
+#### Option 3: DELETE + INSERT (upsert)
+
 ```python
 # For true upsert behavior — delete first, then insert
 cur.execute("DELETE FROM MyTable WHERE id = ?", (row["id"],))
 cur.execute("INSERT INTO MyTable (id, val) VALUES (?, ?)", (row["id"], row["val"]))
 ```
 
-**Option 4: ObjectScript embedded SQL UPSERT**
+#### Option 4: ObjectScript embedded SQL UPSERT
+
 ```objectscript
 // IRIS ObjectScript supports %Save() which handles insert/update automatically
 Set obj = ##class(MyTable).%OpenId(id)
@@ -562,6 +576,7 @@ Do obj.%Save()
 ```
 
 ### Key IRIS INSERT constraints
+
 - No `INSERT OR IGNORE` (SQLite)
 - No `INSERT IGNORE` (MySQL)
 - No `ON CONFLICT ... DO NOTHING/UPDATE` (PostgreSQL/SQLite)
@@ -585,6 +600,7 @@ WHERE Name %STARTSWITH '_mith'  -- matches only names literally starting with "_
 ```
 
 For package/class prefix search, always use `%STARTSWITH`:
+
 ```sql
 WHERE Name %STARTSWITH 'pkg.isc.'    -- faster than LIKE, no escaping needed
 WHERE Name %STARTSWITH ?             -- safe with any user input

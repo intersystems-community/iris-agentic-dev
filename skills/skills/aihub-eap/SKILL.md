@@ -26,7 +26,7 @@ tags: [iris, aihub, eap, ai, configstore, langchain, mcp, docker]
 
 Available downloads:
 
-```
+```text
 iris-community-2026.2.0AI.158.0-docker.tar.gz          # x86_64 Docker (community, no key needed)
 iris_arm64-community-2026.2.0AI.158.0-docker.tar.gz    # ARM64 Docker (community)
 iris-container-x64.key                                   # License key (removes community limits)
@@ -191,11 +191,11 @@ Do ##class(%ConfigStore.Configuration).Create("AI","LLM","","opsreview", config)
 
 Used inside `PROVIDERCONFIG` parameters and ToolSet XML — NOT in ObjectScript code directly.
 
-| Syntax | Source | Example |
-|--------|--------|---------|
-| `@{env.VAR}` | OS environment variable | `@{env.OPENAI_API_KEY}` |
-| `@{config.Key}` | `^%AI.Config` global | `@{config.VertexSAPath}` |
-| `@{wallet.Col.Key}` | IRIS Secure Wallet | `@{wallet.AISecrets.anthropic}` |
+| Syntax              | Source                  | Example                         |
+| ------------------- | ----------------------- | ------------------------------- |
+| `@{env.VAR}`        | OS environment variable | `@{env.OPENAI_API_KEY}`         |
+| `@{config.Key}`     | `^%AI.Config` global    | `@{config.VertexSAPath}`        |
+| `@{wallet.Col.Key}` | IRIS Secure Wallet      | `@{wallet.AISecrets.anthropic}` |
 
 ```objectscript
 // In a declarative agent Parameter:
@@ -365,21 +365,21 @@ mcp = init_mcp_client("AI.MCP.my-server")
 
 ## 10. Breaking Changes: Build 141 → 159
 
-| Feature | Build 141 | Build 159 |
-|---------|-----------|-----------|
-| `LLMConfig` property | Existed | **REMOVED** |
-| Agent instantiation | `##class(%AI.Agent).%New(provider)` only | Also: declarative Parameters subclass |
-| Config Store | Partial WIP | Full `%ConfigStore.Configuration` support |
-| `%Init()` requirement | Optional | **REQUIRED** before first `Chat()` |
-| Streaming | Not available | `StreamChat()` + `%AI.System.StreamRenderer` |
-| Session reset | Not available | `Reset()`, `ResetContext()`, `ResetStats()` |
-| Checkpoints | Not available | `AddCheckpoint()`, `RewindTo()` |
-| Session fork | Not available | `Fork()`, `ForkAndSummarize()` |
-| Nested agents | Not available | `CreateSubAgent()`, `DelegateTask` tool |
-| Skills | Not available | `%AI.Agent.Skill` with XData |
-| RAG | Not available | `%AI.KnowledgeBase`, `EnableSmartDiscovery()` |
-| Prompt caching | Not available | `"cache": {"enabled": 1}` in session config |
-| `@{wallet.*}` substitution | Not available | `@{wallet.Collection.Key}` |
+| Feature                    | Build 141                                | Build 159                                     |
+| -------------------------- | ---------------------------------------- | --------------------------------------------- |
+| `LLMConfig` property       | Existed                                  | **REMOVED**                                   |
+| Agent instantiation        | `##class(%AI.Agent).%New(provider)` only | Also: declarative Parameters subclass         |
+| Config Store               | Partial WIP                              | Full `%ConfigStore.Configuration` support     |
+| `%Init()` requirement      | Optional                                 | **REQUIRED** before first `Chat()`            |
+| Streaming                  | Not available                            | `StreamChat()` + `%AI.System.StreamRenderer`  |
+| Session reset              | Not available                            | `Reset()`, `ResetContext()`, `ResetStats()`   |
+| Checkpoints                | Not available                            | `AddCheckpoint()`, `RewindTo()`               |
+| Session fork               | Not available                            | `Fork()`, `ForkAndSummarize()`                |
+| Nested agents              | Not available                            | `CreateSubAgent()`, `DelegateTask` tool       |
+| Skills                     | Not available                            | `%AI.Agent.Skill` with XData                  |
+| RAG                        | Not available                            | `%AI.KnowledgeBase`, `EnableSmartDiscovery()` |
+| Prompt caching             | Not available                            | `"cache": {"enabled": 1}` in session config   |
+| `@{wallet.*}` substitution | Not available                            | `@{wallet.Collection.Key}`                    |
 
 **DEAD CODE from build 141 (do not use):**
 
@@ -536,10 +536,10 @@ Using it causes `<PROPERTY DOES NOT EXIST>`. Use declarative Parameters or progr
 
 ### `irishealth` vs `iris` image — use `irishealth` for MCP over HTTP
 
-| Image | WebServer | CSPServer binary | Use for |
-|-------|-----------|-----------------|---------|
-| `irishealth-community-*` | 1 (enabled) | Yes | MCP over HTTP, REST, web apps |
-| `iris-community-*` | 0 (disabled) | No | ObjectScript/CLI only, no HTTP tools |
+| Image                    | WebServer    | CSPServer binary | Use for                              |
+| ------------------------ | ------------ | ---------------- | ------------------------------------ |
+| `irishealth-community-*` | 1 (enabled)  | Yes              | MCP over HTTP, REST, web apps        |
+| `iris-community-*`       | 0 (disabled) | No               | ObjectScript/CLI only, no HTTP tools |
 
 ```bash
 # ✅ For MCP over HTTP:
@@ -578,7 +578,7 @@ Build 162 community has **51 `%AI` classes** vs **38 in enterprise 161**. The 13
 
 ### RAG stack (new in 162)
 
-```
+```text
 %AI.RAG.Embedding
 %AI.RAG.Embedding.FastEmbed
 %AI.RAG.Embedding.OpenAI
@@ -588,7 +588,7 @@ Build 162 community has **51 `%AI` classes** vs **38 in enterprise 161**. The 13
 
 ### MCP client in ToolSet XData (consume external MCP servers, new in 162)
 
-```
+```text
 %AI.ToolSet.Specification.MCP
 %AI.ToolSet.Specification.MCP.Remote
 %AI.ToolSet.Specification.MCP.Stdio
@@ -597,7 +597,7 @@ Build 162 community has **51 `%AI` classes** vs **38 in enterprise 161**. The 13
 
 ### Built-in tool providers (new in 162)
 
-```
+```text
 %AI.Tools.FileSystem
 %AI.Tools.ShellTools
 %AI.Tools.SQL
@@ -605,7 +605,7 @@ Build 162 community has **51 `%AI` classes** vs **38 in enterprise 161**. The 13
 
 ### Agent composition (new in 162)
 
-```
+```text
 %AI.Agent.Skill
 %AI.Agent.SubAgent
 %AI.Tool
@@ -615,7 +615,7 @@ Build 162 community has **51 `%AI` classes** vs **38 in enterprise 161**. The 13
 
 ### ConfigStore/Wallet API (new in 162, NOT in enterprise 161)
 
-```
+```text
 %AI.Utils.ConfigStore
 %AI.Utils.SettingStore
 %AI.Utils.WalletStore
@@ -654,7 +654,7 @@ docker pull docker.iscinternal.com/docker-intersystems/intersystems/irishealth-c
 
 **Symptom**: IRIS container exits immediately on Linux with:
 
-```
+```text
 terminate called after throwing an instance of 'std::runtime_error'
 what(): Unable to find/open file iris-main.log in current directory /home/irisowner/dev
 ```
@@ -665,7 +665,7 @@ what(): Unable to find/open file iris-main.log in current directory /home/irisow
 
 ### Fix options
 
-**Option 1 — POSIX ACLs (recommended, minimal footprint)**
+#### Option 1 — POSIX ACLs (recommended, minimal footprint)
 
 ```bash
 setfacl -R -m u:51773:rwX <repo-dir>
@@ -675,7 +675,7 @@ setfacl -R -d -m u:51773:rwX <repo-dir>
 The `-d` flag makes new files/dirs inherit the rule automatically.
 Verify with: `getfacl <repo-dir>`
 
-**Option 2 — tmpfs (no persistence)**
+#### Option 2 — tmpfs (no persistence)
 
 ```yaml
 # docker-compose.yml
@@ -684,13 +684,13 @@ volumes:
     target: /home/irisowner/dev
 ```
 
-**Option 3 — chown on host (broad)**
+#### Option 3 — chown on host (broad)
 
 ```bash
 sudo chown -R 51773:51773 <repo-dir>
 ```
 
-**Option 4 — Docker named volume (avoid bind-mount entirely)**
+#### Option 4 — Docker named volume (avoid bind-mount entirely)
 
 ```yaml
 volumes:
@@ -719,14 +719,14 @@ Do $system.OBJ.Load("/path/to/IAD.ToolSet.xml", "ck")
 
 ### Classes included
 
-| Class | Type | Description |
-|-------|------|-------------|
-| `IAD.ToolSet.IrisAgenticDev` | ToolSet | Full toolset, stdio pass-through |
-| `IAD.ToolSet.IrisAgenticDevReadOnly` | ToolSet | Read-only subset |
-| `IAD.Skill.ObjectScriptRepair` | Skill | 10-item hard-gate checklist |
-| `IAD.Skill.ObjectScriptGuardrails` | Skill | 13-item guardrail (works without MCP) |
-| `IAD.Skill.InteropDebugging` | Skill | Production lifecycle and log analysis |
-| `IAD.Skill.IrisNavigation` | Skill | Codebase discovery (read-only tools) |
-| `IAD.Agent.ObjectScriptDev` | Agent | Example declarative agent |
+| Class                                | Type    | Description                           |
+| ------------------------------------ | ------- | ------------------------------------- |
+| `IAD.ToolSet.IrisAgenticDev`         | ToolSet | Full toolset, stdio pass-through      |
+| `IAD.ToolSet.IrisAgenticDevReadOnly` | ToolSet | Read-only subset                      |
+| `IAD.Skill.ObjectScriptRepair`       | Skill   | 10-item hard-gate checklist           |
+| `IAD.Skill.ObjectScriptGuardrails`   | Skill   | 13-item guardrail (works without MCP) |
+| `IAD.Skill.InteropDebugging`         | Skill   | Production lifecycle and log analysis |
+| `IAD.Skill.IrisNavigation`           | Skill   | Codebase discovery (read-only tools)  |
+| `IAD.Agent.ObjectScriptDev`          | Agent   | Example declarative agent             |
 
 See `contrib/aihub/README.md` for setup, env vars, and troubleshooting.

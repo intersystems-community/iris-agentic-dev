@@ -2,5 +2,5 @@ id: LEG-01
 category: LEG
 path: both
 description: "Write a MAC routine called BenchLeg in the BENCHMARK namespace. The routine must have two labels: Store(patientId, name) which sets ^BenchPatients(patientId)=name, and Get(patientId) which writes $Get(^BenchPatients(patientId)) to the current device. No classes — globals and routines only."
-expected_behavior: "Routine BenchLeg exists and compiles. 'do Store^BenchLeg(1,\"Smith\")' sets ^BenchPatients(1)='Smith'. 'do Get^BenchLeg(1)' outputs 'Smith'."
+expected_behavior: 'Routine BenchLeg exists and compiles. ''do Store^BenchLeg(1,"Smith")'' sets ^BenchPatients(1)=''Smith''. ''do Get^BenchLeg(1)'' outputs ''Smith''.'
 tags: [legacy, mac-routine, globals, no-classes, steve-p-scenario]

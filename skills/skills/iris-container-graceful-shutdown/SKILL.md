@@ -38,12 +38,13 @@ This flushes the WIJ, checkpoints globals, and marks the database clean. Next st
 services:
   iris:
     image: intersystemsdc/iris-community:latest
-    stop_grace_period: 60s    # Give docker stop 60s before SIGKILL
+    stop_grace_period: 60s # Give docker stop 60s before SIGKILL
     # Note: stop_grace_period alone is NOT enough — IRIS doesn't trap SIGTERM.
     # You must also run 'iris stop IRIS quietly' before 'docker compose down'.
 ```
 
 **Shutdown script** (create as `scripts/stop-iris.sh`):
+
 ```bash
 #!/bin/bash
 CONTAINER="${1:-iris}"
@@ -65,6 +66,7 @@ with IRISContainer.community() as iris:
 ```
 
 `stop_gracefully()` is also callable directly:
+
 ```python
 iris.stop_gracefully()   # Returns True on success, False if container not running
 docker stop container    # Safe to call after
@@ -74,12 +76,12 @@ docker stop container    # Safe to call after
 
 ## Why a Webgateway, CPF Merge, or stop_grace_period Alone Is Not Enough
 
-| Approach | Does it prevent data loss? | Why |
-|---|---|---|
-| `stop_grace_period: 60s` | ❌ | IRIS doesn't trap SIGTERM by default |
-| `stop_signal: SIGUSR1` | ❌ | IRIS ignores SIGUSR1/SIGUSR2 |
-| `iris stop IRIS quietly` via exec | ✅ | Explicit graceful shutdown with WIJ flush |
-| Custom entrypoint that traps SIGTERM | ✅ | Intercepts SIGTERM → runs iris stop → exits |
+| Approach                             | Does it prevent data loss? | Why                                         |
+| ------------------------------------ | -------------------------- | ------------------------------------------- |
+| `stop_grace_period: 60s`             | ❌                         | IRIS doesn't trap SIGTERM by default        |
+| `stop_signal: SIGUSR1`               | ❌                         | IRIS ignores SIGUSR1/SIGUSR2                |
+| `iris stop IRIS quietly` via exec    | ✅                         | Explicit graceful shutdown with WIJ flush   |
+| Custom entrypoint that traps SIGTERM | ✅                         | Intercepts SIGTERM → runs iris stop → exits |
 
 ---
 

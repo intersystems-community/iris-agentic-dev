@@ -2,5 +2,5 @@ id: LEG-02
 category: LEG
 path: both
 description: "Write a MAC routine called BenchConfig in BENCHMARK. It must have a Get(section, key) label that returns $Get(^BenchConfig(section, key)) and a Set(section, key, value) label that sets ^BenchConfig(section, key)=value. No classes."
-expected_behavior: "Routine BenchConfig compiles. 'do Set^BenchConfig(\"db\",\"host\",\"localhost\")' stores the value. 'write $$Get^BenchConfig(\"db\",\"host\")' returns 'localhost'."
+expected_behavior: 'Routine BenchConfig compiles. ''do Set^BenchConfig("db","host","localhost")'' stores the value. ''write $$Get^BenchConfig("db","host")'' returns ''localhost''.'
 tags: [legacy, mac-routine, globals, two-subscript]

@@ -8,19 +8,30 @@ description: >
   and how to verify the connection.
   Load when: setting up iris-dev VSCode extension, getting 404 on /api/atelier/,
   connecting to enterprise IRIS, or setting up the webgateway container.
-tags: [iris, vscode, objectscript, atelier, webserver, devtester, extension, webgateway, enterprise]
+tags:
+  [
+    iris,
+    vscode,
+    objectscript,
+    atelier,
+    webserver,
+    devtester,
+    extension,
+    webgateway,
+    enterprise,
+  ]
 ---
 
 # VSCode ObjectScript Extension — IRIS Setup
 
 ## Which Images Have Atelier REST on Port 52773?
 
-| Image | Has private web server | Atelier REST | Solution |
-|---|---|---|---|
-| `intersystemsdc/iris-community:*` | ✅ built-in | ✅ port 52773 | Direct |
-| `intersystemsdc/irishealth-community:*` | ✅ built-in | ✅ port 52773 | Direct |
-| `containers.intersystems.com/intersystems/iris:*` (enterprise) | ❌ WebServer=0 | ✅ via webgateway | See below |
-| `irishealth:2026.2.0AI.*` | ❌ WebServer=0 | ✅ via webgateway | See below |
+| Image                                                          | Has private web server | Atelier REST      | Solution  |
+| -------------------------------------------------------------- | ---------------------- | ----------------- | --------- |
+| `intersystemsdc/iris-community:*`                              | ✅ built-in            | ✅ port 52773     | Direct    |
+| `intersystemsdc/irishealth-community:*`                        | ✅ built-in            | ✅ port 52773     | Direct    |
+| `containers.intersystems.com/intersystems/iris:*` (enterprise) | ❌ WebServer=0         | ✅ via webgateway | See below |
+| `irishealth:2026.2.0AI.*`                                      | ❌ WebServer=0         | ✅ via webgateway | See below |
 
 Enterprise images have `WebServer=0` and no httpd binary. **The webgateway container DOES work** — but requires correct configuration (see three bugs below).
 
@@ -135,13 +146,13 @@ curl -s -u "_SYSTEM:SYS" "http://localhost:64780/api/atelier/" \
     "iris-enterprise": {
       "webServer": {
         "host": "localhost",
-        "port": 64780,      // webgateway host port
-        "pathPrefix": ""
+        "port": 64780, // webgateway host port
+        "pathPrefix": "",
       },
       "username": "_SYSTEM",
-      "description": "IRIS enterprise via webgateway"
-    }
-  }
+      "description": "IRIS enterprise via webgateway",
+    },
+  },
 }
 ```
 
@@ -188,7 +199,7 @@ services:
       - ./merge.cpf:/tmp/merge.cpf:ro
 ```
 
-```
+```ini
 # merge.cpf — prevents password expiry prompt
 [Actions]
 ModifyUser:Name=_SYSTEM,ChangePassword=0,PasswordNeverExpires=1

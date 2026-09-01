@@ -53,7 +53,7 @@ CPFPreset.CI_OPTIMIZED
 
 From [iris-fhir-facade-and-repo-template](https://github.com/grongierisc/iris-fhir-facade-and-repo-template):
 
-```
+```ini
 # merge.cpf
 [Actions]
 CreateDatabase:Name=MYAPP_DATA,Directory=/dur/iris/mgr/MYAPP_DATA
@@ -79,7 +79,7 @@ services:
 
 ## CPF Actions Reference
 
-```
+```ini
 [Actions]
 # Create a namespace with separate databases
 CreateResource:Name=%DB_MYNS_DATA,Description="MYNS data"
@@ -145,7 +145,7 @@ conn = iris.connect(...)
 conn = iris.get_connection()
 ```
 
-```
+```ini
 # WRONG: only patching SuperUser
 ModifyUser:Name=SuperUser,ChangePassword=0    # _SYSTEM still blocked!
 

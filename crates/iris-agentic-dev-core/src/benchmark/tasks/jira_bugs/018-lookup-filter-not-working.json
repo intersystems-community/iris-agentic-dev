@@ -31,11 +31,7 @@
     "created_date": "2025-12-14",
     "source": "Generated ObjectScript bug pattern",
     "author": "objectscript-coder",
-    "tags": [
-      "jira",
-      "bug-fix",
-      "filter-not-applied"
-    ],
+    "tags": ["jira", "bug-fix", "filter-not-applied"],
     "bug_pattern": "filter-not-applied"
   }
 }

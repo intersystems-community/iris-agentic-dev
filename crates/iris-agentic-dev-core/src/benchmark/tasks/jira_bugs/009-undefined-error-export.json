@@ -37,10 +37,6 @@
     "created_date": "2026-03-31",
     "source": "Replaced external-dep version; same null-check pattern",
     "author": "objectscript-coder",
-    "tags": [
-      "null-check",
-      "defensive-programming",
-      "object-reference"
-    ]
+    "tags": ["null-check", "defensive-programming", "object-reference"]
   }
 }

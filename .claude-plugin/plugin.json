@@ -7,7 +7,14 @@
   },
   "homepage": "https://github.com/intersystems-community/iris-agentic-dev",
   "license": "MIT",
-  "keywords": ["intersystems", "iris", "objectscript", "mcp", "skills", "interoperability"],
+  "keywords": [
+    "intersystems",
+    "iris",
+    "objectscript",
+    "mcp",
+    "skills",
+    "interoperability"
+  ],
   "mcpServers": {
     "iris-dev": {
       "command": "iris-dev",

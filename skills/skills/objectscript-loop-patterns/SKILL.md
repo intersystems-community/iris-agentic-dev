@@ -1,37 +1,38 @@
 ---
 author: tdyar
-benchmark_date: '2026-04-02'
-benchmark_iris_version: '2025.1'
+benchmark_date: "2026-04-02"
+benchmark_iris_version: "2025.1"
 benchmark_tasks:
-- jira-001
-- jira-002
-- jira-003
-- jira-004
-- jira-005
-- jira-006
-- jira-007
-- jira-008
-- jira-009
-- jira-010
-- jira-011
-- jira-012
-- jira-013
-- jira-014
-- jira-015
-- jira-016
-- jira-017
-description: 'ObjectScript For/While loop patterns, $Order iteration, postfix Quit,
+  - jira-001
+  - jira-002
+  - jira-003
+  - jira-004
+  - jira-005
+  - jira-006
+  - jira-007
+  - jira-008
+  - jira-009
+  - jira-010
+  - jira-011
+  - jira-012
+  - jira-013
+  - jira-014
+  - jira-015
+  - jira-016
+  - jira-017
+description:
+  "ObjectScript For/While loop patterns, $Order iteration, postfix Quit,
   Return vs Quit. Use when writing loops, iterating globals/collections, or handling
   early exits.
 
-  '
-iris_version: '>=2024.1'
+  "
+iris_version: ">=2024.1"
 name: objectscript-loop-patterns
 pass_rate: 0.5294117647058824
 state: reviewed
 tags:
-- objectscript
-- loops
+  - objectscript
+  - loops
 trigger: Any ObjectScript code with For, While, $Order, Quit, or loop iteration patterns.
 ---
 
@@ -153,7 +154,7 @@ Set safe = $REPLACE(safe,    ">", "&gt;")    // 3. then greater-than
 
 ## 7. For Loop Counter — Never Modify the Loop Variable
 
-```objectscript
+````objectscript
 // WRONG — modifying i inside the loop causes skipped/repeated iterations:
 For i=1:1:items.Count() {
     If condition { Set i = i + 1 }   // skips next item — DON'T DO THIS
@@ -197,11 +198,10 @@ For {
 // Two-level subscript: ^||Name(-score, tiebreaker) = value
 // Lets you sort by score descending, then alphabetically within the same score:
 Set ^||Results(-score, name) = data
-```
+````
 
 **Why it works**: IRIS collates numeric subscripts in numeric order. Negative numbers
 sort before zero, so `-100 < -90 < 0`. Negating the score inverts the order.
 No `$SortBegin` / array copy / post-sort needed — the global IS the sorted structure.
 
 **Common uses**: leaderboards, top-N queries, priority queues, ranked results.
-```

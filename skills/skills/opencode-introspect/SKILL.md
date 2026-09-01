@@ -14,19 +14,20 @@ description: >
 
 OpenCode stores data in **two parallel stores**:
 
-| Store | Path | Role |
-|-------|------|------|
-| SQLite DB | `~/.local/share/opencode/opencode.db` | Query cache — can be wiped and rebuilt |
-| Flat JSON files | `~/.local/share/opencode/storage/` | **Ground truth** — never wiped by opencode |
+| Store           | Path                                  | Role                                       |
+| --------------- | ------------------------------------- | ------------------------------------------ |
+| SQLite DB       | `~/.local/share/opencode/opencode.db` | Query cache — can be wiped and rebuilt     |
+| Flat JSON files | `~/.local/share/opencode/storage/`    | **Ground truth** — never wiped by opencode |
 
 The DB schema has these key tables: `project`, `session`, `message`, `part`.
+
 - `session.directory` — working directory the session ran in
 - `message.session_id` → FK to session
 - `part.message_id` → FK to message; `part.data` is a **JSON blob** (not columns)
 
 ### part.data JSON structure
 
-```
+```text
 type: "text"       → d['text']                            (assistant/user prose)
 type: "tool"       → d['tool'], d['state']['input'], d['state']['output']
 type: "step-start" → d['snapshot']                        (context snapshot hash)
@@ -173,6 +174,7 @@ If any count is 0 → DB was wiped. Sessions are still on disk (see recovery bel
 The DB is a **cache** — flat files are the ground truth.
 
 ### When does a wipe happen?
+
 Running `opencode debug config` (or any command that spawns a child opencode process) against a DB from an older schema version triggers Drizzle migration, which drops and recreates tables. The flat files at `~/.local/share/opencode/storage/` are never touched.
 
 ### Recovery procedure

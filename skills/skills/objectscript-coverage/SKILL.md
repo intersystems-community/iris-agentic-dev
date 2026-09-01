@@ -92,7 +92,13 @@ If you get `BBSIZ_NOT_CONFIGURED`:
   "testcoverage_available": false,
   "testcoverage_hint": "Install with: zpm \"install testcoverage\"",
   "classes": [
-    { "class": "MyApp.MyClass", "routine": "MyApp.MyClass.1", "hit": 45, "total": 61, "pct": 73.8 }
+    {
+      "class": "MyApp.MyClass",
+      "routine": "MyApp.MyClass.1",
+      "hit": 45,
+      "total": 61,
+      "pct": 73.8
+    }
   ]
 }
 ```

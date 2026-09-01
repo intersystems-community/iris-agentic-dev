@@ -25,7 +25,8 @@ benchmark_tasks:
   - jira-020
   - jira-021
   - jira-056
-description: Use when writing or reviewing any ObjectScript code. Hard gate — 10-item
+description:
+  Use when writing or reviewing any ObjectScript code. Hard gate — 10-item
   checklist catches the most common AI mistakes before showing code to the user.
 iris_version: ">=2024.1"
 name: objectscript-guardrails
@@ -47,12 +48,12 @@ trigger: Use for tdyar/iris-light-slim
 
 - [ ] **Quit/Return**: No `Quit value` inside For/While/Try — use `Return value`
 - [ ] **Postfix syntax**: `Quit:key=""` — NO spaces in condition, alone on its own line
-- [ ] **$IsObject**: Check `'$IsObject(obj)` after every `%OpenId` before touching properties
+- [ ] **$IsObject**: Check `'$IsObject(obj)`after every`%OpenId` before touching properties
 - [ ] **SQL table name**: Last dot = schema separator. `Catalog.Item` → SQL `Catalog.Item` (not `Catalog_Item`)
 - [ ] **SQLCODE**: `0` = success (falsy). Check `SQLCODE = 0` not just `SQLCODE`
 - [ ] **HTML escaping**: `&` FIRST, then `<`, then `>`
 - [ ] **Arithmetic**: Left-to-right, no precedence. Use `1.8` not `9/5`. Parenthesize everything
-- [ ] **$ListBuild()**: Empty list is `""` not `$ListBuild()` — `$ListLength($ListBuild()) = 1`
+- [ ] **$ListBuild()**: Empty list is `""` not `$ListBuild()`—`$ListLength($ListBuild()) = 1`
 - [ ] **%Status**: Use `$$$ISERR(sc)` / `$$$ThrowOnError(sc)`. Never return `$$$OK` after catching an error
 - [ ] **Transactions**: `If $TLevel > 0 { TROLLBACK }` — never `Return` inside TSTART without rollback
 - [ ] **Storage blocks**: Never edit `Storage Default { ... }` — compiler auto-maps properties on compile, added or removed (orphans are fine). Rename exception: also rename its Storage entry. Reset needs explicit user confirmation.
