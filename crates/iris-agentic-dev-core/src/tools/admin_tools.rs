@@ -824,7 +824,8 @@ pub async fn my_access_impl(
     let username = username_out.trim();
 
     // Query Security.Users
-    let sql = "SELECT Name, FullName, Roles FROM Security.Users WHERE Name = ?";
+    let sql =
+        "SELECT Name, FullName, $LISTTOSTRING(Roles) AS Roles FROM Security.Users WHERE Name = ?";
     match iris
         .query(
             sql,
@@ -887,7 +888,8 @@ pub async fn capability_matrix_impl(
         }
     };
 
-    let sql = "SELECT Name, FullName, Roles FROM Security.Users WHERE Name = ?";
+    let sql =
+        "SELECT Name, FullName, $LISTTOSTRING(Roles) AS Roles FROM Security.Users WHERE Name = ?";
     match iris
         .query(
             sql,
