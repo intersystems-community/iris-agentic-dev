@@ -38,9 +38,9 @@ enum Commands {
     Doc(cmd::doc::DocCommand),
     /// Invoke any MCP tool by name with JSON arguments
     Tool(cmd::tool::ToolCommand),
-    /// Initialize a .iris-dev.toml workspace config
+    /// Initialize a .iris-agentic-dev.toml workspace config
     Init(cmd::init::InitCommand),
-    /// Install packages from iris-dev.toml
+    /// Install packages from .iris-agentic-dev.toml
     Install(cmd::install::InstallCommand),
     /// Run the skill/tool benchmark harness (pass_rate/lift scoring against the ported task suite)
     Benchmark(cmd::benchmark::BenchmarkCommand),

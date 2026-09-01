@@ -370,8 +370,8 @@ fn credential_not_found_display_contains_server_name() {
         "CredentialNotFound display must contain server name: {s}"
     );
     assert!(
-        s.contains("Reconnect"),
-        "CredentialNotFound display must mention Reconnect: {s}"
+        s.contains("state.vscdb") || s.contains("Reconnect"),
+        "CredentialNotFound display must mention state.vscdb or Reconnect: {s}"
     );
 }
 

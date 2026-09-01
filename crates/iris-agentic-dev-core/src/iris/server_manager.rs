@@ -56,8 +56,10 @@ impl std::fmt::Display for SmCredentialError {
         match self {
             SmCredentialError::CredentialNotFound { server_name } => write!(
                 f,
-                "No credential found in OS keychain for Server Manager server '{server_name}'. \
-                 Open VS Code → Server Manager → right-click the server → Reconnect."
+                "No credential found for Server Manager server '{server_name}'. \
+                 On Windows: credentials are read from VS Code's state.vscdb — make sure \
+                 iris-agentic-dev is v1.2.8 or later. \
+                 On macOS/Linux: open VS Code → Server Manager → right-click the server → Reconnect."
             ),
             SmCredentialError::Ambiguous { available } => write!(
                 f,
