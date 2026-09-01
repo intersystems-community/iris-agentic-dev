@@ -56,7 +56,7 @@ fn resolve_vscode_secret_verbose(
     db_path_override: Option<&std::path::Path>,
 ) -> Result<String, String> {
     use iris_agentic_dev_core::iris::vscode_payload::{
-        decode_payload, hex_preview, DecodedPayload,
+        classify_payload, decode_payload, hex_preview, DecodedPayload,
     };
 
     let db_path = match db_path_override {
