@@ -126,8 +126,8 @@ async fn e2e_database_list_free_space() {
 
     // At least one entry should have size_mb as a positive number
     let has_size = databases.iter().any(|db| {
-        db["size_mb"].as_i64().map_or(false, |n| n > 0)
-            || db["size_mb"].as_f64().map_or(false, |n| n > 0.0)
+        db["size_mb"].as_i64().is_some_and(|n| n > 0)
+            || db["size_mb"].as_f64().is_some_and(|n| n > 0.0)
     });
     assert!(
         has_size,
@@ -147,7 +147,7 @@ async fn e2e_database_list_free_space() {
     for db in databases {
         let max = &db["max_size_mb"];
         assert!(
-            max.is_null() || max.as_i64().map_or(false, |n| n > 0),
+            max.is_null() || max.as_i64().is_some_and(|n| n > 0),
             "max_size_mb should be null or positive, got: {max} in {db}"
         );
     }
