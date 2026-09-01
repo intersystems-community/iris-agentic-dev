@@ -182,6 +182,7 @@ jobs:
           }
 
           Write-Host "PASS: safeStorage and raw DPAPI both resolve; junk reports a format error"
+          exit 0
 
   sign-windows:
     runs-on: windows-latest
