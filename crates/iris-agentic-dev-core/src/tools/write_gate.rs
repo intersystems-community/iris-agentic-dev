@@ -755,9 +755,8 @@ pub fn contains_global_kill(code: &str) -> bool {
         // Check every position where 'k' occurs.
         for (i, _) in lower.match_indices('k') {
             let rest = &lower[i..];
-            let after = if rest.starts_with("kill") {
-                // "kill" keyword — consume 4 bytes.
-                &rest[4..]
+            let after = if let Some(stripped) = rest.strip_prefix("kill") {
+                stripped
             } else {
                 // Single-letter `k`, but not the start of "kill".
                 let tail = &rest[1..];
@@ -767,7 +766,7 @@ pub fn contains_global_kill(code: &str) -> bool {
                 }
                 tail
             };
-            let trimmed = after.trim_start_matches(|c: char| c == ' ' || c == '\t');
+            let trimmed = after.trim_start_matches([' ', '\t']);
             if trimmed.starts_with('^') {
                 return true;
             }

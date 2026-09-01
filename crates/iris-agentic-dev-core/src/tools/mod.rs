@@ -4158,7 +4158,7 @@ impl IrisTools {
         // Indirect vectors (Kill @var, Xecute, ##class dispatch, &sql) are not detected here;
         // the error message says so explicitly so callers cannot mistake this for a full block.
         if crate::tools::write_gate::contains_global_kill(&p.code) {
-            let gates = self.connection.lock().unwrap().gates.clone();
+            let gates = self.connection.lock().unwrap().gates;
             if !gates.destructive_enabled {
                 return err_result(serde_json::json!({
                     "success": false,
