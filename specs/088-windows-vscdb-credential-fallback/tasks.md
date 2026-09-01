@@ -42,12 +42,12 @@
 
 - [x] T011 `cargo fmt --all` clean
 - [x] T012 `cargo clippy -- -D warnings` clean (exit 0)
-- [ ] T013 `cargo test --package iris-agentic-dev-core` — running
-- [ ] T014 `cargo test --package iris-agentic-dev` — running
+- [x] T013 `cargo test --package iris-agentic-dev-core` — green
+- [x] T014 `cargo test --package iris-agentic-dev` — green
 
 ## Done criteria
 
-- `cargo test` (no `--include-ignored`, macOS) green ✓ (pending)
+- `cargo test` (no `--include-ignored`, macOS) green ✓
 - `cargo clippy -- -D warnings` clean ✓
 - `cargo fmt --all -- --check` clean ✓
 - `check_sm_credential.rs` contains no duplicated vscdb/DPAPI/AES logic ✓
