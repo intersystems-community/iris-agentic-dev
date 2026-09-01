@@ -76,6 +76,10 @@ fn mcp_session(
     let mut cmd = Command::new(&bin);
     cmd.args(["mcp"]);
     cmd.env_remove("IRIS_CONTAINER");
+    // Strip gate env vars — these tests need the config file (or defaults) to control gates,
+    // not the CI-injected operator overrides from the parent process.
+    cmd.env_remove("IRIS_WRITE_TOOLS_ENABLED");
+    cmd.env_remove("IRIS_DESTRUCTIVE_TOOLS_ENABLED");
     for key in &[
         "IRIS_HOST",
         "IRIS_WEB_PORT",
