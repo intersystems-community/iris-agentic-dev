@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/schwichtgit/spec-gates/runtime/policy.schema.json",
+  "title": "spec-gates policy",
+  "description": "Declarative gate policy for Spec Kit projects. Consumed by .specify/gates/lib/policy.sh at runtime and validated by /speckit.gates.init and /speckit.gates.upgrade.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["hooks"],
+  "properties": {
+    "_comment": {
+      "type": "string",
+      "description": "Free-form note field. Ignored by the loader. Authored copies may reference this schema URL here."
+    },
+    "$schema": {
+      "type": "string",
+      "description": "Optional schema reference for editor tooling."
+    },
+    "extends": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "version"],
+      "description": "Versioned baseline contract (feature 003). This policy file becomes an overlay on the named baseline: /speckit.gates.sync fetches source@version once, pins it (baseline.lock.json), snapshots it (baseline.json), and materializes the merged effective policy (policy.effective.json) that every boundary enforces. Absent = the contract machinery is fully dormant.",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Anything git accepts as a remote: https/ssh URL, file:// URL, or local path to the baseline repository."
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Tag or commit identifier to pin. Branch names are refused at sync time — a moving pin is not a pin."
+        },
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "default": "policy.json",
+          "description": "Path of the baseline policy document inside the source repository."
+        }
+      }
+    },
+    "hooks": {
+      "type": "object",
+      "description": "Map of hook name to hook stanza. Hook names are free-form strings matching the name used by gates_policy_get / gates_policy_list callers.",
+      "additionalProperties": {
+        "$ref": "#/$defs/hook"
+      }
+    },
+    "protected_files": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Files refused at the agent PreToolUse boundary and by the git forbidden-file scan, on top of the built-in secret/key defaults.",
+      "properties": {
+        "extra": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Additional paths or globs to protect."
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Toggles for the git-boundary hooks (pre-commit / commit-msg).",
+      "properties": {
+        "block_main_commits": {
+          "type": "boolean",
+          "default": true,
+          "description": "Refuse direct commits to main/master (override per-commit with GATES_ALLOW_MAIN_COMMIT=1)."
+        },
+        "conventional_commits": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require Conventional Commits subject format in commit-msg."
+        },
+        "forbid_ai_isms": {
+          "type": "boolean",
+          "default": true,
+          "description": "Reject AI-ism / self-referential phrasing in commit messages and PRs."
+        }
+      }
+    },
+    "attestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Gate-run evidence settings: attestation records appended per verify.sh run and the pins-based parity gate. Optional; absence means all defaults apply (enabled, 200 records, parity error).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Append an attestation record to .specify/gates/attestations.jsonl on every verify.sh run (and embed it in --json). false also disables the parity gate; canaries are unaffected."
+        },
+        "max_records": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 200,
+          "description": "Cap on attestation log lines; the oldest records are dropped once the cap is exceeded."
+        },
+        "parity": {
+          "type": "string",
+          "enum": ["error", "warning", "off"],
+          "default": "error",
+          "description": "Severity of the synthetic parity gate when a resolved tool version drifts from its lockfile pin: error fails the run, warning reports without failing, off omits the gate."
+        }
+      }
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Spec-conformance gate settings: fenced accept blocks in specs/*/tasks.md run as executable acceptance criteria; features whose spec.md Status is Complete are enforced. Optional; absence means all defaults apply (enabled, error, all features, 30s timeout).",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run the spec gate on every verify.sh run. false removes the spec gate entry and the attestation spec object."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["error", "warning"],
+          "default": "error",
+          "description": "How enforcement failures (unchecked tasks, failing accept blocks, parse errors) map to the run result: error fails the run, warning reports without failing."
+        },
+        "include": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["*"],
+          "description": "Feature-directory-name globs eligible for enforcement when marked Complete. Non-matching complete features stay informational."
+        },
+        "exclude": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Feature-directory-name globs skipped entirely (not discovered)."
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 30,
+          "description": "Per-accept-block watchdog seconds; an exceeded budget fails that criterion."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "hook": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["severity"],
+      "allOf": [
+        {
+          "if": {
+            "properties": { "orchestrator": { "const": "custom" } },
+            "required": ["orchestrator"]
+          },
+          "then": {
+            "required": ["custom_command"],
+            "properties": {
+              "custom_command": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "include": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Glob patterns selecting files in scope. Consumed by config generators."
+        },
+        "exclude": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Glob patterns excluded from scope. Consumed by config generators."
+        },
+        "orchestrator": {
+          "type": "string",
+          "enum": ["none", "task", "custom"],
+          "description": "Dispatch style. none = invoke the native tool directly. task = delegate to a Taskfile target. custom = invoke the command in custom_command."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["error", "warning", "info"],
+          "description": "How the hook's overall exit code maps to caller-visible severity."
+        },
+        "on_missing_runner": {
+          "type": "string",
+          "enum": ["warn", "skip"],
+          "default": "warn",
+          "description": "Behavior when no per-service runner can be resolved for a tool (neither $dir/.venv/bin/<tool> nor `uv run --project $dir <tool>` is available). Default is warn. INFRA-025: applies to the verify-quality legacy walker's Python branch; per-service opt-out via [tool.gates.hooks] skip in pyproject.toml is logged as SKIP regardless of this field."
+        },
+        "on_missing_tests": {
+          "type": "string",
+          "enum": ["warn", "skip"],
+          "default": "skip",
+          "description": "Behavior when the test runner reports no tests collected (pytest exit code 5). Default is skip (log SKIP, no WARNING/FAIL). INFRA-026: warn flips to logging WARN and incrementing the warnings counter; consumed by the verify-quality Python branch's pytest classifier."
+        },
+        "custom_command": {
+          "type": "string",
+          "description": "Shell command invoked when orchestrator == custom."
+        }
+      }
+    }
+  }
+}

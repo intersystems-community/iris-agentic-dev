@@ -30,9 +30,24 @@ docs/*.txt
 # Article drafts go in ~/writing/iris-agentic-dev/ — not tracked here
 docs/roadmap-internal.md
 *.profraw
-.specify/
+# spec-gates enforcement runtime is TRACKED; the rest of .specify/ and .claude/
+# is not. CI runs `bash .specify/gates/verify.sh` after a plain checkout with no
+# install step, so the runtime has to be in the repo (the extension projects by
+# copy, not symlink, so it is self-contained and does not need
+# .specify/extensions/). .claude/hooks/gates/ is required too: canary.sh resolves
+# the agent hooks from there and scores a missing one as a failure, not a skip.
+# Directory patterns stop git descending, so these are `dir/*` plus negations.
+/.specify/*
+!/.specify/gates/
+/.specify/gates/attestations.jsonl
 .opencode/
-.claude/
+/.claude/*
+!/.claude/hooks/
+# Nested agent dirs stay fully ignored. The rules above are root-anchored, so
+# without this a subproject's .claude/ (e.g. the VS Code extension) would be
+# un-ignored as a side effect.
+*/.claude/
+*/.specify/
 vscode-iris-dev/*.vsix
 *.exe
 iris-dev-macos*

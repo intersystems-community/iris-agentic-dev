@@ -1,0 +1,151 @@
+#!/bin/bash
+set -euo pipefail
+
+# Git commit-msg hook.
+# Validates commit message format, blocks AI-isms, emoji, and bad patterns.
+
+MSG_FILE="$1"
+MSG=$(cat "$MSG_FILE")
+SUBJECT=$(head -n 1 "$MSG_FILE")
+ERRORS=0
+WARNINGS=0
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
+# shellcheck source=/dev/null disable=SC1091
+[[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"
+
+# A git toggle is enabled unless the policy sets it to false (default: on).
+policy_enabled() { # <git-field>
+    command -v gates_policy_section_get >/dev/null 2>&1 || return 0
+    [[ "$(gates_policy_section_get git "$1")" == "false" ]] && return 1
+    return 0
+}
+
+# --- Empty check ---
+if [[ -z "${MSG// /}" ]]; then
+    echo "ERROR: Empty commit message." >&2
+    exit 1
+fi
+
+# --- Subject length ---
+if [[ ${#SUBJECT} -gt 72 ]]; then
+    echo "WARN: Subject line exceeds 72 characters (${#SUBJECT})." >&2
+    WARNINGS=$((WARNINGS + 1))
+fi
+
+# --- Emoji detection ---
+EMOJI_FOUND=$(python3 << 'PYEOF'
+import re, sys
+
+text = sys.argv[1] if len(sys.argv) > 1 else ""
+emoji_pattern = re.compile(
+    "["
+    "\U0001F300-\U0001F9FF"
+    "\U00002600-\U000027BF"
+    "\U0000FE00-\U0000FE0F"
+    "\U0000200D"
+    "\U00002702-\U000027B0"
+    "\U0001FA00-\U0001FA6F"
+    "\U0001FA70-\U0001FAFF"
+    "]+",
+    flags=re.UNICODE
+)
+if emoji_pattern.search(text):
+    print("true")
+else:
+    print("false")
+PYEOF
+"$SUBJECT" 2>/dev/null || echo "false")
+
+if [[ "$EMOJI_FOUND" == "true" ]]; then
+    echo "ERROR: Emoji detected in commit message." >&2
+    ERRORS=$((ERRORS + 1))
+fi
+
+# --- AI-ism detection (policy: git.forbid_ai_isms) ---
+if policy_enabled forbid_ai_isms; then
+    # Self-references
+    if echo "$MSG" | grep -qiE '\b(I have|I'\''ve|I updated|I fixed|I added|I removed|I refactored)\b'; then
+        echo "ERROR: Self-referential language detected." >&2
+        ERRORS=$((ERRORS + 1))
+    fi
+
+    # Filler
+    if echo "$MSG" | grep -qiE '\b(Certainly|I'\''d be happy to|As an AI|Happy to help)\b'; then
+        echo "ERROR: AI filler language detected." >&2
+        ERRORS=$((ERRORS + 1))
+    fi
+
+    # Marketing adjectives
+    if echo "$MSG" | grep -qiE '\b(seamless|robust|powerful|elegant|streamlined|polished|enhanced|refined)\b'; then
+        echo "ERROR: Marketing adjective detected." >&2
+        ERRORS=$((ERRORS + 1))
+    fi
+
+    # AI branding
+    if echo "$MSG" | grep -qiE '\b(Anthropic|GPT|OpenAI|Copilot)\b'; then
+        echo "ERROR: AI branding detected." >&2
+        ERRORS=$((ERRORS + 1))
+    fi
+
+    # Standalone "Claude" check. Strip legitimate references first so editing
+    # Claude files does not trip the AI-branding rule: the product name
+    # ("Claude Code"), the memory file (CLAUDE.md, any casing), .claude/ paths
+    # (hooks, settings), and claude-* kebab identifiers. Portable sed only (no
+    # GNU-specific case-insensitive flag).
+    CLEANED_MSG=$(echo "$MSG" \
+        | sed 's/Claude Code//g' \
+        | sed 's/[Cc][Ll][Aa][Uu][Dd][Ee]\.md//g' \
+        | sed 's#\.claude/[^[:space:]]*##g' \
+        | sed 's/[Cc]laude-[A-Za-z0-9._-]*//g' \
+        | sed 's/([^)]*)//g')
+    if echo "$CLEANED_MSG" | grep -qiE '\bClaude\b'; then
+        echo "ERROR: Standalone 'Claude' detected (use 'Claude Code' if needed)." >&2
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+# --- Conventional commits (policy: git.conventional_commits) ---
+if policy_enabled conventional_commits; then
+    if ! echo "$SUBJECT" | grep -qE '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\(.+\))?: .+'; then
+        echo "ERROR: Subject does not match conventional commit format." >&2
+        echo "  Expected: type(scope)?: description" >&2
+        echo "  Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert" >&2
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+# --- Draft markers ---
+if echo "$MSG" | grep -qiE '\b(WIP|FIXME|TODO|XXX|DO NOT MERGE)\b'; then
+    echo "WARN: Draft marker detected in commit message." >&2
+    WARNINGS=$((WARNINGS + 1))
+fi
+
+# --- Co-Authored-By ---
+if echo "$MSG" | grep -qi 'Co-Authored-By:'; then
+    echo "ERROR: Co-Authored-By trailer detected." >&2
+    ERRORS=$((ERRORS + 1))
+fi
+
+# --- Body line length ---
+if [[ $(echo "$MSG" | wc -l) -gt 1 ]]; then
+    LONG_LINES=$(echo "$MSG" | tail -n +3 | awk 'length > 100 { count++ } END { print count+0 }')
+    if [[ "$LONG_LINES" -gt 0 ]]; then
+        echo "WARN: $LONG_LINES body line(s) exceed 100 characters." >&2
+        WARNINGS=$((WARNINGS + 1))
+    fi
+fi
+
+# --- Result ---
+if [[ "$ERRORS" -gt 0 ]]; then
+    echo "" >&2
+    echo "Commit message validation failed: $ERRORS error(s), $WARNINGS warning(s)." >&2
+    exit 1
+fi
+
+if [[ "$WARNINGS" -gt 0 ]]; then
+    echo "Commit message accepted with $WARNINGS warning(s)." >&2
+fi
+
+exit 0

@@ -1,0 +1,100 @@
+{
+  "_comment": "spec-gates policy. Schema: .specify/gates/policy.schema.json. Loader: .specify/gates/lib/policy.sh. USER-OWNED: init seeds this file; upgrade never overwrites. Edit include/exclude globs, orchestrator, and severity to customize gate behavior at all three boundaries. node_modules/.venv are excluded at both top-level (name/**) and any nested depth (**/name/**) for monorepos. To inherit an org baseline policy, add \"extends\": { \"source\": \"<git url or path>\", \"version\": \"<tag or commit>\" } and run /speckit.gates.sync — this file then overlays the baseline (see feature 003).",
+  "hooks": {
+    "prettier": {
+      "include": [
+        "**/*.md",
+        "**/*.yml",
+        "**/*.yaml",
+        "**/*.json"
+      ],
+      "exclude": [
+        ".specify/**",
+        ".claude/**",
+        "node_modules/**",
+        "**/node_modules/**",
+        ".venv/**",
+        "**/.venv/**",
+        "target/**",
+        "**/target/**",
+        "specs/**",
+        "LICENSE",
+        "outputs/**",
+        "tests/e2e/results/**",
+        "**/tests/fixtures/**"
+      ],
+      "orchestrator": "none",
+      "severity": "error"
+    },
+    "markdownlint": {
+      "include": [
+        "**/*.md"
+      ],
+      "exclude": [
+        ".specify/**",
+        ".claude/**",
+        "node_modules/**",
+        "**/node_modules/**",
+        ".venv/**",
+        "**/.venv/**",
+        "target/**",
+        "**/target/**",
+        "specs/**",
+        "outputs/**",
+        "tests/e2e/results/**"
+      ],
+      "orchestrator": "none",
+      "severity": "error"
+    },
+    "shellcheck": {
+      "include": [
+        "**/*.sh"
+      ],
+      "exclude": [
+        ".specify/**",
+        ".claude/**",
+        ".git/**",
+        "node_modules/**",
+        "**/node_modules/**",
+        ".venv/**",
+        "**/.venv/**",
+        "target/**",
+        "**/target/**",
+        "dist/**",
+        "**/dist/**",
+        "specs/**"
+      ],
+      "orchestrator": "none",
+      "severity": "error"
+    },
+    "verify-quality": {
+      "orchestrator": "none",
+      "severity": "error"
+    }
+  },
+  "protected_files": {
+    "extra": [
+      ".specify/memory/constitution.md",
+      ".specify/gates/policy.json"
+    ]
+  },
+  "git": {
+    "block_main_commits": true,
+    "conventional_commits": true,
+    "forbid_ai_isms": true
+  },
+  "attestation": {
+    "enabled": true,
+    "max_records": 200,
+    "parity": "error"
+  },
+  "spec": {
+    "enabled": true,
+    "severity": "error",
+    "include": [
+      "*"
+    ],
+    "exclude": [],
+    "timeout_s": 30
+  }
+}
