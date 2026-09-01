@@ -112,9 +112,10 @@ test("US1: unsupported platform/arch → returns null (no PATH, no setting)", as
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
   // We can't override process.platform, so we test via getBinaryName returning null.
   // On supported platforms, this test validates the null-safety of the fallback chain
-  // for unsupported arch. We test getBinaryName(platform, 'arm64') on linux directly.
+  // for unsupported arch. win32/arm64 is the remaining unsupported combination:
+  // linux/arm64 is a published asset now, so it no longer exercises the null path.
   const { getBinaryName } = require("../.test-out/platform.cjs");
-  const name = getBinaryName("linux", "arm64");
+  const name = getBinaryName("win32", "arm64");
   assert.equal(name, null);
   fs.rmSync(tmp, { recursive: true, force: true });
 });
