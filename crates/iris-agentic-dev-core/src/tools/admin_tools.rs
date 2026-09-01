@@ -291,34 +291,204 @@ If $$$ISERR(tSC) { Write "ERROR:"_$System.Status.GetErrorText(tSC) Quit }
 While tRS.Next() {
   Write tRS.Get("Directory"),"|",tRS.Get("Mounted"),"|",tRS.Get("Size"),!
 }"#;
+    let base_out = match iris.execute_via_generator(code, "%SYS", client).await {
+        Ok(out) => out,
+        Err(e) => return err_json("IRIS_UNREACHABLE", &e.to_string()),
+    };
+    let base_out = base_out.trim();
+    if base_out.starts_with("ERROR:") {
+        return err_json("IRIS_EXECUTE_ERROR", base_out);
+    }
+
+    // Query free space — graceful degradation if it fails
+    let fs_code = r#"Set tRS=##class(%ResultSet).%New("%SYS.DatabaseQuery:FreeSpace")
+Set tSC=tRS.Execute()
+If $$$ISERR(tSC) { Write "ERROR:"_$System.Status.GetErrorText(tSC) Quit }
+While tRS.Next() {
+  Write tRS.Get("Directory"),"|",tRS.Get("SizeInt"),"|",tRS.Get("AvailableNum"),"|",tRS.Get("Free"),"|",tRS.Get("MaxSize"),!
+}"#;
+    let (free_space_map, free_space_note) =
+        match iris.execute_via_generator(fs_code, "%SYS", client).await {
+            Ok(fs_out) => {
+                let fs_out = fs_out.trim().to_string();
+                if fs_out.starts_with("ERROR:") {
+                    (
+                        std::collections::HashMap::<String, serde_json::Value>::new(),
+                        Some(format!("unavailable: {fs_out}")),
+                    )
+                } else {
+                    let mut map = std::collections::HashMap::new();
+                    for line in fs_out.lines().filter(|l| !l.is_empty()) {
+                        let p: Vec<&str> = line.splitn(5, '|').collect();
+                        let dir = p.first().copied().unwrap_or("").to_string();
+                        if dir.is_empty() {
+                            continue;
+                        }
+                        let size_mb = p
+                            .get(1)
+                            .copied()
+                            .unwrap_or("0")
+                            .trim()
+                            .parse::<i64>()
+                            .unwrap_or(0);
+                        let free_space_mb = p
+                            .get(2)
+                            .copied()
+                            .unwrap_or("0")
+                            .trim()
+                            .parse::<f64>()
+                            .unwrap_or(0.0);
+                        let free_pct = p
+                            .get(3)
+                            .copied()
+                            .unwrap_or("0")
+                            .trim()
+                            .parse::<i64>()
+                            .unwrap_or(0);
+                        let max_size_mb = parse_max_size_mb(p.get(4).copied().unwrap_or(""))
+                            .map(serde_json::Value::from)
+                            .unwrap_or(serde_json::Value::Null);
+                        map.insert(
+                            dir,
+                            serde_json::json!({
+                                "size_mb": size_mb,
+                                "free_space_mb": free_space_mb,
+                                "free_pct": free_pct,
+                                "max_size_mb": max_size_mb,
+                            }),
+                        );
+                    }
+                    (map, None)
+                }
+            }
+            Err(e) => (
+                std::collections::HashMap::new(),
+                Some(format!("unavailable: {e}")),
+            ),
+        };
+
+    let databases: Vec<serde_json::Value> = base_out
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|line| {
+            let parts: Vec<&str> = line.splitn(3, '|').collect();
+            let dir = parts.first().copied().unwrap_or("");
+            let mut entry = serde_json::json!({
+                "directory": dir,
+                "mounted": parts.get(1).copied().unwrap_or("0") != "0",
+                "size_mb": parts.get(2).copied().unwrap_or("0")
+                    .trim().parse::<f64>().unwrap_or(0.0),
+            });
+            if let Some(fs) = free_space_map.get(dir) {
+                entry["size_mb"] = fs["size_mb"].clone();
+                entry["free_space_mb"] = fs["free_space_mb"].clone();
+                entry["free_pct"] = fs["free_pct"].clone();
+                entry["max_size_mb"] = fs["max_size_mb"].clone();
+            }
+            entry
+        })
+        .collect();
+    let count = databases.len();
+    let mut resp = serde_json::json!({
+        "success": true,
+        "databases": databases,
+        "count": count,
+    });
+    if let Some(note) = free_space_note {
+        resp["free_space_note"] = serde_json::Value::String(note);
+    }
+    ok_json(resp)
+}
+
+// ── iris_mirror_status (089) ──────────────────────────────────────────────────
+
+/// Normalize `%SYSTEM.Mirror.GetMemberType()` output to Option<String>.
+/// Returns `None` for the "Not Member" sentinel and empty strings.
+pub fn normalize_mirror_type(s: &str) -> Option<String> {
+    if s.is_empty() || s == "Not Member" {
+        None
+    } else {
+        Some(s.to_string())
+    }
+}
+
+/// Build the JSON payload for `iris_mirror_status`.
+pub fn build_mirror_status_json(
+    is_member: bool,
+    mirror_name: &str,
+    member_type: &str,
+    is_primary: bool,
+) -> serde_json::Value {
+    let name_val = if is_member && !mirror_name.is_empty() {
+        serde_json::Value::String(mirror_name.to_string())
+    } else {
+        serde_json::Value::Null
+    };
+    let type_val = normalize_mirror_type(member_type)
+        .map(serde_json::Value::String)
+        .unwrap_or(serde_json::Value::Null);
+    serde_json::json!({
+        "is_member": is_member,
+        "mirror_name": name_val,
+        "member_type": type_val,
+        "is_primary": is_primary,
+    })
+}
+
+pub async fn iris_mirror_status_impl(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+) -> Result<CallToolResult, McpError> {
+    let code = r#"ZN "%SYS"
+Set tMember=##class(%SYSTEM.Mirror).IsMember()
+Set tName=##class(%SYSTEM.Mirror).MirrorName()
+Set tType=##class(%SYSTEM.Mirror).GetMemberType()
+Set tPrimary=##class(%SYSTEM.Mirror).IsPrimary()
+Write tMember,"|",tName,"|",tType,"|",tPrimary"#;
     match iris.execute_via_generator(code, "%SYS", client).await {
         Ok(out) => {
             let out = out.trim();
             if out.starts_with("ERROR:") {
-                return err_json("IRIS_EXECUTE_ERROR", out);
+                return ok_json(serde_json::json!({
+                    "success": false,
+                    "error": out,
+                    "is_member": serde_json::Value::Null,
+                }));
             }
-            let databases: Vec<serde_json::Value> = out
-                .lines()
-                .filter(|l| !l.is_empty())
-                .map(|line| {
-                    let parts: Vec<&str> = line.splitn(3, '|').collect();
-                    serde_json::json!({
-                        "directory": parts.first().copied().unwrap_or(""),
-                        "mounted": parts.get(1).copied().unwrap_or("0") != "0",
-                        "size_mb": parts.get(2).copied().unwrap_or("0")
-                            .trim().parse::<f64>().unwrap_or(0.0),
-                    })
-                })
-                .collect();
-            let count = databases.len();
-            ok_json(serde_json::json!({
-                "success": true,
-                "databases": databases,
-                "count": count,
-            }))
+            let parts: Vec<&str> = out.splitn(4, '|').collect();
+            let is_member = parts.first().copied().unwrap_or("0") != "0";
+            let mirror_name = parts.get(1).copied().unwrap_or("");
+            let member_type = parts.get(2).copied().unwrap_or("");
+            let is_primary = parts.get(3).copied().unwrap_or("0") != "0";
+            let mut v = build_mirror_status_json(is_member, mirror_name, member_type, is_primary);
+            v["success"] = serde_json::Value::Bool(true);
+            ok_json(v)
         }
-        Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
+        Err(e) => ok_json(serde_json::json!({
+            "success": false,
+            "error": e.to_string(),
+            "is_member": serde_json::Value::Null,
+        })),
     }
+}
+
+// ── parse_max_size_mb (089) ───────────────────────────────────────────────────
+
+/// Parse the `MaxSize` string from `%SYS.DatabaseQuery:FreeSpace`.
+/// Returns `None` for "Unlimited" or unrecognized formats.
+pub fn parse_max_size_mb(s: &str) -> Option<i64> {
+    if s.is_empty() || s.to_uppercase() == "UNLIMITED" {
+        return None;
+    }
+    let upper = s.to_uppercase();
+    if let Some(n) = upper.strip_suffix("GB") {
+        return n.trim().parse::<i64>().ok().map(|v| v * 1024);
+    }
+    if let Some(n) = upper.strip_suffix("MB") {
+        return n.trim().parse::<i64>().ok();
+    }
+    // bare number — treat as MB
+    s.trim().parse::<i64>().ok()
 }
 
 // ── iris_namespace_create (T084) — gated in call_tool, not here (085) ─────────

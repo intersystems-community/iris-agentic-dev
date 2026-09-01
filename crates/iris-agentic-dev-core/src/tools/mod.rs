@@ -8030,7 +8030,7 @@ Methods:
     }
 
     #[tool(
-        description = "List all databases (directories) on an IRIS instance. server: optional registered instance name. Returns {databases: [{directory, mounted, size_mb}], count: N}. Skill: iris-agentic-dev.",
+        description = "List all databases (directories) on an IRIS instance. server: optional registered instance name. Returns {databases: [{directory, mounted, size_mb, free_space_mb, free_pct, max_size_mb}], count: N}. Skill: iris-agentic-dev.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<IrisDatabaseListResponse>()
     )]
@@ -8045,6 +8045,25 @@ Methods:
         let iris = self.resolve_server(server.as_deref()).await?;
         let result = admin_tools::iris_database_list_impl(&iris, &self.client).await;
         self.record_call("iris_database_list", result.is_ok());
+        result
+    }
+
+    #[tool(
+        description = "Report mirror membership and role for the connected IRIS instance. Returns {is_member, mirror_name, member_type, is_primary}. Non-mirror instances return {is_member: false}. Useful as a pre-flight check before operations that require a primary. server: optional registered instance name. Skill: iris-agentic-dev.",
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<serde_json::Value>()
+    )]
+    async fn iris_mirror_status(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result = admin_tools::iris_mirror_status_impl(&iris, &self.client).await;
+        self.record_call("iris_mirror_status", result.is_ok());
         result
     }
 
@@ -10446,6 +10465,7 @@ impl IrisTools {
         dispatch_any!("hl7_schema_list", hl7_schema_list);
         dispatch_any!("iris_database_list", iris_database_list);
         dispatch_any!("iris_database_stats", iris_database_stats);
+        dispatch_any!("iris_mirror_status", iris_mirror_status);
         dispatch_any!("iris_namespace_create", iris_namespace_create);
         dispatch_any!("iris_namespace_list", iris_namespace_list);
         dispatch_any!("journal_search", journal_search);
