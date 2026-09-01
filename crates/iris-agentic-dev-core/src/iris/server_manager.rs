@@ -378,7 +378,7 @@ pub fn resolve_credential(server_name: &str, username: &str) -> Result<String, S
         },
     )?;
 
-    let wcm_result = match entry.get_password() {
+    let wcm_result: Result<String, SmCredentialError> = match entry.get_password() {
         Ok(pw) => {
             tracing::debug!("SM credential resolved for '{server_name}' via WCM");
             return Ok(pw);
