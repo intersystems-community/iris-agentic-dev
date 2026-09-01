@@ -460,7 +460,15 @@ pub const CLASSIFICATION: &[ToolClass] = &[
     ro("iris_servers"),
     ro("iris_symbols"),
     ro("iris_symbols_local"),
-    mixed("iris_system_performance"),
+    mixed(
+        "iris_system_performance",
+        &[
+            ("start", WriteClass::Write),
+            ("status", WriteClass::ReadOnly),
+            ("last_runid", WriteClass::ReadOnly),
+        ],
+        WriteClass::ReadOnly,
+    ),
     ro("iris_table_info"),
     ro("iris_test_server"),
     // Opening and closing a terminal session mutates nothing. Everything a session can do
