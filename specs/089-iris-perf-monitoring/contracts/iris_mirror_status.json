@@ -1,0 +1,26 @@
+{
+  "name": "iris_mirror_status",
+  "description": "Returns mirror membership, role, and primary status for the connected IRIS instance. Useful for fleet checks and pre-action validation — call this before operations that require the instance to be primary.",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "response": {
+    "success": {
+      "is_member": "bool",
+      "mirror_name": "string|null",
+      "member_type": "string|null",
+      "is_primary": "bool"
+    },
+    "error": {
+      "error": "string",
+      "is_member": null
+    }
+  },
+  "notes": [
+    "Always executes in %SYS namespace",
+    "mirror_name and member_type are null when is_member=false",
+    "member_type values: 'primary', 'backup', 'async', null"
+  ]
+}
