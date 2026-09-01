@@ -1,0 +1,36 @@
+# spec-gates CI boundary — projected by /speckit.gates.ci github
+# Runs the IDENTICAL entrypoint used by the Claude Code Stop hook and the
+# git pre-commit hook. Parity property: local green == CI green.
+name: Quality Gates
+on:
+  pull_request:
+  push:
+    # This repository's default branch is master, not main. Left as the
+    # template's `main`, the push trigger would silently never fire.
+    branches: [master]
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # setup-node@v7 / node 22 to match ci.yml, release.yml and
+      # skill-regression.yml rather than introduce a second node convention.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Install gate tooling
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q jq shellcheck
+      # npm ci, not `npm install -g`, so CI runs the exact prettier and
+      # markdownlint-cli2 versions pinned in package-lock.json. This is what
+      # makes the parity gate meaningful: a global install could drift to a
+      # newer formatter and fail the tree over a version difference.
+      - name: Install pinned formatters
+        run: npm ci
+      - name: Run quality gates
+        run: bash .specify/gates/verify.sh --boundary ci
+      # A red step here means a BROKEN GATE, not a dirty tree: a canary
+      # (known violation) was accepted instead of blocked.
+      - name: Prove the gate still blocks (canaries)
+        run: bash .specify/gates/canary.sh

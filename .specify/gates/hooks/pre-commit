@@ -1,0 +1,186 @@
+#!/bin/bash
+# shellcheck shell=bash
+set -euo pipefail
+
+# Git pre-commit hook -- git boundary.
+#
+# Two responsibilities, deliberately separated:
+#   1. Git-specific safety that has no analogue at the agent or CI boundary:
+#      block commits to protected branches; refuse secret / forbidden files.
+#   2. The shared quality gate, delegated to verify.sh --boundary git, so the
+#      lint/format checks are identical to the agent and CI boundaries.
+#
+# The quality gate runs against the whole tree (not staged-only). That is
+# intentional: whole-tree checking is what makes "if the git boundary passed,
+# CI passes" a guarantee rather than a hope. Emergency override: GATES_SKIP=1.
+
+STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACM)"
+
+if [[ -z "$STAGED_FILES" ]]; then
+    exit 0
+fi
+
+ERRORS=0
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
+# shellcheck source=/dev/null disable=SC1091
+[[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"
+
+# --- Block commits to protected branches (policy: git.block_main_commits) ---
+BLOCK_MAIN=true
+if command -v gates_policy_section_get >/dev/null 2>&1; then
+    [[ "$(gates_policy_section_get git block_main_commits)" == "false" ]] && BLOCK_MAIN=false
+fi
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+if [[ "$BLOCK_MAIN" == "true" ]] \
+    && [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "master" ]]; then
+    if [[ "${GATES_ALLOW_MAIN_COMMIT:-0}" != "1" ]]; then
+        echo "ERROR: Direct commits to '$CURRENT_BRANCH' are blocked." >&2
+        echo "  Create a feature branch instead:" >&2
+        echo "    git switch -c feat/my-feature" >&2
+        echo "" >&2
+        echo "  To override (release/CI only):" >&2
+        echo "    GATES_ALLOW_MAIN_COMMIT=1 git commit ..." >&2
+        exit 1
+    fi
+fi
+
+# --- Check for forbidden files ---
+check_forbidden_files() {
+    local file="$1"
+    local basename
+    basename=$(basename "$file")
+
+    # Template/example files are meant to be committed even when the base name
+    # looks sensitive (.env.example, config.sample, .env.template). Must come
+    # BEFORE the .env.* rule, and mirrors protect-files.sh so the agent and git
+    # boundaries agree.
+    case "$basename" in
+        *.example | *.sample | *.template) return 0 ;;
+    esac
+
+    case "$basename" in
+        .env | .env.*) return 1 ;;
+        id_rsa* | id_ed25519* | id_ecdsa* | authorized_keys | known_hosts) return 1 ;;
+        *.pem | *.key | *.crt | *.p12 | *.pfx | *.keystore) return 1 ;;
+        credentials.json | service-account*.json | aws-credentials) return 1 ;;
+    esac
+
+    if echo "$file" | grep -qE '/(\.ssh|\.gnupg|\.aws|\.gcloud)/'; then
+        return 1
+    fi
+
+    return 0
+}
+
+# --- Check for secrets in staged content ---
+check_for_secrets() {
+    local file="$1"
+    local content
+    content=$(git show ":$file" 2>/dev/null || echo "")
+
+    if [[ -z "$content" ]]; then
+        return 0
+    fi
+
+    # AWS keys
+    if echo "$content" | grep -qE 'AKIA[0-9A-Z]{16}'; then
+        echo "  SECRET: AWS key pattern in $file" >&2
+        return 1
+    fi
+
+    # OpenAI keys
+    if echo "$content" | grep -qE 'sk-[a-zA-Z0-9]{48}'; then
+        echo "  SECRET: OpenAI key pattern in $file" >&2
+        return 1
+    fi
+
+    # GitHub tokens
+    if echo "$content" | grep -qE '(ghp_|gho_)[a-zA-Z0-9]{36}'; then
+        echo "  SECRET: GitHub token pattern in $file" >&2
+        return 1
+    fi
+
+    # GitLab tokens
+    if echo "$content" | grep -qE 'glpat-[a-zA-Z0-9_-]{20}'; then
+        echo "  SECRET: GitLab token pattern in $file" >&2
+        return 1
+    fi
+
+    # Slack tokens
+    if echo "$content" | grep -qE 'xoxb-[0-9]{10,}'; then
+        echo "  SECRET: Slack token pattern in $file" >&2
+        return 1
+    fi
+
+    # Generic password/secret/token assignments
+    if echo "$content" | grep -qiE '(password|secret|api_key|token)\s*[=:]\s*["\x27][^\s"'\'']{8,}'; then
+        echo "  SECRET: Possible credential assignment in $file" >&2
+        return 1
+    fi
+
+    return 0
+}
+
+# Collect policy-declared extra protected paths (protected_files.extra) once.
+PROTECTED_EXTRA=()
+if command -v gates_policy_section_list >/dev/null 2>&1; then
+    while IFS= read -r _entry; do
+        [[ -n "$_entry" ]] && PROTECTED_EXTRA+=("$_entry")
+    done < <(gates_policy_section_list protected_files extra)
+fi
+
+file_is_policy_protected() { # <rel_path>
+    local f="$1" e
+    [[ "${#PROTECTED_EXTRA[@]}" -eq 0 ]] && return 1
+    for e in "${PROTECTED_EXTRA[@]}"; do
+        if gates_glob_match "$f" "$e" || [[ "$(basename "$f")" == "$e" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# --- Git-specific safety pass over staged files ---
+echo "Pre-commit: scanning staged files for secrets and forbidden paths..."
+
+for file in $STAGED_FILES; do
+    if ! check_forbidden_files "$file"; then
+        echo "BLOCKED: forbidden file: $file" >&2
+        ERRORS=$((ERRORS + 1))
+        continue
+    fi
+
+    if file_is_policy_protected "$file"; then
+        echo "BLOCKED: policy-protected file staged: $file" >&2
+        ERRORS=$((ERRORS + 1))
+        continue
+    fi
+
+    if ! check_for_secrets "$file"; then
+        ERRORS=$((ERRORS + 1))
+        continue
+    fi
+done
+
+# --- Shared quality gate (identical to the agent and CI boundaries) ---
+if [[ "${GATES_SKIP:-0}" != "1" ]]; then
+    VERIFY="$PROJECT_ROOT/.specify/gates/verify.sh"
+    if [[ -x "$VERIFY" ]]; then
+        echo "Pre-commit: running quality gate (verify.sh --boundary git)..."
+        if ! "$VERIFY" --boundary git; then
+            echo "" >&2
+            echo "Quality gate failed at the git boundary (see above)." >&2
+            ERRORS=$((ERRORS + 1))
+        fi
+    fi
+fi
+
+if [[ "$ERRORS" -gt 0 ]]; then
+    echo "" >&2
+    echo "Pre-commit failed: $ERRORS issue(s) found." >&2
+    exit 1
+fi
+
+exit 0
