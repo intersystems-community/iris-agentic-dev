@@ -82,8 +82,8 @@ impl ExportArgs {
             _ => {
                 // Text table
                 println!(
-                    "{:<32} {:<30} {:<8} {:<12} {:<24} {:<16} {}",
-                    "timestamp", "tool", "ok", "duration_ms", "run_id", "task_id", "condition"
+                    "{:<32} {:<30} {:<8} {:<12} {:<24} {:<16} condition",
+                    "timestamp", "tool", "ok", "duration_ms", "run_id", "task_id"
                 );
                 println!("{}", "-".repeat(140));
                 for rec in &records {
