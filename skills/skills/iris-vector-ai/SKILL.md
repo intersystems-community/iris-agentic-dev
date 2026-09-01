@@ -11,18 +11,21 @@ benchmark_tasks:
   - prd-006
   - prd-007
 compatibility: objectscript, iris, sql, python
-description: Use when writing any IRIS vector search, embedding, HNSW index, similarity
+description:
+  Use when writing any IRIS vector search, embedding, HNSW index, similarity
   search, or AI feature code. Hard gate — IRIS vector syntax is completely different
   from pgvector.
 iris_version: ">=2024.1"
 license: MIT
 metadata:
   baseline_pass_rate: 1.0
-  benchmark_note: "Source inspection suite. Negative lift on unrelated tasks when
+  benchmark_note:
+    "Source inspection suite. Negative lift on unrelated tasks when
     loaded globally. Load on-demand for vector/AI tasks. RED phase: model plagiarizes
     pgvector syntax 100% without this skill."
   lift: 0.0
-  red_phase: 12 prompts tested — model plagiarizes pgvector syntax 100% of the time
+  red_phase:
+    12 prompts tested — model plagiarizes pgvector syntax 100% of the time
     without this skill
   version: 1.0.0
 name: iris-vector-ai

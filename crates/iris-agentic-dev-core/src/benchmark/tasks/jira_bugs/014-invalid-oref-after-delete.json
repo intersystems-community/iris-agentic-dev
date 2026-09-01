@@ -37,11 +37,6 @@
     "created_date": "2026-03-31",
     "source": "Replaced external-dep (Image.Scanned) version; same OREF lifecycle pattern",
     "author": "objectscript-coder",
-    "tags": [
-      "oref",
-      "null-check",
-      "object-lifecycle",
-      "deleted-reference"
-    ]
+    "tags": ["oref", "null-check", "object-lifecycle", "deleted-reference"]
   }
 }

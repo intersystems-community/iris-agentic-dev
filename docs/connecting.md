@@ -157,7 +157,9 @@ Use `check_config` to see which servers were detected and whether credentials re
 {
   "server_manager": {
     "available": true,
-    "servers": [{ "name": "dev-local", "active": true, "credential_status": "resolved" }]
+    "servers": [
+      { "name": "dev-local", "active": true, "credential_status": "resolved" }
+    ]
   }
 }
 ```

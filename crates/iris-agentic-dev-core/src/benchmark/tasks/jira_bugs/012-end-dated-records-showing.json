@@ -38,10 +38,6 @@
     "created_date": "2026-03-31",
     "source": "Replaced external-dep version; same active-record SQL filter pattern",
     "author": "objectscript-coder",
-    "tags": [
-      "sql",
-      "date-filter",
-      "active-records"
-    ]
+    "tags": ["sql", "date-filter", "active-records"]
   }
 }

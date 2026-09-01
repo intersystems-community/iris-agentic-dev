@@ -64,10 +64,12 @@ conn = iris.get_connection()
 4. `_password_handled = True` prevents double-remediation.
 
 **What this means:**
+
 - Happy path: zero `docker exec` calls. Works in restricted CI environments.
 - Fallback path: one `docker exec` on `attach()` containers or existing containers.
 
 **Manual escape hatches:**
+
 ```bash
 idt test-connection --auto-fix          # detect + reset + retry
 idt container reset-password <name> --timeout 30
@@ -82,7 +84,7 @@ reset_password_if_needed(e, container_name="iris_db", username="_SYSTEM")
 
 ## Connection Flow
 
-```
+```text
 IRISContainer.community().__enter__()
   → start()
     → with_cpf_merge(SECURE_DEFAULTS)  # ChangePassword=0 via ISC_CPF_MERGE_FILE

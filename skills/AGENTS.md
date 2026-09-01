@@ -4,7 +4,7 @@ Drop this file in your repo root (or `.claude/AGENTS.md`) so AI coding agents un
 ObjectScript semantics before writing a single line of code.
 
 > **Primary workflow**: Most ISC SEs and developers use VS Code with the [ObjectScript MCP extension](https://github.com/intersystems-community/vscode-objectscript-mcp) — it wires `iris_compile`, `iris_test`, `docs_introspect`, and `interop_*` tools directly into Copilot agent mode using your existing `objectscript.conn` settings. This AGENTS.md covers the ObjectScript rules those tools operate under.
-
+>
 > **Benchmark result**: Claude Sonnet 4.6 with this file scores **86% on a 22-task ObjectScript repair suite** (+14% lift over no context). The `objectscript-review` skill below raises that to **100%** (+29% lift).
 
 ---
@@ -81,7 +81,7 @@ Load `skills/objectscript-review/SKILL.md` if available. Otherwise apply this ch
 
 ### Via MCP tools (preferred)
 
-```
+```text
 # Find classes by name pattern — live IRIS namespace
 iris_symbols(query="MyPackage.*")
 iris_symbols(query="%ASQ*")          # system classes
@@ -136,7 +136,7 @@ All administration actions go through a single `iris_admin(action=..., ...)` dis
 
 **Read-only (always available, all mcpTemplates):**
 
-```
+```text
 iris_admin(action="list_namespaces")
 iris_admin(action="list_databases")
 iris_admin(action="list_users")
@@ -161,7 +161,7 @@ iris_admin(action="database_status", name="USER")                # single databa
 
 **Write (blocked on `mcpTemplate=live/test`):**
 
-```
+```text
 iris_admin(action="create_user", username="bob", password="...", roles="Developer")
 iris_admin(action="update_user", username="bob", enabled=false)
 iris_admin(action="delete_user", username="bob")
@@ -179,7 +179,7 @@ iris_admin(action="delete_webapp", name="/myapp")
 
 ### Interoperability depth tools (056-interop-depth) — Merged tier, Query category
 
-```
+```text
 # Read a message body by ID — handles plain-text and stream-backed bodies
 iris_message_body(message_id="12345", dataPolicy="allow", acknowledgePhi=true)
 iris_message_body(message_id="12345", dataPolicy="redact")   # HL7 PID/MSH fields scrubbed
@@ -206,7 +206,7 @@ iris_production_diff(production="MyApp.Production")
 
 `iris_query` accepts a `mode` param: `"read"` (default), `"explain"`, `"count"`, `"write"`.
 
-```
+```text
 # explain — query plan inspection, read-only, permitted on all mcpTemplate values
 iris_query(mode="explain", query="SELECT * FROM Sample.Person WHERE Age > 30")
 # -> {success, plan_text, query_hash}
@@ -232,7 +232,7 @@ and SELECT are rejected before any IRIS call. UPDATE/DELETE are pre-checked agai
 
 To read the source of any class — including system classes like `%ASQ.Engine` that have no `.cls` on disk:
 
-```
+```text
 # Option 1 (preferred): docs_introspect — returns parsed method signatures
 docs_introspect(class_name="%ASQ.Engine")
 
@@ -264,7 +264,7 @@ iris session IRIS -U USER "Do ##class(%UnitTest.Manager).RunTest(\"MyPackage.Tes
 
 IRIS compiler errors look like:
 
-```
+```text
 ERROR #5659: Method 'Foo' in class 'My.Class' has a 'Return' that does not match the return type
 ERROR #5002: ObjectScript error in method 'Bar' in class 'My.Class'  <UNDEFINED>var+3^My.Class.1
 ```

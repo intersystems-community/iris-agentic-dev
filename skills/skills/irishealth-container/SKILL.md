@@ -7,7 +7,18 @@ description: >
   four hard-won gotchas, the two-container architecture, no-ZPM FHIR setup,
   and the critical enterprise-vs-community web server split that affects
   Atelier REST and VSCode ObjectScript extension connectivity.
-tags: [iris, irishealth, fhir, ai-hub, docker, container, devtester, vscode, atelier]
+tags:
+  [
+    iris,
+    irishealth,
+    fhir,
+    ai-hub,
+    docker,
+    container,
+    devtester,
+    vscode,
+    atelier,
+  ]
 ---
 
 # irishealth Container Editions
@@ -16,16 +27,17 @@ tags: [iris, irishealth, fhir, ai-hub, docker, container, devtester, vscode, ate
 
 ## CRITICAL: Enterprise Images Have No Private Web Server — Use the Webgateway Container
 
-| Image | `WebServer` in iris.cpf | Port 52773 direct | Atelier REST | Solution |
-|---|---|---|---|---|
-| `iris:2026.1` (enterprise) | `0` — disabled | ❌ | ✅ via webgateway | See below |
-| `iris-community:2026.1` | `1` — enabled | ✅ | ✅ | Direct port 52773 |
-| `irishealth-community` | `1` — enabled | ✅ | ✅ | Direct port 52773 |
-| `irishealth:2026.2.0AI.*` | `0` — disabled | ❌ | ✅ via webgateway | See below |
+| Image                      | `WebServer` in iris.cpf | Port 52773 direct | Atelier REST      | Solution          |
+| -------------------------- | ----------------------- | ----------------- | ----------------- | ----------------- |
+| `iris:2026.1` (enterprise) | `0` — disabled          | ❌                | ✅ via webgateway | See below         |
+| `iris-community:2026.1`    | `1` — enabled           | ✅                | ✅                | Direct port 52773 |
+| `irishealth-community`     | `1` — enabled           | ✅                | ✅                | Direct port 52773 |
+| `irishealth:2026.2.0AI.*`  | `0` — disabled          | ❌                | ✅ via webgateway | See below         |
 
 Enterprise images have `WebServer=0` — the httpd binary and CSP.ini are not installed. However, **the `intersystems/webgateway` sidecar container DOES work** for Atelier REST. The webgateway uses `CSP On` (not `SetHandler`) to route all requests through the CSP module to IRIS via the superserver, and IRIS routes `/api/atelier/` internally.
 
 **Three bugs that cause 404/403/500 during setup** (verified 2026-05-03 — see `iris-vscode-objectscript` skill for full detail):
+
 1. CSP.ini race condition — patch after `Configuration_Initialized` appears, not immediately
 2. Missing credentials in `[LOCAL]` — add `Username=_SYSTEM` and `Password=SYS` to CSP.ini `[LOCAL]` section; default tries CSPSystem which doesn't exist
 3. Wrong Apache directive — use `CSP On` inside `<Location />`, NOT `SetHandler csp-handler-sa`
@@ -48,18 +60,18 @@ The `intersystems.objectscript` extension connects via Atelier REST on port 5277
     "my-iris-dev": {
       "webServer": {
         "host": "localhost",
-        "port": 52773,       // ← IRIS private web server, NOT superserver
-        "pathPrefix": ""     // empty for default, "/iris" if behind a proxy
+        "port": 52773, // ← IRIS private web server, NOT superserver
+        "pathPrefix": "", // empty for default, "/iris" if behind a proxy
       },
       "username": "_SYSTEM",
-      "description": "iris-community:2026.1 dev container"
-    }
+      "description": "iris-community:2026.1 dev container",
+    },
   },
   "objectscript.conn": {
     "server": "my-iris-dev",
     "ns": "USER",
-    "active": true
-  }
+    "active": true,
+  },
 }
 ```
 
@@ -84,15 +96,15 @@ curl -s -u "_SYSTEM:SYS" "http://localhost:64773/api/atelier/" | python3 -c \
 
 ## Two Editions, Two Jobs
 
-| | `IRISContainer.health()` | `IRISContainer.ai_hub()` |
-|---|---|---|
-| Image | `intersystemsdc/irishealth-community:latest` | `docker.iscinternal.com/.../irishealth:2026.2.0AI.159.0` |
-| Port 1972 | ✅ SuperServer | ✅ SuperServer |
-| Port 52773 | ✅ FHIR HTTP / web portal | ❌ WebServer=0 |
-| FHIR R4 endpoint | ✅ pre-installed | ❌ (class exists, no HTTP) |
-| `%AI.Agent`, `VECTOR` | ❌ | ✅ |
-| License key | No | No |
-| Registry | docker.io | docker.iscinternal.com |
+|                       | `IRISContainer.health()`                     | `IRISContainer.ai_hub()`                                 |
+| --------------------- | -------------------------------------------- | -------------------------------------------------------- |
+| Image                 | `intersystemsdc/irishealth-community:latest` | `docker.iscinternal.com/.../irishealth:2026.2.0AI.159.0` |
+| Port 1972             | ✅ SuperServer                               | ✅ SuperServer                                           |
+| Port 52773            | ✅ FHIR HTTP / web portal                    | ❌ WebServer=0                                           |
+| FHIR R4 endpoint      | ✅ pre-installed                             | ❌ (class exists, no HTTP)                               |
+| `%AI.Agent`, `VECTOR` | ❌                                           | ✅                                                       |
+| License key           | No                                           | No                                                       |
+| Registry              | docker.io                                    | docker.iscinternal.com                                   |
 
 ---
 
@@ -149,6 +161,7 @@ iris = IRISContainer.ai_hub(durable_path="/host/path/durable")
 ```
 
 docker-compose init-container pattern (from grongierisc template):
+
 ```yaml
 services:
   init-permissions:
@@ -192,7 +205,7 @@ services:
     volumes:
       - type: tmpfs
         target: /durable
-        tmpfs: {uid: 51773, gid: 51773}
+        tmpfs: { uid: 51773, gid: 51773 }
     # %AI.Agent: connect to localhost:11972 via DBAPI
 ```
 

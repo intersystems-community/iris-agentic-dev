@@ -32,11 +32,7 @@
     "created_date": "2025-12-14",
     "source": "Generated ObjectScript bug pattern",
     "author": "objectscript-coder",
-    "tags": [
-      "jira",
-      "bug-fix",
-      "string-concatenation-performance"
-    ],
+    "tags": ["jira", "bug-fix", "string-concatenation-performance"],
     "bug_pattern": "string-concatenation-performance"
   }
 }

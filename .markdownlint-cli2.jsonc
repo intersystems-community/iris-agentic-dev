@@ -1,6 +1,20 @@
 {
   // Project markdownlint config — matches global ~/.markdownlint-cli2.jsonc rules.
-  "ignores": [".specify/gates/**", ".specify/extensions/**", ".claude/hooks/gates/**"],
+  // Vendored and derived trees. node_modules matters: without it a plain
+  // `markdownlint-cli2 "**/*.md"` walks every dependency's README and reports
+  // hundreds of findings in code nobody here owns. specs/ is historical
+  // feature material; outputs/ and tests/e2e/results/ are generated, so any
+  // fix is undone by the next run.
+  "ignores": [
+    ".specify/gates/**",
+    ".specify/extensions/**",
+    ".claude/hooks/gates/**",
+    "**/node_modules/**",
+    "target/**",
+    "specs/**",
+    "outputs/**",
+    "tests/e2e/results/**"
+  ],
   "config": {
     "default": true,
     "MD003": { "style": "atx" },

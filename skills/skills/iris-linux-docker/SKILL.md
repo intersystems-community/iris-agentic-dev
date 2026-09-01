@@ -18,7 +18,8 @@ bind-mount a host directory owned by UID 1000 (typical Linux user), the containe
 can read the volume but cannot write to it. IRIS needs write access at startup.
 
 **Symptom** — container exits immediately with:
-```
+
+```text
 terminate called after throwing an instance of 'std::runtime_error'
 what(): Unable to find/open file iris-main.log in current directory /home/irisowner/dev
 ```
@@ -106,5 +107,5 @@ container = (
 ```yaml
 # DO NOT do this on Linux without fixing permissions first:
 volumes:
-  - ./:/home/irisowner/dev   # Will fail if host dir owned by uid 1000
+  - ./:/home/irisowner/dev # Will fail if host dir owned by uid 1000
 ```

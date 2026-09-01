@@ -3,3 +3,25 @@
 .specify/gates/
 .specify/extensions/
 .claude/hooks/gates/
+
+# Test fixtures are data under test, not source. sm_settings_malformed.json
+# holds deliberately invalid JSON, so prettier can never parse it and
+# formatting it would void the test that asserts the parser rejects it.
+crates/iris-agentic-dev-core/tests/fixtures/
+
+# Generated artifacts, not source. skill_eval/reporter.py writes
+# skill-eval-*.json on every run, so formatting them is undone by the next
+# test and would flip the gate red again. outputs/ is likewise derived.
+tests/e2e/results/
+outputs/
+
+# NEVER format ObjectScript. Leading-dot block syntax, label columns and
+# significant leading whitespace are load-bearing — a generic formatter
+# corrupts routines silently. Out of prettier's default globs today; listed
+# explicitly so widening those globs can never reach these files.
+*.cls
+*.mac
+*.int
+*.inc
+*.csp
+*.dfi

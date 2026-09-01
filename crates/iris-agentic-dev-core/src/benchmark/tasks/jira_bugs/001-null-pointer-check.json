@@ -36,11 +36,7 @@
     "created_date": "2025-11-10",
     "source": "Typical null pointer bug pattern in IRIS applications",
     "author": "objectscript-coder",
-    "tags": [
-      "null-check",
-      "defensive-programming",
-      "error-handling"
-    ],
+    "tags": ["null-check", "defensive-programming", "error-handling"],
     "jira_reference": "Inspired by common patient record access bugs"
   }
 }

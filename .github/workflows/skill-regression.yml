@@ -3,19 +3,19 @@ name: Skill Regression
 on:
   schedule:
     # Nightly at 02:00 UTC — avoids overlap with daytime CI runs
-    - cron: '0 2 * * *'
+    - cron: "0 2 * * *"
   workflow_dispatch:
     inputs:
       skill:
-        description: 'Single skill to evaluate (leave blank for all covered skills)'
+        description: "Single skill to evaluate (leave blank for all covered skills)"
         required: false
-        default: ''
+        default: ""
       runs:
-        description: 'Runs per skill'
+        description: "Runs per skill"
         required: false
-        default: '5'
+        default: "5"
       update_baseline:
-        description: 'Update baseline after run'
+        description: "Update baseline after run"
         required: false
         type: boolean
         default: false
@@ -30,11 +30,11 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: "22"
 
       - name: Install opencode
         run: npm install -g opencode-ai

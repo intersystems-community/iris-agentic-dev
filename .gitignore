@@ -61,6 +61,12 @@ run_benchmark.py
 skills-lock.json
 .agents/
 
+# npm dependencies, at any depth. Previously only
+# vscode-iris-agentic-dev/.gitignore covered node_modules, so the root
+# npm install for the lint toolchain (package.json pins prettier +
+# markdownlint-cli2) exposed 87 packages as untracked.
+node_modules/
+
 # Coverage and diagnostic artifacts
 .coverage
 tarpaulin-report.json

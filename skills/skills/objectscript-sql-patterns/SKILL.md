@@ -1,43 +1,45 @@
 ---
 author: tdyar
-benchmark_date: '2026-04-02'
-benchmark_iris_version: '2025.1'
+benchmark_date: "2026-04-02"
+benchmark_iris_version: "2025.1"
 benchmark_tasks:
-- jira-001
-- jira-002
-- jira-003
-- jira-004
-- jira-005
-- jira-006
-- jira-007
-- jira-008
-- jira-009
-- jira-010
-- jira-011
-- jira-012
-- jira-013
-- jira-014
-- jira-015
-- jira-016
-- jira-017
-- jira-018
-- jira-019
-- jira-020
-- jira-021
-- jira-056
-description: 'ObjectScript embedded SQL, %SQL.Statement, date filtering, NULL handling,
+  - jira-001
+  - jira-002
+  - jira-003
+  - jira-004
+  - jira-005
+  - jira-006
+  - jira-007
+  - jira-008
+  - jira-009
+  - jira-010
+  - jira-011
+  - jira-012
+  - jira-013
+  - jira-014
+  - jira-015
+  - jira-016
+  - jira-017
+  - jira-018
+  - jira-019
+  - jira-020
+  - jira-021
+  - jira-056
+description:
+  "ObjectScript embedded SQL, %SQL.Statement, date filtering, NULL handling,
   table naming. Use when writing SQL queries in ObjectScript classes, especially for
   filtering, date ranges, or dynamic queries.
 
-  '
-iris_version: '>=2024.1'
+  "
+iris_version: ">=2024.1"
 name: objectscript-sql-patterns
 pass_rate: 0.5909090909090909
 state: reviewed
 tags:
-- objectscript
-- sql
-trigger: Any ObjectScript code with &sql(), %SQL.Statement, %Prepare, %Execute, SQLCODE,
+  - objectscript
+  - sql
+trigger:
+  Any ObjectScript code with &sql(), %SQL.Statement, %Prepare, %Execute, SQLCODE,
   or SQL WHERE clauses.
 ---
 
@@ -47,7 +49,7 @@ trigger: Any ObjectScript code with &sql(), %SQL.Statement, %Prepare, %Execute, 
 
 The SQL table name depends on package depth:
 
-```
+```text
 // Two-level class (Package.ClassName):
 Catalog.Item  →  SQL table: Catalog.Item   (schema=Catalog, table=Item)
 Healthcare.Patient  →  SQL table: Healthcare.Patient
@@ -168,6 +170,7 @@ Set lastYear = today - 365
 Set display = $ZDATE(today, 3)     // "YYYY-MM-DD"
 Set hDate   = $ZDATEH("2026-01-15", 3)  // back to $HOROLOG integer
 ```
+
 ## 9. Embedded SQL INTO Variable — Must Be Initialized First
 
 ```objectscript
@@ -215,6 +218,7 @@ but returns no rows when rows are expected, **check the table name first**:
 ```
 
 **Diagnostic step when SQL returns unexpected results**:
+
 1. Check `SELECT SqlTableName FROM %Dictionary.CompiledClass WHERE Name = ?`
 2. Verify the table name in the SQL matches exactly
 3. Check `SELECT * FROM Bench.Patient` (works) vs `SELECT * FROM Bench_Patient` (wrong)

@@ -262,8 +262,20 @@ iris-agentic-dev benchmark --skill path/to/your/SKILL.md --baseline --output my_
   "iris_version": "2026.1",
   "elapsed_s": 187.4,
   "task_results": [
-    { "task_id": "jira-001", "outcome": "pass", "iterations": 1, "elapsed_s": 8.2, "reason": "" },
-    { "task_id": "jira-002", "outcome": "fail", "iterations": 1, "elapsed_s": 3.9, "reason": "" }
+    {
+      "task_id": "jira-001",
+      "outcome": "pass",
+      "iterations": 1,
+      "elapsed_s": 8.2,
+      "reason": ""
+    },
+    {
+      "task_id": "jira-002",
+      "outcome": "fail",
+      "iterations": 1,
+      "elapsed_s": 3.9,
+      "reason": ""
+    }
   ]
 }
 ```
@@ -489,7 +501,10 @@ Each task is a JSON file under
   "initial_code": {
     "files": [{ "path": "src/X.cls", "content": "...buggy code..." }]
   },
-  "test_code": { "path": "tests/TestX.cls", "content": "...test that fails on bug..." },
+  "test_code": {
+    "path": "tests/TestX.cls",
+    "content": "...test that fails on bug..."
+  },
   "hints": [],
   "expected_behavior": "...",
   "success_criteria": {

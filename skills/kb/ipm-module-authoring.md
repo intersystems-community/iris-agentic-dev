@@ -9,7 +9,7 @@ author: Tim Leavitt (InterSystems)
 source: https://gitlab.iscinternal.com/tleavitt/isc-skills
 ---
 
-# Writing IPM Module Definitions (module.xml)
+## Writing IPM Module Definitions (module.xml)
 
 ## Overview
 
@@ -59,19 +59,20 @@ digraph ipm_flow {
 
 ## The Iron Rule: Never Guess
 
-| What to verify | How to verify |
-|---|---|
-| Code format (XML vs UDL) | Check file extensions: `.xml` = XML, `.cls` = UDL |
-| Package names | `ls cls/` — use actual directory names |
-| Include files | `ls inc/` recursively — check subdirectories |
-| Routine names | `ls rtn/` — use actual filenames |
+| What to verify                      | How to verify                                        |
+| ----------------------------------- | ---------------------------------------------------- |
+| Code format (XML vs UDL)            | Check file extensions: `.xml` = XML, `.cls` = UDL    |
+| Package names                       | `ls cls/` — use actual directory names               |
+| Include files                       | `ls inc/` recursively — check subdirectories         |
+| Routine names                       | `ls rtn/` — use actual filenames                     |
 | Class names in Invoke/DispatchClass | `grep -r "Class.*ClassName"` or read the actual file |
-| Method names in Invoke | Read the class file and confirm the method exists |
-| Web app URLs and paths | Check existing config or CSP app definitions in code |
-| Unit test packages | `ls internal/testing/unit_tests/UnitTest/` |
-| DeepSee resources | `ls ds/` — list each file individually, no wildcards |
+| Method names in Invoke              | Read the class file and confirm the method exists    |
+| Web app URLs and paths              | Check existing config or CSP app definitions in code |
+| Unit test packages                  | `ls internal/testing/unit_tests/UnitTest/`           |
+| DeepSee resources                   | `ls ds/` — list each file individually, no wildcards |
 
 **Red flags — STOP if you catch yourself:**
+
 - Assuming a class or method exists without reading it
 - Using wildcard patterns in Resource Name (IPM doesn't support `*.xml`)
 - Copying Invoke blocks from another app without verifying the classes exist in THIS app
@@ -120,26 +121,26 @@ digraph ipm_flow {
 
 Resources are identified by suffix that indicates the type:
 
-| Suffix | Type | Example |
-|---|---|---|
-| `.PKG` | Package (all classes in a package) | `Eval.PKG` |
-| `.CLS` | Single class | `Eval.Installer.CLS` |
-| `.INC` | Include file | `appsOpenAPI.INC` |
-| `.MAC` | Macro/routine | `%buildccr.MAC` |
-| `.GBL` | Global | |
-| `.DFI` | DeepSee item (pivot/dashboard) | `DistributionsByDay.DFI` |
-| `.LUT` | Lookup table | |
-| `.ESD` | Default settings | `Ens.Config.DefaultSettings.ESD` |
+| Suffix | Type                               | Example                          |
+| ------ | ---------------------------------- | -------------------------------- |
+| `.PKG` | Package (all classes in a package) | `Eval.PKG`                       |
+| `.CLS` | Single class                       | `Eval.Installer.CLS`             |
+| `.INC` | Include file                       | `appsOpenAPI.INC`                |
+| `.MAC` | Macro/routine                      | `%buildccr.MAC`                  |
+| `.GBL` | Global                             |                                  |
+| `.DFI` | DeepSee item (pivot/dashboard)     | `DistributionsByDay.DFI`         |
+| `.LUT` | Lookup table                       |                                  |
+| `.ESD` | Default settings                   | `Ens.Config.DefaultSettings.ESD` |
 
 ### Key Resource Attributes
 
-| Attribute | Purpose | When to use |
-|---|---|---|
-| `Directory` | Source directory on disk | When files are in `cls/`, `inc/`, `rtn/`, etc. |
-| `Format` | `"XML"` or `"UDL"` | Set `Format="XML"` if files have `.xml` extension. UDL is default. |
-| `FilenameExtension` | Override file extension | Rarely needed; use when extension differs from default |
-| `Preload` | Load before other resources | For installer classes needed during module load |
-| `CompileAfter` | Compilation ordering | When one package depends on another |
+| Attribute           | Purpose                     | When to use                                                        |
+| ------------------- | --------------------------- | ------------------------------------------------------------------ |
+| `Directory`         | Source directory on disk    | When files are in `cls/`, `inc/`, `rtn/`, etc.                     |
+| `Format`            | `"XML"` or `"UDL"`          | Set `Format="XML"` if files have `.xml` extension. UDL is default. |
+| `FilenameExtension` | Override file extension     | Rarely needed; use when extension differs from default             |
+| `Preload`           | Load before other resources | For installer classes needed during module load                    |
+| `CompileAfter`      | Compilation ordering        | When one package depends on another                                |
 
 ### Format Detection
 
@@ -203,17 +204,17 @@ Two element types exist — use `WebApplication` for modern apps, `CSPApplicatio
 
 ### IPM Variables (available in attribute values)
 
-| Variable | Resolves to |
-|---|---|
-| `${namespace}` | Current namespace name |
-| `${namespaceLower}` | Lowercase namespace |
-| `${cspdir}` | CSP files directory |
-| `${mgrdir}` | IRIS manager directory |
-| `#{$$$AutheDelegated}` | Delegated auth macro |
+| Variable                     | Resolves to                  |
+| ---------------------------- | ---------------------------- |
+| `${namespace}`               | Current namespace name       |
+| `${namespaceLower}`          | Lowercase namespace          |
+| `${cspdir}`                  | CSP files directory          |
+| `${mgrdir}`                  | IRIS manager directory       |
+| `#{$$$AutheDelegated}`       | Delegated auth macro         |
 | `#{$$$AutheUnauthenticated}` | Unauthenticated access macro |
-| `#{$$$AuthePassword}` | Password auth macro |
-| `#{..Root}` | Module root directory |
-| `#{..Name}` | Module name |
+| `#{$$$AuthePassword}`        | Password auth macro          |
+| `#{..Root}`                  | Module root directory        |
+| `#{..Name}`                  | Module name                  |
 
 ### DeepSee Resources
 
@@ -243,6 +244,7 @@ No existing module.xml in this repo includes DFI resources yet, so verify this c
 **Attributes:** `Class` (required), `Method` (required), `Phase`, `When` (Before/After), `CustomPhase`, `CheckStatus`
 
 **Verification requirement:** Before adding ANY Invoke element, you MUST:
+
 1. Read the actual class file to confirm the method exists
 2. Check the method signature to get argument names/types right
 3. If you cannot verify (e.g., class is too large to scan), add `<!-- TODO: verify Method exists -->` instead of guessing
@@ -283,16 +285,16 @@ Only add dependencies for IPM packages the app actually imports. Common ones: `i
 
 ## Common Mistakes
 
-| Mistake | Fix |
-|---|---|
-| Using `jsonMAP.INC` instead of `jsonMap.INC` | Check actual filename casing with `ls` |
-| Wildcards in Resource Name (`*.pivot.xml`) | List each resource individually |
-| Routine resources with `.rtn` suffix | Use `.MAC` suffix in Resource Name |
-| Guessing DispatchClass names | Read actual class files to find REST handler classes |
-| Copying Invoke blocks from other apps | Verify every class and method exists in THIS app |
-| Missing subdirectory includes | Recursively list `inc/` to find all include files |
-| Wrong Format for a package | Check file extensions in EACH package directory separately |
-| Assuming all packages use same format | XML and UDL can coexist in the same app |
+| Mistake                                            | Fix                                                                             |
+| -------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Using `jsonMAP.INC` instead of `jsonMap.INC`       | Check actual filename casing with `ls`                                          |
+| Wildcards in Resource Name (`*.pivot.xml`)         | List each resource individually                                                 |
+| Routine resources with `.rtn` suffix               | Use `.MAC` suffix in Resource Name                                              |
+| Guessing DispatchClass names                       | Read actual class files to find REST handler classes                            |
+| Copying Invoke blocks from other apps              | Verify every class and method exists in THIS app                                |
+| Missing subdirectory includes                      | Recursively list `inc/` to find all include files                               |
+| Wrong Format for a package                         | Check file extensions in EACH package directory separately                      |
+| Assuming all packages use same format              | XML and UDL can coexist in the same app                                         |
 | Using `<Resources>` wrapper + `<Attribute>` syntax | Use modern flat style: `<Resource Directory="cls" Name="X.PKG" Format="XML" />` |
-| Inventing Invoke methods without reading class | Read the class file first; add `<!-- TODO: verify -->` if unsure |
-| Guessing web app auth/roles without verification | Add `<!-- TODO: verify auth settings -->` comment |
+| Inventing Invoke methods without reading class     | Read the class file first; add `<!-- TODO: verify -->` if unsure                |
+| Guessing web app auth/roles without verification   | Add `<!-- TODO: verify auth settings -->` comment                               |

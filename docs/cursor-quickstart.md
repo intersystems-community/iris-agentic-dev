@@ -12,18 +12,18 @@ instead — see the [README quick start](../README.md#quick-start-vs-code--githu
 
 ## Cursor vs VS Code + Copilot (read this first)
 
-| | **VS Code + Copilot** | **Cursor (IDE / CLI)** |
-| --- | --- | --- |
-| How MCP is registered | Extension implements `McpServerDefinitionProvider`; Copilot picks it up automatically | **`~/.cursor/mcp.json`** (manual). Cursor does not use the Copilot tool panel |
-| Binary install | Extension auto-downloads into VS Code global storage | Install the binary yourself (Homebrew, release tarball, or build from source) and put it on `PATH` (or use an absolute `command`) |
-| Connection config | Often zero-config via ObjectScript `objectscript.conn` / Server Manager | Prefer **`.iris-agentic-dev.toml`** (project or home) + `--workspace` |
-| Server Manager + OS keychain | Documented zero-config path when credentials resolve | **Often fails on Linux** (`KEYCHAIN_FAILED` / empty password → HTTP 401). ObjectScript sidebar login uses a different store and can still work while MCP does not |
-| `server="<Server Manager name>"` | May work when keychain resolves | Prefer **fleet** names from `[instance.*]` in toml (`source: "fleet"` in `iris_servers`). SM short names frequently 401 in Cursor remote/Linux sessions |
-| Skills install (`iris-agentic-dev skill install`) | Copilot / Claude Code / OpenCode targets | **No Cursor/`*.mdc` target** yet. Optional: `npx skills add intersystems-community/iris-agentic-dev` |
-| Tool catalog size | Full list | Full list is fine on current releases (large `outputSchema` payloads that caused Cursor to show **0 tools** were fixed — see issue [#113](https://github.com/intersystems-community/iris-agentic-dev/issues/113)) |
+|                                                   | **VS Code + Copilot**                                                                 | **Cursor (IDE / CLI)**                                                                                                                                                                                            |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| How MCP is registered                             | Extension implements `McpServerDefinitionProvider`; Copilot picks it up automatically | **`~/.cursor/mcp.json`** (manual). Cursor does not use the Copilot tool panel                                                                                                                                     |
+| Binary install                                    | Extension auto-downloads into VS Code global storage                                  | Install the binary yourself (Homebrew, release tarball, or build from source) and put it on `PATH` (or use an absolute `command`)                                                                                 |
+| Connection config                                 | Often zero-config via ObjectScript `objectscript.conn` / Server Manager               | Prefer **`.iris-agentic-dev.toml`** (project or home) + `--workspace`                                                                                                                                             |
+| Server Manager + OS keychain                      | Documented zero-config path when credentials resolve                                  | **Often fails on Linux** (`KEYCHAIN_FAILED` / empty password → HTTP 401). ObjectScript sidebar login uses a different store and can still work while MCP does not                                                 |
+| `server="<Server Manager name>"`                  | May work when keychain resolves                                                       | Prefer **fleet** names from `[instance.*]` in toml (`source: "fleet"` in `iris_servers`). SM short names frequently 401 in Cursor remote/Linux sessions                                                           |
+| Skills install (`iris-agentic-dev skill install`) | Copilot / Claude Code / OpenCode targets                                              | **No Cursor/`*.mdc` target** yet. Optional: `npx skills add intersystems-community/iris-agentic-dev`                                                                                                              |
+| Tool catalog size                                 | Full list                                                                             | Full list is fine on current releases (large `outputSchema` payloads that caused Cursor to show **0 tools** were fixed — see issue [#113](https://github.com/intersystems-community/iris-agentic-dev/issues/113)) |
 
 **Bottom line:** treat Cursor as a **stdio MCP client** (like Claude Code), not as
-“install the VSIX and you’re done.” Installing the VS Code extension *inside*
+“install the VSIX and you’re done.” Installing the VS Code extension _inside_
 Cursor is optional and **untested** as a substitute for `mcp.json`.
 
 ---

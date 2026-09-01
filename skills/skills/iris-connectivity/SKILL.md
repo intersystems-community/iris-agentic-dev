@@ -11,17 +11,20 @@ benchmark_tasks:
   - prd-006
   - prd-007
 compatibility: python, java, objectscript, iris, sql
-description: Use when connecting to IRIS from Python, Java, JDBC, ODBC, or any external
+description:
+  Use when connecting to IRIS from Python, Java, JDBC, ODBC, or any external
   language. IRIS connection APIs have specific package names, port numbers, and syntax
   that differ from every other database.
 iris_version: ">=2022.1"
 license: MIT
 metadata:
   baseline_pass_rate: 1.0
-  benchmark_note: Source inspection suite. Negative lift when loaded globally (-14%).
+  benchmark_note:
+    Source inspection suite. Negative lift when loaded globally (-14%).
     Load on-demand for Python/JDBC/connection tasks only.
   lift: -0.143
-  red_phase: Model uses wrong Python package, wrong JDBC prefix, wrong proc-call syntax
+  red_phase:
+    Model uses wrong Python package, wrong JDBC prefix, wrong proc-call syntax
     in 100% of cases without this skill
   version: 1.0.0
 name: iris-connectivity
