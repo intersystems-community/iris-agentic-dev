@@ -55,6 +55,13 @@ curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/l
   -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
 ```
 
+### Linux arm64
+
+```bash
+curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-linux-aarch64 \
+  -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
+```
+
 If `/usr/local/bin` is not writable, install under your home directory instead
 (for example `~/.local/bin/iris-agentic-dev`) and point `command` in `mcp.json`
 at that absolute path.
