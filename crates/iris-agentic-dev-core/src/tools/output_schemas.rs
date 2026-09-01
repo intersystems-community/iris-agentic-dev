@@ -454,6 +454,12 @@ pub struct DatabaseEntry {
     pub directory: String,
     pub mounted: bool,
     pub size_mb: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub free_space_mb: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_size_mb: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub free_pct: Option<i64>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

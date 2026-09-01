@@ -63,6 +63,8 @@ unless there is something non-obvious to say about it.
 | [`iris_namespace_list`](#iris_namespace_list)                     | Administration            |
 | [`iris_namespace_create`](#iris_namespace_create--) 🔒 ☠          | Administration            |
 | [`iris_database_list`](#iris_database_list)                       | Administration            |
+| [`iris_mirror_status`](#iris_mirror_status)                       | Administration            |
+| [`iris_system_performance`](#iris_system_performance)             | Administration            |
 | [`iris_database_stats`](#iris_database_stats)                     | Administration            |
 | [`journal_search`](#journal_search)                               | Administration            |
 | [`query_audit_log`](#query_audit_log)                             | Administration            |
@@ -1009,11 +1011,39 @@ Create a new namespace and its backing database. Write-gated and destructive-gat
 
 ### `iris_database_list`
 
-List databases and their directory paths.
+List databases, their directory paths, and free space. Each entry includes
+`size_mb`, `free_space_mb`, `free_pct`, and `max_size_mb` (null when unlimited).
 
 | Parameter | Type   | Default | Notes                          |
 | --------- | ------ | ------- | ------------------------------ |
 | `server`  | string | —       | Named server; omit for default |
+
+### `iris_mirror_status`
+
+Report mirror membership and role for the connected IRIS instance. Non-mirror
+instances return `{is_member: false}`. Useful as a pre-flight check before
+operations that require a primary.
+
+| Parameter | Type   | Default | Notes                          |
+| --------- | ------ | ------- | ------------------------------ |
+| `server`  | string | —       | Named server; omit for default |
+
+**Response fields:** `is_member` (bool), `mirror_name` (string or null),
+`member_type` (string or null — primary/backup/async), `is_primary` (bool).
+
+### `iris_system_performance`
+
+Start, poll, or retrieve the last run ID for an IRIS SystemPerformance profile.
+Requires Enterprise IRIS — not available in community builds.
+
+| Parameter | Type   | Default | Notes                                           |
+| --------- | ------ | ------- | ----------------------------------------------- |
+| `mode`    | string | —       | **Required.** `start` / `status` / `last_runid` |
+| `run_id`  | string | —       | Required for `mode=status`                      |
+| `server`  | string | —       | Named server; omit for default                  |
+
+**Response fields:** `success` (bool), `mode` (string), `run_id` (string or null).
+`mode=status` also returns `wait_time` (string from `$$waittime^SystemPerformance`).
 
 ### `iris_database_stats`
 

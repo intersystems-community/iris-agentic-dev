@@ -1,0 +1,13 @@
+## v1.3.0 — What's new
+
+**iris_mirror_status** — new read-only tool that reports whether the current IRIS instance is in a mirror, its role (primary/backup/async), and whether it holds the primary. Returns `{is_member: false}` on non-mirror instances. Uses `%SYSTEM.Mirror` classmethods in %SYS.
+
+**iris_system_performance** — new read-only tool to start, poll, and retrieve the last run ID for an IRIS SystemPerformance profile. Three modes: `start` (fires `run^SystemPerformance` and returns the new run ID), `status` (calls `$$waittime^SystemPerformance(run_id)`), and `last_runid` (reads the most recent run ID from the history global). Requires Enterprise IRIS — returns a clean error on community builds.
+
+**iris_database_list — free space** — the database list now includes `free_space_mb`, `max_size_mb`, `free_pct`, and `size_mb` per database, pulled from `%SYS.DatabaseQuery:FreeSpace`. No parameter change — free space is always returned when %SYS access is available.
+
+**Linux ARM64 binary** — `iris-agentic-dev-linux-aarch64` is now published with every release. The Docker image is now multi-arch (`linux/amd64` and `linux/arm64`). The VS Code extension auto-installs the correct binary on Linux ARM64. Homebrew picks up the right binary on Linux ARM64.
+
+**Server Manager path prefix fix** — entries with a leading `/` in their path prefix (e.g. `/inform`) produced double-slash URLs (`http://host//inform`), causing every request to return 404. The prefix is now trimmed before interpolation.
+
+**my_access / capability_matrix roles fix** — `Security.Users.Roles` is an IRIS `$LIST` column. SQL was returning raw list-encoded bytes (`%All`) instead of readable strings. Fixed by wrapping the column in `$LISTTOSTRING(Roles)`.

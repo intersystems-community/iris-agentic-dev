@@ -1,0 +1,19 @@
+{
+  "name": "iris_database_list (extension)",
+  "description": "Existing tool extended with free space fields per database entry.",
+  "new_fields_per_entry": {
+    "size_mb": "integer|null — database size in MB (SizeInt column)",
+    "free_space_mb": "float|null — available space in MB (AvailableNum column)",
+    "max_size_mb": "integer|null — configured max size in MB; null if Unlimited",
+    "free_pct": "integer|null — used space as percentage 0-100 (Free column)"
+  },
+  "root_degradation_field": {
+    "free_space_note": "string — present only when %SYS.DatabaseQuery:FreeSpace query failed; explains why free space fields are absent"
+  },
+  "notes": [
+    "Existing fields unchanged — no breaking change",
+    "free_space fields absent per-entry (not null) when graceful degradation active",
+    "MaxSize 'Unlimited' maps to max_size_mb: null",
+    "Requires %SYS namespace access; degrades gracefully if unavailable"
+  ]
+}

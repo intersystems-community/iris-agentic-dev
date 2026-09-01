@@ -52,6 +52,7 @@ overall = 88
 "src/iris/server_manager.rs"          = 55
 "src/iris/servers_config.rs"          = 87
 "src/iris/vscode_config.rs"           = 97
+"src/iris/vscode_payload.rs"          = 90
 "src/iris/workspace_config.rs"        = 66
 "src/iris/ws_session.rs"              = 49
 

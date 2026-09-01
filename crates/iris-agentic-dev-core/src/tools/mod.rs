@@ -8030,7 +8030,7 @@ Methods:
     }
 
     #[tool(
-        description = "List all databases (directories) on an IRIS instance. server: optional registered instance name. Returns {databases: [{directory, mounted, size_mb}], count: N}. Skill: iris-agentic-dev.",
+        description = "List all databases (directories) on an IRIS instance. server: optional registered instance name. Returns {databases: [{directory, mounted, size_mb, free_space_mb, free_pct, max_size_mb}], count: N}. Skill: iris-agentic-dev.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<IrisDatabaseListResponse>()
     )]
@@ -8045,6 +8045,59 @@ Methods:
         let iris = self.resolve_server(server.as_deref()).await?;
         let result = admin_tools::iris_database_list_impl(&iris, &self.client).await;
         self.record_call("iris_database_list", result.is_ok());
+        result
+    }
+
+    #[tool(
+        description = "Start, poll, or retrieve the last run ID for an IRIS SystemPerformance profile. Requires Enterprise IRIS (not available in community builds). mode: start | status | last_runid. run_id: required for mode=status. Returns {success, mode, run_id} for start/last_runid; {success, mode, run_id, wait_time} for status. server: optional registered instance name. Skill: iris-agentic-dev.",
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<serde_json::Value>()
+    )]
+    async fn iris_system_performance(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let mode = p
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let run_id = p
+            .get("run_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result = admin_tools::iris_system_performance_impl(
+            &iris,
+            &self.client,
+            &mode,
+            run_id.as_deref(),
+        )
+        .await;
+        self.record_call("iris_system_performance", result.is_ok());
+        result
+    }
+
+    #[tool(
+        description = "Report mirror membership and role for the connected IRIS instance. Returns {is_member, mirror_name, member_type, is_primary}. Non-mirror instances return {is_member: false}. Useful as a pre-flight check before operations that require a primary. server: optional registered instance name. Skill: iris-agentic-dev.",
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<serde_json::Value>()
+    )]
+    async fn iris_mirror_status(
+        &self,
+        Parameters(p): Parameters<AnyParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let server = p
+            .get("server")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let iris = self.resolve_server(server.as_deref()).await?;
+        let result = admin_tools::iris_mirror_status_impl(&iris, &self.client).await;
+        self.record_call("iris_mirror_status", result.is_ok());
         result
     }
 
@@ -10446,6 +10499,8 @@ impl IrisTools {
         dispatch_any!("hl7_schema_list", hl7_schema_list);
         dispatch_any!("iris_database_list", iris_database_list);
         dispatch_any!("iris_database_stats", iris_database_stats);
+        dispatch_any!("iris_mirror_status", iris_mirror_status);
+        dispatch_any!("iris_system_performance", iris_system_performance);
         dispatch_any!("iris_namespace_create", iris_namespace_create);
         dispatch_any!("iris_namespace_list", iris_namespace_list);
         dispatch_any!("journal_search", journal_search);

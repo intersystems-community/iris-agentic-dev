@@ -297,6 +297,10 @@ name = "test_server_manager"
 path = "tests/unit/test_server_manager.rs"
 
 [[test]]
+name = "test_perf_monitoring"
+path = "tests/unit/test_perf_monitoring.rs"
+
+[[test]]
 name = "test_policy_gate"
 path = "tests/unit/test_policy_gate.rs"
 
@@ -526,6 +530,10 @@ path = "tests/integration/test_comparison_e2e.rs"
 [[test]]
 name = "test_admin_e2e"
 path = "tests/integration/test_admin_e2e.rs"
+
+[[test]]
+name = "test_mirror_and_freespace"
+path = "tests/integration/test_mirror_and_freespace.rs"
 
 [[test]]
 name = "test_iris_production_params"

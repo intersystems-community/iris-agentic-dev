@@ -640,11 +640,14 @@ async fn discover_via_server_manager() -> SmDiscovery {
 
     let namespace = std::env::var("IRIS_NAMESPACE").unwrap_or_else(|_| "USER".to_string());
     let base_url = match &profile.path_prefix {
-        Some(prefix) => format!(
+        Some(prefix) if !prefix.trim_matches('/').is_empty() => format!(
             "{}://{}:{}/{}",
-            profile.scheme, profile.host, profile.port, prefix
+            profile.scheme,
+            profile.host,
+            profile.port,
+            prefix.trim_matches('/')
         ),
-        None => format!("{}://{}:{}", profile.scheme, profile.host, profile.port),
+        _ => format!("{}://{}:{}", profile.scheme, profile.host, profile.port),
     };
 
     let mut conn = IrisConnection::new(
