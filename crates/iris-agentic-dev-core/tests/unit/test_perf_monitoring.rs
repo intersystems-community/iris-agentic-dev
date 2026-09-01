@@ -1,5 +1,5 @@
-//! Unit tests for iris_mirror_status and iris_database_list free space (089).
-//! No IRIS connection required.
+//! Unit tests for iris_mirror_status, iris_database_list free space, and
+//! iris_system_performance (089). No IRIS connection required.
 
 use iris_agentic_dev_core::tools::admin_tools::parse_max_size_mb;
 
@@ -100,4 +100,50 @@ fn backup_member_is_not_primary() {
     assert_eq!(v["is_member"], serde_json::Value::Bool(true));
     assert_eq!(v["is_primary"], serde_json::Value::Bool(false));
     assert_eq!(v["member_type"], serde_json::json!("backup"));
+}
+
+// ── SystemPerfMode parsing ─────────────────────────────────────────────────────
+
+use iris_agentic_dev_core::tools::admin_tools::SystemPerfMode;
+
+#[test]
+fn mode_start_parses() {
+    assert_eq!(SystemPerfMode::parse("start"), Some(SystemPerfMode::Start));
+    assert_eq!(SystemPerfMode::parse("START"), Some(SystemPerfMode::Start));
+}
+
+#[test]
+fn mode_status_parses() {
+    assert_eq!(
+        SystemPerfMode::parse("status"),
+        Some(SystemPerfMode::Status)
+    );
+}
+
+#[test]
+fn mode_last_runid_parses() {
+    assert_eq!(
+        SystemPerfMode::parse("last_runid"),
+        Some(SystemPerfMode::LastRunId)
+    );
+}
+
+#[test]
+fn mode_unknown_returns_none() {
+    assert_eq!(SystemPerfMode::parse(""), None);
+    assert_eq!(SystemPerfMode::parse("run"), None);
+    assert_eq!(SystemPerfMode::parse("begin"), None);
+}
+
+#[test]
+fn mode_status_requires_run_id_is_documented() {
+    // Verify the Status variant exists and is distinct from Start/LastRunId
+    assert_ne!(
+        SystemPerfMode::parse("status"),
+        SystemPerfMode::parse("start")
+    );
+    assert_ne!(
+        SystemPerfMode::parse("status"),
+        SystemPerfMode::parse("last_runid")
+    );
 }

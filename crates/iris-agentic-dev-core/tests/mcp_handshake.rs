@@ -161,6 +161,7 @@ fn mcp_server_tools_list_returns_23_tools() {
         "agent_stats",
         "iris_mirror_status",
         "iris_database_list",
+        "iris_system_performance",
     ];
     for name in required {
         assert!(

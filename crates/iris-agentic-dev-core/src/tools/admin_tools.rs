@@ -435,6 +435,143 @@ pub fn build_mirror_status_json(
     })
 }
 
+// ── iris_system_performance (089) ────────────────────────────────────────────
+
+/// Validated modes for iris_system_performance.
+#[derive(Debug, PartialEq)]
+pub enum SystemPerfMode {
+    Start,
+    Status,
+    LastRunId,
+}
+
+impl SystemPerfMode {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "start" => Some(Self::Start),
+            "status" => Some(Self::Status),
+            "last_runid" => Some(Self::LastRunId),
+            _ => None,
+        }
+    }
+}
+
+pub async fn iris_system_performance_impl(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    mode: &str,
+    run_id: Option<&str>,
+) -> Result<CallToolResult, McpError> {
+    match SystemPerfMode::parse(mode) {
+        None => {
+            return ok_json(serde_json::json!({
+                "success": false,
+                "error": format!("unknown mode '{}'; valid values: start, status, last_runid", mode),
+            }));
+        }
+        Some(SystemPerfMode::LastRunId) => {
+            let code = r#"ZN "%SYS"
+Set tLast=$O(^IRIS.SystemPerformance("history",""),-1)
+Write tLast"#;
+            match iris.execute_via_generator(code, "%SYS", client).await {
+                Ok(out) => {
+                    let val = out.trim();
+                    if val.starts_with("ERROR:") {
+                        return ok_json(serde_json::json!({
+                            "success": false,
+                            "error": val,
+                        }));
+                    }
+                    let run_id_out = if val.is_empty() {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::Value::String(val.to_string())
+                    };
+                    ok_json(serde_json::json!({
+                        "success": true,
+                        "mode": "last_runid",
+                        "run_id": run_id_out,
+                    }))
+                }
+                Err(e) => ok_json(serde_json::json!({
+                    "success": false,
+                    "error": e.to_string(),
+                })),
+            }
+        }
+        Some(SystemPerfMode::Start) => {
+            let code = r#"ZN "%SYS"
+Do run^SystemPerformance
+Set tLast=$O(^IRIS.SystemPerformance("history",""),-1)
+Write tLast"#;
+            match iris.execute_via_generator(code, "%SYS", client).await {
+                Ok(out) => {
+                    let val = out.trim();
+                    if val.starts_with("ERROR:") {
+                        return ok_json(serde_json::json!({
+                            "success": false,
+                            "error": val,
+                        }));
+                    }
+                    let run_id_out = if val.is_empty() {
+                        serde_json::Value::Null
+                    } else {
+                        serde_json::Value::String(val.to_string())
+                    };
+                    ok_json(serde_json::json!({
+                        "success": true,
+                        "mode": "start",
+                        "run_id": run_id_out,
+                    }))
+                }
+                Err(e) => ok_json(serde_json::json!({
+                    "success": false,
+                    "error": e.to_string(),
+                })),
+            }
+        }
+        Some(SystemPerfMode::Status) => {
+            let rid = match run_id {
+                Some(r) if !r.trim().is_empty() => r.trim().to_string(),
+                _ => {
+                    return ok_json(serde_json::json!({
+                        "success": false,
+                        "error": "mode=status requires run_id",
+                    }));
+                }
+            };
+            let code = format!(
+                r#"ZN "%SYS"
+Set tWait=$$waittime^SystemPerformance("{rid}")
+Write tWait"#
+            );
+            match iris.execute_via_generator(&code, "%SYS", client).await {
+                Ok(out) => {
+                    let val = out.trim();
+                    if val.starts_with("ERROR:") {
+                        return ok_json(serde_json::json!({
+                            "success": false,
+                            "error": val,
+                            "run_id": rid,
+                        }));
+                    }
+                    ok_json(serde_json::json!({
+                        "success": true,
+                        "mode": "status",
+                        "run_id": rid,
+                        "wait_time": val,
+                    }))
+                }
+                Err(e) => ok_json(serde_json::json!({
+                    "success": false,
+                    "error": e.to_string(),
+                    "run_id": rid,
+                })),
+            }
+        }
+    }
+}
+
 pub async fn iris_mirror_status_impl(
     iris: &IrisConnection,
     client: &reqwest::Client,

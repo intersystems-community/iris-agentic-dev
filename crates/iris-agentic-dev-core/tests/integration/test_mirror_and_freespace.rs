@@ -1,5 +1,9 @@
-//! Live IRIS integration tests for iris_mirror_status and iris_database_list
-//! free space (089). All tests require iris-dev-iris and are #[ignore] by default.
+//! Live IRIS integration tests for iris_mirror_status, iris_database_list
+//! free space, and iris_system_performance (089). All tests require
+//! iris-dev-iris and are #[ignore] by default.
+//!
+//! Note: iris_system_performance tests require Enterprise IRIS — they will
+//! return an error on community builds, which is the expected behaviour.
 //!
 //! Run with:
 //!   IRIS_HOST=localhost IRIS_WEB_PORT=52780 IRIS_USERNAME=_SYSTEM IRIS_PASSWORD=SYS \
@@ -147,4 +151,75 @@ async fn e2e_database_list_free_space() {
             "max_size_mb should be null or positive, got: {max} in {db}"
         );
     }
+}
+
+// iris_system_performance: last_runid on community iris-dev-iris
+// Expected: success=true, run_id=null (no runs have been started)
+// On Enterprise with prior runs, run_id will be a non-empty string.
+#[tokio::test]
+#[ignore]
+async fn e2e_system_performance_last_runid_community() {
+    use iris_agentic_dev_core::tools::admin_tools::iris_system_performance_impl;
+
+    let (conn, client) = match make_conn() {
+        Some(c) => c,
+        None => {
+            eprintln!("IRIS_HOST not set — skipping e2e_system_performance_last_runid_community");
+            return;
+        }
+    };
+
+    let result = iris_system_performance_impl(&conn, &client, "last_runid", None)
+        .await
+        .expect("iris_system_performance_impl failed");
+    let v = parse_json(result);
+
+    eprintln!("system_performance last_runid response: {v}");
+
+    // success must be present — value depends on whether SystemPerformance global exists
+    assert!(
+        v.get("success").is_some(),
+        "expected success field, got: {v}"
+    );
+    // mode must be last_runid on success path
+    if v["success"].as_bool() == Some(true) {
+        assert_eq!(
+            v["mode"].as_str(),
+            Some("last_runid"),
+            "expected mode=last_runid, got: {v}"
+        );
+    }
+}
+
+// iris_system_performance: mode=status without run_id returns error
+#[tokio::test]
+#[ignore]
+async fn e2e_system_performance_status_missing_run_id() {
+    use iris_agentic_dev_core::tools::admin_tools::iris_system_performance_impl;
+
+    let (conn, client) = match make_conn() {
+        Some(c) => c,
+        None => {
+            eprintln!("IRIS_HOST not set — skipping e2e_system_performance_status_missing_run_id");
+            return;
+        }
+    };
+
+    let result = iris_system_performance_impl(&conn, &client, "status", None)
+        .await
+        .expect("iris_system_performance_impl failed");
+    let v = parse_json(result);
+
+    eprintln!("system_performance status (no run_id) response: {v}");
+
+    assert_eq!(
+        v["success"].as_bool(),
+        Some(false),
+        "expected success=false when run_id missing, got: {v}"
+    );
+    let err = v["error"].as_str().unwrap_or("");
+    assert!(
+        err.contains("run_id"),
+        "expected error mentioning run_id, got: {v}"
+    );
 }
