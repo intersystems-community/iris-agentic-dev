@@ -578,8 +578,9 @@ jobs:
         run: |
           cargo install cargo-zigbuild
           cargo zigbuild --locked --release --target x86_64-unknown-linux-musl -p iris-agentic-dev
-          cp target/x86_64-unknown-linux-musl/release/iris-agentic-dev iris-agentic-dev
+          mkdir -p bin
+          cp target/x86_64-unknown-linux-musl/release/iris-agentic-dev bin/iris-agentic-dev-amd64
       - name: Build Docker image
-        run: docker build -t iris-agentic-dev-smoke .
+        run: docker build --build-arg TARGETARCH=amd64 -t iris-agentic-dev-smoke .
       - name: Run smoke tests
         run: IMAGE=iris-agentic-dev-smoke bash tests/docker/smoke.sh

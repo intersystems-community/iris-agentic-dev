@@ -463,12 +463,10 @@ pub async fn iris_system_performance_impl(
     run_id: Option<&str>,
 ) -> Result<CallToolResult, McpError> {
     match SystemPerfMode::parse(mode) {
-        None => {
-            return ok_json(serde_json::json!({
-                "success": false,
-                "error": format!("unknown mode '{}'; valid values: start, status, last_runid", mode),
-            }));
-        }
+        None => ok_json(serde_json::json!({
+            "success": false,
+            "error": format!("unknown mode '{}'; valid values: start, status, last_runid", mode),
+        })),
         Some(SystemPerfMode::LastRunId) => {
             let code = r#"ZN "%SYS"
 Set tLast=$O(^IRIS.SystemPerformance("history",""),-1)
