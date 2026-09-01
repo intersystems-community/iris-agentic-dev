@@ -65,6 +65,9 @@ mod tests {
             timestamp: ts.to_string(),
             session_id: Uuid::new_v4(),
             params: None,
+            eval_run_id: None,
+            eval_task_id: None,
+            eval_condition: None,
         }
     }
 

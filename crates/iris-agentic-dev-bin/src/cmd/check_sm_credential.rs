@@ -1,7 +1,6 @@
 use anyhow::Result;
 use clap::Args;
 
-
 #[derive(Args)]
 pub struct CheckSmCredentialCommand {
     /// Server Manager server name (from intersystems.servers in VS Code settings)
