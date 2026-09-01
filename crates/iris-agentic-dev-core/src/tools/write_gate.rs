@@ -460,7 +460,17 @@ pub const CLASSIFICATION: &[ToolClass] = &[
     ro("iris_servers"),
     ro("iris_symbols"),
     ro("iris_symbols_local"),
-    mixed("iris_system_performance"),
+    // `status` and `last_runid` only read ^IRIS.SystemPerformance. `start` runs
+    // `Do run^SystemPerformance`, which launches a collection run and writes there, so it
+    // needs the write gate. Default Write, not ReadOnly, so a mode added later fails closed.
+    mixed(
+        "iris_system_performance",
+        &[
+            ("last_runid", WriteClass::ReadOnly),
+            ("status", WriteClass::ReadOnly),
+        ],
+        WriteClass::Write,
+    ),
     ro("iris_table_info"),
     ro("iris_test_server"),
     // Opening and closing a terminal session mutates nothing. Everything a session can do
