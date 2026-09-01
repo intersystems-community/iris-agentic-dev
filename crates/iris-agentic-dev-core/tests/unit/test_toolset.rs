@@ -117,7 +117,7 @@ fn test_nostub_tool_count() {
     );
 }
 
-/// Baseline is 90 total `#[tool]` methods minus the 9 that are Merged-tier-only
+/// Baseline is 92 total `#[tool]` methods minus the 9 that are Merged-tier-only
 /// dispatchers (iris_admin, iris_debug, iris_containers, iris_get_log, iris_global,
 /// iris_execute_method, iris_message_body, iris_business_rule_info,
 /// iris_production_diff) = 81. Pinned to a specific number for the same reason as
@@ -265,8 +265,8 @@ fn test_merged_tool_count() {
     let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
     let count = tools.registered_tool_names().len();
     assert_eq!(
-        count, 78,
-        "Merged toolset must have exactly 78 tools (90 total #[tool] methods - stubs 4 - \
+        count, 80,
+        "Merged toolset must have exactly 80 tools (92 total #[tool] methods - stubs 4 - \
          replaced-by-dispatcher 8), got {}. If this changed on purpose (a tool was added, \
          removed, or moved tiers), update this number — do not just silence the assertion.",
         count
