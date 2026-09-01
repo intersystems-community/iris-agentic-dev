@@ -154,6 +154,9 @@ fn decode_piped(line: &str, session_id: Uuid) -> Option<ToolCallRecord> {
         timestamp,
         session_id,
         params,
+        eval_run_id: None,
+        eval_task_id: None,
+        eval_condition: None,
     })
 }
 
@@ -452,7 +455,10 @@ mod tests {
         let back: ToolCallRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(back.eval_run_id.as_deref(), Some("gauntlet-ab12cd34"));
         assert_eq!(back.eval_task_id.as_deref(), Some("G05"));
-        assert_eq!(back.eval_condition.as_deref(), Some("raw_api/none/claude-opus-4-8"));
+        assert_eq!(
+            back.eval_condition.as_deref(),
+            Some("raw_api/none/claude-opus-4-8")
+        );
     }
 
     #[test]

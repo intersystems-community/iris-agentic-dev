@@ -125,7 +125,9 @@ impl ToolCommand {
     pub async fn run(self) -> Result<()> {
         let name = self.name.clone();
         let envelope = self.envelope;
-        let run_id = std::env::var("GAUNTLET_RUN_ID").ok().filter(|v| !v.is_empty());
+        let run_id = std::env::var("GAUNTLET_RUN_ID")
+            .ok()
+            .filter(|v| !v.is_empty());
 
         // Validate tool name before connecting
         if !TOOL_NAMES.contains(&name.as_str()) {
@@ -237,7 +239,8 @@ impl ToolCommand {
                     } else {
                         serde_json::Value::Array(parts)
                     };
-                    let tool_ok = result_value.get("success") != Some(&serde_json::Value::Bool(false));
+                    let tool_ok =
+                        result_value.get("success") != Some(&serde_json::Value::Bool(false));
                     println!(
                         "{}",
                         serde_json::json!({

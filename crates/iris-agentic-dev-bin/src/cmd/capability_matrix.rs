@@ -24,18 +24,14 @@ impl CapabilityMatrixCommand {
                     if let Some(text) = content.as_text() {
                         if self.json {
                             // Re-serialize as compact JSON
-                            if let Ok(v) =
-                                serde_json::from_str::<serde_json::Value>(&text.text)
-                            {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text.text) {
                                 println!("{}", serde_json::to_string(&v)?);
                             } else {
                                 println!("{}", text.text);
                             }
                         } else {
                             // Pretty-print
-                            if let Ok(v) =
-                                serde_json::from_str::<serde_json::Value>(&text.text)
-                            {
+                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text.text) {
                                 println!("{}", serde_json::to_string_pretty(&v)?);
                             } else {
                                 println!("{}", text.text);
