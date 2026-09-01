@@ -378,25 +378,19 @@ pub fn resolve_credential(server_name: &str, username: &str) -> Result<String, S
         },
     )?;
 
-    match entry.get_password() {
+    let wcm_result = match entry.get_password() {
         Ok(pw) => {
-            tracing::debug!("SM credential resolved for '{server_name}'");
-            Ok(pw)
+            tracing::debug!("SM credential resolved for '{server_name}' via WCM");
+            return Ok(pw);
         }
         Err(keyring_core::Error::NoEntry) => Err(SmCredentialError::CredentialNotFound {
             server_name: server_name.to_string(),
         }),
-        Err(keyring_core::Error::NoDefaultStore) => {
-            // Platform keychain store not available — headless host or D-Bus not running.
-            // Distinct from CredentialNotFound: here the entire store is inaccessible,
-            // not just this particular entry.
-            Err(SmCredentialError::KeychainUnavailable {
-                server_name: server_name.to_string(),
-                detail: "no default keychain store".to_string(),
-            })
-        }
+        Err(keyring_core::Error::NoDefaultStore) => Err(SmCredentialError::KeychainUnavailable {
+            server_name: server_name.to_string(),
+            detail: "no default keychain store".to_string(),
+        }),
         Err(keyring_core::Error::NoStorageAccess(msg)) => {
-            // D-Bus / keychain daemon running but access denied or session unavailable.
             Err(SmCredentialError::KeychainUnavailable {
                 server_name: server_name.to_string(),
                 detail: format!("keychain access denied: {msg}"),
@@ -406,7 +400,201 @@ pub fn resolve_credential(server_name: &str, username: &str) -> Result<String, S
             server_name: server_name.to_string(),
             detail: e.to_string(),
         }),
+    };
+
+    // On Windows, Server Manager stores credentials in VS Code's state.vscdb
+    // (safeStorage / AES-256-GCM), not in Windows Credential Manager. Try
+    // state.vscdb whenever WCM has no entry or is unavailable.
+    #[cfg(target_os = "windows")]
+    {
+        tracing::debug!("WCM lookup failed for '{server_name}', trying state.vscdb fallback");
+        return resolve_vscode_secret(server_name, &account, None).map_err(|e| {
+            SmCredentialError::KeychainError {
+                server_name: server_name.to_string(),
+                detail: e,
+            }
+        });
     }
+
+    #[cfg(not(target_os = "windows"))]
+    wcm_result
+}
+
+// ── Windows vscdb credential fallback ────────────────────────────────────────
+
+/// Read a Server Manager credential from VS Code's `state.vscdb` on Windows.
+///
+/// This is the two-stage unseal: DPAPI on the Local State AES key, then
+/// AES-256-GCM on the stored value. Called by `resolve_credential` when
+/// Windows Credential Manager has no entry.
+///
+/// `db_path_override` is for testing — pass `None` in production.
+#[cfg(target_os = "windows")]
+pub fn resolve_vscode_secret(
+    server_name: &str,
+    account: &str,
+    db_path_override: Option<&std::path::Path>,
+) -> Result<String, String> {
+    use crate::iris::vscode_payload::{
+        decode_payload, decrypt_safe_storage, parse_local_state_key, DecodedPayload,
+    };
+
+    let db_path = match db_path_override {
+        Some(p) => p.to_path_buf(),
+        None => vscdb_state_db_path()?,
+    };
+
+    let secret_key = format!(
+        r#"secret://{{"extensionId":"intersystems-community.servermanager","key":"{account}"}}"#
+    );
+
+    let (stored, _sqlite_type) = vscdb_read_secret(&db_path, &secret_key).map_err(|e| {
+        // state.vscdb found but key missing — not an error worth surfacing loudly
+        tracing::debug!("vscdb lookup failed for '{server_name}': {e}");
+        e
+    })?;
+
+    match decode_payload(&stored)? {
+        DecodedPayload::Dpapi(ciphertext) => {
+            let plaintext = vscdb_dpapi_decrypt(&ciphertext, "the stored secret")?;
+            String::from_utf8(plaintext).map_err(|e| format!("decrypted bytes are not UTF-8: {e}"))
+        }
+        DecodedPayload::SafeStorage(envelope) => {
+            let local_state = vscdb_local_state_path(&db_path)?;
+            let json = std::fs::read_to_string(&local_state)
+                .map_err(|e| format!("cannot read {}: {e}", local_state.display()))?;
+            let sealed_key = parse_local_state_key(&json)?;
+            let aes_key = vscdb_dpapi_decrypt(&sealed_key, "the Local State AES key")?;
+            decrypt_safe_storage(&envelope, &aes_key)
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn vscdb_state_db_path() -> Result<std::path::PathBuf, String> {
+    let appdata = std::env::var("APPDATA").map_err(|_| "%APPDATA% not set".to_string())?;
+    let path = std::path::PathBuf::from(&appdata)
+        .join("Code")
+        .join("User")
+        .join("globalStorage")
+        .join("state.vscdb");
+    if path.exists() {
+        return Ok(path);
+    }
+    let cursor = std::path::PathBuf::from(&appdata)
+        .join("Cursor")
+        .join("User")
+        .join("globalStorage")
+        .join("state.vscdb");
+    if cursor.exists() {
+        return Ok(cursor);
+    }
+    Err(format!(
+        "state.vscdb not found at {} (also tried Cursor)",
+        path.display()
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn vscdb_local_state_path(db_path: &std::path::Path) -> Result<std::path::PathBuf, String> {
+    let install_root = db_path
+        .parent() // globalStorage
+        .and_then(|p| p.parent()) // User
+        .and_then(|p| p.parent()) // Code
+        .ok_or_else(|| {
+            format!(
+                "cannot locate Local State relative to {} — expected \
+                 …\\Code\\User\\globalStorage\\state.vscdb",
+                db_path.display()
+            )
+        })?;
+    Ok(install_root.join("Local State"))
+}
+
+#[cfg(target_os = "windows")]
+fn vscdb_read_secret(db_path: &std::path::Path, key: &str) -> Result<(Vec<u8>, String), String> {
+    use rusqlite::OptionalExtension;
+    let conn =
+        rusqlite::Connection::open(db_path).map_err(|e| format!("cannot open state.vscdb: {e}"))?;
+    let result: Option<(Vec<u8>, String)> = conn
+        .query_row(
+            "SELECT value, typeof(value) FROM ItemTable WHERE key = ?1",
+            rusqlite::params![key],
+            |row| {
+                use rusqlite::types::ValueRef;
+                let bytes = match row.get_ref(0)? {
+                    ValueRef::Blob(b) => b.to_vec(),
+                    ValueRef::Text(t) => t.to_vec(),
+                    other => {
+                        return Err(rusqlite::Error::InvalidColumnType(
+                            0,
+                            "value".to_string(),
+                            other.data_type(),
+                        ))
+                    }
+                };
+                Ok((bytes, row.get::<_, String>(1)?))
+            },
+        )
+        .optional()
+        .map_err(|e| format!("query failed: {e}"))?;
+    result.ok_or_else(|| {
+        "key not found in state.vscdb — Server Manager credentials may not be stored yet"
+            .to_string()
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn current_windows_username() -> Option<String> {
+    use windows::core::PWSTR;
+    use windows::Win32::System::WindowsProgramming::GetUserNameW;
+    let mut buf = vec![0u16; 257];
+    let mut size = buf.len() as u32;
+    let ok = unsafe { GetUserNameW(PWSTR(buf.as_mut_ptr()), &mut size) };
+    if ok.is_err() {
+        return None;
+    }
+    let len = size.saturating_sub(1) as usize;
+    Some(String::from_utf16_lossy(&buf[..len]))
+}
+
+#[cfg(target_os = "windows")]
+fn vscdb_dpapi_decrypt(ciphertext: &[u8], what: &str) -> Result<Vec<u8>, String> {
+    use windows::Win32::Security::Cryptography::{CryptUnprotectData, CRYPT_INTEGER_BLOB};
+
+    let mut input = CRYPT_INTEGER_BLOB {
+        cbData: ciphertext.len() as u32,
+        pbData: ciphertext.as_ptr() as *mut u8,
+    };
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
+
+    let ok = unsafe { CryptUnprotectData(&mut input, None, None, None, None, 0, &mut output) };
+
+    if ok.is_err() {
+        let err = std::io::Error::last_os_error();
+        let current_user = current_windows_username().unwrap_or_else(|| "<unknown>".to_string());
+        return Err(format!(
+            "CryptUnprotectData failed on {what} ({} bytes): {err}.\n\
+             This process is running as Windows user: {current_user}\n\
+             DPAPI encrypts data to the user who wrote it. If this process runs as a \
+             different user than VS Code, it cannot decrypt VS Code's stored secrets.\n\
+             Fix: run VS Code and this tool as the same Windows user, or put the \
+             password directly in .iris-agentic-dev.toml (see docs/connecting.md).",
+            ciphertext.len()
+        ));
+    }
+
+    let decrypted =
+        unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec() };
+    unsafe {
+        windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(
+            output.pbData as *mut _,
+        ));
+    }
+    Ok(decrypted)
 }
 
 // ── check_config helpers ──────────────────────────────────────────────────────

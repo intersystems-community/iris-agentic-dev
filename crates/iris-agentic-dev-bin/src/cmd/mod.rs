@@ -16,4 +16,3 @@ pub mod skill;
 pub mod telemetry;
 pub mod tool;
 pub mod tsv;
-pub mod vscode_payload;

@@ -35,6 +35,7 @@ quick-xml = "0.37"
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots", "connect", "handshake"], default-features = false }
 futures-util = { version = "0.3", features = ["sink"] }
 base64 = "0.22"
+aes-gcm = "0.10"
 similar = "2"
 
 
@@ -48,6 +49,8 @@ apple-native-keyring-store = "1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-native-keyring-store = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+windows = { version = "0.58", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_System_WindowsProgramming"] }
 
 [target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
 zbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
@@ -556,6 +559,10 @@ path = "tests/unit/test_gate_check.rs"
 [[test]]
 name = "test_docs_contract"
 path = "tests/unit/test_docs_contract.rs"
+
+[[test]]
+name = "test_vscode_payload"
+path = "tests/unit/test_vscode_payload.rs"
 
 [[test]]
 name = "test_lockfile_sync"

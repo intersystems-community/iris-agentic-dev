@@ -107,6 +107,7 @@ Before closing any release (tagging, publishing, merging release branch):
 
 ## Recent Changes
 
+- 088-windows-vscdb-credential-fallback: `resolve_credential` on Windows now falls back to `state.vscdb` (safeStorage / AES-256-GCM) when Windows Credential Manager has no entry; `vscode_payload.rs` moved to core; DPAPI error message includes current Windows username; `check-sm-credential` delegates to core
 - 087-execute-gate-bypass: `iris_execute` now enforces the destructive gate when `Kill ^<global>` appears literally in the code string; `contains_global_kill` in `write_gate.rs`; 22 unit tests + 4 live IRIS tests; indirection gap documented in spec and error message
 - 086-agent-attribution-audit: caller marker in `User-Agent` on every IRIS-bound request, opt-in `%SYS.Audit` emission via `[policy.<server>].irisAudit`, `docs/agent-attribution.md`; plan at `specs/086-agent-attribution-audit/plan.md`
 - 085-write-gate-integrity: write/destructive gates resolved as data and enforced once in `call_tool`; plan at `specs/085-write-gate-integrity/plan.md`

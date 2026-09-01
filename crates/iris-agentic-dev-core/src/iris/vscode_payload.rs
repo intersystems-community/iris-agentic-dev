@@ -11,13 +11,11 @@
 //!
 //! So DPAPI is used — one level in, on the *key*, never on the secret. Calling
 //! `CryptUnprotectData` on the stored value cannot succeed for any user on any
-//! machine. An earlier revision of this diagnostic did exactly that and
-//! reported "likely running as a different user than VS Code", which sent a
-//! field diagnosis down a dead end.
+//! machine.
 //!
 //! This module is deliberately platform-independent so every format and crypto
 //! step is covered by `cargo test` on any dev machine. Only the DPAPI unseal of
-//! the AES key is Windows-gated, in `check_sm_credential`.
+//! the AES key is Windows-gated, in `server_manager`.
 
 use base64::Engine;
 
@@ -232,8 +230,6 @@ pub fn decrypt_safe_storage(envelope: &[u8], aes_key: &[u8]) -> Result<String, S
     }
 
     let nonce = &envelope[ENVELOPE_TAG_LEN..ENVELOPE_TAG_LEN + GCM_NONCE_LEN];
-    // aes-gcm expects ciphertext with the auth tag appended, which is exactly
-    // the remainder of the envelope.
     let sealed = &envelope[ENVELOPE_TAG_LEN + GCM_NONCE_LEN..];
 
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(aes_key));
@@ -250,8 +246,6 @@ pub fn decrypt_safe_storage(envelope: &[u8], aes_key: &[u8]) -> Result<String, S
 }
 
 fn looks_like_buffer_json(value: &[u8]) -> bool {
-    // Cheap structural check on the head of the value: an object that names
-    // the Buffer type. Full validation happens in decode_buffer_json.
     let head = &value[..64.min(value.len())];
     let Ok(text) = std::str::from_utf8(head) else {
         return false;

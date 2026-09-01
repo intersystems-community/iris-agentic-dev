@@ -1,132 +1,118 @@
-# 087 — iris_execute gate bypass: implementation plan
+# Implementation Plan: [FEATURE]
 
-## Status
+**Branch**: `[###-feature-name]` | **Date**: [DATE] | **Spec**: [link]
+**Input**: Feature specification from `/specs/[###-feature-name]/spec.md`
 
-Draft.
+**Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/commands/plan.md` for the execution workflow.
 
-## Current state (verified against codebase)
+## Summary
 
-`iris_execute` is already `wr("iris_execute")` in `write_gate::CLASSIFICATION` —
-write-gated. `gate_check` runs before the handler body in `call_tool` dispatch and
-blocks `iris_execute` when `write_tools_enabled = false`. That half of the bug is
-already fixed.
+[Extract from feature spec: primary requirement + technical approach from research]
 
-The open gap: `iris_execute` is classified as `Write`, not `Destructive`. A caller
-with `write_tools_enabled = true` but `destructive_tools_enabled = false` can run
-`Kill ^SomeGlobal` through `iris_execute` with no refusal. `iris_global` kill is
-classified `Destructive` (the `mixed` entry in CLASSIFICATION), so the same operation
-through `iris_global` is correctly blocked.
+## Technical Context
 
-## Design decision
+<!--
+  ACTION REQUIRED: Replace the content in this section with the technical details
+  for the project. The structure here is presented in advisory capacity to guide
+  the iteration process.
+-->
 
-**Option 3 from spec:** content-sensitive destructive check inside the `iris_execute`
-handler body, after the `gate_check` write-tier pass, before the IRIS HTTP call.
+**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]  
+**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]  
+**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]  
+**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]  
+**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
+**Project Type**: [single/web/mobile - determines source structure]  
+**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]  
+**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
+**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
 
-- `gate_check` continues to enforce the write tier via CLASSIFICATION (no change to
-  that path).
-- A new helper `contains_global_kill(code: &str) -> bool` checks for the patterns
-  that literally appear in the code string and indicate a direct kill of a global:
-  `Kill ^`, `KILL ^`, `k ^`, `K ^` (case variants ObjectScript accepts). This is a
-  simple substring/regex check.
-- If `contains_global_kill` returns true and `gates.destructive_enabled` is false,
-  `iris_execute` returns the standard `DESTRUCTIVE_TOOLS_DISABLED` refusal before any
-  IRIS call.
-- The check lives in a standalone function in `write_gate.rs` (or a small submodule)
-  so it is unit-testable without the full handler.
+## Constitution Check
 
-This does NOT claim to catch indirect vectors (`Kill @var`, `Xecute`, `##class`
-dispatch, `&sql`). The spec says so plainly. The check is defense against inadvertent
-sloppiness, not a security boundary.
+_GATE: Must pass before Phase 0 research. Re-check after Phase 1 design._
 
-## Files changed
+| Principle                      | Status                    | Notes                                                                                                                                 |
+| ------------------------------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| I. Zero-Install Binary         | PASS / FAIL / N/A         | No new install step required                                                                                                          |
+| II. ObjectScript Sanity        | PASS / NEEDS VERIFICATION | All APIs verified against live IRIS                                                                                                   |
+| III. HTTP-First Execution      | PASS / FAIL               | No new Docker-required tools in Merged tier                                                                                           |
+| IV. Test-First, Fixture-Driven | PASS / FAIL               | Unit tests for no-IRIS path; fixtures committed                                                                                       |
+| V. Output Shape Parity         | PASS / FAIL / N/A         | Response shape matches existing tools                                                                                                 |
+| VI. Environment Guard          | PASS / FAIL / N/A         | Write tools classified and gated                                                                                                      |
+| VII. Dependency Minimalism     | PASS / FAIL               | Any new crate justified in research.md                                                                                                |
+| VIII. 90% Coverage Gate        | PASS / FAIL               | Polish phase has coverage-check task; `--include-ignored` ≥ 90%                                                                       |
+| IX. Tool Lift Requirement      | PASS / FAIL / N/A         | Benchmark task defined; lift ≥ +0.20 measured before merge; N/A if tool is internal-only                                              |
+| X. ObjectScript Coverage       | PASS / FAIL / N/A         | N/A for pure Rust features; TestCoverage run + coverage-results.md required for any ObjectScript feature; ≥ 90% or passlist justified |
 
-| File                                                              | Change                                                                                                            |
-| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `crates/iris-agentic-dev-core/src/tools/write_gate.rs`            | Add `pub fn contains_global_kill(code: &str) -> bool`                                                             |
-| `crates/iris-agentic-dev-core/src/tools/mod.rs`                   | Call the helper in `iris_execute` body; return destructive refusal if triggered                                   |
-| `crates/iris-agentic-dev-core/tests/unit/test_write_gate.rs`      | Unit tests for `contains_global_kill`                                                                             |
-| `crates/iris-agentic-dev-bin/tests/integration/test_exec_live.rs` | Live IRIS integration test: `iris_execute("Kill ^TestGlobal")` blocked when destructive gate off; allowed when on |
-| `docs/tools.md`                                                   | Note on `iris_execute` destructive-tier behaviour                                                                 |
+_A plan with any FAIL gate MUST NOT proceed to implementation._
 
-## `contains_global_kill` spec
+## Project Structure
 
-Matches any line that contains a Kill/KILL/k/K token immediately followed by optional
-whitespace and then `^`. Case-insensitive on the keyword. Must not match:
+### Documentation (this feature)
 
-- `Kill localvar` (no `^`)
-- A comment line containing `// Kill ^foo` — decision: do NOT attempt comment
-  stripping; false positives here are acceptable (blocking a comment that looks like a
-  kill is better than missing a kill that looks like a comment). Regex: `(?i)\bkill\s*\^`
-
-Must match:
-
-- `Kill ^Foo`
-- `KILL ^Foo`
-- `Kill  ^Foo("bar")` (extra whitespace)
-- Multiline code where one line contains `Kill ^Foo`
-
-## Error message
-
-```
-iris_execute contains a Kill ^<global> expression and the destructive tier is disabled
-(source: <source>). Set destructive_tools_enabled = true in .iris-agentic-dev.toml
-to allow destructive operations. Note: this check applies to literal Kill ^ patterns
-in the code string only. Indirect kill operations (via variables, Xecute, or class
-methods) are not detected here — IRIS-side credentials and the mcpTemplate env gate
-are the appropriate controls for those.
+```text
+specs/[###-feature]/
+├── plan.md              # This file (/speckit.plan command output)
+├── research.md          # Phase 0 output (/speckit.plan command)
+├── data-model.md        # Phase 1 output (/speckit.plan command)
+├── quickstart.md        # Phase 1 output (/speckit.plan command)
+├── contracts/           # Phase 1 output (/speckit.plan command)
+└── tasks.md             # Phase 2 output (/speckit.tasks command - NOT created by /speckit.plan)
 ```
 
-The last two sentences prevent anyone from misreading the error as a comprehensive
-block.
+### Source Code (repository root)
 
-## Test requirements (three layers, non-negotiable)
+<!--
+  ACTION REQUIRED: Replace the placeholder tree below with the concrete layout
+  for this feature. Delete unused options and expand the chosen structure with
+  real paths (e.g., apps/admin, packages/something). The delivered plan must
+  not include Option labels.
+-->
 
-### Layer 1 — unit tests for `contains_global_kill`
+```text
+# [REMOVE IF UNUSED] Option 1: Single project (DEFAULT)
+src/
+├── models/
+├── services/
+├── cli/
+└── lib/
 
-File: `crates/iris-agentic-dev-core/tests/unit/test_write_gate.rs`
+tests/
+├── contract/
+├── integration/
+└── unit/
 
-- `Kill ^Foo` → true
-- `KILL ^Foo` → true
-- `Kill  ^Foo("sub")` (extra space) → true
-- `Kill ^` (bare caret) → true
-- Multiline with kill on line 3 → true
-- `Kill localvar` (no caret) → false
-- `Set ^Foo=1` (set, not kill) → false
-- Empty string → false
-- `// Kill ^Foo` — acceptable either way; document which (recommend: true, false
-  positive is the safer side)
+# [REMOVE IF UNUSED] Option 2: Web application (when "frontend" + "backend" detected)
+backend/
+├── src/
+│   ├── models/
+│   ├── services/
+│   └── api/
+└── tests/
 
-### Layer 2 — binary invocation (no live IRIS)
+frontend/
+├── src/
+│   ├── components/
+│   ├── pages/
+│   └── services/
+└── tests/
 
-File: `crates/iris-agentic-dev-bin/tests/integration/test_exec_live.rs`
-(or a new `test_exec_gate.rs` if cleaner)
+# [REMOVE IF UNUSED] Option 3: Mobile + API (when "iOS/Android" detected)
+api/
+└── [same as backend above]
 
-Spawn `iris-agentic-dev` as subprocess. Send `tools/call` with
-`iris_execute(code="Kill ^IadGateTest")` with env
-`IRIS_WRITE_TOOLS_ENABLED=1 IRIS_DESTRUCTIVE_TOOLS_ENABLED=0`. Assert JSON-RPC
-response contains `error_code: "DESTRUCTIVE_TOOLS_DISABLED"` without connecting to
-IRIS. `#[ignore]` tag; CI wires `IAD_BINARY`.
+ios/ or android/
+└── [platform-specific structure: feature modules, UI flows, platform tests]
+```
 
-### Layer 3 — live IRIS integration
+**Structure Decision**: [Document the selected structure and reference the real
+directories captured above]
 
-File: `crates/iris-agentic-dev-bin/tests/integration/test_exec_live.rs`
+## Complexity Tracking
 
-`#[ignore]` test against `iris-dev-iris` (localhost:52780), `--test-threads=1`.
+> **Fill ONLY if Constitution Check has violations that must be justified**
 
-Two cases:
-
-1. Destructive gate off + `Kill ^IadGateTest`: expect `DESTRUCTIVE_TOOLS_DISABLED`
-2. Destructive gate on + `Kill ^IadGateTest`: expect the kill to succeed (set the
-   global first in the same test, clean up after)
-
-The test sets/kills a dedicated `^IadGateTest` global so it never touches anything
-meaningful.
-
-## Out of scope
-
-- `iris_ws_exec` — same class of problem, separate spec.
-- Detecting indirect kill vectors — stated as out of scope in spec.
-- Modifying `gate_check` / CLASSIFICATION to handle code-content dispatch — the
-  `classify` function dispatches on `action`/`mode` args; extending it to handle
-  arbitrary code-string content is more invasive than needed and the handler-body check
-  achieves the same result.
+| Violation                  | Why Needed         | Simpler Alternative Rejected Because |
+| -------------------------- | ------------------ | ------------------------------------ |
+| [e.g., 4th project]        | [current need]     | [why 3 projects insufficient]        |
+| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient]  |

@@ -1424,9 +1424,7 @@ dependencies = [
 name = "iris-agentic-dev"
 version = "1.2.7"
 dependencies = [
- "aes-gcm",
  "anyhow",
- "base64 0.22.1",
  "clap",
  "dirs",
  "hyper",
@@ -1444,13 +1442,13 @@ dependencies = [
  "tracing-subscriber",
  "urlencoding",
  "which",
- "windows",
 ]
 
 [[package]]
 name = "iris-agentic-dev-core"
 version = "1.2.7"
 dependencies = [
+ "aes-gcm",
  "anyhow",
  "apple-native-keyring-store",
  "base64 0.22.1",
@@ -1464,6 +1462,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rmcp",
+ "rusqlite",
  "schemars",
  "semver",
  "serde",
@@ -1480,6 +1479,7 @@ dependencies = [
  "tree-sitter-objectscript-routine",
  "urlencoding",
  "uuid",
+ "windows",
  "windows-native-keyring-store",
  "wiremock",
  "zbus-secret-service-keyring-store",

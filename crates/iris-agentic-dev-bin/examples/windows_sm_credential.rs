@@ -48,9 +48,10 @@ fn windows_main() {
     let server_name = &args[1];
     let username = args[2].to_lowercase();
 
-    match iris_agentic_dev::cmd::check_sm_credential::resolve_vscode_secret(
+    let account = format!("credentialProvider:{server_name}/{username}");
+    match iris_agentic_dev_core::iris::server_manager::resolve_vscode_secret(
         server_name,
-        &username,
+        &account,
         None,
     ) {
         Ok(password) => {

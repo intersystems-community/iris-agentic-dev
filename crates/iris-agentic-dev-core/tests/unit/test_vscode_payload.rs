@@ -10,7 +10,7 @@
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use base64::Engine;
-use iris_agentic_dev::cmd::vscode_payload::{
+use iris_agentic_dev_core::iris::vscode_payload::{
     classify_payload, decode_payload, decrypt_safe_storage, hex_preview, parse_local_state_key,
     DecodedPayload, PayloadEncoding, DPAPI_BLOB_HEADER, LOCAL_STATE_KEY_PREFIX,
 };
@@ -296,8 +296,6 @@ fn empty_value_is_not_mistaken_for_base64() {
 
 #[test]
 fn short_alphanumeric_values_are_not_mistaken_for_base64() {
-    // Four base64-alphabet characters decode cleanly but are far too short to
-    // be any of the real formats; treating them as base64 would hide the cause.
     assert_eq!(classify_payload(b"YWJj"), PayloadEncoding::Unknown);
 }
 
@@ -323,8 +321,6 @@ fn hex_preview_truncates_and_reports_the_full_length() {
 
 #[test]
 fn dpapi_header_matches_the_documented_provider_guid() {
-    // version 1 (u32 LE) followed by df9d8cd0-1501-11d1-8c7a-00c04fc297eb
-    // in the little-endian layout Windows writes.
     assert_eq!(DPAPI_BLOB_HEADER.len(), 20);
     assert_eq!(&DPAPI_BLOB_HEADER[0..4], &[0x01, 0x00, 0x00, 0x00]);
     assert_eq!(&DPAPI_BLOB_HEADER[4..8], &[0xd0, 0x8c, 0x9d, 0xdf]);

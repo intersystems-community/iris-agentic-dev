@@ -24,8 +24,6 @@ anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 urlencoding = "2"
-base64 = "0.22"
-aes-gcm = "0.10"
 dirs = "5"
 tracing.workspace = true
 tracing-subscriber.workspace = true
@@ -39,7 +37,6 @@ path = "examples/windows_sm_credential.rs"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
-windows = { version = "0.58", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -85,9 +82,6 @@ path = "tests/unit/test_tool_dispatch.rs"
 name = "test_plugin_manifest_version"
 path = "tests/unit/test_plugin_manifest_version.rs"
 
-[[test]]
-name = "test_vscode_payload"
-path = "tests/unit/test_vscode_payload.rs"
 
 [[test]]
 name = "test_exec_live"
