@@ -1,31 +1,36 @@
 class IrisAgenticDev < Formula
   desc "MCP server connecting AI assistants to InterSystems IRIS — compile, test, debug ObjectScript without leaving the chat"
   homepage "https://github.com/intersystems-community/iris-agentic-dev"
-  version "1.2.9"
+  version "1.3.0"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.2.9/iris-agentic-dev-macos-arm64"
-      sha256 "c67e431dd9a9c3f02c0ccf6c33da627c60ac89d206d7a10479f224a013da832c"
+      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.3.0/iris-agentic-dev-macos-arm64"
+      sha256 "0a885e46cf7e2d1305559e0a2c515f6ae03bf83a07852addd3f7ae63c7125412"
     end
     on_intel do
-      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.2.9/iris-agentic-dev-macos-x86_64"
-      sha256 "7904135561a0ac46aab843f740e4cfb7b0de796cee356e8967f69bd6a36a811c"
+      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.3.0/iris-agentic-dev-macos-x86_64"
+      sha256 "d76c143c88d055bae79fcfe62222dd5190d078895b98a7b35e8cdeb9f7613cdf"
     end
   end
 
   on_linux do
+    on_arm do
+      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.3.0/iris-agentic-dev-linux-aarch64"
+      sha256 "78e12d351016cb93e7a96761ab4ab5b019006b659540ef8c2ef3db6208405c22"
+    end
     on_intel do
-      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.2.9/iris-agentic-dev-linux-x86_64"
-      sha256 "2a1b9e9245d189f3ec12b9c4b90badaa153540aab270a5553367a0dc79ad5eb3"
+      url "https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.3.0/iris-agentic-dev-linux-x86_64"
+      sha256 "0c1976603dad85bd9af63599f1ab30723402031cd6f08fbbb4d1c3cb0e0e6ccf"
     end
   end
 
   def install
     bin_name = "iris-agentic-dev-macos-arm64"
     bin_name = "iris-agentic-dev-macos-x86_64" if Hardware::CPU.intel? && OS.mac?
-    bin_name = "iris-agentic-dev-linux-x86_64" if OS.linux?
+    bin_name = "iris-agentic-dev-linux-aarch64" if OS.linux? && Hardware::CPU.arm?
+    bin_name = "iris-agentic-dev-linux-x86_64" if OS.linux? && Hardware::CPU.intel?
     bin.install bin_name => "iris-agentic-dev"
   end
 
