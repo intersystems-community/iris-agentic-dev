@@ -1034,7 +1034,6 @@ operations that require a primary.
 ### `iris_system_performance`
 
 Start, poll, or retrieve the last run ID for an IRIS SystemPerformance profile.
-Requires Enterprise IRIS — not available in community builds.
 
 | Parameter | Type   | Default | Notes                                           |
 | --------- | ------ | ------- | ----------------------------------------------- |

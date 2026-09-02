@@ -8049,7 +8049,7 @@ Methods:
     }
 
     #[tool(
-        description = "Start, poll, or retrieve the last run ID for an IRIS SystemPerformance profile. Requires Enterprise IRIS (not available in community builds). mode: start | status | last_runid. run_id: required for mode=status. Returns {success, mode, run_id} for start/last_runid; {success, mode, run_id, wait_time} for status. server: optional registered instance name. Skill: iris-agentic-dev.",
+        description = "Start, poll, or retrieve the last run ID for an IRIS SystemPerformance profile. mode: start | status | last_runid. run_id: required for mode=status. Returns {success, mode, run_id} for start/last_runid; {success, mode, run_id, wait_time} for status. server: optional registered instance name. Skill: iris-agentic-dev.",
         output_schema = output_schemas::oneof_output_schema::<serde_json::Value>()
     )]
     async fn iris_system_performance(

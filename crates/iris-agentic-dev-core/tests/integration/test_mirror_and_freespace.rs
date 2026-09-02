@@ -2,8 +2,8 @@
 //! free space, and iris_system_performance (089). All tests require
 //! iris-dev-iris and are #[ignore] by default.
 //!
-//! Note: iris_system_performance tests require Enterprise IRIS — they will
-//! return an error on community builds, which is the expected behaviour.
+//! Note: iris_system_performance tests require a live IRIS instance with the
+//! SystemPerformance routine available (run^SystemPerformance).
 //!
 //! Run with:
 //!   IRIS_HOST=localhost IRIS_WEB_PORT=52780 IRIS_USERNAME=_SYSTEM IRIS_PASSWORD=SYS \
