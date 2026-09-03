@@ -42,6 +42,8 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.16.0"
       - run: cargo install cargo-zigbuild
       # --locked is load-bearing, not hygiene. Cargo reconciles a stale lockfile during
       # resolution, which happens before build.rs runs `git describe --dirty` — so drift

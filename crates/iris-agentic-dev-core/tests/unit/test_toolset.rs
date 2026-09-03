@@ -117,10 +117,10 @@ fn test_nostub_tool_count() {
     );
 }
 
-/// Baseline is 92 total `#[tool]` methods minus the 9 that are Merged-tier-only
+/// Baseline is 93 total `#[tool]` methods minus the 9 that are Merged-tier-only
 /// dispatchers (iris_admin, iris_debug, iris_containers, iris_get_log, iris_global,
 /// iris_execute_method, iris_message_body, iris_business_rule_info,
-/// iris_production_diff) = 81. Pinned to a specific number for the same reason as
+/// iris_production_diff) = 84. Pinned to a specific number for the same reason as
 /// test_merged_tool_count: `registered_tool_names()` now derives directly from the router
 /// so it has no parallel list left to drift against, but the router itself can still
 /// silently grow or shrink if a `#[tool]` method is added, removed, or accidentally
@@ -132,8 +132,8 @@ fn test_baseline_tool_count() {
     let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
     let count = tools.registered_tool_names().len();
     assert_eq!(
-        count, 83,
-        "Baseline toolset must have exactly 83 tools (92 total #[tool] methods - 9 \
+        count, 84,
+        "Baseline toolset must have exactly 84 tools (93 total #[tool] methods - 9 \
          Merged-tier-only dispatchers), got {}. If this changed on purpose, update this \
          number — do not just silence the assertion.",
         count
@@ -248,11 +248,11 @@ fn test_merged_excludes_original_interop_production_tools() {
     }
 }
 
-/// Merged tool count, derived from the real router (90 `#[tool]` methods total in
+/// Merged tool count, derived from the real router (93 `#[tool]` methods total in
 /// Baseline) minus the 4 stub tools minus the 8 tools replaced by consolidated
 /// dispatchers (debug_capture_packet/debug_get_error_logs/debug_map_int_to_cls/
 /// debug_source_map → iris_debug; agent_info/iris_list_containers/
-/// iris_select_container/iris_start_sandbox → iris_containers) = 78.
+/// iris_select_container/iris_start_sandbox → iris_containers) = 81.
 ///
 /// This asserts a specific number deliberately, even though `registered_tool_names()`
 /// no longer has a parallel hand-maintained list to drift against: a hardcoded number
@@ -265,8 +265,8 @@ fn test_merged_tool_count() {
     let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
     let count = tools.registered_tool_names().len();
     assert_eq!(
-        count, 80,
-        "Merged toolset must have exactly 80 tools (92 total #[tool] methods - stubs 4 - \
+        count, 81,
+        "Merged toolset must have exactly 81 tools (93 total #[tool] methods - stubs 4 - \
          replaced-by-dispatcher 8), got {}. If this changed on purpose (a tool was added, \
          removed, or moved tiers), update this number — do not just silence the assertion.",
         count

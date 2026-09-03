@@ -984,3 +984,195 @@ mod tests {
         assert!(!admin_write_allowed());
     }
 }
+
+// ── 099: Fresh Container Setup ───────────────────────────────────────────────
+
+#[derive(serde::Serialize, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum SetupStepStatus {
+    Ok,
+    Skipped,
+    Error,
+}
+
+#[derive(serde::Serialize, Debug)]
+pub struct SetupStep {
+    pub action: String,
+    pub status: SetupStepStatus,
+    pub detail: String,
+}
+
+#[derive(serde::Serialize, Debug)]
+pub struct FreshSetupResult {
+    pub success: bool,
+    pub ready: bool,
+    pub steps: Vec<SetupStep>,
+}
+
+pub async fn admin_clear_password_change_flag_impl(
+    iris: Option<&IrisConnection>,
+    username: &str,
+    password: &str,
+    new_password: &str,
+) -> Result<CallToolResult, McpError> {
+    if !admin_write_allowed() {
+        return write_disabled();
+    }
+    let iris = match iris {
+        Some(i) => i,
+        None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
+    };
+    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let un = os_str_expr(username);
+    let pw = os_str_expr(password);
+    let newpw = os_str_expr(new_password);
+    let code = format!(
+        r#"ZN "%SYS"
+Set sc=##class(%SYSTEM.Security).ChangePassword({un},{newpw},{pw},.status)
+If sc {{ Write "OK" }} Else {{ Write "ERROR:"_$System.Status.GetErrorText(status) }}"#
+    );
+    match iris.execute_via_generator(&code, "%SYS", &client).await {
+        Ok(out) => {
+            let out = out.trim();
+            if out == "OK" {
+                ok_json(serde_json::json!({
+                    "success": true,
+                    "username": username,
+                    "flag_cleared": true,
+                }))
+            } else if let Some(msg) = out.strip_prefix("ERROR:") {
+                err_json("PASSWORD_CHANGE_FAILED", msg)
+            } else {
+                err_json("PASSWORD_CHANGE_FAILED", out)
+            }
+        }
+        Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
+    }
+}
+
+pub async fn admin_unlock_user_impl(
+    iris: Option<&IrisConnection>,
+    username: &str,
+) -> Result<CallToolResult, McpError> {
+    if !admin_write_allowed() {
+        return write_disabled();
+    }
+    let iris = match iris {
+        Some(i) => i,
+        None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
+    };
+    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let un = os_str_expr(username);
+    let code = format!(
+        r#"ZN "%SYS"
+Set props("InvalidLoginAttempts")=0
+Set sc=##class(Security.Users).Modify({un},.props)
+If sc {{ Write "OK" }} Else {{ Write "ERROR:"_$System.Status.GetErrorText(sc) }}"#
+    );
+    match iris.execute_via_generator(&code, "%SYS", &client).await {
+        Ok(out) => {
+            let out = out.trim();
+            if out == "OK" {
+                ok_json(serde_json::json!({
+                    "success": true,
+                    "username": username,
+                    "unlocked": true,
+                }))
+            } else if let Some(msg) = out.strip_prefix("ERROR:") {
+                err_json("UNLOCK_FAILED", msg)
+            } else {
+                err_json("UNLOCK_FAILED", out)
+            }
+        }
+        Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
+    }
+}
+
+pub async fn admin_fresh_container_setup_impl(
+    iris: Option<&IrisConnection>,
+    username: &str,
+    password: &str,
+    new_password: &str,
+) -> Result<CallToolResult, McpError> {
+    if !admin_write_allowed() {
+        return write_disabled();
+    }
+    let mut steps: Vec<SetupStep> = Vec::new();
+
+    let clear_result =
+        admin_clear_password_change_flag_impl(iris, username, password, new_password).await;
+    match clear_result {
+        Ok(r) => {
+            let text = r
+                .content
+                .first()
+                .and_then(|c| c.as_text())
+                .map(|t| t.text.as_str())
+                .unwrap_or("{}");
+            let v: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+            let (status, detail) = if v["success"] == true {
+                (SetupStepStatus::Ok, "flag cleared".to_string())
+            } else {
+                let msg = v["error"].as_str().unwrap_or("failed").to_string();
+                (SetupStepStatus::Error, msg)
+            };
+            steps.push(SetupStep {
+                action: "clear_password_change_flag".to_string(),
+                status,
+                detail,
+            });
+        }
+        Err(e) => {
+            steps.push(SetupStep {
+                action: "clear_password_change_flag".to_string(),
+                status: SetupStepStatus::Error,
+                detail: e.to_string(),
+            });
+        }
+    }
+
+    let unlock_result = admin_unlock_user_impl(iris, username).await;
+    match unlock_result {
+        Ok(r) => {
+            let text = r
+                .content
+                .first()
+                .and_then(|c| c.as_text())
+                .map(|t| t.text.as_str())
+                .unwrap_or("{}");
+            let v: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+            let (status, detail) = if v["success"] == true {
+                (SetupStepStatus::Ok, "unlocked".to_string())
+            } else {
+                let msg = v["error"].as_str().unwrap_or("failed").to_string();
+                (SetupStepStatus::Error, msg)
+            };
+            steps.push(SetupStep {
+                action: "unlock_user".to_string(),
+                status,
+                detail,
+            });
+        }
+        Err(e) => {
+            steps.push(SetupStep {
+                action: "unlock_user".to_string(),
+                status: SetupStepStatus::Error,
+                detail: e.to_string(),
+            });
+        }
+    }
+
+    let all_ok = steps
+        .iter()
+        .all(|s| matches!(s.status, SetupStepStatus::Ok | SetupStepStatus::Skipped));
+    let has_error = steps
+        .iter()
+        .any(|s| matches!(s.status, SetupStepStatus::Error));
+
+    let result = FreshSetupResult {
+        success: all_ok,
+        ready: !has_error,
+        steps,
+    };
+    ok_json(serde_json::to_value(result).unwrap_or_default())
+}

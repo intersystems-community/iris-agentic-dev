@@ -829,7 +829,8 @@ fn tool_to_category(tool_name: &str) -> Option<crate::iris::workspace_config::To
         "capability_matrix" | "compare_document" | "compare_namespace" | "global_preview"
         | "hl7_schema_inspect" | "hl7_schema_list" | "iris_credential_list"
         | "iris_database_list" | "iris_database_stats" | "iris_get_log" | "iris_interop_query"
-        | "iris_list_containers" | "iris_mirror_status" | "iris_namespace_list" | "iris_servers"
+        | "iris_list_containers" | "iris_mirror_status" | "iris_namespace_list" | "iris_reload_pool"
+        | "iris_servers"
         | "iris_system_performance" | "iris_test_server" | "journal_search" | "mermaid_class"
         | "mermaid_production" | "my_access" | "query_audit_log" | "resolve_storage"
         | "stream_inspect" => ToolCategory::Query,

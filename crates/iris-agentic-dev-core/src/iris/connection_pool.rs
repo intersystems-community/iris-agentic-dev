@@ -211,9 +211,9 @@ pub fn load_pool(config_file: Option<&std::path::Path>) -> ConnectionPool {
                 server_name: name.clone(),
             },
         );
-        // Attempt keychain credential resolution; fall back to empty string.
-        let password =
-            server_manager::resolve_credential(name, &entry.username).unwrap_or_default();
+        // Keychain first; fall back to plaintext field in ServerEntry (headless path).
+        let password = server_manager::resolve_credential(name, &entry.username)
+            .unwrap_or_else(|_| entry.password.clone().unwrap_or_default());
         let mut conn = conn;
         conn.password = password;
         builder.add_with_source(name.clone(), conn, is_default, "iad-native");

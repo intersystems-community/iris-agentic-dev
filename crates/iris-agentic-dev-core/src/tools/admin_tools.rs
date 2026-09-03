@@ -607,6 +607,162 @@ Write tMember,"|",tName,"|",tType,"|",tPrimary"#;
     }
 }
 
+// ── iris_mirror_add_async_impl (097) ─────────────────────────────────────────
+
+pub async fn iris_mirror_add_async_impl(
+    iris: Option<&IrisConnection>,
+    client: &reqwest::Client,
+    mirror_name: &str,
+    primary_host: &str,
+    primary_port: u16,
+    instance_name: &str,
+    async_member_type: u8,
+) -> Result<CallToolResult, McpError> {
+    let iris = match iris {
+        Some(c) => c,
+        None => {
+            return ok_json(serde_json::json!({
+                "success": false,
+                "error_code": "IRIS_UNREACHABLE",
+                "error": "No IRIS connection available",
+            }))
+        }
+    };
+    let code = format!(
+        r#"ZN "%SYS"
+Set tMember=##class(%SYSTEM.Mirror).IsMember()
+If tMember'=0 {{
+  Write "ALREADY_MEMBER|",##class(%SYSTEM.Mirror).GetMirrorNames(),!
+  Quit
+}}
+Set tLocalInfo="",tSSLInfo=""
+Set tSC=##class(SYS.Mirror).JoinMirrorAsAsyncMember("{mirror_name}","","{instance_name}","{primary_host}",{primary_port},{async_member_type},.tLocalInfo,.tSSLInfo)
+If $$$ISERR(tSC) {{
+  Write "ERROR:",$System.Status.GetErrorText(tSC),!
+}} Else {{
+  Write "OK",!
+}}"#
+    );
+    match iris.execute_via_generator(&code, "%SYS", client).await {
+        Ok(out) => {
+            let out = out.trim();
+            if out.starts_with("ALREADY_MEMBER|") {
+                let existing = out.strip_prefix("ALREADY_MEMBER|").unwrap_or("");
+                return ok_json(serde_json::json!({
+                    "success": false,
+                    "error_code": "ALREADY_MEMBER",
+                    "error": format!("Instance is already a member of mirror set: {existing}"),
+                    "mirror_name": existing,
+                }));
+            }
+            if let Some(err) = out.strip_prefix("ERROR:") {
+                let lc = err.to_lowercase();
+                if lc.contains("version") || lc.contains("incompatible") {
+                    return ok_json(serde_json::json!({
+                        "success": false,
+                        "error_code": "MIRROR_VERSION_MISMATCH",
+                        "error": err,
+                    }));
+                }
+                return ok_json(serde_json::json!({
+                    "success": false,
+                    "error_code": "MIRROR_JOIN_FAILED",
+                    "error": err,
+                }));
+            }
+            ok_json(serde_json::json!({
+                "success": true,
+                "action": "mirror_add_async",
+                "mirror_name": mirror_name,
+            }))
+        }
+        Err(e) => ok_json(serde_json::json!({
+            "success": false,
+            "error_code": "IRIS_UNREACHABLE",
+            "error": e.to_string(),
+        })),
+    }
+}
+
+// ── iris_mirror_failover_impl (097) ──────────────────────────────────────────
+
+pub async fn iris_mirror_failover_impl(
+    iris: Option<&IrisConnection>,
+    client: &reqwest::Client,
+) -> Result<CallToolResult, McpError> {
+    let iris = match iris {
+        Some(c) => c,
+        None => {
+            return ok_json(serde_json::json!({
+                "success": false,
+                "error_code": "IRIS_UNREACHABLE",
+                "error": "No IRIS connection available",
+            }))
+        }
+    };
+    let code = r#"ZN "%SYS"
+Set tMember=##class(%SYSTEM.Mirror).IsMember()
+If tMember=0 {
+  Write "NOT_MEMBER",!
+  Quit
+}
+Set tPrimary=##class(%SYSTEM.Mirror).IsPrimary()
+If tPrimary {
+  Write "ALREADY_PRIMARY",!
+  Quit
+}
+Set tResult=##class(SYS.Mirror).BecomePrimary()
+If tResult {
+  Write "OK",!
+} Else {
+  Write "ERROR:BecomePrimary returned false",!
+}"#;
+    match iris.execute_via_generator(code, "%SYS", client).await {
+        Ok(out) => {
+            let out = out.trim();
+            if out == "NOT_MEMBER" {
+                return ok_json(serde_json::json!({
+                    "success": false,
+                    "error_code": "NOT_MIRROR_MEMBER",
+                    "error": "This instance is not a mirror member",
+                }));
+            }
+            if out == "ALREADY_PRIMARY" {
+                return ok_json(serde_json::json!({
+                    "success": false,
+                    "error_code": "ALREADY_PRIMARY",
+                    "error": "This instance is already the primary — no failover needed",
+                }));
+            }
+            if let Some(err) = out.strip_prefix("ERROR:") {
+                return ok_json(serde_json::json!({
+                    "success": false,
+                    "error_code": "MIRROR_FAILOVER_FAILED",
+                    "error": err,
+                }));
+            }
+            ok_json(serde_json::json!({
+                "success": true,
+                "action": "mirror_failover",
+                "new_role": "primary",
+            }))
+        }
+        Err(e) => ok_json(serde_json::json!({
+            "success": false,
+            "error_code": "IRIS_UNREACHABLE",
+            "error": e.to_string(),
+        })),
+    }
+}
+
+// ── is_version_mismatch_error (097) ──────────────────────────────────────────
+
+/// Returns true if the IRIS error string suggests a mirror version incompatibility.
+pub fn is_version_mismatch_error(error: &str) -> bool {
+    let lc = error.to_lowercase();
+    lc.contains("version") || lc.contains("incompatible")
+}
+
 // ── parse_max_size_mb (089) ───────────────────────────────────────────────────
 
 /// Parse the `MaxSize` string from `%SYS.DatabaseQuery:FreeSpace`.

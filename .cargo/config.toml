@@ -1,4 +1,17 @@
+[build]
+# Disable sccache — 0% hit rate on incremental builds, adds latency, can deadlock.
+# Overrides the global ~/.cargo/config.toml setting.
+rustc-wrapper = ""
+# Disable incremental compilation — mod.rs is a monolith so incremental rarely reuses
+# artifacts, just accumulates stale cache that triggers full rebuilds on next run.
+incremental = false
+
 [test]
 # Sequential tests — avoids env-var races across test binaries and port conflicts.
-# Override with: cargo test -j4 -- --test-threads=4
+# test-threads controls cargo-level parallelism (binaries); RUST_TEST_THREADS controls
+# within-binary thread count. Both needed to fully serialize env-var-sensitive tests.
+# Override with: RUST_TEST_THREADS=4 cargo test -j4
 test-threads = 1
+
+[env]
+RUST_TEST_THREADS = "1"

@@ -219,6 +219,10 @@ pub struct IrisConnection {
     pub port_superserver: Option<u16>,
     /// Detected at probe time — controls write-tool availability (issue #26).
     pub system_mode: SystemMode,
+    /// Remote SSH host for docker exec routing (FR-007/101-nopws-connectivity).
+    /// When set, docker exec commands are prefixed with
+    /// `ssh -o StrictHostKeyChecking=no <ssh_host>`.
+    pub ssh_host: Option<String>,
 }
 
 /// T011: Manual Debug implementation — never prints the password.
@@ -234,6 +238,7 @@ impl fmt::Debug for IrisConnection {
             .field("source", &self.source)
             .field("port_superserver", &self.port_superserver)
             .field("system_mode", &self.system_mode)
+            .field("ssh_host", &self.ssh_host)
             .finish()
     }
 }
@@ -286,6 +291,7 @@ impl IrisConnection {
             source,
             port_superserver: None,
             system_mode: SystemMode::Unknown,
+            ssh_host: None,
         }
     }
 
@@ -707,6 +713,50 @@ impl IrisConnection {
             tokio::time::timeout(std::time::Duration::from_secs(30), child.wait_with_output())
                 .await
                 .map_err(|_| anyhow::anyhow!("docker exec timed out after 30s"))??;
+
+        let raw = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(strip_iris_banner(&raw))
+    }
+
+    /// FR-007 (101-nopws-connectivity): Execute ObjectScript on a remote container via SSH.
+    ///
+    /// Routes through `ssh -o StrictHostKeyChecking=no <ssh_host> docker exec -i <container>
+    /// iris session IRIS -U <namespace>`. StrictHostKeyChecking=no is required for
+    /// non-interactive MCP subprocess use.
+    pub async fn execute_ssh(
+        &self,
+        code: &str,
+        namespace: &str,
+        ssh_host: &str,
+    ) -> anyhow::Result<String> {
+        let container =
+            std::env::var("IRIS_CONTAINER").map_err(|_| anyhow::anyhow!("DOCKER_REQUIRED"))?;
+
+        use tokio::io::AsyncWriteExt;
+
+        let remote_cmd = format!("docker exec -i {container} iris session IRIS -U {namespace}");
+        let mut child = tokio::process::Command::new("ssh")
+            .args(["-o", "StrictHostKeyChecking=no", ssh_host, &remote_cmd])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("ssh not available: {e}"))?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(code.as_bytes()).await;
+            let _ = stdin.write_all(b"\r\nHalt\r\n").await;
+        }
+
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(30), child.wait_with_output())
+                .await
+                .map_err(|_| anyhow::anyhow!("ssh docker exec timed out after 30s"))??;
+
+        if !output.status.success() && output.stdout.is_empty() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("ssh exec failed: {stderr}"));
+        }
 
         let raw = String::from_utf8_lossy(&output.stdout).to_string();
         Ok(strip_iris_banner(&raw))

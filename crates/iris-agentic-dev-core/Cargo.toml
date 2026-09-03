@@ -520,6 +520,11 @@ path = "tests/integration/test_server_pool_e2e.rs"
 required-features = ["testing"]
 
 [[test]]
+name = "test_terminal_compat_096"
+path = "tests/integration/test_terminal_compat_096.rs"
+required-features = ["testing"]
+
+[[test]]
 name = "test_ws_e2e"
 path = "tests/integration/test_ws_e2e.rs"
 
@@ -597,3 +602,40 @@ required-features = ["testing"]
 [[test]]
 name = "test_environment_restriction_live"
 path = "tests/integration/test_environment_restriction_live.rs"
+
+[[test]]
+name = "test_fresh_container_setup_unit"
+path = "tests/unit/test_fresh_container_setup_unit.rs"
+
+[[test]]
+name = "test_fresh_container_setup_live"
+path = "tests/integration/test_fresh_container_setup_live.rs"
+
+[[test]]
+name = "test_nopws_detection"
+path = "tests/unit/test_nopws_detection.rs"
+
+[[test]]
+name = "test_nopws_execute"
+path = "tests/unit/test_nopws_execute.rs"
+
+[[test]]
+name = "nopws_101"
+path = "tests/integration/nopws_101.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "nopws_101_binary"
+path = "tests/binary/nopws_101.rs"
+
+[[test]]
+name = "nopws_skill_test"
+path = "tests/skills/nopws_skill_test.rs"
+
+[[test]]
+name = "test_server_entry_plaintext"
+path = "tests/unit/test_server_entry_plaintext.rs"
+
+[[test]]
+name = "test_reload_pool"
+path = "tests/unit/test_reload_pool.rs"

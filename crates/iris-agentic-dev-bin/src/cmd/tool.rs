@@ -65,6 +65,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "iris_production_diff",
     "iris_production_item",
     "iris_query",
+    "iris_reload_pool",
     "iris_remove_server",
     "iris_search",
     "iris_servers",

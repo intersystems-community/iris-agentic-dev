@@ -157,12 +157,43 @@ Use `check_config` to see which servers were detected and whether credentials re
 {
   "server_manager": {
     "available": true,
-    "servers": [
-      { "name": "dev-local", "active": true, "credential_status": "resolved" }
-    ]
+    "servers": [{ "name": "dev-local", "active": true, "credential_status": "resolved" }]
   }
 }
 ```
+
+---
+
+## Adding servers via iris_add_server
+
+`iris_add_server` registers an IRIS instance in
+`~/.config/iris-agentic-dev/servers.json` so it can be referenced by name in any tool
+call via the `server` parameter.
+
+**Keychain path (macOS / Windows with keychain):** the credential is stored in the OS
+keychain and never written to disk.
+
+**Headless path (Claude Desktop MCP subprocess, Remote SSH, Linux CI):** when no OS
+keychain is available, the credential is stored in plaintext in `servers.json` as a
+fallback. The response includes `stored_plaintext: true` and a warning:
+
+```json
+{
+  "added": true,
+  "stored_plaintext": true,
+  "warning": "Credential stored in plaintext in servers.json — use VS Code Server Manager for production credentials.",
+  "note": "Restart iad for the pool to include this server."
+}
+```
+
+For production workloads, prefer VS Code Server Manager (keychain-backed) or
+`.iris-agentic-dev.toml` with file permissions restricted to your user. The plaintext
+fallback is intended for development and CI contexts where the OS keychain is not
+available.
+
+`iris_servers` marks entries that use the plaintext fallback with
+`has_plaintext_credential: true` so you can identify them and migrate credentials when
+needed.
 
 ---
 
@@ -339,6 +370,56 @@ To connect an AI Hub agent to iris-agentic-dev over HTTP, start the server with
 
 See [`contrib/aihub/README.md`](../contrib/aihub/README.md) for the full AI Hub
 ToolSet setup guide.
+
+---
+
+## NoPWS — AI branch containers (2026.3+, irishealth-ai:\*)
+
+AI branch IRIS builds (`irishealth-ai:*`, `iris-ai:*`, IRIS 2026.3+ Enterprise AI
+editions) ship without an embedded web server (`WebServer=0` in `iris.cpf`). Atelier
+REST is unavailable on these images, so the standard HTTP path fails with "connection
+refused."
+
+**Detect NoPWS:** Call `iris_test_server` — it reports `nopws: true` and
+`nopws_detected` when it detects this condition. Or probe manually:
+
+```bash
+docker exec <container> sh -c \
+  "grep -i WebServer /usr/irissys/iris.cpf 2>/dev/null || true"
+```
+
+Output `WebServer=0` confirms NoPWS.
+
+**Configure for NoPWS:**
+
+```toml
+docker_only = true
+nopws = true
+container = "my-iris-ai-container"
+```
+
+Setting either `docker_only = true` or `nopws = true` activates the `docker exec`
+path, bypassing Atelier REST entirely. `iris_execute` and `iris_compile` work;
+tools requiring Atelier REST (`iris_doc`, `iris_source_control`) return
+`NOPWS_ATELIER_REQUIRED`.
+
+**Remote containers via SSH:**
+
+```toml
+docker_only = true
+nopws = true
+container = "iris-ai-prod"
+ssh_host = "prodhost.internal"
+```
+
+Setting `ssh_host` routes `docker exec` through `ssh -o StrictHostKeyChecking=no
+<ssh_host>`. This bypasses SSH host key verification to enable non-interactive use.
+Ensure you trust the remote host before setting this option.
+
+Every `iris_execute` and `iris_compile` response includes an `execution_path` field
+(`"atelier"`, `"docker_exec_local"`, or `"docker_exec_ssh"`) to confirm which path
+ran. See [skills/nopws-setup](../skills/skills/iris-agentic-dev/nopws-setup/SKILL.md)
+for the full setup guide.
 
 ---
 

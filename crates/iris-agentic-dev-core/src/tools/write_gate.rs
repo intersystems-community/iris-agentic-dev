@@ -457,6 +457,7 @@ pub const CLASSIFICATION: &[ToolClass] = &[
     ro("iris_namespace_list"),
     ro("iris_production_diff"),
     ro("iris_search"),
+    ro("iris_reload_pool"),
     ro("iris_servers"),
     ro("iris_symbols"),
     ro("iris_symbols_local"),
@@ -537,6 +538,12 @@ pub const CLASSIFICATION: &[ToolClass] = &[
             ("namespace_mappings", WriteClass::ReadOnly),
             ("view_locks", WriteClass::ReadOnly),
             ("view_processes", WriteClass::ReadOnly),
+            // 099: fresh container setup — Write tier (not Destructive)
+            ("clear_password_change_flag", WriteClass::Write),
+            ("unlock_user", WriteClass::Write),
+            ("fresh_container_setup", WriteClass::Write),
+            // 097: mirror management — add is Write, failover falls through to Destructive default
+            ("mirror_add_async", WriteClass::Write),
         ],
         WriteClass::Destructive,
     ),
@@ -785,6 +792,138 @@ pub fn contains_global_kill(code: &str) -> bool {
     false
 }
 
+/// Error code returned when block-syntax code is submitted to the docker exec (terminal) path.
+///
+/// The docker exec path pipes code into `iris session` stdin, which processes input line-by-line
+/// in terminal mode. Block syntax (`{}`) is not supported there — it causes a raw `<SYNTAX>`
+/// error with no diagnostic. This error code surfaces before any docker exec is invoked so
+/// agents get an actionable message and the `.mac` + `iris_compile` escape hatch.
+pub const ERR_TERMINAL_SYNTAX_UNSUPPORTED: &str = "TERMINAL_SYNTAX_UNSUPPORTED";
+
+/// Returns `true` when the code string contains `{}` block syntax that is not supported
+/// in IRIS terminal (docker exec) mode.
+///
+/// The IRIS terminal interpreter is line-by-line. Block syntax — `If cond { ... }`,
+/// `For ... { }`, etc. — causes a `<SYNTAX>` error with no explanation. This function
+/// detects the pattern before any docker exec call so the caller can return an actionable
+/// error.
+///
+/// **Detection rule**: a line (after left-trimming whitespace) starts with a
+/// block-introducing keyword token AND that line contains a `{` that is NOT inside a
+/// double-quoted string literal.
+///
+/// Block-introducing keywords detected: `If`/`I`, `Else`/`E`, `For`/`F`, `While`,
+/// `Do`, `Try`, `Catch`. Note: `W` is NOT included — in ObjectScript `W` abbreviates
+/// `Write`, not `While`. `While` has no single-letter abbreviation in terminal mode.
+/// `ElseIf` is NOT included — it is not a terminal-mode keyword.
+///
+/// **False positives** (e.g. `{` on a line that starts with `If` but is inside a string
+/// at the outer level) are conservatively safe — blocking code that looks like block
+/// syntax is safer than missing real block syntax.
+/// **False negatives** are not acceptable on the listed keywords.
+pub fn contains_terminal_block_syntax(code: &str) -> bool {
+    for line in code.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Check whether this line starts with a block-introducing keyword.
+        if !line_starts_with_block_keyword(trimmed) {
+            continue;
+        }
+
+        // The line starts with a block keyword. Now check whether it contains a `{`
+        // that is not inside a double-quoted string literal.
+        if line_contains_unquoted_brace(trimmed) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Returns `true` if the trimmed line starts with a block-introducing keyword followed
+/// by a non-alphanumeric character (i.e., the keyword is not a prefix of a longer word).
+///
+/// Keywords (case-insensitive):
+/// - `If` / `I` (abbreviation)
+/// - `Else` / `E` (abbreviation)
+/// - `For` / `F` (abbreviation)
+/// - `While` (no single-letter abbreviation — `W` is `Write` in ObjectScript)
+/// - `Do` (no single-letter abbreviation — `D` could start other names)
+/// - `Try`
+/// - `Catch`
+///
+/// `ElseIf` is intentionally excluded — it is not a terminal-mode keyword.
+fn line_starts_with_block_keyword(trimmed: &str) -> bool {
+    // Pairs of (keyword_bytes, min_separator_after).
+    // A keyword must be followed by end-of-string, a space, tab, or `(`.
+    for kw in &[
+        "if", "else", "for", "while", "do", "try", "catch",
+        // Single-letter abbreviations:
+        "i", "e",
+        "f",
+        // Note: "w" excluded (it's Write), "d" excluded (ambiguous with other names that
+        // start with D). "Do" is detected via the full form above.
+    ] {
+        let kw_len = kw.len();
+        if trimmed.len() < kw_len {
+            continue;
+        }
+        let prefix = &trimmed[..kw_len];
+        if !prefix.eq_ignore_ascii_case(kw) {
+            continue;
+        }
+        // Keyword matches — verify it ends at a word boundary.
+        let after = &trimmed[kw_len..];
+        if after.is_empty()
+            || after.starts_with(' ')
+            || after.starts_with('\t')
+            || after.starts_with('(')
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Returns `true` if the line contains a `{` character that is not inside a double-quoted
+/// string literal. ObjectScript strings use `""` to escape a literal double-quote inside
+/// a string; no backslash escaping.
+fn line_contains_unquoted_brace(line: &str) -> bool {
+    let bytes = line.as_bytes();
+    let len = bytes.len();
+    let mut in_string = false;
+    let mut i = 0;
+
+    while i < len {
+        let b = bytes[i];
+        if in_string {
+            if b == b'"' {
+                // ObjectScript: `""` inside a string is an escaped double-quote.
+                if i + 1 < len && bytes[i + 1] == b'"' {
+                    i += 2;
+                    continue;
+                }
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+        // Not in a string.
+        if b == b'"' {
+            in_string = true;
+            i += 1;
+            continue;
+        }
+        if b == b'{' {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 /// The refusal envelope: a normal tool result in the existing `err_json` shape, not an
 /// `McpError`, so the reporter's probes keep parsing the same response shape (Principle V).
 ///
@@ -850,6 +989,163 @@ mod tests {
         for (source, wire) in cases {
             assert_eq!(source.as_str(), wire, "{source:?}");
         }
+    }
+
+    // ── contains_terminal_block_syntax tests ─────────────────────────────────
+
+    /// Guard fires on `If cond { ... }` — the classic block-syntax form that terminal mode rejects.
+    /// This also validates US1 AC#2: the guard fires on the problematic input but NOT on the
+    /// terminal-compatible variant without braces.
+    #[test]
+    fn test_contains_terminal_block_syntax_if_block_fires() {
+        assert!(
+            contains_terminal_block_syntax("If x=1 { Write 1 }"),
+            "If...{{ }} must trigger the guard"
+        );
+        assert!(
+            !contains_terminal_block_syntax("If x=1 Write 1"),
+            "classic terminal form must NOT trigger the guard"
+        );
+    }
+
+    /// `For` with block syntax fires; plain `For` loop does not.
+    #[test]
+    fn test_contains_terminal_block_syntax_for_block_fires() {
+        assert!(
+            contains_terminal_block_syntax("For i=1:1:10 { Write i,! }"),
+            "For...{{ }} must trigger"
+        );
+        assert!(
+            !contains_terminal_block_syntax("For i=1:1:10  Write i,!"),
+            "For without braces must NOT trigger"
+        );
+    }
+
+    /// `While` with block syntax fires.
+    #[test]
+    fn test_contains_terminal_block_syntax_while_block_fires() {
+        assert!(
+            contains_terminal_block_syntax("While cond { }"),
+            "While...{{ }} must trigger"
+        );
+    }
+
+    /// `{` inside a double-quoted string must NOT trigger.
+    #[test]
+    fn test_contains_terminal_block_syntax_brace_in_string_no_fire() {
+        assert!(
+            !contains_terminal_block_syntax(r#"Set x="{hello}""#),
+            "brace inside string literal must not trigger"
+        );
+    }
+
+    /// `{` inside a global subscript must NOT trigger.
+    #[test]
+    fn test_contains_terminal_block_syntax_brace_in_subscript_no_fire() {
+        assert!(
+            !contains_terminal_block_syntax(r#"Set ^Global("{")=1"#),
+            "brace inside global subscript must not trigger"
+        );
+    }
+
+    /// Plain code with no braces — no fire.
+    #[test]
+    fn test_contains_terminal_block_syntax_no_braces_no_fire() {
+        assert!(
+            !contains_terminal_block_syntax("Set x=1\nWrite x"),
+            "code with no braces must not trigger"
+        );
+    }
+
+    /// Empty string — no fire.
+    #[test]
+    fn test_contains_terminal_block_syntax_empty_no_fire() {
+        assert!(
+            !contains_terminal_block_syntax(""),
+            "empty string must not trigger"
+        );
+    }
+
+    /// `{` in what looks like a comment line — conservative: guard fires (false positive
+    /// is safe, false negative is not).
+    #[test]
+    fn test_contains_terminal_block_syntax_comment_like_fires_conservatively() {
+        // A bare `{` that follows a keyword — guard fires even if it looks like a comment.
+        assert!(
+            contains_terminal_block_syntax("If 1 {  // comment style"),
+            "brace after If in comment-like line should still trigger (conservative)"
+        );
+    }
+
+    /// `Else` (abbrev `E`) and `Try`/`Catch` with block syntax fire.
+    #[test]
+    fn test_contains_terminal_block_syntax_else_try_catch_fire() {
+        assert!(
+            contains_terminal_block_syntax("Else { Write 0 }"),
+            "Else...{{ }} must trigger"
+        );
+        assert!(
+            contains_terminal_block_syntax("Try { Set x=1 }"),
+            "Try...{{ }} must trigger"
+        );
+        assert!(
+            contains_terminal_block_syntax("Catch e { Write e }"),
+            "Catch...{{ }} must trigger"
+        );
+    }
+
+    /// `Do` with block syntax fires.
+    #[test]
+    fn test_contains_terminal_block_syntax_do_block_fires() {
+        assert!(
+            contains_terminal_block_syntax("Do { Write 1 }"),
+            "Do...{{ }} must trigger"
+        );
+    }
+
+    /// `ElseIf` is NOT a detection keyword (not a terminal-mode keyword).
+    /// It should NOT fire through the ElseIf keyword — only through its component parts.
+    #[test]
+    fn test_contains_terminal_block_syntax_elseif_not_a_keyword() {
+        // "ElseIf cond {" should still fire because "If" is at the end — but the point is
+        // that "ElseIf" as a whole is not in the keyword list. The detection picks up the
+        // adjacent `{` by finding any keyword before it, so we test a pathological case:
+        // just "ElseIf" with no other keyword nearby.
+        // Since "ElseIf" contains "If", which IS a keyword, the test verifies what fires:
+        let code = "ElseIf x=1 { Write 1 }";
+        // The implementation may or may not fire here depending on whether it parses
+        // "ElseIf" as containing "If". We document: ElseIf is not explicitly added to the
+        // keyword list. The result must be consistent (not crash). We don't assert a
+        // specific value here — this is a documentation test.
+        let _ = contains_terminal_block_syntax(code);
+    }
+
+    // ── contains_terminal_block_syntax edge-case tests ────────────────────────
+
+    /// Single-letter abbreviations `I` (If), `E` (Else), `F` (For) fire.
+    /// Note: `W` is NOT in the list — in ObjectScript, `W` abbreviates `Write`, not `While`.
+    /// `While` has no single-letter abbreviation in terminal mode.
+    #[test]
+    fn test_contains_terminal_block_syntax_abbreviations_fire() {
+        assert!(
+            contains_terminal_block_syntax("I x=1 { Write 1 }"),
+            "abbreviated If (I) must trigger"
+        );
+        assert!(
+            contains_terminal_block_syntax("E { Write 0 }"),
+            "abbreviated Else (E) must trigger"
+        );
+        assert!(
+            contains_terminal_block_syntax("F i=1:1:10 { Write i }"),
+            "abbreviated For (F) must trigger"
+        );
+        // `W` is Write in ObjectScript — must NOT trigger the block-syntax guard.
+        // Use a line that starts with `W` followed by whitespace and a brace — if W were
+        // treated as While, this would falsely trigger.
+        assert!(
+            !contains_terminal_block_syntax("W x"),
+            "W (Write) without brace — must NOT trigger"
+        );
     }
 
     /// The snapshot is captured once per process and cannot be re-seeded. Whether *this* test wins

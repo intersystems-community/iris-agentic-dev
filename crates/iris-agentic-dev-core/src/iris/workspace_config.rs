@@ -28,6 +28,17 @@ pub struct WorkspaceConfig {
     /// Requires IRIS_CONTAINER to be set or container= in config.
     #[serde(default)]
     pub docker_only: bool,
+    /// Declare that this IRIS instance has no embedded web server (AI-branch builds,
+    /// irishealth-ai:*, 2026.3+). Routes iris_execute and iris_compile to docker exec
+    /// immediately without attempting Atelier REST. When the web port IS reachable
+    /// (webgateway sidecar scenario), use host= instead and leave nopws=false.
+    #[serde(default)]
+    pub nopws: bool,
+    /// Route docker exec commands through SSH to a remote Docker host.
+    /// When set, every docker exec call is prefixed with
+    /// `ssh -o StrictHostKeyChecking=no <ssh_host>`.
+    /// Requires `container` to be set. See docs/connecting.md for security notes.
+    pub ssh_host: Option<String>,
     /// Tools to exclude from the MCP tool list at startup.
     /// Each entry is an exact tool name (e.g. "iris_source_control", "iris_admin").
     /// Useful for stripping tools irrelevant to your workflow to reduce noise.
@@ -821,11 +832,11 @@ pub fn workspace_config_to_connection(
         if let Some(ref pass) = cfg.password {
             std::env::set_var("IRIS_PASSWORD", pass);
         }
-        if cfg.docker_only {
-            // docker_only=true: skip HTTP entirely, use docker exec for all operations.
-            // Return a connection with an unreachable URL — HTTP calls will fail fast,
+        if cfg.docker_only || cfg.nopws {
+            // docker_only=true or nopws=true: skip HTTP entirely, use docker exec.
+            // Return a connection with an unreachable URL — HTTP calls fail fast,
             // triggering the docker exec fallback in iris_execute/iris_compile etc.
-            return Some(IrisConnection::new(
+            let mut conn = IrisConnection::new(
                 "http://127.0.0.1:1",
                 ns,
                 username,
@@ -833,9 +844,44 @@ pub fn workspace_config_to_connection(
                 DiscoverySource::Docker {
                     container_name: container.clone(),
                 },
-            ));
+            );
+            conn.ssh_host = cfg.ssh_host.clone();
+            return Some(conn);
         }
         return None; // discover_iris() will find the container via IRIS_CONTAINER
+    }
+
+    // docker_only=true with no container field — still route to docker exec sentinel so
+    // the block-syntax guard fires before any HTTP attempt. IRIS_CONTAINER env var (if set)
+    // will be picked up by execute() at call time.
+    if cfg.docker_only || cfg.nopws {
+        let ns = cfg
+            .namespace
+            .clone()
+            .or_else(|| std::env::var("IRIS_NAMESPACE").ok())
+            .unwrap_or_else(|| "USER".to_string());
+        let username = cfg
+            .username
+            .clone()
+            .or_else(|| std::env::var("IRIS_USERNAME").ok())
+            .unwrap_or_else(|| "_SYSTEM".to_string());
+        let password = cfg
+            .password
+            .clone()
+            .or_else(|| std::env::var("IRIS_PASSWORD").ok())
+            .unwrap_or_else(|| "SYS".to_string());
+        let container = std::env::var("IRIS_CONTAINER").ok().unwrap_or_default();
+        let mut conn = IrisConnection::new(
+            "http://127.0.0.1:1",
+            ns,
+            username,
+            password,
+            DiscoverySource::Docker {
+                container_name: container,
+            },
+        );
+        conn.ssh_host = cfg.ssh_host.clone();
+        return Some(conn);
     }
 
     None
@@ -1096,6 +1142,8 @@ mod tests {
             scheme: None,
             web_prefix: None,
             docker_only: false,
+            nopws: false,
+            ssh_host: None,
             disabled_tools: vec![],
             enabled_tools: vec![],
             write_tools_enabled: None,
@@ -1119,6 +1167,8 @@ mod tests {
             scheme: None,
             web_prefix: None,
             docker_only: false,
+            nopws: false,
+            ssh_host: None,
             disabled_tools: vec![],
             enabled_tools: vec![],
             write_tools_enabled: None,
@@ -1143,6 +1193,8 @@ mod tests {
             scheme: None,
             web_prefix: None,
             docker_only: false,
+            nopws: false,
+            ssh_host: None,
             disabled_tools: vec![],
             enabled_tools: vec![],
             write_tools_enabled: None,
@@ -1187,6 +1239,8 @@ mod tests {
             scheme: Some("http".to_string()),
             web_prefix: Some("iriscore".to_string()),
             docker_only: false,
+            nopws: false,
+            ssh_host: None,
             disabled_tools: vec![],
             enabled_tools: vec![],
             write_tools_enabled: None,
@@ -1214,6 +1268,8 @@ mod tests {
             scheme: None,
             web_prefix: None,
             docker_only: false,
+            nopws: false,
+            ssh_host: None,
             disabled_tools: vec![],
             enabled_tools: vec![],
             write_tools_enabled: None,
@@ -1247,6 +1303,8 @@ mod tests {
             scheme: None,
             web_prefix: None,
             docker_only: false,
+            nopws: false,
+            ssh_host: None,
             disabled_tools: vec![],
             enabled_tools: vec![],
             write_tools_enabled: None,
@@ -1279,6 +1337,8 @@ mod tests {
             scheme: None,
             web_prefix: None,
             docker_only: true,
+            nopws: false,
+            ssh_host: None,
             disabled_tools: vec![],
             enabled_tools: vec![],
             write_tools_enabled: None,

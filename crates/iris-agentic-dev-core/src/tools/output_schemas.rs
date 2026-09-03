@@ -353,6 +353,10 @@ pub struct IrisAddServerOk {
     pub added: bool,
     pub name: String,
     pub note: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stored_plaintext: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]

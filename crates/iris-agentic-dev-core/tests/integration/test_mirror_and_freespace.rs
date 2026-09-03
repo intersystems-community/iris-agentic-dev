@@ -223,3 +223,97 @@ async fn e2e_system_performance_status_missing_run_id() {
         "expected error mentioning run_id, got: {v}"
     );
 }
+
+// ── 097 T020: mirror_add_async on community iris-dev-iris (not a mirror member) ─
+//
+// Community iris-dev-iris is never a mirror member. The pre-flight `IsMember()` call
+// returns 0, so `ALREADY_MEMBER` is NOT returned. The call proceeds to
+// `JoinMirrorAsAsyncMember`, which fails with an IRIS-level error.
+// Assert: success=false, error field non-empty (not a crash, not ALREADY_MEMBER).
+// Skip when IRIS_MIRROR_PRIMARY is set (full round-trip test environment replaces this).
+#[tokio::test]
+#[ignore]
+async fn e2e_mirror_add_async_community_non_member() {
+    use iris_agentic_dev_core::tools::admin_tools::iris_mirror_add_async_impl;
+
+    if std::env::var("IRIS_MIRROR_PRIMARY").is_ok() {
+        eprintln!("IRIS_MIRROR_PRIMARY set — skipping community non-member test");
+        return;
+    }
+
+    let (conn, client) = match make_conn() {
+        Some(c) => c,
+        None => {
+            eprintln!("IRIS_HOST not set — skipping e2e_mirror_add_async_community_non_member");
+            return;
+        }
+    };
+
+    let result = iris_mirror_add_async_impl(
+        Some(&conn),
+        &client,
+        "TestMirror097",
+        "127.0.0.1",
+        2188,
+        "IRIS",
+        0,
+    )
+    .await
+    .expect("iris_mirror_add_async_impl failed");
+    let v = parse_json(result);
+
+    eprintln!("mirror_add_async (community) response: {v}");
+
+    assert_eq!(
+        v["success"].as_bool(),
+        Some(false),
+        "community iris-dev-iris cannot join a mirror; expected success=false, got: {v}"
+    );
+    assert_ne!(
+        v["error_code"].as_str(),
+        Some("ALREADY_MEMBER"),
+        "community iris-dev-iris is not a mirror member — ALREADY_MEMBER is wrong, got: {v}"
+    );
+    let error = v["error"].as_str().unwrap_or("");
+    assert!(
+        !error.is_empty(),
+        "expected non-empty error field, got: {v}"
+    );
+}
+
+// ── 097 T027b: mirror_failover on community iris-dev-iris → NOT_MIRROR_MEMBER ─
+//
+// Community iris-dev-iris is never a mirror member. mirror_failover with
+// IRIS_DESTRUCTIVE_TOOLS_ENABLED set should return NOT_MIRROR_MEMBER (not a crash).
+// Skip when IRIS_MIRROR_PRIMARY is not set (requires destructive env to be meaningful).
+#[tokio::test]
+#[ignore]
+async fn e2e_mirror_failover_community_non_member() {
+    use iris_agentic_dev_core::tools::admin_tools::iris_mirror_failover_impl;
+
+    let (conn, client) = match make_conn() {
+        Some(c) => c,
+        None => {
+            eprintln!("IRIS_HOST not set — skipping e2e_mirror_failover_community_non_member");
+            return;
+        }
+    };
+
+    let result = iris_mirror_failover_impl(Some(&conn), &client)
+        .await
+        .expect("iris_mirror_failover_impl failed");
+    let v = parse_json(result);
+
+    eprintln!("mirror_failover (community) response: {v}");
+
+    assert_eq!(
+        v["success"].as_bool(),
+        Some(false),
+        "community iris-dev-iris is not a mirror member; expected success=false, got: {v}"
+    );
+    assert_eq!(
+        v["error_code"].as_str(),
+        Some("NOT_MIRROR_MEMBER"),
+        "expected NOT_MIRROR_MEMBER for non-member failover, got: {v}"
+    );
+}

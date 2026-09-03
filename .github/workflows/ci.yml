@@ -558,6 +558,8 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
       - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.16.0"
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-zigbuild
       - run: cargo zigbuild --locked --release --target x86_64-unknown-linux-musl -p iris-agentic-dev
@@ -573,6 +575,8 @@ jobs:
         with:
           targets: x86_64-unknown-linux-musl
       - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.16.0"
       - uses: Swatinem/rust-cache@v2
       - name: Build static musl binary
         run: |

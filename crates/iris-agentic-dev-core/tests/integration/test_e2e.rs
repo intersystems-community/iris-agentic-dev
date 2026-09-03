@@ -5766,7 +5766,7 @@ fn e2e_skill_search_returns_results() {
 #[test]
 fn e2e_skill_list_surfaces_a_synthesized_skill_from_skills_global() {
     require_iris!();
-    let set = call_tool(
+    let set = call_tool_destructive(
         "iris_global",
         serde_json::json!({
             "action": "set",
@@ -5784,7 +5784,7 @@ fn e2e_skill_list_surfaces_a_synthesized_skill_from_skills_global() {
 
     let list = call_tool("skill_list", serde_json::json!({}));
 
-    let cleanup = call_tool(
+    let cleanup = call_tool_destructive(
         "iris_global",
         serde_json::json!({
             "action": "kill",

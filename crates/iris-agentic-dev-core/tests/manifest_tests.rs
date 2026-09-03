@@ -201,6 +201,10 @@ bad-dep = { version = "not-a-semver-version!!", github = "owner/repo" }
 #[tokio::test]
 #[ignore = "requires GitHub API access — run with --include-ignored in CI with network"]
 async fn test_resolve_github_any_version_succeeds() {
+    if std::env::var("GITHUB_TOKEN").is_err() {
+        eprintln!("skipping: GITHUB_TOKEN not set (unauthenticated GitHub API rate-limited)");
+        return;
+    }
     use iris_agentic_dev_core::manifest::resolve::{resolve_github_version_async, ResolvedSource};
     use semver::VersionReq;
     let req = VersionReq::parse("*").unwrap();
@@ -225,6 +229,10 @@ async fn test_resolve_github_any_version_succeeds() {
 #[tokio::test]
 #[ignore = "requires GitHub API access — run with --include-ignored in CI with network"]
 async fn test_resolve_github_specific_range() {
+    if std::env::var("GITHUB_TOKEN").is_err() {
+        eprintln!("skipping: GITHUB_TOKEN not set (unauthenticated GitHub API rate-limited)");
+        return;
+    }
     use iris_agentic_dev_core::manifest::resolve::{resolve_github_version_async, ResolvedSource};
     use semver::VersionReq;
     let req = VersionReq::parse("^0.4").unwrap();

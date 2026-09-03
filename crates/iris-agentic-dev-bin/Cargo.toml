@@ -126,3 +126,23 @@ path = "tests/integration/test_attribution_stdio.rs"
 [[test]]
 name = "test_eval_session_binary"
 path = "tests/unit/test_eval_session_binary.rs"
+
+[[test]]
+name = "binary_096_terminal_compat"
+path = "tests/integration/binary_096_terminal_compat.rs"
+
+[[test]]
+name = "binary_093_reload_pool"
+path = "tests/integration/binary_093_reload_pool.rs"
+
+[[test]]
+name = "binary_095_add_server_plaintext"
+path = "tests/integration/binary_095_add_server_plaintext.rs"
+
+[[test]]
+name = "binary_099_fresh_container"
+path = "tests/integration/binary_099_fresh_container.rs"
+
+[[test]]
+name = "binary_098_server_probe"
+path = "tests/integration/binary_098_server_probe.rs"

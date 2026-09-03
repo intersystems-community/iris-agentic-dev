@@ -103,6 +103,7 @@ pub mod global;
 pub mod info;
 pub mod interop;
 pub mod log_store;
+pub mod nopws;
 pub mod observability;
 pub mod output_schemas;
 pub mod scm;
@@ -129,16 +130,16 @@ pub use scm::{ScmAction, ScmParams};
 /// happened and how it's now derived instead of hand-maintained.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Toolset {
-    /// 81 tools — 90 total `#[tool]` methods minus the 9 that are Merged-tier-only
+    /// 84 tools — 93 total `#[tool]` methods minus the 9 that are Merged-tier-only
     /// dispatchers (iris_admin, iris_debug, iris_containers, iris_get_log, iris_global,
     /// iris_execute_method, iris_message_body, iris_business_rule_info,
     /// iris_production_diff — added by later specs and deliberately scoped to Merged
     /// rather than the original tool surface). Default when `IRIS_TOOLSET` is unset.
     Baseline,
-    /// 77 tools — Baseline (81) minus the 4 stub tools (skill_propose/skill_optimize/
+    /// 80 tools — Baseline (84) minus the 4 stub tools (skill_propose/skill_optimize/
     /// skill_share/skill_community_install).
     Nostub,
-    /// 78 tools — 90 total minus the 4 stubs minus 8 tools replaced by 2 consolidated
+    /// 81 tools — 93 total minus the 4 stubs minus 8 tools replaced by 2 consolidated
     /// dispatchers (4 debug_* tools → iris_debug; agent_info/iris_list_containers/
     /// iris_select_container/iris_start_sandbox → iris_containers). The 9
     /// Merged-tier-only dispatchers from Baseline's note above are present here, which
@@ -2271,7 +2272,9 @@ pub struct IrisTools {
     /// Session-scoped TTL cache for %Dictionary introspection results (037).
     pub metadata_cache: Arc<dict::MetadataCache>,
     /// Multi-instance connection pool (072-multi-instance-pool).
-    pub pool: Arc<crate::iris::connection_pool::ConnectionPool>,
+    /// Wrapped in RwLock<Arc<...>> so iris_reload_pool can atomically swap the inner
+    /// Arc from &self without requiring exclusive access to IrisTools.
+    pub pool: Arc<std::sync::RwLock<Arc<crate::iris::connection_pool::ConnectionPool>>>,
     /// WebSocket terminal session pool (072-b).
     pub ws_pool: Arc<crate::iris::ws_session::WsSessionPool>,
     /// Confirmation tokens for global_preview/global_kill flow (072-c).
@@ -2331,7 +2334,9 @@ impl IrisTools {
             ))),
             metadata_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             // T018: no with_connection constructor found — pool field added to all existing constructors
-            pool: Arc::new(crate::iris::connection_pool::load_pool(None)),
+            pool: Arc::new(std::sync::RwLock::new(Arc::new(
+                crate::iris::connection_pool::load_pool(None),
+            ))),
             ws_pool: Arc::new(crate::iris::ws_session::WsSessionPool::new()),
             confirm_tokens: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             toolset: Toolset::Baseline,
@@ -2679,9 +2684,9 @@ impl IrisTools {
                 log_max, log_ttl,
             ))),
             metadata_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
-            pool: Arc::new(crate::iris::connection_pool::load_pool(
-                pool_config_path.as_deref(),
-            )),
+            pool: Arc::new(std::sync::RwLock::new(Arc::new(
+                crate::iris::connection_pool::load_pool(pool_config_path.as_deref()),
+            ))),
             ws_pool: Arc::new(crate::iris::ws_session::WsSessionPool::new()),
             confirm_tokens: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             toolset,
@@ -2690,6 +2695,13 @@ impl IrisTools {
             iris_audit_counter: crate::iris::iris_audit::AuditEmitCounter::new(),
             tool_router: router,
         })
+    }
+
+    /// Cheap read-only snapshot of the connection pool.
+    /// Read-locks the RwLock and clones the inner Arc — callers get an owned Arc
+    /// that stays valid even if iris_reload_pool swaps the pool concurrently.
+    fn pool_ref(&self) -> Arc<crate::iris::connection_pool::ConnectionPool> {
+        self.pool.read().unwrap().clone()
     }
 
     /// Returns the active IRIS connection, or IRIS_UNREACHABLE if not connected.
@@ -2745,7 +2757,7 @@ impl IrisTools {
     ) -> Result<Arc<IrisConnection>, McpError> {
         match name {
             None => self.get_iris_reloaded().await,
-            Some(n) => self.pool.get(Some(n)),
+            Some(n) => self.pool_ref().get(Some(n)),
         }
     }
 
@@ -3044,6 +3056,7 @@ impl IrisTools {
         // an edit in either direction takes effect on this reload (085 FR-002).
         let gates =
             write_gate::resolve_for_connection(declared, Some(&new_conn), &new_conn.namespace);
+        let config_path_for_pool = config_path.clone();
         let new_state = ConnectionState::from_iris(
             new_conn,
             ConnectionSource::ConfigFile,
@@ -3055,6 +3068,21 @@ impl IrisTools {
         *conn = new_state;
         conn.config_parse_error = None;
         tracing::info!("iris-agentic-dev: hot-reloaded connection from .iris-agentic-dev.toml");
+        drop(conn);
+
+        // 093 US2: also reload the pool on config change. Use same swap pattern as
+        // iris_reload_pool. Fail-safe: parse errors return early above, so we only
+        // reach here when the config parsed successfully.
+        // Pass config_path so Source 3 (fleet instances) is loaded from the right TOML.
+        let new_pool = Arc::new(crate::iris::connection_pool::load_pool(Some(
+            &config_path_for_pool,
+        )));
+        let count = new_pool.names().len();
+        *self.pool.write().unwrap() = new_pool;
+        tracing::info!(
+            "iris-agentic-dev: background pool reload triggered by config change — {} server(s) loaded",
+            count
+        );
     }
     fn http_client(&self) -> &reqwest::Client {
         &self.client
@@ -3245,24 +3273,14 @@ impl IrisTools {
         // Capability gate: if atelier_rest is unavailable (docker_only or NoPWS build),
         // compile via docker exec immediately — no 52773 probe, no retry.
         {
-            let (docker_only, no_pws) = {
-                let conn_lock = self.connection.lock().unwrap();
-                let docker_only = conn_lock
-                    .iris
-                    .as_ref()
-                    .map(|i| {
-                        i.base_url == "http://127.0.0.1:1"
-                            || i.base_url.starts_with("http://127.0.0.1:1/")
-                    })
-                    .unwrap_or(false);
-                let no_pws = conn_lock
-                    .iris
-                    .as_ref()
-                    .and_then(|i| i.version.as_deref())
-                    .map(|v| v.contains("2026.2.0AI"))
-                    .unwrap_or(false);
-                (docker_only, no_pws)
-            };
+            let docker_only = iris.base_url == "http://127.0.0.1:1"
+                || iris.base_url.starts_with("http://127.0.0.1:1/");
+            let no_pws = iris
+                .version
+                .as_deref()
+                .map(|v| v.contains("2026.2.0AI"))
+                .unwrap_or(false);
+            let ssh_host_compile = iris.ssh_host.clone();
 
             if docker_only || no_pws {
                 let code = format!(
@@ -3270,7 +3288,12 @@ impl IrisTools {
                     p.target.replace('"', "\\\""),
                     p.flags.replace('"', "\\\""),
                 );
-                let result = iris.execute(&code, &namespace).await;
+                let exec_path = nopws::execution_path_docker(ssh_host_compile.as_deref());
+                let result = if let Some(ref ssh_host) = ssh_host_compile {
+                    iris.execute_ssh(&code, &namespace, ssh_host).await
+                } else {
+                    iris.execute(&code, &namespace).await
+                };
                 self.record_call("iris_compile", result.is_ok());
                 return match result {
                     Ok(output) => {
@@ -3281,6 +3304,7 @@ impl IrisTools {
                             "target": p.target,
                             "namespace": namespace,
                             "method": "docker_exec",
+                            "execution_path": exec_path,
                             "output": trimmed,
                         }))
                     }
@@ -4070,7 +4094,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Execute arbitrary ObjectScript code on IRIS and return stdout. Uses pure-HTTP execution via CodeMode=objectgenerator (write temp class, compile, query result, delete). Falls back to docker exec if IRIS_CONTAINER env var is set and HTTP fails. &sql(...) embedded SQL macros are automatically translated to %SQL.Statement calls (set translate_sql: false to disable). When translation fires, response includes sql_translated: true and translated_code. Example: code='write $ZVERSION,!' returns the IRIS version string. Skill: objectscript-tdd for the compile-execute-fix loop. Session state: set use_session: true to enable the %ctx carrier (%DynamicObject). Store values in %ctx.key between calls — scalars, %DynamicObject, and %Persistent objects (stored as OID stubs and re-opened on restore). The response includes session_state (opaque Base64 token); pass it back as session_state on the next call to restore %ctx. Nothing is written to IRIS — the token is held by the client. Error codes: SESSION_INVALID (bad token), SESSION_RESTORE_FAILED (missing class or bad OID), SESSION_SERIALIZE_FAILED (serialization error). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "Execute arbitrary ObjectScript code on IRIS and return stdout. Two execution paths: (1) HTTP primary — wraps code in a temporary class method body (CodeMode=objectgenerator), compiles it via Atelier REST, runs it, deletes the class. Block syntax (`{}`) works here because class method bodies support it. (2) docker exec fallback — used when IRIS_CONTAINER env var is set and HTTP fails, or when docker_only=true. This path pipes code into `iris session` stdin, which is a line-by-line terminal interpreter. Block syntax (`{}`) is NOT supported in terminal mode — `If cond { ... }` causes a `<SYNTAX>` error. Use classic terminal-compatible form instead: `If cond Write x`. For complex multi-line scripts that require `{}` on a docker exec path, write a .mac routine with `iris_doc` (mode=put) and compile it with `iris_compile`, then call `iris_execute Do entry^RoutineName`. &sql(...) embedded SQL macros are automatically translated to %SQL.Statement calls (set translate_sql: false to disable). When translation fires, response includes sql_translated: true and translated_code. Example: code='write $ZVERSION,!' returns the IRIS version string. Skill: objectscript-tdd for the compile-execute-fix loop. Session state: set use_session: true to enable the %ctx carrier (%DynamicObject). Store values in %ctx.key between calls — scalars, %DynamicObject, and %Persistent objects (stored as OID stubs and re-opened on restore). The response includes session_state (opaque Base64 token); pass it back as session_state on the next call to restore %ctx. Nothing is written to IRIS — the token is held by the client. Error codes: SESSION_INVALID (bad token), SESSION_RESTORE_FAILED (missing class or bad OID), SESSION_SERIALIZE_FAILED (serialization error), TERMINAL_SYNTAX_UNSUPPORTED (block syntax on docker exec path). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         output_schema = output_schemas::oneof_output_schema::<IrisExecuteResponse>()
     )]
     async fn iris_execute(
@@ -4082,7 +4106,10 @@ impl IrisTools {
         // The paired client carries the matching (isolated) cookie jar — see
         // get_iris_for_exec_with_client for why sharing the primary client would defeat routing.
         let (iris, exec_client) = if let Some(ref s) = p.server {
-            (self.pool.get(Some(s.as_str()))?, Arc::clone(&self.client))
+            (
+                self.pool_ref().get(Some(s.as_str()))?,
+                Arc::clone(&self.client),
+            )
         } else {
             self.get_iris_for_exec_with_client().await?
         };
@@ -4220,6 +4247,95 @@ impl IrisTools {
             base_code
         };
 
+        // NoPWS early-branch: when docker_only or NoPWS build detected, skip Atelier REST
+        // and route through docker exec immediately — same pattern as iris_compile (lines ~3245).
+        {
+            let docker_only = iris.base_url == "http://127.0.0.1:1"
+                || iris.base_url.starts_with("http://127.0.0.1:1/");
+            let no_pws = iris
+                .version
+                .as_deref()
+                .map(|v| v.contains("2026.2.0AI"))
+                .unwrap_or(false);
+            let ssh_host_opt = iris.ssh_host.clone();
+
+            if nopws::nopws_is_active(docker_only, no_pws) {
+                // Block syntax check: terminal mode does not support `{}`.
+                if crate::tools::write_gate::contains_terminal_block_syntax(code_to_run) {
+                    self.record_call("iris_execute", false);
+                    return err_result(serde_json::json!({
+                        "success": false,
+                        "error_code": crate::tools::write_gate::ERR_TERMINAL_SYNTAX_UNSUPPORTED,
+                        "error": "Code contains block-syntax (`{...}`) that is not supported in terminal (docker exec) mode. Rewrite in classic form (If cond Write x) or use iris_doc + iris_compile to write a .mac routine.",
+                    }));
+                }
+
+                let exec_path = nopws::execution_path_docker(ssh_host_opt.as_deref());
+                let result = if let Some(ref ssh_host) = ssh_host_opt {
+                    iris.execute_ssh(code_to_run, &namespace, ssh_host).await
+                } else {
+                    iris.execute(code_to_run, &namespace).await
+                };
+                return match result {
+                    Err(e) => {
+                        self.record_call("iris_execute", false);
+                        let msg = e.to_string();
+                        if msg == "DOCKER_REQUIRED" {
+                            err_result(serde_json::json!({
+                                "success": false,
+                                "error_code": nopws::NOPWS_NO_CONTAINER,
+                                "error": "docker_only or nopws=true requires a container name. \
+                                          Set IRIS_CONTAINER env var or add container = \"<name>\" \
+                                          to .iris-agentic-dev.toml.",
+                            }))
+                        } else if let Some(ref ssh_host) = ssh_host_opt {
+                            err_result(serde_json::json!({
+                                "success": false,
+                                "error_code": "SSH_EXEC_FAILED",
+                                "error": format!(
+                                    "ssh {ssh_host} docker exec failed: {msg}. \
+                                     Verify SSH connectivity and that Docker is running on the remote host."
+                                ),
+                                "execution_path": exec_path,
+                            }))
+                        } else {
+                            err_result(serde_json::json!({
+                                "success": false,
+                                "error_code": "EXECUTION_FAILED",
+                                "error": msg,
+                                "execution_path": exec_path,
+                            }))
+                        }
+                    }
+                    Ok(output) => {
+                        let trimmed = output.trim();
+                        let is_runtime_error = trimmed.starts_with("ERROR: ")
+                            || trimmed.starts_with("ERROR($ZERROR): ");
+                        self.record_call("iris_execute", !is_runtime_error);
+                        let mut resp = serde_json::json!({
+                            "success": !is_runtime_error,
+                            "output": trimmed,
+                            "namespace": namespace,
+                            "method": "docker",
+                            "execution_path": exec_path,
+                        });
+                        if is_runtime_error {
+                            resp["error_code"] =
+                                serde_json::Value::String("IRIS_RUNTIME_ERROR".into());
+                        }
+                        if let Some(ref tr) = translation {
+                            if tr.found {
+                                resp["sql_translated"] = serde_json::Value::Bool(true);
+                                resp["translated_code"] =
+                                    serde_json::Value::String(tr.translated_code.clone());
+                            }
+                        }
+                        json_result(resp)
+                    }
+                };
+            }
+        }
+
         // Try pure-HTTP execution first (write-compile-query via CodeMode=objectgenerator).
         let gen_result = tokio::time::timeout(
             timeout,
@@ -4257,6 +4373,7 @@ impl IrisTools {
                         "error": detail,
                         "namespace": namespace,
                         "method": "http",
+                        "execution_path": "atelier",
                         "auth_user": auth_user,
                         "service_account_env": svc_env,
                     }));
@@ -4272,6 +4389,7 @@ impl IrisTools {
                     "output": trimmed,
                     "namespace": namespace,
                     "method": "http",
+                    "execution_path": "atelier",
                     "auth_user": auth_user,
                     "service_account_env": svc_env,
                 });
@@ -4303,6 +4421,19 @@ impl IrisTools {
                 e.to_string()
             }
         };
+
+        // Spec 096: pre-submission guard — block syntax is not supported in IRIS terminal mode.
+        // The docker exec path pipes code into `iris session` stdin (line-by-line interpreter).
+        // Block syntax (`{}`) causes a raw `<SYNTAX>` error there. Detect it here, before the
+        // round-trip, and return an actionable error so the agent knows to rewrite or use .mac.
+        if crate::tools::write_gate::contains_terminal_block_syntax(code_to_run) {
+            self.record_call("iris_execute", false);
+            return err_result(serde_json::json!({
+                "success": false,
+                "error_code": crate::tools::write_gate::ERR_TERMINAL_SYNTAX_UNSUPPORTED,
+                "error": "Code contains block-syntax (`{...}`) that is not supported in terminal (docker exec) mode. Rewrite in classic form (If cond Write x) or use iris_doc + iris_compile to write a .mac routine.",
+            }));
+        }
 
         // Fallback: docker exec (requires IRIS_CONTAINER env var).
         let docker_result =
@@ -4351,6 +4482,7 @@ impl IrisTools {
                     "output": trimmed,
                     "namespace": namespace,
                     "method": "docker",
+                    "execution_path": "docker_exec_local",
                 });
                 if is_runtime_error {
                     resp["error_code"] = serde_json::Value::String("IRIS_RUNTIME_ERROR".into());
@@ -4383,6 +4515,17 @@ impl IrisTools {
         Parameters(p): Parameters<IrisDocParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.resolve_server(p.server.as_deref()).await?;
+        // FR-010: NoPWS guard — iris_doc requires Atelier REST.
+        if nopws::nopws_is_active(
+            iris.base_url == "http://127.0.0.1:1"
+                || iris.base_url.starts_with("http://127.0.0.1:1/"),
+            iris.version
+                .as_deref()
+                .map(|v| v.contains("2026.2.0AI"))
+                .unwrap_or(false),
+        ) {
+            return err_result(nopws::nopws_atelier_required_error());
+        }
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         tracing::info!(namespace = %namespace, "iris_doc");
         let client = self.http_client();
@@ -4520,7 +4663,10 @@ impl IrisTools {
                 // Use the paired client so the service-account identity isn't overridden by the
                 // primary user's CSP session cookie (see get_iris_for_exec_with_client).
                 let (iris, exec_client) = if let Some(ref s) = p.server {
-                    (self.pool.get(Some(s.as_str()))?, Arc::clone(&self.client))
+                    (
+                        self.pool_ref().get(Some(s.as_str()))?,
+                        Arc::clone(&self.client),
+                    )
                 } else {
                     self.get_iris_for_exec_with_client().await?
                 };
@@ -6292,6 +6438,17 @@ Methods:
         Parameters(p): Parameters<ScmParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.resolve_server(p.server.as_deref()).await?;
+        // FR-010: NoPWS guard — iris_source_control requires Atelier REST.
+        if nopws::nopws_is_active(
+            iris.base_url == "http://127.0.0.1:1"
+                || iris.base_url.starts_with("http://127.0.0.1:1/"),
+            iris.version
+                .as_deref()
+                .map(|v| v.contains("2026.2.0AI"))
+                .unwrap_or(false),
+        ) {
+            return err_result(nopws::nopws_atelier_required_error());
+        }
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         // Policy gate (044 + 051): check before role gate.
         let (sm_server_sc, policy_sc) = self.active_server_manager_policy();
@@ -6391,7 +6548,10 @@ Methods:
         // account via exec_client (isolated CSP session), reads stay on the primary connection.
         let (iris, exec_client) = if is_write {
             if let Some(ref s) = p.server {
-                (self.pool.get(Some(s.as_str()))?, Arc::clone(&self.client))
+                (
+                    self.pool_ref().get(Some(s.as_str()))?,
+                    Arc::clone(&self.client),
+                )
             } else {
                 self.get_iris_for_exec_with_client().await?
             }
@@ -6491,7 +6651,10 @@ Methods:
         // it through the restricted service account when configured (least-privilege). The paired
         // client carries the matching cookie jar (see get_iris_for_exec_with_client).
         let (iris, exec_client) = if let Some(ref s) = p.server {
-            (self.pool.get(Some(s.as_str()))?, Arc::clone(&self.client))
+            (
+                self.pool_ref().get(Some(s.as_str()))?,
+                Arc::clone(&self.client),
+            )
         } else {
             self.get_iris_for_exec_with_client().await?
         };
@@ -6538,7 +6701,7 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let action = p.action.as_str();
         let _iris_arc_hold: Option<Arc<IrisConnection>> = match p.server.as_deref() {
-            Some(s) => Some(self.pool.get(Some(s))?),
+            Some(s) => Some(self.pool_ref().get(Some(s))?),
             None => self.iris_arc(),
         };
         let iris_opt = _iris_arc_hold.as_deref();
@@ -6651,7 +6814,7 @@ Methods:
         let what = p.get("what").and_then(|v| v.as_str()).unwrap_or("logs");
         let _iris_arc_hold: Option<Arc<IrisConnection>> =
             match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool.get(Some(s))?),
+                Some(s) => Some(self.pool_ref().get(Some(s))?),
                 None => self.iris_arc(),
             };
         let iris_opt = _iris_arc_hold.as_deref();
@@ -6818,7 +6981,7 @@ Methods:
             .unwrap_or_default();
         let _iris_arc_hold: Option<Arc<IrisConnection>> =
             match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool.get(Some(s))?),
+                Some(s) => Some(self.pool_ref().get(Some(s))?),
                 None => self.iris_arc(),
             };
         let conn_ns = _iris_arc_hold
@@ -6863,7 +7026,7 @@ Methods:
         }
         let _iris_arc_hold: Option<Arc<IrisConnection>> =
             match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool.get(Some(s))?),
+                Some(s) => Some(self.pool_ref().get(Some(s))?),
                 None => self.iris_arc(),
             };
         let conn_ns = _iris_arc_hold
@@ -6931,7 +7094,7 @@ Methods:
             .map(|s| s.to_string());
         let _iris_arc_hold: Option<Arc<IrisConnection>> =
             match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool.get(Some(s))?),
+                Some(s) => Some(self.pool_ref().get(Some(s))?),
                 None => self.iris_arc(),
             };
         let conn_ns = _iris_arc_hold
@@ -6978,7 +7141,7 @@ Methods:
             .map(|s| s.to_string());
         let _iris_arc_hold: Option<Arc<IrisConnection>> =
             match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool.get(Some(s))?),
+                Some(s) => Some(self.pool_ref().get(Some(s))?),
                 None => self.iris_arc(),
             };
         let conn_ns = _iris_arc_hold
@@ -7165,8 +7328,21 @@ Methods:
         Read actions (always available): list_namespaces, list_databases, list_users, list_roles, \
         list_user_roles, check_permission, list_webapps, get_webapp, \
         view_locks, view_processes, journal_search, namespace_mappings, database_status. \
-        Write actions (require IRIS_ADMIN_TOOLS=1): create_user, update_user, delete_user, \
-        create_namespace, delete_namespace, create_webapp, delete_webapp. \
+        Write actions (require IRIS_WRITE_TOOLS_ENABLED=1): create_user, update_user, delete_user, \
+        create_namespace, delete_namespace, create_webapp, delete_webapp, \
+        clear_password_change_flag, unlock_user, fresh_container_setup, mirror_add_async. \
+        mirror_add_async joins this IRIS instance to an existing mirror set as an async DR member. \
+        Params: mirror_name (required), primary_host (required), primary_port (default 2188), \
+        instance_name (default IRIS), async_member_type (0=DR, 1=ReadOnly, 2=ReadWrite; default 0). \
+        Destructive actions (require IRIS_DESTRUCTIVE_TOOLS_ENABLED=1): mirror_failover. \
+        mirror_failover promotes this backup member to primary (irreversible without manual recovery). \
+        Params: confirm (required, must be true). \
+        fresh_container_setup runs the full first-boot sequence on a fresh IRIS container: \
+        clears the forced-password-change flag and unlocks the default account. \
+        clear_password_change_flag params: username (default _SYSTEM), password (default SYS), \
+        new_password (optional). unlock_user params: username (required). \
+        fresh_container_setup params: username (default _SYSTEM), password (default SYS), \
+        new_password (optional). \
         All operations run in %SYS namespace. check_permission checks the currently connected \
         user (IRIS_USERNAME). view_processes requires dataPolicy param (block/redact/allow). \
         journal_search requires dataPolicy=allow and at least one of global_pattern or time_range. \
@@ -7181,7 +7357,7 @@ Methods:
         let action = p.get("action").and_then(|v| v.as_str()).unwrap_or("");
         let _iris_arc_hold: Option<Arc<IrisConnection>> =
             match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool.get(Some(s))?),
+                Some(s) => Some(self.pool_ref().get(Some(s))?),
                 None => self.iris_arc(),
             };
         let iris_opt = _iris_arc_hold.as_deref();
@@ -7347,13 +7523,97 @@ Methods:
                 let name_filter = p.get("name").and_then(|v| v.as_str());
                 observability::database_status_impl(iris_opt, name_filter).await
             }
+            // ── 099: fresh container setup ────────────────────────────────────
+            "clear_password_change_flag" => {
+                let username = p
+                    .get("username")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("_SYSTEM");
+                let password = p.get("password").and_then(|v| v.as_str()).unwrap_or("SYS");
+                let new_password = p
+                    .get("new_password")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(password);
+                admin::admin_clear_password_change_flag_impl(
+                    iris_opt,
+                    username,
+                    password,
+                    new_password,
+                )
+                .await
+            }
+            "unlock_user" => {
+                let username = p.get("username").and_then(|v| v.as_str()).unwrap_or("");
+                if username.is_empty() {
+                    return err_json("INVALID_PARAMS", "username is required for unlock_user");
+                }
+                admin::admin_unlock_user_impl(iris_opt, username).await
+            }
+            "fresh_container_setup" => {
+                let username = p
+                    .get("username")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("_SYSTEM");
+                let password = p.get("password").and_then(|v| v.as_str()).unwrap_or("SYS");
+                let new_password = p
+                    .get("new_password")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(password);
+                admin::admin_fresh_container_setup_impl(iris_opt, username, password, new_password)
+                    .await
+            }
+            "mirror_add_async" => {
+                let mirror_name = p.get("mirror_name").and_then(|v| v.as_str()).unwrap_or("");
+                let primary_host = p.get("primary_host").and_then(|v| v.as_str()).unwrap_or("");
+                if mirror_name.is_empty() || primary_host.is_empty() {
+                    return err_json(
+                        "INVALID_PARAMS",
+                        "mirror_name and primary_host are required for mirror_add_async",
+                    );
+                }
+                let primary_port = p
+                    .get("primary_port")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(2188) as u16;
+                let instance_name = p
+                    .get("instance_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("IRIS");
+                let async_member_type = p
+                    .get("async_member_type")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u8;
+                admin_tools::iris_mirror_add_async_impl(
+                    iris_opt,
+                    &self.client,
+                    mirror_name,
+                    primary_host,
+                    primary_port,
+                    instance_name,
+                    async_member_type,
+                )
+                .await
+            }
+            "mirror_failover" => {
+                let confirm = p.get("confirm").and_then(|v| v.as_bool()).unwrap_or(false);
+                if !confirm {
+                    return err_json(
+                        "CONFIRMATION_REQUIRED",
+                        "confirm must be true to execute mirror_failover — \
+                         this action is irreversible without manual recovery",
+                    );
+                }
+                admin_tools::iris_mirror_failover_impl(iris_opt, &self.client).await
+            }
             _ => err_json(
                 "INVALID_ACTION",
                 "iris_admin: action must be one of: list_namespaces, list_databases, \
                  list_users, list_roles, list_user_roles, check_permission, list_webapps, \
                  get_webapp, view_locks, view_processes, journal_search, namespace_mappings, \
                  database_status, create_user, update_user, delete_user, create_namespace, \
-                 delete_namespace, create_webapp, delete_webapp",
+                 delete_namespace, create_webapp, delete_webapp, \
+                 clear_password_change_flag, unlock_user, fresh_container_setup, \
+                 mirror_add_async, mirror_failover",
             ),
         };
         self.record_call("iris_admin", result.is_ok());
@@ -7451,41 +7711,132 @@ Methods:
     // ── 072: server management tools ─────────────────────────────────────────
 
     #[tool(
-        description = "List all IRIS server instances registered in the connection pool. Returns an array of {name, host, port, namespace, username, source, reachable} objects. `source` values: iad-native (added via iris_add_server), vscode (from VS Code/Cursor Server Manager), fleet (from workspace TOML), env (from IRIS_HOST env var). `reachable` is null — call iris_test_server to probe connectivity.",
+        description = "List all IRIS server instances registered in the connection pool. Returns an array of {name, host, port, namespace, username, source, reachable} objects. `source` values: iad-native (added via iris_add_server), vscode (from VS Code/Cursor Server Manager), fleet (from workspace TOML), env (from IRIS_HOST env var). Default: `reachable` is null (fast path). Pass `probe: true` to probe all servers in parallel (5 s timeout each) and include reachable, auth, latency_ms, error fields.",
         annotations(read_only_hint = true),
         output_schema = schema_for_output::<IrisServersResponse>()
     )]
-    async fn iris_servers(&self) -> Result<CallToolResult, McpError> {
-        let entries: Vec<serde_json::Value> = self
-            .pool
+    async fn iris_servers(
+        &self,
+        Parameters(p): Parameters<server_tools::IrisServersParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.check_reload().await;
+        use crate::iris::servers_config;
+        use futures_util::future::join_all;
+
+        let do_probe = p.probe.unwrap_or(false);
+        let native_cfg = servers_config::load_native_config();
+
+        // Build base entry metadata for each server.
+        struct ServerMeta {
+            name: String,
+            host: String,
+            port: u16,
+            namespace: String,
+            username: String,
+            password: String,
+            source: String,
+            has_plaintext: bool,
+        }
+
+        let pool = self.pool_ref();
+        let metas: Vec<ServerMeta> = pool
             .names()
             .iter()
-            .map(|name| {
-                let source = self.pool.source_of(name);
-                // Get connection metadata without triggering a live connection.
-                match self.pool.get(Some(name)) {
+            .filter_map(|name| {
+                let source = pool.source_of(name);
+                let has_plaintext = if source == "iad-native" {
+                    native_cfg
+                        .servers
+                        .get(*name)
+                        .map(|e| e.password.is_some())
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+                match pool.get(Some(name)) {
                     Ok(conn) => {
-                        // Parse host/port from base_url for clean output.
                         let (host, port) = parse_host_port(&conn.base_url);
-                        serde_json::json!({
-                            "name": name,
-                            "host": host,
-                            "port": port,
-                            "namespace": conn.namespace,
-                            "username": conn.username,
-                            "source": source,
-                            "reachable": serde_json::Value::Null,
+                        Some(ServerMeta {
+                            name: name.to_string(),
+                            host,
+                            port,
+                            namespace: conn.namespace.clone(),
+                            username: conn.username.clone(),
+                            password: conn.password.clone(),
+                            source: source.to_string(),
+                            has_plaintext,
                         })
                     }
-                    Err(_) => serde_json::json!({ "name": name, "source": source }),
+                    Err(_) => None,
                 }
             })
             .collect();
+
+        let entries: Vec<serde_json::Value> = if do_probe {
+            // Fan out probe_server calls in parallel.
+            let futures: Vec<_> = metas
+                .iter()
+                .map(|m| {
+                    let host = m.host.clone();
+                    let port = m.port;
+                    let ns = m.namespace.clone();
+                    let user = m.username.clone();
+                    let pass = m.password.clone();
+                    async move { server_tools::probe_server(&host, port, &ns, &user, &pass).await }
+                })
+                .collect();
+            let probe_results = join_all(futures).await;
+            metas
+                .into_iter()
+                .zip(probe_results)
+                .map(|(m, probe)| {
+                    let mut entry = serde_json::json!({
+                        "name": m.name,
+                        "host": m.host,
+                        "port": m.port,
+                        "namespace": m.namespace,
+                        "username": m.username,
+                        "source": m.source,
+                        "reachable": probe.reachable,
+                        "auth": probe.auth,
+                        "latency_ms": probe.latency_ms,
+                        "error": probe.error,
+                        "iris_version": probe.iris_version,
+                        "atelier_version": probe.atelier_version,
+                    });
+                    if m.has_plaintext {
+                        entry["has_plaintext_credential"] = serde_json::Value::Bool(true);
+                    }
+                    entry
+                })
+                .collect()
+        } else {
+            // Fast path: no probe, reachable:null.
+            metas
+                .into_iter()
+                .map(|m| {
+                    let mut entry = serde_json::json!({
+                        "name": m.name,
+                        "host": m.host,
+                        "port": m.port,
+                        "namespace": m.namespace,
+                        "username": m.username,
+                        "source": m.source,
+                        "reachable": serde_json::Value::Null,
+                    });
+                    if m.has_plaintext {
+                        entry["has_plaintext_credential"] = serde_json::Value::Bool(true);
+                    }
+                    entry
+                })
+                .collect()
+        };
+
         ok_json(serde_json::json!({"servers": entries, "count": entries.len()}))
     }
 
     #[tool(
-        description = "Add a new IRIS server to the iad-native configuration. The password is stored in the OS keychain — never written to disk. The running pool does not hot-reload; restart iad after adding a server to make it available via the `server` param. Returns {added: true, name, note}.",
+        description = "Add a new IRIS server to the iad-native configuration. The credential is stored in the OS keychain when available. On headless hosts (MCP in Claude Desktop, Remote SSH, CI) where no keychain exists, the credential is stored in plaintext in servers.json as a fallback — the response includes stored_plaintext: true and a warning in that case. The running pool does not hot-reload; restart iad after adding a server to make it available via the `server` param. Returns {added: true, name, note}.",
         output_schema = output_schemas::oneof_output_schema::<IrisAddServerResponse>()
     )]
     async fn iris_add_server(
@@ -7514,6 +7865,7 @@ Methods:
                 username: p.username.clone(),
                 description: p.description.clone(),
                 scheme: p.scheme.clone(),
+                password: None,
             },
         );
         if let Err(e) = servers_config::save_native_config(&cfg) {
@@ -7529,17 +7881,32 @@ Methods:
                 e,
                 crate::iris::server_manager::SmCredentialError::KeychainUnavailable { .. }
             );
-            let hint = if is_unavailable {
-                "Keychain is not available on this host (headless / Remote SSH). \
-                 Add host/port/username/password to .iris-agentic-dev.toml instead — \
-                 the file hot-reloads without restarting the MCP server."
-            } else {
-                "You can reconnect via iris_import_servers after authenticating in VS Code Server Manager."
-            };
+            if is_unavailable && !p.password.is_empty() {
+                // Keychain not available (headless MCP, Remote SSH). Fall back to writing
+                // the credential into the ServerEntry in servers.json. Not ideal, but the
+                // server is immediately usable after pool reload without manual config edits.
+                let mut cfg = servers_config::load_native_config();
+                if let Some(entry) = cfg.servers.get_mut(&p.name) {
+                    entry.password = Some(p.password.clone());
+                }
+                if let Err(e2) = servers_config::save_native_config(&cfg) {
+                    return err_result(serde_json::json!({
+                        "error_code": "SAVE_FAILED",
+                        "message": format!("Failed to save plaintext credential to servers.json: {e2}")
+                    }));
+                }
+                return ok_json(serde_json::json!({
+                    "added": true,
+                    "name": p.name,
+                    "stored_plaintext": true,
+                    "warning": "Credential stored in plaintext in servers.json — use VS Code Server Manager for production credentials.",
+                    "note": "Restart iad for the pool to include this server."
+                }));
+            }
             return err_result(serde_json::json!({
                 "error_code": "KEYCHAIN_FAILED",
                 "keychain_unavailable": is_unavailable,
-                "message": format!("Server added to config but keychain storage failed: {e}. {hint}")
+                "message": format!("Server added to config but keychain storage failed: {e}. You can reconnect via iris_import_servers after authenticating in VS Code Server Manager.")
             }));
         }
 
@@ -7562,7 +7929,8 @@ Methods:
         use crate::iris::servers_config;
 
         // Check source — only iad-native servers can be removed.
-        let source = self.pool.source_of(&p.name);
+        let pool = self.pool_ref();
+        let source = pool.source_of(&p.name);
         if source != "iad-native" {
             return err_result(serde_json::json!({
                 "error_code": server_tools::REMOVE_NOT_ALLOWED,
@@ -7597,7 +7965,7 @@ Methods:
 
         // Best-effort keychain removal — ignore errors (entry may not exist on all platforms).
         let username = self
-            .pool
+            .pool_ref()
             .get(Some(&p.name))
             .map(|c| c.username.clone())
             .unwrap_or_default();
@@ -7614,7 +7982,63 @@ Methods:
     }
 
     #[tool(
-        description = "Probe an IRIS server for reachability. Performs GET /api/atelier/ with timing. Does not modify the active connection. Returns {name, reachable, atelier_version, iris_version, latency_ms} on success, or {name, reachable: false, error} on failure. Error codes: SERVER_NOT_FOUND (not in pool).",
+        description = "Hot-reload the IRIS connection pool from disk without restarting iad. Re-reads the workspace TOML config and the iad-native servers list, then atomically replaces the in-memory pool. Servers added or removed in the config file are available immediately. Returns {success, servers_loaded, servers, note} on success, or {success: false, error_code, error, note} if the config file cannot be parsed (the existing pool is preserved on parse errors). Error codes: TOML_PARSE_ERROR.",
+        annotations(read_only_hint = true)
+    )]
+    async fn iris_reload_pool(&self) -> Result<CallToolResult, McpError> {
+        use crate::iris::{connection_pool, workspace_config};
+
+        // Pre-validate the workspace TOML before swapping the pool.
+        // workspace_root(None) replicates the same path-finding load_pool uses.
+        let ws_root = workspace_config::workspace_root(None);
+        let config_path = if ws_root.is_file()
+            || ws_root
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("toml"))
+        {
+            Some(ws_root)
+        } else if ws_root.join(".iris-agentic-dev.toml").exists() {
+            Some(ws_root.join(".iris-agentic-dev.toml"))
+        } else if ws_root.join(".iris-dev.toml").exists() {
+            Some(ws_root.join(".iris-dev.toml"))
+        } else {
+            None
+        };
+
+        if let Some(ref path) = config_path {
+            match std::fs::read_to_string(path) {
+                Ok(contents) => {
+                    if let Err(e) = workspace_config::load_fleet_config_from_str(&contents) {
+                        return ok_json(serde_json::json!({
+                            "success": false,
+                            "error_code": "TOML_PARSE_ERROR",
+                            "error": e.to_string(),
+                            "note": "Existing pool preserved — no servers were removed."
+                        }));
+                    }
+                }
+                Err(_) => {
+                    // File unreadable — load_pool will skip fleet instances but still load
+                    // iad-native and env entries. Proceed without TOML_PARSE_ERROR.
+                }
+            }
+        }
+
+        let new_pool = Arc::new(connection_pool::load_pool(None));
+        let names: Vec<String> = new_pool.names().iter().map(|s| s.to_string()).collect();
+        let count = names.len();
+        *self.pool.write().unwrap() = new_pool;
+        ok_json(serde_json::json!({
+            "success": true,
+            "servers_loaded": count,
+            "servers": names,
+            "note": "Pool rebuilt. Servers are immediately routable via the `server` parameter."
+        }))
+    }
+
+    #[tool(
+        description = "Probe an IRIS server for reachability. Performs GET /api/atelier/ with timing. Does not modify the active connection. Returns {name, reachable, atelier_version, iris_version, latency_ms} on success, or {name, reachable: false, error} on failure. Ad-hoc probe: pass `host` (+ optional `web_port`, `username`, `password`) instead of `name` to probe a server not in the pool. Error codes: SERVER_NOT_FOUND (name not in pool), MISSING_PARAMS (neither name nor host provided).",
         annotations(read_only_hint = true),
         output_schema = schema_for_output::<IrisTestServerResponse>()
     )]
@@ -7622,7 +8046,109 @@ Methods:
         &self,
         Parameters(p): Parameters<server_tools::TestServerParams>,
     ) -> Result<CallToolResult, McpError> {
-        let conn = self.pool.get(Some(&p.name))?;
+        // ── 098: ad-hoc probe path ────────────────────────────────────────────
+        if let Some(ref host) = p.host {
+            let port = p.web_port.unwrap_or(52773);
+            let username = p.username.as_deref().unwrap_or("_SYSTEM");
+            let password = p.password.as_deref().unwrap_or("");
+            let result = server_tools::probe_server(host, port, "USER", username, password).await;
+            return ok_json(serde_json::json!({
+                "host": host,
+                "port": port,
+                "reachable": result.reachable,
+                "auth": result.auth,
+                "iris_version": result.iris_version,
+                "atelier_version": result.atelier_version,
+                "latency_ms": result.latency_ms,
+                "error": result.error,
+            }));
+        }
+
+        let name = match p.name.as_deref() {
+            Some(n) if !n.is_empty() => n.to_string(),
+            _ => {
+                return ok_json(serde_json::json!({
+                    "error": "Provide either `name` (registered server) or `host` (ad-hoc probe).",
+                    "error_code": "MISSING_PARAMS",
+                }));
+            }
+        };
+
+        let conn = self.pool_ref().get(Some(&name))?;
+
+        // NoPWS detection: check if this connection is using the sentinel URL.
+        let is_sentinel = conn.base_url == "http://127.0.0.1:1"
+            || conn.base_url.starts_with("http://127.0.0.1:1/");
+        // Version heuristic: 2026.2.0AI builds have NoPWS (no embedded Apache).
+        let version_nopws = conn
+            .version
+            .as_deref()
+            .map(|v| v.contains("2026.2.0AI"))
+            .unwrap_or(false);
+        let nopws = is_sentinel || version_nopws;
+
+        // iris.cpf probe: when docker_only or nopws config, check WebServer= in cpf.
+        let (nopws_detected, nopws_evidence) = if nopws {
+            let container = std::env::var("IRIS_CONTAINER").ok();
+            if let Some(ref cname) = container {
+                // Probe iris.cpf from inside the container to check WebServer=0
+                let cpf_paths = ["/usr/irissys/iris.cpf", "/usr/local/etc/irissys/iris.cpf"];
+                let mut found_webserver_zero = false;
+                let mut evidence = String::new();
+                for cpf in &cpf_paths {
+                    let out = tokio::process::Command::new("docker")
+                        .args([
+                            "exec",
+                            cname,
+                            "sh",
+                            "-c",
+                            &format!("grep -i 'WebServer' {cpf} 2>/dev/null || true"),
+                        ])
+                        .output()
+                        .await;
+                    if let Ok(out) = out {
+                        let text = String::from_utf8_lossy(&out.stdout);
+                        let text = text.trim();
+                        if !text.is_empty() {
+                            evidence = format!("{cpf}: {text}");
+                            if text.to_lowercase().contains("webserver=0") {
+                                found_webserver_zero = true;
+                            }
+                            break;
+                        }
+                    }
+                }
+                (
+                    found_webserver_zero,
+                    if evidence.is_empty() {
+                        None
+                    } else {
+                        Some(evidence)
+                    },
+                )
+            } else {
+                (false, None)
+            }
+        } else {
+            (false, None)
+        };
+
+        if nopws {
+            // In NoPWS mode the Atelier REST URL is unreachable; skip the HTTP probe.
+            let mut resp = serde_json::json!({
+                "name": name,
+                "reachable": false,
+                "nopws": true,
+                "web_available": false,
+                "nopws_detected": nopws_detected,
+                "suggestion": "NoPWS build: use docker_only=true or add a webgateway sidecar. See skills/nopws-setup for setup instructions.",
+            });
+            if let Some(ev) = nopws_evidence {
+                resp["nopws_evidence"] = serde_json::Value::String(ev);
+            }
+            return ok_json(resp);
+        }
+
         let url = conn.atelier_url("/");
         let start = std::time::Instant::now();
         match self
@@ -7633,8 +8159,10 @@ Methods:
             .await
         {
             Err(e) => ok_json(serde_json::json!({
-                "name": p.name,
+                "name": name,
                 "reachable": false,
+                "nopws": false,
+                "web_available": false,
                 "error": e.to_string(),
                 "latency_ms": start.elapsed().as_millis(),
             })),
@@ -7643,8 +8171,10 @@ Methods:
                 let latency_ms = start.elapsed().as_millis();
                 if !status.is_success() {
                     return ok_json(serde_json::json!({
-                        "name": p.name,
+                        "name": name,
                         "reachable": false,
+                        "nopws": false,
+                        "web_available": false,
                         "http_status": status.as_u16(),
                         "latency_ms": latency_ms,
                     }));
@@ -7652,8 +8182,10 @@ Methods:
                 let auth = status != reqwest::StatusCode::UNAUTHORIZED;
                 match resp.json::<serde_json::Value>().await {
                     Err(e) => ok_json(serde_json::json!({
-                        "name": p.name,
+                        "name": name,
                         "reachable": true,
+                        "nopws": false,
+                        "web_available": true,
                         "auth": auth,
                         "latency_ms": latency_ms,
                         "parse_error": e.to_string(),
@@ -7661,8 +8193,10 @@ Methods:
                     Ok(body) => {
                         let content = &body["result"]["content"];
                         ok_json(serde_json::json!({
-                            "name": p.name,
+                            "name": name,
                             "reachable": true,
+                            "nopws": false,
+                            "web_available": true,
                             "auth": auth,
                             "atelier_version": content["api"],
                             "iris_version": content["version"],
@@ -7736,6 +8270,7 @@ Methods:
                     username: profile.username.clone(),
                     description: None,
                     scheme: Some(profile.scheme.clone()),
+                    password: None,
                 },
             );
             imported += 1;
@@ -7869,8 +8404,8 @@ Methods:
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let server_a = self.pool.get(Some(&server_a_name))?;
-        let server_b = self.pool.get(Some(&server_b_name))?;
+        let server_a = self.pool_ref().get(Some(&server_a_name))?;
+        let server_b = self.pool_ref().get(Some(&server_b_name))?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &server_a.namespace).to_string();
 
         let result = comparison_tools::compare_document_impl(
@@ -7911,8 +8446,8 @@ Methods:
             .unwrap_or("")
             .to_string();
 
-        let server_a = self.pool.get(Some(&server_a_name))?;
-        let server_b = self.pool.get(Some(&server_b_name))?;
+        let server_a = self.pool_ref().get(Some(&server_a_name))?;
+        let server_b = self.pool_ref().get(Some(&server_b_name))?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &server_a.namespace).to_string();
 
         let result = comparison_tools::compare_namespace_impl(
@@ -9139,6 +9674,42 @@ mod config_watcher_tests {
         assert!(
             !watcher.has_changed(),
             "no spurious change for existing file"
+        );
+    }
+
+    // T026: background pool-reload precondition — watcher detects content change
+    // (simulates the detection step that triggers pool swap in check_reload)
+    #[test]
+    fn test_config_watcher_fires_on_server_entry_added() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".iris-agentic-dev.toml");
+
+        // Initial config with one server
+        std::fs::write(&path, "[connection]\nhost = \"localhost\"\nport = 52780\n").unwrap();
+        let mut watcher = ConfigWatcher::new(path.clone()).unwrap();
+        assert!(!watcher.has_changed(), "no change right after creation");
+
+        // Simulate a later write (wind mtime back so new write is definitively newer)
+        if let Some(ref mut mtime) = watcher.last_mtime {
+            *mtime = mtime
+                .checked_sub(std::time::Duration::from_secs(2))
+                .unwrap();
+        }
+
+        // Write updated config adding a second server entry
+        std::fs::write(
+            &path,
+            "[connection]\nhost = \"localhost\"\nport = 52780\n\n[instance.prod]\nhost = \"prod.example.com\"\nport = 52773\n",
+        )
+        .unwrap();
+
+        assert!(
+            watcher.has_changed(),
+            "watcher must fire when config file is updated with new server entry"
+        );
+        assert!(
+            !watcher.has_changed(),
+            "no second fire after detection consumed"
         );
     }
 }
@@ -10460,9 +11031,11 @@ impl IrisTools {
         );
         dispatch!("iris_coverage", coverage::IrisCoverageParams, iris_coverage);
         // 072: server management tools
-        if tool == "iris_servers" {
-            return self.iris_servers().await.map_err(|e| format!("{e:?}"));
-        }
+        dispatch!(
+            "iris_servers",
+            server_tools::IrisServersParams,
+            iris_servers
+        );
         if tool == "iris_import_servers" {
             return self
                 .iris_import_servers()
@@ -10515,6 +11088,10 @@ impl IrisTools {
             doc_search::IrisDocSearchParams,
             iris_doc_search
         );
+        // 093: hot-reload pool
+        if tool == "iris_reload_pool" {
+            return self.iris_reload_pool().await.map_err(|e| format!("{e:?}"));
+        }
         Err(format!("unknown tool: {tool}"))
     }
 }

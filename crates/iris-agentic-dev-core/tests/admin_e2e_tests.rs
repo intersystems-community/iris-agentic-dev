@@ -494,3 +494,131 @@ fn test_admin_webapp_crud() {
         "webapp must be gone after delete"
     );
 }
+
+// ── 099: fresh container setup — write gate blocking (binary invocation) ─────
+
+#[test]
+#[ignore = "requires compiled binary (IAD_BINARY or target/debug/iris-agentic-dev)"]
+fn test_clear_password_change_flag_write_gate_blocks() {
+    let r = admin_call(
+        serde_json::json!({"action":"clear_password_change_flag"}),
+        &[("IRIS_ADMIN_TOOLS", "1"), ("IRIS_WRITE_TOOLS_ENABLED", "0")],
+    );
+    assert_eq!(
+        r["error_code"], "WRITE_TOOLS_DISABLED",
+        "clear_password_change_flag must be blocked without IRIS_WRITE_TOOLS_ENABLED, got: {:?}",
+        r
+    );
+}
+
+#[test]
+#[ignore = "requires compiled binary (IAD_BINARY or target/debug/iris-agentic-dev)"]
+fn test_unlock_user_write_gate_blocks() {
+    let r = admin_call(
+        serde_json::json!({"action":"unlock_user","username":"_SYSTEM"}),
+        &[("IRIS_ADMIN_TOOLS", "1"), ("IRIS_WRITE_TOOLS_ENABLED", "0")],
+    );
+    assert_eq!(
+        r["error_code"], "WRITE_TOOLS_DISABLED",
+        "unlock_user must be blocked without IRIS_WRITE_TOOLS_ENABLED, got: {:?}",
+        r
+    );
+}
+
+#[test]
+#[ignore = "requires compiled binary (IAD_BINARY or target/debug/iris-agentic-dev)"]
+fn test_fresh_container_setup_write_gate_blocks() {
+    let r = admin_call(
+        serde_json::json!({"action":"fresh_container_setup"}),
+        &[("IRIS_ADMIN_TOOLS", "1"), ("IRIS_WRITE_TOOLS_ENABLED", "0")],
+    );
+    assert_eq!(
+        r["error_code"], "WRITE_TOOLS_DISABLED",
+        "fresh_container_setup must be blocked without IRIS_WRITE_TOOLS_ENABLED, got: {:?}",
+        r
+    );
+}
+
+// ── 097: mirror management gate tests ────────────────────────────────────────
+
+#[test]
+#[ignore = "requires compiled binary (IAD_BINARY or target/debug/iris-agentic-dev)"]
+fn test_mirror_add_async_write_gate_blocks() {
+    let r = admin_call(
+        serde_json::json!({"action":"mirror_add_async","mirror_name":"TestMirror","primary_host":"localhost"}),
+        &[("IRIS_ADMIN_TOOLS", "1"), ("IRIS_WRITE_TOOLS_ENABLED", "0")],
+    );
+    assert_eq!(
+        r["error_code"], "WRITE_TOOLS_DISABLED",
+        "mirror_add_async must be blocked without IRIS_WRITE_TOOLS_ENABLED, got: {:?}",
+        r
+    );
+}
+
+#[test]
+#[ignore = "requires compiled binary (IAD_BINARY or target/debug/iris-agentic-dev)"]
+fn test_mirror_add_async_missing_params() {
+    let r = admin_call(
+        serde_json::json!({"action":"mirror_add_async"}),
+        &[("IRIS_WRITE_TOOLS_ENABLED", "1")],
+    );
+    assert_eq!(
+        r["error_code"], "INVALID_PARAMS",
+        "mirror_add_async without mirror_name must return INVALID_PARAMS, got: {:?}",
+        r
+    );
+}
+
+#[test]
+#[ignore = "requires compiled binary (IAD_BINARY or target/debug/iris-agentic-dev)"]
+fn test_mirror_failover_destructive_gate_blocks() {
+    let r = admin_call(
+        serde_json::json!({"action":"mirror_failover","confirm":true}),
+        &[("IRIS_WRITE_TOOLS_ENABLED", "1")],
+    );
+    assert_eq!(
+        r["error_code"], "DESTRUCTIVE_TOOLS_DISABLED",
+        "mirror_failover must be blocked without IRIS_DESTRUCTIVE_TOOLS_ENABLED, got: {:?}",
+        r
+    );
+}
+
+#[test]
+#[ignore = "requires compiled binary (IAD_BINARY or target/debug/iris-agentic-dev)"]
+fn test_mirror_failover_confirm_required() {
+    let r = admin_call(
+        serde_json::json!({"action":"mirror_failover"}),
+        &[
+            ("IRIS_WRITE_TOOLS_ENABLED", "1"),
+            ("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "1"),
+        ],
+    );
+    assert_eq!(
+        r["error_code"], "CONFIRMATION_REQUIRED",
+        "mirror_failover without confirm=true must return CONFIRMATION_REQUIRED, got: {:?}",
+        r
+    );
+}
+
+// ── 097 T015a: version mismatch detection (pure unit, no binary/IRIS needed) ─
+
+#[test]
+fn test_mirror_version_mismatch_detection() {
+    use iris_agentic_dev_core::tools::admin_tools::is_version_mismatch_error;
+    assert!(
+        is_version_mismatch_error("Mirror member version incompatible with primary"),
+        "should detect 'version' in error string"
+    );
+    assert!(
+        is_version_mismatch_error("Incompatible IRIS version on target node"),
+        "should detect 'incompatible' in error string"
+    );
+    assert!(
+        !is_version_mismatch_error("Mirror set not found"),
+        "should not flag generic error as version mismatch"
+    );
+    assert!(
+        !is_version_mismatch_error(""),
+        "should not flag empty string"
+    );
+}

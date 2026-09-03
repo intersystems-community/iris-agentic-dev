@@ -13,6 +13,11 @@ pub struct ServerEntry {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scheme: Option<String>,
+    /// Plaintext credential stored as a fallback when the OS keychain is unavailable
+    /// (e.g. headless MCP contexts, Remote SSH). Keychain takes priority when present.
+    /// Never returned in any tool response — only read for connection auth.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
 }
 
 /// The iad-native servers config file (`~/.config/iris-agentic-dev/servers.json`).
@@ -120,6 +125,7 @@ mod tests {
                 username: "_SYSTEM".to_string(),
                 description: Some("Dev container".to_string()),
                 scheme: Some("http".to_string()),
+                password: None,
             },
         );
         servers.insert(
@@ -131,6 +137,7 @@ mod tests {
                 username: "admin".to_string(),
                 description: None,
                 scheme: Some("https".to_string()),
+                password: None,
             },
         );
         ServersConfig {

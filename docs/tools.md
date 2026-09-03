@@ -18,6 +18,7 @@ unless there is something non-obvious to say about it.
 | [`iris_servers`](#iris_servers)                                   | Server Management         |
 | [`iris_add_server`](#iris_add_server)                             | Server Management         |
 | [`iris_remove_server`](#iris_remove_server-) ☠                    | Server Management         |
+| [`iris_reload_pool`](#iris_reload_pool)                           | Server Management         |
 | [`iris_test_server`](#iris_test_server)                           | Server Management         |
 | [`iris_import_servers`](#iris_import_servers)                     | Server Management         |
 | [`iris_doc`](#iris_doc)                                           | Code                      |
@@ -121,7 +122,14 @@ to list what's registered.
 
 List all registered IRIS instances from all configuration sources (iad-native config, VS
 Code Server Manager settings, workspace fleet config, environment variables). Shows name,
-host, port, namespace, source, and reachability status (`null` = not yet tested).
+host, port, namespace, source, and reachability status.
+
+Default (`probe` omitted or `false`): fast path — `reachable` is `null` per entry, no HTTP
+requests made.
+
+Pass `probe: true` to fan out a parallel Atelier REST probe to every server in the pool
+(5-second timeout each). Each entry then includes `reachable`, `auth`, `latency_ms`,
+`iris_version`, `atelier_version`, and `error`.
 
 ### `iris_add_server`
 
@@ -141,10 +149,30 @@ Remove a server from the iad-native config and its keychain entry. Requires
 `destructive_tools_enabled = true`. Cannot remove servers sourced from VS Code settings —
 edit `settings.json` directly for those.
 
+### `iris_reload_pool`
+
+Hot-reload the connection pool from disk without restarting iad. Re-reads the workspace
+TOML config and the iad-native servers list, then atomically replaces the in-memory pool.
+Returns `{success, servers_loaded, servers, note}`. Parse errors preserve the existing pool
+and return `{success: false, error_code: "TOML_PARSE_ERROR", ...}`.
+
+**Background reload**: iad also reloads the pool automatically when the workspace TOML
+changes on disk. The change is detected via file mtime on each call to `iris_servers`,
+`iris_compile`, `iris_execute`, and similar tools. A parse error during background reload
+is silently swallowed — the existing pool is kept.
+
 ### `iris_test_server`
 
-Test connectivity to a named server without changing the active connection. Returns
-Atelier API version, IRIS version string, and round-trip latency.
+Probe an IRIS server for reachability. Returns `reachable`, `auth`, `iris_version`,
+`atelier_version`, and `latency_ms`.
+
+Two modes:
+
+- **Named server** (`name`): looks up the server in the connection pool and probes it.
+- **Ad-hoc** (`host`, optional `web_port`, `username`, `password`): probes a server that is
+  not in the pool. Useful for discovery before calling `iris_add_server`. Default port is
+  52773; default credentials are `_SYSTEM`/`""`. Returns `reachable: true, auth: false` when
+  the server responds with HTTP 401 (reachable but credentials wrong).
 
 ### `iris_import_servers`
 
@@ -312,6 +340,53 @@ Session error codes:
 
 **`server`** (optional): route this call to a named registered IRIS instance. If omitted,
 uses the default connection. Use `iris_servers` to list available instances.
+
+#### Execution paths and terminal-mode constraint
+
+`iris_execute` has two execution paths:
+
+1. **HTTP (primary)** — wraps code in a temporary class method body, compiles it via
+   Atelier REST, runs it, deletes the class. Block syntax (`{}`) works here because class
+   method bodies support it.
+
+2. **docker exec (fallback)** — used when `IRIS_CONTAINER` is set and HTTP fails, or when
+   `docker_only = true` in config. This path pipes code into `iris session` stdin, which is
+   a line-by-line terminal interpreter. **Block syntax is not supported in terminal mode.**
+   `If cond { Write x }` causes `<SYNTAX>` with no explanation.
+
+Use classic terminal-compatible form for the docker exec path:
+
+```text
+// Terminal-compatible: classic form
+If cond  Write x
+
+// Terminal-compatible: dotted-DO
+If cond  Do
+.  Write x
+
+// NOT terminal-compatible: block syntax
+If cond {
+    Write x        // causes <SYNTAX> on docker exec path
+}
+```
+
+**Escape hatch for complex scripts on the docker exec path**: write a `.mac` routine with
+`iris_doc`, compile it with `iris_compile`, then call `iris_execute Do entry^RoutineName`.
+Block syntax works inside compiled routines.
+
+```text
+// Step 1: write the routine
+iris_doc(mode="put", name="MyScript.mac", content="ROUTINE MyScript\nentry()\n    If x=1 {\n        Write \"yes\"\n    }\n    Quit")
+
+// Step 2: compile it
+iris_compile(target="MyScript.mac")
+
+// Step 3: run it
+iris_execute(code="Do entry^MyScript")
+```
+
+Error code `TERMINAL_SYNTAX_UNSUPPORTED` is returned when block syntax is detected before
+the docker exec round-trip, with an actionable message pointing to this pattern.
 
 ---
 
@@ -1248,7 +1323,7 @@ For standalone journal access with the same parameters, the `journal_search` too
 ### `iris_admin` ☠
 
 List namespaces, databases, users, roles, and web apps. Read actions have no gate.
-Write actions require both `destructive_tools_enabled = true` and `IRIS_ADMIN_TOOLS=1`.
+Write actions require `IRIS_WRITE_TOOLS_ENABLED=1`.
 
 **Read actions** (no env gate):
 
@@ -1268,23 +1343,61 @@ Write actions require both `destructive_tools_enabled = true` and `IRIS_ADMIN_TO
 | `list_user_roles`    | `username` (string, required)                                                                              |
 | `journal_search`     | `global_pattern` (string), `time_range` (`{from, to}` ISO8601), `max_records` (int, default 100, max 1000) |
 
-**Write actions** (require `IRIS_ADMIN_TOOLS=1`):
+**Write actions** (require `IRIS_WRITE_TOOLS_ENABLED=1`):
 
-| Action             | Parameters                                                             |
-| ------------------ | ---------------------------------------------------------------------- |
-| `create_user`      | `username`, `password` (required); `full_name`, `roles` (optional)     |
-| `update_user`      | `username` (required); `password`, `enabled`, `roles` (optional)       |
-| `delete_user`      | `username` (required)                                                  |
-| `create_namespace` | `name`, `code_database`, `data_database` (all required)                |
-| `delete_namespace` | `name` (required)                                                      |
-| `create_webapp`    | `path`, `namespace`, `enabled` (required); `dispatch_class` (optional) |
-| `delete_webapp`    | `path` (required)                                                      |
+| Action                       | Parameters                                                                                                                                                                |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `create_user`                | `username`, `password` (required); `full_name`, `roles` (optional)                                                                                                        |
+| `update_user`                | `username` (required); `password`, `enabled`, `roles` (optional)                                                                                                          |
+| `delete_user`                | `username` (required)                                                                                                                                                     |
+| `create_namespace`           | `name`, `code_database`, `data_database` (all required)                                                                                                                   |
+| `delete_namespace`           | `name` (required)                                                                                                                                                         |
+| `create_webapp`              | `path`, `namespace`, `enabled` (required); `dispatch_class` (optional)                                                                                                    |
+| `delete_webapp`              | `path` (required)                                                                                                                                                         |
+| `clear_password_change_flag` | `username` (default `_SYSTEM`), `password` (default `SYS`), `new_password` (optional, default same as password)                                                           |
+| `unlock_user`                | `username` (required)                                                                                                                                                     |
+| `fresh_container_setup`      | `username` (default `_SYSTEM`), `password` (default `SYS`), `new_password` (optional)                                                                                     |
+| `mirror_add_async`           | `mirror_name`, `primary_host` (required); `primary_port` (default 2188), `instance_name` (default `IRIS`), `async_member_type` (0=DR, 1=ReadOnly, 2=ReadWrite; default 0) |
+
+**Destructive actions** (require `IRIS_DESTRUCTIVE_TOOLS_ENABLED=1`):
+
+| Action            | Parameters                                                                 |
+| ----------------- | -------------------------------------------------------------------------- |
+| `mirror_failover` | `confirm` (bool, required — must be `true`; prevents accidental promotion) |
+
+**Fresh container setup actions** clear the first-boot blockers on a newly-started IRIS
+community container:
+
+- `clear_password_change_flag` — clears the forced-password-change flag on an account by
+  calling `%SYSTEM.Security.ChangePassword`. When `new_password` is omitted, the same
+  password is used for both old and new — clears the flag without changing the credential.
+- `unlock_user` — resets `InvalidLoginAttempts` to 0 via `Security.Users.Modify`, unblocking
+  a locked account. Idempotent — safe to call on an account that is not locked.
+- `fresh_container_setup` — runs `clear_password_change_flag` then `unlock_user` in sequence.
+  Returns `{success, ready, steps[]}`. Continues on per-step errors so callers see which
+  steps succeeded. Call this once on a fresh container before any other iad tool.
+
+**Mirror management**:
+
+- `mirror_add_async` — joins this IRIS instance to an existing mirror set as an async
+  disaster-recovery member by calling `SYS.Mirror.JoinMirrorAsAsyncMember` in `%SYS`.
+  Performs a pre-flight `IsMember()` check; returns `ALREADY_MEMBER` if already in a
+  mirror. Version mismatches between primary and candidate surface as `MIRROR_VERSION_MISMATCH`.
+- `mirror_failover` — promotes this backup member to primary via `SYS.Mirror.BecomePrimary`.
+  Irreversible without manual recovery. Requires `confirm: true` to prevent accidental
+  promotion. Pre-flights: returns `NOT_MIRROR_MEMBER` if not in a mirror, `ALREADY_PRIMARY`
+  if this instance is already the primary.
 
 ```text
 iris_admin(action="list_namespaces")
 iris_admin(action="list_users")
 iris_admin(action="journal_search", global_pattern="^MyApp.*",
            time_range={"from": "2025-01-01T00:00:00Z", "to": "2025-01-02T00:00:00Z"})
+iris_admin(action="fresh_container_setup")
+iris_admin(action="clear_password_change_flag", username="_SYSTEM", password="SYS")
+iris_admin(action="unlock_user", username="_SYSTEM")
+iris_admin(action="mirror_add_async", mirror_name="DR_SET", primary_host="10.0.1.5")
+iris_admin(action="mirror_failover", confirm=true)
 ```
 
 ---
@@ -1496,7 +1609,7 @@ can act on before calling the tool.
 
 | Annotation         | Set on                                                                                                                                               | What it means                                      |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `read_only_hint`   | 52 tools — all query, inspect, list, history, and comparison tools                                                                                   | The tool makes no changes to IRIS state            |
+| `read_only_hint`   | 53 tools — all query, inspect, list, history, and comparison tools                                                                                   | The tool makes no changes to IRIS state            |
 | `destructive_hint` | 7 tools — `global_kill`, `iris_admin`, `iris_credential_manage`, `iris_lookup_manage`, `iris_namespace_create`, `iris_remove_server`, `skill_forget` | The tool can irreversibly delete or overwrite data |
 
 MCP clients that respect `read_only_hint` can run read-only tools in parallel or in

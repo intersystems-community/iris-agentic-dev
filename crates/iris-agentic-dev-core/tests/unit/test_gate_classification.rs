@@ -317,3 +317,58 @@ fn annotations_agree_with_the_classification() {
          same failure mode as above"
     );
 }
+
+// ── 099: fresh container setup actions must classify as Write, not Destructive ──
+
+fn args_with_action(action: &str) -> serde_json::Map<String, serde_json::Value> {
+    let mut m = serde_json::Map::new();
+    m.insert(
+        "action".to_string(),
+        serde_json::Value::String(action.to_string()),
+    );
+    m
+}
+
+#[test]
+fn test_fresh_container_setup_actions_classify_as_write() {
+    for action in &[
+        "clear_password_change_flag",
+        "unlock_user",
+        "fresh_container_setup",
+    ] {
+        let args = args_with_action(action);
+        let class = iris_agentic_dev_core::tools::write_gate::classify("iris_admin", Some(&args));
+        assert_eq!(
+            class,
+            Some(WriteClass::Write),
+            "iris_admin action={action} must classify as WriteClass::Write, got {:?}",
+            class
+        );
+    }
+}
+
+// ── 097: mirror management actions must classify at correct tiers ──
+
+#[test]
+fn test_mirror_add_async_classifies_as_write() {
+    let args = args_with_action("mirror_add_async");
+    let class = iris_agentic_dev_core::tools::write_gate::classify("iris_admin", Some(&args));
+    assert_eq!(
+        class,
+        Some(WriteClass::Write),
+        "iris_admin action=mirror_add_async must classify as WriteClass::Write, got {:?}",
+        class
+    );
+}
+
+#[test]
+fn test_mirror_failover_classifies_as_destructive() {
+    let args = args_with_action("mirror_failover");
+    let class = iris_agentic_dev_core::tools::write_gate::classify("iris_admin", Some(&args));
+    assert_eq!(
+        class,
+        Some(WriteClass::Destructive),
+        "iris_admin action=mirror_failover must classify as WriteClass::Destructive, got {:?}",
+        class
+    );
+}

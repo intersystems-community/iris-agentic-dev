@@ -354,6 +354,8 @@ const NOT_OUR_CODES: &[&str] = &[
     "GITHUB_TOKEN",
     // An IRIS `CSP.ini` section name (`[APP_PATH:/api]`) quoted in the IIS setup instructions.
     "APP_PATH",
+    // A literal mirror set name used in an iris_admin example — not an error code iad emits.
+    "DR_SET",
 ];
 
 /// Is this token an environment variable rather than an error code?
