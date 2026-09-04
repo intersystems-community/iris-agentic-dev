@@ -466,6 +466,33 @@ if rs.%Next() {{
         .await
         .map_err(|e| rmcp::ErrorData::internal_error(format!("execute failed: {e}"), None))?;
 
+    // The DDL branch below infers global names from the table string alone, so it produces a
+    // confident-looking answer for *any* output this function does not recognize. An IRIS error or
+    // an empty generator result therefore came back as `success: true` with three invented global
+    // names. Reject both before the branch runs.
+    if let Some(msg) = crate::iris::connection::generator_error_message(&output) {
+        return crate::tools::err_result(serde_json::json!({
+            "success": false,
+            "error_code": "TABLE_INFO_FAILED",
+            "error": format!("Table lookup failed in namespace '{namespace}': {}", msg.trim()),
+            "table": p.table,
+            "namespace": namespace,
+        }));
+    }
+    if output.trim().is_empty() {
+        return crate::tools::err_result(serde_json::json!({
+            "success": false,
+            "error_code": "TABLE_INFO_EMPTY",
+            "error": format!(
+                "Table lookup for '{}' in namespace '{namespace}' returned no output. \
+                 The lookup ran but wrote nothing, so nothing about this table is known.",
+                p.table
+            ),
+            "table": p.table,
+            "namespace": namespace,
+        }));
+    }
+
     let lines: std::collections::HashMap<&str, &str> =
         output.lines().filter_map(|l| l.split_once(':')).collect();
 
@@ -499,7 +526,7 @@ if rs.%Next() {{
             obj["row_count"] = count;
         }
         obj
-    } else {
+    } else if output.lines().any(|l| l.trim() == "DDL_TABLE") {
         // DDL-created table — infer global names by IRIS naming convention
         let data_global = format!("^{}.{}D", sql_schema, sql_table);
         let index_global = format!("^{}.{}I", sql_schema, sql_table);
@@ -520,6 +547,21 @@ if rs.%Next() {{
             obj["row_count"] = count;
         }
         obj
+    } else {
+        // Neither `CLASS:` nor `DDL_TABLE` nor `NOT_FOUND`. The lookup wrote something, but nothing
+        // this function can read — report that instead of guessing global names off the table name.
+        return crate::tools::err_result(serde_json::json!({
+            "success": false,
+            "error_code": "TABLE_INFO_UNPARSEABLE",
+            "error": format!(
+                "Table lookup for '{}' in namespace '{namespace}' produced output that could not be \
+                 parsed. Expected CLASS:, DDL_TABLE or NOT_FOUND.",
+                p.table
+            ),
+            "table": p.table,
+            "namespace": namespace,
+            "raw_output": output.chars().take(500).collect::<String>(),
+        }));
     };
 
     crate::tools::ok_json(serde_json::json!({

@@ -14,9 +14,14 @@
 
 use std::process::Command;
 
+// A relative `IAD_BINARY` — the form the doc comment above tells you to pass — used to be handed to
+// `Command::new` as-is and resolved against the process working directory, which for a workspace
+// member's test binary is the *member* directory. `iad_binary_path` resolves relative values against
+// the workspace root.
 fn binary() -> String {
-    std::env::var("IAD_BINARY")
-        .unwrap_or_else(|_| env!("CARGO_BIN_EXE_iris-agentic-dev").to_string())
+    iris_agentic_dev_core::testing::iad_binary_path()
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[test]

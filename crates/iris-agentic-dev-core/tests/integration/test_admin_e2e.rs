@@ -631,8 +631,37 @@ async fn e2e_import_servers() {
         {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"iris_import_servers","arguments":{}}}
     ]);
 
+    // `iris_import_servers` rewrites `~/.config/iris-agentic-dev/servers.json` and reads whatever
+    // VS Code / Cursor settings the machine happens to have. With the real home inherited, this
+    // test edits the developer's own server registry, and `imported`/`skipped` are counts of their
+    // personal config rather than anything the test set up. Redirect every path
+    // `servers_config::native_config_path()` consults — `$HOME` on Unix, `%USERPROFILE%` and
+    // `%APPDATA%` on Windows — so isolating one platform is not mistaken for isolating the test.
+    let home = tempfile::TempDir::new().expect("tempdir for isolated home");
+
     let mut cmd = Command::new(&bin);
     cmd.args(["mcp"])
+        .env("HOME", home.path())
+        .env("USERPROFILE", home.path())
+        .env("APPDATA", home.path().join("AppData").join("Roaming"))
+        // `iris_import_servers` is write-gated (`wr(...)` in write_gate.rs), so asserting
+        // `success == true` is an assertion about the gate state. Unpinned, this passed only in
+        // the CI e2e job — which exports IRIS_WRITE_TOOLS_ENABLED=1 at job level — and returned
+        // WRITE_TOOLS_DISABLED everywhere else. Destructive stays off: an import never removes a
+        // server, and leaving it on would hide a future misclassification into that tier.
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "0")
+        // No IRIS is contacted, but connection discovery still runs at startup. Pin it at a closed
+        // port and drop IRIS_CONTAINER so the run neither probes an operator's container nor pays
+        // for docker discovery in a test that needs neither.
+        .env("IRIS_HOST", "127.0.0.1")
+        .env("IRIS_WEB_PORT", "9")
+        .env_remove("IRIS_CONTAINER")
+        // An allow-list or deny-list in the operator's shell removes iris_import_servers from the
+        // advertised surface, and tools/call then answers "unknown tool" instead of the result
+        // shape asserted below.
+        .env_remove("IRIS_ENABLED_TOOLS")
+        .env_remove("IRIS_DISABLED_TOOLS")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());

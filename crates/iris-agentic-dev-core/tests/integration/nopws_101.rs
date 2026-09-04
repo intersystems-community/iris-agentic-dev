@@ -9,17 +9,26 @@
 async fn test_iris_test_server_community_nopws_detected_false() {
     // This test requires a live MCP server; validate via binary invocation instead.
     // The live test verifies the community container does NOT trigger nopws detection.
-    let binary = std::env::var("IAD_BINARY")
-        .unwrap_or_else(|_| "./target/debug/iris-agentic-dev".to_string());
-    if !std::path::Path::new(&binary).exists() {
-        eprintln!("IAD_BINARY not found at {binary}, skipping");
+    let Some(binary) = iris_agentic_dev_core::testing::require_iad_binary() else {
         return;
-    }
+    };
 
     use std::io::Write;
     use std::process::{Command, Stdio};
 
     let mut child = Command::new(&binary)
+        // The MCP server is the `mcp` subcommand. Spawning the bare binary prints the usage
+        // banner and exits, which these tests read as an empty stdout.
+        .arg("mcp")
+        // Declare the gate state instead of inheriting the operator's (or the CI e2e job's):
+        // iris_execute and iris_compile are write tools and refuse when the gate is off.
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env_remove("IRIS_DESTRUCTIVE_TOOLS_ENABLED")
+        // An inherited IRIS_CONTAINER moves the probe onto a different server than the one this
+        // test names, and an inherited OBJECTSCRIPT_WORKSPACE can supply a whole different
+        // connection from a toml. Pin the endpoint, do not merely hope it is unset.
+        .env_remove("IRIS_CONTAINER")
+        .env_remove("OBJECTSCRIPT_WORKSPACE")
         .env("IRIS_HOST", "localhost")
         .env("IRIS_WEB_PORT", "52780")
         .env("IRIS_USERNAME", "_SYSTEM")
@@ -62,14 +71,18 @@ async fn test_iris_execute_docker_exec_fallback() {
     use std::io::Write;
     use std::process::{Command, Stdio};
 
-    let binary = std::env::var("IAD_BINARY")
-        .unwrap_or_else(|_| "./target/debug/iris-agentic-dev".to_string());
-    if !std::path::Path::new(&binary).exists() {
-        eprintln!("IAD_BINARY not found at {binary}, skipping");
+    let Some(binary) = iris_agentic_dev_core::testing::require_iad_binary() else {
         return;
-    }
+    };
 
     let mut child = Command::new(&binary)
+        // The MCP server is the `mcp` subcommand. Spawning the bare binary prints the usage
+        // banner and exits, which these tests read as an empty stdout.
+        .arg("mcp")
+        // Declare the gate state instead of inheriting the operator's (or the CI e2e job's):
+        // iris_execute and iris_compile are write tools and refuse when the gate is off.
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env_remove("IRIS_DESTRUCTIVE_TOOLS_ENABLED")
         .env("IRIS_HOST", "localhost")
         .env("IRIS_WEB_PORT", "1") // closed port → forces docker exec fallback
         .env("IRIS_CONTAINER", container)
@@ -143,17 +156,21 @@ async fn test_iris_execute_docker_exec_fallback() {
 #[ignore]
 #[tokio::test]
 async fn test_iris_execute_atelier_path_has_execution_path_field() {
-    let binary = std::env::var("IAD_BINARY")
-        .unwrap_or_else(|_| "./target/debug/iris-agentic-dev".to_string());
-    if !std::path::Path::new(&binary).exists() {
-        eprintln!("IAD_BINARY not found at {binary}, skipping");
+    let Some(binary) = iris_agentic_dev_core::testing::require_iad_binary() else {
         return;
-    }
+    };
 
     use std::io::Write;
     use std::process::{Command, Stdio};
 
     let mut child = Command::new(&binary)
+        // The MCP server is the `mcp` subcommand. Spawning the bare binary prints the usage
+        // banner and exits, which these tests read as an empty stdout.
+        .arg("mcp")
+        // Declare the gate state instead of inheriting the operator's (or the CI e2e job's):
+        // iris_execute and iris_compile are write tools and refuse when the gate is off.
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env_remove("IRIS_DESTRUCTIVE_TOOLS_ENABLED")
         .env("IRIS_HOST", "localhost")
         .env("IRIS_WEB_PORT", "52780")
         .env("IRIS_CONTAINER", "iris-dev-iris")

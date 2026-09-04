@@ -18,12 +18,13 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+// A relative `IAD_BINARY` — the form CLAUDE.md and every doc comment in this crate tell you to
+// pass — is resolved against the process working directory, which for a workspace member's test
+// binary is the *member* directory. `./target/debug/iris-agentic-dev` therefore never resolved
+// here. `iad_binary_path` resolves relative values against the workspace root, and there is one
+// copy of that rule instead of six.
 fn iad_binary() -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("IAD_BINARY") {
-        return std::path::PathBuf::from(p);
-    }
-    // Fall back to CARGO_BIN_EXE_ macro (works when the binary is built in the same workspace)
-    std::path::PathBuf::from(env!("CARGO_BIN_EXE_iris-agentic-dev"))
+    iris_agentic_dev_core::testing::iad_binary_path()
 }
 
 /// Spawn the binary in MCP mode, configured with `docker_only=true` via a temp config file.
@@ -144,6 +145,7 @@ fn test_block_syntax_blocked_on_docker_exec() {
     });
 
     child.kill().ok();
+    child.wait().ok();
 
     let result = result.expect("no tools/call response received for block-syntax test");
 
@@ -194,6 +196,7 @@ fn test_classic_syntax_not_blocked_on_docker_exec() {
     });
 
     child.kill().ok();
+    child.wait().ok();
 
     let result = result.expect("no tools/call response received for classic-syntax test");
 
@@ -269,6 +272,7 @@ fn test_http_path_does_not_trigger_terminal_guard() {
     });
 
     child.kill().ok();
+    child.wait().ok();
 
     let result = result.expect("no tools/call response received for HTTP path test");
 
@@ -341,6 +345,7 @@ fn test_iris_execute_description_documents_both_paths() {
     });
 
     child.kill().ok();
+    child.wait().ok();
 
     let desc = description.expect("iris_execute tool description not found in tools/list");
 

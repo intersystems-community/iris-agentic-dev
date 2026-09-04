@@ -4,25 +4,16 @@
 
 use std::process::Command;
 
-fn iris_dev_bin() -> std::path::PathBuf {
-    let workspace_root = {
-        let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        p.pop();
-        p.pop();
-        p
-    };
-    for target_subdir in [
-        "target/debug/iris-agentic-dev",
-        "target/release/iris-agentic-dev",
-        "target/llvm-cov-target/debug/iris-agentic-dev",
-        "target/llvm-cov-target/release/iris-agentic-dev",
-    ] {
-        let candidate = workspace_root.join(target_subdir);
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-    workspace_root.join("target/debug/iris-agentic-dev")
+/// The binary under test, or `None` only when an operator has explicitly asked for a quiet
+/// skip.
+///
+/// This file used to resolve the path itself and then `return` when it did not exist. Three
+/// tests below spawn that binary, so a missing build meant three lines of `ok` for three
+/// tests that ran nothing — the same defect `testing::require_iad_binary` was written to end.
+/// Going through the shared helper means the skip is loud by default and the resolution does
+/// not depend on the working directory.
+fn iris_dev_bin() -> Option<std::path::PathBuf> {
+    iris_agentic_dev_core::testing::require_iad_binary()
 }
 
 fn fixtures_dir() -> std::path::PathBuf {
@@ -41,10 +32,9 @@ fn write_fixture(dir: &std::path::Path, name: &str, content: &str) -> std::path:
 /// Compiling a valid class exits 0 and outputs the class name.
 #[tokio::test]
 async fn compile_good_cls_exits_zero() {
-    let bin = iris_dev_bin();
-    if !bin.exists() {
+    let Some(bin) = iris_dev_bin() else {
         return;
-    }
+    };
 
     let dir = tempfile::tempdir().unwrap();
     let cls = write_fixture(
@@ -98,10 +88,9 @@ async fn compile_good_cls_exits_zero() {
 /// Compiling a syntactically invalid class exits non-zero.
 #[tokio::test]
 async fn compile_bad_cls_exits_nonzero() {
-    let bin = iris_dev_bin();
-    if !bin.exists() {
+    let Some(bin) = iris_dev_bin() else {
         return;
-    }
+    };
 
     let dir = tempfile::tempdir().unwrap();
     let cls = write_fixture(
@@ -134,10 +123,9 @@ async fn compile_bad_cls_exits_nonzero() {
 /// --format json produces valid JSON on stdout.
 #[test]
 fn compile_format_json_produces_json() {
-    let bin = iris_dev_bin();
-    if !bin.exists() {
+    let Some(bin) = iris_dev_bin() else {
         return;
-    }
+    };
 
     let dir = tempfile::tempdir().unwrap();
     let cls = write_fixture(

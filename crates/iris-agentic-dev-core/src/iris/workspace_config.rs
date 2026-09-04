@@ -246,7 +246,12 @@ pub struct ConnectionPolicyRaw {
 ///
 /// - `allow = None` → all categories permitted.
 /// - `allow = Some([...])` → only listed categories permitted; all others blocked.
-#[derive(Debug, Clone)]
+///
+/// `Default` is the strict policy, and it is what `dispatch_gate` uses for a connection with no
+/// `[policy.<server>]` section: every `Option` field's `None` already means the locked-down
+/// choice (`dataPolicy=block`, `mcpTemplate=dev`), so an unconfigured connection gets the same
+/// gates as a configured one rather than none at all.
+#[derive(Debug, Clone, Default)]
 pub struct ConnectionPolicy {
     /// The `[policy.<server-name>]` map key.
     pub server_name: String,

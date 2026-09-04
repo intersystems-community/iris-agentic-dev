@@ -63,6 +63,8 @@ serde_json.workspace = true
 reqwest.workspace = true
 regex.workspace = true
 wiremock = "0.6"
+toml.workspace = true
+
 [[test]]
 name = "discovery_tests"
 path = "tests/discovery_tests.rs"
@@ -74,6 +76,7 @@ path = "tests/manifest_tests.rs"
 [[test]]
 name = "mcp_handshake"
 path = "tests/mcp_handshake.rs"
+required-features = ["testing"]
 
 [[test]]
 name = "vscode_config_tests"
@@ -90,6 +93,7 @@ path = "tests/integration/test_mcp_iris.rs"
 [[test]]
 name = "test_compile_cmd"
 path = "tests/integration/test_compile_cmd.rs"
+required-features = ["testing"]
 
 [[test]]
 name = "interop_unit_tests"
@@ -285,6 +289,11 @@ required-features = ["testing"]
 [[test]]
 name = "test_iris_global_live"
 path = "tests/integration/test_iris_global_live.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_generator_device_live"
+path = "tests/integration/test_generator_device_live.rs"
 required-features = ["testing"]
 
 [[test]]
@@ -639,3 +648,48 @@ path = "tests/unit/test_server_entry_plaintext.rs"
 [[test]]
 name = "test_reload_pool"
 path = "tests/unit/test_reload_pool.rs"
+
+[[test]]
+name = "test_generator_false_success"
+path = "tests/unit/test_generator_false_success.rs"
+
+[[test]]
+name = "test_generator_false_success_live"
+path = "tests/integration/test_generator_false_success_live.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_gate_uncovered_paths"
+path = "tests/unit/test_gate_uncovered_paths.rs"
+
+[[test]]
+name = "test_probe_server_offline"
+path = "tests/unit/test_probe_server_offline.rs"
+
+[[test]]
+name = "test_testing_helpers"
+path = "tests/unit/test_testing_helpers.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_workspace_config_paths"
+path = "tests/unit/test_workspace_config_paths.rs"
+
+[[test]]
+name = "test_policy_patterns"
+path = "tests/unit/test_policy_patterns.rs"
+
+[[test]]
+name = "test_code_edit_gate_unit"
+path = "tests/unit/test_code_edit_gate_unit.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_llm_usage"
+path = "tests/unit/test_llm_usage.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_cli_dispatch_helpers"
+path = "tests/unit/test_cli_dispatch_helpers.rs"
+required-features = ["testing"]

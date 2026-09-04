@@ -82,51 +82,24 @@ macro_rules! tool_gate {
 
 #[cfg(test)]
 mod tests {
-    // Note: These are compile-only tests that verify macro expansion is valid Rust.
-    // We cannot instantiate the struct or mock the methods in a unit test, but we can
-    // verify that the macro syntax is correct and doesn't cause compilation errors.
-
+    /// `tool_gate!` has no call site anywhere in the crate.
+    ///
+    /// Four tests used to live here — `test_tool_gate_macro_syntax`,
+    /// `test_tool_gate_macro_compiles`, `test_tool_gate_early_return_dispatch_gate_err`,
+    /// `test_tool_gate_early_return_policy_gate_some`. Every one had an empty body: a doc comment
+    /// describing what the macro does, no code, no assertion. They reported `ok` on every run and
+    /// showed up in the count as four tests covering the policy gate. They covered nothing, and
+    /// four green lines beside a security gate is worse than no lines at all.
+    ///
+    /// A `macro_rules!` definition with no invocation is not even type-checked, so no test in this
+    /// file can say anything about it. The honest statement is this one: the macro is unused, and
+    /// the real gate is covered by `tests/unit/test_policy_gate.rs` (`dispatch_gate`,
+    /// `policy_gate`) and `tests/integration/test_role_gate_e2e.rs` (end to end through the
+    /// binary). When a handler is refactored to call `tool_gate!`, that handler's test is what
+    /// covers the expansion.
     #[test]
-    fn test_tool_gate_macro_syntax() {
-        // This test only verifies that the macro_rules! declaration is valid Rust.
-        // Actual invocation is tested through integration tests in mod.rs when
-        // handlers are refactored to use the macro.
-    }
-
-    #[test]
-    fn test_tool_gate_macro_compiles() {
-        // Verification that the macro expands without syntax errors.
-        // The macro uses:
-        // - $self_expr: receiver expression (self)
-        // - $tool_name: string literal ("tool_name")
-        // - $params_json: serde_json::Value expression
-        //
-        // All of these are properly typed and the macro correctly calls:
-        // - active_server_manager_policy() -> (Option<String>, Option<Policy>)
-        // - dispatch_gate() -> Result<(), Value>
-        // - policy_gate() -> Option<Value>
-        // - write_audit_entry() -> ()
-        // - ok_json() -> Result<CallToolResult, McpError>
-        //
-        // The return type flows correctly through all branches.
-    }
-
-    #[test]
-    fn test_tool_gate_early_return_dispatch_gate_err() {
-        // When dispatch_gate returns Err, the macro:
-        // 1. Calls write_audit_entry with "blocked", Some("policy"), None
-        // 2. Returns Ok(ok_json(gate))
-        //
-        // This prevents reaching the policy_gate or allowed audit branches.
-    }
-
-    #[test]
-    fn test_tool_gate_early_return_policy_gate_some() {
-        // When policy_gate returns Some, the macro:
-        // 1. Extracts allowed_categories as Option<Vec<String>>
-        // 2. Calls write_audit_entry with "blocked", Some("policy"), allowed
-        // 3. Returns Ok(ok_json(gate))
-        //
-        // This prevents reaching the allowed audit branch.
+    fn the_macro_is_unused_and_this_file_has_nothing_to_assert() {
+        // Deliberately trivial, and it says so in the name. Kept as a marker so the next person to
+        // add a call site finds the note above instead of re-adding empty tests.
     }
 }

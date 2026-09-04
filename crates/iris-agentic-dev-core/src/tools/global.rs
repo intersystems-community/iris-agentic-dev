@@ -66,11 +66,27 @@ pub fn build_global_ref(name: &str, subscripts: &[String]) -> String {
 // ObjectScript code builders — output-parsing helpers
 // ---------------------------------------------------------------------------
 
-/// Parse the output from execute_via_generator for errors.
-/// Lines starting with "ERROR: " indicate an ObjectScript catch or $ZERROR.
+/// Parse the output from `execute_via_generator`, separating a failure report from real output.
+///
+/// The generator reports IRIS-side failure inside the output string, in four shapes — and this
+/// function used to recognise exactly one of them (`ERROR: ` with a trailing space). The other
+/// three (`ERROR($ZERROR): `, `ERROR($DEVICE): `, and the no-space `ERROR:<sentinel>` that
+/// tool-generated ObjectScript emits) fell through to `Ok`, so `global_get` reported
+/// `defined: false` for a global it could not read, and `global_preview` reported an empty preview
+/// plus a valid `confirm_token` for a kill it had never actually looked at.
+///
+/// [`is_generator_error`] is the single definition of "this string is a failure"; every caller goes
+/// through it so a fifth shape is one edit, not fourteen.
 pub fn parse_execute_output(output: &str) -> Result<String, serde_json::Value> {
     let trimmed = output.trim();
-    if let Some(msg) = trimmed.strip_prefix("ERROR: ") {
+    if crate::iris::connection::is_generator_error(trimmed) {
+        // Strip whichever prefix matched so the message reads as a message, not as a sentinel.
+        let msg = trimmed
+            .strip_prefix("ERROR($ZERROR): ")
+            .or_else(|| trimmed.strip_prefix("ERROR($DEVICE): "))
+            .or_else(|| trimmed.strip_prefix("ERROR: "))
+            .or_else(|| trimmed.strip_prefix("ERROR:"))
+            .unwrap_or(trimmed);
         return Err(serde_json::json!({
             "success": false,
             "error_code": "IRIS_EXECUTE_ERROR",

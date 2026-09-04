@@ -4,7 +4,7 @@
 //! namespace_mappings, database_status. All are ToolCategory::Query, permitted
 //! on every mcpTemplate value. Called from the iris_admin match dispatcher in mod.rs.
 
-use crate::iris::connection::IrisConnection;
+use crate::iris::connection::{is_generator_error, IrisConnection};
 use rmcp::{model::*, ErrorData as McpError};
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
@@ -89,7 +89,7 @@ While tRS.Next() {
     match iris.execute_via_generator(code, "%SYS", &client).await {
         Ok(out) => {
             let out = out.trim();
-            if out.starts_with("ERROR:") {
+            if is_generator_error(out) {
                 return err_json("IRIS_EXECUTE_ERROR", out);
             }
             let locks: Vec<serde_json::Value> = out
@@ -257,7 +257,7 @@ Write "COUNT:"_tCount,!"#,
     match iris.execute_via_generator(&code, "%SYS", &client).await {
         Ok(out) => {
             let out = out.trim();
-            if out.starts_with("ERROR:") {
+            if is_generator_error(out) {
                 return err_json("IRIS_EXECUTE_ERROR", out);
             }
             let mut records: Vec<serde_json::Value> = Vec::new();
@@ -413,7 +413,7 @@ While tRS.Next() {{
     match iris.execute_via_generator(&code, "%SYS", &client).await {
         Ok(out) => {
             let out = out.trim();
-            if out.starts_with("ERROR:") {
+            if is_generator_error(out) {
                 return err_json("IRIS_EXECUTE_ERROR", out);
             }
             let databases: Vec<serde_json::Value> = out

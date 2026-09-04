@@ -1,7 +1,15 @@
 [build]
 # Disable sccache — 0% hit rate on incremental builds, adds latency, can deadlock.
 # Overrides the global ~/.cargo/config.toml setting.
-rustc-wrapper = ""
+#
+# `/usr/bin/env` and not `""`. Cargo reads an empty wrapper as "no wrapper", so `cargo build`
+# was fine, but cargo-llvm-cov reads this key itself and does not apply that special case: it
+# built the command `" " + rustc` and every invocation died with
+# `could not execute process ` /Users/…/bin/rustc --print cfg` (never executed)`. The whole
+# coverage gate was unrunnable from a720d2f onward, and nothing said so — `cargo build` and
+# `cargo test` kept passing. A passthrough that is a real executable keeps sccache out of the
+# build without handing any tool an empty argv[0].
+rustc-wrapper = "/usr/bin/env"
 # Disable incremental compilation — mod.rs is a monolith so incremental rarely reuses
 # artifacts, just accumulates stale cache that triggers full rebuilds on next run.
 incremental = false

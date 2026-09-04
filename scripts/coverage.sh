@@ -56,6 +56,29 @@ IRIS_PASSWORD="${IRIS_PASSWORD:-SYS}"
 IRIS_NAMESPACE="${IRIS_NAMESPACE:-USER}"
 IRIS_CONTAINER="${IRIS_CONTAINER:-iris-dev-iris}"
 
+# ── Step -1: Drop stale instrumented objects ──────────────────────────────────
+#
+# llvm-cov reports on every object file it finds under llvm-cov-target, not just
+# the ones this run built. A test binary left over from an earlier build carries
+# its own instrumented copy of the library, and that copy never executes, so the
+# same source file gets counted twice: once covered, once dark. Measured on
+# 2026-09-04: data_policy_gate.rs read 50.00% with four copies of the core crate
+# in the report (three stale), 98.04% after a clean. Overall read 75.64% against
+# a floor of 88 and nine files looked to be below floor, all of it leftovers.
+#
+# So clean first. It costs a full rebuild. A coverage number that depends on what
+# happens to be lying in the target directory is not a number.
+#
+# COVERAGE_NO_CLEAN=1 skips it. Only for iterating locally — never for the gate.
+
+if [[ "${COVERAGE_NO_CLEAN:-}" == "1" ]]; then
+    echo "=== Step -1: SKIPPED (COVERAGE_NO_CLEAN=1) — numbers may be diluted by stale objects ==="
+else
+    echo "=== Step -1: Clean stale instrumented objects ==="
+    PATH="$HOME/.cargo/bin:$PATH" "$CARGO" llvm-cov clean --workspace
+fi
+echo ""
+
 # ── Step 0: Build the instrumented binary ─────────────────────────────────────
 #
 # We build the iris-agentic-dev binary under cargo-llvm-cov's instrumentation

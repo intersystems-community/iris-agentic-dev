@@ -51,9 +51,33 @@ pub fn dispatch_gate(
                 return Err(err);
             }
         }
+    } else if tool_name == "iris_execute_method" {
+        // Naming a class and method directly reaches everything the ObjectScript gate blocks —
+        // `iris_execute_method(class="%SYSTEM.OBJ", method="Delete")` deletes a class — and this
+        // tool never carried a `code` param, so gate [0] used to skip it entirely. Reassemble the
+        // call in the form the gate reads.
+        let class = params.get("class").and_then(|v| v.as_str()).unwrap_or("");
+        let method = params.get("method").and_then(|v| v.as_str()).unwrap_or("");
+        if !class.is_empty() {
+            let reassembled = format!("##class({class}).{method}()");
+            if let Some(err) = crate::policy::code_edit_gate::check_objectscript_code_edit(
+                &reassembled,
+                server_name,
+            ) {
+                return Err(err);
+            }
+        }
     } else if tool_name == "iris_query" {
+        // `mode="write"` is not the only way to send DML. `mode="read"` with `force=true` skips
+        // the read-only SQL validation, so it reached the dictionary with this gate never
+        // consulted. Gate both. A plain `mode="read"` SELECT is left alone so `%Dictionary.
+        // Compiled*` introspection keeps working.
         let is_write = params.get("mode").and_then(|v| v.as_str()) == Some("write");
-        if is_write {
+        let forced = params
+            .get("force")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if is_write || forced {
             if let Some(query) = params.get("query").and_then(|v| v.as_str()) {
                 if let Some(err) =
                     crate::policy::code_edit_gate::check_sql_code_edit(query, server_name)
@@ -64,9 +88,13 @@ pub fn dispatch_gate(
         }
     }
 
-    let Some(policy) = policy else {
-        return Ok(());
-    };
+    // No policy configured is not the same as no policy wanted. Gates [1]–[4] used to vanish
+    // when a connection had no `[policy.<server>]` section, which made the "non-configurable"
+    // system blocklist and the bulk-PHI hard block opt-in — the wrong default on both. Fall back
+    // to `ConnectionPolicy::default()`, whose own field defaults are already the strict ones
+    // (`dataPolicy=block`, `mcpTemplate=dev`, empty custom blocklist on top of the hardcoded set).
+    let default_policy = ConnectionPolicy::default();
+    let policy = policy.unwrap_or(&default_policy);
 
     // [1] Environment template gate
     let template = policy
@@ -80,14 +108,26 @@ pub fn dispatch_gate(
     }
 
     // [2] Bulk-PHI hard-block
+    //
+    // `iris_admin` multiplexes: `action="journal_search"` runs the same journal reader as the
+    // standalone `journal_search` tool. The gate saw the dispatcher's name, which is not in
+    // `BULK_PHI_TOOLS`, so the block never fired on that route — and the handler then took its
+    // effective policy from the caller's own `dataPolicy` parameter. Check the `action` value under
+    // the same rule, so routing through a dispatcher is not a way around the gate.
     let data_policy = policy
         .data_policy
         .as_ref()
         .unwrap_or(&crate::iris::workspace_config::DataPolicy::Block);
-    if let Some(err) =
-        crate::policy::data_policy_gate::check_bulk_phi_gate(tool_name, data_policy, server_name)
-    {
-        return Err(err);
+    let action = params.get("action").and_then(|v| v.as_str()).unwrap_or("");
+    for name in [tool_name, action] {
+        if name.is_empty() {
+            continue;
+        }
+        if let Some(err) =
+            crate::policy::data_policy_gate::check_bulk_phi_gate(name, data_policy, server_name)
+        {
+            return Err(err);
+        }
     }
 
     // [3] System global blocklist (only fires when global_name param is present)

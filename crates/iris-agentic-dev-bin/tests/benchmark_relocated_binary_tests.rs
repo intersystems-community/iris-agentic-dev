@@ -65,6 +65,12 @@ fn run_relocated(args: &[&str]) -> std::process::Output {
         match Command::new(&relocated)
             .args(args)
             .current_dir(dir.path())
+            // The property under test is that the binary carries no build-machine path with it.
+            // Cargo injects CARGO_MANIFEST_DIR into this test process, the child inherits it, and
+            // `benchmark::cli_dispatch::iris_dev_bin` (cli_dispatch.rs:35) derives the workspace
+            // root from it — so the relocated binary finds the source tree through the parent's
+            // environment and the regression this file exists to catch can never fail.
+            .env_remove("CARGO_MANIFEST_DIR")
             .output()
         {
             Ok(output) => return output,

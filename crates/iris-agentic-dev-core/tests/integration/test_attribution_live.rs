@@ -231,15 +231,9 @@ fn docker_only_attribution_warn_once() {
         }
     };
 
-    let bin = if let Ok(p) = std::env::var("IAD_BINARY") {
-        std::path::PathBuf::from(p)
-    } else {
-        let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        p.pop();
-        p.pop();
-        p.push("target/debug/iris-agentic-dev");
-        p
-    };
+    // `iad_binary_path` resolves a relative IAD_BINARY against the workspace root; a test
+    // binary's working directory is the crate root, so the two differ.
+    let bin = iris_agentic_dev_core::testing::iad_binary_path();
     if !bin.exists() {
         eprintln!("T019: IAD_BINARY not found at {:?} — skipping", bin);
         return;

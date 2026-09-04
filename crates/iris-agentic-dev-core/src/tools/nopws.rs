@@ -21,10 +21,16 @@ pub fn nopws_atelier_required_error() -> serde_json::Value {
     serde_json::json!({
         "success": false,
         "error_code": NOPWS_ATELIER_REQUIRED,
+        // The setup guide is a repo file, not a loadable skill: skill discovery globs
+        // <skills dir>/*/SKILL.md, so a file one level deeper is never found, and the
+        // NoPWS guide is not in EMBEDDED_SKILLS either. Naming it "skills/nopws-setup"
+        // sent agents to `skill(action="describe")`, which answered count: 0.
         "error": "NoPWS: this tool requires Atelier REST API. \
                   Set up a webgateway sidecar for Atelier REST access, \
-                  or use docker_only = true for supported execution tools. \
-                  See skills/nopws-setup.md for setup instructions."
+                  or set docker_only = true in .iris-agentic-dev.toml (a connection key, \
+                  not a tool parameter) for supported execution tools. \
+                  Setup instructions: skills/skills/iris-agentic-dev/nopws-setup/SKILL.md \
+                  in the iris-agentic-dev repo."
     })
 }
 

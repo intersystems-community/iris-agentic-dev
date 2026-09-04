@@ -11,11 +11,13 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
+// A relative `IAD_BINARY` — the form CLAUDE.md and every doc comment in this crate tell you to
+// pass — is resolved against the process working directory, which for a workspace member's test
+// binary is the *member* directory. `./target/debug/iris-agentic-dev` therefore never resolved
+// here. `iad_binary_path` resolves relative values against the workspace root, and there is one
+// copy of that rule instead of six.
 fn iad_binary() -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("IAD_BINARY") {
-        return std::path::PathBuf::from(p);
-    }
-    std::path::PathBuf::from(env!("CARGO_BIN_EXE_iris-agentic-dev"))
+    iris_agentic_dev_core::testing::iad_binary_path()
 }
 
 fn read_until<T, F>(
@@ -70,7 +72,18 @@ fn spawn_mcp_no_iris() -> Option<(
         .env_remove("IRIS_HOST")
         .env_remove("IRIS_CONTAINER")
         .env("IRIS_WEB_PORT", "9") // unreachable port
-        .env("IRIS_ADMIN_TOOLS_ENABLED", "1")
+        // `IRIS_ADMIN_TOOLS` is the name `admin::admin_writes_enabled()` reads. This line said
+        // `IRIS_ADMIN_TOOLS_ENABLED`, which nothing in `crates/*/src/` reads — so the gate was
+        // never opened and the caller below was measuring an ADMIN_WRITE_DISABLED refusal, not the
+        // no-connection path it documents.
+        .env("IRIS_ADMIN_TOOLS", "1")
+        // `fresh_container_setup` is WriteClass::Write on top of the admin gate, and a refusal from
+        // either gate also satisfies the loose "structured JSON" assertion below — so an unpinned
+        // run passes without the tool ever attempting a connection. Writes on is what forces the
+        // request out to the closed port and back as the connection error this test documents;
+        // destructive off keeps the action's Write classification (write_gate.rs:544) asserted.
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "0")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -135,6 +148,7 @@ fn test_iris_admin_description_mentions_fresh_container_setup() {
     });
 
     child.kill().ok();
+    child.wait().ok();
 
     let desc = description.expect("T099-B1: iris_admin not found in tools/list");
     assert!(
@@ -190,6 +204,7 @@ fn test_iris_admin_fresh_container_setup_returns_structured_json() {
     });
 
     child.kill().ok();
+    child.wait().ok();
 
     let result = result.expect("T099-B2: no tools/call response for fresh_container_setup");
 

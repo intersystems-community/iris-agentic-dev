@@ -1,7 +1,7 @@
 //! iris_source_control — SCM status, menu, checkout, execute via Atelier xecute.
 
 use crate::elicitation::{ElicitationAction, ElicitationStore};
-use crate::iris::connection::IrisConnection;
+use crate::iris::connection::{is_generator_error, IrisConnection};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -69,13 +69,27 @@ pub struct ScmParams {
     pub server: Option<String>,
 }
 
+/// Run ObjectScript and refuse output that is actually a failure report.
+///
+/// `execute_via_generator` reports IRIS-side failure *in* the output string, not as an `Err` — the
+/// HTTP call and the compile both succeeded, so there is nothing for `Result` to carry. Every SCM
+/// caller below then parsed that failure text as a status line, a menu list, or a checkout result:
+/// `parse_action_msg` reads a leading integer, so `ERROR: <ZSOAP>...` parses as action code 0, which
+/// the caller reads as "no action needed". Checking once here is the only version of this that stays
+/// correct as call sites are added.
+///
+/// See [`is_generator_error`] for the four shapes and why hand-rolling the check does not work.
 async fn xecute(
     iris: &IrisConnection,
     client: &reqwest::Client,
     code: &str,
     namespace: &str,
 ) -> anyhow::Result<String> {
-    iris.execute_via_generator(code, namespace, client).await
+    let out = iris.execute_via_generator(code, namespace, client).await?;
+    if is_generator_error(&out) {
+        anyhow::bail!("{}", out.trim());
+    }
+    Ok(out)
 }
 
 /// Escape a string for safe interpolation into an ObjectScript double-quoted literal.
@@ -238,7 +252,13 @@ pub async fn handle_iris_source_control(
 
         "menu" => {
             let code = menu_all_items_code(doc, &iris.username, &iris.password);
-            let raw = xecute(iris, client, &code, ns).await.unwrap_or_default();
+            // An empty menu and a failed menu query are different answers. `unwrap_or_default()`
+            // turned the second into the first, so a caller saw `"actions": []` and concluded the
+            // document has no source-control actions available.
+            let raw = match xecute(iris, client, &code, ns).await {
+                Ok(v) => v,
+                Err(e) => return err_json("IRIS_EXECUTE_ERROR", &e.to_string()),
+            };
             let mut actions = vec![];
             for line in raw.lines() {
                 let line = line.trim();

@@ -9,13 +9,16 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-fn iris_dev_bin() -> std::path::PathBuf {
-    // Find the binary in the cargo target directory
-    let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    path.pop(); // crates/iris-dev-core → crates
-    path.pop(); // crates → workspace root
-    path.push("target/debug/iris-agentic-dev");
-    path
+/// The binary under test, or `None` only when an operator has explicitly asked for a quiet
+/// skip.
+///
+/// These are the MCP protocol tests — initialize, tools/list, version negotiation. They used
+/// to resolve `target/debug/iris-agentic-dev` themselves and `return` when it was absent, so
+/// on any run that did not happen to have a debug build sitting there, seven `ok` lines
+/// stood in for the entire handshake contract. `require_iad_binary` makes that absence a
+/// failure unless IAD_ALLOW_SKIP says otherwise.
+fn iris_dev_bin() -> Option<std::path::PathBuf> {
+    iris_agentic_dev_core::testing::require_iad_binary()
 }
 
 fn send_jsonrpc(stdin: &mut impl Write, id: u64, method: &str, params: &str) {
@@ -38,14 +41,9 @@ fn read_jsonrpc(reader: &mut impl BufRead) -> serde_json::Value {
 fn mcp_server_starts_and_responds_to_initialize() {
     // Give any previous test's spawned processes time to fully exit
     std::thread::sleep(std::time::Duration::from_millis(500));
-    let bin = iris_dev_bin();
-    if !bin.exists() {
-        eprintln!(
-            "Skipping: iris-agentic-dev binary not found at {}",
-            bin.display()
-        );
+    let Some(bin) = iris_dev_bin() else {
         return;
-    }
+    };
 
     let mut child = Command::new(&bin)
         .arg("mcp")
@@ -97,11 +95,9 @@ fn mcp_server_starts_and_responds_to_initialize() {
 /// tools/list returns ≥23 tools.
 #[test]
 fn mcp_server_tools_list_returns_23_tools() {
-    let bin = iris_dev_bin();
-    if !bin.exists() {
-        eprintln!("Skipping: iris-agentic-dev binary not found");
+    let Some(bin) = iris_dev_bin() else {
         return;
-    }
+    };
 
     let mut child = Command::new(&bin)
         .arg("mcp")
@@ -192,11 +188,9 @@ fn mcp_server_tools_list_returns_23_tools() {
 #[test]
 fn mcp_server_tools_list_pagination_works() {
     std::thread::sleep(std::time::Duration::from_millis(500));
-    let bin = iris_dev_bin();
-    if !bin.exists() {
-        eprintln!("Skipping: iris-agentic-dev binary not found");
+    let Some(bin) = iris_dev_bin() else {
         return;
-    }
+    };
 
     let mut child = Command::new(&bin)
         .arg("mcp")
@@ -293,11 +287,9 @@ fn mcp_server_tools_list_pagination_works() {
 /// unoptimized code — threshold is relaxed to 500ms for debug builds.
 #[test]
 fn mcp_server_startup_latency_under_100ms() {
-    let bin = iris_dev_bin();
-    if !bin.exists() {
-        eprintln!("Skipping: iris-agentic-dev binary not found");
+    let Some(bin) = iris_dev_bin() else {
         return;
-    }
+    };
 
     let mut latencies = Vec::new();
     for _ in 0..5 {
@@ -351,11 +343,9 @@ fn mcp_server_startup_latency_under_100ms() {
 /// Uses port 9 (discard) so discovery fails fast, but server still returns tool list.
 #[test]
 fn discovery_waits_for_iris() {
-    let bin = iris_dev_bin();
-    if !bin.exists() {
-        eprintln!("Skipping: iris-agentic-dev binary not found");
+    let Some(bin) = iris_dev_bin() else {
         return;
-    }
+    };
 
     let mut child = Command::new(&bin)
         .arg("mcp")
@@ -444,11 +434,9 @@ fn web_prefix_in_connection_url() {
 #[test]
 fn mcp_server_negotiates_all_known_protocol_versions() {
     std::thread::sleep(std::time::Duration::from_millis(500));
-    let bin = iris_dev_bin();
-    if !bin.exists() {
-        eprintln!("Skipping: iris-agentic-dev binary not found");
+    let Some(bin) = iris_dev_bin() else {
         return;
-    }
+    };
 
     // All known protocol versions should be echoed back
     for client_version in &["2026-07-28", "2025-11-25", "2024-11-05"] {
@@ -493,11 +481,9 @@ fn mcp_server_negotiates_all_known_protocol_versions() {
 #[test]
 fn mcp_server_tools_list_includes_cache_annotation_for_2026_07_28() {
     std::thread::sleep(std::time::Duration::from_millis(500));
-    let bin = iris_dev_bin();
-    if !bin.exists() {
-        eprintln!("Skipping: iris-agentic-dev binary not found");
+    let Some(bin) = iris_dev_bin() else {
         return;
-    }
+    };
 
     let mut child = Command::new(&bin)
         .arg("mcp")

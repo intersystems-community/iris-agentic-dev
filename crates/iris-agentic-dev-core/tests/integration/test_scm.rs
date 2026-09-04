@@ -33,6 +33,23 @@ fn mcp_exchange(
     }
     let mut cmd = Command::new(&bin);
     cmd.args(["mcp"]);
+    // `iris_doc` put and `iris_compile` are WriteClass::Write and the tests below assert
+    // `success == true`, so the gate state is the test's own subject. Unpinned, these ran green only
+    // in the CI e2e job (which exports both gates at job level) and returned WRITE_TOOLS_DISABLED in
+    // a clean shell. Destructive stays off: nothing in this file is in that tier.
+    cmd.env("IRIS_WRITE_TOOLS_ENABLED", "1");
+    cmd.env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "0");
+    // Checkin is the one SCM action this file must never reach, and this is the var that opens it.
+    // Leaving it inherited means an operator who has it exported is running a different test.
+    cmd.env_remove("IRIS_SCM_ALLOW_CHECKIN");
+    // `iris_generate_returns_context_no_api_key` asserts the no-key branch — prompt + instructions +
+    // context returned instead of LLM_UNAVAILABLE. Either key present sends the tool down the live
+    // LLM path instead, and both are routinely exported on a developer's machine, so the test would
+    // spend money and then fail on a response shape it never asked for. IRIS_GENERATE_CLASS_MODEL
+    // selects that model, and is equally not this test's input.
+    cmd.env_remove("ANTHROPIC_API_KEY");
+    cmd.env_remove("OPENAI_API_KEY");
+    cmd.env_remove("IRIS_GENERATE_CLASS_MODEL");
     for (k, v) in env_vars {
         cmd.env(k, v);
     }

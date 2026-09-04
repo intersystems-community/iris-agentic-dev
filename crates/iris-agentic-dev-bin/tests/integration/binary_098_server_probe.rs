@@ -11,11 +11,13 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
+// A relative `IAD_BINARY` — the form CLAUDE.md and every doc comment in this crate tell you to
+// pass — is resolved against the process working directory, which for a workspace member's test
+// binary is the *member* directory. `./target/debug/iris-agentic-dev` therefore never resolved
+// here. `iad_binary_path` resolves relative values against the workspace root, and there is one
+// copy of that rule instead of six.
 fn iad_binary() -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("IAD_BINARY") {
-        return std::path::PathBuf::from(p);
-    }
-    std::path::PathBuf::from(env!("CARGO_BIN_EXE_iris-agentic-dev"))
+    iris_agentic_dev_core::testing::iad_binary_path()
 }
 
 fn read_until<T, F>(
@@ -81,12 +83,28 @@ fn spawn_iad() -> (
     let cfg = tmp.path().join(".iris-agentic-dev.toml");
     std::fs::write(&cfg, "docker_only = true\n").expect("write config");
 
+    // `iris_servers` enumerates the saved server registry, which `servers_config` resolves from
+    // `$HOME` on Unix and `%USERPROFILE%`/`%APPDATA%` on Windows. Inheriting the real one means
+    // T031 asserts `reachable: null` over whatever servers the developer happens to have saved —
+    // vacuously true on an empty registry, and a different set of entries on every machine.
+    // Isolating a single platform's variable is not isolating the test, so all three move.
+    let home = tmp.path().join("home");
+    std::fs::create_dir_all(&home).expect("create isolated home");
+
     let mut child = Command::new(&bin)
         .arg("mcp")
         .args(["--config", cfg.to_str().unwrap()])
         .env_remove("IRIS_HOST")
         .env_remove("IRIS_WEB_PORT")
         .env_remove("IRIS_CONTAINER")
+        .env("HOME", &home)
+        .env("USERPROFILE", &home)
+        .env("APPDATA", home.join("AppData").join("Roaming"))
+        // `iris_test_server` and `iris_servers` are both read-only, and these tests must keep
+        // saying so. The CI e2e job exports both gates at job level, so a tool reclassified into
+        // the write or destructive tier would still answer here instead of being refused.
+        .env("IRIS_WRITE_TOOLS_ENABLED", "0")
+        .env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "0")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -111,7 +129,7 @@ fn test_adhoc_probe_response_shape() {
     writeln!(stdin, "{call}").ok();
     stdin.flush().ok();
 
-    let result = read_until(stdout, 12000, |v| parse_tool_result(v));
+    let result = read_until(stdout, 12000, parse_tool_result);
     let _ = child.kill();
 
     let r = result.expect("T019: timed out waiting for iris_test_server response");
@@ -140,7 +158,7 @@ fn test_neither_name_nor_host_error() {
     writeln!(stdin, "{call}").ok();
     stdin.flush().ok();
 
-    let result = read_until(stdout, 8000, |v| parse_tool_result(v));
+    let result = read_until(stdout, 8000, parse_tool_result);
     let _ = child.kill();
 
     let r = result.expect("T020: timed out waiting for iris_test_server response");
@@ -165,7 +183,7 @@ fn test_closed_port_unreachable() {
     writeln!(stdin, "{call}").ok();
     stdin.flush().ok();
 
-    let result = read_until(stdout, 12000, |v| parse_tool_result(v));
+    let result = read_until(stdout, 12000, parse_tool_result);
     let _ = child.kill();
 
     let r = result.expect("T021: timed out waiting for iris_test_server response");
@@ -195,7 +213,7 @@ fn test_iris_servers_no_probe_reachable_null() {
     writeln!(stdin, "{call}").ok();
     stdin.flush().ok();
 
-    let result = read_until(stdout, 8000, |v| parse_tool_result(v));
+    let result = read_until(stdout, 8000, parse_tool_result);
     let _ = child.kill();
 
     let r = result.expect("T031: timed out waiting for iris_servers response");

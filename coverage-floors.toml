@@ -78,6 +78,10 @@ overall = 88
 "src/skills/bundled.rs"               = 93
 "src/skills/mod.rs"                   = 58
 
+# testing.rs — helpers the test crates call. Only the branches the current suite happens to
+# take are covered, and the panic/skip paths are deliberately not exercised.
+"src/testing.rs"                      = 35
+
 # telemetry/ — trace and redaction
 "src/telemetry/mod.rs"                = 81
 "src/telemetry/prune.rs"              = 69
@@ -101,6 +105,7 @@ overall = 88
 "src/tools/interop.rs"                = 45
 "src/tools/log_store.rs"              = 96
 "src/tools/mod.rs"                    = 35
+"src/tools/nopws.rs"                  = 98
 "src/tools/observability.rs"          = 17
 "src/tools/output_schemas.rs"         = 98
 "src/tools/storage_guard.rs"          = 98

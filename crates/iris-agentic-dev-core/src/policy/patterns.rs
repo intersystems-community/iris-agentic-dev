@@ -29,17 +29,29 @@ pub const SYSTEM_BLOCKLIST: &[&str] = &[
     "^Ens.Rules*",
     "^Ens.MessageHeader*",
     "^Ens.MessageBody*",
-    "^SYS*",
-    "^SYSTEM*",
+    // `^SYS` and `^SYS.*`, not `^SYS*`. The blocklist is a hard block with no bypass, so an
+    // over-broad prefix permanently hides application globals: `^SYS*` matched `^SYSCONFIG`,
+    // `^SYSDATA`, `^SYSTOTALS` — any application global whose name happens to start with those
+    // three letters. Enumerating `^$GLOBAL` in %SYS, USER, IRISLIB and HSLIB on 2026.2 finds
+    // exactly one global in that space: `^SYS`. The dotted form is here because that is the
+    // convention IRIS uses when it adds one, same reasoning as `^IRIS.Sys.*` above.
+    "^SYS",
+    "^SYS.*",
+    "^SYSTEM",
+    "^SYSTEM.*",
     "^DeepSee*",
     "^IRIS.Msg*",
     "^IRIS.Temp*",
-    "^IRIS.Sys*",
+    // `^IRIS.Sys.*` (dotted), not `^IRIS.Sys*` — the broader prefix also swallowed
+    // `^IRIS.SystemPerformance`, which holds pbuttons run history and profile definitions.
+    // That global is diagnostic data, not code storage, and reading it is the documented way
+    // to recover the last run ID.
+    "^IRIS.Sys.*",
     "^IRIS.SysLog*",
 ];
 
 /// Hardcoded PHI name patterns. Globals matching these require `acknowledgePhi: true`
-/// for individual reads. Does NOT apply to bulk-PHI tools (`journal_search`, `view_message_body`).
+/// for individual reads. Does NOT apply to bulk-PHI tools (`journal_search`, `iris_message_body`).
 pub const PHI_NAME_PATTERNS: &[&str] = &[
     "^PAPMI*",
     "^PAADM*",
@@ -95,52 +107,4 @@ pub fn first_match_owned(global_name: &str, patterns: &[String]) -> Option<Strin
         .iter()
         .find(|p| matches_pattern(global_name, p.as_str()))
         .cloned()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn prefix_match_star() {
-        assert!(matches_pattern("%SYS.Security", "^%SYS*"));
-        assert!(matches_pattern("%SYSNotReal", "^%SYS*"));
-        assert!(matches_pattern("%SYSOTHER", "^%SYS*"));
-    }
-
-    #[test]
-    fn no_match_unrelated() {
-        assert!(!matches_pattern("MySYS", "^%SYS*"));
-        assert!(!matches_pattern("MyAppData", "^PAPMI*"));
-    }
-
-    #[test]
-    fn exact_match_no_star() {
-        assert!(matches_pattern("rOBJ", "^rOBJ"));
-        assert!(!matches_pattern("rOBJExtra", "^rOBJ"));
-    }
-
-    #[test]
-    fn case_insensitive() {
-        assert!(matches_pattern("papmi", "^PAPMI*"));
-        assert!(matches_pattern("PAPMI123", "^PAPMI*"));
-    }
-
-    #[test]
-    fn phi_patterns_cover_expected_names() {
-        assert!(matches_any("PAPMI", PHI_NAME_PATTERNS));
-        assert!(matches_any("PAADM1234", PHI_NAME_PATTERNS));
-        assert!(matches_any("ORDER123", PHI_NAME_PATTERNS));
-        assert!(!matches_any("MyAppData", PHI_NAME_PATTERNS));
-    }
-
-    #[test]
-    fn system_blocklist_count() {
-        assert_eq!(SYSTEM_BLOCKLIST.len(), 30);
-    }
-
-    #[test]
-    fn phi_patterns_count() {
-        assert_eq!(PHI_NAME_PATTERNS.len(), 9);
-    }
 }

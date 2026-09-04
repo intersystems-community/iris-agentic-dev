@@ -4094,7 +4094,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Execute arbitrary ObjectScript code on IRIS and return stdout. Two execution paths: (1) HTTP primary — wraps code in a temporary class method body (CodeMode=objectgenerator), compiles it via Atelier REST, runs it, deletes the class. Block syntax (`{}`) works here because class method bodies support it. (2) docker exec fallback — used when IRIS_CONTAINER env var is set and HTTP fails, or when docker_only=true. This path pipes code into `iris session` stdin, which is a line-by-line terminal interpreter. Block syntax (`{}`) is NOT supported in terminal mode — `If cond { ... }` causes a `<SYNTAX>` error. Use classic terminal-compatible form instead: `If cond Write x`. For complex multi-line scripts that require `{}` on a docker exec path, write a .mac routine with `iris_doc` (mode=put) and compile it with `iris_compile`, then call `iris_execute Do entry^RoutineName`. &sql(...) embedded SQL macros are automatically translated to %SQL.Statement calls (set translate_sql: false to disable). When translation fires, response includes sql_translated: true and translated_code. Example: code='write $ZVERSION,!' returns the IRIS version string. Skill: objectscript-tdd for the compile-execute-fix loop. Session state: set use_session: true to enable the %ctx carrier (%DynamicObject). Store values in %ctx.key between calls — scalars, %DynamicObject, and %Persistent objects (stored as OID stubs and re-opened on restore). The response includes session_state (opaque Base64 token); pass it back as session_state on the next call to restore %ctx. Nothing is written to IRIS — the token is held by the client. Error codes: SESSION_INVALID (bad token), SESSION_RESTORE_FAILED (missing class or bad OID), SESSION_SERIALIZE_FAILED (serialization error), TERMINAL_SYNTAX_UNSUPPORTED (block syntax on docker exec path). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "Execute arbitrary ObjectScript code on IRIS and return stdout. Two execution paths: (1) HTTP primary — wraps code in a temporary class method body (CodeMode=objectgenerator), compiles it via Atelier REST, runs it, deletes the class. Block syntax (`{}`) works here because class method bodies support it. (2) docker exec fallback — used when IRIS_CONTAINER env var is set and HTTP fails, or when the connection sets `docker_only = true` in `.iris-agentic-dev.toml` (a config-file key, not a parameter of this tool — passing docker_only in the tool arguments does nothing). This path pipes code into `iris session` stdin, which is a line-by-line terminal interpreter. Block syntax (`{}`) is NOT supported in terminal mode — `If cond { ... }` causes a `<SYNTAX>` error. Use classic terminal-compatible form instead: `If cond Write x`. For complex multi-line scripts that require `{}` on a docker exec path, write a .mac routine with `iris_doc` (mode=put) and compile it with `iris_compile`, then call `iris_execute Do entry^RoutineName`. &sql(...) embedded SQL macros are automatically translated to %SQL.Statement calls (set translate_sql: false to disable). When translation fires, response includes sql_translated: true and translated_code. Example: code='write $ZVERSION,!' returns the IRIS version string. Skill: objectscript-tdd for the compile-execute-fix loop. Session state: set use_session: true to enable the %ctx carrier (%DynamicObject). Store values in %ctx.key between calls — scalars, %DynamicObject, and %Persistent objects (stored as OID stubs and re-opened on restore). The response includes session_state (opaque Base64 token); pass it back as session_state on the next call to restore %ctx. Nothing is written to IRIS — the token is held by the client. Error codes: SESSION_INVALID (bad token), SESSION_RESTORE_FAILED (missing class or bad OID), SESSION_SERIALIZE_FAILED (serialization error), TERMINAL_SYNTAX_UNSUPPORTED (block syntax on docker exec path). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         output_schema = output_schemas::oneof_output_schema::<IrisExecuteResponse>()
     )]
     async fn iris_execute(
@@ -4309,8 +4309,7 @@ impl IrisTools {
                     }
                     Ok(output) => {
                         let trimmed = output.trim();
-                        let is_runtime_error = trimmed.starts_with("ERROR: ")
-                            || trimmed.starts_with("ERROR($ZERROR): ");
+                        let is_runtime_error = crate::iris::connection::is_generator_error(trimmed);
                         self.record_call("iris_execute", !is_runtime_error);
                         let mut resp = serde_json::json!({
                             "success": !is_runtime_error,
@@ -4381,8 +4380,7 @@ impl IrisTools {
 
                 let trimmed = session_visible.trim();
                 // Catch ObjectScript runtime errors written by the Catch block or $ZERROR check.
-                let is_runtime_error =
-                    trimmed.starts_with("ERROR: ") || trimmed.starts_with("ERROR($ZERROR): ");
+                let is_runtime_error = crate::iris::connection::is_generator_error(trimmed);
                 self.record_call("iris_execute", !is_runtime_error);
                 let mut resp = serde_json::json!({
                     "success": !is_runtime_error,
@@ -4474,8 +4472,7 @@ impl IrisTools {
             }
             Ok(Ok(output)) => {
                 let trimmed = output.trim();
-                let is_runtime_error =
-                    trimmed.starts_with("ERROR: ") || trimmed.starts_with("ERROR($ZERROR): ");
+                let is_runtime_error = crate::iris::connection::is_generator_error(trimmed);
                 self.record_call("iris_execute", !is_runtime_error);
                 let mut resp = serde_json::json!({
                     "success": !is_runtime_error,
@@ -5900,12 +5897,27 @@ Methods:
                 "Kill ^SKILLS(\"{}\") Write \"OK\"",
                 p.name.replace('"', "\\\"")
             );
-            if iris
+            match iris
                 .execute(&code, &crate::tools::skills_tools::skills_namespace())
                 .await
-                .is_ok()
             {
-                return ok_json(serde_json::json!({"success": true, "name": p.name}));
+                // The terminal returns `Ok` even when the Kill was refused, so only the `OK` marker
+                // proves the skill is gone. Reporting a delete that did not happen sends the caller
+                // off to fix something else while the skill keeps being served.
+                Ok(out) if crate::tools::skills_tools::forget_confirmed(&out) => {
+                    return ok_json(serde_json::json!({"success": true, "name": p.name}));
+                }
+                Ok(out) => {
+                    return err_json(
+                        "IRIS_EXECUTE_ERROR",
+                        &format!(
+                            "IRIS did not confirm removal of skill '{}' — it is still in ^SKILLS. Raw output: {}",
+                            p.name,
+                            out.trim()
+                        ),
+                    );
+                }
+                Err(_) => {}
             }
         }
         err_json(
@@ -6167,7 +6179,7 @@ Methods:
     }
 
     #[tool(
-        description = "Export recorded tool-call data as {from, to, via, count, ts} dispatch-trace records, aggregating repeated identical edges into a single record with an incremented count. Directly compatible with iris_graph's record_trace ingestion format.",
+        description = "Export recorded tool-call data as {from, to, via, count, ts} dispatch-trace records, aggregating repeated identical edges into a single record with an incremented count. The record shape is a graph-ingestion format; no tool in this server consumes it yet.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<TelemetryExportTraceResponse>()
     )]
@@ -6803,7 +6815,7 @@ Methods:
     }
 
     #[tool(
-        description = "Interoperability query dispatcher (merged). what (REQUIRED): logs=Event Log entries, queues=message queue depths, messages=message archive (Ens.MessageHeader), trace=ALL of one session by session_id, partners=Ens.Config.BusinessPartner rows. Filters: component=<config item> and session_id=<n> narrow logs/messages; since_id=<n> tails after a watermark. what=messages can also search message CONTENT: (a) body_class=<msg class> + body_where=<SQL fragment on body table> + body_select=[cols] joins the body table server-side (SQL name resolved for you); (b) search_table={prop, value|value_like, class?, extent?} searches an indexed Search Table field (extent default EnsLib.HL7.SearchTable; errors list searchable props). Pass namespace=<ns> for a non-default interop namespace. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance.",
+        description = "Interoperability query dispatcher (merged). what (REQUIRED): logs=Event Log entries, queues=message queue depths, messages=message archive (Ens.MessageHeader). Anything else returns INVALID_ACTION. To trace one session, use what=messages with session_id=<n>. Filters: component=<config item> narrows logs and messages; session_id=<n> and since_id=<n> (tails after a watermark) narrow messages. what=messages can also search message CONTENT: (a) body_class=<msg class> + body_where=<SQL fragment on body table> + body_select=[cols] joins the body table server-side (SQL name resolved for you); (b) search_table={prop, value|value_like, class?, extent?} searches an indexed Search Table field (extent default EnsLib.HL7.SearchTable; errors list searchable props). Pass namespace=<ns> for a non-default interop namespace. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<IrisInteropQueryResponse>()
     )]
@@ -7360,6 +7372,28 @@ Methods:
                 Some(s) => Some(self.pool_ref().get(Some(s))?),
                 None => self.iris_arc(),
             };
+        // `iris_admin` reached none of gates [1]–[4]: the policy gates are applied per handler and
+        // this one never called them. `action="journal_search"` is bulk-PHI and got its effective
+        // policy from the caller's own `dataPolicy` parameter, so the caller authorized itself.
+        // The action goes into the gate params because gate [2] matches on it as well as on the
+        // tool name.
+        let (sm_server, policy) = self.active_server_manager_policy();
+        if let Err(gate) = crate::policy::gate::dispatch_gate(
+            "iris_admin",
+            sm_server.as_deref().unwrap_or(""),
+            policy.as_ref(),
+            &serde_json::json!({ "action": action }),
+        ) {
+            return err_result(gate);
+        }
+        // `view_processes` and `journal_search` used to read this out of the caller's parameters,
+        // which let a caller hand itself `dataPolicy: "allow"`. It is configuration, so it comes
+        // from `[policy.<server>]` and defaults to the strict value when unset.
+        let effective_data_policy = match policy.as_ref().and_then(|pol| pol.data_policy.as_ref()) {
+            Some(crate::iris::workspace_config::DataPolicy::Allow) => "allow",
+            Some(crate::iris::workspace_config::DataPolicy::Redact) => "redact",
+            _ => "block",
+        };
         let iris_opt = _iris_arc_hold.as_deref();
         let result = match action {
             "list_namespaces" => admin::admin_list_namespaces_impl(iris_opt).await,
@@ -7490,18 +7524,11 @@ Methods:
             // ── 055-system-observability ──────────────────────────────────────
             "view_locks" => observability::view_locks_impl(iris_opt).await,
             "view_processes" => {
-                let data_policy = p
-                    .get("dataPolicy")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("block");
                 let ns_filter = p.get("namespace").and_then(|v| v.as_str());
-                observability::view_processes_impl(iris_opt, data_policy, ns_filter).await
+                observability::view_processes_impl(iris_opt, effective_data_policy, ns_filter).await
             }
             "journal_search" => {
-                let data_policy = p
-                    .get("dataPolicy")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("block");
+                let data_policy = effective_data_policy;
                 let global_pattern = p.get("global_pattern").and_then(|v| v.as_str());
                 let time_range = p.get("time_range");
                 let max_records = p.get("max_records").and_then(|v| v.as_u64());
@@ -8141,7 +8168,7 @@ Methods:
                 "nopws": true,
                 "web_available": false,
                 "nopws_detected": nopws_detected,
-                "suggestion": "NoPWS build: use docker_only=true or add a webgateway sidecar. See skills/nopws-setup for setup instructions.",
+                "suggestion": "NoPWS build: set docker_only = true in .iris-agentic-dev.toml (a connection key, not a tool parameter) or add a webgateway sidecar. Setup instructions: skills/skills/iris-agentic-dev/nopws-setup/SKILL.md in the iris-agentic-dev repo.",
             });
             if let Some(ev) = nopws_evidence {
                 resp["nopws_evidence"] = serde_json::Value::String(ev);
@@ -8584,7 +8611,7 @@ Methods:
     }
 
     #[tool(
-        description = "Start, poll, or retrieve the last run ID for an IRIS SystemPerformance profile. mode: start | status | last_runid. run_id: required for mode=status. Returns {success, mode, run_id} for start/last_runid; {success, mode, run_id, wait_time} for status. server: optional registered instance name. Skill: iris-agentic-dev.",
+        description = "Start, poll, or retrieve the last run ID for an IRIS SystemPerformance (pbuttons) profile. mode: start | status | last_runid. profile: for mode=start, one of test (5 min, the default), 30mins, 4hours, 8hours, 12hours, 24hours. run_id: required for mode=status. Returns {success, mode, profile, run_id} for start; {success, mode, run_id, in_progress} for last_runid (in_progress=true means the run is still collecting and has no report yet); {success, mode, run_id, wait_time} for status. Works on community and Enterprise builds. server: optional registered instance name. Skill: iris-agentic-dev.",
         output_schema = output_schemas::oneof_output_schema::<serde_json::Value>()
     )]
     async fn iris_system_performance(
@@ -8604,12 +8631,17 @@ Methods:
             .get("run_id")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let profile = p
+            .get("profile")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let iris = self.resolve_server(server.as_deref()).await?;
         let result = admin_tools::iris_system_performance_impl(
             &iris,
             &self.client,
             &mode,
             run_id.as_deref(),
+            profile.as_deref(),
         )
         .await;
         self.record_call("iris_system_performance", result.is_ok());
@@ -10208,10 +10240,13 @@ mod pure_fn_tests {
 
     #[test]
     fn test_find_keyword_pos_keyword_as_substring_not_matched() {
-        // "FROMAGE" must not match keyword "FROM" unless it is a full token
-        // Behavior depends on implementation; at minimum the function returns Some or None
-        // consistently (we just assert the call doesn't panic).
-        let _ = find_keyword_pos("FROMAGE t", "FROM");
+        // "FROMAGE" contains "FROM" but is one token, so it is not a keyword occurrence.
+        // The old version of this test called the function and discarded the result, which
+        // documented the ambiguity instead of resolving it — it passed whichever way the
+        // function behaved. Pin the behaviour: substring hits do not count, real ones do.
+        assert_eq!(find_keyword_pos("SELECT * FROMAGE t", "FROM"), None);
+        assert_eq!(find_keyword_pos("x FROMt", "FROM"), None);
+        assert!(find_keyword_pos("SELECT * FROMAGE t FROM u", "FROM").is_some());
     }
 
     // ── replace_host_vars_with_positional — additional edge cases ────────────

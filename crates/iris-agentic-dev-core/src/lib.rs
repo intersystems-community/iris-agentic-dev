@@ -10,3 +10,7 @@ pub mod telemetry;
 pub mod tools;
 
 pub mod generate;
+
+/// Helpers shared by the test binaries. Not part of the shipped surface.
+#[cfg(feature = "testing")]
+pub mod testing;

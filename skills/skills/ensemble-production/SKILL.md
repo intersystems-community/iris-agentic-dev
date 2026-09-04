@@ -345,8 +345,8 @@ Create, update, or delete Ensemble credentials. Write-gated **and destructive-ga
 
 - **Never force-stop** (`force=true`) unless graceful stop has timed out. Force-stop drops
   in-flight messages.
-- **Always check `interop_production_needs_update` before `interop_production_update`** — calling
-  update when not needed is a no-op, but it's good hygiene to confirm first.
+- **Always run `iris_production(action="check")` before `iris_production(action="update")`** —
+  calling update when not needed is a no-op, but it's good hygiene to confirm first.
 - **Namespace matters** — every tool accepts a `namespace` parameter. Default is `USER`.
   Productions in `HSCUSTOM` or application-specific namespaces require the correct namespace.
 - **Do not restart to fix a config change** — use `update` instead. Restart loses in-flight messages.

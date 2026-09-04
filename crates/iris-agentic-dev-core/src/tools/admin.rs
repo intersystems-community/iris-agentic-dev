@@ -2,7 +2,7 @@
 //! All operations execute in the %SYS namespace via HTTP ObjectScript execution.
 //! Read operations are always available; write operations require IRIS_ADMIN_TOOLS=1.
 
-use crate::iris::connection::IrisConnection;
+use crate::iris::connection::{generator_error_message, is_generator_error, IrisConnection};
 use crate::objectscript::os_str_expr;
 use rmcp::{model::*, ErrorData as McpError};
 
@@ -93,7 +93,7 @@ While tRS.Next() {
     match iris.execute_via_generator(code, "%SYS", &client).await {
         Ok(out) => {
             let out = out.trim();
-            if out.starts_with("ERROR:") {
+            if is_generator_error(out) {
                 return err_json("INTEROP_ERROR", out);
             }
             let databases: Vec<serde_json::Value> = out
@@ -290,6 +290,34 @@ pub async fn admin_list_webapps_impl(
 
 // ── List user roles ──────────────────────────────────────────────────────────
 
+/// Decode the roles line written by the `Security.Users.Get` snippet below.
+///
+/// `Ok(roles)` on real output, `Err((error_code, message))` on any failure report. Two failures live
+/// in the same string: the snippet's own `ERROR:USER_NOT_FOUND:` sentinel, and whatever
+/// `execute_via_generator` puts there when the call itself failed — `<PROTECT>` on %SYS, a
+/// privilege refusal, a moved device. Only the first was checked, so the second was split on commas
+/// and returned as `{"success": true, "roles": ["<PROTECT> zGet+7^Security.Users.1"]}`: a privilege
+/// failure dressed up as a user who holds one oddly-named role.
+pub fn decode_user_roles_output(
+    username: &str,
+    out: &str,
+) -> Result<Vec<String>, (&'static str, String)> {
+    let out = out.trim();
+    if let Some(msg) = out.strip_prefix("ERROR:USER_NOT_FOUND:") {
+        return Err(("USER_NOT_FOUND", msg.to_string()));
+    }
+    if let Some(msg) = generator_error_message(out) {
+        return Err((
+            "IRIS_EXECUTE_ERROR",
+            format!("Could not read roles for {username}: {}", msg.trim()),
+        ));
+    }
+    if out.is_empty() {
+        return Ok(vec![]);
+    }
+    Ok(out.split(',').map(|r| r.trim().to_string()).collect())
+}
+
 pub async fn admin_list_user_roles_impl(
     iris: Option<&IrisConnection>,
     username: &str,
@@ -306,18 +334,12 @@ If $$$ISERR(tSC) {{ Write "ERROR:USER_NOT_FOUND:User not found: "_{un} Quit }}
 Write $GET(props("Roles"))"#
     );
     match iris.execute_via_generator(&code, "%SYS", &client).await {
-        Ok(out) => {
-            let out = out.trim();
-            if let Some(msg) = out.strip_prefix("ERROR:USER_NOT_FOUND:") {
-                return err_json("USER_NOT_FOUND", msg);
+        Ok(out) => match decode_user_roles_output(username, &out) {
+            Ok(roles) => {
+                ok_json(serde_json::json!({"success":true,"username":username,"roles":roles}))
             }
-            let roles: Vec<&str> = if out.is_empty() {
-                vec![]
-            } else {
-                out.split(',').map(|r| r.trim()).collect()
-            };
-            ok_json(serde_json::json!({"success":true,"username":username,"roles":roles}))
-        }
+            Err((code, msg)) => err_json(code, &msg),
+        },
         Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
     }
 }
@@ -571,7 +593,12 @@ pub async fn admin_create_namespace_impl(
         r#"Set ns("Globals")={dd}
 Set ns("Routines")={cd}
 Set ns("Database")={dd}
+; Create edits the CPF by opening it, which moves the current device off the generator's capture
+; file. Save and restore $IO or the verdict Write below goes nowhere and the caller gets
+; INTEROP_ERROR with an empty message for a namespace that was created fine.
+Set tIO=$IO
 Set tSC=##class(Config.Namespaces).Create({nm},.ns)
+Use tIO
 If $$$ISERR(tSC) {{ Write "ERROR:NAMESPACE_EXISTS:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#
     );
     match iris.execute_via_generator(&code, "%SYS", &client).await {
@@ -607,7 +634,10 @@ pub async fn admin_delete_namespace_impl(
     // Deletes namespace definition only — databases are NOT deleted (by design)
     let code = format!(
         r#"If '##class(Config.Namespaces).Exists({nm}) {{ Write "ERROR:NAMESPACE_NOT_FOUND:Namespace not found: "_{nm} Quit }}
+; Delete edits the CPF the same way Create does; restore $IO before writing the verdict.
+Set tIO=$IO
 Set tSC=##class(Config.Namespaces).Delete({nm})
+Use tIO
 If $$$ISERR(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#
     );
     match iris.execute_via_generator(&code, "%SYS", &client).await {
@@ -1040,7 +1070,7 @@ If sc {{ Write "OK" }} Else {{ Write "ERROR:"_$System.Status.GetErrorText(status
                     "username": username,
                     "flag_cleared": true,
                 }))
-            } else if let Some(msg) = out.strip_prefix("ERROR:") {
+            } else if let Some(msg) = generator_error_message(out) {
                 err_json("PASSWORD_CHANGE_FAILED", msg)
             } else {
                 err_json("PASSWORD_CHANGE_FAILED", out)
@@ -1078,7 +1108,7 @@ If sc {{ Write "OK" }} Else {{ Write "ERROR:"_$System.Status.GetErrorText(sc) }}
                     "username": username,
                     "unlocked": true,
                 }))
-            } else if let Some(msg) = out.strip_prefix("ERROR:") {
+            } else if let Some(msg) = generator_error_message(out) {
                 err_json("UNLOCK_FAILED", msg)
             } else {
                 err_json("UNLOCK_FAILED", out)

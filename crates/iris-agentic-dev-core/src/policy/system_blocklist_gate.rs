@@ -47,6 +47,7 @@ fn blocklist_error(
     server_name: &str,
 ) -> serde_json::Value {
     serde_json::json!({
+        "success": false,
         "error_code": "SYSTEM_BLOCKLIST",
         "system_blocklist": true,
         "server_name": server_name,

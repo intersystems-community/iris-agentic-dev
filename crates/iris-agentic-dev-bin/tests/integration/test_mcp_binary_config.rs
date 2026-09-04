@@ -266,6 +266,11 @@ fn run_with_gate_config(args: &[&str], cwd: &std::path::Path) -> (Option<i32>, S
         .env_remove("IRIS_WRITE_TOOLS_ENABLED")
         .env_remove("IRIS_DESTRUCTIVE_TOOLS_ENABLED")
         .env_remove("IRIS_TOOLSET")
+        // `workspace_root` (workspace_config.rs:293) checks OBJECTSCRIPT_WORKSPACE before either
+        // `--workspace` or the cwd walk-up, so an operator with it exported has the contradictory
+        // toml written above ignored and a different file validated instead — and the exit-2
+        // assertion then fails with nothing wrong in the loader.
+        .env_remove("OBJECTSCRIPT_WORKSPACE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -436,6 +441,16 @@ fn no_config_returns_default_toolset() {
         .env_remove("IRIS_WRITE_TOOLS_ENABLED")
         .env_remove("IRIS_ENABLED_TOOLS")
         .env_remove("IRIS_DISABLED_TOOLS")
+        // The empty tempdir is the whole setup: it is what makes "no config" true. But
+        // OBJECTSCRIPT_WORKSPACE outranks `--workspace` in `workspace_root`
+        // (workspace_config.rs:293), so an operator with it exported points the server at their own
+        // .iris-agentic-dev.toml and this stops being the no-config case at all.
+        .env_remove("OBJECTSCRIPT_WORKSPACE")
+        // The assertion is a tool count. IRIS_TOOLSET selects the tier (baseline 84 vs merged 81 vs
+        // nostub 80) and IRIS_NO_SKILLS drops the skill tools, so any of these inherited turns a
+        // count check into a check of the operator's shell.
+        .env_remove("IRIS_TOOLSET")
+        .env_remove("IRIS_NO_SKILLS")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -472,6 +487,17 @@ fn tools_list_response_omits_output_schema() {
     let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
     let mut child = Command::new(bin)
         .args(["mcp", "--workspace", &dir.path().to_string_lossy()])
+        // OBJECTSCRIPT_WORKSPACE outranks `--workspace` in `workspace_root`
+        // (workspace_config.rs:293), so an operator with it exported gets their own config applied
+        // and the empty tempdir above stops meaning anything.
+        .env_remove("OBJECTSCRIPT_WORKSPACE")
+        // `tool_count >= 70` is only a statement about the wire payload if the surface is the
+        // default one: IRIS_TOOLSET picks the tier, the two tool lists filter it, and IRIS_NO_SKILLS
+        // drops the skill tools outright.
+        .env_remove("IRIS_TOOLSET")
+        .env_remove("IRIS_ENABLED_TOOLS")
+        .env_remove("IRIS_DISABLED_TOOLS")
+        .env_remove("IRIS_NO_SKILLS")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

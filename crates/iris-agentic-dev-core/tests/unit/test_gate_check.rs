@@ -295,3 +295,30 @@ fn empty_string_not_detected() {
 fn no_kill_not_detected() {
     assert!(!contains_global_kill("Write \"hello world\""));
 }
+
+/// A routine label that happens to end in `k` is not a kill keyword. The old scan saw the `k`
+/// of `check` sitting directly before the caret and refused ordinary routine calls with
+/// DESTRUCTIVE_TOOLS_DISABLED — the same "a caret means a global" mistake the code-edit gate had.
+#[test]
+fn routine_label_ending_in_k_not_detected() {
+    for code in [
+        "Do check^MyRtn",
+        "Set x=$$lock^MyLocks",
+        "Do work^Setup",
+        "Do $$check^%Utils",
+        "Do walk^Tree,check^Tree",
+    ] {
+        assert!(
+            !contains_global_kill(code),
+            "{code:?} is a routine call, not a global kill"
+        );
+    }
+}
+
+/// A postconditional between the keyword and the global must not let the kill through.
+#[test]
+fn postconditional_kill_detected() {
+    assert!(contains_global_kill("Kill:1 ^Foo"));
+    assert!(contains_global_kill("Kill:$D(tFlag) ^Foo(\"bar\")"));
+    assert!(contains_global_kill("K:x=1 ^Foo"));
+}

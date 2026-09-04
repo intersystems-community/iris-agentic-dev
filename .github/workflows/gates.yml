@@ -30,6 +30,12 @@ jobs:
         run: npm ci
       - name: Run quality gates
         run: bash .specify/gates/verify.sh --boundary ci
+      # The accept block in specs/112-antipattern-gates/tasks.md already runs these
+      # inside the step above. Naming them as their own step is for the failure
+      # message: "Shipped-bug antipatterns" says which class regressed, where
+      # "Run quality gates" over 64 features does not.
+      - name: Shipped-bug antipatterns
+        run: python3 scripts/gates/antipatterns.py
       # A red step here means a BROKEN GATE, not a dirty tree: a canary
       # (known violation) was accepted instead of blocked.
       - name: Prove the gate still blocks (canaries)

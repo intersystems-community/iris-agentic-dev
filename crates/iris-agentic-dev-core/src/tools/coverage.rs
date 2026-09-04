@@ -358,6 +358,40 @@ fn build_coverage_start_code(routine_list: &str, namespace: &str) -> String {
     .join("\n")
 }
 
+/// Build stop mode ObjectScript code (single-line form, no curly braces).
+pub fn build_coverage_stop_code(namespace: &str) -> String {
+    [
+        format!(" New $NAMESPACE  Set $NAMESPACE=\"{}\"", namespace),
+        " Do ##class(%Monitor.System.LineByLine).Stop()".to_string(),
+        r#" Write "OK|stopped",$C(10)"#.to_string(),
+    ]
+    .join("\n")
+}
+
+/// Decide the outcome of stop mode from its output.
+///
+/// The old code was `Ok(_) => {"success": true, "stopped": true}` — the output was thrown away.
+/// `execute_via_generator` reports IRIS-side failure inside that output, so `mode=stop` answered
+/// `stopped: true` for a monitor that was still running and still holding the single process-wide
+/// LineByLine slot; the next `mode=start` then failed with MONITOR_IN_USE and nothing pointed back
+/// at the stop that never happened. `OK|stopped` is only written after `Stop()` returns, so its
+/// presence is the proof.
+pub fn parse_stop_output(output: &str) -> serde_json::Value {
+    if let Some(msg) = crate::iris::connection::generator_error_message(output) {
+        return err_json("IRIS_EXECUTE_ERROR", msg.trim());
+    }
+    if !output.lines().any(|l| l.trim() == "OK|stopped") {
+        return err_json(
+            "IRIS_EXECUTE_ERROR",
+            &format!(
+                "%Monitor.System.LineByLine.Stop() did not confirm; the monitor may still be running. Raw output: {}",
+                output.trim()
+            ),
+        );
+    }
+    serde_json::json!({"success": true, "stopped": true})
+}
+
 /// Build report mode ObjectScript code for the given routines (single-line form).
 fn build_coverage_report_code(routines: &[String], namespace: &str) -> String {
     let mut lines = vec![
@@ -548,15 +582,10 @@ pub async fn handle_iris_coverage(
         }
 
         "stop" => {
-            let code = [
-                format!(" New $NAMESPACE  Set $NAMESPACE=\"{}\"", ns),
-                " Do ##class(%Monitor.System.LineByLine).Stop()".to_string(),
-                r#" Write "OK|stopped",$C(10)"#.to_string(),
-            ]
-            .join("\n");
+            let code = build_coverage_stop_code(&ns);
             match execute_coverage_code(iris, client, &code, &ns).await {
                 Err(e) => e,
-                Ok(_) => serde_json::json!({"success": true, "stopped": true}),
+                Ok(output) => parse_stop_output(&output),
             }
         }
 

@@ -1,6 +1,6 @@
 //! skill, skill_community, kb, agent_info tools via docker exec + ^SKILLS global.
 
-use crate::iris::connection::IrisConnection;
+use crate::iris::connection::{is_generator_error, IrisConnection};
 use crate::tools::ToolCallEntry;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -25,13 +25,38 @@ pub fn skills_namespace() -> String {
     std::env::var("OBJECTSCRIPT_SKILLMCP_NAMESPACE").unwrap_or_else(|_| "USER".to_string())
 }
 
+/// True only when a docker-exec run of `Kill ^SKILLS(...) Write "OK"` confirmed the delete.
+///
+/// `IrisConnection::execute` talks to the IRIS terminal, and the terminal reports a failure by
+/// echoing the offending line back with the error underneath — the process still exits 0, so the
+/// call returns `Ok`. `skill_forget` only checked `is_ok()` and told the caller the skill was gone
+/// while it was still in `^SKILLS`. The echoed line itself contains `WRITE "OK"`, so a
+/// `contains("OK")` check would pass on exactly the failures this is meant to catch: the marker has
+/// to be a line of its own.
+pub fn forget_confirmed(output: &str) -> bool {
+    output.lines().any(|line| line.trim() == "OK")
+}
+
+/// Run ObjectScript and refuse output that is actually a failure report.
+///
+/// `execute_via_generator` reports IRIS-side failure *in* the output string, not as an `Err` — the
+/// HTTP call and the compile both succeeded, so there is nothing for `Result` to carry. Every one of
+/// the call sites below then treated the failure text as a skill body, a search result, or a
+/// successful delete. Checking here rather than at each caller is the only version of this that
+/// stays correct as call sites are added.
+///
+/// See [`is_generator_error`] for the four shapes and why hand-rolling the check does not work.
 async fn xecute(
     iris: &IrisConnection,
     client: &reqwest::Client,
     code: &str,
     namespace: &str,
 ) -> anyhow::Result<String> {
-    iris.execute_via_generator(code, namespace, client).await
+    let out = iris.execute_via_generator(code, namespace, client).await?;
+    if is_generator_error(&out) {
+        anyhow::bail!("{}", out.trim());
+    }
+    Ok(out)
 }
 
 // ── skill ─────────────────────────────────────────────────────────────────────
@@ -63,7 +88,13 @@ pub async fn handle_skill(
         "list" => {
             // Bug 9: use separator variable so empty global yields "[]" not "]".
             let code = "set key=\"\" set out=\"[\" set sep=\"\" for  { set key=$order(^SKILLS(key)) quit:key=\"\"  set data=$get(^SKILLS(key)) set out=out_sep_\"{\"_\"\\\"name\\\":\\\"\"_key_\"\\\",\\\"description\\\":\\\"\"_$piece(data,\"|\",1)_\"\\\",\\\"usage_count\\\":\"_$piece(data,\"|\",3)_\"}\" set sep=\",\" } set out=out_\"]\" write out";
-            let raw = xecute(iris, client, code, &ns).await.unwrap_or_default();
+            // A failure here used to become an empty string, which `from_str` then turned into an
+            // empty array reported as `"success": true` — "you have no skills" is what an operator
+            // saw when the truth was "IRIS refused the call".
+            let raw = match xecute(iris, client, code, &ns).await {
+                Ok(v) => v,
+                Err(e) => return err_json("IRIS_EXECUTE_ERROR", &e.to_string()),
+            };
             let skills: serde_json::Value =
                 serde_json::from_str(&raw).unwrap_or(serde_json::json!([]));
             ok_json(serde_json::json!({"success": true, "skills": skills}))
@@ -74,7 +105,10 @@ pub async fn handle_skill(
                 "set data=$get(^SKILLS(\"{}\")) write data",
                 name.replace('"', "\\\"")
             );
-            let raw = xecute(iris, client, &code, &ns).await.unwrap_or_default();
+            let raw = match xecute(iris, client, &code, &ns).await {
+                Ok(v) => v,
+                Err(e) => return err_json("IRIS_EXECUTE_ERROR", &e.to_string()),
+            };
             if raw.is_empty() {
                 return err_json("NOT_FOUND", &format!("Skill '{}' not found", name));
             }
@@ -95,7 +129,10 @@ pub async fn handle_skill(
                 "set key=\"\" set out=\"[\" set sep=\"\" for {{ set key=$order(^SKILLS(key)) quit:key=\"\"  set data=$get(^SKILLS(key)) if $find($zconvert(key_data,\"L\"),\"{}\")>0 {{ set out=out_sep_\"{{\\\"name\\\":\\\"\"_key_\"\\\",\\\"description\\\":\\\"\"_$piece(data,\"|\",1)_\"\\\"}}\" set sep=\",\" }} }} set out=out_\"]\" write out",
                 query.replace('"', "\\\"")
             );
-            let raw = xecute(iris, client, &code, &ns).await.unwrap_or_default();
+            let raw = match xecute(iris, client, &code, &ns).await {
+                Ok(v) => v,
+                Err(e) => return err_json("IRIS_EXECUTE_ERROR", &e.to_string()),
+            };
             let results: serde_json::Value =
                 serde_json::from_str(&raw).unwrap_or(serde_json::json!([]));
             ok_json(serde_json::json!({"success": true, "query": query, "results": results}))
@@ -106,7 +143,11 @@ pub async fn handle_skill(
                 "kill ^SKILLS(\"{}\") write \"ok\"",
                 name.replace('"', "\\\"")
             );
-            xecute(iris, client, &code, &ns).await.unwrap_or_default();
+            // `forget` reported `"action": "forgotten"` whether or not the kill ran. A delete that
+            // silently did nothing is the one outcome a caller must never be told is a success.
+            if let Err(e) = xecute(iris, client, &code, &ns).await {
+                return err_json("IRIS_EXECUTE_ERROR", &e.to_string());
+            }
             ok_json(serde_json::json!({"success": true, "name": name, "action": "forgotten"}))
         }
         "propose" => {
@@ -155,7 +196,11 @@ pub async fn handle_skill(
                 body.replace('"', "\\\""),
                 now,
             );
-            xecute(iris, client, &code, &ns).await.unwrap_or_default();
+            // `forget` reported `"action": "forgotten"` whether or not the kill ran. A delete that
+            // silently did nothing is the one outcome a caller must never be told is a success.
+            if let Err(e) = xecute(iris, client, &code, &ns).await {
+                return err_json("IRIS_EXECUTE_ERROR", &e.to_string());
+            }
             ok_json(serde_json::json!({
                 "success": true,
                 "skill": {"name": skill_name, "description": description, "body": body}
@@ -223,7 +268,10 @@ pub async fn handle_skill_community(
                         scontent.replace('"', "\\\""),
                         now,
                     );
-                    xecute(iris, client, &code, &ns).await.unwrap_or_default();
+                    // An install that never landed must not report `installed`.
+                    if let Err(e) = xecute(iris, client, &code, &ns).await {
+                        return err_json("IRIS_EXECUTE_ERROR", &e.to_string());
+                    }
                     ok_json(serde_json::json!({"success": true, "installed": sname}))
                 }
                 None => err_json("NOT_FOUND", &format!("Community skill '{}' not found", pkg)),
@@ -299,7 +347,14 @@ pub async fn handle_kb(
                             let code = format!(
                                 "set ^KBCHUNKS(\"{fname}\")=\"{chunk_escaped}\" write \"ok\""
                             );
-                            xecute(iris, client, &code, &ns).await.unwrap_or_default();
+                            // Stop rather than keep counting: a partial index reported as a whole
+                            // one sends the caller to `kb recall` expecting hits that are not there.
+                            if let Err(e) = xecute(iris, client, &code, &ns).await {
+                                return err_json(
+                                    "IRIS_EXECUTE_ERROR",
+                                    &format!("indexing failed after {indexed} chunk(s): {e}"),
+                                );
+                            }
                             indexed += 1;
                         }
                     }
@@ -316,7 +371,10 @@ pub async fn handle_kb(
                 query = query.replace('"', "\\\""),
                 top_k = top_k,
             );
-            let raw = xecute(iris, client, &code, &ns).await.unwrap_or_default();
+            let raw = match xecute(iris, client, &code, &ns).await {
+                Ok(v) => v,
+                Err(e) => return err_json("IRIS_EXECUTE_ERROR", &e.to_string()),
+            };
             let results: serde_json::Value =
                 serde_json::from_str(&raw).unwrap_or(serde_json::json!([]));
             ok_json(serde_json::json!({"success": true, "query": query, "results": results}))
@@ -352,12 +410,11 @@ pub async fn handle_agent_info(
         "stats" => {
             let ns = skills_namespace();
             let code = "set count=0 set key=\"\" for { set key=$order(^SKILLS(key)) quit:key=\"\"  set count=count+1 } write count";
-            let skill_count: usize = xecute(iris, client, code, &ns)
-                .await
-                .unwrap_or_default()
-                .trim()
-                .parse()
-                .unwrap_or(0);
+            // Reporting `skill_count: 0` for a failed count is indistinguishable from a real zero.
+            let skill_count: usize = match xecute(iris, client, code, &ns).await {
+                Ok(v) => v.trim().parse().unwrap_or(0),
+                Err(e) => return err_json("IRIS_EXECUTE_ERROR", &e.to_string()),
+            };
             let session_calls = history.lock().map(|h| h.len()).unwrap_or(0);
             ok_json(serde_json::json!({
                 "success": true,

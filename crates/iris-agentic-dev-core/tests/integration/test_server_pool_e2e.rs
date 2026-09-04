@@ -605,9 +605,9 @@ async fn test_iris_servers_probe_true_live() {
     let entry = servers
         .iter()
         .find(|s| s["name"].as_str() == Some(SERVER_NAME))
-        .expect(&format!(
-            "T032: must find {SERVER_NAME} in probe response; got: {probe_v}"
-        ));
+        .unwrap_or_else(|| {
+            panic!("T032: must find {SERVER_NAME} in probe response; got: {probe_v}")
+        });
 
     assert_eq!(
         entry["reachable"].as_bool(),
@@ -728,15 +728,11 @@ async fn test_iris_servers_probe_differential() {
     let live_entry = servers
         .iter()
         .find(|s| s["name"].as_str() == Some(LIVE_NAME))
-        .expect(&format!(
-            "T033: must find {LIVE_NAME} in probe response; got: {probe_v}"
-        ));
+        .unwrap_or_else(|| panic!("T033: must find {LIVE_NAME} in probe response; got: {probe_v}"));
     let dead_entry = servers
         .iter()
         .find(|s| s["name"].as_str() == Some(DEAD_NAME))
-        .expect(&format!(
-            "T033: must find {DEAD_NAME} in probe response; got: {probe_v}"
-        ));
+        .unwrap_or_else(|| panic!("T033: must find {DEAD_NAME} in probe response; got: {probe_v}"));
 
     assert_eq!(
         live_entry["reachable"].as_bool(),

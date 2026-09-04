@@ -1,6 +1,6 @@
 //! %Dictionary introspection tools for dynamic dispatch resolution.
 
-use crate::iris::connection::IrisConnection;
+use crate::iris::connection::{generator_error_message, IrisConnection};
 use crate::tools::xdata_flow;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -128,7 +128,9 @@ pub async fn handle_resolve_dynamic_dispatch(
         metadata_cache_set(cache, cache_key, r.clone());
         return ok_json(r);
     }
-    if let Some(msg) = trimmed.strip_prefix("ERROR:") {
+    // Before `generator_error_message`, an `ERROR($ZERROR):` output fell past this check into
+    // `from_str(...).unwrap_or(json!([]))` and came back as an empty result with success: true.
+    if let Some(msg) = generator_error_message(trimmed) {
         return err_json("QUERY_ERROR", msg.trim());
     }
 
@@ -468,7 +470,7 @@ pub async fn handle_find_subclass_implementations(
         .map_err(|e| rmcp::ErrorData::internal_error(format!("method query failed: {e}"), None))?;
     let trimmed = output.trim();
 
-    if let Some(msg) = trimmed.strip_prefix("ERROR:") {
+    if let Some(msg) = generator_error_message(trimmed) {
         return err_json("QUERY_ERROR", msg.trim());
     }
     let raw: serde_json::Value = serde_json::from_str(trimmed).unwrap_or(serde_json::json!([]));
@@ -731,14 +733,27 @@ mod tests {
         assert_eq!(descendants[2], "Custom.Router");
     }
 
+    /// The prefix stripping the dict handlers rely on, over all four generator shapes.
+    ///
+    /// This test used to assert `"ERROR: ...".strip_prefix("ERROR:")` against a literal — the
+    /// hand-rolled form, checked against the one shape it happened to handle. It said nothing about
+    /// `ERROR($ZERROR):`, which the handlers were blind to.
     #[test]
     fn test_error_prefix_stripping() {
-        let trimmed = "ERROR: some sql error message";
-        if let Some(msg) = trimmed.strip_prefix("ERROR:") {
-            assert_eq!(msg.trim(), "some sql error message");
-        } else {
-            panic!("strip_prefix failed");
+        use crate::iris::connection::generator_error_message;
+        for raw in [
+            "ERROR: some sql error message",
+            "ERROR($ZERROR): some sql error message",
+            "ERROR($DEVICE): some sql error message",
+        ] {
+            let msg = generator_error_message(raw)
+                .unwrap_or_else(|| panic!("{raw:?} must be recognised as a failure"));
+            assert_eq!(msg.trim(), "some sql error message", "raw = {raw:?}");
         }
+        assert!(
+            generator_error_message("[{\"Name\":\"x\"}]").is_none(),
+            "real output must not be read as a failure"
+        );
     }
 
     #[test]
