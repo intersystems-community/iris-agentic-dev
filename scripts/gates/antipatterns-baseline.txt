@@ -162,7 +162,7 @@ tool-name-refs	crates/iris-agentic-dev-core/src/tools/mod.rs:68
 tool-name-refs	crates/iris-agentic-dev-core/src/tools/output_schemas.rs:420
 tool-name-refs	crates/iris-agentic-dev-core/src/tools/search.rs:3
 tool-name-refs	crates/iris-agentic-dev-core/src/tools/server_tools.rs:80
-tool-name-refs	docs/connecting.md:239
+tool-name-refs	docs/connecting.md:241
 tool-name-refs	docs/tools.md:132
 tool-name-refs	skills/BENCHMARKING.md:262
 tool-name-refs	skills/README.md:198
@@ -181,7 +181,7 @@ tool-name-refs	skills/skills/iris-devtester/SKILL.md:31
 tool-name-refs	skills/skills/iris-devtester/SKILL.md:80
 tool-name-refs	skills/skills/iris-linux-docker/SKILL.md:90
 tool-name-refs	skills/skills/iris-objectscript-eval/SKILL.md:205
-tool-name-refs	skills/skills/iris-product-features/SKILL.md:17
+tool-name-refs	skills/skills/iris-product-features/SKILL.md:18
 tool-name-refs	skills/skills/iris-sql/SKILL.md:19
 tool-name-refs	skills/skills/iris-vector-ai/SKILL.md:18
 tool-name-refs	skills/skills/irishealth-container/SKILL.md:114

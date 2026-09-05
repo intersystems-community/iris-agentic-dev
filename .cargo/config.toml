@@ -1,15 +1,19 @@
 [build]
-# Disable sccache — 0% hit rate on incremental builds, adds latency, can deadlock.
-# Overrides the global ~/.cargo/config.toml setting.
+# No `rustc-wrapper` key here, deliberately. Both values this repo has tried break something:
 #
-# `/usr/bin/env` and not `""`. Cargo reads an empty wrapper as "no wrapper", so `cargo build`
-# was fine, but cargo-llvm-cov reads this key itself and does not apply that special case: it
-# built the command `" " + rustc` and every invocation died with
-# `could not execute process ` /Users/…/bin/rustc --print cfg` (never executed)`. The whole
-# coverage gate was unrunnable from a720d2f onward, and nothing said so — `cargo build` and
-# `cargo test` kept passing. A passthrough that is a real executable keeps sccache out of the
-# build without handing any tool an empty argv[0].
-rustc-wrapper = "/usr/bin/env"
+#   ""             cargo reads an empty wrapper as "no wrapper", but cargo-llvm-cov reads the
+#                  key itself and does not apply that special case — it built `" " + rustc` and
+#                  every invocation died with `could not execute process ` …/rustc --print cfg`
+#                  (never executed)`. The coverage gate was unrunnable from a720d2f on.
+#   /usr/bin/env   a real passthrough on macOS and Linux, and a path that does not exist on
+#                  Windows. `cargo build --locked` failed outright on windows-latest.
+#
+# So the passthrough that cargo-llvm-cov needs lives in scripts/coverage.sh and
+# scripts/check-coverage-floors.sh, which are bash and only ever run on macOS or Linux. A
+# committed cargo config has to build on every platform the project ships to, and turning off a
+# tool the global ~/.cargo/config.toml turns on is not worth breaking one of them for. To keep
+# sccache out of an ordinary local build: export CARGO_BUILD_RUSTC_WRAPPER=/usr/bin/env.
+#
 # Disable incremental compilation — mod.rs is a monolith so incremental rarely reuses
 # artifacts, just accumulates stale cache that triggers full rebuilds on next run.
 incremental = false

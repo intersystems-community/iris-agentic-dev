@@ -29,6 +29,12 @@ CARGO="$HOME/.cargo/bin/cargo"
 
 [[ -x "$CARGO" ]] || { echo "ERROR: cargo not found at $CARGO"; exit 1; }
 
+# Keep sccache out of the instrumented build, and do it with a real executable.
+# cargo-llvm-cov reads build.rustc-wrapper literally, so an empty value gives it `" " + rustc`
+# and nothing runs. /usr/bin/env is a passthrough here and does not exist on Windows, which is
+# why .cargo/config.toml cannot carry it — see the comment there.
+export CARGO_BUILD_RUSTC_WRAPPER="${CARGO_BUILD_RUSTC_WRAPPER:-/usr/bin/env}"
+
 # ── Locate llvm-cov / llvm-profdata ───────────────────────────────────────────
 
 RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"

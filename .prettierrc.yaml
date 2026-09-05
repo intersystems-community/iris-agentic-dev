@@ -1,0 +1,10 @@
+# Prettier walks upward from each file until it finds a config, and it does not
+# stop at the repo root. With no config here it picks up whatever sits above the
+# checkout — on my machine that is ~/ws/.prettierrc with printWidth 100, on a CI
+# runner it is nothing at all. The prettier gate then measured a different thing
+# in each place: ten files were dirty locally and clean in CI, three the other
+# way round. These are prettier's own defaults, so nothing is being changed; the
+# point of writing them down is that the search stops here.
+printWidth: 80
+tabWidth: 2
+proseWrap: preserve

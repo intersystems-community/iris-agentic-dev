@@ -15,6 +15,11 @@ crates/iris-agentic-dev-core/tests/fixtures/
 tests/e2e/results/
 outputs/
 
+# pytest writes .pytest_cache/README.md itself, and its own .gitignore keeps it
+# out of the repo — so the gate only ever sees it on a machine that has run the
+# Python tests, which is why it failed locally and not in CI.
+**/.pytest_cache/
+
 # NEVER format ObjectScript. Leading-dot block syntax, label columns and
 # significant leading whitespace are load-bearing — a generic formatter
 # corrupts routines silently. Out of prettier's default globs today; listed

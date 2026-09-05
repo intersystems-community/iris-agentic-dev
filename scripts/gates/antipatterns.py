@@ -642,10 +642,17 @@ def check_version_consistency() -> list[Finding]:
 
 RAW_IAD_BINARY = re.compile(r'env::var\(\s*"IAD_BINARY"')
 
+# The other half of the same bug: a hard-coded `"./target/..."` in Rust resolves against
+# whichever directory the process happens to start in. The spec 112 accept block used to
+# grep for this itself, which made two implementations of one rule — the defect
+# `self-referential-gates` is about — and the grep had no exemption for the resolver's own
+# tests, whose whole job is to feed it a relative path.
+RELATIVE_TARGET = re.compile(r'"\./target/')
+
 
 def check_binary_path() -> list[Finding]:
     found = []
-    for path in test_files():
+    for path in test_files() + src_files():
         if path.name in RESOLVER_FILES:
             continue
         text = mask_comments(path.read_text(errors="replace"))
@@ -659,6 +666,17 @@ def check_binary_path() -> list[Finding]:
                     "`require_iad_binary()`) — a relative IAD_BINARY, which is the form every "
                     "doc comment in this repo tells you to pass, resolves against the crate "
                     "directory here and not the workspace root.",
+                )
+            )
+        for m in RELATIVE_TARGET.finditer(text):
+            found.append(
+                Finding(
+                    "binary-path",
+                    f"{rel(path)}:{text.count(chr(10), 0, m.start()) + 1}",
+                    "hard-codes a relative path to a build artifact. A test binary runs with "
+                    "the crate directory as its working directory, so `./target/...` does not "
+                    "resolve — go through "
+                    "`iris_agentic_dev_core::testing::iad_binary_path()` instead.",
                 )
             )
     return found

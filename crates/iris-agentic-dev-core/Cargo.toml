@@ -676,6 +676,10 @@ name = "test_workspace_config_paths"
 path = "tests/unit/test_workspace_config_paths.rs"
 
 [[test]]
+name = "test_cargo_config"
+path = "tests/unit/test_cargo_config.rs"
+
+[[test]]
 name = "test_policy_patterns"
 path = "tests/unit/test_policy_patterns.rs"
 

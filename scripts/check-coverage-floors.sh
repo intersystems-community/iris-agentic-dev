@@ -18,6 +18,11 @@ CARGO="$HOME/.cargo/bin/cargo"
 
 [[ -x "$CARGO" ]] || { echo "ERROR: cargo not found at $CARGO"; exit 1; }
 
+# Same passthrough scripts/coverage.sh sets, for the same reason: cargo-llvm-cov reads
+# build.rustc-wrapper literally and an empty value leaves it unable to run rustc at all.
+# .cargo/config.toml cannot hold this — /usr/bin/env does not exist on Windows.
+export CARGO_BUILD_RUSTC_WRAPPER="${CARGO_BUILD_RUSTC_WRAPPER:-/usr/bin/env}"
+
 # Stale objects under llvm-cov-target get reported alongside the ones this run
 # builds. A leftover test binary holds its own instrumented copy of the library
 # that never executes, so a source file is counted twice — once covered, once

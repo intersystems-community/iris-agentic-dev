@@ -63,11 +63,9 @@ the old behaviour, and asking for it explicitly is the point.
 set -euo pipefail
 python3 scripts/gates/antipatterns.py vacuous-tests
 grep -q 'IAD_ALLOW_SKIP' crates/iris-agentic-dev-core/src/testing.rs
-# No test may resolve a build artifact through a relative path again.
-if grep -rn '"\./target/' crates/*/tests crates/*/src --include='*.rs' | grep -v '^\S*: *//'; then
-    echo "relative path to a build artifact: a test's CWD is the crate root, so this never resolves." >&2
-    exit 1
-fi
+# No test may resolve a build artifact through a relative path again. The rule lives in the
+# binary-path detector, which knows the resolver's own tests are allowed to write one.
+python3 scripts/gates/antipatterns.py binary-path
 ```
 
 ---
