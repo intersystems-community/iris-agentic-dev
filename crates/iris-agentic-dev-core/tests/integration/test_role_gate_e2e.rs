@@ -107,6 +107,22 @@ fn mcp_call_with_workspace(
     let mut cmd = Command::new(&bin);
     cmd.args(["mcp"]);
     cmd.env("OBJECTSCRIPT_WORKSPACE", workspace_dir);
+    // Every tool exercised here (iris_compile, iris_execute, iris_source_control checkout) is
+    // WriteClass::Write, so the write gate answers before the role gate ever runs. Unpinned, this
+    // file measured two different things: in the CI e2e job the gate leaked on at job level and the
+    // "blocked" tests really did read a role_gate refusal, while in a clean shell every one of them
+    // got WRITE_TOOLS_DISABLED — which has no `role_gate` key, so the `assert_ne!` in the
+    // develop-mode and no-config tests passed without the role gate having been consulted at all.
+    // Turning writes on is what makes the role gate the thing under test.
+    cmd.env("IRIS_WRITE_TOOLS_ENABLED", "1");
+    // None of these tools is Destructive-tier, and the assertions must keep proving that: with the
+    // destructive gate left inherited (the e2e job sets it) a tool silently reclassified into that
+    // tier would still return role_gate here instead of DESTRUCTIVE_TOOLS_DISABLED.
+    cmd.env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "0");
+    // The fleet config under test is what declares the instance role. IRIS_ALLOW_PROD is the #26
+    // override that widens writes on Live instances, and an operator who exports it would be
+    // measuring their shell instead of the toml written above.
+    cmd.env_remove("IRIS_ALLOW_PROD");
     // Pass through IRIS connection env vars
     for key in &[
         "IRIS_HOST",

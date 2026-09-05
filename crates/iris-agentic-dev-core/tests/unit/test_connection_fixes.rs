@@ -444,3 +444,64 @@ fn test_is_write_allowed_delegates_to_the_resolver() {
         );
     }
 }
+
+// ── is_generator_error ────────────────────────────────────────────────────────
+//
+// `build_exec_class` emits three distinct error prefixes: `ERROR: <exception>` from the Catch
+// block, `ERROR($ZERROR): <code>` when the body produced no output but left $ZERROR set, and
+// `ERROR($DEVICE): <detail>` when the body left the current device somewhere other than the
+// capture file. Every caller that guarded on `starts_with("ERROR:")` was blind to the
+// parenthesized forms and reported the IRIS error as a successful result.
+
+use iris_agentic_dev_core::iris::connection::is_generator_error;
+
+#[test]
+fn generator_error_detects_the_catch_block_prefix() {
+    assert!(is_generator_error("ERROR: <UNDEFINED> pname"));
+    assert!(is_generator_error("  ERROR: <UNDEFINED> pname\n"));
+}
+
+#[test]
+fn generator_error_detects_the_tool_sentinel_prefix() {
+    // Tool-generated ObjectScript writes "ERROR:" with no space before a %Status text or a
+    // named sentinel. Requiring the space would silently downgrade these to success.
+    assert!(is_generator_error("ERROR:permission denied"));
+    assert!(is_generator_error("ERROR:STREAM_NOT_FOUND"));
+    assert!(is_generator_error("ERROR:NO_PRODUCTION"));
+}
+
+#[test]
+fn generator_error_detects_the_zerror_prefix() {
+    assert!(is_generator_error(
+        "ERROR($ZERROR): <NAMESPACE>GetCurrentSrcLine+10^%SYS.ProcessQuery.1"
+    ));
+    assert!(is_generator_error(
+        "\nERROR($ZERROR): <NAMESPACE>zGetCurrentSrcLine+10\n"
+    ));
+}
+
+#[test]
+fn generator_error_detects_the_device_prefix() {
+    // A routine that selects its own device and does not put it back sends every later Write
+    // somewhere we never read. Before this shape existed the tool got an empty string and
+    // reported success — the 1.3.0 pbuttons bug.
+    assert!(is_generator_error(
+        "ERROR($DEVICE): the called code left the current device set to \"|TRM|:|4568\" instead of the capture file"
+    ));
+}
+
+#[test]
+fn generator_error_ignores_ordinary_output() {
+    for ok in [
+        "",
+        "20260904_161059_test",
+        "ERRORLEVEL=0",
+        "The report is not error free",
+        "SCMSTATUS|0|0|0|1|0|1|",
+    ] {
+        assert!(
+            !is_generator_error(ok),
+            "{ok:?} is not a generator error prefix"
+        );
+    }
+}

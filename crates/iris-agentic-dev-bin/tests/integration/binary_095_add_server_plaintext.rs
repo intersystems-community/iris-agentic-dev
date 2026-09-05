@@ -14,11 +14,13 @@
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
+// A relative `IAD_BINARY` — the form CLAUDE.md and every doc comment in this crate tell you to
+// pass — is resolved against the process working directory, which for a workspace member's test
+// binary is the *member* directory. `./target/debug/iris-agentic-dev` therefore never resolved
+// here. `iad_binary_path` resolves relative values against the workspace root, and there is one
+// copy of that rule instead of six.
 fn iad_binary() -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("IAD_BINARY") {
-        return std::path::PathBuf::from(p);
-    }
-    std::path::PathBuf::from(env!("CARGO_BIN_EXE_iris-agentic-dev"))
+    iris_agentic_dev_core::testing::iad_binary_path()
 }
 
 /// Read one newline-delimited JSON line matching `predicate` or time out.
@@ -143,6 +145,7 @@ fn test_add_server_returns_success_without_keychain() {
     });
 
     child.kill().ok();
+    child.wait().ok();
 
     let result = result.expect("T095-B1: no tools/call response received");
 
@@ -227,6 +230,7 @@ fn test_add_server_description_mentions_plaintext_fallback() {
     });
 
     child.kill().ok();
+    child.wait().ok();
 
     let desc = description.expect("T095-B2: iris_add_server description not found in tools/list");
 

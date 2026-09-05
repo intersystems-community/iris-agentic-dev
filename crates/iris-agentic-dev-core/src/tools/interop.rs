@@ -1,4 +1,4 @@
-use crate::iris::connection::IrisConnection;
+use crate::iris::connection::{is_generator_error, IrisConnection};
 use crate::objectscript::{os_str_expr, os_stream_write_stmts};
 use rmcp::{model::*, ErrorData as McpError};
 use schemars::JsonSchema;
@@ -203,6 +203,70 @@ pub async fn interop_production_status_impl(
     }
 }
 
+/// `Ens.Director.StartProduction` — device snapshot, call, device restore, then the verdict.
+///
+/// StartProduction brings up the production's jobs, and starting a job can leave the current device
+/// pointed at that job's device instead of the generator's capture file. Every Write after the call
+/// then goes nowhere: the handler sees empty output, compares it against "OK", and reports
+/// INTEROP_ERROR for a production that did in fact start. `Set tIO=$IO` / `Use tIO` around the call
+/// is what keeps the verdict readable.
+pub fn build_production_start_code(production: &str) -> String {
+    format!(
+        r#"Set tIO=$IO
+Set sc=##class(Ens.Director).StartProduction("{}")
+Use tIO
+If $System.Status.IsError(sc) {{ Write "ERROR:"_$System.Status.GetErrorText(sc) }} Else {{ Write "OK" }}"#,
+        production
+    )
+}
+
+/// `Ens.Director.StopProduction` — same device snapshot/restore as start.
+///
+/// Stopping the production shuts its jobs down and can leave the current device on one of them
+/// rather than on the generator's capture file. Without the restore the verdict Write lands nowhere,
+/// the handler reads empty output and answers INTEROP_ERROR for a production that stopped cleanly —
+/// which sends the caller round to stop it again.
+pub fn build_production_stop_code(timeout: u32, force: bool) -> String {
+    format!(
+        r#"Set tIO=$IO
+Set sc=##class(Ens.Director).StopProduction({},{})
+Use tIO
+If $System.Status.IsError(sc) {{ Write "ERROR:"_$System.Status.GetErrorText(sc) }} Else {{ Write "OK" }}"#,
+        timeout,
+        if force { 1 } else { 0 }
+    )
+}
+
+/// `Ens.Director.UpdateProduction` — same device snapshot/restore as start.
+///
+/// Update stops and restarts the items whose config changed, so it moves the current device for the
+/// same reason start and stop do. Without the restore the verdict Write is swallowed and the handler
+/// reports INTEROP_ERROR on an update that applied.
+pub fn build_production_update_code(timeout: u32, force: bool) -> String {
+    format!(
+        r#"Set tIO=$IO
+Set sc=##class(Ens.Director).UpdateProduction({},{})
+Use tIO
+If $System.Status.IsError(sc) {{ Write "ERROR:"_$System.Status.GetErrorText(sc) }} Else {{ Write "OK" }}"#,
+        timeout,
+        if force { 1 } else { 0 }
+    )
+}
+
+/// `Ens.Director.RecoverProduction` — same device snapshot/restore as start.
+///
+/// Recover cleans up a production left in a bad state and starts it again, so it moves the current
+/// device the way StartProduction does. Without the restore the verdict Write disappears and the
+/// handler reports INTEROP_ERROR after a successful recovery, which invites a second recover on a
+/// production that is already running.
+pub fn build_production_recover_code() -> String {
+    r#"Set tIO=$IO
+Set sc=##class(Ens.Director).RecoverProduction()
+Use tIO
+If $System.Status.IsError(sc) { Write "ERROR:"_$System.Status.GetErrorText(sc) } Else { Write "OK" }"#
+        .to_string()
+}
+
 pub async fn interop_production_start_impl(
     iris: Option<&IrisConnection>,
     params: ProductionNameParams,
@@ -212,10 +276,7 @@ pub async fn interop_production_start_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let prod = params.production.as_deref().unwrap_or("");
-    let code = format!(
-        r#"Set sc=##class(Ens.Director).StartProduction("{}") If $System.Status.IsError(sc) {{ Write "ERROR:"_$System.Status.GetErrorText(sc) }} Else {{ Write "OK" }}"#,
-        prod
-    );
+    let code = build_production_start_code(prod);
     let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
     match iris
         .execute_via_generator(&code, &params.namespace, &client)
@@ -248,11 +309,7 @@ pub async fn interop_production_stop_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let code = format!(
-        r#"Set sc=##class(Ens.Director).StopProduction({},{}) If $System.Status.IsError(sc) {{ Write "ERROR:"_$System.Status.GetErrorText(sc) }} Else {{ Write "OK" }}"#,
-        params.timeout,
-        if params.force { 1 } else { 0 }
-    );
+    let code = build_production_stop_code(params.timeout, params.force);
     let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
     match iris
         .execute_via_generator(&code, &params.namespace, &client)
@@ -285,11 +342,7 @@ pub async fn interop_production_update_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let code = format!(
-        r#"Set sc=##class(Ens.Director).UpdateProduction({},{}) If $System.Status.IsError(sc) {{ Write "ERROR:"_$System.Status.GetErrorText(sc) }} Else {{ Write "OK" }}"#,
-        params.timeout,
-        if params.force { 1 } else { 0 }
-    );
+    let code = build_production_update_code(params.timeout, params.force);
     let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
     match iris
         .execute_via_generator(&code, &params.namespace, &client)
@@ -350,10 +403,10 @@ pub async fn interop_production_recover_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let code = r#"Set sc=##class(Ens.Director).RecoverProduction() If $System.Status.IsError(sc) { Write "ERROR:"_$System.Status.GetErrorText(sc) } Else { Write "OK" }"#;
+    let code = build_production_recover_code();
     let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
     match iris
-        .execute_via_generator(code, &params.namespace, &client)
+        .execute_via_generator(&code, &params.namespace, &client)
         .await
     {
         Ok(output) => {
@@ -907,8 +960,13 @@ pub async fn interop_production_item_impl(
     match params.action.as_str() {
         "enable" | "disable" => {
             let enabled_val = if params.action == "enable" { "1" } else { "0" };
+            // `UpdateProduction` re-jobs the production's workers and can leave $IO pointing at
+            // one of their devices, so every Write after it — the verdict and the error text
+            // alike — has to run on the device this snippet started on. Without the snapshot the
+            // caller reads an empty result for an update that ran.
             let code = format!(
-                r#"Set tSC=##class(Ens.Director).GetProductionStatus(.n,.s)
+                r#"Set tIO=$IO
+Set tSC=##class(Ens.Director).GetProductionStatus(.n,.s)
 If $System.Status.IsError(tSC) {{ Write "ERROR:NO_PRODUCTION:"_$System.Status.GetErrorText(tSC) Quit }}
 If n="" {{ Write "ERROR:NO_PRODUCTION:No production running" Quit }}
 Set tProd=##class(Ens.Config.Production).%OpenId(n,,.tSC2)
@@ -919,6 +977,7 @@ Set tItem.Enabled={enabled_val}
 Set tSC4=tProd.%Save()
 If $System.Status.IsError(tSC4) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC4) Quit }}
 Set tSC5=##class(Ens.Director).UpdateProduction(10,0)
+Use tIO
 If $System.Status.IsError(tSC5) {{ Write "ERROR:UPDATE_FAILED:"_$System.Status.GetErrorText(tSC5) Quit }}
 Write "OK""#
             );
@@ -969,7 +1028,7 @@ Set tKey="" For {{ Set tSetting=tItem.Settings.GetNext(.tKey) Quit:tKey=""
                     if let Some(msg) = out.strip_prefix("ERROR:NO_PRODUCTION:") {
                         return err_json("NO_PRODUCTION", msg);
                     }
-                    if out.starts_with("ERROR:") {
+                    if is_generator_error(out) {
                         return err_json("INTEROP_ERROR", out);
                     }
                     let settings: std::collections::HashMap<String, String> = out
@@ -1020,8 +1079,11 @@ Set tS.Value={v}
                     v = v_expr
                 ));
             }
+            // Same $IO discipline as the enable/disable branch above: snapshot before, `Use tIO`
+            // immediately after `UpdateProduction`, then write the verdict.
             let code = format!(
-                r#"Set tSC=##class(Ens.Director).GetProductionStatus(.n,.s)
+                r#"Set tIO=$IO
+Set tSC=##class(Ens.Director).GetProductionStatus(.n,.s)
 If $System.Status.IsError(tSC)||n="" {{ Write "ERROR:NO_PRODUCTION:No production running" Quit }}
 Set tProd=##class(Ens.Config.Production).%OpenId(n,,.tSC2)
 If '$IsObject(tProd) {{ Write "ERROR:INTEROP_ERROR:Cannot open production" Quit }}
@@ -1030,6 +1092,7 @@ If '$IsObject(tItem) {{ Write "ERROR:ITEM_NOT_FOUND:Item not found: "_{item} Qui
 {setting_lines}Set tSC4=tProd.%Save()
 If $System.Status.IsError(tSC4) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC4) Quit }}
 Set tSC5=##class(Ens.Director).UpdateProduction(10,0)
+Use tIO
 If $System.Status.IsError(tSC5) {{ Write "ERROR:UPDATE_FAILED:"_$System.Status.GetErrorText(tSC5) Quit }}
 Write "OK""#
             );

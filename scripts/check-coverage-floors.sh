@@ -18,6 +18,18 @@ CARGO="$HOME/.cargo/bin/cargo"
 
 [[ -x "$CARGO" ]] || { echo "ERROR: cargo not found at $CARGO"; exit 1; }
 
+# Stale objects under llvm-cov-target get reported alongside the ones this run
+# builds. A leftover test binary holds its own instrumented copy of the library
+# that never executes, so a source file is counted twice — once covered, once
+# dark — and every file reads low. See the Step -1 comment in coverage.sh for the
+# measurement. Clean first; a diluted floor check is worse than none.
+if [[ "${COVERAGE_NO_CLEAN:-}" == "1" ]]; then
+  echo "=== SKIPPING clean (COVERAGE_NO_CLEAN=1) — numbers may be diluted ==="
+else
+  echo "=== Clean stale instrumented objects ==="
+  PATH="$HOME/.cargo/bin:$PATH" "$CARGO" llvm-cov clean --workspace
+fi
+
 echo "=== Running unit coverage (no IRIS required) ==="
 COVERAGE_OUT="$REPO_ROOT/target/coverage-raw.txt"
 mkdir -p "$REPO_ROOT/target"

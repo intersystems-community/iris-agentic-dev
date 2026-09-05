@@ -215,17 +215,9 @@ async fn code_edit_blocked_carries_message_and_remediation() {
         return;
     }
 
-    let bin = if let Ok(p) = std::env::var("IAD_BINARY") {
-        std::path::PathBuf::from(p)
-    } else {
-        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        manifest
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("target/debug/iris-agentic-dev")
-    };
+    // `iad_binary_path` resolves a relative IAD_BINARY against the workspace root; a test
+    // binary's working directory is the crate root, so the two differ.
+    let bin = iris_agentic_dev_core::testing::iad_binary_path();
     if !bin.exists() {
         eprintln!(
             "T043: IAD_BINARY not found at {:?} — skipping binary assertion",
@@ -311,5 +303,99 @@ async fn code_edit_blocked_carries_message_and_remediation() {
     assert!(
         resp_str.contains("message") && resp_str.contains("remediation"),
         "T043: CODE_EDIT_BLOCKED must carry both message and remediation; got: {resp_str}"
+    );
+}
+
+/// Reading `^IRIS.SystemPerformance("history")` is the documented way to recover the last
+/// pbuttons run ID. The blocklist pattern `^IRIS.Sys*` used to prefix-match that global and
+/// the code-edit guard reported the read as a class edit, which broke the SystemPerformance
+/// workflow end to end. Runs through the binary because the guard fires in the tool handler.
+#[tokio::test]
+#[ignore]
+async fn systemperformance_history_read_is_not_code_edit_blocked() {
+    iris_agentic_dev_core::iris::connection::set_caller_mode(CallerMode::Cli);
+    let host = std::env::var("IRIS_HOST").unwrap_or_default();
+    if host.is_empty() {
+        eprintln!("IRIS_HOST not set — skipping SystemPerformance read test");
+        return;
+    }
+
+    // `iad_binary_path` resolves a relative IAD_BINARY against the workspace root; a test
+    // binary's working directory is the crate root, so the two differ.
+    let bin = iris_agentic_dev_core::testing::iad_binary_path();
+    if !bin.exists() {
+        eprintln!("IAD_BINARY not found at {bin:?} — skipping");
+        return;
+    }
+
+    let port = std::env::var("IRIS_WEB_PORT").unwrap_or_else(|_| "52780".to_string());
+    let username = std::env::var("IRIS_USERNAME").unwrap_or_else(|_| "_SYSTEM".to_string());
+    let password = std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".to_string());
+
+    let config = format!(
+        "host = \"{host}\"\nweb_port = {port}\nusername = \"{username}\"\npassword = \"{password}\"\nnamespace = \"%SYS\"\n"
+    );
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join(".iris-agentic-dev.toml"), &config).unwrap();
+
+    let mut child = std::process::Command::new(&bin)
+        .arg("mcp")
+        .arg("--workspace")
+        .arg(".")
+        .current_dir(dir.path())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn binary");
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+
+    use std::io::Write as IoWrite;
+    let init = concat!(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"#,
+        r#""protocolVersion":"2025-03-26","capabilities":{},"#,
+        r#""clientInfo":{"name":"sysperf-read-client","version":"1.0.0"}}}"#,
+        "\n"
+    );
+    let notif = "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\",\"params\":{}}\n";
+    let call = concat!(
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{",
+        "\"name\":\"iris_execute\",\"arguments\":{",
+        "\"code\":\"Write $Order(^IRIS.SystemPerformance(\\\"history\\\",\\\"\\\"),-1),!\"",
+        "}}}\n"
+    );
+    stdin.write_all(init.as_bytes()).ok();
+    stdin.write_all(notif.as_bytes()).ok();
+    stdin.write_all(call.as_bytes()).ok();
+
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        let reader = std::io::BufReader::new(stdout);
+        for line in reader.lines().map_while(Result::ok) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) {
+                if v.get("id").and_then(|i| i.as_u64()) == Some(2) {
+                    let _ = tx.send(line);
+                    return;
+                }
+            }
+        }
+    });
+
+    let resp_str = rx
+        .recv_timeout(std::time::Duration::from_secs(15))
+        .unwrap_or_default();
+    let _ = child.kill();
+    let _ = child.wait();
+
+    eprintln!("SystemPerformance read response: {resp_str}");
+    assert!(
+        !resp_str.is_empty(),
+        "expected a response from iris_execute; got nothing"
+    );
+    assert!(
+        !resp_str.contains("CODE_EDIT_BLOCKED"),
+        "reading ^IRIS.SystemPerformance history must not be gated as a code edit; got: {resp_str}"
     );
 }

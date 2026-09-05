@@ -764,24 +764,42 @@ pub fn gate_check(
 /// looks like a kill is safer than missing a kill that looks like a comment.
 pub fn contains_global_kill(code: &str) -> bool {
     // Scan each line for a `kill` keyword (case-insensitive) or its single-letter
-    // abbreviation `k`, followed by optional whitespace and `^`. Searches within the
-    // line so comment lines containing a kill expression are also caught — a false
+    // abbreviation `k`, followed by an optional postconditional and then `^`. Searches within
+    // the line so comment lines containing a kill expression are also caught — a false
     // positive beats a false negative.
     for line in code.lines() {
         let lower = line.to_ascii_lowercase();
+        let bytes = lower.as_bytes();
         // Check every position where 'k' occurs.
         for (i, _) in lower.match_indices('k') {
+            // The keyword has to stand on its own. Without this the trailing `k` of a routine
+            // label made `Do check^MyRtn` and `Set x=$$lock^MyLocks` look like `k ^MyRtn` —
+            // the same one-meaning-of-caret mistake that made the code-edit gate reject
+            // `$$run^SystemPerformance`.
+            if i > 0 {
+                let prev = bytes[i - 1];
+                if prev.is_ascii_alphanumeric() || prev == b'%' || prev == b'_' || prev == b'.' {
+                    continue;
+                }
+            }
             let rest = &lower[i..];
             let after = if let Some(stripped) = rest.strip_prefix("kill") {
                 stripped
             } else {
-                // Single-letter `k`, but not the start of "kill".
-                let tail = &rest[1..];
-                if tail.starts_with("ill") {
-                    // "kill" will be handled at this same index on a later iteration.
-                    continue;
+                // Single-letter `k`. `lower` is lowercased, so if `rest` began with "kill" the
+                // strip above would have taken it — no "did we land mid-keyword" check is
+                // reachable here, and there used to be one that no test could ever enter.
+                &rest[1..]
+            };
+            // A postconditional sits between the keyword and its argument: `Kill:$D(x) ^Foo`.
+            // Skipping to the whitespace that ends it keeps those from walking through.
+            let after = if after.starts_with(':') {
+                match after.find([' ', '\t']) {
+                    Some(sp) => &after[sp..],
+                    None => continue,
                 }
-                tail
+            } else {
+                after
             };
             let trimmed = after.trim_start_matches([' ', '\t']);
             if trimmed.starts_with('^') {
@@ -853,13 +871,18 @@ pub fn contains_terminal_block_syntax(code: &str) -> bool {
 /// - `Do` (no single-letter abbreviation — `D` could start other names)
 /// - `Try`
 /// - `Catch`
+/// - `ElseIf`
 ///
-/// `ElseIf` is intentionally excluded — it is not a terminal-mode keyword.
+/// `ElseIf` was excluded on the grounds that it is "not a terminal-mode keyword", and the test
+/// that was supposed to cover it asserted nothing at all. `ElseIf x=1 { ... }` is braced syntax
+/// like any other: `else` does not match because `If` follows it without a separator, so the
+/// line went through undetected. False negatives are the failure this check exists to prevent,
+/// so the keyword is in the list.
 fn line_starts_with_block_keyword(trimmed: &str) -> bool {
     // Pairs of (keyword_bytes, min_separator_after).
     // A keyword must be followed by end-of-string, a space, tab, or `(`.
     for kw in &[
-        "if", "else", "for", "while", "do", "try", "catch",
+        "if", "else", "elseif", "for", "while", "do", "try", "catch",
         // Single-letter abbreviations:
         "i", "e",
         "f",
@@ -1103,21 +1126,18 @@ mod tests {
         );
     }
 
-    /// `ElseIf` is NOT a detection keyword (not a terminal-mode keyword).
-    /// It should NOT fire through the ElseIf keyword — only through its component parts.
+    /// `ElseIf` is a detection keyword. It was not, and this test asserted nothing while
+    /// claiming to document that — so a braced `ElseIf` reached the terminal undetected.
     #[test]
-    fn test_contains_terminal_block_syntax_elseif_not_a_keyword() {
-        // "ElseIf cond {" should still fire because "If" is at the end — but the point is
-        // that "ElseIf" as a whole is not in the keyword list. The detection picks up the
-        // adjacent `{` by finding any keyword before it, so we test a pathological case:
-        // just "ElseIf" with no other keyword nearby.
-        // Since "ElseIf" contains "If", which IS a keyword, the test verifies what fires:
-        let code = "ElseIf x=1 { Write 1 }";
-        // The implementation may or may not fire here depending on whether it parses
-        // "ElseIf" as containing "If". We document: ElseIf is not explicitly added to the
-        // keyword list. The result must be consistent (not crash). We don't assert a
-        // specific value here — this is a documentation test.
-        let _ = contains_terminal_block_syntax(code);
+    fn test_contains_terminal_block_syntax_elseif_fires() {
+        assert!(
+            contains_terminal_block_syntax("ElseIf x=1 { Write 1 }"),
+            "braced ElseIf is block syntax the terminal cannot take a line at a time"
+        );
+        assert!(
+            !contains_terminal_block_syntax("ElseIfy=1"),
+            "a name that merely starts with the keyword is not the keyword"
+        );
     }
 
     // ── contains_terminal_block_syntax edge-case tests ────────────────────────

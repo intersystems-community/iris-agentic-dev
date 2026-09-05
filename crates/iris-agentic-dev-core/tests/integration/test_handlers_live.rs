@@ -12048,6 +12048,13 @@ async fn test_doc_put_returns_200_with_status_errors() {
     let client = reqwest::Client::new();
     let elicitation_store = iris_agentic_dev_core::elicitation::ElicitationStore::new();
 
+    // The pre-write source-control probe is no longer fail-open: an unanswerable probe returns
+    // SCM_PROBE_FAILED instead of writing without a checkout. This mock server answers only the
+    // PUT route, so the probe cannot run. Seed the checkout cache — the documented fast path for a
+    // doc we already hold — so the test still reaches the PUT/compile branch it exists to cover.
+    let checkout_cache = iris_agentic_dev_core::elicitation::CheckoutCache::new();
+    checkout_cache.mark("USER", "Test.Cls.cls");
+
     let result = handle_iris_doc(
         &conn,
         &client,
@@ -12072,7 +12079,7 @@ async fn test_doc_put_returns_200_with_status_errors() {
             server: None,
         },
         &elicitation_store,
-        &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
+        &checkout_cache,
     )
     .await;
 
@@ -12128,6 +12135,13 @@ async fn test_doc_put_compile_non_2xx_compile_request() {
     let client = reqwest::Client::new();
     let elicitation_store = iris_agentic_dev_core::elicitation::ElicitationStore::new();
 
+    // The pre-write source-control probe is no longer fail-open: an unanswerable probe returns
+    // SCM_PROBE_FAILED instead of writing without a checkout. This mock server answers only the
+    // PUT route, so the probe cannot run. Seed the checkout cache — the documented fast path for a
+    // doc we already hold — so the test still reaches the PUT/compile branch it exists to cover.
+    let checkout_cache = iris_agentic_dev_core::elicitation::CheckoutCache::new();
+    checkout_cache.mark("USER", "Test.ConcurrentCompile.cls");
+
     let result = handle_iris_doc(
         &conn,
         &client,
@@ -12152,7 +12166,7 @@ async fn test_doc_put_compile_non_2xx_compile_request() {
             server: None,
         },
         &elicitation_store,
-        &iris_agentic_dev_core::elicitation::CheckoutCache::new(),
+        &checkout_cache,
     )
     .await;
 
@@ -14934,17 +14948,95 @@ async fn test_iris_table_info_ddl_path_via_wiremock() {
         }
     }
     let v = parse_result(result);
-    // Success with DDL type, or NOT_FOUND if output was "NOT_FOUND" — both exercised
-    assert!(v["success"].is_boolean(), "table_info ddl: {v}");
-    if v["success"].as_bool() == Some(true) {
-        // Either class_projection (CLASS: found) or ddl_table (no CLASS:) — check for ddl_table
-        if v.get("result").and_then(|r| r["type"].as_str()) == Some("ddl_table") {
-            assert!(
-                v["result"]["data_global"].as_str().is_some(),
-                "data_global: {v}"
-            );
+    // The mock returns exactly `DDL_TABLE`, so the DDL branch is the only correct outcome. The
+    // previous version of this assertion was nested under `if success == true` and would have
+    // passed just as happily on a failure.
+    assert_eq!(v["success"].as_bool(), Some(true), "table_info ddl: {v}");
+    assert_eq!(v["result"]["type"].as_str(), Some("ddl_table"), "{v}");
+    assert_eq!(
+        v["result"]["data_global"].as_str(),
+        Some("^Ens_Config.ProductionsD"),
+        "{v}"
+    );
+}
+
+/// A generator error used to reach the DDL branch, which infers global names from the table string
+/// alone — so an IRIS failure came back as `success: true` with three invented global names.
+#[tokio::test]
+async fn test_iris_table_info_generator_error_is_not_success() {
+    use wiremock::MockServer;
+    let server = MockServer::start().await;
+    mount_scm_mocks(&server, "ERROR: <UNDEFINED> *rs at LOOKUP+4\n").await;
+
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let saved = std::env::var("IRIS_CONTAINER").ok();
+    unsafe {
+        std::env::remove_var("IRIS_CONTAINER");
+    }
+    let tools = make_wiremock_tools(&server);
+    let result = tools
+        .call_for_test(
+            "iris_table_info",
+            serde_json::json!({"table": "MyApp.Orders", "namespace": "USER"}),
+        )
+        .await;
+    unsafe {
+        if let Some(v) = saved {
+            std::env::set_var("IRIS_CONTAINER", v);
         }
     }
+    let v = parse_result(result);
+    assert_ne!(v["success"].as_bool(), Some(true), "{v}");
+    assert_eq!(v["error_code"].as_str(), Some("TABLE_INFO_FAILED"), "{v}");
+    assert!(
+        v["error"].as_str().unwrap_or("").contains("<UNDEFINED>"),
+        "the IRIS error text is what makes this actionable: {v}"
+    );
+    assert!(
+        v.get("result").is_none(),
+        "no table description may be reported when the lookup failed: {v}"
+    );
+}
+
+/// Output the parser does not recognise must be reported, not silently treated as a DDL table.
+#[tokio::test]
+async fn test_iris_table_info_unparseable_output_is_not_success() {
+    use wiremock::MockServer;
+    let server = MockServer::start().await;
+    mount_scm_mocks(&server, "unexpected chatter from somewhere else\n").await;
+
+    let _docker_guard = DOCKER_REQUIRED_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let saved = std::env::var("IRIS_CONTAINER").ok();
+    unsafe {
+        std::env::remove_var("IRIS_CONTAINER");
+    }
+    let tools = make_wiremock_tools(&server);
+    let result = tools
+        .call_for_test(
+            "iris_table_info",
+            serde_json::json!({"table": "MyApp.Orders", "namespace": "USER"}),
+        )
+        .await;
+    unsafe {
+        if let Some(v) = saved {
+            std::env::set_var("IRIS_CONTAINER", v);
+        }
+    }
+    let v = parse_result(result);
+    assert_ne!(v["success"].as_bool(), Some(true), "{v}");
+    assert_eq!(
+        v["error_code"].as_str(),
+        Some("TABLE_INFO_UNPARSEABLE"),
+        "{v}"
+    );
+    assert!(
+        v["raw_output"].as_str().unwrap_or("").contains("chatter"),
+        "the raw output is what lets a caller diagnose this: {v}"
+    );
 }
 
 /// lookup_transfer action=export → XML output (interop.rs export path).
@@ -16825,8 +16917,21 @@ async fn test_iris_table_info_table_via_wiremock() {
         )
         .await;
     let v = parse_result(result);
-    // Either NOT_FOUND error or a response — both acceptable, no panic is the key check
-    let _ = v; // the handler ran without panic
+    // "no panic is the key check" is not a check. The mocked query endpoint answers with a
+    // content row that has no `result` column, so the generator hands back an empty string —
+    // exactly the empty-success shape this release closed. Assert the handler reports that as a
+    // failure rather than an empty table description.
+    assert!(v.is_object(), "handler must return a JSON object, got: {v}");
+    let code = v["error_code"].as_str().unwrap_or("");
+    assert!(
+        !code.is_empty(),
+        "an empty generator result must surface an error_code, not a bare success: {v}"
+    );
+    assert_ne!(
+        v["success"].as_bool(),
+        Some(true),
+        "an empty generator result must not be reported as success: {v}"
+    );
 }
 
 // ── LLM-gated tool paths (iris_generate_class / iris_generate_test) ─────────────

@@ -1,7 +1,7 @@
 //! Admin tools — namespace/database, observability, security, HL7, Mermaid.
 //! Implements T077–T105 from spec 072-c.
 
-use crate::iris::connection::IrisConnection;
+use crate::iris::connection::{generator_error_message, is_generator_error, IrisConnection};
 use rmcp::{model::*, ErrorData as McpError};
 use std::sync::Arc;
 
@@ -87,19 +87,49 @@ Write "DONE|"_cnt,!"#
         .await
         .map_err(|e| McpError::internal_error(format!("IRIS execute failed: {e}"), None))?;
 
+    // A refused or failed read arrives as failure text inside `out`, not as `Err` — the HTTP call
+    // and the class compile both succeeded, only the `$Order` loop did not. Parsing that text found
+    // no `DONE|` line, so the preview came back empty and a confirm_token was minted anyway, which
+    // handed `global_kill` a valid confirmation for a global nobody had ever read. A preview that
+    // did not see the data must not authorise deleting it.
+    if let Some(msg) = generator_error_message(&out) {
+        return err_json(
+            "IRIS_EXECUTE_ERROR",
+            &format!(
+                "Could not read {global_ref} in namespace {ns}, so no confirm_token was issued: {}",
+                msg.trim()
+            ),
+        );
+    }
+
     let mut entries: Vec<serde_json::Value> = Vec::new();
     let mut total = 0u32;
+    let mut saw_done = false;
     for line in out.lines() {
         if line.is_empty() {
             continue;
         }
         if let Some(rest) = line.strip_prefix("DONE|") {
             total = rest.parse().unwrap_or(0);
+            saw_done = true;
         } else if let Some(idx) = line.find('|') {
             let key = &line[..idx];
             let val = &line[idx + 1..];
             entries.push(serde_json::json!({"key": key, "value": val}));
         }
+    }
+
+    // `DONE|<count>` is the last thing the loop writes, so its absence means the read never
+    // finished — output truncated, device moved, job killed. Zero entries plus no marker is not an
+    // empty global, and it must not mint a token either.
+    if !saw_done {
+        return err_json(
+            "IRIS_EXECUTE_ERROR",
+            &format!(
+                "Preview of {global_ref} in namespace {ns} did not complete (no DONE marker in output), so no confirm_token was issued. Raw output: {}",
+                out.trim()
+            ),
+        );
     }
 
     // Mint a confirmation token
@@ -296,7 +326,7 @@ While tRS.Next() {
         Err(e) => return err_json("IRIS_UNREACHABLE", &e.to_string()),
     };
     let base_out = base_out.trim();
-    if base_out.starts_with("ERROR:") {
+    if is_generator_error(base_out) {
         return err_json("IRIS_EXECUTE_ERROR", base_out);
     }
 
@@ -311,7 +341,7 @@ While tRS.Next() {
         match iris.execute_via_generator(fs_code, "%SYS", client).await {
             Ok(fs_out) => {
                 let fs_out = fs_out.trim().to_string();
-                if fs_out.starts_with("ERROR:") {
+                if is_generator_error(&fs_out) {
                     (
                         std::collections::HashMap::<String, serde_json::Value>::new(),
                         Some(format!("unavailable: {fs_out}")),
@@ -456,11 +486,108 @@ impl SystemPerfMode {
     }
 }
 
+/// SystemPerformance profiles shipped with every IRIS instance.
+pub const SYSPERF_PROFILES: &[&str] = &["test", "30mins", "4hours", "8hours", "12hours", "24hours"];
+
+/// Resolve the profile for `mode=start`, defaulting to `test` (5 minutes, 30-second samples) —
+/// the shortest shipped profile, so an unqualified start doesn't pin a collector on the
+/// instance for hours.
+///
+/// The profile is interpolated into an ObjectScript string literal, so anything outside
+/// `[A-Za-z0-9_]` is rejected rather than escaped.
+pub fn sysperf_profile_or_default(profile: Option<&str>) -> Result<String, String> {
+    let p = profile.map(str::trim).filter(|s| !s.is_empty());
+    let Some(p) = p else {
+        return Ok("test".to_string());
+    };
+    if !p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err(format!(
+            "invalid profile '{p}': only letters, digits and underscore are allowed. \
+             Profiles shipped with IRIS: {}",
+            SYSPERF_PROFILES.join(", ")
+        ));
+    }
+    Ok(p.to_string())
+}
+
+/// ObjectScript for `mode=start`.
+///
+/// `run^SystemPerformance` requires a profile name — the argument-less `Do run^SystemPerformance`
+/// throws `<UNDEFINED> pname` at `run+4`. The extrinsic form returns the new run ID directly,
+/// which is the only reliable way to get it: an in-flight run lives under
+/// `^IRIS.SystemPerformance("run",<runid>)` and gets no `("history")` node until it completes,
+/// so scanning history right after starting reports the *previous* run.
+///
+/// `run^SystemPerformance` leaves the current device pointing away from the generator's capture
+/// file, so `$IO` is snapshotted before the call and re-selected after it. Without that the
+/// `Write` lands nowhere and the tool sees an empty result with a residual
+/// `<NAMESPACE>...^%SYS.ProcessQuery` in `$ZERROR` — even though the run started fine.
+pub fn sysperf_start_code(profile: &str) -> String {
+    format!(
+        r#"ZN "%SYS"
+Set io=$IO
+Set tRun=$$run^SystemPerformance("{profile}")
+Use io
+Write tRun"#
+    )
+}
+
+/// ObjectScript for `mode=status`. Same device dance as [`sysperf_start_code`].
+pub fn sysperf_status_code(run_id: &str) -> String {
+    format!(
+        r#"ZN "%SYS"
+Set io=$IO
+Set tWait=$$waittime^SystemPerformance("{run_id}")
+Use io
+Write tWait"#
+    )
+}
+
+/// [`sysperf_status_code`] with the run ID validated first — it is interpolated into a quoted
+/// ObjectScript literal, and IRIS run IDs are `YYYYMMDD_HHMMSS_<profile>`.
+pub fn sysperf_status_code_checked(run_id: &str) -> Result<String, String> {
+    let rid = run_id.trim();
+    if rid.is_empty() {
+        return Err("mode=status requires run_id".to_string());
+    }
+    if !rid.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err(format!(
+            "invalid run_id '{rid}': only letters, digits and underscore are allowed. \
+             Run IDs look like 20260904_161059_test — use mode=last_runid to get the current one."
+        ));
+    }
+    Ok(sysperf_status_code(rid))
+}
+
+/// ObjectScript for `mode=last_runid`.
+///
+/// Reads the in-flight subtree first: while a run is collecting, its ID is under `("run")` and
+/// absent from `("history")`. Emits `<runid>|<in_progress>`.
+pub fn sysperf_last_runid_code() -> &'static str {
+    r#"ZN "%SYS"
+Set tRun=$O(^IRIS.SystemPerformance("run",""),-1)
+Set tHist=$O(^IRIS.SystemPerformance("history",""),-1)
+Write $S(tRun'="":tRun_"|1",1:tHist_"|0")"#
+}
+
+/// Split the `<runid>|<in_progress>` payload from [`sysperf_last_runid_code`].
+fn parse_last_runid(out: &str) -> (serde_json::Value, bool) {
+    let (rid, flag) = out.trim().split_once('|').unwrap_or((out.trim(), "0"));
+    let rid = rid.trim();
+    let run_id = if rid.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(rid.to_string())
+    };
+    (run_id, flag.trim() == "1")
+}
+
 pub async fn iris_system_performance_impl(
     iris: &IrisConnection,
     client: &reqwest::Client,
     mode: &str,
     run_id: Option<&str>,
+    profile: Option<&str>,
 ) -> Result<CallToolResult, McpError> {
     match SystemPerfMode::parse(mode) {
         None => ok_json(serde_json::json!({
@@ -468,27 +595,24 @@ pub async fn iris_system_performance_impl(
             "error": format!("unknown mode '{}'; valid values: start, status, last_runid", mode),
         })),
         Some(SystemPerfMode::LastRunId) => {
-            let code = r#"ZN "%SYS"
-Set tLast=$O(^IRIS.SystemPerformance("history",""),-1)
-Write tLast"#;
-            match iris.execute_via_generator(code, "%SYS", client).await {
+            match iris
+                .execute_via_generator(sysperf_last_runid_code(), "%SYS", client)
+                .await
+            {
                 Ok(out) => {
                     let val = out.trim();
-                    if val.starts_with("ERROR:") {
+                    if is_generator_error(val) {
                         return ok_json(serde_json::json!({
                             "success": false,
                             "error": val,
                         }));
                     }
-                    let run_id_out = if val.is_empty() {
-                        serde_json::Value::Null
-                    } else {
-                        serde_json::Value::String(val.to_string())
-                    };
+                    let (run_id_out, in_progress) = parse_last_runid(val);
                     ok_json(serde_json::json!({
                         "success": true,
                         "mode": "last_runid",
                         "run_id": run_id_out,
+                        "in_progress": in_progress,
                     }))
                 }
                 Err(e) => ok_json(serde_json::json!({
@@ -498,17 +622,24 @@ Write tLast"#;
             }
         }
         Some(SystemPerfMode::Start) => {
-            let code = r#"ZN "%SYS"
-Do run^SystemPerformance
-Set tLast=$O(^IRIS.SystemPerformance("history",""),-1)
-Write tLast"#;
-            match iris.execute_via_generator(code, "%SYS", client).await {
+            let profile = match sysperf_profile_or_default(profile) {
+                Ok(p) => p,
+                Err(e) => {
+                    return ok_json(serde_json::json!({
+                        "success": false,
+                        "error": e,
+                    }));
+                }
+            };
+            let code = sysperf_start_code(&profile);
+            match iris.execute_via_generator(&code, "%SYS", client).await {
                 Ok(out) => {
                     let val = out.trim();
-                    if val.starts_with("ERROR:") {
+                    if is_generator_error(val) {
                         return ok_json(serde_json::json!({
                             "success": false,
                             "error": val,
+                            "profile": profile,
                         }));
                     }
                     let run_id_out = if val.is_empty() {
@@ -519,34 +650,32 @@ Write tLast"#;
                     ok_json(serde_json::json!({
                         "success": true,
                         "mode": "start",
+                        "profile": profile,
                         "run_id": run_id_out,
                     }))
                 }
                 Err(e) => ok_json(serde_json::json!({
                     "success": false,
                     "error": e.to_string(),
+                    "profile": profile,
                 })),
             }
         }
         Some(SystemPerfMode::Status) => {
-            let rid = match run_id {
-                Some(r) if !r.trim().is_empty() => r.trim().to_string(),
-                _ => {
+            let rid = run_id.unwrap_or_default().trim().to_string();
+            let code = match sysperf_status_code_checked(&rid) {
+                Ok(c) => c,
+                Err(e) => {
                     return ok_json(serde_json::json!({
                         "success": false,
-                        "error": "mode=status requires run_id",
+                        "error": e,
                     }));
                 }
             };
-            let code = format!(
-                r#"ZN "%SYS"
-Set tWait=$$waittime^SystemPerformance("{rid}")
-Write tWait"#
-            );
             match iris.execute_via_generator(&code, "%SYS", client).await {
                 Ok(out) => {
                     let val = out.trim();
-                    if val.starts_with("ERROR:") {
+                    if is_generator_error(val) {
                         return ok_json(serde_json::json!({
                             "success": false,
                             "error": val,
@@ -583,7 +712,7 @@ Write tMember,"|",tName,"|",tType,"|",tPrimary"#;
     match iris.execute_via_generator(code, "%SYS", client).await {
         Ok(out) => {
             let out = out.trim();
-            if out.starts_with("ERROR:") {
+            if is_generator_error(out) {
                 return ok_json(serde_json::json!({
                     "success": false,
                     "error": out,
@@ -636,7 +765,12 @@ If tMember'=0 {{
   Quit
 }}
 Set tLocalInfo="",tSSLInfo=""
+; JoinMirrorAsAsyncMember opens sockets to the primary and can leave the current device pointed at
+; one of them. The generator captures output by making a temp file the current device, so a moved
+; $IO sends every Write below into the void and the caller sees an empty success. Restore it.
+Set tIO=$IO
 Set tSC=##class(SYS.Mirror).JoinMirrorAsAsyncMember("{mirror_name}","","{instance_name}","{primary_host}",{primary_port},{async_member_type},.tLocalInfo,.tSSLInfo)
+Use tIO
 If $$$ISERR(tSC) {{
   Write "ERROR:",$System.Status.GetErrorText(tSC),!
 }} Else {{
@@ -655,7 +789,7 @@ If $$$ISERR(tSC) {{
                     "mirror_name": existing,
                 }));
             }
-            if let Some(err) = out.strip_prefix("ERROR:") {
+            if let Some(err) = generator_error_message(out) {
                 let lc = err.to_lowercase();
                 if lc.contains("version") || lc.contains("incompatible") {
                     return ok_json(serde_json::json!({
@@ -711,7 +845,11 @@ If tPrimary {
   Write "ALREADY_PRIMARY",!
   Quit
 }
+; BecomePrimary reconfigures the mirror and can leave $IO on a device of its own choosing. The
+; generator reads output off the current device, so restore it before writing the verdict.
+Set tIO=$IO
 Set tResult=##class(SYS.Mirror).BecomePrimary()
+Use tIO
 If tResult {
   Write "OK",!
 } Else {
@@ -734,7 +872,7 @@ If tResult {
                     "error": "This instance is already the primary — no failover needed",
                 }));
             }
-            if let Some(err) = out.strip_prefix("ERROR:") {
+            if let Some(err) = generator_error_message(out) {
                 return ok_json(serde_json::json!({
                     "success": false,
                     "error_code": "MIRROR_FAILOVER_FAILED",
@@ -795,7 +933,12 @@ pub async fn iris_namespace_create_impl(
         r#"Set props("Name")="{name}"
 Set props("Globals")="{db}"
 Set props("Routines")="{name}"
+; CreateOne edits the CPF, which it does by opening the file — and that leaves the current device
+; on the CPF, not on the generator's capture file. Every Write below then went nowhere and
+; namespace creation reported success with no output to check. Restore $IO first.
+Set tIO=$IO
 Set tSC=##class(Config.Namespaces).CreateOne(.props)
+Use tIO
 If $$$ISERR(tSC) {{
   Write "ERROR:"_$System.Status.GetErrorText(tSC),!
 }} Else {{
@@ -805,7 +948,7 @@ If $$$ISERR(tSC) {{
     match iris.execute_via_generator(&code, "%SYS", client).await {
         Ok(out) => {
             let out = out.trim();
-            if out.starts_with("ERROR:") {
+            if is_generator_error(out) {
                 err_json("CREATE_FAILED", out)
             } else {
                 ok_json(serde_json::json!({
@@ -853,7 +996,7 @@ While tRS.Next() {
     match iris.execute_via_generator(&code, "%SYS", client).await {
         Ok(out) => {
             let out = out.trim();
-            if out.starts_with("ERROR:") {
+            if is_generator_error(out) {
                 return err_json("IRIS_EXECUTE_ERROR", out);
             }
             let stats: Vec<serde_json::Value> = out
@@ -1099,6 +1242,24 @@ Write "CONTENT|"_content,!"#
 
 // ── my_access (T093) ──────────────────────────────────────────────────────────
 
+/// Read the username out of a `Write $USERNAME` generator run, or say why there isn't one.
+///
+/// `execute_via_generator` reports IRIS-side failure inside the output string, so the failure text
+/// used to be taken for a username. `Security.Users` then matched nothing, and the no-rows branch
+/// of both callers answers `success: true` with `"roles": []` — the tools claimed the caller holds
+/// no roles when they had never established who the caller is. An empty output is the same lie
+/// without the error text.
+pub fn username_from_generator_output(out: &str) -> Result<String, String> {
+    if let Some(msg) = generator_error_message(out) {
+        return Err(msg.trim().to_string());
+    }
+    let name = out.trim();
+    if name.is_empty() {
+        return Err("IRIS returned no output for `Write $USERNAME`".to_string());
+    }
+    Ok(name.to_string())
+}
+
 pub async fn my_access_impl(
     iris: &IrisConnection,
     client: &reqwest::Client,
@@ -1109,10 +1270,18 @@ pub async fn my_access_impl(
         .execute_via_generator(code, &iris.namespace, client)
         .await
     {
-        Ok(out) => out.trim().to_string(),
+        Ok(out) => out,
         Err(e) => return err_json("IRIS_UNREACHABLE", &e.to_string()),
     };
-    let username = username_out.trim();
+    let username = match username_from_generator_output(&username_out) {
+        Ok(name) => name,
+        Err(msg) => {
+            return err_json(
+                "IRIS_EXECUTE_ERROR",
+                &format!("Could not determine the current IRIS username, so no permissions were checked: {msg}"),
+            )
+        }
+    };
 
     // Query Security.Users
     let sql =
@@ -1165,17 +1334,24 @@ pub async fn capability_matrix_impl(
     user: Option<&str>,
 ) -> Result<CallToolResult, McpError> {
     // Resolve username
-    let resolved_username: String;
     let username = if let Some(u) = user {
         u.to_string()
     } else {
         let code = r#"Write $USERNAME,!"#;
-        match iris.execute_via_generator(code, "%SYS", client).await {
-            Ok(out) => {
-                resolved_username = out.trim().to_string();
-                resolved_username.clone()
-            }
+        let out = match iris.execute_via_generator(code, "%SYS", client).await {
+            Ok(out) => out,
             Err(e) => return err_json("IRIS_UNREACHABLE", &e.to_string()),
+        };
+        // Same in-band failure as `my_access`: the failure text became the username, the
+        // `Security.Users` lookup missed, and the matrix reported an empty role set as success.
+        match username_from_generator_output(&out) {
+            Ok(name) => name,
+            Err(msg) => {
+                return err_json(
+                    "IRIS_EXECUTE_ERROR",
+                    &format!("Could not determine the current IRIS username, so no capabilities were resolved: {msg}"),
+                )
+            }
         }
     };
 
@@ -1250,7 +1426,7 @@ While tRS.Next() {
     match iris.execute_via_generator(code, namespace, client).await {
         Ok(out) => {
             let out = out.trim();
-            if out.starts_with("ERROR:") {
+            if is_generator_error(out) {
                 return err_json("IRIS_EXECUTE_ERROR", out);
             }
             let schemas: Vec<String> = out
@@ -1316,7 +1492,7 @@ While tRS.Next() {{
     {
         Ok(out) => {
             let out = out.trim();
-            if out.starts_with("ERROR:") {
+            if is_generator_error(out) {
                 return err_json("IRIS_EXECUTE_ERROR", out);
             }
             if segment.is_some() {

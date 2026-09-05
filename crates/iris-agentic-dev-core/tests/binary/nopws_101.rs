@@ -3,26 +3,31 @@
 // Run with: IAD_BINARY=./target/debug/iris-agentic-dev cargo test --test nopws_101_binary -- --include-ignored
 
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
-fn iad_binary() -> String {
-    std::env::var("IAD_BINARY").unwrap_or_else(|_| "./target/debug/iris-agentic-dev".to_string())
-}
-
-fn binary_exists() -> bool {
-    std::path::Path::new(&iad_binary()).exists()
-}
+// `require_iad_binary` resolves the path against the workspace root and panics when the binary is
+// missing. The local helper it replaced defaulted to the relative `./target/debug/...`, which never
+// resolves from a crate-root working directory, and reported the miss by returning early — so all
+// three tests in this file printed `ok` without executing an assertion for the whole 1.3.x line.
+// See `iris_agentic_dev_core::testing`.
+use iris_agentic_dev_core::testing::require_iad_binary;
 
 /// FR-012: Binary invocation test — spawn binary, call tools/list, assert iris_execute is listed.
 #[ignore]
 #[test]
 fn test_binary_tools_list_includes_iris_execute() {
-    if !binary_exists() {
-        eprintln!("IAD_BINARY not found at {}, skipping", iad_binary());
+    let Some(bin) = require_iad_binary() else {
         return;
-    }
+    };
 
-    let mut child = Command::new(iad_binary())
+    let mut child = std::process::Command::new(&bin)
+        // The MCP server is the `mcp` subcommand. Spawning the bare binary prints the usage
+        // banner and exits, which these tests read as an empty stdout.
+        .arg("mcp")
+        // Declare the gate state instead of inheriting the operator's (or the CI e2e job's):
+        // iris_execute and iris_compile are write tools and refuse when the gate is off.
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env_remove("IRIS_DESTRUCTIVE_TOOLS_ENABLED")
         .env("IRIS_HOST", "localhost")
         .env("IRIS_WEB_PORT", "52780")
         .env("IRIS_USERNAME", "_SYSTEM")
@@ -86,27 +91,39 @@ fn test_binary_tools_list_includes_iris_execute() {
 #[ignore]
 #[test]
 fn test_binary_iris_execute_has_execution_path_field_in_docker_only_mode() {
-    if !binary_exists() {
-        eprintln!("IAD_BINARY not found at {}, skipping", iad_binary());
+    let Some(bin) = require_iad_binary() else {
         return;
-    }
+    };
 
     use tempfile::TempDir;
 
     // Create a temp config with docker_only=true to force docker exec path
     let dir = TempDir::new().unwrap();
-    let config_content = format!(
-        r#"
+    let config_content = r#"
 container = "iris-dev-iris"
 namespace = "USER"
 nopws = true
 docker_only = true
-"#
-    );
+"#;
     let config_path = dir.path().join(".iris-agentic-dev.toml");
     std::fs::write(&config_path, config_content).unwrap();
 
-    let mut child = Command::new(iad_binary())
+    let mut child = std::process::Command::new(&bin)
+        // The MCP server is the `mcp` subcommand. Spawning the bare binary prints the usage
+        // banner and exits, which these tests read as an empty stdout.
+        .arg("mcp")
+        // Declare the gate state instead of inheriting the operator's (or the CI e2e job's):
+        // iris_execute and iris_compile are write tools and refuse when the gate is off.
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env_remove("IRIS_DESTRUCTIVE_TOOLS_ENABLED")
+        // The config file under OBJECTSCRIPT_WORKSPACE is what puts this run in docker_only
+        // mode. Inherited connection vars outrank it, so a shell (or the CI e2e job) with
+        // IRIS_HOST/IRIS_WEB_PORT set silently moved the call onto the Atelier path — where
+        // iris_compile has no execution_path field to assert on.
+        .env_remove("IRIS_HOST")
+        .env_remove("IRIS_WEB_PORT")
+        .env_remove("IRIS_CONTAINER")
+        .env_remove("IRIS_NAMESPACE")
         .env("OBJECTSCRIPT_WORKSPACE", dir.path())
         .env("IRIS_USERNAME", "_SYSTEM")
         .env("IRIS_PASSWORD", "SYS")
@@ -174,10 +191,9 @@ docker_only = true
 #[ignore]
 #[test]
 fn test_binary_iris_compile_has_execution_path_in_docker_only_mode() {
-    if !binary_exists() {
-        eprintln!("IAD_BINARY not found at {}, skipping", iad_binary());
+    let Some(bin) = require_iad_binary() else {
         return;
-    }
+    };
 
     use tempfile::TempDir;
 
@@ -191,7 +207,22 @@ docker_only = true
     let config_path = dir.path().join(".iris-agentic-dev.toml");
     std::fs::write(&config_path, config_content).unwrap();
 
-    let mut child = Command::new(iad_binary())
+    let mut child = std::process::Command::new(&bin)
+        // The MCP server is the `mcp` subcommand. Spawning the bare binary prints the usage
+        // banner and exits, which these tests read as an empty stdout.
+        .arg("mcp")
+        // Declare the gate state instead of inheriting the operator's (or the CI e2e job's):
+        // iris_execute and iris_compile are write tools and refuse when the gate is off.
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env_remove("IRIS_DESTRUCTIVE_TOOLS_ENABLED")
+        // The config file under OBJECTSCRIPT_WORKSPACE is what puts this run in docker_only
+        // mode. Inherited connection vars outrank it, so a shell (or the CI e2e job) with
+        // IRIS_HOST/IRIS_WEB_PORT set silently moved the call onto the Atelier path — where
+        // iris_compile has no execution_path field to assert on.
+        .env_remove("IRIS_HOST")
+        .env_remove("IRIS_WEB_PORT")
+        .env_remove("IRIS_CONTAINER")
+        .env_remove("IRIS_NAMESPACE")
         .env("OBJECTSCRIPT_WORKSPACE", dir.path())
         .env("IRIS_USERNAME", "_SYSTEM")
         .env("IRIS_PASSWORD", "SYS")

@@ -169,7 +169,7 @@ async fn e2e_system_performance_last_runid_community() {
         }
     };
 
-    let result = iris_system_performance_impl(&conn, &client, "last_runid", None)
+    let result = iris_system_performance_impl(&conn, &client, "last_runid", None, None)
         .await
         .expect("iris_system_performance_impl failed");
     let v = parse_json(result);
@@ -188,7 +188,121 @@ async fn e2e_system_performance_last_runid_community() {
             Some("last_runid"),
             "expected mode=last_runid, got: {v}"
         );
+        assert!(
+            v["in_progress"].is_boolean(),
+            "last_runid must report whether the run is still collecting, got: {v}"
+        );
     }
+}
+
+/// `mode=start` shipped calling `Do run^SystemPerformance` with no profile, which throws
+/// `<UNDEFINED> pname`. This is the test that was missing: start a real run against live IRIS,
+/// assert a run ID comes back, then confirm `last_runid` and `status` can see it.
+///
+/// Uses the `test` profile (5 minutes) and leaves it collecting — SystemPerformance has no
+/// cancel entry point, and the run is harmless on a dev container.
+#[tokio::test]
+#[ignore]
+async fn e2e_system_performance_start_returns_run_id() {
+    use iris_agentic_dev_core::tools::admin_tools::iris_system_performance_impl;
+
+    let (conn, client) = match make_conn() {
+        Some(c) => c,
+        None => {
+            eprintln!("IRIS_HOST not set — skipping e2e_system_performance_start_returns_run_id");
+            return;
+        }
+    };
+
+    let started = parse_json(
+        iris_system_performance_impl(&conn, &client, "start", None, Some("test"))
+            .await
+            .expect("start call failed"),
+    );
+    eprintln!("system_performance start response: {started}");
+
+    assert_eq!(
+        started["success"].as_bool(),
+        Some(true),
+        "mode=start must succeed against live IRIS, got: {started}"
+    );
+    assert_eq!(started["profile"].as_str(), Some("test"));
+    let run_id = started["run_id"]
+        .as_str()
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    assert!(
+        !run_id.is_empty(),
+        "start must return the run ID that run^SystemPerformance produced, got: {started}"
+    );
+
+    // The freshly started run is in flight, so it has no ("history") node yet. last_runid
+    // must still see it and flag it as in progress.
+    let last = parse_json(
+        iris_system_performance_impl(&conn, &client, "last_runid", None, None)
+            .await
+            .expect("last_runid call failed"),
+    );
+    eprintln!("system_performance last_runid after start: {last}");
+    assert_eq!(
+        last["run_id"].as_str(),
+        Some(run_id.as_str()),
+        "last_runid must report the in-flight run, not the newest completed one, got: {last}"
+    );
+    assert_eq!(
+        last["in_progress"].as_bool(),
+        Some(true),
+        "a run that just started is still collecting, got: {last}"
+    );
+
+    // status resolves the run ID rather than reporting "no such runid".
+    let status = parse_json(
+        iris_system_performance_impl(&conn, &client, "status", Some(&run_id), None)
+            .await
+            .expect("status call failed"),
+    );
+    eprintln!("system_performance status for {run_id}: {status}");
+    assert_eq!(status["success"].as_bool(), Some(true));
+    let wait = status["wait_time"].as_str().unwrap_or_default();
+    assert!(
+        !wait.contains("no such runid"),
+        "status must recognise the run ID returned by start, got: {status}"
+    );
+}
+
+/// The profile is interpolated into an ObjectScript string literal, so a hostile value must be
+/// rejected in Rust and never reach IRIS.
+#[tokio::test]
+#[ignore]
+async fn e2e_system_performance_start_rejects_bad_profile() {
+    use iris_agentic_dev_core::tools::admin_tools::iris_system_performance_impl;
+
+    let (conn, client) = match make_conn() {
+        Some(c) => c,
+        None => {
+            eprintln!("IRIS_HOST not set — skipping");
+            return;
+        }
+    };
+
+    let v = parse_json(
+        iris_system_performance_impl(
+            &conn,
+            &client,
+            "start",
+            None,
+            Some(r#"test") Do ^%ZSTOP //"#),
+        )
+        .await
+        .expect("start call failed"),
+    );
+    eprintln!("system_performance start with hostile profile: {v}");
+    assert_eq!(v["success"].as_bool(), Some(false));
+    assert!(
+        v["error"].as_str().unwrap_or_default().contains("profile"),
+        "error must name the offending parameter, got: {v}"
+    );
 }
 
 // iris_system_performance: mode=status without run_id returns error
@@ -205,7 +319,7 @@ async fn e2e_system_performance_status_missing_run_id() {
         }
     };
 
-    let result = iris_system_performance_impl(&conn, &client, "status", None)
+    let result = iris_system_performance_impl(&conn, &client, "status", None, None)
         .await
         .expect("iris_system_performance_impl failed");
     let v = parse_json(result);

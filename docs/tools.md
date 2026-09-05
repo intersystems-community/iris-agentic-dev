@@ -860,22 +860,28 @@ iris_generate_test(class_name="MyApp.Service")
 
 Start, stop, update, check, or recover a production.
 
-| Parameter    | Type   | Default  | Notes                                                                                                                                                     |
-| ------------ | ------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `action`     | string | —        | **Required.** `"status"` \| `"start"` \| `"stop"` \| `"update"` \| `"check"` \| `"recover"` \| `"get_autostart"` \| `"set_autostart"` \| `"needs_update"` |
-| `production` | string | —        | Production class name; defaults to the currently running production                                                                                       |
-| `timeout`    | int    | `30`     | Seconds; for `stop`/`update`                                                                                                                              |
-| `force`      | bool   | `false`  | For `stop`/`update`                                                                                                                                       |
-| `full`       | bool   | `false`  | `status` only: include per-item state                                                                                                                     |
-| `enabled`    | bool   | —        | `set_autostart` only                                                                                                                                      |
-| `namespace`  | string | `"USER"` |                                                                                                                                                           |
+| Parameter         | Type   | Default  | Notes                                                                                                                                 |
+| ----------------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `action`          | string | —        | **Required.** `"status"` \| `"start"` \| `"stop"` \| `"update"` \| `"check"` \| `"recover"` \| `"get_autostart"` \| `"set_autostart"` |
+| `production_name` | string | —        | Production class name for `start` and `stop`; defaults to the currently running production                                            |
+| `production`      | string | —        | `set_autostart` only — the class name to autostart. **No other action reads this key**                                                |
+| `timeout`         | int    | `30`     | Seconds; `stop` only                                                                                                                  |
+| `force`           | bool   | `false`  | `stop` only                                                                                                                           |
+| `full`            | bool   | `false`  | `status` only: include per-item state                                                                                                 |
+| `enabled`         | bool   | —        | `set_autostart` only                                                                                                                  |
+| `namespace`       | string | `"USER"` |                                                                                                                                       |
+
+`production_name` and `production` are two distinct keys, and each action reads exactly
+one of them. Passing `production` to `start` is silently ignored — the production name
+comes out empty and the call starts nothing.
 
 Actions that modify production state require `IRIS_CONTAINER`.
 
 ```text
 iris_production(action="status")
 iris_production(action="stop", timeout=60, force=true)
-iris_production(action="start", production="MyApp.Production")
+iris_production(action="start", production_name="MyApp.Production")
+iris_production(action="set_autostart", production="MyApp.Production", enabled=true)
 ```
 
 ---
@@ -1108,16 +1114,28 @@ operations that require a primary.
 
 ### `iris_system_performance`
 
-Start, poll, or retrieve the last run ID for an IRIS SystemPerformance profile.
+Start, poll, or retrieve the last run ID for an IRIS SystemPerformance (pbuttons) profile.
 
-| Parameter | Type   | Default | Notes                                           |
-| --------- | ------ | ------- | ----------------------------------------------- |
-| `mode`    | string | —       | **Required.** `start` / `status` / `last_runid` |
-| `run_id`  | string | —       | Required for `mode=status`                      |
-| `server`  | string | —       | Named server; omit for default                  |
+| Parameter | Type   | Default | Notes                                                                                 |
+| --------- | ------ | ------- | ------------------------------------------------------------------------------------- |
+| `mode`    | string | —       | **Required.** `start` / `status` / `last_runid`                                       |
+| `profile` | string | `test`  | `mode=start` only. `test` (5 min), `30mins`, `4hours`, `8hours`, `12hours`, `24hours` |
+| `run_id`  | string | —       | Required for `mode=status`                                                            |
+| `server`  | string | —       | Named server; omit for default                                                        |
 
 **Response fields:** `success` (bool), `mode` (string), `run_id` (string or null).
-`mode=status` also returns `wait_time` (string from `$$waittime^SystemPerformance`).
+
+- `mode=start` also returns `profile`. The run ID comes straight from
+  `$$run^SystemPerformance(profile)`.
+- `mode=last_runid` also returns `in_progress` (bool). It reads
+  `^IRIS.SystemPerformance("run")` before `("history")`, so a run that is still collecting is
+  reported with `in_progress: true` — a run gets no history node until it finishes.
+- `mode=status` also returns `wait_time` (string from `$$waittime^SystemPerformance`, e.g.
+  `"7 minutes"`).
+
+The completed report lands in the instance's mgr directory as
+`<host>_<instance>_<run_id>.html`. There is no cancel entry point — a started profile runs to
+completion, so prefer `test` unless you need a longer window.
 
 ### `iris_database_stats`
 
@@ -1143,14 +1161,19 @@ requires `dataPolicy = "allow"` on the connection.
 
 ### `query_audit_log`
 
-Query the `%SYS_Audit.Log` table for recent events.
+Query the `%SYS.Audit` table for recent events.
 
-| Parameter    | Type   | Default | Notes                              |
-| ------------ | ------ | ------- | ---------------------------------- |
-| `event_type` | string | —       | Filter by `Event` column substring |
-| `user`       | string | —       | Filter by `SystemID` substring     |
-| `limit`      | number | `100`   | Max rows (1–200)                   |
-| `server`     | string | —       | Named server; omit for default     |
+Both filters are equality comparisons (`EventType = ?`, `Username = ?`), not substring
+matches — `event_type="Login"` will not find `LoginFailure`.
+
+| Parameter    | Type   | Default | Notes                                              |
+| ------------ | ------ | ------- | -------------------------------------------------- |
+| `event_type` | string | —       | Exact match on the `EventType` column              |
+| `user`       | string | —       | Exact match on the `Username` column               |
+| `start`      | string | —       | Lower bound on `UTCTimeStamp`, inclusive; ISO 8601 |
+| `end`        | string | —       | Upper bound on `UTCTimeStamp`, inclusive; ISO 8601 |
+| `limit`      | number | `100`   | Max rows; clamped to 1–500                         |
+| `server`     | string | —       | Named server; omit for default                     |
 
 ### `stream_inspect`
 
@@ -1277,13 +1300,14 @@ iris_admin(action="view_locks")
 
 **`view_processes`** — shows running IRIS processes. Columns include process ID,
 namespace, routine+label (i.e. where the process is executing), CPU time, and whether
-the process is suspended. The `namespace_filter` parameter narrows results to a single
-namespace. Process user names are redacted in the response (PHI precaution) unless your
-connection has `dataPolicy = "allow"`.
+the process is suspended. The `namespace` parameter narrows results to a single
+namespace. Process user names are redacted in the response (PHI precaution) unless the
+call passes `dataPolicy = "allow"`; the default is `block`, which refuses the call
+outright.
 
 ```text
-iris_admin(action="view_processes")
-iris_admin(action="view_processes", namespace_filter="MYAPP")
+iris_admin(action="view_processes", dataPolicy="redact")
+iris_admin(action="view_processes", dataPolicy="redact", namespace="MYAPP")
 ```
 
 **`namespace_mappings`** — returns the global, package, and routine mappings for a
@@ -1296,12 +1320,12 @@ iris_admin(action="namespace_mappings", namespace="MYAPP")
 ```
 
 **`database_status`** — calls `SYS.Database:FreeSpace` and returns size, free space, and
-journal state for every database. Pass `name_filter` to narrow to a substring match on
+journal state for every database. Pass `name` to narrow to a substring match on
 the database path.
 
 ```text
 iris_admin(action="database_status")
-iris_admin(action="database_status", name_filter="MYAPP")
+iris_admin(action="database_status", name="MYAPP")
 ```
 
 **`journal_search`** — scans the IRIS journal for global set/kill records in a time
@@ -1315,8 +1339,19 @@ iris_admin(action="journal_search",
                        "to":   "2026-01-15T23:59:59Z"})
 ```
 
-For standalone journal access with the same parameters, the `journal_search` tool
-(Administration section below) is an alias that does not require `iris_admin`.
+For standalone journal access there is also a `journal_search` tool (Administration
+section below) that does not require `iris_admin`. It is **not** an alias — the two take
+different parameter names for the same concepts, and passing one tool's names to the
+other gets them dropped without an error:
+
+| Concept       | `iris_admin(action="journal_search")` | standalone `journal_search` |
+| ------------- | ------------------------------------- | --------------------------- |
+| Time window   | `time_range={"from": …, "to": …}`     | `start` / `end`             |
+| Result cap    | `max_records` (default 100, max 1000) | `max_entries` (1–500)       |
+| PHI gate      | `dataPolicy="allow"` on the call      | connection `dataPolicy`     |
+| Global filter | `global_pattern`                      | `global_pattern`            |
+
+`global_pattern` is the only name they share.
 
 ---
 
@@ -1333,15 +1368,24 @@ Write actions require `IRIS_WRITE_TOOLS_ENABLED=1`.
 | `list_databases`     | —                                                                                                          |
 | `list_users`         | —                                                                                                          |
 | `list_roles`         | —                                                                                                          |
-| `list_webapps`       | `type_filter` (string, optional)                                                                           |
+| `list_webapps`       | `type` (string, optional)                                                                                  |
 | `get_webapp`         | `path` (string, required)                                                                                  |
 | `check_permission`   | `resource` (string, required), `permission` (string, required)                                             |
 | `view_locks`         | —                                                                                                          |
-| `view_processes`     | `namespace_filter` (string, optional)                                                                      |
+| `view_processes`     | `namespace` (string, optional)                                                                             |
 | `namespace_mappings` | `namespace` (string, optional)                                                                             |
-| `database_status`    | `name_filter` (string, optional)                                                                           |
+| `database_status`    | `name` (string, optional)                                                                                  |
 | `list_user_roles`    | `username` (string, required)                                                                              |
 | `journal_search`     | `global_pattern` (string), `time_range` (`{from, to}` ISO8601), `max_records` (int, default 100, max 1000) |
+
+`iris_admin` reads its arguments by key out of an open parameter map, so a key it does
+not recognise is dropped without an error — a filter typed as `type_filter` or
+`name_filter` returns the unfiltered result set, not a complaint.
+
+`view_processes` and `journal_search` redact PHI according to `dataPolicy` in
+`[policy.<server>]`, which defaults to `block`. It used to be a call parameter, which meant
+a caller could authorize its own bulk journal read by passing `dataPolicy: "allow"`. Passing
+it now does nothing. `journal_search` needs `dataPolicy = "allow"` on the connection.
 
 **Write actions** (require `IRIS_WRITE_TOOLS_ENABLED=1`):
 

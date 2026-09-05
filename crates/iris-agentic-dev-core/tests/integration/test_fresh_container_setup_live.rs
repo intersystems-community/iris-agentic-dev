@@ -1,10 +1,13 @@
 // Live IRIS integration tests for 099-fresh-container-setup actions.
 // Requires: iris-dev-iris running at localhost:52780
-// Run: IRIS_WRITE_TOOLS_ENABLED=1 IRIS_HOST=localhost IRIS_WEB_PORT=52780
+// Run: IRIS_HOST=localhost IRIS_WEB_PORT=52780
 //        cargo test --test test_fresh_container_setup_live -- --ignored --test-threads=1
+//
+// The gates are pinned in `admin_call_live` below, not asked of the operator: an instruction in a
+// comment is not enforcement, and the version of this header that asked for
+// IRIS_WRITE_TOOLS_ENABLED=1 meant the suite silently measured the caller's shell instead.
 
 #![allow(unused)]
-use serde_json;
 
 fn admin_call_live(action: serde_json::Value, extra_env: &[(&str, &str)]) -> serde_json::Value {
     use std::io::{BufRead, BufReader, Write};
@@ -49,7 +52,21 @@ fn admin_call_live(action: serde_json::Value, extra_env: &[(&str, &str)]) -> ser
             std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".into()),
         )
         .env("IRIS_NAMESPACE", "USER")
-        .env("IRIS_TOOLSET", "merged");
+        .env("IRIS_TOOLSET", "merged")
+        // Every test here calls a write action on `iris_admin` and asserts `success == true`, so the
+        // gate state is part of the test, not part of the operator's shell. Declared here rather
+        // than requested in the header: unpinned, these passed in the CI e2e job (which exports both
+        // gates at job level) and returned WRITE_TOOLS_DISABLED for anyone who followed the run
+        // instructions literally.
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        // The three actions under test — clear_password_change_flag, unlock_user,
+        // fresh_container_setup — are WriteClass::Write, while `iris_admin`'s default is
+        // Destructive (write_gate.rs:542-548). Pinning this off is what keeps that classification
+        // asserted instead of hidden behind a leaked destructive gate.
+        .env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "0")
+        // Admin writes are behind a second, independent gate (`admin::admin_writes_enabled`), so
+        // without this every call answers ADMIN_WRITE_DISABLED before reaching IRIS.
+        .env("IRIS_ADMIN_TOOLS", "1");
 
     for (k, v) in extra_env {
         cmd.env(k, v);
@@ -98,6 +115,7 @@ fn admin_call_live(action: serde_json::Value, extra_env: &[(&str, &str)]) -> ser
         }
     }
     child.kill().ok();
+    child.wait().ok();
 
     let resp = results.iter().find(|r| r["id"] == 2).cloned();
     resp.map(|r| {

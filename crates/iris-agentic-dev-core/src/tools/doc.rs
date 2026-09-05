@@ -542,13 +542,49 @@ async fn write_with_scm(
     // Only such a "we hold it" outcome is safe to cache — NOT NO_SCM (no source control at all),
     // where there is no checkout to remember.
     let mut we_hold_checkout = false;
-    if let Ok(out) = iris.execute_via_generator(&scm_check, ns, client).await {
-        let out = out.trim().to_string();
-        // "NO_SCM"/empty → no source control; "PROCEED" → we already hold the checkout.
+    // A probe that did not run is not the same answer as "this instance has no source control", and
+    // the difference decides whether the checkout gate applies. Both the `Err` arm and an empty or
+    // `ERROR(...)` output used to fall through to `do_write` — a fail-open, so an unreachable or
+    // device-clobbered probe wrote to a document the operator may not hold. Refuse instead: only an
+    // explicit `NO_SCM` from IRIS means there is no source control to satisfy.
+    let probe = match iris.execute_via_generator(&scm_check, ns, client).await {
+        Ok(v) => v,
+        Err(e) => {
+            return err_json(
+                "SCM_PROBE_FAILED",
+                &format!(
+                    "could not determine source-control state for {name} in {ns}, so the write was \
+                     refused rather than attempted without a checkout: {e}"
+                ),
+            )
+        }
+    };
+    {
+        let out = probe.trim().to_string();
+        if crate::iris::connection::is_generator_error(&out) {
+            return err_json(
+                "SCM_PROBE_FAILED",
+                &format!(
+                    "source-control probe for {name} in {ns} failed on the IRIS side, so the write \
+                     was refused rather than attempted without a checkout: {out}"
+                ),
+            );
+        }
+        if out.is_empty() {
+            return err_json(
+                "SCM_PROBE_FAILED",
+                &format!(
+                    "source-control probe for {name} in {ns} returned no output. That is not the \
+                     same as 'no source control' — refusing the write rather than bypassing the \
+                     checkout. Retry, or check the IRIS console log."
+                ),
+            );
+        }
+        // "NO_SCM" → no source control; "PROCEED" → we already hold the checkout.
         // Both skip the checkout dialog and fall through to do_write below.
         if out.starts_with("PROCEED") {
             we_hold_checkout = true;
-        } else if out != "NO_SCM" && !out.is_empty() {
+        } else if out != "NO_SCM" {
             let parts: Vec<&str> = out.splitn(2, '|').collect();
             let action_code = parts
                 .first()
@@ -1817,7 +1853,7 @@ pub async fn handle_iris_execute_method(
 
     // Check for generator-level errors (Catch block writes "ERROR: ...")
     let trimmed = output.trim();
-    if let Some(stripped) = trimmed.strip_prefix("ERROR: ") {
+    if let Some(stripped) = crate::iris::connection::generator_error_message(trimmed) {
         return err_json("IRIS_EXECUTE_ERROR", stripped.trim());
     }
 

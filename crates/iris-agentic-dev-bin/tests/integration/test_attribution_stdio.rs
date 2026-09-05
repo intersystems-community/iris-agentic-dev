@@ -13,15 +13,12 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+// A relative `IAD_BINARY` — the form the doc comment above tells you to pass — used to be resolved
+// against the process working directory, which for a workspace member's test binary is the *member*
+// directory. `iad_binary_path` resolves relative values against the workspace root, and it also
+// falls back to the release profile so `cargo test --release` finds its own binary.
 fn iad_binary() -> std::path::PathBuf {
-    if let Ok(p) = std::env::var("IAD_BINARY") {
-        return std::path::PathBuf::from(p);
-    }
-    let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.pop(); // crates/iris-agentic-dev-bin
-    p.pop(); // crates/
-    p.push("target/debug/iris-agentic-dev");
-    p
+    iris_agentic_dev_core::testing::iad_binary_path()
 }
 
 /// Spawn the binary in MCP mode with live IRIS env vars.
@@ -57,6 +54,11 @@ fn spawn_mcp_live() -> Option<(
             "IRIS_NAMESPACE",
             std::env::var("IRIS_NAMESPACE").unwrap_or_else(|_| "USER".to_string()),
         )
+        // The assertion below is on the literal User-Agent marker, and `IRIS_AGENT_LABEL`
+        // (connection.rs:124) rewrites exactly that string — `test_exec_live.rs:117` sets it
+        // deliberately, so a shell or a sibling test run that exports it turns this into a failure
+        // about a label nobody here chose.
+        .env_remove("IRIS_AGENT_LABEL")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());

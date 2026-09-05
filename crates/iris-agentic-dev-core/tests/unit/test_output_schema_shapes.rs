@@ -252,10 +252,13 @@ async fn test_iris_lookup_transfer_no_connection_response_matches_declared_shape
 // and each impl function's own `Option<&IrisConnection>` match returns a real, deterministic
 // IRIS_UNREACHABLE error, not a mock.
 
+/// `iris_message_body` is a bulk-PHI tool, so it never reaches its connection check here: gate [2]
+/// blocks it first. Passing `dataPolicy: "allow"` in the params used to get past that gate, which
+/// is the self-authorization hole 1.3.2 closed — the policy is read from `[policy.<server>]`, never
+/// from the caller. The shape contract is the point of this test either way, so assert it on the
+/// response the tool actually returns.
 #[tokio::test]
 async fn test_iris_message_body_no_connection_response_matches_declared_shape() {
-    // dataPolicy defaults to "block" (PHI-gated) — must opt in past that check to reach the
-    // connection check this test is actually exercising.
     let body = call(
         &tools(),
         "iris_message_body",
@@ -263,8 +266,11 @@ async fn test_iris_message_body_no_connection_response_matches_declared_shape() 
     )
     .await;
     assert_eq!(body["success"], false);
-    assert_eq!(body["error_code"], "IRIS_UNREACHABLE");
-    assert!(body["error"].is_string());
+    assert_eq!(
+        body["error_code"], "DATA_POLICY_BLOCKED",
+        "caller-supplied dataPolicy must not unlock a bulk-PHI tool: {body}"
+    );
+    assert!(body["message"].is_string() || body["error"].is_string());
 }
 
 #[tokio::test]

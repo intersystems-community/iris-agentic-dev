@@ -9,7 +9,14 @@ use crate::policy::patterns::{first_match, matches_any, PHI_NAME_PATTERNS};
 
 /// Tools that access PHI in bulk and cannot be made PHI-aware at field level.
 /// Hard-blocked on any policy other than `Allow`. No `acknowledgePhi` bypass.
-const BULK_PHI_TOOLS: &[&str] = &["journal_search", "view_message_body"];
+///
+/// These are matched against the name the router dispatches on, so every entry has to be a
+/// registered tool name. `view_message_body` sat here from 051 until 1.3.2 and never matched
+/// anything — the real tool is `iris_message_body`, so the gate was dead for the one tool it
+/// most needed to cover. Public so `test_data_policy_gate.rs` can assert every entry appears in
+/// [`crate::tools::write_gate::CLASSIFICATION`]; a name typo in a security gate fails open and
+/// looks exactly like a permitted call.
+pub const BULK_PHI_TOOLS: &[&str] = &["journal_search", "iris_message_body"];
 
 /// Gate [2]: hard-block bulk-PHI tools when dataPolicy is not Allow.
 ///
@@ -33,6 +40,7 @@ pub fn check_bulk_phi_gate(
     };
 
     Some(serde_json::json!({
+        "success": false,
         "error_code": "DATA_POLICY_BLOCKED",
         "data_policy_blocked": true,
         "server_name": server_name,
@@ -68,6 +76,7 @@ pub fn check_phi_name_gate(
     let matched = first_match(global_name, PHI_NAME_PATTERNS).unwrap_or("(unknown)");
 
     Some(serde_json::json!({
+        "success": false,
         "error_code": "PHI_GATE_BLOCKED",
         "phi_gate_blocked": true,
         "server_name": server_name,

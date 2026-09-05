@@ -72,12 +72,40 @@ fn no_params() -> serde_json::Value {
     serde_json::json!({})
 }
 
-// ── No policy: all tools permitted ───────────────────────────────────────────
+// ── No policy: the strict default, not an absence of gates ───────────────────
 
 #[test]
-fn no_policy_always_permits() {
+fn no_policy_permits_ordinary_tools() {
     let r = dispatch_gate("iris_execute", "server", None, &no_params());
-    assert!(r.is_ok(), "no policy → all tools permitted");
+    assert!(
+        r.is_ok(),
+        "no policy must not block a tool the default policy permits"
+    );
+}
+
+/// A connection with no `[policy.<server>]` section used to skip gates [1]–[4] entirely, which
+/// made the bulk-PHI hard block opt-in. `journal_search` would dump journal records — global
+/// names and values — on any unconfigured connection.
+#[test]
+fn no_policy_still_blocks_bulk_phi() {
+    let r = dispatch_gate("journal_search", "server", None, &no_params());
+    assert!(
+        r.is_err(),
+        "bulk-PHI hard block must fire on an unconfigured connection"
+    );
+    assert_eq!(r.unwrap_err()["error_code"], "DATA_POLICY_BLOCKED");
+}
+
+/// Same hole on the other side: the system blocklist is documented as non-configurable, but with
+/// no policy section gate [3] never ran, so `iris_global` reached `^oddDEF` unimpeded.
+#[test]
+fn no_policy_still_blocks_system_globals() {
+    let params = serde_json::json!({ "global_name": "oddDEF", "action": "set" });
+    let r = dispatch_gate("iris_global", "server", None, &params);
+    assert!(
+        r.is_err(),
+        "system blocklist must fire on an unconfigured connection"
+    );
 }
 
 // ── Gate [1]: mcpTemplate env gate ───────────────────────────────────────────
@@ -188,10 +216,14 @@ fn gate2_journal_search_permitted_when_policy_allow() {
     assert!(r.is_ok(), "journal_search permitted with dataPolicy=allow");
 }
 
+/// The registered tool is `iris_message_body`. This test named `view_message_body` — a tool that has
+/// never existed — and passed, because `BULK_PHI_TOOLS` held the same wrong string. Two artifacts
+/// agreeing with each other is not evidence; `every_bulk_phi_tool_is_a_registered_tool` in
+/// `test_data_policy_gate.rs` is what makes this checkable.
 #[test]
-fn gate2_view_message_body_blocked() {
+fn gate2_iris_message_body_blocked() {
     let r = dispatch_gate(
-        "view_message_body",
+        "iris_message_body",
         "iris-dev",
         Some(&policy_dev_block()),
         &no_params(),
@@ -487,5 +519,207 @@ fn gate0_permits_iris_query_read_of_dictionary() {
     assert!(
         r.is_ok(),
         "read-mode %Dictionary introspection must be permitted"
+    );
+}
+
+/// `iris_execute_method` names a class and a method directly, which reaches everything the
+/// ObjectScript gate blocks. It carries no `code` param, so gate [0] used to skip it and
+/// `class="%SYSTEM.OBJ", method="Delete"` deleted a class with nothing recorded.
+#[test]
+fn gate0_blocks_execute_method_code_apis() {
+    for (class, method) in &[
+        ("%SYSTEM.OBJ", "Delete"),
+        ("%SYSTEM.OBJ", "Compile"),
+        ("%SYSTEM.OBJ", "Load"),
+        ("%RoutineMgr", "Delete"),
+        ("%Compiler.UDL.TextServices", "SetTextFromString"),
+        ("%Dictionary.ClassDefinition", "%DeleteId"),
+    ] {
+        let params = serde_json::json!({ "class": class, "method": method, "args": [] });
+        let r = dispatch_gate("iris_execute_method", "iris-dev", None, &params);
+        assert!(
+            r.is_err(),
+            "iris_execute_method must not reach {class}.{method}"
+        );
+        assert_eq!(r.unwrap_err()["error_code"], "CODE_EDIT_BLOCKED");
+    }
+}
+
+#[test]
+fn gate0_permits_ordinary_execute_method() {
+    for (class, method) in &[
+        ("%SYSTEM.Version", "GetVersion"),
+        ("%SYS.Journal.System", "GetCurrentFile"),
+        ("MyApp.Util", "Format"),
+        ("%Dictionary.CompiledClass", "%OpenId"),
+    ] {
+        let params = serde_json::json!({ "class": class, "method": method, "args": [] });
+        let r = dispatch_gate("iris_execute_method", "iris-dev", None, &params);
+        assert!(r.is_ok(), "{class}.{method} must stay callable");
+    }
+}
+
+/// `mode="read"` plus `force=true` skips the read-only SQL validation, and gate [0] only looked
+/// at `mode="write"` — so this was the way to send DML at the code dictionary without either
+/// check running.
+#[test]
+fn gate0_blocks_forced_read_mode_dictionary_write() {
+    let params = serde_json::json!({
+        "namespace": "USER",
+        "mode": "read",
+        "force": true,
+        "query": "DELETE FROM %Dictionary.ClassDefinition WHERE ID='My.Class'",
+    });
+    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    assert!(
+        r.is_err(),
+        "force=true must not be a way past the code-edit gate"
+    );
+    assert_eq!(r.unwrap_err()["error_code"], "CODE_EDIT_BLOCKED");
+}
+
+#[test]
+fn gate0_permits_forced_write_to_app_table() {
+    let params = serde_json::json!({
+        "namespace": "USER",
+        "mode": "read",
+        "force": true,
+        "query": "DELETE FROM MyApp.Patient WHERE ID=1",
+    });
+    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    assert!(
+        r.is_ok(),
+        "force=true against an application table is not a code edit"
+    );
+}
+
+/// Every gate rejection has to look like every other tool error. The declared output shape is
+/// `{success: false, error_code, ...}`, and until 1.3.2 no gate set `success` at all — so
+/// `test_iris_message_body_no_connection_response_matches_declared_shape` read `Null` there the
+/// moment gate [2] started firing. A caller that branches on `success` treats a missing field as
+/// "not false" and reads the block as a pass.
+#[test]
+fn every_gate_rejection_carries_success_false_and_an_error_code() {
+    // One case per gate, in dispatch order: [0] code-edit, [1] env template, [2] bulk PHI,
+    // [3] system blocklist, [4] PHI name.
+    let cases: Vec<(&str, ConnectionPolicy, serde_json::Value, &str)> = vec![
+        (
+            "iris_execute",
+            policy_dev_allow(),
+            serde_json::json!({"code": "do ##class(%SYSTEM.OBJ).Delete(\"My.Class\")"}),
+            "CODE_EDIT_BLOCKED",
+        ),
+        (
+            "iris_compile",
+            policy_live(),
+            serde_json::json!({"name": "My.Class.cls"}),
+            "ENV_GATE_BLOCKED",
+        ),
+        (
+            "iris_message_body",
+            policy_dev_block(),
+            serde_json::json!({"message_id": "1"}),
+            "DATA_POLICY_BLOCKED",
+        ),
+        (
+            "iris_global",
+            policy_dev_allow(),
+            serde_json::json!({"global_name": "oddDEF"}),
+            "SYSTEM_BLOCKLIST",
+        ),
+        (
+            "iris_global",
+            policy_dev_allow(),
+            serde_json::json!({"global_name": "PAPMI"}),
+            "PHI_GATE_BLOCKED",
+        ),
+    ];
+
+    for (tool, policy, params, expected_code) in cases {
+        let e = dispatch_gate(tool, &policy.server_name.clone(), Some(&policy), &params)
+            .expect_err(&format!("{tool} must be blocked with {expected_code}"));
+        assert_eq!(
+            e["error_code"], expected_code,
+            "wrong gate fired for {tool}: {e}"
+        );
+        assert_eq!(
+            e["success"],
+            serde_json::Value::Bool(false),
+            "{expected_code} must set success: false, got {e}"
+        );
+        assert!(
+            e["message"].is_string() || e["error"].is_string(),
+            "{expected_code} must carry human-readable text: {e}"
+        );
+    }
+}
+
+/// `iris_admin` multiplexes: `action="journal_search"` runs the same journal reader as the
+/// standalone tool. Gate [2] matched only the dispatcher's name, which is not in `BULK_PHI_TOOLS`,
+/// so routing through `iris_admin` skipped the bulk-PHI block entirely.
+#[test]
+fn gate2_blocks_bulk_phi_reached_through_the_iris_admin_action() {
+    let policy = policy_dev_block();
+    let e = dispatch_gate(
+        "iris_admin",
+        &policy.server_name.clone(),
+        Some(&policy),
+        &serde_json::json!({"action": "journal_search"}),
+    )
+    .expect_err("iris_admin(action=journal_search) must hit the bulk-PHI block");
+    assert_eq!(e["error_code"], "DATA_POLICY_BLOCKED", "{e}");
+    assert_eq!(e["success"], serde_json::Value::Bool(false), "{e}");
+    // The message has to name the action, not the dispatcher, or the operator cannot tell what
+    // was refused.
+    assert_eq!(e["tool_name"], "journal_search", "{e}");
+}
+
+/// The same route must still work when the configured policy permits it, and every other
+/// `iris_admin` action must be unaffected by the action-aware check.
+#[test]
+fn gate2_permits_iris_admin_actions_that_are_not_bulk_phi() {
+    let blocked = policy_dev_block();
+    for action in [
+        "list_namespaces",
+        "list_databases",
+        "view_locks",
+        "view_processes",
+        "create_namespace",
+    ] {
+        dispatch_gate(
+            "iris_admin",
+            &blocked.server_name.clone(),
+            Some(&blocked),
+            &serde_json::json!({"action": action}),
+        )
+        .unwrap_or_else(|e| panic!("iris_admin(action={action}) must not be gate-blocked: {e}"));
+    }
+
+    let allowed = policy_dev_allow();
+    dispatch_gate(
+        "iris_admin",
+        &allowed.server_name.clone(),
+        Some(&allowed),
+        &serde_json::json!({"action": "journal_search"}),
+    )
+    .expect("dataPolicy=allow in config must permit journal_search");
+}
+
+/// A caller-supplied `dataPolicy` must not unlock the action. This is the `iris_message_body`
+/// self-authorization hole on the dispatcher route.
+#[test]
+fn gate2_ignores_caller_supplied_data_policy_on_the_admin_route() {
+    let policy = policy_dev_block();
+    let e = dispatch_gate(
+        "iris_admin",
+        &policy.server_name.clone(),
+        Some(&policy),
+        &serde_json::json!({"action": "journal_search", "dataPolicy": "allow"}),
+    )
+    .expect_err("caller-supplied dataPolicy must not unlock a bulk-PHI action");
+    assert_eq!(e["error_code"], "DATA_POLICY_BLOCKED", "{e}");
+    assert_eq!(
+        e["data_policy"], "block",
+        "the gate must report the configured policy: {e}"
     );
 }

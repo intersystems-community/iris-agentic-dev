@@ -11,21 +11,18 @@ benchmark_tasks:
   - prd-006
   - prd-007
 compatibility: objectscript, iris, sql
-description:
-  Use when asked about IRIS capabilities, products, or features — especially
+description: Use when asked about IRIS capabilities, products, or features — especially
   MCP, full-text search, HL7/Interoperability, mirroring, IRIS for Health vs HealthShare.
   AI models confidently describe features that don't exist or confuse products.
 iris_version: ">=2024.1"
 license: MIT
 metadata:
   baseline_pass_rate: 1.0
-  benchmark_note:
-    Source inspection suite. Negative lift when loaded globally (-29%).
+  benchmark_note: Source inspection suite. Negative lift when loaded globally (-29%).
     Load on-demand when asked about IRIS capabilities/products. Features ARE in IRIS
     — this skill prevents denial of existence.
   lift: -0.286
-  red_phase:
-    Model denies MCP exists, invents Python HL7 APIs, confuses IRIS/HealthShare,
+  red_phase: Model denies MCP exists, invents Python HL7 APIs, confuses IRIS/HealthShare,
     uses PostgreSQL FTS syntax
   version: 1.0.0
 name: iris-product-features
@@ -261,7 +258,7 @@ The classes exist in the install but their **package mappings** aren't added to 
 1. Verify install: `iris list` shows `Interoperability: installed`
 2. Enable namespace: `Do ##class(%EnsembleMgr).EnableNamespace("MYNS", 1)`
 3. Confirm: `Write ##class(%EnsembleMgr).IsEnsembleNamespace()` → 1
-4. Start a production: use `interop_production_start` MCP tool or Management Portal
+4. Start a production: `iris_production(action="start", production_name="MyApp.Production")` or Management Portal
 
 **Exporting a namespace that has Interop enabled** will include `EnsLib.*`/`EnsPortal.*` in the export — these are ISC's framework classes, NOT your application code. Strip them from your deployment script; they'll already be present on any target IRIS.
 

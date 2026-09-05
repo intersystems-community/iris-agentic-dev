@@ -29,11 +29,11 @@ fn bulk_phi_blocked_when_policy_block() {
 }
 
 #[test]
-fn view_message_body_blocked_when_policy_block() {
-    let r = check_bulk_phi_gate("view_message_body", &DataPolicy::Block, "iris-hl7");
+fn iris_message_body_blocked_when_policy_block() {
+    let r = check_bulk_phi_gate("iris_message_body", &DataPolicy::Block, "iris-hl7");
     assert!(
         r.is_some(),
-        "view_message_body must be blocked with policy=block"
+        "iris_message_body must be blocked with policy=block"
     );
     assert_eq!(r.unwrap()["error_code"], "DATA_POLICY_BLOCKED");
 }
@@ -58,9 +58,32 @@ fn bulk_phi_permitted_when_policy_allow() {
 }
 
 #[test]
-fn view_message_body_permitted_when_policy_allow() {
-    let r = check_bulk_phi_gate("view_message_body", &DataPolicy::Allow, "iris-hl7");
-    assert!(r.is_none(), "view_message_body permitted when policy=allow");
+fn iris_message_body_permitted_when_policy_allow() {
+    let r = check_bulk_phi_gate("iris_message_body", &DataPolicy::Allow, "iris-hl7");
+    assert!(r.is_none(), "iris_message_body permitted when policy=allow");
+}
+
+/// Every name in the gate list has to be a name the router actually dispatches on.
+///
+/// This is the test that was missing. `BULK_PHI_TOOLS` carried `view_message_body` from 051 until
+/// 1.3.2; no tool by that name was ever registered, so `check_bulk_phi_gate` never matched and PHI
+/// message bodies came back with no policy check at all. The two tests above passed the whole time
+/// because they asserted the same wrong string the constant held — a gate compared against itself
+/// agrees with itself. Comparing against `CLASSIFICATION`, which is the router's own list, is the
+/// only version of this test that can fail.
+#[test]
+fn every_bulk_phi_tool_is_a_registered_tool() {
+    use iris_agentic_dev_core::policy::data_policy_gate::BULK_PHI_TOOLS;
+    use iris_agentic_dev_core::tools::write_gate::CLASSIFICATION;
+
+    for tool in BULK_PHI_TOOLS {
+        assert!(
+            CLASSIFICATION.iter().any(|c| c.tool == *tool),
+            "BULK_PHI_TOOLS names {tool:?}, which is not a registered tool — the bulk-PHI gate \
+             silently permits everything it was supposed to block. Registered names live in \
+             tools::write_gate::CLASSIFICATION."
+        );
+    }
 }
 
 #[test]

@@ -273,6 +273,51 @@ impl CompileResult {
     }
 }
 
+/// Did the run report a failure instead of the code's own output?
+///
+/// Four prefixes mean failure. [`IrisConnection::execute_via_generator`] itself emits
+/// `ERROR: <exception>` from the `Catch` block, `ERROR($ZERROR): <code>` when the body wrote
+/// nothing but left `$ZERROR` set, and `ERROR($DEVICE): <detail>` when the body left the current
+/// device pointing somewhere other than the capture file, which means its output went where we
+/// cannot read it. Tool-generated ObjectScript adds its own `ERROR:<sentinel>` on a bad `%Status`.
+///
+/// Callers that hand-rolled `starts_with("ERROR:")` caught the first and last but were blind to
+/// the parenthesized shapes, and reported the IRIS error as a successful result.
+///
+/// This is the only permitted way to decide that generator output is a failure. Adding a shape
+/// here fixes every caller at once; hand-rolling one fixes nothing anywhere else.
+pub fn is_generator_error(out: &str) -> bool {
+    generator_error_message(out).is_some()
+}
+
+/// The failure message, with whichever prefix matched removed — or `None` on real output.
+///
+/// Every site that used to write `if let Some(msg) = out.strip_prefix("ERROR:")` wants this. That
+/// hand-rolled form matches the two unparenthesized shapes and is blind to `ERROR($ZERROR):` and
+/// `ERROR($DEVICE):`, so those fell through to the success path: `dict.rs` parsed the error text as
+/// JSON and returned `[]`, `admin.rs` reported `flag_cleared: true` for a password change that
+/// never ran.
+///
+/// Returning the message rather than a bool is what makes the single-source rule adoptable — a
+/// caller needs the text for its own error code, and if getting it means re-doing the prefix work
+/// by hand then the shared check buys nothing.
+pub fn generator_error_message(out: &str) -> Option<&str> {
+    let t = out.trim_start();
+    for prefix in [
+        "ERROR($ZERROR): ",
+        "ERROR($DEVICE): ",
+        "ERROR: ",
+        // Tool-generated ObjectScript writes `ERROR:<CODE>:<text>` with no space. Last, so the
+        // spaced and parenthesized shapes are stripped in full before this catches the rest.
+        "ERROR:",
+    ] {
+        if let Some(rest) = t.strip_prefix(prefix) {
+            return Some(rest);
+        }
+    }
+    None
+}
+
 impl IrisConnection {
     pub fn new(
         base_url: impl Into<String>,
@@ -601,6 +646,9 @@ impl IrisConnection {
 
     /// Build the `.cls` source lines for the temp executor class.
     ///
+    /// Callers that inspect the returned string for failure must use
+    /// [`is_generator_error`] — this method emits two different error prefixes.
+    ///
     /// Uses a plain ClassMethod (not CodeMode=objectgenerator) so that user code is
     /// compiled directly through the IRIS macro preprocessor. This means $$$macros and
     /// #include / #define directives in user code work as expected, matching what a real
@@ -631,6 +679,11 @@ impl IrisConnection {
             "  } Catch ex {".into(),
             "    Write \"ERROR: \",ex.DisplayString(),!".into(),
             "  }".into(),
+            // Which device is current now that the body has run? Routines like
+            // run^SystemPerformance select their own device and do not put it back, which
+            // sends every later Write somewhere we never read. That used to surface as an
+            // empty result the caller reported as success (the 1.3.0 pbuttons bug).
+            "  Set devio = $IO".into(),
             // Snapshot $ZERROR now, before Close/Use/stream operations below can clobber
             // it. This captures non-exception errors (e.g. an OPEN failure that sets
             // $ZERROR without throwing) so we can surface them if the body produced no
@@ -651,6 +704,10 @@ impl IrisConnection {
             // SCM provider's internal Read even when the operation fully succeeded;
             // appending it to a non-empty result corrupted otherwise-valid output.
             "  If (out=\"\") && (ze'=\"\") && (ze'=\",\") { Set out = \"ERROR($ZERROR): \"_ze_$Char(10) }"
+                .into(),
+            // Whatever we captured is partial when the device moved, so refuse the whole
+            // result rather than hand back a plausible-looking fragment.
+            "  If devio'=tmpfile { Set out = \"ERROR($DEVICE): the called code left the current device set to \"\"\"_devio_\"\"\" instead of the capture file, so its output was written elsewhere and is lost. Snapshot and restore around the call: Set io=$IO / <call> / Use io\"_$Char(10) }"
                 .into(),
             "  Quit out".into(),
             "}".into(),

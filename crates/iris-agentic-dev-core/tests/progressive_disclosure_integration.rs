@@ -46,6 +46,27 @@ fn mcp_exchange(
         )
         .env("IRIS_NAMESPACE", "USER")
         .env("IRIS_TOOLSET", "merged")
+        // `iris_compile` is WriteClass::Write, and the truncation chain tests assert on its
+        // `truncated`/`log_id`/`inline_count` fields. Unpinned, they only reached the compiler at
+        // all inside the CI e2e job, which exports IRIS_WRITE_TOOLS_ENABLED=1 at job level; in a
+        // clean shell the response is WRITE_TOOLS_DISABLED, whose missing `total_count` sends every
+        // test down its "SKIP" branch and reports ok. Destructive stays off — nothing here is in
+        // that tier, and the assertions should keep saying so.
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "0")
+        // The whole subject of this file is the inline-vs-log-store split, and each of these vars
+        // moves the threshold being asserted. Pinned to the in-code defaults (mod.rs:3636,
+        // mod.rs:5496, info.rs:96, search.rs:273, mod.rs:2315-2322) so a test that does not name a
+        // threshold is measuring the shipped one; `extra_env` below still overrides per test.
+        .env("IRIS_INLINE_COMPILE", "20")
+        .env("IRIS_INLINE_ERROR_LOGS", "20")
+        .env("IRIS_INLINE_INFO", "30")
+        .env("IRIS_INLINE_SEARCH", "30")
+        // Store capacity and entry lifetime decide whether `iris_get_log` can still find the
+        // log_id a truncated call just handed out. An operator with IRIS_LOG_STORE_MAX=0 or a
+        // one-minute TTL would see the list assertions fail with nothing wrong in the code.
+        .env("IRIS_LOG_STORE_MAX", "50")
+        .env("IRIS_LOG_TTL_MINUTES", "60")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());

@@ -88,6 +88,35 @@ fn system_blocks_iris_sys_globals() {
     }
 }
 
+/// `^IRIS.SystemPerformance` holds SystemPerformance (pbuttons) run history and profile
+/// definitions. It is diagnostic *data*, not code storage, and reading it is the documented
+/// way to recover the last run ID. The old `^IRIS.Sys*` pattern swallowed it.
+#[test]
+fn system_allows_systemperformance_data_global() {
+    for name in &["IRIS.SystemPerformance", "IRIS.SystemPerformance.History"] {
+        let r = check_system_blocklist(name, NO_CUSTOM, NO_KILL_LIST, false, "iris-prod");
+        assert!(
+            r.is_none(),
+            "{name} is perf data, not code storage — must not be blocked; got {r:?}"
+        );
+    }
+}
+
+/// Narrowing `^IRIS.Sys*` to `^IRIS.Sys.*` must not open up the config/log globals it
+/// was there to protect.
+#[test]
+fn system_still_blocks_iris_sys_dot_and_syslog() {
+    for name in &[
+        "IRIS.Sys.Config",
+        "IRIS.Sys.Anything",
+        "IRIS.SysLog",
+        "IRIS.SysLog.Events",
+    ] {
+        let r = check_system_blocklist(name, NO_CUSTOM, NO_KILL_LIST, false, "iris-prod");
+        assert!(r.is_some(), "{name} must still be blocked");
+    }
+}
+
 #[test]
 fn system_blocks_deepsee() {
     let r = check_system_blocklist(
@@ -240,11 +269,23 @@ fn error_json_includes_matched_pattern() {
 // ── System blocklist count (regression guard) ─────────────────────────────────
 
 #[test]
-fn system_blocklist_has_30_entries() {
+fn system_blocklist_has_32_entries() {
     use iris_agentic_dev_core::policy::patterns::SYSTEM_BLOCKLIST;
     assert_eq!(
         SYSTEM_BLOCKLIST.len(),
-        30,
-        "system blocklist must have exactly 30 entries"
+        32,
+        "system blocklist must have exactly 32 entries"
     );
+}
+
+/// A count guard says nothing about coverage. `^SYS*` was narrowed to `^SYS` / `^SYS.*` because
+/// the blocklist is a hard block with no bypass, and the broad prefix permanently hid any
+/// application global starting with those three letters.
+#[test]
+fn sys_narrowing_blocks_the_system_global_and_permits_app_globals() {
+    use iris_agentic_dev_core::policy::patterns::{matches_any, SYSTEM_BLOCKLIST};
+    assert!(matches_any("SYS", SYSTEM_BLOCKLIST));
+    assert!(matches_any("SYS.Config", SYSTEM_BLOCKLIST));
+    assert!(!matches_any("SYSCONFIG", SYSTEM_BLOCKLIST));
+    assert!(!matches_any("SYSDATA", SYSTEM_BLOCKLIST));
 }

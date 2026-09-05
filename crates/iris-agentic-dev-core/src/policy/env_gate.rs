@@ -60,6 +60,7 @@ pub fn check_env_gate(
             McpTemplate::Live => "live",
         };
         return Some(serde_json::json!({
+            "success": false,
             "error_code": "ENV_GATE_BLOCKED",
             "env_gate_blocked": true,
             "server_name": server_name,

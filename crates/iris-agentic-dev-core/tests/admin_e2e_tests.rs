@@ -53,6 +53,13 @@ fn mcp_exchange(
         .env("IRIS_NAMESPACE", "USER")
         .env("IRIS_TOOLSET", "merged");
 
+    // The child inherits the operator's environment, so a shell (or the CI e2e job, which sets
+    // both) that has the write/destructive gates on silently turned every gate-refusal test in
+    // this file into a live call. Strip them and let each test declare the gate state it means
+    // to exercise via extra_env — same fix as 4254748 made for the live_reload tests.
+    cmd.env_remove("IRIS_WRITE_TOOLS_ENABLED");
+    cmd.env_remove("IRIS_DESTRUCTIVE_TOOLS_ENABLED");
+
     for (k, v) in extra_env {
         cmd.env(k, v);
     }

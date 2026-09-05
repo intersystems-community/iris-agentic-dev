@@ -6,15 +6,22 @@
 //! struct, so serde dropped it silently — the #110 pattern, applied to a security boundary.
 //!
 //! So: pull the identifiers out of the shipped surfaces and require each one to exist in
-//! `crates/*/src`. Five extractors, because "exists" means something different for each kind:
+//! `crates/*/src`. Seven extractors, because "exists" means something different for each kind:
 //!
-//! | Extractor        | What it pulls out                      | "Exists" means                     |
-//! | ---------------- | -------------------------------------- | ---------------------------------- |
-//! | error codes      | `SCREAMING_SNAKE_CASE` tokens          | emitted as a string literal        |
-//! | config keys      | `### \`key\`` headings, toml fences    | deserializes **and** has a reader  |
-//! | env vars         | `IRIS_*` / `IAD_*` / `OBJECTSCRIPT_*`  | read, not merely written           |
-//! | tool parameters  | parameter-table rows under a tool      | present in the tool's inputSchema  |
-//! | counts           | the `read_only_hint` sentence          | equals what the router registers   |
+//! | Extractor         | What it pulls out                       | "Exists" means                    |
+//! | ----------------- | --------------------------------------- | --------------------------------- |
+//! | error codes       | `SCREAMING_SNAKE_CASE` tokens           | emitted as a string literal       |
+//! | config keys       | `### \`key\`` headings, toml fences     | deserializes **and** has a reader |
+//! | env vars          | `IRIS_*` / `IAD_*` / `OBJECTSCRIPT_*`   | read, not merely written          |
+//! | tool parameters   | rows of tables headed `Parameter`       | present in the tool's inputSchema |
+//! | `iris_admin` args | rows of tables headed `Action`          | a key the dispatch looks up       |
+//! | skill inventory   | rows of the `docs/skills.md` table      | present in `EMBEDDED_SKILLS`      |
+//! | counts            | the `read_only_hint` sentence           | equals what the router registers  |
+//!
+//! The parameter extractor requires the header's first cell to be literally `Parameter`, which is
+//! why `iris_admin` needs its own: its per-action tables are headed `Action`, so for three releases
+//! they documented `type_filter`, `namespace_filter` and `name_filter` for actions that read
+//! `type`, `namespace` and `name`, and nothing noticed.
 //!
 //! Presence in the sources is deliberately not the test for config keys and env vars.
 //! `IRIS_DESTRUCTIVE_TOOLS_ENABLED` was in the sources for five releases — as a `set_var` with no
@@ -127,6 +134,15 @@ fn rel(path: &Path) -> String {
         .to_string()
 }
 
+/// Documents checked by a single narrow test rather than by the identifier extractors.
+///
+/// `docs/skills.md` is deliberately not in [`contract_doc_files`]: its subject is the bundled
+/// skills, so its screaming-snake tokens are IRIS syntax (`VECTOR_COSINE`, `TO_VECTOR`,
+/// `ISC_CPF_MERGE_FILE`) for exactly the reason the bundled skills themselves are out of scope.
+/// One claim in it *is* about iad — the inventory table, which agents read as the list of skills
+/// that exist — and [`the_skill_inventory_lists_every_bundled_skill`] checks that claim alone.
+const NARROWLY_CHECKED_DOCS: &[&str] = &["docs/skills.md"];
+
 /// The scope decision above, asserted and printed. A contract that silently covers three files out
 /// of thirty-nine reads as "the docs are checked" when it is not.
 #[test]
@@ -155,14 +171,29 @@ fn the_contract_scope_is_stated_out_loud() {
         "no bundled skill was skipped, which means either the skills moved or this scope note is \
          describing a filter that no longer does anything"
     );
+    for doc in NARROWLY_CHECKED_DOCS {
+        assert!(
+            repo_root().join(doc).is_file(),
+            "{doc} is named as narrowly checked but does not exist — the test that reads it would \
+             panic, and the scope note here would be describing nothing"
+        );
+    }
     eprintln!(
         "note: the identifier contract covers {} file(s): {}.\n\
          note: {} bundled skill(s) are OUT of scope — they document IRIS/ObjectScript/SQL, whose \
-         SCREAMING_SNAKE tokens are IRIS syntax and container env vars, not iad identifiers: {}",
+         SCREAMING_SNAKE tokens are IRIS syntax and container env vars, not iad identifiers: {}\n\
+         note: {} further file(s) are checked by one narrow test each, not by the identifier \
+         extractors: {}\n\
+         note: inside docs/tools.md, parameter tables are checked by \
+         every_documented_tool_parameter_is_in_the_input_schema and the `iris_admin` per-action \
+         tables by every_iris_admin_action_parameter_is_read_by_the_dispatch — two extractors, \
+         because the two table shapes have different header rows.",
         in_scope.len(),
         in_scope.join(", "),
         skipped.len(),
-        skipped.join(", ")
+        skipped.join(", "),
+        NARROWLY_CHECKED_DOCS.len(),
+        NARROWLY_CHECKED_DOCS.join(", ")
     );
 }
 
@@ -1204,5 +1235,231 @@ fn agent_attribution_doc_has_required_us4_content() {
         text.contains("credentials") && text.contains("roles"),
         "docs/agent-attribution.md must describe IRIS credentials and roles as the primary \
          enforcement mechanism (US4 T044)"
+    );
+}
+
+// ── the `iris_admin` per-action tables ───────────────────────────────────────
+
+/// Split a markdown table row on `|` without touching the cell contents.
+///
+/// [`table_cells`] strips backticks off each end of every cell, which is right for a one-token
+/// cell and wrong for a parameter list: `` `username`, `password` (required) `` loses the opening
+/// backtick of the first name, so a backtick-anchored extractor silently drops it.
+fn raw_table_cells(line: &str) -> Vec<String> {
+    line.trim()
+        .trim_start_matches('|')
+        .trim_end_matches('|')
+        .split('|')
+        .map(|c| c.trim().to_string())
+        .collect()
+}
+
+/// Backticked identifiers in a cell that sit outside any parentheses.
+///
+/// The parameter cells qualify each name with a parenthesised type and default, and those
+/// qualifiers are backticked too — `` `confirm` (bool, required — must be `true`) ``,
+/// `` `username` (default `_SYSTEM`) ``, `` `time_range` (`{from, to}` ISO8601) ``. Collecting
+/// every backticked token would demand the dispatch read arguments named `true` and `from, to`.
+/// Paren depth is the whole distinction, so it is asserted directly in the test below.
+fn top_level_backticked_idents(cell: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut current: Option<String> = None;
+    for c in cell.chars() {
+        match c {
+            '`' => match current.take() {
+                Some(tok) => {
+                    if depth == 0 && is_param_ident(&tok) {
+                        out.push(tok);
+                    }
+                }
+                None => current = Some(String::new()),
+            },
+            '(' if current.is_none() => depth += 1,
+            ')' if current.is_none() => depth -= 1,
+            _ => {
+                if let Some(tok) = current.as_mut() {
+                    tok.push(c);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Parameter names claimed by the `iris_admin` per-action tables in `docs/tools.md`.
+///
+/// These tables were never checked by [`documented_tool_params`], which only reads tables whose
+/// header's first cell is literally `Parameter` — these say `Action`. `iris_admin` takes
+/// `AnyParams` and looks every argument up by key, so a name the dispatch does not read is
+/// dropped with no error: the table documented `type_filter`, `namespace_filter` and
+/// `name_filter` for three actions that read `type`, `namespace` and `name`, and an agent
+/// following it got the entire unfiltered result set back and no complaint.
+fn documented_iris_admin_action_params() -> Vec<ParamMention> {
+    let mut out = Vec::new();
+    let mut in_iris_admin = false;
+    let mut in_action_table = false;
+
+    for line in contract_lines() {
+        if line.text.starts_with("### ") {
+            in_iris_admin = heading_tools(&line.text).iter().any(|t| t == "iris_admin");
+            in_action_table = false;
+            continue;
+        }
+        if line.text.starts_with("## ") || line.text.starts_with("# ") {
+            in_iris_admin = false;
+            in_action_table = false;
+            continue;
+        }
+        if !in_iris_admin {
+            continue;
+        }
+        let t = line.text.trim();
+        if !t.starts_with('|') {
+            in_action_table = false;
+            continue;
+        }
+        let cells = raw_table_cells(t);
+        let first = cells.first().cloned().unwrap_or_default();
+        if first.eq_ignore_ascii_case("action") {
+            in_action_table = true;
+            continue;
+        }
+        if !in_action_table || first.chars().all(|c| c == '-' || c == ':') {
+            continue;
+        }
+        let Some(params) = cells.get(1) else { continue };
+        for param in top_level_backticked_idents(params) {
+            out.push(ParamMention {
+                tools: vec!["iris_admin".to_string()],
+                param,
+                at: line.at(),
+            });
+        }
+    }
+    out
+}
+
+/// Every parameter the `iris_admin` per-action tables name is a key the dispatch looks up.
+///
+/// The dispatch reads `p.get("<key>")` out of an open map, so the input schema cannot answer this
+/// and neither can serde: an unrecognised key is not an error, it is simply absent, and the action
+/// runs unfiltered. That is how `iris_admin(action="database_status", name_filter="MYAPP")` came to
+/// return every database on the instance while looking exactly like a successful filtered query.
+#[test]
+fn every_iris_admin_action_parameter_is_read_by_the_dispatch() {
+    // Paren depth is the entire reason this extractor does not demand a key named `true`.
+    assert_eq!(
+        top_level_backticked_idents("`confirm` (bool, required — must be `true`)"),
+        vec!["confirm".to_string()]
+    );
+    assert_eq!(
+        top_level_backticked_idents("`username` (default `_SYSTEM`), `new_password` (optional)"),
+        vec!["username".to_string(), "new_password".to_string()]
+    );
+    assert!(top_level_backticked_idents("—").is_empty());
+
+    let body = handler_body("iris_admin")
+        .expect("the iris_admin dispatch must be locatable as `async fn iris_admin(`");
+    let documented = documented_iris_admin_action_params();
+
+    let mut missing: Vec<String> = Vec::new();
+    for m in &documented {
+        if !body.contains(&format!("\"{}\"", m.param)) {
+            missing.push(format!(
+                "{} at {} — the iris_admin dispatch never looks up \"{}\", so the argument is \
+                 dropped and the action runs as if it were absent",
+                m.param, m.at, m.param
+            ));
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "{} parameter(s) in the iris_admin per-action tables are not keys the dispatch reads:\n  {}",
+        missing.len(),
+        missing.join("\n  ")
+    );
+    // The three action tables carry 25 distinct parameter names across ~25 rows. A floor well
+    // under that lets a name be deleted but not the extractor: if the header row is renamed or the
+    // tables move, this test would otherwise pass by reading nothing at all.
+    assert!(
+        documented.len() >= 20,
+        "only {} parameter mention(s) were extracted from the iris_admin action tables — the \
+         extractor has stopped reading them and this test is asserting nothing",
+        documented.len()
+    );
+}
+
+// ── the bundled-skill inventory in docs/skills.md ────────────────────────────
+
+/// Skill names in the `## Skill inventory` table of `docs/skills.md`.
+fn documented_skill_inventory() -> BTreeSet<String> {
+    let path = repo_root().join("docs/skills.md");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read docs/skills.md: {e}"));
+
+    let mut out = BTreeSet::new();
+    let mut in_section = false;
+    for line in text.lines() {
+        if line.starts_with("## ") {
+            in_section = line.trim() == "## Skill inventory";
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        let t = line.trim();
+        if !t.starts_with('|') {
+            continue;
+        }
+        let first = table_cells(t).first().cloned().unwrap_or_default();
+        if first.eq_ignore_ascii_case("skill") || first.chars().all(|c| c == '-' || c == ':') {
+            continue;
+        }
+        if !first.is_empty() {
+            out.insert(first);
+        }
+    }
+    out
+}
+
+/// The inventory table lists exactly the skills in `EMBEDDED_SKILLS`, both directions.
+///
+/// Agents treat a short inventory as the set of skills that exist and reimplement from scratch
+/// rather than asking for one that is not on it, so an incomplete table hides working skills as
+/// effectively as deleting them. The table listed 14 of the 34 shipped skills. Comparing both
+/// directions matters: a missing row is the defect that shipped, and a leftover row for a deleted
+/// skill sends the agent to `skill(action="describe")` for something that answers `count: 0`.
+#[test]
+fn the_skill_inventory_lists_every_bundled_skill() {
+    let embedded: BTreeSet<String> = iris_agentic_dev_core::skills::bundled::embedded_skill_dirs()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
+    let documented = documented_skill_inventory();
+
+    let undocumented: Vec<&String> = embedded.difference(&documented).collect();
+    let phantom: Vec<&String> = documented.difference(&embedded).collect();
+
+    assert!(
+        undocumented.is_empty(),
+        "{} bundled skill(s) ship in the binary but are absent from the docs/skills.md inventory, \
+         so an agent reading that table concludes they do not exist: {:?}",
+        undocumented.len(),
+        undocumented
+    );
+    assert!(
+        phantom.is_empty(),
+        "{} skill(s) are listed in the docs/skills.md inventory but are not in EMBEDDED_SKILLS — \
+         `skill(action=\"describe\")` will answer count: 0 for them: {:?}",
+        phantom.len(),
+        phantom
+    );
+    assert!(
+        embedded.len() >= 30,
+        "only {} embedded skill(s) were read — EMBEDDED_SKILLS is the source of truth for this \
+         test and it appears empty",
+        embedded.len()
     );
 }
