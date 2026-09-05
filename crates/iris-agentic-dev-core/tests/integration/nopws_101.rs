@@ -1,6 +1,58 @@
 // 101-nopws-connectivity: Live IRIS integration tests.
-// These require iris-dev-iris running at localhost:52780.
+// These need a live IRIS with the Atelier REST API reachable. Locally that is iris-dev-iris on
+// localhost:52780; the CI e2e job names its own container and port in the environment.
 // Run with: cargo test --test nopws_101 -- --test-threads=1 --include-ignored
+
+/// The endpoint these tests should talk to.
+///
+/// Every test in this file used to pin `localhost:52780` and the container name `iris-dev-iris`,
+/// which are one laptop's conventions. The CI e2e container answers on 52773 and is called
+/// `iris-e2e`, so `iris_execute` could not reach Atelier at all there and fell back to
+/// `docker exec` — and `test_iris_execute_atelier_path_has_execution_path_field` read that
+/// fallback as a broken Atelier path. The environment wins when it names an endpoint; the local
+/// container is only the default.
+fn live_iris_env() -> Vec<(&'static str, String)> {
+    vec![
+        ("IRIS_HOST", env_or("IRIS_HOST", "localhost")),
+        ("IRIS_WEB_PORT", env_or("IRIS_WEB_PORT", "52780")),
+        ("IRIS_USERNAME", env_or("IRIS_USERNAME", "_SYSTEM")),
+        ("IRIS_PASSWORD", env_or("IRIS_PASSWORD", "SYS")),
+        ("IRIS_NAMESPACE", env_or("IRIS_NAMESPACE", "USER")),
+    ]
+}
+
+/// The container `docker exec` should target, same rule.
+fn live_iris_container() -> String {
+    env_or("IRIS_CONTAINER", "iris-dev-iris")
+}
+
+fn env_or(name: &str, default: &str) -> String {
+    std::env::var(name)
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| default.to_string())
+}
+
+/// Not an IRIS test: the endpoint resolution above is what decides whether the live assertions
+/// mean anything, and it is exactly the kind of thing that looks right and silently defaults.
+#[test]
+fn live_iris_env_prefers_the_environment_over_the_local_default() {
+    let resolved = live_iris_env();
+    let port = resolved
+        .iter()
+        .find(|(k, _)| *k == "IRIS_WEB_PORT")
+        .map(|(_, v)| v.clone())
+        .expect("IRIS_WEB_PORT is always resolved");
+
+    match std::env::var("IRIS_WEB_PORT") {
+        Ok(v) if !v.is_empty() => assert_eq!(port, v),
+        _ => assert_eq!(port, "52780"),
+    }
+
+    // An empty value is not an endpoint. Inheriting `IRIS_HOST=` and passing it through would
+    // hand the connection layer a blank host instead of falling back.
+    assert!(resolved.iter().all(|(_, v)| !v.is_empty()));
+}
 
 /// FR-013: iris_test_server against community container (has web server) must return
 /// nopws_detected: false.
@@ -29,11 +81,7 @@ async fn test_iris_test_server_community_nopws_detected_false() {
         // connection from a toml. Pin the endpoint, do not merely hope it is unset.
         .env_remove("IRIS_CONTAINER")
         .env_remove("OBJECTSCRIPT_WORKSPACE")
-        .env("IRIS_HOST", "localhost")
-        .env("IRIS_WEB_PORT", "52780")
-        .env("IRIS_USERNAME", "_SYSTEM")
-        .env("IRIS_PASSWORD", "SYS")
-        .env("IRIS_NAMESPACE", "USER")
+        .envs(live_iris_env())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -66,7 +114,7 @@ async fn test_iris_test_server_community_nopws_detected_false() {
 #[tokio::test]
 async fn test_iris_execute_docker_exec_fallback() {
     // Set IRIS_WEB_PORT to a closed port to force docker exec path
-    let container = "iris-dev-iris";
+    let container = live_iris_container();
 
     use std::io::Write;
     use std::process::{Command, Stdio};
@@ -83,12 +131,9 @@ async fn test_iris_execute_docker_exec_fallback() {
         // iris_execute and iris_compile are write tools and refuse when the gate is off.
         .env("IRIS_WRITE_TOOLS_ENABLED", "1")
         .env_remove("IRIS_DESTRUCTIVE_TOOLS_ENABLED")
-        .env("IRIS_HOST", "localhost")
+        .envs(live_iris_env())
         .env("IRIS_WEB_PORT", "1") // closed port → forces docker exec fallback
-        .env("IRIS_CONTAINER", container)
-        .env("IRIS_USERNAME", "_SYSTEM")
-        .env("IRIS_PASSWORD", "SYS")
-        .env("IRIS_NAMESPACE", "USER")
+        .env("IRIS_CONTAINER", &container)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -171,12 +216,8 @@ async fn test_iris_execute_atelier_path_has_execution_path_field() {
         // iris_execute and iris_compile are write tools and refuse when the gate is off.
         .env("IRIS_WRITE_TOOLS_ENABLED", "1")
         .env_remove("IRIS_DESTRUCTIVE_TOOLS_ENABLED")
-        .env("IRIS_HOST", "localhost")
-        .env("IRIS_WEB_PORT", "52780")
-        .env("IRIS_CONTAINER", "iris-dev-iris")
-        .env("IRIS_USERNAME", "_SYSTEM")
-        .env("IRIS_PASSWORD", "SYS")
-        .env("IRIS_NAMESPACE", "USER")
+        .envs(live_iris_env())
+        .env("IRIS_CONTAINER", live_iris_container())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
