@@ -46,6 +46,17 @@ fn make_conn() -> Option<(IrisConnection, reqwest::Client)> {
     Some((conn, client))
 }
 
+/// The container name for the `iris_containers` select/start tests.
+///
+/// Those tests accept an `error_code` as a pass, so a name the host does not have turns them into
+/// no-ops rather than failures — which is what happened in CI, where the container is `iris-e2e`.
+fn live_container() -> String {
+    std::env::var("IRIS_CONTAINER")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "iris-dev-iris".to_string())
+}
+
 fn make_log_store() -> Arc<Mutex<log_store::LogStore>> {
     Arc::new(Mutex::new(log_store::LogStore::new(100, 60)))
 }
@@ -8973,7 +8984,7 @@ async fn test_dispatch_iris_containers_select_action() {
             "iris_containers",
             serde_json::json!({
                 "action": "select",
-                "name": "iris-dev-iris"
+                "name": live_container()
             }),
         )
         .await;
@@ -10401,10 +10412,15 @@ async fn test_dispatch_iris_containers_list_with_workspace_config() {
         None => return,
     };
 
-    // Create a temp dir with a .iris-agentic-dev.toml referencing iris-dev-iris
+    // Create a temp dir with a .iris-agentic-dev.toml naming the live container. Loading that
+    // config writes its `container` value into the process's IRIS_CONTAINER, so a literal here
+    // would leak one laptop's container name into every test that runs after this one.
     let tmp_dir = std::env::temp_dir().join("iris-dev-containers-ws-test");
     std::fs::create_dir_all(&tmp_dir).expect("create tmp dir");
-    let config_content = "container = \"iris-dev-iris\"\nnamespace = \"USER\"\n";
+    let config_content = format!(
+        "container = \"{}\"\nnamespace = \"USER\"\n",
+        live_container()
+    );
     std::fs::write(tmp_dir.join(".iris-agentic-dev.toml"), config_content).expect("write config");
 
     // Set OBJECTSCRIPT_WORKSPACE so iris_containers picks it up
@@ -10437,14 +10453,14 @@ async fn test_dispatch_iris_containers_start_idempotent() {
         Some(t) => t,
         None => return,
     };
-    // iris-dev-iris is the known-running container for this project.
-    // iris_start_sandbox detects it as already running and returns idempotent=true.
+    // The container named by IRIS_CONTAINER is already running for the rest of this suite, so
+    // iris_start_sandbox detects it and returns idempotent=true.
     let result = tools
         .call_for_test(
             "iris_containers",
             serde_json::json!({
                 "action": "start",
-                "name": "iris-dev-iris"
+                "name": live_container()
             }),
         )
         .await;

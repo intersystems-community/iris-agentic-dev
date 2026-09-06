@@ -38,6 +38,18 @@ fn iris_host() -> String {
     std::env::var("IRIS_HOST").unwrap_or_default()
 }
 
+/// The container name to hand to the tests that need one set.
+///
+/// `iris-dev-iris` is this laptop's container. T027 asserts that setting IRIS_CONTAINER does not
+/// divert iris_test onto the docker path — a name nothing on the host answers to would make that
+/// assertion hold for the wrong reason.
+fn iris_container() -> String {
+    std::env::var("IRIS_CONTAINER")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "iris-dev-iris".to_string())
+}
+
 fn mcp_call_with_env(
     env_vars: &[(&str, &str)],
     messages: &[serde_json::Value],
@@ -263,8 +275,9 @@ fn test_e2e_us2_docker_path_with_container() {
         return;
     }
     // The fixture was already written by T017 (or write it if running standalone)
-    write_test_fixture_to_disk(&[("IRIS_CONTAINER", "iris-dev-iris")]);
-    let result = iris_test_call(&[("IRIS_CONTAINER", "iris-dev-iris")], "IrisDevE2E", "USER");
+    let container = iris_container();
+    write_test_fixture_to_disk(&[("IRIS_CONTAINER", &container)]);
+    let result = iris_test_call(&[("IRIS_CONTAINER", &container)], "IrisDevE2E", "USER");
     eprintln!(
         "T027 result: {}",
         serde_json::to_string_pretty(&result).unwrap()

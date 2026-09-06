@@ -1784,6 +1784,7 @@ comes back as-is, so `redact` is not a safe default for XML or custom message bo
 | `CODE_EDIT_BLOCKED`                   | `iris_execute` call matched a code-editing pattern — use `iris_doc` + `iris_compile`                           |
 | `CHECKIN_BLOCKED`                     | SCM CheckIn called without `IRIS_SCM_ALLOW_CHECKIN=1`                                                          |
 | `HTTP_EXECUTION_FAILED`               | Atelier HTTP call failed — check host, port, credentials                                                       |
+| `CONTAINER_UNREACHABLE`               | `docker exec` never reached IRIS — the container is missing or stopped; the message names which                |
 | `IRIS_UNREACHABLE`                    | No IRIS connection discoverable — run `check_config`                                                           |
 | `INTEROP_ERROR`                       | Ensemble/interop HTTP call failed — check production state and container access                                |
 | `SESSION_WS_UNAVAILABLE`              | The instance does not serve the WebSocket terminal endpoint — requires IRIS 2023.2+                            |

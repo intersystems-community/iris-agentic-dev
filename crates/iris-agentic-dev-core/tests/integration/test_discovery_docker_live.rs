@@ -2,8 +2,9 @@
 //!
 //! These tests require:
 //!   - A real Docker daemon running, reachable via the standard socket.
-//!   - A running container named `iris-dev-iris` with its private web port
-//!     (52773) mapped to a host port (this session: 52780).
+//!   - A running IRIS container with its private web port (52773) mapped to a host
+//!     port. Name it in `IRIS_CONTAINER` and give the host port in `IRIS_WEB_PORT`;
+//!     both default to this laptop's `iris-dev-iris` on 52780.
 //!
 //! ALL tests here are `#[ignore]` — they do not run on a normal `cargo test`
 //! and must be invoked explicitly:
@@ -36,6 +37,18 @@ fn live_username() -> String {
 
 fn live_password() -> String {
     std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".to_string())
+}
+
+/// The container to look for by name.
+///
+/// `iris-dev-iris` is one laptop's convention. CI names its container `iris-e2e`, so pinning the
+/// literal here meant the only way to keep CI green was to `--skip` this test — which is how a
+/// discovery test stopped covering discovery on the one machine where a regression would matter.
+fn live_container() -> String {
+    std::env::var("IRIS_CONTAINER")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "iris-dev-iris".to_string())
 }
 
 // ── probe_atelier / probe_atelier_with_client against the real container ────
@@ -124,15 +137,16 @@ async fn probe_atelier_wrong_credentials_returns_none() {
 // ── discover_via_docker_named ────────────────────────────────────────────────
 
 #[tokio::test]
-#[ignore = "requires live Docker daemon + iris-dev-iris container"]
+#[ignore = "requires live Docker daemon + the container named by IRIS_CONTAINER"]
 async fn discover_via_docker_named_finds_real_container() {
-    let result = discover_via_docker_named("iris-dev-iris").await;
+    let container = live_container();
+    let result = discover_via_docker_named(&container).await;
     match result {
         DiscoveryResult::Connected(conn) => {
             let version = conn.version.expect("version populated");
             assert!(version.to_uppercase().contains("IRIS"));
         }
-        other => panic!("expected Connected for iris-dev-iris, got {other:?}"),
+        other => panic!("expected Connected for {container}, got {other:?}"),
     }
 }
 

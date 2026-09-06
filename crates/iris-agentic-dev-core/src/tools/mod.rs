@@ -3316,6 +3316,21 @@ impl IrisTools {
                                 "compile_path=docker_exec but IRIS_CONTAINER env var is not set. \
                                  Set IRIS_CONTAINER to the container name and retry.",
                             )
+                        } else if let Some(detail) = msg.strip_prefix(&format!(
+                            "{}: ",
+                            crate::iris::connection::ERR_CONTAINER_UNREACHABLE
+                        )) {
+                            // Nothing was compiled, so COMPILE_FAILED would send the agent looking
+                            // at the class. Name the container instead, and keep execution_path so
+                            // a docker_only caller can see which leg broke.
+                            err_result(serde_json::json!({
+                                "success": false,
+                                "error_code": crate::iris::connection::ERR_CONTAINER_UNREACHABLE,
+                                "error": detail,
+                                "target": p.target,
+                                "namespace": namespace,
+                                "execution_path": exec_path,
+                            }))
                         } else {
                             err_json("COMPILE_FAILED", &msg)
                         }
@@ -4460,6 +4475,20 @@ impl IrisTools {
                              Verify the Atelier REST endpoint is reachable and the credentials \
                              have %Service_Object:USE.{DOCKER_REQUIRED_HINT}"
                         ),
+                        "http_error": http_err,
+                    }))
+                } else if let Some(detail) = msg.strip_prefix(&format!(
+                    "{}: ",
+                    crate::iris::connection::ERR_CONTAINER_UNREACHABLE
+                )) {
+                    // The exec never reached IRIS. Report which path failed rather than dropping
+                    // execution_path — an agent that asked for docker_only wants to know the
+                    // docker leg is what broke, not just that "execution failed".
+                    err_result(serde_json::json!({
+                        "success": false,
+                        "error_code": crate::iris::connection::ERR_CONTAINER_UNREACHABLE,
+                        "error": detail,
+                        "execution_path": "docker_exec_local",
                         "http_error": http_err,
                     }))
                 } else {

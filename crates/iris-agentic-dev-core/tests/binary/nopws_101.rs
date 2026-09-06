@@ -12,6 +12,19 @@ use std::process::Stdio;
 // See `iris_agentic_dev_core::testing`.
 use iris_agentic_dev_core::testing::require_iad_binary;
 
+/// The container the docker_only tests below should target.
+///
+/// Read here in the parent, because the children deliberately `env_remove("IRIS_CONTAINER")` —
+/// the name has to reach them through the toml instead, which is what puts them in docker_only
+/// mode. Writing `iris-dev-iris` into that toml pinned both tests to one laptop's container, so on
+/// a CI runner they exercised a `docker exec` that could never land anywhere.
+fn live_container() -> String {
+    std::env::var("IRIS_CONTAINER")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "iris-dev-iris".to_string())
+}
+
 /// FR-012: Binary invocation test — spawn binary, call tools/list, assert iris_execute is listed.
 #[ignore]
 #[test]
@@ -99,12 +112,15 @@ fn test_binary_iris_execute_has_execution_path_field_in_docker_only_mode() {
 
     // Create a temp config with docker_only=true to force docker exec path
     let dir = TempDir::new().unwrap();
-    let config_content = r#"
-container = "iris-dev-iris"
+    let config_content = format!(
+        r#"
+container = "{}"
 namespace = "USER"
 nopws = true
 docker_only = true
-"#;
+"#,
+        live_container()
+    );
     let config_path = dir.path().join(".iris-agentic-dev.toml");
     std::fs::write(&config_path, config_content).unwrap();
 
@@ -198,12 +214,15 @@ fn test_binary_iris_compile_has_execution_path_in_docker_only_mode() {
     use tempfile::TempDir;
 
     let dir = TempDir::new().unwrap();
-    let config_content = r#"
-container = "iris-dev-iris"
+    let config_content = format!(
+        r#"
+container = "{}"
 namespace = "USER"
 nopws = true
 docker_only = true
-"#;
+"#,
+        live_container()
+    );
     let config_path = dir.path().join(".iris-agentic-dev.toml");
     std::fs::write(&config_path, config_content).unwrap();
 
@@ -284,4 +303,115 @@ docker_only = true
         found_execution_path,
         "iris_compile in docker_only mode must include execution_path field. stdout:\n{stdout}"
     );
+}
+
+/// iris_compile must report a missing container the same way iris_execute does.
+///
+/// Needs docker, not IRIS. `COMPILE_FAILED` with the raw daemon text buried in it reads as "your
+/// class did not compile" when nothing was ever compiled — an agent in docker_only mode should be
+/// told the container is what is wrong, and which leg failed.
+#[ignore]
+#[test]
+fn test_binary_iris_compile_missing_container_reports_container_unreachable() {
+    let Some(bin) = require_iad_binary() else {
+        return;
+    };
+
+    use tempfile::TempDir;
+
+    let dir = TempDir::new().unwrap();
+    let config_content = r#"
+container = "iad-no-such-container-xyz"
+namespace = "USER"
+nopws = true
+docker_only = true
+"#;
+    std::fs::write(dir.path().join(".iris-agentic-dev.toml"), config_content).unwrap();
+
+    let mut child = std::process::Command::new(&bin)
+        .arg("mcp")
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env_remove("IRIS_DESTRUCTIVE_TOOLS_ENABLED")
+        .env_remove("IRIS_HOST")
+        .env_remove("IRIS_WEB_PORT")
+        .env_remove("IRIS_CONTAINER")
+        .env_remove("IRIS_NAMESPACE")
+        .env("OBJECTSCRIPT_WORKSPACE", dir.path())
+        .env("IRIS_USERNAME", "_SYSTEM")
+        .env("IRIS_PASSWORD", "SYS")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("must spawn binary");
+
+    let stdin = child.stdin.as_mut().unwrap();
+    let init = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "test", "version": "0"}
+        }
+    });
+    writeln!(stdin, "{}", serde_json::to_string(&init).unwrap()).unwrap();
+
+    let call = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "iris_compile",
+            "arguments": {"target": "User.TestNoPWSClass.cls"}
+        }
+    });
+    writeln!(stdin, "{}", serde_json::to_string(&call).unwrap()).unwrap();
+    drop(child.stdin.take());
+
+    let output = child.wait_with_output().expect("must wait");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let resp = tool_response(&stdout)
+        .unwrap_or_else(|| panic!("no tools/call response in stdout:\n{stdout}"));
+
+    assert_eq!(
+        resp["error_code"].as_str(),
+        Some("CONTAINER_UNREACHABLE"),
+        "expected CONTAINER_UNREACHABLE from iris_compile: {resp}"
+    );
+    assert_eq!(
+        resp["execution_path"].as_str(),
+        Some("docker_exec_local"),
+        "the failure must still say which leg ran: {resp}"
+    );
+    assert!(
+        resp["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("iad-no-such-container-xyz"),
+        "the error must name the container that was tried: {resp}"
+    );
+}
+
+/// The tool payload from a tools/call response, whichever content item carries it.
+fn tool_response(stdout: &str) -> Option<serde_json::Value> {
+    for line in stdout.lines() {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v["id"] != 2 {
+            continue;
+        }
+        // Errors come back through `content` too (isError: true), so read both the same way.
+        for item in v["result"]["content"].as_array().into_iter().flatten() {
+            if let Some(text) = item["text"].as_str() {
+                if let Ok(resp) = serde_json::from_str::<serde_json::Value>(text) {
+                    return Some(resp);
+                }
+            }
+        }
+    }
+    None
 }

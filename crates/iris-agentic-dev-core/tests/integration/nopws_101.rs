@@ -169,32 +169,132 @@ async fn test_iris_execute_docker_exec_fallback() {
     let output = child.wait_with_output().expect("must wait");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Find the tools/call response (id=2)
-    let mut found_docker_exec = false;
+    let resp = tool_response(&stdout).unwrap_or_else(|| {
+        panic!("no tools/call response in stdout:\n{stdout}");
+    });
+
+    assert_eq!(
+        resp["execution_path"].as_str(),
+        Some("docker_exec_local"),
+        "iris_execute with a closed web port must route to docker exec: {resp}"
+    );
+    // `Write 1` prints 1. Asserting on the output is the difference between "the tool claimed the
+    // docker path" and "the docker path ran": this test used to pass in CI against a container
+    // that does not exist there, because a failed exec came back as success with empty output.
+    assert_eq!(resp["success"], true, "docker exec did not succeed: {resp}");
+    assert!(
+        resp["output"].as_str().unwrap_or("").contains('1'),
+        "docker exec produced no output for `Write 1` — the exec did not reach IRIS: {resp}"
+    );
+}
+
+/// The docker path must fail loudly when the container is not there.
+///
+/// Needs a docker daemon; deliberately does not need IRIS. `docker exec` into a name nothing
+/// answers to used to return `{"success": true, "output": ""}`, which is how CI reported a
+/// working fallback while executing nothing at all.
+#[ignore]
+#[tokio::test]
+async fn test_iris_execute_missing_container_is_an_error_not_an_empty_success() {
+    let Some(binary) = iris_agentic_dev_core::testing::require_iad_binary() else {
+        return;
+    };
+
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    // An empty workspace root, because a `container` key in any .iris-agentic-dev.toml the server
+    // finds overwrites IRIS_CONTAINER outright — and the search walks up from cwd, so on a dev
+    // machine it reaches ~/.iris-agentic-dev.toml and substitutes that container for the one this
+    // test names. Without this the test asserts nothing: it silently ran against iris-dev-iris.
+    let empty_workspace = tempfile::TempDir::new().expect("temp workspace");
+
+    let mut child = Command::new(&binary)
+        .arg("mcp")
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env_remove("IRIS_DESTRUCTIVE_TOOLS_ENABLED")
+        .env("OBJECTSCRIPT_WORKSPACE", empty_workspace.path())
+        .envs(live_iris_env())
+        .env("IRIS_WEB_PORT", "1") // closed port → forces the docker path
+        .env("IRIS_CONTAINER", "iad-no-such-container-xyz")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("must spawn binary");
+
+    let stdin = child.stdin.as_mut().unwrap();
+    let init = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "test", "version": "0"}
+        }
+    });
+    writeln!(stdin, "{}", serde_json::to_string(&init).unwrap()).unwrap();
+
+    let call = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "iris_execute",
+            "arguments": {"code": "Write 1"}
+        }
+    });
+    writeln!(stdin, "{}", serde_json::to_string(&call).unwrap()).unwrap();
+
+    drop(child.stdin.take());
+
+    let output = child.wait_with_output().expect("must wait");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    let resp = tool_response(&stdout).unwrap_or_else(|| {
+        panic!("no tools/call response in stdout:\n{stdout}");
+    });
+
+    assert_eq!(
+        resp["success"], false,
+        "missing container reported as a success: {resp}"
+    );
+    assert_eq!(
+        resp["error_code"].as_str(),
+        Some("CONTAINER_UNREACHABLE"),
+        "expected CONTAINER_UNREACHABLE: {resp}"
+    );
+    let error = resp["error"].as_str().unwrap_or("");
+    assert!(
+        error.contains("iad-no-such-container-xyz"),
+        "the error must name the container that was tried: {resp}"
+    );
+    assert!(
+        error.contains("docker ps"),
+        "the error must say how to check: {resp}"
+    );
+}
+
+/// The `iris_execute` payload from a tools/call response, whichever content item carries it.
+fn tool_response(stdout: &str) -> Option<serde_json::Value> {
     for line in stdout.lines() {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-            if v["id"] == 2 {
-                let content = &v["result"]["content"];
-                if let Some(arr) = content.as_array() {
-                    for item in arr {
-                        if let Some(text) = item["text"].as_str() {
-                            if let Ok(resp) = serde_json::from_str::<serde_json::Value>(text) {
-                                let exec_path = resp["execution_path"].as_str().unwrap_or("");
-                                if exec_path == "docker_exec_local" {
-                                    found_docker_exec = true;
-                                }
-                            }
-                        }
-                    }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v["id"] != 2 {
+            continue;
+        }
+        // Errors come back through `content` too (isError: true), so read both the same way.
+        for item in v["result"]["content"].as_array().into_iter().flatten() {
+            if let Some(text) = item["text"].as_str() {
+                if let Ok(resp) = serde_json::from_str::<serde_json::Value>(text) {
+                    return Some(resp);
                 }
             }
         }
     }
-
-    assert!(
-        found_docker_exec,
-        "iris_execute with closed web port must return execution_path=docker_exec_local. stdout:\n{stdout}"
-    );
+    None
 }
 
 /// FR-008: iris_execute via Atelier REST path must return execution_path: "atelier".
@@ -253,29 +353,13 @@ async fn test_iris_execute_atelier_path_has_execution_path_field() {
     let output = child.wait_with_output().expect("must wait");
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    let mut found_atelier = false;
-    for line in stdout.lines() {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-            if v["id"] == 2 {
-                let content = &v["result"]["content"];
-                if let Some(arr) = content.as_array() {
-                    for item in arr {
-                        if let Some(text) = item["text"].as_str() {
-                            if let Ok(resp) = serde_json::from_str::<serde_json::Value>(text) {
-                                let exec_path = resp["execution_path"].as_str().unwrap_or("");
-                                if exec_path == "atelier" {
-                                    found_atelier = true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let resp = tool_response(&stdout).unwrap_or_else(|| {
+        panic!("no tools/call response in stdout:\n{stdout}");
+    });
 
-    assert!(
-        found_atelier,
-        "iris_execute via Atelier must return execution_path=atelier. stdout:\n{stdout}"
+    assert_eq!(
+        resp["execution_path"].as_str(),
+        Some("atelier"),
+        "iris_execute via Atelier must return execution_path=atelier: {resp}"
     );
 }

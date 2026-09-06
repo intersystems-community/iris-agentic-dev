@@ -757,7 +757,10 @@ impl IrisConnection {
             ])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
+            // Kept, not discarded: when the daemon refuses the exec, its stderr is the only
+            // account of why, and dropping it is what turned "no such container" into an empty
+            // success. See [`docker_exec_failure`].
+            .stderr(std::process::Stdio::piped())
             .spawn()
             .map_err(|e| anyhow::anyhow!("docker not available: {e}"))?;
 
@@ -770,6 +773,17 @@ impl IrisConnection {
             tokio::time::timeout(std::time::Duration::from_secs(30), child.wait_with_output())
                 .await
                 .map_err(|_| anyhow::anyhow!("docker exec timed out after 30s"))??;
+
+        // Non-zero exit with output is IRIS reporting a problem in the code, and the caller reads
+        // that text (`is_generator_error` classifies it). Non-zero exit with nothing to show means
+        // the exec itself did not happen — the same rule execute_ssh has always used.
+        if !output.status.success() && output.stdout.is_empty() {
+            return Err(anyhow::anyhow!(docker_exec_failure(
+                &container,
+                output.status.code(),
+                &String::from_utf8_lossy(&output.stderr),
+            )));
+        }
 
         let raw = String::from_utf8_lossy(&output.stdout).to_string();
         Ok(strip_iris_banner(&raw))
@@ -963,6 +977,56 @@ impl IrisConnection {
     pub fn build_exec_class_for_test(class_name: &str, _tmpfile: &str, code: &str) -> Vec<String> {
         Self::build_exec_class(class_name, code)
     }
+}
+
+/// Error code for a `docker exec` that never reached IRIS.
+///
+/// The local docker path sent stderr to `/dev/null` and ignored the exit status, so a
+/// `docker exec` into a container that does not exist — which fails in the daemon, before IRIS
+/// is involved at all — came back as `Ok("")` and `iris_execute` reported
+/// `{"success": true, "output": ""}`. Every test pinned to a container name the machine does
+/// not have therefore passed without executing anything, which is how the CI e2e job ran
+/// `test_iris_execute_docker_exec_fallback` green against `iris-dev-iris`, a container that
+/// only exists on one laptop.
+pub const ERR_CONTAINER_UNREACHABLE: &str = "CONTAINER_UNREACHABLE";
+
+/// Explain a failed `docker exec` in terms of what to do about it.
+///
+/// `exit_code` is `None` when the process died on a signal. `stderr` is passed through whenever
+/// this function has no specific advice for it — a message the daemon wrote is worth more than
+/// a guess.
+pub fn docker_exec_failure(container: &str, exit_code: Option<i32>, stderr: &str) -> String {
+    let detail = stderr.trim();
+    let advice = if detail.contains("No such container") {
+        format!(
+            "docker has no container named '{container}'. Check `docker ps --filter name={container}`, \
+             then point IRIS_CONTAINER (or the `container` key in .iris-agentic-dev.toml) at a \
+             container that is running."
+        )
+    } else if detail.contains("is not running")
+        || detail.contains("is paused")
+        || detail.contains("is restarting")
+    {
+        format!(
+            "container '{container}' exists but is not running: start it with \
+             `docker start {container}`."
+        )
+    } else {
+        let exit = match exit_code {
+            Some(code) => format!("exit {code}"),
+            None => "killed by signal".to_string(),
+        };
+        let said = if detail.is_empty() {
+            "and wrote nothing to stderr".to_string()
+        } else {
+            format!("and said: {detail}")
+        };
+        format!(
+            "`docker exec` into '{container}' failed ({exit}) {said}. IRIS was never reached, \
+             so nothing ran."
+        )
+    };
+    format!("{ERR_CONTAINER_UNREACHABLE}: {advice}")
 }
 
 /// FR-006: Strip IRIS session banner and prompt lines from docker exec stdout.
@@ -1391,6 +1455,66 @@ mod pure_fn_tests {
         let url1 = c.versioned_ns_url("MYNS", "/foo");
         let url2 = c.versioned_ns_url("OTHERNS", "/foo");
         assert_ne!(url1, url2);
+    }
+
+    // ── docker_exec_failure ──────────────────────────────────────────────────
+
+    /// Verbatim stderr from `docker exec -i iad-no-such-container-xyz iris session IRIS -U USER`.
+    const NO_SUCH_CONTAINER: &str =
+        "Error response from daemon: No such container: iad-no-such-container-xyz\n";
+
+    #[test]
+    fn docker_exec_failure_names_the_container_and_how_to_check_it() {
+        let msg = docker_exec_failure("iris-dev-iris", Some(1), NO_SUCH_CONTAINER);
+        assert!(msg.starts_with(ERR_CONTAINER_UNREACHABLE), "{msg}");
+        // Which container, and the one command that answers "so is it there or not".
+        assert!(msg.contains("iris-dev-iris"), "{msg}");
+        assert!(msg.contains("docker ps"), "{msg}");
+        // Where the name came from, so the fix is findable.
+        assert!(msg.contains("IRIS_CONTAINER"), "{msg}");
+    }
+
+    #[test]
+    fn docker_exec_failure_distinguishes_stopped_from_absent() {
+        let stopped = docker_exec_failure(
+            "iris-dev-iris",
+            Some(126),
+            "Error response from daemon: Container abc123 is not running\n",
+        );
+        assert!(stopped.contains("not running"), "{stopped}");
+        assert!(
+            stopped.contains("docker start iris-dev-iris"),
+            "a stopped container has a one-command fix; say it: {stopped}"
+        );
+        // The absent case must not tell the operator to start a container that does not exist.
+        let absent = docker_exec_failure("iris-dev-iris", Some(1), NO_SUCH_CONTAINER);
+        assert!(!absent.contains("docker start"), "{absent}");
+    }
+
+    #[test]
+    fn docker_exec_failure_keeps_the_exit_code_when_stderr_says_nothing() {
+        let msg = docker_exec_failure("iris-e2e", Some(127), "   \n");
+        assert!(msg.contains("127"), "{msg}");
+        assert!(msg.contains("iris-e2e"), "{msg}");
+    }
+
+    #[test]
+    fn docker_exec_failure_survives_a_signal_kill_with_no_exit_code() {
+        let msg = docker_exec_failure("iris-e2e", None, "killed");
+        assert!(msg.starts_with(ERR_CONTAINER_UNREACHABLE), "{msg}");
+        assert!(msg.contains("killed"), "{msg}");
+    }
+
+    #[test]
+    fn docker_exec_failure_passes_unrecognized_stderr_through() {
+        // Anything the daemon says that this function does not have a special case for still has
+        // to reach the caller — guessing is what produced `success: true, output: ""`.
+        let msg = docker_exec_failure(
+            "iris-e2e",
+            Some(1),
+            "permission denied while trying to connect to the Docker daemon socket",
+        );
+        assert!(msg.contains("permission denied"), "{msg}");
     }
 
     // ── strip_iris_banner ────────────────────────────────────────────────────

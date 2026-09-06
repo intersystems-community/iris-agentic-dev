@@ -352,10 +352,6 @@ jobs:
       #   - test_admin_webapp_crud: Security.Applications.Create() calls
       #     %ZHSLIB.HealthShareMgr internally, which doesn't exist on Community
       #     edition (confirmed via %ExistsId=0) — needs an Enterprise/Ensemble image.
-      #   - discover_via_docker_named_finds_real_container: hardcodes the container
-      #     name "iris-dev-iris" (a personal dev machine's convention); this job's
-      #     container is named iris-e2e. The rest of test_discovery_docker_live.rs
-      #     (5 tests) has no such hardcoding and passes here.
       #   - test_scm_*_via_wiremock / test_search_sync_with_wiremock_null_work_id:
       #     these tests spin up their own wiremock MockServer in-process but the CI
       #     environment's IRIS_HOST is set, which causes the handler to attempt a
@@ -389,7 +385,6 @@ jobs:
             --skip live_benchmark_run_covers_all_tasks_with_a_verdict \
             --skip live_benchmark_baseline_computes_absolute_difference_lift \
             --skip test_admin_webapp_crud \
-            --skip discover_via_docker_named_finds_real_container \
             --skip test_scm_checkout_immediate_success_via_wiremock \
             --skip test_scm_execute_action_code_0_via_wiremock \
             --skip test_scm_execute_action_code_1_via_wiremock \
