@@ -543,7 +543,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.92.0
       - uses: Swatinem/rust-cache@v2
       - name: Docs contract (docs/tools.md, docs/connecting.md, iad SKILL.md)
-        run: cargo test --locked -p iris-agentic-dev-core --test test_docs_contract
+        # test_docs_contract is a module of the aggregated `unit` target now, so it needs
+        # the target name plus a filter, and `--features testing` because the aggregate
+        # requires it.
+        run: cargo test --locked -p iris-agentic-dev-core --features testing --test unit test_docs_contract::
 
   cross-compile-check:
     runs-on: ubuntu-latest

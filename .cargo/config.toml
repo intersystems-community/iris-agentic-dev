@@ -18,12 +18,24 @@
 # artifacts, just accumulates stale cache that triggers full rebuilds on next run.
 incremental = false
 
-[test]
-# Sequential tests — avoids env-var races across test binaries and port conflicts.
-# test-threads controls cargo-level parallelism (binaries); RUST_TEST_THREADS controls
-# within-binary thread count. Both needed to fully serialize env-var-sensitive tests.
-# Override with: RUST_TEST_THREADS=4 cargo test -j4
-test-threads = 1
-
+# There used to be a `[test] test-threads = 1` stanza here with a comment claiming it controlled
+# cargo-level parallelism across test binaries. Cargo has no `[test]` table, so the key was inert
+# and there was never any cargo-level parallelism to control: cargo runs test binaries strictly one
+# after another and offers no knob to change that. RUST_TEST_THREADS below was doing the whole job
+# on its own.
+#
+# That sequencing is why the test files are aggregated into four targets per crate instead of one
+# target per file — see crates/iris-agentic-dev-core/tests/unit/main.rs. The per-binary spawn was
+# ~85% of a warm run.
 [env]
+# Serializes tests within each binary. It matters more now than it did with one target per file:
+# the integration and misc aggregates put many files in one process, so a test that calls
+# `set_var` is visible to the next one.
+#
+# The `unit` target touches no IRIS and no shared env, and runs 2,319 tests in 5.7s parallel
+# against 18.6s serial:
+#
+#   RUST_TEST_THREADS=12 cargo test --features testing --test unit
+#
+# Do not do that for `integration` — those tests need a live container and must stay serial.
 RUST_TEST_THREADS = "1"

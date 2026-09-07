@@ -1,6 +1,16 @@
 [profile.dev]
 debug = true          # full debug info — required for stepping in VS Code / lldb
 
+# Test binaries only. This was added while chasing the 207-`[[test]]`-target spawn cost and does not
+# address it — aggregating the test files into five targets per crate did (see
+# crates/iris-agentic-dev-core/tests/unit/main.rs). It stays for what it does do: full DWARF copied
+# into every test binary made target/debug/deps 26 GB and made each link slower.
+# `debug = 1` keeps line tables, so panic backtraces still name a file and line. Stepping in a
+# debugger is what `debug = 2` buys, and that is not what test binaries are for.
+[profile.test]
+debug = 1
+split-debuginfo = "unpacked"   # leave DWARF in the .o files instead of copying it into each binary
+
 [profile.dev-fast]
 inherits = "dev"
 opt-level = 1         # faster compile, still debuggable

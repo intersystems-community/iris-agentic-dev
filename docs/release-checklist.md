@@ -18,9 +18,18 @@ node -e "const p=require('./.claude-plugin/plugin.json'); console.log(p.version)
 
 ## 2. Tests
 
-- [ ] `cargo clippy -- -D warnings` — zero warnings
+- [ ] `cargo clippy --features testing --all-targets -- -D warnings` — zero warnings
 - [ ] `cargo fmt --all -- --check` — zero diffs
-- [ ] `cargo test --test '*' -- --test-threads=1 --include-ignored` against live `iris-dev-iris` container — all pass
+- [ ] Full suite against a live `iris-dev-iris` container — all pass:
+
+```bash
+IRIS_HOST=localhost IRIS_WEB_PORT=52780 IRIS_USERNAME=_SYSTEM IRIS_PASSWORD=SYS \
+  cargo test --features testing --no-fail-fast --test '*' -- --test-threads=1 --include-ignored
+```
+
+All four env vars are required. Without them `admin_e2e_tests` and the `params_batch*` live tests
+assert `IRIS_HOST must be set` and fail, which reads as a regression and is not one. `--no-fail-fast`
+matters too: without it the first failing target aborts the run and you never see the rest.
 
 ## 3. Coverage gate (merged/subprocess mode)
 

@@ -31,14 +31,46 @@ cargo test --features testing        # unit tests (no IRIS required)
 cargo test --features testing -- --include-ignored   # full suite (requires live container)
 ```
 
-Always pass `--features testing`. A third of the test binaries declare
+Always pass `--features testing`. Every aggregate test target declares
 `required-features = ["testing"]`, and cargo skips them silently without it — a bare `cargo test`
-reports green while never compiling the contract suites. CI passes the flag on every job.
+reports green while never compiling anything. CI passes the flag on every job.
 
 For integration/e2e tests always use `--test-threads=1`:
 
 ```bash
 cargo test --features testing --test '*' -- --test-threads=1 --include-ignored
+```
+
+### Test target layout
+
+`iris-agentic-dev-core` declares five `[[test]]` targets, not one per file. Each is an aggregator
+(`tests/<dir>/main.rs`) whose only content is `mod` lines:
+
+| Target        | Files | What it holds                                      |
+| ------------- | ----- | -------------------------------------------------- |
+| `unit`        | 100   | Pure logic — parsers, guards, gates, contracts     |
+| `integration` | 54    | Live IRIS via `iris-dev-iris`; must stay serial    |
+| `binary`      | 14    | Spawn `iris-agentic-dev`, talk JSON-RPC over stdio |
+| `misc`        | 15    | Older top-level `tests/*.rs`                       |
+| `skills`      | 1     | Single file, so it stays its own target            |
+
+Cargo runs test binaries strictly one after another and gives you no knob to change that, so a
+per-file target charges every run a process spawn. At 207 targets that was ~85% of a warm run:
+254 s, of which about 40 s was actually running tests. The aggregates bring the same suite in at
+61 s.
+
+Two consequences:
+
+- **Add a file, add its `mod` line.** An unlisted file compiles nowhere and its tests never run,
+  and `cargo test` still reports ok. `test_test_target_layout.rs` fails when that happens — do not
+  delete it.
+- **Do not add a per-file `[[test]]` block.** `autotests = false` is set, so a file declared as its
+  own target _and_ listed in an aggregator compiles twice. The same guard test catches it.
+
+`unit` touches no IRIS and no shared env, so it can run parallel — 5.7 s against 18.6 s serial:
+
+```bash
+RUST_TEST_THREADS=12 cargo test --features testing --test unit
 ```
 
 ## Testing Philosophy — NON-NEGOTIABLE
@@ -52,7 +84,9 @@ IRIS is the only valid test object.
   covering pure logic (parsers, guards, gates) are fine, but anything that touches
   IRIS behaviour must run against real IRIS.
 - **`--test-threads=1`** is required for all IRIS integration/e2e test runs to prevent
-  env-var race conditions across test binaries.
+  env-var race conditions. This matters more since the files were aggregated into one
+  binary per group: tests in the same target share a process, so a `set_var` in one is
+  visible to the next.
 
 ## Test Coverage Policy — NON-NEGOTIABLE
 
