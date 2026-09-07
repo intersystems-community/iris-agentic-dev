@@ -36,3 +36,43 @@ fn plugin_json_version_matches_workspace_version() {
          version ({workspace_version}) — update plugin.json alongside the next release bump."
     );
 }
+
+/// The extension's `package-lock.json` carries the extension's own version in two places, and
+/// nothing bumped them: the lock sat at `0.4.31` while `package.json` shipped `0.4.32`. `npm ci`
+/// tolerates that today, which is why it went unnoticed for a release, but the two disagreeing is
+/// the same silent drift the test above exists to stop.
+///
+/// This checks the lock against `package.json`, not against the workspace version — the extension
+/// semver (`0.4.x`) and the server version (`1.4.x`) are separate sequences on purpose.
+#[test]
+fn extension_package_lock_version_matches_package_json() {
+    let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    root.pop(); // iris-agentic-dev-bin → crates
+    root.pop(); // crates → workspace root
+    let dir = root.join("vscode-iris-agentic-dev");
+
+    let read = |name: &str| -> serde_json::Value {
+        let path = dir.join(name);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+        serde_json::from_str(&text).unwrap_or_else(|e| panic!("{} is not valid JSON: {e}", name))
+    };
+
+    let pkg = read("package.json");
+    let lock = read("package-lock.json");
+    let declared = pkg["version"]
+        .as_str()
+        .expect("package.json must have a string \"version\"");
+
+    assert_eq!(
+        lock["version"].as_str(),
+        Some(declared),
+        "package-lock.json top-level version does not match package.json ({declared})"
+    );
+    assert_eq!(
+        lock["packages"][""]["version"].as_str(),
+        Some(declared),
+        "package-lock.json packages.\"\".version does not match package.json ({declared}) — npm \
+         writes the root version in both places and both have to move"
+    );
+}
