@@ -1,5 +1,10 @@
 name: Skill Regression
 
+# One job per skill. The suite is about 105 minutes of sequential opencode sessions, so the
+# old single job hit its 75-minute timeout and was cancelled every night from 2026-08-29 on.
+# Run 34093536537 got through five of nine skills in 68 minutes before the runner killed it.
+# Sharded, the wall clock is the slowest skill (iris-ai-hub, ~29 min) plus setup.
+
 on:
   schedule:
     # Nightly at 02:00 UTC — avoids overlap with daytime CI runs
@@ -21,9 +26,63 @@ on:
         default: false
 
 jobs:
-  skill-regression:
+  discover:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 10
+    outputs:
+      skills: ${{ steps.matrix.outputs.skills }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        # The harness unit tests import yaml and requests only — no LLM client, no container.
+        run: pip install pyyaml pytest requests
+
+      - name: Run unit tests for skill_eval harness
+        run: |
+          python -m pytest tests/e2e/skill_eval/ \
+            --ignore=tests/e2e/skill_eval/test_integration.py \
+            --ignore=tests/e2e/skill_eval/test_debug_events.py \
+            --ignore=tests/e2e/skill_eval/test_debug_single.py \
+            --ignore=tests/e2e/skill_eval/test_debug_vector.py \
+            --ignore=tests/e2e/skill_eval/test_tovector_probe.py \
+            --ignore=tests/e2e/skill_eval/test_tovector_score.py \
+            -q
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+      - name: Build the shard matrix
+        id: matrix
+        run: |
+          # --list-skills reads the same two directories the eval reads, so the matrix cannot
+          # drift out of sync with what actually has an eval.yaml. A hand-written list would.
+          if [ -n "${{ github.event.inputs.skill }}" ]; then
+            SKILLS='["${{ github.event.inputs.skill }}"]'
+          else
+            SKILLS=$(python -m tests.e2e.skill_eval --list-skills)
+          fi
+          echo "skills=$SKILLS" >> "$GITHUB_OUTPUT"
+          echo "Sharding on: $SKILLS"
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+  evaluate:
+    needs: discover
+    runs-on: ubuntu-latest
+    # Slowest skill estimates at 29 min; the rest are 8-14. 45 leaves room for a slow runner
+    # without letting a wedged shard hold a runner for hours.
+    timeout-minutes: 45
+    strategy:
+      # One skill regressing must not cancel the other eight — the nightly report is the
+      # whole point, and a report covering one skill is worse than useless.
+      fail-fast: false
+      matrix:
+        skill: ${{ fromJSON(needs.discover.outputs.skills) }}
 
     steps:
       - uses: actions/checkout@v7
@@ -116,31 +175,12 @@ jobs:
           docker logs iris-skill-eval 2>&1 | tail -40
           exit 1
 
-      - name: Run unit tests for skill_eval harness
-        run: |
-          python -m pytest tests/e2e/skill_eval/ \
-            --ignore=tests/e2e/skill_eval/test_integration.py \
-            --ignore=tests/e2e/skill_eval/test_debug_events.py \
-            --ignore=tests/e2e/skill_eval/test_debug_single.py \
-            --ignore=tests/e2e/skill_eval/test_debug_vector.py \
-            --ignore=tests/e2e/skill_eval/test_tovector_probe.py \
-            --ignore=tests/e2e/skill_eval/test_tovector_score.py \
-            -q
-        env:
-          PYTHONPATH: ${{ github.workspace }}
-
-      - name: Run skill regression suite
+      - name: Evaluate ${{ matrix.skill }}
         id: eval
         run: |
-          SKILL_ARG=""
-          if [ -n "${{ github.event.inputs.skill }}" ]; then
-            SKILL_ARG="--skill ${{ github.event.inputs.skill }}"
-          fi
-          RUNS="${{ github.event.inputs.runs || '5' }}"
-
           python -m tests.e2e.skill_eval \
-            $SKILL_ARG \
-            --runs "$RUNS" \
+            --skill "${{ matrix.skill }}" \
+            --runs "${{ github.event.inputs.runs || '5' }}" \
             --yes \
             --output tests/e2e/results/ \
             --model "openai/gpt-4.1"
@@ -154,19 +194,66 @@ jobs:
           IRIS_NAMESPACE: USER
           IRIS_CONTAINER: iris-skill-eval
 
-      - name: Upload eval results
+      - name: Upload ${{ matrix.skill }} results
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: skill-eval-results-${{ github.run_id }}
+          # Per-skill name: a shared name means the last upload wins and the aggregate job
+          # reports one skill as the whole night.
+          name: skill-eval-results-${{ matrix.skill }}
+          path: tests/e2e/results/skill-eval-*.json
+          retention-days: 90
+
+  aggregate:
+    needs: evaluate
+    # Runs even when a shard regressed or timed out. A shard that left no artifact shows up
+    # in the merged report as a named hole rather than vanishing.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install pyyaml
+
+      - name: Download shard results
+        uses: actions/download-artifact@v7
+        with:
+          pattern: skill-eval-results-*
+          path: shards/
+
+      - name: Merge shard results
+        run: |
+          # Exits 1 on any regression: this is the gate for the whole night.
+          python -m tests.e2e.skill_eval \
+            --merge-results shards/ \
+            --output tests/e2e/results/ \
+            --model "openai/gpt-4.1"
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+      - name: Upload combined results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: skill-eval-combined-${{ github.run_id }}
           path: tests/e2e/results/skill-eval-*.json
           retention-days: 90
 
       - name: Update baseline
         if: ${{ github.event.inputs.update_baseline == 'true' }}
         run: |
+          # Merges the same shard results again with --update-baseline. It does not re-run
+          # the eval: the numbers are already measured, and a second full pass cost another
+          # 100 minutes and $5 for nothing. One job pushes, so there is nothing to race.
           python -m tests.e2e.skill_eval \
-            --yes \
+            --merge-results shards/ \
             --update-baseline \
             --output tests/e2e/results/ \
             --model "openai/gpt-4.1"
@@ -177,10 +264,3 @@ jobs:
           git push
         env:
           PYTHONPATH: ${{ github.workspace }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          IRIS_HOST: localhost
-          IRIS_WEB_PORT: "52773"
-          IRIS_USERNAME: ${{ env.IRIS_USERNAME }}
-          IRIS_PASSWORD: ${{ env.IRIS_PASSWORD }}
-          IRIS_NAMESPACE: USER
-          IRIS_CONTAINER: iris-skill-eval

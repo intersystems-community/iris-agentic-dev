@@ -1,7 +1,8 @@
 """CLI entry point: python -m tests.e2e.skill_eval [OPTIONS] — T027."""
+
 import argparse
-import dataclasses
 import datetime
+import json
 import os
 import sys
 
@@ -9,12 +10,15 @@ import sys
 import tests.e2e.skill_eval  # noqa: F401 (triggers sys.path shim)
 
 from tests.e2e.skill_eval.evaluator import (
-    discover_skills, load_eval_config, compare_to_baseline,
+    discover_skills,
+    load_eval_config,
+    compare_to_baseline,
     SkillResult,
 )
 from tests.e2e.skill_eval.baseline import load_baseline, save_baseline, compute_diff
 from tests.e2e.skill_eval.cost_estimator import estimate, format_dry_run
 from tests.e2e.skill_eval.reporter import EvalRun, print_summary, write_result
+from tests.e2e.skill_eval.shard import covered_skills, merge_results
 
 _SKILLS_PACK_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "skills", "skills")
@@ -32,45 +36,82 @@ _DEFAULT_MODEL = "openai/gpt-4.1"
 def _make_uncovered_result(skill_name: str) -> SkillResult:
     return SkillResult(
         skill=skill_name,
-        fire_rate=None, implicit_fire_rate=None, isolation_fire_rate=None,
-        pass_rate_baseline=None, pass_rate_skill=None,
-        lift=None, lift_delta=None,
-        regression_flag=False, new_skill=False,
-        no_task_coverage=True, task_ids_used=[],
+        fire_rate=None,
+        implicit_fire_rate=None,
+        isolation_fire_rate=None,
+        pass_rate_baseline=None,
+        pass_rate_skill=None,
+        lift=None,
+        lift_delta=None,
+        regression_flag=False,
+        new_skill=False,
+        no_task_coverage=True,
+        task_ids_used=[],
     )
 
 
-def _run_skill(config, openai_key, model, n_runs, iris_host, iris_web_port, iris_container) -> SkillResult:
+def _run_skill(
+    config, openai_key, model, n_runs, iris_host, iris_web_port, iris_container
+) -> SkillResult:
     from tests.e2e.skill_eval.fire_rate import measure_fire_rate
     from tests.e2e.skill_eval.lift import measure_lift
     from tests.e2e.skill_eval.isolation import check_isolation
 
     print(f"  [{config.skill}] measuring fire-rate ({n_runs} runs)...", flush=True)
-    fire_rate = measure_fire_rate(config, n_runs=n_runs, openai_api_key=openai_key, model=model)
+    fire_rate = measure_fire_rate(
+        config, n_runs=n_runs, openai_api_key=openai_key, model=model
+    )
     print(f"  [{config.skill}] fire_rate={fire_rate:.2f}", flush=True)
 
     # Implicit fire-rate: prompt doesn't name the skill — tests autonomous triggering
     implicit_fire_rate = None
     if config.implicit_fire_rate_prompt:
-        print(f"  [{config.skill}] measuring implicit fire-rate ({n_runs} runs)...", flush=True)
+        print(
+            f"  [{config.skill}] measuring implicit fire-rate ({n_runs} runs)...",
+            flush=True,
+        )
         implicit_fire_rate = measure_fire_rate(
-            config, n_runs=n_runs, openai_api_key=openai_key, model=model,
+            config,
+            n_runs=n_runs,
+            openai_api_key=openai_key,
+            model=model,
             prompt=config.implicit_fire_rate_prompt,
         )
-        print(f"  [{config.skill}] implicit_fire_rate={implicit_fire_rate:.2f}", flush=True)
+        print(
+            f"  [{config.skill}] implicit_fire_rate={implicit_fire_rate:.2f}",
+            flush=True,
+        )
 
     isolation_fire_rate = None
     if config.domain_skill and config.isolation_prompt:
         print(f"  [{config.skill}] checking isolation ({n_runs} runs)...", flush=True)
-        isolation_fire_rate = check_isolation(config, n_runs=n_runs, openai_api_key=openai_key, model=model)
-        print(f"  [{config.skill}] isolation_fire_rate={isolation_fire_rate:.2f}", flush=True)
+        isolation_fire_rate = check_isolation(
+            config, n_runs=n_runs, openai_api_key=openai_key, model=model
+        )
+        print(
+            f"  [{config.skill}] isolation_fire_rate={isolation_fire_rate:.2f}",
+            flush=True,
+        )
 
-    lift_data = {"pass_rate_baseline": None, "pass_rate_skill": None, "lift": None, "task_ids_used": []}
+    lift_data = {
+        "pass_rate_baseline": None,
+        "pass_rate_skill": None,
+        "lift": None,
+        "task_ids_used": [],
+    }
     if config.benchmark_tasks:
-        print(f"  [{config.skill}] measuring lift on {config.benchmark_tasks}...", flush=True)
+        print(
+            f"  [{config.skill}] measuring lift on {config.benchmark_tasks}...",
+            flush=True,
+        )
         lift_data = measure_lift(
-            config, n_runs=n_runs, openai_api_key=openai_key, model=model,
-            iris_host=iris_host, iris_web_port=iris_web_port, iris_container=iris_container,
+            config,
+            n_runs=n_runs,
+            openai_api_key=openai_key,
+            model=model,
+            iris_host=iris_host,
+            iris_web_port=iris_web_port,
+            iris_container=iris_container,
         )
         print(f"  [{config.skill}] lift={lift_data.get('lift')}", flush=True)
 
@@ -90,18 +131,115 @@ def _run_skill(config, openai_key, model, n_runs, iris_host, iris_web_port, iris
     )
 
 
+def _merge_and_report(args) -> int:
+    """Combine the per-skill shard results into one summary. Returns the process exit code.
+
+    This is the gate for a sharded nightly run: each shard evaluates one skill and compares it
+    to the baseline on its own, but nothing decides whether the *night* passed until the
+    shards are back together. Exits 1 on any regression, exactly as the single-job run did.
+    """
+    results = merge_results(args.merge_results)
+    if not results:
+        print(f"No shard results found under {args.merge_results}", file=sys.stderr)
+
+    reported = {r.skill for r in results}
+    # A shard that timed out or failed to upload leaves no result at all. Reporting only what
+    # arrived would call a clean night on a third of the suite.
+    missing = [
+        s
+        for s in covered_skills(_SKILLS_PACK_DIR, _TASKS_SKILLS_DIR)
+        if s not in reported
+    ]
+    for skill in missing:
+        results.append(_make_uncovered_result(skill))
+
+    regressions = [r.skill for r in results if r.regression_flag]
+    improvements = [
+        r.skill for r in results if r.lift_delta is not None and r.lift_delta > 0
+    ]
+
+    run = EvalRun(
+        run_id=datetime.datetime.utcnow().strftime("%Y-%m-%dT%H%M%S"),
+        model=args.model,
+        judge_model="openai/gpt-4.1",
+        timestamp=datetime.datetime.utcnow().isoformat() + "Z",
+        regression_threshold=args.regression_threshold,
+        skills=results,
+        summary={
+            "regressions": regressions,
+            "improvements": improvements,
+            "uncovered": missing,
+            "shards_merged": len(reported),
+        },
+    )
+    print_summary(run)
+    if missing:
+        print(f"Missing shard results: {', '.join(missing)}")
+    path = write_result(run, args.output)
+    print(f"\nCombined results written to: {path}")
+
+    if args.update_baseline:
+        measured = [r for r in results if r.lift is not None]
+        baseline = load_baseline(_DEFAULT_BASELINE)
+        diff = compute_diff(baseline, measured)
+        save_baseline(measured, _DEFAULT_BASELINE)
+        print("\nBaseline updated. Changes:")
+        for d in diff:
+            sign = "+" if (d["delta"] or 0) > 0 else ""
+            old = f"{d['old_lift']:.2f}" if d["old_lift"] is not None else "n/a"
+            new_skill = " (new)" if d["new_skill"] else ""
+            delta = f"{sign}{d['delta']:.2f}" if d["delta"] is not None else "n/a"
+            print(f"  {d['skill']}: {old} → {d['new_lift']:.2f} ({delta}){new_skill}")
+        if not diff:
+            print("  (no changes)")
+
+    return 1 if regressions else 0
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Skill regression and lift measurement suite")
+    parser = argparse.ArgumentParser(
+        description="Skill regression and lift measurement suite"
+    )
     parser.add_argument("--skill", help="Evaluate a single skill by name")
-    parser.add_argument("--category", help="Filter skills by name prefix (e.g. objectscript, iris, domain)")
-    parser.add_argument("--dry-run", action="store_true", help="Print cost estimate and exit")
-    parser.add_argument("--yes", action="store_true", help="Skip confirmation for full-suite run")
-    parser.add_argument("--update-baseline", action="store_true", help="Update skill-baseline.json after run")
+    parser.add_argument(
+        "--category",
+        help="Filter skills by name prefix (e.g. objectscript, iris, domain)",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Print cost estimate and exit"
+    )
+    parser.add_argument(
+        "--yes", action="store_true", help="Skip confirmation for full-suite run"
+    )
+    parser.add_argument(
+        "--update-baseline",
+        action="store_true",
+        help="Update skill-baseline.json after run",
+    )
     parser.add_argument("--regression-threshold", type=float, default=0.05)
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--output", default=_DEFAULT_RESULTS_DIR)
     parser.add_argument("--model", default=_DEFAULT_MODEL)
+    parser.add_argument(
+        "--list-skills",
+        action="store_true",
+        help="Print covered skill names as a JSON array and exit (builds the CI matrix)",
+    )
+    parser.add_argument(
+        "--merge-results",
+        metavar="DIR",
+        help="Merge per-shard skill-eval-*.json under DIR into one summary and exit",
+    )
     args = parser.parse_args()
+
+    # Both shard-support modes are pure file IO. They run in CI jobs that hold no secrets and
+    # start no container, so neither may reach the OPENAI_API_KEY check below.
+    if args.list_skills:
+        print(json.dumps(covered_skills(_SKILLS_PACK_DIR, _TASKS_SKILLS_DIR)))
+        sys.exit(0)
+
+    if args.merge_results:
+        sys.exit(_merge_and_report(args))
 
     openai_key = os.environ.get("OPENAI_API_KEY", "")
     if not openai_key:
@@ -119,15 +257,19 @@ def main():
     if args.skill:
         target_skills = [args.skill] if args.skill in all_skills else []
         if not target_skills:
-            print(f"ERROR: skill '{args.skill}' not found in skills/skills/", file=sys.stderr)
+            print(
+                f"ERROR: skill '{args.skill}' not found in skills/skills/",
+                file=sys.stderr,
+            )
             sys.exit(2)
     elif args.category:
         if args.category == "domain":
             # domain = skills with domain_skill: true in eval.yaml
             target_skills = [
-                s for s in all_skills
-                if load_eval_config(s, _TASKS_SKILLS_DIR) and
-                   load_eval_config(s, _TASKS_SKILLS_DIR).domain_skill
+                s
+                for s in all_skills
+                if load_eval_config(s, _TASKS_SKILLS_DIR)
+                and load_eval_config(s, _TASKS_SKILLS_DIR).domain_skill
             ]
         else:
             target_skills = [s for s in all_skills if s.startswith(args.category)]
@@ -159,7 +301,9 @@ def main():
             print("Aborted.")
             sys.exit(3)
 
-    print(f"\nRunning skill evaluation ({len(configs)} covered, {len(uncovered)} uncovered)...\n")
+    print(
+        f"\nRunning skill evaluation ({len(configs)} covered, {len(uncovered)} uncovered)...\n"
+    )
 
     # Load baseline for regression comparison
     baseline = load_baseline(_DEFAULT_BASELINE)
@@ -167,9 +311,18 @@ def main():
     # Run evaluations
     results: list[SkillResult] = []
     for cfg in configs:
-        result = _run_skill(cfg, openai_key, args.model, args.runs,
-                            iris_host, iris_web_port, iris_container)
-        result = compare_to_baseline(result, baseline, threshold=args.regression_threshold)
+        result = _run_skill(
+            cfg,
+            openai_key,
+            args.model,
+            args.runs,
+            iris_host,
+            iris_web_port,
+            iris_container,
+        )
+        result = compare_to_baseline(
+            result, baseline, threshold=args.regression_threshold
+        )
         results.append(result)
 
     # Add uncovered skills
@@ -178,7 +331,9 @@ def main():
 
     # Build summary
     regressions = [r.skill for r in results if r.regression_flag]
-    improvements = [r.skill for r in results if r.lift_delta is not None and r.lift_delta > 0]
+    improvements = [
+        r.skill for r in results if r.lift_delta is not None and r.lift_delta > 0
+    ]
     uncovered_names = [r.skill for r in results if r.no_task_coverage]
 
     run = EvalRun(
@@ -213,7 +368,9 @@ def main():
                 sign = "+" if (d["delta"] or 0) > 0 else ""
                 new_skill = " (new)" if d["new_skill"] else ""
                 old = f"{d['old_lift']:.2f}" if d["old_lift"] is not None else "n/a"
-                print(f"  {d['skill']}: {old} → {d['new_lift']:.2f} ({sign}{d['delta']:.2f}){new_skill}")
+                print(
+                    f"  {d['skill']}: {old} → {d['new_lift']:.2f} ({sign}{d['delta']:.2f}){new_skill}"
+                )
         else:
             print("  (no changes)")
 
