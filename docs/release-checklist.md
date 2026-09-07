@@ -57,9 +57,21 @@ re-measured against the tree you are tagging, not copied forward from the spec t
 
 ## 5. Skill regression baseline
 
-- [ ] Run `tests/e2e/skill_eval/run_skill_eval.sh` or the GitHub Actions skill-regression workflow
+- [ ] Run the eval — either the GitHub Actions skill-regression workflow, or locally:
+
+```bash
+PYTHONPATH=. python -m tests.e2e.skill_eval --skill <name> --runs 5 \
+  --output tests/e2e/results/ --model "openai/gpt-4.1"
+```
+
 - [ ] No skill shows `regression_flag = true` in the results
 - [ ] If a skill improved, update `tests/e2e/results/skill-baseline.json`
+
+There is no `run_skill_eval.sh`; this item named one for months and nobody noticed, which says
+something about how often the gate was actually run. The full sweep is nine skills, about 105
+minutes of sequential opencode sessions and roughly $5 of `OPENAI_API_KEY`, so it is the one gate
+here that costs real money. The nightly workflow is the cheap path — check the last scheduled run
+before deciding to run it by hand.
 
 ## 6. CI pre-flight (before tagging)
 
