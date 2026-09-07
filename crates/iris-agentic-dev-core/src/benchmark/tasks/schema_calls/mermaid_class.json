@@ -1,9 +1,5 @@
 {
   "tool": "mermaid_class",
   "request": "Draw me a class diagram for Sample.Person in the USER namespace, following inheritance two levels up.",
-  "expect_keys": [
-    "class",
-    "namespace",
-    "depth"
-  ]
+  "expect_keys": ["class", "namespace", "depth"]
 }
