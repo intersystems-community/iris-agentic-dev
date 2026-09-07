@@ -1,11 +1,11 @@
 """Unit tests for opencode_runner — T007."""
+
 import json
 import os
 import sqlite3
 import subprocess
 import tempfile
 import pytest
-from tests.e2e import opencode_runner
 from tests.e2e.opencode_runner import (
     collect_events,
     parse_events_from_lines,
@@ -13,51 +13,69 @@ from tests.e2e.opencode_runner import (
     read_session_db,
 )
 
-
-TOOL_USE_COMPLETED = json.dumps({
-    "type": "tool_use",
-    "timestamp": 1000,
-    "sessionID": "s1",
-    "part": {
-        "id": "p1",
+TOOL_USE_COMPLETED = json.dumps(
+    {
+        "type": "tool_use",
+        "timestamp": 1000,
         "sessionID": "s1",
-        "type": "tool",
-        "tool": "iris_agentic_dev:iris_compile",
-        "state": {
-            "status": "completed",
-            "input": {"cls_name": "User.Foo"},
-            "output": "Compiled OK",
-            "title": "iris_compile",
-        }
+        "part": {
+            "id": "p1",
+            "sessionID": "s1",
+            "type": "tool",
+            "tool": "iris_agentic_dev:iris_compile",
+            "state": {
+                "status": "completed",
+                "input": {"cls_name": "User.Foo"},
+                "output": "Compiled OK",
+                "title": "iris_compile",
+            },
+        },
     }
-})
+)
 
-TOOL_USE_BUILTIN = json.dumps({
-    "type": "tool_use",
-    "timestamp": 1001,
-    "sessionID": "s1",
-    "part": {
-        "id": "p2",
+TOOL_USE_BUILTIN = json.dumps(
+    {
+        "type": "tool_use",
+        "timestamp": 1001,
         "sessionID": "s1",
-        "type": "tool",
-        "tool": "bash",
-        "state": {"status": "completed", "input": {"command": "ls"}, "output": "file.txt"},
+        "part": {
+            "id": "p2",
+            "sessionID": "s1",
+            "type": "tool",
+            "tool": "bash",
+            "state": {
+                "status": "completed",
+                "input": {"command": "ls"},
+                "output": "file.txt",
+            },
+        },
     }
-})
+)
 
-TEXT_EVENT = json.dumps({
-    "type": "text",
-    "timestamp": 1002,
-    "sessionID": "s1",
-    "part": {"type": "text", "text": "The class compiled successfully.", "time": {"end": 1}}
-})
+TEXT_EVENT = json.dumps(
+    {
+        "type": "text",
+        "timestamp": 1002,
+        "sessionID": "s1",
+        "part": {
+            "type": "text",
+            "text": "The class compiled successfully.",
+            "time": {"end": 1},
+        },
+    }
+)
 
-ERROR_EVENT = json.dumps({
-    "type": "error",
-    "timestamp": 1003,
-    "sessionID": "s1",
-    "error": {"name": "CompileError", "data": {"message": "Syntax error at line 5"}}
-})
+ERROR_EVENT = json.dumps(
+    {
+        "type": "error",
+        "timestamp": 1003,
+        "sessionID": "s1",
+        "error": {
+            "name": "CompileError",
+            "data": {"message": "Syntax error at line 5"},
+        },
+    }
+)
 
 UNKNOWN_EVENT = json.dumps({"type": "some_future_event", "data": {}})
 
@@ -162,15 +180,59 @@ def test_read_session_db_missing_file():
 # corrupting the YAML and crashing the lift stage minutes later.
 
 
-class _FakeProc:
-    """Stand-in for Popen that records the cwd it was given."""
+def _reaped_pid() -> int:
+    """A pid whose process group is certainly gone.
+
+    `_kill_tree` calls `os.getpgid(proc.pid)` and then signals that group, so
+    the fake needs a pid that is safe to hand it. Anything live -- our own pid
+    above all -- would have the test runner SIGKILL its own process group.
+    A started-and-reaped child leaves `getpgid` raising ProcessLookupError,
+    which is one of the errors `_kill_tree` is supposed to treat as
+    "already dead".
+
+    Call this before `popen_spy` patches `subprocess.Popen`, never from inside
+    `_FakeProc.__init__` -- the patched Popen returns a `_FakeProc`, which would
+    call back in here and recurse until the stack ran out.
+    """
+    proc = subprocess.Popen(["true"], start_new_session=True)
+    proc.wait()
+    return proc.pid
+
+
+class _EmptyStdout:
+    """`iter([])` has no `close()`, and the runner closes its read end."""
 
     def __init__(self):
-        self.stdout = iter([])
+        self._it = iter([])
+        self.closed = False
+
+    def __iter__(self):
+        return self._it
+
+    def __next__(self):
+        return next(self._it)
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeProc:
+    """Stand-in for Popen that records the cwd it was given.
+
+    Models `pid` and a closeable `stdout` because `_kill_tree` and the runner's
+    `finally` block use both. It did not, and a `suppress(Exception)` in
+    `_kill_tree` turned both AttributeErrors into silence -- the tests passed
+    while never reaching the process-group kill they exist to cover.
+    """
+
+    def __init__(self, pid: int):
+        self.stdout = _EmptyStdout()
         self.returncode = 0
+        self.pid = pid
+        self.killed = False
 
     def kill(self):
-        pass
+        self.killed = True
 
     def wait(self, timeout=None):
         return 0
@@ -179,17 +241,20 @@ class _FakeProc:
 @pytest.fixture
 def popen_spy(monkeypatch):
     seen = {}
+    # Before the patch below, while subprocess.Popen is still the real one.
+    dead_pid = _reaped_pid()
 
     def fake_popen(cmd, **kwargs):
         cwd = kwargs.get("cwd")
         seen["cwd"] = cwd
         seen["cmd"] = cmd
         seen["env"] = kwargs.get("env")
+        seen["start_new_session"] = kwargs.get("start_new_session")
         # Sampled while the process is "running" — a scratch dir is cleaned up
         # by the time collect_events returns, so it can't be checked after.
         seen["cwd_existed"] = cwd is not None and os.path.isdir(cwd)
         seen["cwd_contents"] = sorted(os.listdir(cwd)) if seen["cwd_existed"] else None
-        return _FakeProc()
+        return _FakeProc(dead_pid)
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     return seen
@@ -199,13 +264,11 @@ def test_omitted_working_dir_does_not_run_in_the_repo(popen_spy):
     """No working_dir must not mean "run in the repo checkout"."""
     collect_events("do something", {})
     cwd = popen_spy["cwd"]
-    repo_root = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "..", "..")
-    )
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     assert cwd is not None, "cwd must be set explicitly, never inherited"
-    assert os.path.commonpath([os.path.abspath(cwd), repo_root]) != repo_root, (
-        f"agent would run inside the repo checkout: {cwd}"
-    )
+    assert (
+        os.path.commonpath([os.path.abspath(cwd), repo_root]) != repo_root
+    ), f"agent would run inside the repo checkout: {cwd}"
 
 
 def test_omitted_working_dir_gets_a_real_empty_directory(popen_spy):
@@ -216,7 +279,9 @@ def test_omitted_working_dir_gets_a_real_empty_directory(popen_spy):
 
 def test_scratch_workdir_is_cleaned_up(popen_spy):
     collect_events("do something", {})
-    assert not os.path.exists(popen_spy["cwd"]), "scratch workdir must not be left behind"
+    assert not os.path.exists(
+        popen_spy["cwd"]
+    ), "scratch workdir must not be left behind"
 
 
 def test_explicit_working_dir_is_respected(popen_spy):
@@ -252,13 +317,15 @@ _REPO_LEAKING_VARS = [
 
 
 @pytest.mark.parametrize("var", _REPO_LEAKING_VARS)
-def test_repo_pointing_env_vars_are_not_handed_to_the_agent(monkeypatch, popen_spy, var):
+def test_repo_pointing_env_vars_are_not_handed_to_the_agent(
+    monkeypatch, popen_spy, var
+):
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
     monkeypatch.setenv(var, repo_root)
     collect_events("do something", {})
-    assert popen_spy["env"].get(var) != repo_root, (
-        f"{var} still points the agent at the repo checkout"
-    )
+    assert (
+        popen_spy["env"].get(var) != repo_root
+    ), f"{var} still points the agent at the repo checkout"
 
 
 def test_no_inherited_env_value_points_at_the_repo(monkeypatch, popen_spy):
@@ -266,13 +333,18 @@ def test_no_inherited_env_value_points_at_the_repo(monkeypatch, popen_spy):
     monkeypatch.setenv("PYTHONPATH", repo_root)
     monkeypatch.setenv("GITHUB_WORKSPACE", repo_root)
     collect_events("do something", {})
-    leaks = {k: v for k, v in popen_spy["env"].items()
-             if isinstance(v, str) and repo_root in v}
+    leaks = {
+        k: v
+        for k, v in popen_spy["env"].items()
+        if isinstance(v, str) and repo_root in v
+    }
     assert not leaks, f"env leaks the repo path to the agent: {leaks}"
 
 
 def test_explicit_env_vars_still_win(popen_spy):
-    collect_events("do something", {"IRIS_HOST": "localhost", "OPENCODE_DB": "/tmp/x.db"})
+    collect_events(
+        "do something", {"IRIS_HOST": "localhost", "OPENCODE_DB": "/tmp/x.db"}
+    )
     assert popen_spy["env"]["IRIS_HOST"] == "localhost"
     assert popen_spy["env"]["OPENCODE_DB"] == "/tmp/x.db"
 
@@ -282,3 +354,75 @@ def test_essential_env_is_preserved(popen_spy):
     collect_events("do something", {})
     assert popen_spy["env"].get("PATH"), "PATH must survive scrubbing"
     assert popen_spy["env"].get("HOME"), "HOME must survive scrubbing"
+
+
+# --- Timeout enforcement ----------------------------------------------------
+#
+# `opencode` on PATH is a wrapper: it execs the real
+# node_modules/opencode-ai/bin/.opencode as a child, and that grandchild
+# inherits the stdout pipe. Killing only the direct child (plain proc.kill())
+# therefore leaves the grandchild running, reparented to init, still holding
+# the write end of the pipe open — so the reader never sees EOF and blocks
+# forever, *past* the timeout that was supposed to bound it.
+#
+# Observed during the v1.4.0 release run: the timer fired at 300 s and killed
+# the wrapper, then the harness sat in read() for 20 minutes at 0% CPU while
+# the orphaned grandchild burned 35% of a core. The whole 9-skill suite made
+# no further progress. The fix is to put the child in its own process group
+# and signal the group.
+
+
+def test_run_puts_the_child_in_its_own_process_group(popen_spy):
+    """Without a new session there is no process group to signal."""
+    collect_events("do something", {})
+    assert popen_spy.get("start_new_session") is True, (
+        "Popen must set start_new_session=True so the whole opencode process "
+        "tree can be killed as a group"
+    )
+
+
+def _fake_opencode_tree(tmpdir: str) -> None:
+    """Write a fake `opencode` that leaks a grandchild holding stdout open."""
+    script = os.path.join(tmpdir, "opencode")
+    with open(script, "w") as f:
+        f.write(
+            "#!/bin/sh\n"
+            # Grandchild inherits stdout and outlives the wrapper, exactly like
+            # the real .opencode binary does.
+            "sh -c 'sleep 120' &\n"
+            "sleep 120\n"
+        )
+    os.chmod(script, 0o755)
+
+
+def test_timeout_kills_the_whole_tree_not_just_the_wrapper():
+    """A leaked grandchild must not be able to hold the reader open past timeout."""
+    import time
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _fake_opencode_tree(tmpdir)
+        started = time.monotonic()
+        events = collect_events(
+            "do something",
+            {"PATH": f"{tmpdir}:/usr/bin:/bin"},
+            timeout=2,
+        )
+        elapsed = time.monotonic() - started
+
+    assert elapsed < 30, (
+        f"collect_events took {elapsed:.1f}s with a timeout of 2s — the orphaned "
+        "grandchild is still holding the stdout pipe open"
+    )
+    assert events == []
+
+
+def test_timeout_leaves_no_orphaned_processes():
+    """The killed tree must actually be gone, not reparented to init."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        _fake_opencode_tree(tmpdir)
+        collect_events("do something", {"PATH": f"{tmpdir}:/usr/bin:/bin"}, timeout=2)
+        leftover = subprocess.run(
+            ["pgrep", "-f", "sleep 120"], capture_output=True, text=True
+        ).stdout.strip()
+
+    assert not leftover, f"orphaned processes survived the timeout: {leftover}"

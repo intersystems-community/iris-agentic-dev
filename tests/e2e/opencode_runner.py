@@ -1,4 +1,5 @@
 """OpenCode subprocess runner and event stream parser."""
+
 import contextlib
 import json
 import os
@@ -35,7 +36,7 @@ def parse_mcp_tool(tool_name: str) -> tuple[str | None, str]:
         prefix = server + "_"
         if tool_name.startswith(prefix):
             # Return sanitized server name (hyphens→underscores) for consistent matching
-            return server.replace("-", "_"), tool_name[len(prefix):]
+            return server.replace("-", "_"), tool_name[len(prefix) :]
     return None, tool_name
 
 
@@ -83,7 +84,8 @@ def _sandbox_env(env_vars: dict, cwd: str) -> dict:
     # runners do sometimes prepend workspace-relative bin dirs to PATH.
     launched_from = os.path.abspath(os.getcwd())
     env = {
-        k: v for k, v in env.items()
+        k: v
+        for k, v in env.items()
         if k in ("PATH", "HOME") or not (isinstance(v, str) and launched_from in v)
     }
 
@@ -111,6 +113,28 @@ def _sandbox_dir(working_dir: str | None) -> Generator[str, None, None]:
         yield scratch
 
 
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """SIGKILL the child's whole process group, then reap it.
+
+    `proc.kill()` signals one pid. opencode is a wrapper that spawns the real
+    binary, so one pid is never enough: the survivor keeps the stdout pipe open
+    and whoever is reading it hangs. Falls back to the single pid if the group
+    is already gone.
+
+    Each suppress names the OS errors that mean "already dead" and nothing
+    wider. A bare `suppress(Exception)` here swallowed a missing `import signal`
+    -- `killpg` raised NameError, was silently skipped, and the function
+    degraded to exactly the single-pid kill it exists to replace, while every
+    test still passed.
+    """
+    with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    with contextlib.suppress(ProcessLookupError, OSError):
+        proc.kill()
+    with contextlib.suppress(subprocess.TimeoutExpired, OSError):
+        proc.wait(timeout=5)
+
+
 def run_opencode(
     prompt: str,
     env_vars: dict,
@@ -123,11 +147,22 @@ def run_opencode(
     Uses Popen + readline so we can kill the process as soon as the
     session goes idle rather than waiting for opencode to exit on its own
     (opencode run can hang on teardown after the LLM response completes).
+
+    The child is started in its own session so the entire tree can be killed
+    as a process group. `opencode` on PATH is only a wrapper around
+    node_modules/opencode-ai/bin/.opencode, and that grandchild inherits this
+    pipe's write end. Killing the wrapper alone leaves the grandchild alive and
+    reparented to init, still holding the pipe open, so the read loop below
+    blocks forever and the timeout never takes effect.
     """
     cmd = [
-        "opencode", "run", prompt,
-        "--format", "json",
-        "--model", model,
+        "opencode",
+        "run",
+        prompt,
+        "--format",
+        "json",
+        "--model",
+        model,
         "--dangerously-skip-permissions",
     ]
     collected: list[dict] = []
@@ -140,10 +175,13 @@ def run_opencode(
             text=True,
             env=env,
             cwd=cwd,
+            start_new_session=True,
         )
 
-        # Kill the process after timeout regardless
-        timer = threading.Timer(timeout, lambda: proc.kill())
+        # Kill the whole process group after timeout regardless. Killing only
+        # `proc` leaves the real .opencode grandchild holding stdout open, which
+        # makes the read loop below outlast the timeout indefinitely.
+        timer = threading.Timer(timeout, lambda: _kill_tree(proc))
         timer.start()
 
         try:
@@ -155,19 +193,23 @@ def run_opencode(
                     event = json.loads(line)
                     collected.append(event)
                     # Stop reading once the session reports idle — opencode has finished
-                    if (event.get("type") == "session.status"
-                            and event.get("properties", {}).get("status", {}).get("type") == "idle"):
+                    if (
+                        event.get("type") == "session.status"
+                        and event.get("properties", {}).get("status", {}).get("type")
+                        == "idle"
+                    ):
                         break
                     # Also stop on step_finish with no more steps pending (heuristic)
                 except json.JSONDecodeError:
                     continue
         finally:
             timer.cancel()
-            try:
-                proc.kill()
-                proc.wait(timeout=5)
-            except Exception:
-                pass
+            _kill_tree(proc)
+            # Close our read end too. Without this the fd stays open until the
+            # generator is collected, and a scratch-dir cleanup that races the
+            # dying tree can block on it.
+            with contextlib.suppress(OSError):
+                proc.stdout.close()
 
     yield from collected
 
@@ -180,7 +222,11 @@ def collect_events(
     working_dir: str | None = None,
 ) -> list[dict]:
     """Run opencode and return all events as a list."""
-    return list(run_opencode(prompt, env_vars, model=model, timeout=timeout, working_dir=working_dir))
+    return list(
+        run_opencode(
+            prompt, env_vars, model=model, timeout=timeout, working_dir=working_dir
+        )
+    )
 
 
 def read_session_db(db_path: str) -> dict:
@@ -189,9 +235,12 @@ def read_session_db(db_path: str) -> dict:
         return {}
     try:
         conn = sqlite3.connect(db_path)
-        tables = [r[0] for r in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()]
+        tables = [
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        ]
         result = {}
         for table in tables:
             result[table] = conn.execute(f"SELECT * FROM {table}").fetchall()
