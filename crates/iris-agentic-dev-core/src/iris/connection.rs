@@ -633,10 +633,15 @@ impl IrisConnection {
             .send()
             .await?;
         let query_body: serde_json::Value = query_resp.json().await.unwrap_or_default();
-        let output = query_body["result"]["content"][0]["result"]
-            .as_str()
-            .unwrap_or("")
-            .replace('\x01', "\n");
+        // Atelier does not always hand the column back as a JSON string. When the captured output
+        // parses as JSON on its own — an array, an object, a number, a bare `true` — IRIS emits it
+        // structurally, so `as_str()` is None and the old `.unwrap_or("")` reported Ok("") for a
+        // call that had in fact produced its whole payload. Re-serialize those instead.
+        let output = match &query_body["result"]["content"][0]["result"] {
+            serde_json::Value::String(s) => s.replace('\x01', "\n"),
+            serde_json::Value::Null => String::new(),
+            other => other.to_string(),
+        };
 
         // 4. Delete the temp class (best-effort)
         let _ = self.delete_doc(&doc_name, namespace, client).await;

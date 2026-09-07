@@ -791,6 +791,11 @@ path = "tests/integration/enum_rejection.rs"
 required-features = ["testing"]
 
 [[test]]
+name = "subclass_impl_live"
+path = "tests/integration/subclass_impl_live.rs"
+required-features = ["testing"]
+
+[[test]]
 name = "test_enum_contract"
 path = "tests/unit/test_enum_contract.rs"
 required-features = ["testing"]

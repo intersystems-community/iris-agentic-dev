@@ -376,30 +376,65 @@ pub struct FindSubclassImplementationsParams {
     pub server: Option<String>,
 }
 
-fn build_expand_hierarchy_code(base_classes: &[String]) -> String {
-    let bases_list = base_classes
+/// Escape a value for embedding in an ObjectScript string literal (`"` doubles).
+fn cos_str(s: &str) -> String {
+    s.replace('"', "\"\"")
+}
+
+/// One generator call that expands the hierarchy and reports the implementations.
+///
+/// The previous version issued one `SELECT ... WHERE Super LIKE '%base%'` per class discovered,
+/// which cost 29 s for `%Library.Persistent` in USER and matched on substrings: `Super` is a
+/// comma-delimited list of full class names, so `LIKE '%Demo.Base%'` also claimed
+/// `Demo.BaseSibling`, and an underscore or percent in a class name was read as a LIKE wildcard.
+/// This reads `Name, Super` once, inverts it into a child index, and walks that in memory.
+///
+/// `limit` caps the *filtered* rows. Pushing it into the SQL as `FETCH FIRST n ROWS ONLY` truncated
+/// every class in the namespace that defines the method before the hierarchy filter ran, so a base
+/// whose subclasses sort late alphabetically reported none at all.
+fn build_find_impls_code(base_classes: &[String], method_name: &str, limit: usize) -> String {
+    let mut lines: Vec<String> = base_classes
         .iter()
-        .map(|c| format!(r#"$LISTBUILD("{}")"#, c.replace('"', "\\\"")))
-        .collect::<Vec<_>>()
-        .join("_");
-    format!(
-        r#"
-Set queue={bases}
-Set result=queue
-While $LISTLENGTH(queue)>0 {{
-    Set base=$LISTGET(queue,1),queue=$LIST(queue,2,*)
-    Set rs2=##class(%SQL.Statement).%ExecDirect(,"SELECT Name FROM %Dictionary.CompiledClass WHERE Super LIKE ?","%"_base_"%")
-    While rs2.%Next() {{
-        Set child=rs2.Name
-        If '$LISTFIND(result,child) {{ Set result=result_$LISTBUILD(child),queue=queue_$LISTBUILD(child) }}
-    }}
-}}
-Set out="",sep=""
-For i=1:1:$LISTLENGTH(result) {{ Set out=out_sep_$LISTGET(result,i),sep="|" }}
-Write out,!
-"#,
-        bases = bases_list
-    )
+        .map(|c| format!(r#"Set bases("{}")="""#, cos_str(c)))
+        .collect();
+    lines.extend([
+        "Set ok=1".to_string(),
+        r#"Set rsc=##class(%SQL.Statement).%ExecDirect(,"SELECT Name,Super FROM %Dictionary.CompiledClass WHERE Super IS NOT NULL AND Super <> ''")"#.to_string(),
+        r#"If rsc.%SQLCODE<0 { Write "ERROR: class scan: "_rsc.%Message,! Set ok=0 }"#.to_string(),
+        "If ok {".to_string(),
+        "  While rsc.%Next() {".to_string(),
+        "    Set tName=rsc.Name,tSupers=rsc.Super".to_string(),
+        r#"    For i=1:1:$LENGTH(tSupers,",") {"#.to_string(),
+        r#"      Set tSuper=$ZSTRIP($PIECE(tSupers,",",i),"<>W")"#.to_string(),
+        r#"      If tSuper'="" { Set kids(tSuper,tName)="" }"#.to_string(),
+        "    }".to_string(),
+        "  }".to_string(),
+        r#"  Set tBase="" For { Set tBase=$ORDER(bases(tBase)) Quit:tBase=""  Set family(tBase)="",todo(tBase)="" }"#.to_string(),
+        r#"  For { Set tCur=$ORDER(todo("")) Quit:tCur=""  Kill todo(tCur)"#.to_string(),
+        r#"    Set tKid="" For { Set tKid=$ORDER(kids(tCur,tKid)) Quit:tKid=""  If '$DATA(family(tKid)) { Set family(tKid)="",todo(tKid)="" } }"#.to_string(),
+        "  }".to_string(),
+        format!(
+            r#"  Set rsm=##class(%SQL.Statement).%ExecDirect(,"SELECT parent,FormalSpec FROM %Dictionary.CompiledMethod WHERE Name = ? AND Origin = parent ORDER BY parent","{}")"#,
+            cos_str(method_name)
+        ),
+        r#"  If rsm.%SQLCODE<0 { Write "ERROR: method scan: "_rsm.%Message,! Set ok=0 }"#.to_string(),
+        "  If ok {".to_string(),
+        "    Set impls=[],n=0".to_string(),
+        format!("    While (n<{limit})&&rsm.%Next() {{"),
+        "      Set tParent=rsm.parent".to_string(),
+        "      If $DATA(family(tParent)) {".to_string(),
+        "        Set tRow={}".to_string(),
+        r#"        Do tRow.%Set("class",tParent)"#.to_string(),
+        r#"        Do tRow.%Set("formal_spec",rsm.FormalSpec)"#.to_string(),
+        "        Do impls.%Push(tRow)".to_string(),
+        "        Set n=n+1".to_string(),
+        "      }".to_string(),
+        "    }".to_string(),
+        "    Write impls.%ToJSON(),!".to_string(),
+        "  }".to_string(),
+        "}".to_string(),
+    ]);
+    lines.join("\n")
 }
 
 pub async fn handle_find_subclass_implementations(
@@ -415,58 +450,22 @@ pub async fn handle_find_subclass_implementations(
     let namespace = crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace);
     let mut sorted = p.base_classes.clone();
     sorted.sort();
+    let limit = p.limit.unwrap_or(100);
+    // limit and server belong in the key: a limit-5 call must not be answered from a limit-100
+    // entry, and two instances must not share one another's dictionary.
     let cache_key = format!(
-        "find_subclass:{}:{}:{}",
+        "find_subclass:{}:{}:{}:{}:{}",
         p.method_name,
         sorted.join(","),
-        namespace
+        namespace,
+        limit,
+        p.server.as_deref().unwrap_or("")
     );
     if let Some(cached) = metadata_cache_get(cache, &cache_key) {
         return ok_json(cached);
     }
 
-    let limit = p.limit.unwrap_or(100);
-    let expand_code = build_expand_hierarchy_code(&p.base_classes);
-    let desc_raw = iris
-        .execute_via_generator(&expand_code, namespace, client)
-        .await
-        .map_err(|e| {
-            rmcp::ErrorData::internal_error(format!("hierarchy expansion failed: {e}"), None)
-        })?;
-
-    let descendants: Vec<String> = desc_raw
-        .trim()
-        .split('|')
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect();
-    if descendants.is_empty() {
-        let r = serde_json::json!({"success":true,"method_name":p.method_name,"base_classes":p.base_classes,"namespace":namespace,"implementations":[],"implementation_count":0,"confidence":0.0});
-        metadata_cache_set(cache, cache_key, r.clone());
-        return ok_json(r);
-    }
-
-    let method_esc = p.method_name.replace('"', "\\\"");
-    let desc_list = descendants
-        .iter()
-        .map(|c| format!(r#"$LISTBUILD("{}")"#, c.replace('"', "\\\"")))
-        .collect::<Vec<_>>()
-        .join("_");
-
-    let mut lines: Vec<String> = vec!["Set q=$CHAR(34)".into()];
-    lines.push(format!("Set descList={}", desc_list));
-    lines.push(format!(r#"Set rs=##class(%SQL.Statement).%ExecDirect(,"SELECT m.parent, m.FormalSpec FROM %Dictionary.CompiledMethod m WHERE m.Name = ? AND m.Origin = m.parent ORDER BY m.parent FETCH FIRST {} ROWS ONLY","{}")"#, limit, method_esc));
-    lines.push(r#"If rs.%SQLCODE<0 { Write "ERROR:"_rs.%Message,! Quit }"#.into());
-    lines.push(r#"Set out="[",sep="""#.into());
-    lines.push("While rs.%Next() {".into());
-    lines.push(r#"  If $LISTFIND(descList,rs.parent) {"#.into());
-    lines.push(r#"    Set out=out_sep_"{"_q_"class"_q_":"_q_rs.parent_q_","_q_"formal_spec"_q_":"_q_rs.FormalSpec_q_"}""#.into());
-    lines.push(r#"    Set sep=",""#.into());
-    lines.push("  }".into());
-    lines.push("}".into());
-    lines.push(r#"Write out_"]",!"#.into());
-    let code = lines.join("\n");
-
+    let code = build_find_impls_code(&p.base_classes, &p.method_name, limit);
     let output = iris
         .execute_via_generator(&code, namespace, client)
         .await
@@ -476,8 +475,27 @@ pub async fn handle_find_subclass_implementations(
     if let Some(msg) = generator_error_message(trimmed) {
         return err_json("QUERY_ERROR", msg.trim());
     }
-    let raw: serde_json::Value = serde_json::from_str(trimmed).unwrap_or(serde_json::json!([]));
-    let impls = raw.as_array().cloned().unwrap_or_default();
+    // The payload is built by %DynamicArray and serialized with %ToJSON, so a parse failure means
+    // something went wrong on the IRIS side — it is not an empty result. Reporting it as `[]` is
+    // how a `FormalSpec` containing a quote used to erase the whole answer.
+    let raw: serde_json::Value = match serde_json::from_str(trimmed) {
+        Ok(v) => v,
+        Err(e) => {
+            return err_json(
+                "PARSE_ERROR",
+                &format!("IRIS returned output that is not JSON ({e}): {trimmed:?}"),
+            )
+        }
+    };
+    let impls = match raw.as_array() {
+        Some(a) => a.clone(),
+        None => {
+            return err_json(
+                "PARSE_ERROR",
+                &format!("expected a JSON array of implementations, got: {raw}"),
+            )
+        }
+    };
     let n = impls.len();
     let confidence = confidence_for_count(n);
     let annotated: Vec<_> = impls
@@ -545,16 +563,57 @@ mod tests {
         assert!(v["routes"].as_array().unwrap().is_empty());
     }
 
-    // ── A1 fix: task description alignment ──────────────────────────────────
+    // ── hierarchy expansion: exact superclass match, no pattern matching ─────
 
     #[test]
-    fn test_expand_uses_like_not_instring() {
-        let code = build_expand_hierarchy_code(&["Ens.BusinessProcess".to_string()]);
-        assert!(code.contains("LIKE"), "must use LIKE for Super matching");
+    fn test_expansion_never_pattern_matches_the_super_column() {
+        let code = build_find_impls_code(&["Ens.BusinessProcess".to_string()], "OnRequest", 100);
+        // `Super` is a comma-delimited list of full class names. Matching it with LIKE '%base%'
+        // claimed any class whose name merely contained the base — `Demo.BaseSibling` for
+        // `Demo.Base` — and read `_` and `%` in a class name as wildcards.
         assert!(
-            !code.contains("%INSTRING"),
-            "%INSTRING doesn't accept ? params"
+            !code.contains("LIKE"),
+            "expansion must compare class names, not patterns: {code}"
         );
+        assert!(
+            code.contains(r#"$PIECE(tSupers,",",i)"#),
+            "Super must be split on commas: {code}"
+        );
+        assert!(
+            code.contains("Set kids(tSuper,tName)"),
+            "the child index is what makes one query enough: {code}"
+        );
+    }
+
+    #[test]
+    fn test_limit_caps_the_loop_not_the_sql() {
+        let code = build_find_impls_code(&["Ens.BusinessProcess".to_string()], "OnRequest", 7);
+        // FETCH FIRST truncated all definers of the method namespace-wide before the hierarchy
+        // filter ran, so a base whose subclasses sort late reported none at all.
+        assert!(
+            !code.contains("FETCH FIRST"),
+            "limit must not reach the SQL: {code}"
+        );
+        assert!(
+            code.contains("While (n<7)&&rsm.%Next()"),
+            "limit must cap the filtered rows: {code}"
+        );
+    }
+
+    #[test]
+    fn test_payload_is_built_by_dynamic_array() {
+        let code = build_find_impls_code(&["Ens.BusinessProcess".to_string()], "OnRequest", 100);
+        // Hand-concatenated JSON broke on any FormalSpec containing a quote, e.g.
+        // `%String(MAXLEN="")`, and the parse failure was swallowed into an empty list.
+        assert!(
+            code.contains("%ToJSON()"),
+            "must serialize via IRIS: {code}"
+        );
+        assert!(
+            code.contains(r#"Do tRow.%Set("formal_spec",rsm.FormalSpec)"#),
+            "FormalSpec must go through %Set, not concatenation: {code}"
+        );
+        assert!(!code.contains("$CHAR(34)"), "no hand-built quoting: {code}");
     }
 
     // ── A2 fix: route parsing JSON shape ─────────────────────────────────────
@@ -621,24 +680,47 @@ mod tests {
         assert!(code.contains("My.Quoted"));
     }
 
-    // ── build_expand_hierarchy_code multiple bases ────────────────────────────
+    // ── build_find_impls_code: bases seed the walk ────────────────────────────
 
     #[test]
-    fn test_expand_hierarchy_code_multiple_bases() {
-        let code = build_expand_hierarchy_code(&[
-            "Ens.BusinessProcess".to_string(),
-            "Ens.BusinessOperation".to_string(),
-        ]);
-        assert!(code.contains("Ens.BusinessProcess"));
-        assert!(code.contains("Ens.BusinessOperation"));
-        assert!(code.contains("LIKE"));
-        assert!(code.contains("$LISTFIND"), "must deduplicate via LISTFIND");
+    fn test_every_base_seeds_the_walk() {
+        let code = build_find_impls_code(
+            &[
+                "Ens.BusinessProcess".to_string(),
+                "Ens.BusinessOperation".to_string(),
+            ],
+            "OnRequest",
+            100,
+        );
+        assert!(
+            code.contains(r#"Set bases("Ens.BusinessProcess")="""#),
+            "{code}"
+        );
+        assert!(
+            code.contains(r#"Set bases("Ens.BusinessOperation")="""#),
+            "{code}"
+        );
+        assert!(
+            code.contains("If '$DATA(family(tKid))"),
+            "the walk must not revisit a class: {code}"
+        );
     }
 
     #[test]
-    fn test_expand_hierarchy_code_single_base() {
-        let code = build_expand_hierarchy_code(&["Ens.Adapter".to_string()]);
-        assert!(code.contains("Ens.Adapter"));
+    fn test_find_impls_code_single_base() {
+        let code = build_find_impls_code(&["Ens.Adapter".to_string()], "OnInit", 100);
+        assert!(code.contains(r#"Set bases("Ens.Adapter")="""#), "{code}");
+        assert!(code.contains(r#""OnInit""#), "{code}");
+    }
+
+    #[test]
+    fn test_find_impls_code_escapes_a_quote_for_objectscript() {
+        // ObjectScript escapes `"` by doubling it; a backslash is not an escape character, so the
+        // old `\"` produced code that would not compile.
+        let code = build_find_impls_code(&[r#"My"Base"#.to_string()], r#"My"Method"#, 3);
+        assert!(code.contains(r#"Set bases("My""Base")="""#), "{code}");
+        assert!(code.contains(r#""My""Method""#), "{code}");
+        assert!(!code.contains("\\\""), "no backslash escaping: {code}");
     }
 
     // ── ok_json / err_json output shape ──────────────────────────────────────
@@ -797,9 +879,20 @@ mod tests {
     }
 
     #[test]
-    fn test_expand_hierarchy_code_nonempty() {
-        let code = build_expand_hierarchy_code(&["Ens.BusinessProcess".to_string()]);
-        assert!(code.contains("Ens.BusinessProcess"));
-        assert!(code.contains("LIKE"));
+    fn test_one_generator_call_does_both_halves() {
+        let code = build_find_impls_code(&["Ens.BusinessProcess".to_string()], "OnRequest", 100);
+        // Two round trips became one: the class scan and the method scan share the same
+        // in-memory `family` array, so nothing has to be shipped back to Rust in between.
+        assert_eq!(
+            code.matches("%ExecDirect").count(),
+            2,
+            "one class scan plus one method scan: {code}"
+        );
+        assert!(code.contains("%Dictionary.CompiledClass"), "{code}");
+        assert!(code.contains("%Dictionary.CompiledMethod"), "{code}");
+        assert!(
+            code.contains("If $DATA(family(tParent))"),
+            "the hierarchy filter must run against the walked family: {code}"
+        );
     }
 }

@@ -363,3 +363,51 @@ async fn live_skill_forget_removes_a_seeded_skill() {
         "the skill must actually be gone from ^SKILLS, got: {check:?}"
     );
 }
+
+// ── execute_via_generator: output that happens to be JSON must survive ────────
+
+/// Atelier's `/action/query` does not always hand back the column value as a JSON *string*. When
+/// the value parses as JSON in its own right, IRIS emits it structurally — `Write "[{""a"":1}]"`
+/// comes back as `"result": [{"a": 1}]`, an array. `as_str()` on that returns `None`, so the old
+/// `.unwrap_or("")` turned every JSON-emitting tool's output into an empty string and reported
+/// `Ok("")`. `find_subclass_implementations` builds its whole payload that way, which is why it
+/// returned zero implementations for every input regardless of the hierarchy.
+#[tokio::test]
+#[ignore]
+async fn live_json_shaped_output_is_not_swallowed() {
+    let (conn, client) = match make_conn() {
+        Some(c) => c,
+        None => {
+            eprintln!("IRIS_HOST not set — skipping live_json_shaped_output_is_not_swallowed");
+            return;
+        }
+    };
+
+    // An array of objects: the exact shape find_subclass_implementations writes.
+    let out = conn
+        .execute_via_generator(
+            r#"Set a=[] Set o={} Do o.%Set("class","A.B") Do a.%Push(o) Write a.%ToJSON(),!"#,
+            "USER",
+            &client,
+        )
+        .await
+        .expect("generator call failed");
+    let v: serde_json::Value = serde_json::from_str(out.trim())
+        .unwrap_or_else(|e| panic!("output {out:?} did not parse as JSON: {e}"));
+    assert_eq!(v[0]["class"], "A.B", "got {v}");
+
+    // A bare object, and a bare number — both are valid JSON and both took the same path.
+    let obj = conn
+        .execute_via_generator(r#"Write "{""k"":1}",!"#, "USER", &client)
+        .await
+        .expect("generator call failed");
+    assert!(
+        obj.contains("\"k\""),
+        "object-shaped output was swallowed: {obj:?}"
+    );
+    let num = conn
+        .execute_via_generator("Write 42,!", "USER", &client)
+        .await
+        .expect("generator call failed");
+    assert_eq!(num.trim(), "42", "numeric output was swallowed: {num:?}");
+}

@@ -5713,6 +5713,7 @@ async fn test_dispatch_find_subclass_implementations_cache_hit() {
         None => return,
     };
     // Call twice — second call hits cache. Uses correct field name: base_classes.
+    let mut seen = Vec::new();
     for _ in 0..2 {
         let result = tools
             .call_for_test(
@@ -5725,11 +5726,17 @@ async fn test_dispatch_find_subclass_implementations_cache_hit() {
             )
             .await;
         let v = parse_result(result);
+        assert_eq!(v["success"], true, "find_subclass_impls cache: {v}");
         assert!(
-            v.get("implementations").is_some() || v.get("error_code").is_some(),
+            v["implementations"].is_array(),
             "find_subclass_impls cache: {v}"
         );
+        seen.push(v);
     }
+    assert_eq!(
+        seen[0], seen[1],
+        "the second call must be served from cache unchanged"
+    );
 }
 
 // ── dict.rs edge cases ────────────────────────────────────────────────────────
@@ -7393,9 +7400,8 @@ async fn test_dispatch_resolve_dynamic_dispatch_v2() {
 
 // ── find_subclass_implementations (covers dict handler) ───────────────────────
 
-// TODO(fix/json-escaping-helper): same failure as
-// test_dispatch_find_subclass_implementations_cache_hit above. Re-enable
-// once that fix lands.
+// This and the cache-hit test above used to time out: expanding %Library.Persistent cost one SQL
+// round trip per class discovered — 29 s for the USER class tree — inside a single Atelier request.
 #[tokio::test]
 async fn test_dispatch_find_subclass_implementations_v2() {
     let tools = match make_iris_tools() {
@@ -7414,10 +7420,9 @@ async fn test_dispatch_find_subclass_implementations_v2() {
         )
         .await;
     let v = parse_result(result);
-    assert!(
-        v.get("success").is_some() || v.get("error_code").is_some(),
-        "find_subclass_implementations: {v}"
-    );
+    assert_eq!(v["success"], true, "find_subclass_implementations: {v}");
+    let n = v["implementations"].as_array().expect("array").len();
+    assert!(n <= 5, "limit 5 must cap the answer, got {n}: {v}");
 }
 
 // ── extract_message_map_routing (covers dict handler) ─────────────────────────
@@ -15173,14 +15178,15 @@ async fn test_extract_message_map_routing_success_via_wiremock() {
     );
 }
 
-// Covers dict.rs lines 310-312: find_subclass_implementations with empty descendants
-// (execute_via_generator returns empty string → descendants vec is empty → early return).
+// An empty generator result is a failed call, not an empty answer. The handler builds its payload
+// with %DynamicArray and %ToJSON, so the shortest legitimate output is "[]"; nothing at all means
+// the generated code never reached its Write. Reporting that as success with zero implementations
+// is what hid the bug for as long as it did.
 #[tokio::test]
-async fn test_find_subclass_implementations_empty_descendants_via_wiremock() {
+async fn test_find_subclass_implementations_empty_output_is_an_error_via_wiremock() {
     use wiremock::MockServer;
     let server = MockServer::start().await;
 
-    // Generator returns empty output → descendants.is_empty() → early return with empty list
     mount_scm_mocks(&server, "").await;
 
     let _docker_guard = DOCKER_REQUIRED_LOCK
@@ -15203,14 +15209,9 @@ async fn test_find_subclass_implementations_empty_descendants_via_wiremock() {
         }
     }
     let v = parse_result(result);
-    assert!(
-        v["success"].as_bool() == Some(true),
-        "find_subclass empty: {v}"
-    );
     assert_eq!(
-        v["implementation_count"].as_u64(),
-        Some(0),
-        "find_subclass empty count: {v}"
+        v["error_code"], "PARSE_ERROR",
+        "empty generator output must not be reported as an empty answer: {v}"
     );
 }
 
