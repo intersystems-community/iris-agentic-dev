@@ -2,8 +2,17 @@
 name = "iris-agentic-dev"
 version.workspace = true
 edition.workspace = true
+# Every test file is a module of one of the three aggregate targets below. Without this, cargo would
+# also auto-discover each tests/*.rs as its own target and compile the same code twice.
+autotests = false
 authors.workspace = true
 license.workspace = true
+
+[features]
+# Carries no code. It exists so this crate's test targets can gate on the same `--features testing`
+# flag the core crate's do, which is what CI and every documented test command pass. `testing` is
+# already on for the core dependency below unconditionally.
+testing = []
 
 [[bin]]
 name = "iris-agentic-dev"
@@ -43,106 +52,19 @@ tempfile = "3"
 serde_json.workspace = true
 
 [[test]]
-name = "plugin_dispatch_tests"
-path = "tests/plugin_dispatch_tests.rs"
+# All 2 files directly under tests/ compile into this one binary. See tests/main.rs.
+name = "bin_misc"
+path = "tests/main.rs"
+required-features = ["testing"]
 
 [[test]]
-name = "benchmark_relocated_binary_tests"
-path = "tests/benchmark_relocated_binary_tests.rs"
+# All 10 files under tests/unit/ compile into this one binary. See tests/unit/main.rs for why.
+name = "bin_unit"
+path = "tests/unit/main.rs"
+required-features = ["testing"]
 
 [[test]]
-name = "test_connection_args"
-path = "tests/unit/test_connection_args.rs"
-
-[[test]]
-name = "test_tsv"
-path = "tests/unit/test_tsv.rs"
-
-[[test]]
-name = "test_exec_args"
-path = "tests/unit/test_exec_args.rs"
-
-[[test]]
-name = "test_compile_args"
-path = "tests/unit/test_compile_args.rs"
-
-[[test]]
-name = "test_query_tsv"
-path = "tests/unit/test_query_tsv.rs"
-
-[[test]]
-name = "test_doc_args"
-path = "tests/unit/test_doc_args.rs"
-
-[[test]]
-name = "test_tool_dispatch"
-path = "tests/unit/test_tool_dispatch.rs"
-
-[[test]]
-name = "test_plugin_manifest_version"
-path = "tests/unit/test_plugin_manifest_version.rs"
-
-
-[[test]]
-name = "test_exec_live"
-path = "tests/integration/test_exec_live.rs"
-
-[[test]]
-name = "test_compile_live"
-path = "tests/integration/test_compile_live.rs"
-
-[[test]]
-name = "test_query_live"
-path = "tests/integration/test_query_live.rs"
-
-[[test]]
-name = "test_doc_live"
-path = "tests/integration/test_doc_live.rs"
-
-[[test]]
-name = "test_tool_live"
-path = "tests/integration/test_tool_live.rs"
-
-[[test]]
-name = "test_http_transport"
-path = "tests/integration/test_http_transport.rs"
-
-[[test]]
-name = "test_mcp_binary_config"
-path = "tests/integration/test_mcp_binary_config.rs"
-
-[[test]]
-name = "test_reporter_repro"
-path = "tests/integration/test_reporter_repro.rs"
-
-[[test]]
-name = "test_workflow_files"
-path = "tests/unit/test_workflow_files.rs"
-
-[[test]]
-name = "test_attribution_stdio"
-path = "tests/integration/test_attribution_stdio.rs"
-
-[[test]]
-name = "test_eval_session_binary"
-path = "tests/unit/test_eval_session_binary.rs"
-
-[[test]]
-name = "binary_096_terminal_compat"
-path = "tests/integration/binary_096_terminal_compat.rs"
-
-[[test]]
-name = "binary_093_reload_pool"
-path = "tests/integration/binary_093_reload_pool.rs"
-
-[[test]]
-name = "binary_095_add_server_plaintext"
-path = "tests/integration/binary_095_add_server_plaintext.rs"
-
-[[test]]
-name = "binary_099_fresh_container"
-path = "tests/integration/binary_099_fresh_container.rs"
-
-[[test]]
-name = "binary_098_server_probe"
-path = "tests/integration/binary_098_server_probe.rs"
+# All 14 files under tests/integration/ compile into this one binary. See tests/integration/main.rs for why.
+name = "bin_integration"
+path = "tests/integration/main.rs"
+required-features = ["testing"]

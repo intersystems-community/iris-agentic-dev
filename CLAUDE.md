@@ -43,21 +43,28 @@ cargo test --features testing --test '*' -- --test-threads=1 --include-ignored
 
 ### Test target layout
 
-`iris-agentic-dev-core` declares five `[[test]]` targets, not one per file. Each is an aggregator
+Both crates declare a handful of `[[test]]` targets, not one per file. Each is an aggregator
 (`tests/<dir>/main.rs`) whose only content is `mod` lines:
 
-| Target        | Files | What it holds                                      |
-| ------------- | ----- | -------------------------------------------------- |
-| `unit`        | 100   | Pure logic — parsers, guards, gates, contracts     |
-| `integration` | 54    | Live IRIS via `iris-dev-iris`; must stay serial    |
-| `binary`      | 14    | Spawn `iris-agentic-dev`, talk JSON-RPC over stdio |
-| `misc`        | 15    | Older top-level `tests/*.rs`                       |
-| `skills`      | 1     | Single file, so it stays its own target            |
+| Crate  | Target            | Files | What it holds                                      |
+| ------ | ----------------- | ----- | -------------------------------------------------- |
+| `core` | `unit`            | 100   | Pure logic — parsers, guards, gates, contracts     |
+| `core` | `integration`     | 54    | Live IRIS via `iris-dev-iris`; must stay serial    |
+| `core` | `binary`          | 14    | Spawn `iris-agentic-dev`, talk JSON-RPC over stdio |
+| `core` | `misc`            | 15    | Older top-level `tests/*.rs`                       |
+| `core` | `skills`          | 1     | Single file, so it stays its own target            |
+| `bin`  | `bin_unit`        | 10    | CLI arg parsing, config resolution                 |
+| `bin`  | `bin_integration` | 14    | Spawned-binary and live-IRIS CLI paths             |
+| `bin`  | `bin_misc`        | 2     | Older top-level `tests/*.rs`                       |
 
 Cargo runs test binaries strictly one after another and gives you no knob to change that, so a
-per-file target charges every run a process spawn. At 207 targets that was ~85% of a warm run:
-254 s, of which about 40 s was actually running tests. The aggregates bring the same suite in at
-61 s.
+per-file target charges every run a process spawn. At 233 targets across the two crates that was
+~85% of a warm run: 254 s, of which about 40 s was actually running tests. The eight aggregates
+bring the same suite in at ~65 s.
+
+Almost all of that came from the core crate. Aggregating the bin crate's 26 targets cut its own
+CPU time from 26.8 s to 11.6 s but moved the workspace wall clock barely at all, because the core
+build dominates. It is here for the guard coverage and the consistency, not for the clock.
 
 Two consequences:
 
