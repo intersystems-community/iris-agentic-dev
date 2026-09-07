@@ -1,0 +1,32 @@
+{
+  "run_id": "2026-09-07T183606",
+  "model": "openai/gpt-4.1",
+  "judge_model": "openai/gpt-4.1",
+  "timestamp": "2026-09-07T18:36:06.939672Z",
+  "regression_threshold": 0.05,
+  "skills": [
+    {
+      "skill": "iris-vector-ai",
+      "fire_rate": 1.0,
+      "implicit_fire_rate": null,
+      "isolation_fire_rate": 0.0,
+      "pass_rate_baseline": 0.0,
+      "pass_rate_skill": 0.1,
+      "lift": 0.1,
+      "lift_delta": -0.15,
+      "regression_flag": false,
+      "new_skill": false,
+      "no_task_coverage": false,
+      "task_ids_used": [
+        "VECTOR-PYTHON-SEARCH",
+        "VECTOR-TOVECTOR-MISMATCH"
+      ]
+    }
+  ],
+  "summary": {
+    "regressions": [],
+    "improvements": [],
+    "uncovered": [],
+    "estimated_cost_usd": 0.62
+  }
+}
