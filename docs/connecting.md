@@ -378,6 +378,60 @@ wins for any name present in both lists.
 See also: `provides.tools` in a project manifest (`docs/ecosystem-integration.md`) for
 declaring a team-wide tool subset that installs automatically.
 
+## Any MCP client (Antigravity, Cline, Continue, Zed, Claude Desktop)
+
+The VS Code extension is a convenience wrapper. The MCP server itself is one static
+binary, so any client that can launch a subprocess and speak MCP over stdio can use it —
+including VS Code forks whose extension gallery does not carry the extension.
+
+**Point the client at the binary:**
+
+```json
+{
+  "mcpServers": {
+    "iris-agentic-dev": {
+      "command": "/usr/local/bin/iris-agentic-dev",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Most clients accept that shape; the key name and file location differ (look for "MCP" or
+"Tools" in the AI settings). Connection details come from `.iris-agentic-dev.toml` in the
+project root, so nothing IRIS-specific belongs in the client config — though an `env` block
+of `IRIS_*` variables works too if the client supports one.
+
+**Finding the binary.** Install it standalone (Homebrew, or the
+[latest release](https://github.com/intersystems-community/iris-agentic-dev/releases/latest))
+and use that path. If the extension already downloaded one, it is under the editor's
+extension storage in a version-named subdirectory —
+`<storage>/intersystems-community.iris-agentic-dev/iris-agentic-dev-<version>/iris-agentic-dev-<platform>`:
+
+| Platform | `<storage>`                                             |
+| -------- | ------------------------------------------------------- |
+| macOS    | `~/Library/Application Support/Code/User/globalStorage` |
+| Linux    | `~/.config/Code/User/globalStorage`                     |
+| Windows  | `%APPDATA%\Code\User\globalStorage`                     |
+
+Forks substitute their own directory for `Code` (`Cursor`, `Windsurf`, and so on). The
+platform suffix is `macos-arm64`, `macos-x86_64`, `linux-x86_64`, `linux-aarch64`, or
+`windows-x86_64.exe`. Setting `iris-agentic-dev.serverPath` in the editor's settings points
+the extension at a binary you manage instead, which also tells you where it is.
+
+**Verify before wiring anything.** The binary answers on its own, so a failure here is a
+connection problem, not a client-config problem:
+
+```bash
+iris-agentic-dev tool check_config --args '{}'
+```
+
+Then, once the client is configured, ask it: `Call check_config and show me the result.` If
+the tools do not appear at all, the client never launched the binary — check its MCP log for
+the command line it tried.
+
+---
+
 ## HTTP transport
 
 By default, `iris-agentic-dev mcp` communicates over stdio — the standard MCP channel
