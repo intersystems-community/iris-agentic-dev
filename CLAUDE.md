@@ -133,6 +133,13 @@ Before closing any release (tagging, publishing, merging release branch):
 3. Release notes must read like a human wrote them for other humans — no filler phrases,
    no hedging, no passive voice, no "This release includes…" boilerplate.
 
+## Issue Closure — NON-NEGOTIABLE
+
+Comment on a fixed issue saying what changed. **Never close it.** Closing is the reporter's
+move — they filed it, so they are the one who can confirm the thing they hit stopped
+happening. If nobody answers within a week of the release carrying the fix, close it then.
+Constitution → Development Workflow → Issue Closure.
+
 ## Docs
 
 - `docs/connecting.md` — connection config (toml file, env vars)

@@ -99,7 +99,8 @@ git push github vX.Y.Z
 
 ## 8. Post-release
 
-- [ ] Close fixed issues with thank-you comments
+- [ ] Comment on fixed issues saying what changed and which release carries it — **do not close them**.
+      The reporter closes; if nobody answers within a week, close it then.
 - [ ] Comment on contributor PRs
 - [ ] Verify Homebrew tap: `brew tap intersystems-community/tap && brew install iris-agentic-dev` installs the new version
 - [ ] Smoke test: `iris-agentic-dev --version` prints `vX.Y.Z`

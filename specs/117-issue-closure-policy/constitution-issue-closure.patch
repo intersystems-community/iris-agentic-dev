@@ -1,0 +1,49 @@
+diff --git a/.specify/memory/constitution.md b/.specify/memory/constitution.md
+index 2ce6beb..3bb4b92 100644
+--- a/.specify/memory/constitution.md
++++ b/.specify/memory/constitution.md
+@@ -1,6 +1,17 @@
+ <!--
+ SYNC IMPACT REPORT
+ ==================
++Version change: 1.5.2 → 1.5.3
++Bump rationale: MINOR — new section, Development Workflow → Issue Closure. It adds a
++normative rule (comment on a fixed issue, do not close it) rather than clarifying an
++existing one, and no principle changed.
++
++Prompted by v1.4.1, where three issues were closed along with the release. Closing a
++report is the reporter's evidence to give, not the maintainer's to assume, and a closed
++thread is a bad place for "still broken on 2026.2" to land.
++---
++Prior sync report:
++---
+ Version change: 1.5.1 → 1.5.2
+ Bump rationale: PATCH — two rows added to the Bug Class Registry, no principle
+ changed. Both rows record the same shipped class from two directions:
+@@ -540,6 +551,20 @@ tagging. MUST NOT tag without running through the full checklist.
+ **Rationale**: Multiple releases shipped with wrong version numbers, no release notes, or
+ untested regressions. The checklist exists because each of these has happened.
+ 
++### Issue Closure
++
++A fix ships with a comment on the issue saying what changed. It MUST NOT ship with the issue
++closed. Closing is the reporter's move: they filed it, so they are the one who can say the
++thing they hit stopped happening. If nobody answers within a week of the release carrying the
++fix, close it then.
++
++This is the default for every agent working in this repo — comment, never close, unless Tom
++says otherwise in so many words.
++
++**Rationale**: A maintainer closing their own fix asserts the report is resolved without the
++one piece of evidence that would prove it. It also ends the thread: a reporter coming back to
++say "still broken on 2026.2" is now replying to something already marked done.
++
+ ### Commit Discipline
+ 
+ - Never commit `iris.key` or any license file. (A prior incident required git history rewriting.)
+@@ -665,4 +690,4 @@ to implementation.
+    this spec (Bug Class Registry). A fix without a detector closes the instance and leaves
+    the class open.
+ 
+-**Version**: 1.5.2 | **Ratified**: 2026-05-01 | **Last Amended**: 2026-09-07
++**Version**: 1.5.3 | **Ratified**: 2026-05-01 | **Last Amended**: 2026-09-07
