@@ -258,6 +258,15 @@ iris-agentic-dev resolves the IRIS connection in this order — first match wins
 6. Running Docker containers (scored by workspace name similarity)
 7. Localhost port scan (52773, 41773, 51773, 8080)
 
+### Discovery that needs no connection
+
+Two paths skip resolution entirely: `tool --list` and `tool <name> --schema` read the tool
+router, not IRIS. A harness can enumerate the surface and read a tool's parameters before it
+has a container, credentials, or a reachable port — useful when the thing being set up is the
+connection itself. Every other `tool` invocation resolves a connection as above and fails with
+the usual diagnostic when it cannot. See [Discovery from a
+shell](tools.md#discovery-from-a-shell).
+
 ---
 
 ## Environment variables

@@ -65,6 +65,7 @@ async fn xecute(
 #[serde(deny_unknown_fields)]
 pub struct SkillParams {
     /// Action: list, describe, search, forget, propose
+    #[schemars(extend("enum" = ["list", "describe", "search", "forget", "propose"]))]
     pub action: String,
     pub name: Option<String>,
     pub query: Option<String>,
@@ -223,6 +224,7 @@ pub async fn handle_skill(
 #[serde(deny_unknown_fields)]
 pub struct SkillCommunityParams {
     /// Action: list or install
+    #[schemars(extend("enum" = ["list", "install"]))]
     pub action: String,
     pub package: Option<String>,
 }
@@ -292,6 +294,7 @@ pub async fn handle_skill_community(
 #[serde(deny_unknown_fields)]
 pub struct KbParams {
     /// Action: index or recall
+    #[schemars(extend("enum" = ["index", "recall"]))]
     pub action: String,
     /// File path for index, query for recall
     pub path: Option<String>,
@@ -395,6 +398,7 @@ pub async fn handle_kb(
 #[serde(deny_unknown_fields)]
 pub struct AgentInfoParams {
     /// What to return: stats or history
+    #[schemars(extend("enum" = ["stats", "history"]))]
     pub what: String,
     #[serde(default = "default_limit")]
     pub limit: usize,

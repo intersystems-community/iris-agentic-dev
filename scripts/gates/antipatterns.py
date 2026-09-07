@@ -34,6 +34,8 @@ Exit: 0 = no new findings, 2 = at least one new finding (or a stale baseline ent
 
 from __future__ import annotations
 
+import collections
+import hashlib
 import pathlib
 import re
 import sys
@@ -43,14 +45,38 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "scripts/gates/antipatterns-baseline.txt"
 
 
+def _norm(msg: str) -> str:
+    """Collapse whitespace so a rewrapped message keeps its identity."""
+    return " ".join(msg.split())
+
+
 @dataclass(frozen=True)
 class Finding:
     check: str
     location: str  # "path:line" or "path"
     message: str
 
+    def path(self) -> str:
+        """`location` without the line number.
+
+        A finding's identity must not include the line it sits on. Line numbers move whenever
+        anything above them is edited, and the baseline then reports the same finding as
+        simultaneously new and stale — churn that costs a re-record on every unrelated edit and
+        teaches you to retarget baseline lines without reading them. What identifies a finding is
+        the check, the file, and what the detector said about it.
+        """
+        head, _, tail = self.location.rpartition(":")
+        return head if head and tail.isdigit() else self.location
+
+    def fingerprint(self) -> str:
+        return hashlib.sha1(_norm(self.message).encode()).hexdigest()[:12]
+
     def key(self) -> str:
-        return f"{self.check}\t{self.location}"
+        return f"{self.check}\t{self.path()}\t{self.fingerprint()}"
+
+    def baseline_line(self) -> str:
+        """The key plus a comment, because a bare hash is unreviewable in a diff."""
+        return f"{self.key()}\t# {_norm(self.message)[:70]}"
 
 
 # ---------------------------------------------------------------------------
@@ -866,8 +892,12 @@ def check_tool_name_refs() -> list[Finding]:
 STRUCT_DECL = re.compile(
     r"^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?struct[ \t]+([A-Za-z0-9_]+)", re.M
 )
+# `r#` is optional and stripped from the captured name: a field whose wire name is a Rust keyword
+# is written `pub r#type: Option<String>`, and a pattern anchored at `[a-z_]` reads that as no field
+# at all. The parameter then does not exist as far as every check that indexes a params struct is
+# concerned — `iris_admin.type` was invisible this way, not exempt.
 FIELD_DECL = re.compile(
-    r"^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?([a-z_][A-Za-z0-9_]*)[ \t]*:[ \t]*([^,\n]+)",
+    r"^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?(?:r#)?([a-z_][A-Za-z0-9_]*)[ \t]*:[ \t]*([^,\n]+)",
     re.M,
 )
 OPEN_REFERENT = re.compile(r"Parameters<\s*(?:serde_json::)?(Value|AnyParams)\s*>")
@@ -1040,7 +1070,13 @@ def undeclared_params_findings(files: dict[str, str]) -> list[Finding]:
 # ---------------------------------------------------------------------------
 
 TOOL_ATTR = re.compile(r"#\[tool\(")
-TOOL_DESC = re.compile(r'description\s*=\s*"((?:[^"\\]|\\.)*)"')
+# `re.S` is load-bearing: `iris_admin` writes its description as one string split over 24 lines
+# with backslash continuations, and without DOTALL the `\\.` alternative cannot cross the newline,
+# so the whole `#[tool(...)]` block parsed as having no description and the tool was skipped. The
+# worst offender on the tree — 25 action values, none declared — was invisible, not clean.
+TOOL_DESC = re.compile(r'description\s*=\s*"((?:[^"\\]|\\.)*)"', re.S)
+# The continuation itself: `\` at end of line plus the next line's indent is one space to Rust.
+LINE_CONTINUATION = re.compile(r"\\[ \t]*\n[ \t]*")
 TOOL_FN = re.compile(r"async fn ([a-z0-9_]+)\s*\(")
 PARAMS_REFERENT = re.compile(r"Parameters<([A-Za-z0-9_:]+)>")
 ENUM_DECL = re.compile(
@@ -1057,6 +1093,44 @@ PIPE_VALUES = re.compile(
 ONE_OF_VALUES = re.compile(
     r"`?([a-z_][a-z0-9_]*)`?[^.]{0,60}?\b(?:one of|valid values(?: are)?)\b[ \t]*:?[ \t]*"
     r"((?:`?[A-Za-z0-9_.\-]+`?[^,.]{0,40},[ \t]*)+(?:or[ \t]+)?`?[A-Za-z0-9_.\-]+`?)"
+)
+# `what=documents lists all docs, what=modified lists recently changed, …` — the same parameter
+# assigned a different value each time it is mentioned. Six dispatchers document their whole
+# action set this way and the first two patterns see none of it.
+ASSIGNED_VALUE = re.compile(
+    r"`?\b([a-z_][a-z0-9_]*)`?[ \t]*=[ \t]*`?([A-Za-z0-9_.\-]+)`?"
+)
+# The colon-list scanner: one item is a bare token, optionally followed by a `=gloss` or a
+# `(gloss)`, then a comma. A gloss can itself contain commas — `put (write, auto SCM checkout)` —
+# so the parenthetical is consumed whole before the separator is looked for. Anything else ends
+# the list, which is what keeps `server (optional): name of a registered instance.` from parsing
+# as a value called `name`.
+COLON_LIST_HEAD = re.compile(
+    r"`?\b([a-z_][a-z0-9_]*)`?[ \t]*(?:\(optional\)[ \t]*)?:[ \t]*"
+)
+COLON_LIST_ITEM = re.compile(
+    r"[ \t]*`?([A-Za-z0-9_][A-Za-z0-9_.\-]*)`?[ \t]*"
+    r"(?:=[^,()]*|\([^()]*\)[^,.()]*)?"
+    r"[ \t]*([,;.]|$)"
+)
+# `match action {` / `match p.action.as_str() {` — the scrutinee, so the arms can be attributed to
+# a parameter. The arms are the only source that does not depend on anyone writing prose.
+MATCH_HEAD = re.compile(r"\bmatch[ \t]+([^{\n]{1,120}?)[ \t]*\{")
+MATCH_ARM_LITERAL = re.compile(r'"([A-Za-z0-9_.\-]+)"[ \t]*(?:=>|\|)')
+LET_BINDING = re.compile(
+    r"\blet[ \t]+(?:mut[ \t]+)?([a-z_][a-z0-9_]*)[ \t]*(?:=|:)([^;]{0,200});"
+)
+ASYNC_FN = re.compile(r"\basync fn[ \t]+([a-z0-9_]+)[ \t]*\(")
+MIN_COMMA_LIST = 3
+MIN_MATCH_ARMS = 3
+# `/// Action: index or recall` — the set in the field's own doc comment. Two values is enough
+# here because the shape is tight: a colon, then bare tokens joined by "or", and nothing else
+# before the line ends. `kb` and `skill_community` are the two that write it this way.
+DOC_COMMENT_VALUES = re.compile(
+    r":[ \t]*`?([a-z_][a-z0-9_]*)`?"
+    r"((?:[ \t]*,[ \t]*`?[a-z_][a-z0-9_]*`?)*)"
+    r"[ \t]+or[ \t]+`?([a-z_][a-z0-9_]*)`?[ \t]*$",
+    re.M,
 )
 
 
@@ -1077,12 +1151,142 @@ def tool_blocks(text: str):
         open_brace = seg.find("{", fn.end())
         sig = seg[fn.end() : open_brace if open_brace > 0 else len(seg)]
         ref = PARAMS_REFERENT.search(sig)
+        # Read the description the way rustc does: a backslash continuation and the next line's
+        # indent are one space, not a newline plus twelve spaces.
+        description = LINE_CONTINUATION.sub(" ", desc.group(1)).replace('\\"', '"')
         yield (
             fn.group(1),
-            desc.group(1).replace('\\"', '"'),
+            description,
             ref.group(1).split("::")[-1] if ref else None,
             text.count("\n", 0, starts[i] + desc.start()) + 1,
         )
+
+
+def assigned_value_sets(description: str) -> dict[str, list[str]]:
+    """`what=documents … what=modified … what=namespace` -> `{"what": [...]}`.
+
+    Three distinct values for the same parameter, because two `x=y` mentions are as likely to be
+    an example pair as a value set.
+    """
+    seen: dict[str, list[str]] = {}
+    for m in ASSIGNED_VALUE.finditer(description):
+        values = seen.setdefault(m.group(1), [])
+        if m.group(2) not in values:
+            values.append(m.group(2))
+    return {k: v for k, v in seen.items() if len(v) >= MIN_COMMA_LIST}
+
+
+def colon_list_value_sets(description: str) -> dict[str, list[str]]:
+    """`mode: get (fetch source), put (write, auto SCM checkout), delete, head (existence)`.
+
+    A comma list with no lead-in phrase, which is how seven of the dispatchers write their action
+    set. Scanned item by item rather than matched as one regex so a gloss can hold a comma, and
+    stopped at the first thing that is not an item so an English sentence after a colon cannot
+    turn into a value set.
+    """
+    sets: dict[str, list[str]] = {}
+    for head in COLON_LIST_HEAD.finditer(description):
+        param = head.group(1)
+        pos = head.end()
+        values: list[str] = []
+        while True:
+            item = COLON_LIST_ITEM.match(description, pos)
+            if not item:
+                break
+            values.append(item.group(1))
+            pos = item.end()
+            if item.group(2) != ",":
+                break
+        if len(values) >= MIN_COMMA_LIST and param not in sets:
+            sets[param] = values
+    return sets
+
+
+def handler_bodies(text: str) -> dict[str, str]:
+    """`{handler_fn_name: body}` for every `async fn` in `text`, brace-matched.
+
+    The body is where a dispatcher's real contract lives: `iris_admin` documents its actions under
+    "Read actions:" rather than under `action`, so no pattern keyed on the parameter name can find
+    them, but the `match` arms name every one.
+    """
+    bodies: dict[str, str] = {}
+    for m in ASYNC_FN.finditer(text):
+        open_brace = text.find("{", m.end())
+        if open_brace < 0:
+            continue
+        depth = 0
+        for i in range(open_brace, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    bodies[m.group(1)] = text[open_brace + 1 : i]
+                    break
+    return bodies
+
+
+def branched_value_sets(body: str, fields: set[str]) -> dict[str, list[str]]:
+    """`match action { "list_users" => …, "create_user" => …, _ => err }` -> `{"action": [...]}`.
+
+    A scrutinee counts as a parameter when it names a declared field, either directly
+    (`match p.action.as_str()`) or through a binding that reads one (`let action = p.get("action")`
+    … `match action`). A `match` on anything else — a transport kind, a connection state — names no
+    field and is left alone.
+    """
+    alias: dict[str, str] = {}
+    for m in LET_BINDING.finditer(body):
+        rhs = m.group(2)
+        for field in fields:
+            if re.search(rf'\.{field}\b|"{field}"', rhs):
+                alias[m.group(1)] = field
+                break
+
+    sets: dict[str, list[str]] = {}
+    for head in MATCH_HEAD.finditer(body):
+        scrutinee = head.group(1)
+        param = None
+        for token in re.findall(r"[A-Za-z0-9_]+", scrutinee):
+            if token in fields:
+                param = token
+                break
+            if token in alias:
+                param = alias[token]
+                break
+        if param is None:
+            continue
+        open_brace = body.find("{", head.start())
+        depth = 0
+        block = ""
+        for i in range(open_brace, len(body)):
+            if body[i] == "{":
+                depth += 1
+            elif body[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    block = body[open_brace + 1 : i]
+                    break
+        values: list[str] = []
+        for arm in MATCH_ARM_LITERAL.finditer(block):
+            if arm.group(1) not in values:
+                values.append(arm.group(1))
+        if len(values) >= MIN_MATCH_ARMS:
+            sets.setdefault(param, values)
+    return sets
+
+
+def doc_comment_value_set(declared: str) -> list[str]:
+    """The value set written in a field's own doc comment, if it wrote one.
+
+    Read off the declaration text rather than the description, so it needs no parameter name in
+    the prose: the text already belongs to one field. The `$`-anchored tail is what keeps an
+    ordinary sentence containing "or" out — a value set ends the line, a sentence carries on.
+    """
+    m = DOC_COMMENT_VALUES.search(declared)
+    if not m:
+        return []
+    middle = [v.strip(" `") for v in m.group(2).split(",") if v.strip(" `")]
+    return [m.group(1), *middle, m.group(3)]
 
 
 def advertised_value_sets(description: str) -> dict[str, str]:
@@ -1091,6 +1295,9 @@ def advertised_value_sets(description: str) -> dict[str, str]:
     for pattern in (PIPE_VALUES, ONE_OF_VALUES):
         for m in pattern.finditer(description):
             sets.setdefault(m.group(1), m.group(2).strip().rstrip("."))
+    for reader in (assigned_value_sets, colon_list_value_sets):
+        for param, values in reader(description).items():
+            sets.setdefault(param, ", ".join(values))
     return sets
 
 
@@ -1122,11 +1329,23 @@ def prose_only_enum_findings(files: dict[str, str]) -> list[Finding]:
     found: list[Finding] = []
     for path, raw in sorted(files.items()):
         code = mask_comments(blank_inline_tests(raw))
+        bodies = handler_bodies(code)
         for tool, description, struct, line in tool_blocks(code):
             fields = index.get(struct or "")
             if fields is None:
                 continue
-            for param, values in sorted(advertised_value_sets(description).items()):
+            value_sets = advertised_value_sets(description)
+            # The arms are consulted last and never overwrite the prose, so the message quotes
+            # what a reader can see for themselves when there is prose to quote.
+            for param, arms in branched_value_sets(
+                bodies.get(tool, ""), set(fields)
+            ).items():
+                value_sets.setdefault(param, "branches on " + ", ".join(arms))
+            for param, declared_text in fields.items():
+                values = doc_comment_value_set(declared_text)
+                if values:
+                    value_sets.setdefault(param, ", ".join(values))
+            for param, values in sorted(value_sets.items()):
                 declared = fields.get(param)
                 # A parameter the description names and the struct does not is a different
                 # bug, and `test_docs_contract.rs` already fails on it.
@@ -1147,8 +1366,8 @@ def prose_only_enum_findings(files: dict[str, str]) -> list[Finding]:
                         "only copy of the contract, so a client cannot validate a value and "
                         "the description optimizer can delete the set without noticing. Add "
                         '`#[schemars(extend("enum" = [...]))]` to '
-                        f"`{struct}.{param}`, or say in its doc comment why this is `not an "
-                        'enum" (the way `profile` does).',
+                        f"`{struct}.{param}`, or say in its doc comment why this is "
+                        "`not an enum` (the way `profile` does).",
                     )
                 )
     return found
@@ -1197,14 +1416,21 @@ NO_BASELINE = {
 }
 
 
-def load_baseline() -> set[str]:
+def load_baseline() -> collections.Counter[str]:
+    """Baselined keys and how many times each is allowed to fire.
+
+    A count, not a set: two findings can share a check, a file, and a message — the same
+    antipattern twice in one file — and collapsing them to one key would silence the second.
+    """
+    counts: collections.Counter[str] = collections.Counter()
     if not BASELINE.exists():
-        return set()
-    return {
-        ln.strip()
-        for ln in BASELINE.read_text().splitlines()
-        if ln.strip() and not ln.startswith("#")
-    }
+        return counts
+    for ln in BASELINE.read_text().splitlines():
+        ln = ln.strip()
+        if not ln or ln.startswith("#"):
+            continue
+        counts["\t".join(ln.split("\t")[:3])] += 1
+    return counts
 
 
 def main(argv: list[str]) -> int:
@@ -1232,13 +1458,21 @@ def main(argv: list[str]) -> int:
             "# file that no longer fires. That is what makes the list shrink instead of rot.",
             "# Regenerate with: scripts/gates/antipatterns.py --write-baseline",
             "#",
+            "# Format: check <TAB> file <TAB> fingerprint <TAB> # gist",
+            "# The fingerprint is sha1 of the finding's message, so an entry survives code",
+            "# moving up or down the file and only goes stale when the finding itself changes.",
+            "# Line numbers are deliberately absent: they made every unrelated edit look like a",
+            "# fixed finding plus a new one. The gist is a comment for reviewers, not part of",
+            "# the key.",
+            "#",
             "# Adding a line here silences a real finding. It is a tracked edit and it will",
             "# show up in review — say why in the commit message.",
             "",
         ]
         BASELINE.write_text(
             "\n".join(
-                header + [f.key() for f in findings if f.check not in NO_BASELINE]
+                header
+                + [f.baseline_line() for f in findings if f.check not in NO_BASELINE]
             )
             + "\n"
         )
@@ -1254,12 +1488,21 @@ def main(argv: list[str]) -> int:
         return 0
 
     baseline = load_baseline()
-    seen = {f.key() for f in findings}
-    new = [f for f in findings if f.key() not in baseline or f.check in NO_BASELINE]
-    # A baseline entry that no longer fires is a fixed bug whose line was never removed.
-    # Only reconcile entries for the checks that ran, or a single-check run looks stale.
+    # Spend the baseline's allowance one finding at a time. A finding is new when its key has no
+    # allowance left, so a second copy of an already-baselined finding still fails the gate.
+    budget = collections.Counter(baseline)
+    new = []
+    for f in findings:
+        if f.check in NO_BASELINE or budget[f.key()] <= 0:
+            new.append(f)
+        else:
+            budget[f.key()] -= 1
+    # Unspent allowance is a finding that stopped firing — a fixed bug whose line was never
+    # removed. Only reconcile checks that ran, or a single-check run looks stale.
     ran = set(names)
-    stale = sorted(k for k in baseline - seen if k.split("\t", 1)[0] in ran)
+    stale = sorted(
+        k for k, left in budget.items() if left > 0 and k.split("\t", 1)[0] in ran
+    )
 
     for f in new:
         print(f"FINDING [{f.check}] {f.location}\n    {f.message}")
@@ -1281,7 +1524,7 @@ def main(argv: list[str]) -> int:
 
     print(
         f"antipatterns: clean ({' '.join(names)}) — "
-        f"{len(baseline)} known instance(s) still in the baseline"
+        f"{sum(baseline.values())} known instance(s) still in the baseline"
     )
     return 0
 

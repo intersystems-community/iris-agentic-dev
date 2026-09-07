@@ -633,9 +633,13 @@ fn branch_literals(body: &str, tracked: &BTreeSet<String>) -> BTreeSet<String> {
     };
     let lit = regex::Regex::new(r#""([^"]*)""#).expect("static regex");
 
-    // (a) match arms.
-    let arm = regex::Regex::new(r#"(?m)^\s*((?:"[^"]*"\s*\|\s*)*"[^"]*")\s*(?:if [^=]*)?=>"#)
-        .expect("static regex");
+    // (a) match arms. The optional `ident @ (…)` prefix is `iris_macro`'s shape —
+    // `action @ ("signature" | "location" | "definition" | "expand") =>` binds the value it also
+    // matches on, and a pattern that required the literal to open the line read that arm as absent.
+    let arm = regex::Regex::new(
+        r#"(?m)^\s*(?:[a-z_][a-z0-9_]*\s*@\s*)?\(?\s*((?:"[^"]*"\s*\|\s*)*"[^"]*")\s*\)?\s*(?:if [^=]*)?=>"#,
+    )
+    .expect("static regex");
     for m in regex::Regex::new(r"match\s+([^\n{]{1,200})\{")
         .expect("static regex")
         .captures_iter(body)
@@ -647,7 +651,11 @@ fn branch_literals(body: &str, tracked: &BTreeSet<String>) -> BTreeSet<String> {
         else {
             continue;
         };
-        for a in arm.captures_iter(block) {
+        // Only this match's own arms. An arm body may match on a different parameter —
+        // `iris_info`'s `what == "documents"` arm matches `doc_type` — and reading the block as flat
+        // text donates the inner arms to the outer parameter. `ALL` reached `iris_info.what` that
+        // way: a value of `doc_type`, in a set that was otherwise right.
+        for a in arm.captures_iter(&outermost_arms_only(block)) {
             for l in lit.captures_iter(&a[1]) {
                 out.insert(l[1].to_string());
             }
@@ -685,6 +693,47 @@ fn branch_literals(body: &str, tracked: &BTreeSet<String>) -> BTreeSet<String> {
         }
     }
 
+    out
+}
+
+/// A match block with everything inside an arm's own braces blanked out.
+///
+/// Newlines survive so line-anchored arm patterns still line up, and every other nested character
+/// becomes a space. What is left is the arms of this match and nothing they contain.
+fn outermost_arms_only(block: &str) -> String {
+    let mut out = String::with_capacity(block.len());
+    let mut depth = 0usize;
+    let mut in_str = false;
+    let mut escaped = false;
+    for c in block.chars() {
+        if in_str {
+            out.push(if depth > 1 && c != '\n' { ' ' } else { c });
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => {
+                in_str = true;
+                out.push(if depth > 1 { ' ' } else { c });
+            }
+            '{' => {
+                depth += 1;
+                out.push(if depth > 1 { ' ' } else { c });
+            }
+            '}' => {
+                out.push(if depth > 1 { ' ' } else { c });
+                depth = depth.saturating_sub(1);
+            }
+            '\n' => out.push('\n'),
+            _ => out.push(if depth > 1 { ' ' } else { c }),
+        }
+    }
     out
 }
 
@@ -794,6 +843,11 @@ const NOT_A_BRANCH: &[&str] = &[
     "clone",
     "collect",
     "contains",
+    // The policy gate reads `action` out of a params_json to decide whether a kill allowlist
+    // applies, so it compares the parameter against `"kill"` without being its dispatcher. Following
+    // it made the gate's two literals the whole advertised set for `iris_global` and
+    // `iris_source_control`, both of which gate before they dispatch.
+    "dispatch_gate",
     "err_json",
     "err_result",
     "expect",

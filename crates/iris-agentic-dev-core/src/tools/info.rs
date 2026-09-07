@@ -27,6 +27,16 @@ fn default_limit() -> usize {
 #[serde(deny_unknown_fields)]
 pub struct InfoParams {
     /// What to fetch: documents, modified, namespace, metadata, jobs, csp_apps, csp_debug, sa_schema
+    #[schemars(extend("enum" = [
+        "documents",
+        "modified",
+        "namespace",
+        "metadata",
+        "jobs",
+        "csp_apps",
+        "csp_debug",
+        "sa_schema",
+    ]))]
     pub what: String,
     /// Document type filter for what=documents: CLS, MAC, INT, INC, CSP, ALL
     pub doc_type: Option<String>,
@@ -115,6 +125,7 @@ pub async fn handle_iris_info(
 #[serde(deny_unknown_fields)]
 pub struct MacroParams {
     /// Action: list, signature, location, definition, expand
+    #[schemars(extend("enum" = ["list", "signature", "location", "definition", "expand"]))]
     pub action: String,
     pub name: Option<String>,
     #[serde(default)]
@@ -199,6 +210,7 @@ pub async fn handle_iris_macro(
 #[serde(deny_unknown_fields)]
 pub struct DebugParams {
     /// Action: map_int, error_logs, capture, source_map
+    #[schemars(extend("enum" = ["map_int", "error_logs", "capture", "source_map"]))]
     pub action: String,
     /// Error string for map_int e.g. "<UNDEFINED>x+3^MyApp.Foo.1"
     pub error_string: Option<String>,

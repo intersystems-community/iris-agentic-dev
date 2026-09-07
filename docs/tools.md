@@ -93,10 +93,19 @@ unless there is something non-obvious to say about it.
 ## Parameters are declared, and the set is closed
 
 Every tool advertises its parameters in its `inputSchema`: names, JSON types, and — where
-the handler branches on a fixed set of values — an `enum`. 17 parameters across 15 tools
+the handler branches on a fixed set of values — an `enum`. 29 parameters across 25 tools
 carry one, `iris_admin.action` (25 values) being the largest. The parameter tables in this
 file describe the same contract in prose; the schema is what a client can read without
 parsing English.
+
+Every declared `enum` is the set the handler branches on, checked against the source rather
+than against these tables — a test extracts the string literals each dispatcher matches on
+and compares them with the schema. Two parameters have no branch literal behind them and
+say so in the test with a reason: `iris_add_server.scheme`, which is interpolated into a
+URL, and `iris_admin.type`, which filters the webapp list case-insensitively against a name
+derived from IRIS. Declaring an enum changes nothing at runtime: a value outside the set
+still reaches the handler and still comes back with the handler's own message naming the
+values it accepts.
 
 Every tool also sets `additionalProperties: false`. A parameter the tool does not declare
 is rejected with `UNKNOWN_PARAMETER` and the error lists the names it does accept. Until
@@ -132,6 +141,40 @@ to pick just one:
   `tools/list` calls instead — each response includes a `nextCursor` when more tools remain;
   omit `cursor` on the first call and pass back whatever `nextCursor` you last received to get
   the next page, until a response with no `nextCursor` signals the end.
+
+---
+
+## Discovery from a shell
+
+`tool --list` prints one line per tool — name and a one-sentence summary. `tool <name>
+--schema` prints one tool's full description and `inputSchema`. Both read the same router
+`tools/list` reads, so the schema you get from the CLI is byte-identical to the schema an MCP
+client receives, and a test compares all 81 for every build.
+
+Neither path connects to IRIS. Discovery works with no container running, no credentials, and
+a closed port:
+
+```bash
+iris-agentic-dev tool --list                    # 81 names + summaries
+iris-agentic-dev tool iris_query --schema       # one tool's contract
+iris-agentic-dev tool iris_query --schema --json  # same, as one JSON document
+```
+
+Why it exists — measured against this tree:
+
+| Reading the surface via              | Bytes   |
+| ------------------------------------ | ------- |
+| MCP `tools/list` (81 tools, compact) | 105,111 |
+| `tool --list`                        | 7,670   |
+| `tool <name> --schema`, smallest     | 231     |
+| `tool <name> --schema`, median       | 1,357   |
+| `tool <name> --schema`, largest      | 10,134  |
+
+An agent with only a shell reads the whole surface for 7.7 KB and then pays for the one or two
+schemas it actually needs, instead of 105 KB up front. A wrong name is refused with the nearest
+accepted name, the same suggestion `UNKNOWN_PARAMETER` uses for misspelled parameters.
+
+`IRIS_TOOLSET` applies to `--list`, so the CLI lists the tier the server would serve.
 
 ---
 

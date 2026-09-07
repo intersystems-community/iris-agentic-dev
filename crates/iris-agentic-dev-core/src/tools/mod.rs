@@ -147,6 +147,98 @@ impl Toolset {
     }
 }
 
+/// One tool as `tool --list` and `tool <name> --schema` report it.
+///
+/// Built by [`IrisTools::tool_catalogue`] from the router, so `description` and `input_schema` are
+/// the same values a client reads off `tools/list`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CatalogueEntry {
+    pub name: String,
+    /// First sentence of the description, at most 100 characters. What `--list` prints.
+    pub summary: String,
+    /// The full description, verbatim. `None` for a tool that declares none.
+    pub description: Option<String>,
+    pub input_schema: serde_json::Value,
+}
+
+/// Words whose trailing period is not a sentence break.
+///
+/// Checked against the token immediately before the period, lowercased. Single letters are handled
+/// separately, which covers the second period in `e.g.` and the initial in a name.
+const NOT_SENTENCE_END: &[&str] = &["e.g", "i.e", "etc", "vs", "cf", "approx", "inc"];
+
+/// The one-line summary for a tool description: its first sentence, at most 100 characters.
+///
+/// Tool descriptions open with what the tool does and then spend a paragraph or more on parameters
+/// and caveats, so the first sentence is the summary and nothing has to be written twice. A
+/// truncated summary ends in `…` — a listing that silently drops the end of a sentence reads as a
+/// complete claim about the tool.
+///
+/// Sentence detection skips a period inside an abbreviation (`e.g. My.Class.` is one sentence), and
+/// treats a newline as a break so a description whose first line has no period still yields a line.
+pub fn summarize_description(description: &str) -> String {
+    const LIMIT: usize = 100;
+
+    let text = description.trim();
+    if text.is_empty() {
+        return String::new();
+    }
+
+    let first = first_sentence(text);
+    let first = first.trim();
+    if first.chars().count() <= LIMIT {
+        return first.to_string();
+    }
+
+    // Cut at the last word boundary that leaves room for the ellipsis.
+    let budget: usize = first
+        .char_indices()
+        .nth(LIMIT - 1)
+        .map(|(i, _)| i)
+        .unwrap_or(first.len());
+    let cut = first[..budget].rfind(char::is_whitespace).unwrap_or(budget);
+    let mut out = first[..cut].trim_end().to_string();
+    out.push('…');
+    out
+}
+
+/// The first sentence of `text`, or its first line, whichever comes first.
+fn first_sentence(text: &str) -> &str {
+    if let Some(nl) = text.find('\n') {
+        let line = &text[..nl];
+        if let Some(end) = sentence_end(line) {
+            return &line[..end];
+        }
+        // No break on the first line, but the line itself is the unit.
+        return line;
+    }
+    match sentence_end(text) {
+        Some(end) => &text[..end],
+        None => text,
+    }
+}
+
+/// Byte offset just past the first sentence-ending period in `line`, if there is one.
+fn sentence_end(line: &str) -> Option<usize> {
+    for (i, _) in line.match_indices('.') {
+        let after = line[i + 1..].chars().next();
+        if after.is_some_and(|c| !c.is_whitespace()) {
+            continue; // mid-token period: `My.Class`, the first dot of `e.g.`
+        }
+        let token = line[..i]
+            .rsplit(|c: char| c.is_whitespace())
+            .next()
+            .unwrap_or_default()
+            .trim_start_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase();
+        if token.chars().count() == 1 || NOT_SENTENCE_END.contains(&token.as_str()) {
+            continue;
+        }
+        return Some(i + 1);
+    }
+    None
+}
+
 pub const ERR_NO_TESTS_FOUND: &str = "NO_TESTS_FOUND";
 pub const ERR_NAMESPACE_NOT_FOUND: &str = "NAMESPACE_NOT_FOUND";
 pub const ERR_TEST_EXECUTION_ERROR: &str = "TEST_EXECUTION_ERROR";
@@ -998,6 +1090,16 @@ pub struct IrisExecuteMethodParams {
 #[serde(deny_unknown_fields)]
 pub struct IrisProductionParams {
     /// Action to perform: status, start, stop, update, check, recover, get_autostart, set_autostart.
+    #[schemars(extend("enum" = [
+        "status",
+        "start",
+        "stop",
+        "update",
+        "check",
+        "recover",
+        "get_autostart",
+        "set_autostart",
+    ]))]
     #[serde(default = "default_production_action")]
     pub action: String,
     /// Production class name (used by start/stop).
@@ -2418,6 +2520,56 @@ impl IrisTools {
             .collect()
     }
 
+    /// The catalog `tools/list` serves, before pagination.
+    ///
+    /// One function so the MCP transport and `tool --list` / `tool <name> --schema` cannot answer
+    /// differently. The transforms here are not cosmetic: `normalize_schema_openapi3` rewrites
+    /// nullable types into `anyOf`, so a CLI that skipped it would print a schema no client ever
+    /// receives, and the description suppression an eval run turns on has to apply to both arms or
+    /// the CLI arm silently keeps the prose the run is measuring without.
+    fn listed_tools(&self) -> Vec<rmcp::model::Tool> {
+        let mut tools = self.tool_router.list_all();
+        let suppressed = std::env::var("IRIS_SUPPRESS_TOOL_DESCRIPTION")
+            .map(|v| parse_suppressed_descriptions(&v))
+            .unwrap_or_default();
+        for tool in tools.iter_mut() {
+            if suppressed.contains(tool.name.as_ref()) {
+                tool.description = Some(std::borrow::Cow::Borrowed(""));
+            }
+            let schema = std::sync::Arc::make_mut(&mut tool.input_schema);
+            normalize_schema_openapi3(schema);
+            // Stripped from tools/list since #113 — clients ignore it and it inflates the payload
+            // from ~30KB to ~220KB. Still returned per call via structuredContent.
+            tool.output_schema = None;
+        }
+        tools
+    }
+
+    /// Every registered tool, sorted by name, with the one-line summary `tool --list` prints.
+    ///
+    /// Built from [`Self::listed_tools`], so `description` and `input_schema` are exactly what a
+    /// client reads off `tools/list` — same source, same transforms. The per-name accessors above
+    /// each call `list_all()`, which is fine for a test asking about one tool and quadratic for a
+    /// listing of eighty.
+    pub fn tool_catalogue(&self) -> Vec<CatalogueEntry> {
+        let mut entries: Vec<CatalogueEntry> = self
+            .listed_tools()
+            .into_iter()
+            .map(|t| {
+                let description = t.description.map(|d| d.to_string());
+                CatalogueEntry {
+                    name: t.name.to_string(),
+                    summary: summarize_description(description.as_deref().unwrap_or_default()),
+                    description,
+                    input_schema: serde_json::to_value(&t.input_schema)
+                        .unwrap_or(serde_json::Value::Null),
+                }
+            })
+            .collect();
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        entries
+    }
+
     /// Returns `true` if `tool_name` is registered and declares a non-null `output_schema` —
     /// the same `Tool` definitions a real `list_tools` RPC serves (076-interface-modernization
     /// User Story 1). Used by tests to confirm a tool's declared output schema actually reaches
@@ -2462,6 +2614,12 @@ impl IrisTools {
 
     /// Returns the `inputSchema` for `tool_name` if it is registered, otherwise `None`.
     /// Used by tests to assert that a tool's schema documents specific parameters.
+    ///
+    /// This is the schema as schemars reflected it, *before* the nullable-array rewrite that
+    /// `list_tools` applies on the way out (`normalize_schema_openapi3`). The two differ for every
+    /// optional typed parameter: the rewrite moves `type`, `enum`, `format` and friends into an
+    /// `anyOf` branch. Tests that read `properties.<name>.enum` want this form; a test comparing
+    /// against what a client receives has to apply `normalize_schema_openapi3` itself.
     pub fn tool_input_schema(&self, tool_name: &str) -> Option<serde_json::Value> {
         self.tool_router
             .list_all()
@@ -9331,22 +9489,7 @@ impl ServerHandler for IrisTools {
         request: Option<rmcp::model::PaginatedRequestParams>,
         _context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::ListToolsResult, rmcp::ErrorData> {
-        let mut tools = self.tool_router.list_all();
-        let suppressed = std::env::var("IRIS_SUPPRESS_TOOL_DESCRIPTION")
-            .map(|v| parse_suppressed_descriptions(&v))
-            .unwrap_or_default();
-        for tool in tools.iter_mut() {
-            if suppressed.contains(tool.name.as_ref()) {
-                tool.description = Some(std::borrow::Cow::Borrowed(""));
-            }
-            let schema = std::sync::Arc::make_mut(&mut tool.input_schema);
-            normalize_schema_openapi3(schema);
-            // Strip outputSchema from tools/list — clients (Cursor, VS Code) do not use it
-            // for tool registration, and including it inflates the payload from ~30KB to ~220KB.
-            // Large payloads trigger Cursor's silent toolCount:0 bug (#113). outputSchema is
-            // still returned in structured tool call responses via structuredContent (#112).
-            tool.output_schema = None;
-        }
+        let tools = self.listed_tools();
         let page_size = log_store::read_inline_threshold(
             "IRIS_LIST_TOOLS_PAGE_SIZE",
             DEFAULT_LIST_TOOLS_PAGE_SIZE,
@@ -9429,7 +9572,7 @@ pub fn paginate_tool_list(
 /// schemars + rmcp emit `"type": ["integer", "null"]` (JSON Schema 2020-12) which
 /// Google Vertex AI and Azure OpenAI reject. Rewrites to OpenAPI 3.0:
 /// `"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]`.
-fn normalize_schema_openapi3(schema: &mut serde_json::Map<String, serde_json::Value>) {
+pub fn normalize_schema_openapi3(schema: &mut serde_json::Map<String, serde_json::Value>) {
     // Recurse into container schemas first (anyOf, allOf, oneOf, items)
     for key in ["anyOf", "allOf", "oneOf"] {
         if let Some(arr) = schema.get_mut(key).and_then(|v| v.as_array_mut()) {

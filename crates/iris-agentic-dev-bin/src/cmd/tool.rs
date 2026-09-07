@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Args;
 use iris_agentic_dev_core::{
     iris::connection::IrisConnection,
-    tools::{IrisTools, Toolset},
+    tools::{param_check::nearest, CatalogueEntry, IrisTools, Toolset},
 };
 use std::time::Instant;
 
@@ -108,9 +108,9 @@ pub fn dispatch_map_keys() -> std::collections::HashSet<&'static str> {
 
 #[derive(Args)]
 pub struct ToolCommand {
-    /// Exact MCP tool name (e.g. iris_info, iris_execute)
+    /// Exact MCP tool name (e.g. iris_info, iris_execute). Omit it with --list.
     #[arg(value_name = "TOOL_NAME")]
-    pub name: String,
+    pub name: Option<String>,
 
     /// JSON object of tool arguments (default: `{}`)
     #[arg(long, short = 'a', value_name = "JSON", default_value = "{}")]
@@ -120,13 +120,38 @@ pub struct ToolCommand {
     #[arg(long)]
     pub envelope: bool,
 
+    /// List every tool this CLI can dispatch, one per line, with a one-line summary.
+    /// Needs no IRIS connection.
+    #[arg(long, conflicts_with = "schema")]
+    pub list: bool,
+
+    /// Print TOOL_NAME's description and inputSchema — the same contract tools/list serves.
+    /// Needs no IRIS connection.
+    #[arg(long)]
+    pub schema: bool,
+
+    /// Emit --list / --schema output as a single JSON document.
+    #[arg(long)]
+    pub json: bool,
+
+    /// Which tool tier to list and dispatch: baseline, nostub, or merged.
+    #[arg(long, env = "IRIS_TOOLSET", default_value = "merged")]
+    pub toolset: String,
+
     #[command(flatten)]
     pub conn: ConnectionArgs,
 }
 
 impl ToolCommand {
     pub async fn run(self) -> Result<()> {
-        let name = self.name.clone();
+        if self.list || self.schema {
+            return self.discover();
+        }
+        let Some(name) = self.name.clone() else {
+            eprintln!("error: a tool name is required; run `iris-agentic-dev tool --list` to see");
+            eprintln!("       every tool this CLI can dispatch, or pass --schema with a name");
+            std::process::exit(1);
+        };
         let envelope = self.envelope;
         let run_id = std::env::var("GAUNTLET_RUN_ID")
             .ok()
@@ -223,7 +248,7 @@ impl ToolCommand {
             }
         };
 
-        let tools = IrisTools::new_with_toolset(iris, Toolset::Merged)?;
+        let tools = IrisTools::new_with_toolset(iris, Toolset::from_str(&self.toolset))?;
         let t0 = Instant::now();
 
         match tools.call_for_test(&name, args_json).await {
@@ -297,5 +322,112 @@ impl ToolCommand {
             }
         }
         Ok(())
+    }
+
+    /// `--list` and `--schema`: the discovery half, which never touches a connection.
+    ///
+    /// A shell-only caller can read the whole surface for about 6 KB and one tool's contract for
+    /// about 1 KB, instead of the ~104 KB an MCP `tools/list` costs before the first call. Both
+    /// answers come from `IrisTools::tool_catalogue()`, which is the same list `tools/list` serves,
+    /// so this cannot advertise a tool the server does not have.
+    ///
+    /// `IrisTools::new_with_toolset(None, …)` is the whole reason no connection is needed: every
+    /// tool's name, description and schema is static, and only calling one requires IRIS.
+    fn discover(&self) -> Result<()> {
+        let entries = self.catalogue()?;
+
+        if self.list {
+            if let Some(name) = &self.name {
+                eprintln!("error: --list takes no tool name (got '{name}')");
+                eprintln!("       for one tool's contract: iris-agentic-dev tool {name} --schema");
+                std::process::exit(1);
+            }
+            self.print_list(&entries);
+            return Ok(());
+        }
+
+        let Some(name) = self.name.as_deref() else {
+            eprintln!("error: --schema needs a tool name");
+            eprintln!("       for the whole list: iris-agentic-dev tool --list");
+            std::process::exit(1);
+        };
+        match entries.iter().find(|e| e.name == name) {
+            Some(entry) => {
+                self.print_schema(entry);
+                Ok(())
+            }
+            None => {
+                let known: std::collections::BTreeSet<String> =
+                    entries.iter().map(|e| e.name.clone()).collect();
+                eprintln!("error: unknown tool '{name}'");
+                if let Some(suggestion) = nearest(name, &known) {
+                    eprintln!("       did you mean '{suggestion}'?");
+                }
+                eprintln!("       for the whole list: iris-agentic-dev tool --list");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    /// The tools this CLI can both list and dispatch, in name order.
+    ///
+    /// Two filters, both load-bearing. The toolset decides what the router registers, so
+    /// `IRIS_TOOLSET=baseline` lists the baseline tier rather than always reporting Merged — a
+    /// harness that scopes the toolset and then reads a Merged listing calls tools that are not
+    /// there. `TOOL_NAMES` decides what `call_for_test` can dispatch, so a tool the router has and
+    /// this CLI cannot call is left out: advertising it would send the caller into "unknown tool",
+    /// which is exactly the drift that shipped once already (22 names, no dispatch arm).
+    fn catalogue(&self) -> Result<Vec<CatalogueEntry>> {
+        let tools = IrisTools::new_with_toolset(None, Toolset::from_str(&self.toolset))?;
+        let dispatchable = dispatch_map_keys();
+        Ok(tools
+            .tool_catalogue()
+            .into_iter()
+            .filter(|e| dispatchable.contains(e.name.as_str()))
+            .collect())
+    }
+
+    fn print_list(&self, entries: &[CatalogueEntry]) {
+        if self.json {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "toolset": Toolset::from_str(&self.toolset).as_str(),
+                    "count": entries.len(),
+                    "tools": entries.iter().map(|e| serde_json::json!({
+                        "name": e.name,
+                        "summary": e.summary,
+                    })).collect::<Vec<_>>(),
+                })
+            );
+            return;
+        }
+        let width = entries.iter().map(|e| e.name.len()).max().unwrap_or(0);
+        for entry in entries {
+            println!("{:<width$}  {}", entry.name, entry.summary, width = width);
+        }
+    }
+
+    fn print_schema(&self, entry: &CatalogueEntry) {
+        if self.json {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "name": entry.name,
+                    "description": entry.description,
+                    "inputSchema": entry.input_schema,
+                })
+            );
+            return;
+        }
+        println!("{}", entry.name);
+        if let Some(description) = &entry.description {
+            println!("\n{description}");
+        }
+        println!(
+            "\ninputSchema:\n{}",
+            serde_json::to_string_pretty(&entry.input_schema)
+                .unwrap_or_else(|_| entry.input_schema.to_string())
+        );
     }
 }

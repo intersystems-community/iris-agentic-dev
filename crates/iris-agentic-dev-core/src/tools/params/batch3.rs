@@ -73,7 +73,10 @@ pub struct IrisAdminParams {
     pub server: Option<String>,
 
     // ── web applications ──────────────────────────────────────────────────────
-    /// `list_webapps`: keep only applications of this type (`REST`, `CSP`).
+    /// `list_webapps`: keep only applications of this type (`REST`, `CSP`). Matched
+    /// case-insensitively against the type IRIS reports, so a value outside the set filters
+    /// everything out rather than erroring.
+    #[schemars(extend("enum" = ["REST", "CSP"]))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub r#type: Option<String>,
     /// Web application path, e.g. `/api/atelier`. Used by `get_webapp`, `create_webapp`,

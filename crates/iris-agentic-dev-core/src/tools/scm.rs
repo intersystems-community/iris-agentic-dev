@@ -51,6 +51,7 @@ impl ScmAction {
 #[serde(deny_unknown_fields)]
 pub struct ScmParams {
     /// Action: status, menu, checkout, execute
+    #[schemars(extend("enum" = ["status", "menu", "checkout", "execute"]))]
     pub action: String,
     pub document: Option<String>,
     /// SCM action ID for action=execute

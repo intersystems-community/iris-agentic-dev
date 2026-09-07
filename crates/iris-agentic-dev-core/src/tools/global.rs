@@ -275,6 +275,7 @@ use serde::Deserialize;
 #[serde(deny_unknown_fields)]
 pub struct IrisGlobalParams {
     /// Action: get, set, kill, list
+    #[schemars(extend("enum" = ["get", "set", "kill", "list"]))]
     pub action: String,
     /// Global name (with or without leading ^)
     pub global_name: String,

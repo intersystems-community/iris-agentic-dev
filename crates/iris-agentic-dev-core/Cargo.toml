@@ -796,6 +796,16 @@ path = "tests/unit/test_enum_contract.rs"
 required-features = ["testing"]
 
 [[test]]
+name = "test_tool_catalogue"
+path = "tests/unit/test_tool_catalogue.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "cli_discovery"
+path = "tests/binary/cli_discovery.rs"
+required-features = ["testing"]
+
+[[test]]
 name = "test_param_rejection"
 path = "tests/unit/test_param_rejection.rs"
 

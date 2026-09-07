@@ -50,6 +50,17 @@ pub struct IrisDocParams {
     /// INT form, list=glob docnames, insert=splice `content` before 1-based `line`
     /// (omit `line` to append at EOF), delete_lines=remove inclusive `start`..`end`
     /// (requires `expected`).
+    #[schemars(extend("enum" = [
+        "get",
+        "put",
+        "delete",
+        "head",
+        "fragment",
+        "compiled",
+        "list",
+        "insert",
+        "delete_lines",
+    ]))]
     #[serde(default = "default_mode", alias = "action")]
     pub mode: String,
     /// Document name e.g. 'MyApp.Patient.cls'

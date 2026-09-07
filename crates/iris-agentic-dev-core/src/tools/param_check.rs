@@ -107,7 +107,11 @@ pub fn unknown_parameter_message(
 /// parameter as the right one, and the accepted list is printed in full anyway. Ties resolve to the
 /// lexicographically smallest name — `accepted` is a `BTreeSet`, so the first match found is
 /// already the smallest.
-fn nearest(key: &str, accepted: &BTreeSet<String>) -> Option<String> {
+///
+/// Public because tool names get the same treatment as parameter names: a `--schema` request for a
+/// name one letter off from `iris_query` suggests it through this function rather than through a
+/// second distance metric that could disagree with the one behind `UNKNOWN_PARAMETER`.
+pub fn nearest(key: &str, accepted: &BTreeSet<String>) -> Option<String> {
     accepted
         .iter()
         .find(|name| edit_distance_within_one(key, name))
