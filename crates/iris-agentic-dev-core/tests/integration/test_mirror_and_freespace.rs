@@ -159,7 +159,7 @@ async fn e2e_database_list_free_space() {
 #[tokio::test]
 #[ignore]
 async fn e2e_system_performance_last_runid_community() {
-    use iris_agentic_dev_core::tools::admin_tools::iris_system_performance_impl;
+    use iris_agentic_dev_core::tools::admin_tools::{iris_system_performance_impl, SysPerfRequest};
 
     let (conn, client) = match make_conn() {
         Some(c) => c,
@@ -169,7 +169,7 @@ async fn e2e_system_performance_last_runid_community() {
         }
     };
 
-    let result = iris_system_performance_impl(&conn, &client, "last_runid", None, None)
+    let result = iris_system_performance_impl(&conn, &client, &SysPerfRequest::new("last_runid"))
         .await
         .expect("iris_system_performance_impl failed");
     let v = parse_json(result);
@@ -204,7 +204,7 @@ async fn e2e_system_performance_last_runid_community() {
 #[tokio::test]
 #[ignore]
 async fn e2e_system_performance_start_returns_run_id() {
-    use iris_agentic_dev_core::tools::admin_tools::iris_system_performance_impl;
+    use iris_agentic_dev_core::tools::admin_tools::{iris_system_performance_impl, SysPerfRequest};
 
     let (conn, client) = match make_conn() {
         Some(c) => c,
@@ -215,9 +215,16 @@ async fn e2e_system_performance_start_returns_run_id() {
     };
 
     let started = parse_json(
-        iris_system_performance_impl(&conn, &client, "start", None, Some("test"))
-            .await
-            .expect("start call failed"),
+        iris_system_performance_impl(
+            &conn,
+            &client,
+            &SysPerfRequest {
+                profile: Some("test"),
+                ..SysPerfRequest::new("start")
+            },
+        )
+        .await
+        .expect("start call failed"),
     );
     eprintln!("system_performance start response: {started}");
 
@@ -240,7 +247,7 @@ async fn e2e_system_performance_start_returns_run_id() {
     // The freshly started run is in flight, so it has no ("history") node yet. last_runid
     // must still see it and flag it as in progress.
     let last = parse_json(
-        iris_system_performance_impl(&conn, &client, "last_runid", None, None)
+        iris_system_performance_impl(&conn, &client, &SysPerfRequest::new("last_runid"))
             .await
             .expect("last_runid call failed"),
     );
@@ -258,9 +265,16 @@ async fn e2e_system_performance_start_returns_run_id() {
 
     // status resolves the run ID rather than reporting "no such runid".
     let status = parse_json(
-        iris_system_performance_impl(&conn, &client, "status", Some(&run_id), None)
-            .await
-            .expect("status call failed"),
+        iris_system_performance_impl(
+            &conn,
+            &client,
+            &SysPerfRequest {
+                run_id: Some(&run_id),
+                ..SysPerfRequest::new("status")
+            },
+        )
+        .await
+        .expect("status call failed"),
     );
     eprintln!("system_performance status for {run_id}: {status}");
     assert_eq!(status["success"].as_bool(), Some(true));
@@ -276,7 +290,7 @@ async fn e2e_system_performance_start_returns_run_id() {
 #[tokio::test]
 #[ignore]
 async fn e2e_system_performance_start_rejects_bad_profile() {
-    use iris_agentic_dev_core::tools::admin_tools::iris_system_performance_impl;
+    use iris_agentic_dev_core::tools::admin_tools::{iris_system_performance_impl, SysPerfRequest};
 
     let (conn, client) = match make_conn() {
         Some(c) => c,
@@ -290,9 +304,10 @@ async fn e2e_system_performance_start_rejects_bad_profile() {
         iris_system_performance_impl(
             &conn,
             &client,
-            "start",
-            None,
-            Some(r#"test") Do ^%ZSTOP //"#),
+            &SysPerfRequest {
+                profile: Some(r#"test") Do ^%ZSTOP //"#),
+                ..SysPerfRequest::new("start")
+            },
         )
         .await
         .expect("start call failed"),
@@ -309,7 +324,7 @@ async fn e2e_system_performance_start_rejects_bad_profile() {
 #[tokio::test]
 #[ignore]
 async fn e2e_system_performance_status_missing_run_id() {
-    use iris_agentic_dev_core::tools::admin_tools::iris_system_performance_impl;
+    use iris_agentic_dev_core::tools::admin_tools::{iris_system_performance_impl, SysPerfRequest};
 
     let (conn, client) = match make_conn() {
         Some(c) => c,
@@ -319,7 +334,7 @@ async fn e2e_system_performance_status_missing_run_id() {
         }
     };
 
-    let result = iris_system_performance_impl(&conn, &client, "status", None, None)
+    let result = iris_system_performance_impl(&conn, &client, &SysPerfRequest::new("status"))
         .await
         .expect("iris_system_performance_impl failed");
     let v = parse_json(result);
@@ -430,4 +445,316 @@ async fn e2e_mirror_failover_community_non_member() {
         Some("NOT_MIRROR_MEMBER"),
         "expected NOT_MIRROR_MEMBER for non-member failover, got: {v}"
     );
+}
+
+// ── 096: profile management and report retrieval, live ────────────────────────
+//
+// These are the modes 089 left out. Everything they assert was measured on iris-dev-iris
+// first — the profile node layout, the `0^profile name exists already` refusal, and the
+// `<node name>_<instance>_<run id>.html` report path.
+
+async fn sysperf(
+    conn: &IrisConnection,
+    client: &reqwest::Client,
+    req: iris_agentic_dev_core::tools::admin_tools::SysPerfRequest<'_>,
+) -> serde_json::Value {
+    parse_json(
+        iris_agentic_dev_core::tools::admin_tools::iris_system_performance_impl(conn, client, &req)
+            .await
+            .expect("iris_system_performance_impl failed"),
+    )
+}
+
+// Every instance ships `test`, so a listing that does not contain it is a broken read, not an
+// instance with no profiles.
+#[tokio::test]
+#[ignore]
+async fn e2e_system_performance_list_profiles() {
+    use iris_agentic_dev_core::tools::admin_tools::SysPerfRequest;
+
+    let (conn, client) = match make_conn() {
+        Some(c) => c,
+        None => {
+            eprintln!("IRIS_HOST not set — skipping e2e_system_performance_list_profiles");
+            return;
+        }
+    };
+
+    let v = sysperf(&conn, &client, SysPerfRequest::new("list_profiles")).await;
+    eprintln!("system_performance list_profiles response: {v}");
+
+    assert_eq!(v["success"].as_bool(), Some(true), "got: {v}");
+    let profiles = v["profiles"].as_array().expect("profiles must be an array");
+    assert_eq!(
+        v["count"].as_u64(),
+        Some(profiles.len() as u64),
+        "the DONE count and the number of parsed lines disagree, so a line was dropped: {v}"
+    );
+    let test = profiles
+        .iter()
+        .find(|p| p["name"] == "test")
+        .unwrap_or_else(|| panic!("every IRIS instance ships a `test` profile; got: {v}"));
+    // `test` is 30-second samples, 10 of them — the 5 minutes its own description claims.
+    assert_eq!(test["interval_seconds"].as_i64(), Some(30), "got: {test}");
+    assert_eq!(test["sample_count"].as_i64(), Some(10), "got: {test}");
+    assert_eq!(test["duration_minutes"].as_f64(), Some(5.0), "got: {test}");
+    assert!(
+        !test["description"].as_str().unwrap_or("").is_empty(),
+        "got: {test}"
+    );
+}
+
+// Full add → list → duplicate-refusal → delete round trip. The profile name is unique per run
+// so a crashed earlier run cannot make this one fail.
+#[tokio::test]
+#[ignore]
+async fn e2e_system_performance_profile_round_trip() {
+    use iris_agentic_dev_core::tools::admin_tools::SysPerfRequest;
+
+    let (conn, client) = match make_conn() {
+        Some(c) => c,
+        None => {
+            eprintln!("IRIS_HOST not set — skipping e2e_system_performance_profile_round_trip");
+            return;
+        }
+    };
+
+    let name = format!(
+        "iad_rt_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    );
+    let add = SysPerfRequest {
+        profile: Some(&name),
+        description: Some("iris-agentic-dev round trip, 1 s samples"),
+        interval_seconds: Some(1),
+        sample_count: Some(60),
+        ..SysPerfRequest::new("add_profile")
+    };
+
+    let v = sysperf(&conn, &client, add.clone()).await;
+    eprintln!("system_performance add_profile response: {v}");
+    assert_eq!(v["success"].as_bool(), Some(true), "got: {v}");
+    assert_eq!(v["duration_minutes"].as_f64(), Some(1.0), "got: {v}");
+
+    let listed = sysperf(&conn, &client, SysPerfRequest::new("list_profiles")).await;
+    let mine = listed["profiles"]
+        .as_array()
+        .expect("profiles must be an array")
+        .iter()
+        .find(|p| p["name"] == name.as_str())
+        .unwrap_or_else(|| panic!("{name} was added but is not in the listing: {listed}"));
+    assert_eq!(mine["interval_seconds"].as_i64(), Some(1), "got: {mine}");
+    assert_eq!(mine["sample_count"].as_i64(), Some(60), "got: {mine}");
+    assert_eq!(
+        mine["description"].as_str(),
+        Some("iris-agentic-dev round trip, 1 s samples"),
+        "got: {mine}"
+    );
+
+    // A second add of the same name is refused with IRIS's own words, not a generic failure.
+    let dup = sysperf(&conn, &client, add).await;
+    eprintln!("system_performance add_profile (duplicate) response: {dup}");
+    assert_eq!(dup["success"].as_bool(), Some(false), "got: {dup}");
+    assert!(
+        dup["error"].as_str().unwrap_or("").contains("exists"),
+        "expected IRIS's 'profile name exists already', got: {dup}"
+    );
+
+    let del = sysperf(
+        &conn,
+        &client,
+        SysPerfRequest {
+            profile: Some(&name),
+            ..SysPerfRequest::new("delete_profile")
+        },
+    )
+    .await;
+    eprintln!("system_performance delete_profile response: {del}");
+    assert_eq!(del["success"].as_bool(), Some(true), "got: {del}");
+
+    let after = sysperf(&conn, &client, SysPerfRequest::new("list_profiles")).await;
+    assert!(
+        !after["profiles"]
+            .as_array()
+            .expect("profiles must be an array")
+            .iter()
+            .any(|p| p["name"] == name.as_str()),
+        "{name} survived delete_profile: {after}"
+    );
+}
+
+// `addprofile("bad name",...)` returns 1 and stores `badname`. The name is rejected before the
+// call, so IRIS never gets the chance to leave a profile the caller cannot find.
+#[tokio::test]
+#[ignore]
+async fn e2e_system_performance_add_profile_rejects_a_name_iris_would_rewrite() {
+    use iris_agentic_dev_core::tools::admin_tools::SysPerfRequest;
+
+    let (conn, client) = match make_conn() {
+        Some(c) => c,
+        None => {
+            eprintln!("IRIS_HOST not set — skipping add_profile hostile-name test");
+            return;
+        }
+    };
+
+    let v = sysperf(
+        &conn,
+        &client,
+        SysPerfRequest {
+            profile: Some("iad bad name"),
+            description: Some("must not be created"),
+            interval_seconds: Some(1),
+            sample_count: Some(60),
+            ..SysPerfRequest::new("add_profile")
+        },
+    )
+    .await;
+    eprintln!("system_performance add_profile (bad name) response: {v}");
+    assert_eq!(v["success"].as_bool(), Some(false), "got: {v}");
+
+    let listed = sysperf(&conn, &client, SysPerfRequest::new("list_profiles")).await;
+    assert!(
+        !listed["profiles"]
+            .as_array()
+            .expect("profiles must be an array")
+            .iter()
+            .any(|p| p["name"] == "iadbadname"),
+        "the rejected name reached IRIS and was stored stripped: {listed}"
+    );
+}
+
+// list_runs on an instance that has never collected is legitimately empty; the DONE marker is
+// what makes that distinguishable from a read that stopped early.
+#[tokio::test]
+#[ignore]
+async fn e2e_system_performance_list_runs() {
+    use iris_agentic_dev_core::tools::admin_tools::SysPerfRequest;
+
+    let (conn, client) = match make_conn() {
+        Some(c) => c,
+        None => {
+            eprintln!("IRIS_HOST not set — skipping e2e_system_performance_list_runs");
+            return;
+        }
+    };
+
+    let v = sysperf(&conn, &client, SysPerfRequest::new("list_runs")).await;
+    eprintln!("system_performance list_runs response: {v}");
+
+    assert_eq!(v["success"].as_bool(), Some(true), "got: {v}");
+    let runs = v["runs"].as_array().expect("runs must be an array");
+    assert_eq!(
+        v["count"].as_u64(),
+        Some(runs.len() as u64),
+        "the DONE count and the number of parsed lines disagree: {v}"
+    );
+    for run in runs {
+        let rid = run["run_id"].as_str().unwrap_or("");
+        assert!(!rid.is_empty(), "run with no run_id: {run}");
+        assert!(
+            run["completed_at"].as_str().is_some(),
+            "a history node always carries a completion time: {run}"
+        );
+        assert!(
+            run["profile"].as_str().is_some(),
+            "run_id {rid} did not yield a profile: {run}"
+        );
+    }
+    // Descending iteration: newest first.
+    let ids: Vec<&str> = runs.iter().filter_map(|r| r["run_id"].as_str()).collect();
+    let mut sorted = ids.clone();
+    sorted.sort_by(|a, b| b.cmp(a));
+    assert_eq!(ids, sorted, "runs are not newest-first: {v}");
+}
+
+// mode=report with no run_id resolves the newest completed run. On an instance with no history
+// that is a clean "nothing to report on", not a crash.
+#[tokio::test]
+#[ignore]
+async fn e2e_system_performance_report_newest() {
+    use iris_agentic_dev_core::tools::admin_tools::SysPerfRequest;
+
+    let (conn, client) = match make_conn() {
+        Some(c) => c,
+        None => {
+            eprintln!("IRIS_HOST not set — skipping e2e_system_performance_report_newest");
+            return;
+        }
+    };
+
+    let runs = sysperf(&conn, &client, SysPerfRequest::new("list_runs")).await;
+    let newest = runs["runs"]
+        .as_array()
+        .and_then(|r| r.first())
+        .and_then(|r| r["run_id"].as_str())
+        .map(str::to_string);
+
+    let v = sysperf(&conn, &client, SysPerfRequest::new("report")).await;
+    eprintln!("system_performance report (newest) response: {v}");
+
+    let Some(newest) = newest else {
+        assert_eq!(
+            v["success"].as_bool(),
+            Some(false),
+            "no history, so report has nothing to resolve: {v}"
+        );
+        return;
+    };
+
+    assert_eq!(v["success"].as_bool(), Some(true), "got: {v}");
+    assert_eq!(v["run_id"].as_str(), Some(newest.as_str()), "got: {v}");
+    assert!(
+        v["output_dir"].as_str().is_some_and(|d| !d.is_empty()),
+        "got: {v}"
+    );
+    if v["exists"] == serde_json::json!(true) {
+        let path = v["report_path"].as_str().unwrap_or("");
+        assert!(
+            path.ends_with(&format!("_{newest}.html")),
+            "the report file name ends in the run ID: {v}"
+        );
+        assert!(
+            v["size_bytes"].as_i64().is_some_and(|n| n > 0),
+            "an existing report is not zero bytes: {v}"
+        );
+    } else {
+        // The HTML is written at completion; a run whose file was archived or deleted reports
+        // exists=false with the reason rather than a path that is not there.
+        assert!(
+            v["note"].as_str().is_some_and(|n| !n.is_empty()),
+            "exists=false must say why: {v}"
+        );
+    }
+}
+
+// An unknown run ID is a named miss, not an empty success.
+#[tokio::test]
+#[ignore]
+async fn e2e_system_performance_report_unknown_run() {
+    use iris_agentic_dev_core::tools::admin_tools::SysPerfRequest;
+
+    let (conn, client) = match make_conn() {
+        Some(c) => c,
+        None => {
+            eprintln!("IRIS_HOST not set — skipping e2e_system_performance_report_unknown_run");
+            return;
+        }
+    };
+
+    let v = sysperf(
+        &conn,
+        &client,
+        SysPerfRequest {
+            run_id: Some("19700101_000000_nosuch"),
+            ..SysPerfRequest::new("report")
+        },
+    )
+    .await;
+    eprintln!("system_performance report (unknown run) response: {v}");
+
+    assert_eq!(v["exists"], serde_json::json!(false), "got: {v}");
 }

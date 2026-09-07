@@ -8,7 +8,7 @@
 //!
 //! `mode` is documented as required for `iris_system_performance`, and it is not in `required` here.
 //! The handler reads it with `unwrap_or("")` and answers a missing mode with
-//! `unknown mode ''; valid values: start, status, last_runid`. Putting it in `required` would
+//! `unknown mode ''; valid values: start, status, last_runid, ...`. Putting it in `required` would
 //! replace that sentence with a serde deserialization failure, which is a worse answer to the same
 //! mistake (FR-004). `action` on `iris_admin` is the one exception in this feature, and it is an
 //! exception because a missing action has no handler to produce a better message.
@@ -25,6 +25,9 @@ const BATCH4: &[ParamContract] = &[
             ("mode", "string"),
             ("run_id", "string"),
             ("profile", "string"),
+            ("description", "string"),
+            ("interval_seconds", "integer"),
+            ("sample_count", "integer"),
         ],
         required: &[],
     },

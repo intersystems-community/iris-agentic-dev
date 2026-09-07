@@ -467,6 +467,14 @@ pub const CLASSIFICATION: &[ToolClass] = &[
             ("start", WriteClass::Write),
             ("status", WriteClass::ReadOnly),
             ("last_runid", WriteClass::ReadOnly),
+            ("list_profiles", WriteClass::ReadOnly),
+            // Both writers touch ^IRIS.SystemPerformance("profile") and nothing else, and a
+            // deleted profile is one add_profile away from being back — recoverable, so Write
+            // rather than Destructive.
+            ("add_profile", WriteClass::Write),
+            ("delete_profile", WriteClass::Write),
+            ("list_runs", WriteClass::ReadOnly),
+            ("report", WriteClass::ReadOnly),
         ],
         WriteClass::ReadOnly,
     ),

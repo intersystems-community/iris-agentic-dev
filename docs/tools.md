@@ -1198,28 +1198,50 @@ operations that require a primary.
 
 ### `iris_system_performance`
 
-Start, poll, or retrieve the last run ID for an IRIS SystemPerformance (pbuttons) profile.
+Manage IRIS SystemPerformance (pbuttons) profiles, start and poll runs, and locate the report a
+finished run wrote.
 
-| Parameter | Type   | Default | Notes                                                                                 |
-| --------- | ------ | ------- | ------------------------------------------------------------------------------------- |
-| `mode`    | string | —       | **Required.** `start` / `status` / `last_runid`                                       |
-| `profile` | string | `test`  | `mode=start` only. `test` (5 min), `30mins`, `4hours`, `8hours`, `12hours`, `24hours` |
-| `run_id`  | string | —       | Required for `mode=status`                                                            |
-| `server`  | string | —       | Named server; omit for default                                                        |
+| Parameter          | Type    | Default | Notes                                                                                                                         |
+| ------------------ | ------- | ------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `mode`             | string  | —       | **Required.** `start` / `status` / `last_runid` / `list_profiles` / `add_profile` / `delete_profile` / `list_runs` / `report` |
+| `profile`          | string  | `test`  | `mode=start`: which profile to run. `mode=add_profile` / `delete_profile`: which profile to create or remove                  |
+| `run_id`           | string  | —       | Required for `mode=status`. Optional for `mode=report` — omit for the newest completed run                                    |
+| `description`      | string  | —       | Required for `mode=add_profile`                                                                                               |
+| `interval_seconds` | integer | —       | Required for `mode=add_profile`. Seconds between samples; the shipped profiles use 1 to 60                                    |
+| `sample_count`     | integer | —       | Required for `mode=add_profile`. `interval_seconds × sample_count` is the run length                                          |
+| `server`           | string  | —       | Named server; omit for default                                                                                                |
 
-**Response fields:** `success` (bool), `mode` (string), `run_id` (string or null).
+**Response fields:** `success` (bool), `mode` (string).
 
-- `mode=start` also returns `profile`. The run ID comes straight from
+- `mode=start` returns `profile` and `run_id`. The run ID comes straight from
   `$$run^SystemPerformance(profile)`.
-- `mode=last_runid` also returns `in_progress` (bool). It reads
+- `mode=last_runid` returns `run_id` and `in_progress` (bool). It reads
   `^IRIS.SystemPerformance("run")` before `("history")`, so a run that is still collecting is
   reported with `in_progress: true` — a run gets no history node until it finishes.
-- `mode=status` also returns `wait_time` (string from `$$waittime^SystemPerformance`, e.g.
+- `mode=status` returns `wait_time` (string from `$$waittime^SystemPerformance`, e.g.
   `"7 minutes"`).
+- `mode=list_profiles` returns `profiles` and `count`. Each profile has `name`,
+  `interval_seconds`, `sample_count`, `duration_minutes`, and `description`.
+- `mode=add_profile` returns the stored `profile`, `interval_seconds`, `sample_count`, and
+  `duration_minutes`. A duplicate name comes back as `success: false` with IRIS's own
+  `profile name exists already`.
+- `mode=delete_profile` returns the deleted `profile`. A deleted profile is one `add_profile`
+  away from being back, so this is a write, not a destructive operation.
+- `mode=list_runs` returns `runs` (newest first, capped at 100) and `count`. Each run has
+  `run_id`, `completed_at`, `output_dir`, and `profile`.
+- `mode=report` returns `run_id`, `completed_at`, `output_dir`, `report_path`, `size_bytes`, and
+  `exists`. A run still collecting has no report yet and comes back with `exists: false` and a
+  `note` saying so.
+
+Profile names accept letters, digits and underscore only. That is stricter than IRIS itself:
+`addprofile` accepts `"bad name"`, returns success, and stores the profile as `badname` — so the
+name you asked for does not exist and nothing tells you. Names outside the safe set are rejected
+before the call.
 
 The completed report lands in the instance's mgr directory as
-`<host>_<instance>_<run_id>.html`. There is no cancel entry point — a started profile runs to
-completion, so prefer `test` unless you need a longer window.
+`<host>_<instance>_<run_id>.html`; `mode=report` resolves that path and falls back to scanning
+the run's output directory if the host name has changed since. There is no cancel entry point —
+a started profile runs to completion, so prefer `test` unless you need a longer window.
 
 ### `iris_database_stats`
 

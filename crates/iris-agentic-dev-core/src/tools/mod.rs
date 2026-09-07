@@ -8864,7 +8864,7 @@ Methods:
     }
 
     #[tool(
-        description = "Start, poll, or retrieve the last run ID for an IRIS SystemPerformance (pbuttons) profile. mode: start | status | last_runid. profile: for mode=start, one of test (5 min, the default), 30mins, 4hours, 8hours, 12hours, 24hours. run_id: required for mode=status. Returns {success, mode, profile, run_id} for start; {success, mode, run_id, in_progress} for last_runid (in_progress=true means the run is still collecting and has no report yet); {success, mode, run_id, wait_time} for status. Works on community and Enterprise builds. server: optional registered instance name. Skill: iris-agentic-dev.",
+        description = "Manage and read IRIS SystemPerformance (pbuttons) profiles and runs. mode: start | status | last_runid | list_profiles | add_profile | delete_profile | list_runs | report. profile: for mode=start, one of test (5 min, the default), 30mins, 4hours, 8hours, 12hours, 24hours, or any instance-defined profile; for add_profile/delete_profile, the profile to create or remove. run_id: required for mode=status; optional for mode=report (omit for the newest completed run). description, interval_seconds, sample_count: required for mode=add_profile. Returns {success, mode, profile, run_id} for start; {success, mode, run_id, in_progress} for last_runid (in_progress=true means the run is still collecting and has no report yet); {success, mode, run_id, wait_time} for status; {success, mode, profiles, count} for list_profiles, each with name, interval_seconds, sample_count, duration_minutes, description; {success, mode, runs, count} for list_runs, newest first, each with run_id, completed_at, output_dir, profile; {success, mode, run_id, completed_at, output_dir, report_path, size_bytes, exists} for report. Works on community and Enterprise builds. server: optional registered instance name. Skill: iris-agentic-dev.",
         output_schema = output_schemas::oneof_output_schema::<serde_json::Value>()
     )]
     async fn iris_system_performance(
@@ -8889,13 +8889,24 @@ Methods:
             .get("profile")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let description = p
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let interval_seconds = p.get("interval_seconds").and_then(|v| v.as_i64());
+        let sample_count = p.get("sample_count").and_then(|v| v.as_i64());
         let iris = self.resolve_server(server.as_deref()).await?;
         let result = admin_tools::iris_system_performance_impl(
             &iris,
             &self.client,
-            &mode,
-            run_id.as_deref(),
-            profile.as_deref(),
+            &admin_tools::SysPerfRequest {
+                mode: &mode,
+                run_id: run_id.as_deref(),
+                profile: profile.as_deref(),
+                description: description.as_deref(),
+                interval_seconds,
+                sample_count,
+            },
         )
         .await;
         self.record_call("iris_system_performance", result.is_ok());

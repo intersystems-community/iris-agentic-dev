@@ -17,7 +17,7 @@
 //! line of the body re-serializes it back into a `serde_json::Value` named `p`, so every existing
 //! `p.get("key").and_then(|v| v.as_str())` line still compiles and still means the same thing:
 //!
-//! ```ignore
+//! ```text
 //! async fn iris_namespace_list(
 //!     &self,
 //!     Parameters(params): Parameters<IrisNamespaceListParams>,
@@ -41,7 +41,8 @@
 //!
 //! Closed value sets stay `Option<String>` with `#[schemars(extend("enum" = [...]))]` rather than
 //! becoming Rust enums, so the handler's own validation keeps producing its specific error
-//! (`unknown mode 'x'; valid values: start, status, last_runid`). A Rust enum would move rejection
+//! (`unknown mode 'x'; valid values: start, status, last_runid, ...`). A Rust enum would move
+//! rejection
 //! into serde and replace that message with a generic deserialization failure.
 
 use schemars::JsonSchema;

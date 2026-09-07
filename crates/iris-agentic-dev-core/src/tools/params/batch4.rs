@@ -8,7 +8,7 @@
 //!
 //! Nothing in this batch is `required`. `iris_system_performance.mode` is documented as required and
 //! is deliberately optional in the schema: the handler reads it with `unwrap_or("")` and answers a
-//! missing value with `unknown mode ''; valid values: start, status, last_runid`. Requiring it would
+//! missing value with `unknown mode ''; valid values: ` and the whole list. Requiring it would
 //! trade that sentence for a serde deserialization failure.
 
 use schemars::JsonSchema;
@@ -18,19 +18,37 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IrisSystemPerformanceParams {
-    /// `start` (begin a profile run), `status` (poll one), or `last_runid` (report the most recent).
+    /// `start` (begin a profile run), `status` (poll one), `last_runid` (the most recent),
+    /// `list_profiles`, `add_profile`, `delete_profile`, `list_runs` (completed runs, newest
+    /// first), or `report` (locate the HTML a completed run wrote).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("enum" = ["start", "status", "last_runid"]))]
+    #[schemars(extend("enum" = [
+        "start", "status", "last_runid", "list_profiles", "add_profile", "delete_profile",
+        "list_runs", "report"
+    ]))]
     pub mode: Option<String>,
     /// `mode=status`: the run to poll. `waittime^SystemPerformance` answers an unknown ID with
-    /// `-2^no such runid`.
+    /// `-2^no such runid`. `mode=report`: the run to locate; omit for the newest completed run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
     /// `mode=start`: profile to run, default `test` (5 minutes). IRIS ships `test`, `30mins`,
     /// `4hours`, `8hours`, `12hours`, `24hours`, and an instance may define its own — any name of
     /// letters, digits and underscore is accepted, which is why this is not an enum.
+    /// `mode=add_profile` / `delete_profile`: the profile to create or remove. IRIS silently
+    /// strips characters outside that set, so anything else is rejected here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    /// `mode=add_profile`: what the profile is for. Shows up in `list_profiles` and in the
+    /// Management Portal. Required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// `mode=add_profile`: seconds between samples. The shipped profiles use 1 to 60.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval_seconds: Option<i64>,
+    /// `mode=add_profile`: how many samples to take. `interval_seconds * sample_count` is how
+    /// long the run lasts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_count: Option<i64>,
     /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<String>,

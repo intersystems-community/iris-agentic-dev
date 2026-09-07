@@ -473,6 +473,11 @@ pub enum SystemPerfMode {
     Start,
     Status,
     LastRunId,
+    ListProfiles,
+    AddProfile,
+    DeleteProfile,
+    ListRuns,
+    Report,
 }
 
 impl SystemPerfMode {
@@ -481,10 +486,27 @@ impl SystemPerfMode {
             "start" => Some(Self::Start),
             "status" => Some(Self::Status),
             "last_runid" => Some(Self::LastRunId),
+            "list_profiles" => Some(Self::ListProfiles),
+            "add_profile" => Some(Self::AddProfile),
+            "delete_profile" => Some(Self::DeleteProfile),
+            "list_runs" => Some(Self::ListRuns),
+            "report" => Some(Self::Report),
             _ => None,
         }
     }
 }
+
+/// Every mode name, for the error message an unknown mode gets.
+pub const SYSPERF_MODES: &[&str] = &[
+    "start",
+    "status",
+    "last_runid",
+    "list_profiles",
+    "add_profile",
+    "delete_profile",
+    "list_runs",
+    "report",
+];
 
 /// SystemPerformance profiles shipped with every IRIS instance.
 pub const SYSPERF_PROFILES: &[&str] = &["test", "30mins", "4hours", "8hours", "12hours", "24hours"];
@@ -582,17 +604,400 @@ fn parse_last_runid(out: &str) -> (serde_json::Value, bool) {
     (run_id, flag.trim() == "1")
 }
 
+// ── Profile management and report retrieval (096) ─────────────────────────────
+//
+// 089 could start a collection and poll it. It could not answer "which profiles does this
+// instance have", "make me a 1-second one", or "where did the last run write its report" —
+// which is most of what someone actually does with SystemPerformance.
+
+/// Validate a profile name for `add_profile` / `delete_profile`.
+///
+/// Stricter than it looks necessary, for a measured reason: `$$addprofile^SystemPerformance`
+/// accepts `"bad name"`, returns **1**, and stores the profile as `badname`. The caller is told
+/// it worked and the name it asked for does not exist. IRIS never reports the rename, so the
+/// only place it can be caught is here.
+pub fn sysperf_profile_name_checked(name: Option<&str>) -> Result<String, String> {
+    let n = name.map(str::trim).filter(|s| !s.is_empty());
+    let Some(n) = n else {
+        return Err(
+            "profile is required: pass the profile name to create or delete (letters, digits \
+             and underscore only)"
+                .to_string(),
+        );
+    };
+    if !n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err(format!(
+            "invalid profile name '{n}': only letters, digits and underscore are allowed. \
+             IRIS silently strips anything else — it would store this as \
+             '{}' and report success.",
+            n.chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .collect::<String>()
+        ));
+    }
+    Ok(n.to_string())
+}
+
+/// Validate and escape a profile description.
+///
+/// Descriptions are prose, so unlike the name this escapes rather than rejects: a double quote
+/// becomes the ObjectScript `""`. A line break cannot be escaped — the generated code is
+/// newline-delimited ObjectScript, so an embedded newline becomes a new command — so control
+/// characters are refused.
+pub fn sysperf_description_checked(description: Option<&str>) -> Result<String, String> {
+    let d = description.map(str::trim).filter(|s| !s.is_empty());
+    let Some(d) = d else {
+        return Err(
+            "description is required: addprofile takes a description, and a profile with a \
+             blank one tells the next person nothing"
+                .to_string(),
+        );
+    };
+    if d.chars().any(|c| c.is_control()) {
+        return Err(format!(
+            "invalid description '{}': line breaks and control characters are not allowed",
+            d.escape_debug()
+        ));
+    }
+    Ok(d.replace('"', "\"\""))
+}
+
+fn sysperf_positive_int(value: Option<i64>, field: &str, hint: &str) -> Result<i64, String> {
+    match value {
+        Some(v) if v > 0 => Ok(v),
+        Some(v) => Err(format!(
+            "invalid {field} {v}: must be a positive whole number ({hint})"
+        )),
+        None => Err(format!("{field} is required ({hint})")),
+    }
+}
+
+/// Seconds between samples.
+pub fn sysperf_interval_checked(interval_seconds: Option<i64>) -> Result<i64, String> {
+    sysperf_positive_int(
+        interval_seconds,
+        "interval_seconds",
+        "the shipped profiles use 1 to 60",
+    )
+}
+
+/// How many samples the run takes. `interval_seconds * sample_count` is the run length.
+pub fn sysperf_sample_count_checked(sample_count: Option<i64>) -> Result<i64, String> {
+    sysperf_positive_int(
+        sample_count,
+        "sample_count",
+        "interval_seconds x sample_count is how long the run takes",
+    )
+}
+
+/// Newest-first cap for `mode=list_runs`. An instance that has been collecting for months holds
+/// hundreds of history nodes and nobody reads past the recent ones.
+pub const SYSPERF_RUN_LIMIT: usize = 100;
+
+/// ObjectScript for `mode=list_profiles`.
+///
+/// A profile node is `$LB(description, interval_seconds, sample_count)`. The description is
+/// written **last** because it is free text and may contain the `|` delimiter — put last, the
+/// Rust side can `splitn` and keep it whole.
+///
+/// `$LISTVALID` guards the decode: one hand-written or legacy node that is not a `$LIST` would
+/// otherwise throw `<LIST>` and take the entire listing down with it. The trailing `DONE|<count>`
+/// distinguishes "this instance has no profiles" from "the read stopped early".
+pub fn sysperf_list_profiles_code() -> &'static str {
+    r#"ZN "%SYS"
+Set cnt=0,name=$O(^IRIS.SystemPerformance("profile",""))
+While name'="" {
+  Set node=$G(^IRIS.SystemPerformance("profile",name))
+  Set cnt=cnt+1
+  If $LISTVALID(node) {
+    Write name,"|",$LG(node,2),"|",$LG(node,3),"|",$LG(node,1),!
+  } Else {
+    Write name,"|||",node,!
+  }
+  Set name=$O(^IRIS.SystemPerformance("profile",name))
+}
+Write "DONE|",cnt"#
+}
+
+/// Decode one `name|interval|count|description` line from [`sysperf_list_profiles_code`].
+///
+/// Returns `None` for the `DONE` sentinel and for anything that is not a profile line, so the
+/// caller can filter without a second pass.
+pub fn parse_profile_line(line: &str) -> Option<serde_json::Value> {
+    let parts: Vec<&str> = line.trim_end().splitn(4, '|').collect();
+    if parts.len() < 4 {
+        return None;
+    }
+    let name = parts[0].trim();
+    if name.is_empty() {
+        return None;
+    }
+    let interval = parts[1].trim().parse::<i64>().ok();
+    let count = parts[2].trim().parse::<i64>().ok();
+    let duration = match (interval, count) {
+        (Some(i), Some(c)) => serde_json::json!((i * c) as f64 / 60.0),
+        _ => serde_json::Value::Null,
+    };
+    Some(serde_json::json!({
+        "name": name,
+        "interval_seconds": interval,
+        "sample_count": count,
+        "duration_minutes": duration,
+        "description": parts[3],
+    }))
+}
+
+/// ObjectScript for `mode=add_profile`.
+///
+/// Writes `<stored>|<result>`: the `$D` of the node under the *requested* name comes first so
+/// the `0^<reason>` form of the result, which contains a `^` but no `|`, survives the split.
+/// Reading the node back is what catches the silent rename described on
+/// [`sysperf_profile_name_checked`] if a future IRIS version rewrites a name this accepts.
+pub fn sysperf_add_profile_code(
+    name: &str,
+    description: &str,
+    interval_seconds: i64,
+    sample_count: i64,
+) -> String {
+    format!(
+        r#"ZN "%SYS"
+Set io=$IO
+Set tR=$$addprofile^SystemPerformance("{name}","{description}",{interval_seconds},{sample_count})
+Use io
+Write $D(^IRIS.SystemPerformance("profile","{name}")),"|",tR"#
+    )
+}
+
+/// ObjectScript for `mode=delete_profile`.
+pub fn sysperf_delete_profile_code(name: &str) -> String {
+    format!(
+        r#"ZN "%SYS"
+Set io=$IO
+Set tR=$$delprofile^SystemPerformance("{name}")
+Use io
+Write tR"#
+    )
+}
+
+/// Both profile writers answer `1` on success or `0^<reason>` on refusal — a duplicate name
+/// gives `0^profile name exists already`. Empty output means the `Write` never landed, which is
+/// a failure of the read, not a success.
+pub fn parse_profile_write_result(out: &str) -> Result<(), String> {
+    let v = out.trim();
+    if v == "1" {
+        return Ok(());
+    }
+    match v.split_once('^') {
+        Some((_, reason)) if !reason.trim().is_empty() => Err(reason.trim().to_string()),
+        _ if v.is_empty() => Err("IRIS returned nothing — the profile was not written".to_string()),
+        _ => Err(format!("IRIS refused the profile write: {v}")),
+    }
+}
+
+/// ObjectScript for `mode=list_runs`.
+///
+/// A history node is `<$HOROLOG of completion>^<output directory>`, and the subscript is the run
+/// ID. Iterates descending so the newest runs come first and the cap keeps the useful ones.
+pub fn sysperf_list_runs_code() -> String {
+    format!(
+        r#"ZN "%SYS"
+Set cnt=0,rid=$O(^IRIS.SystemPerformance("history",""),-1)
+While (rid'="")&(cnt<{SYSPERF_RUN_LIMIT}) {{
+  Set node=$G(^IRIS.SystemPerformance("history",rid))
+  Set cnt=cnt+1
+  Write rid,"|",$S($P(node,"^",1)'="":$ZDT($P(node,"^",1),3),1:""),"|",$P(node,"^",2),!
+  Set rid=$O(^IRIS.SystemPerformance("history",rid),-1)
+}}
+Write "DONE|",cnt"#
+    )
+}
+
+/// Decode one `run_id|completed_at|output_dir` line from [`sysperf_list_runs_code`].
+pub fn parse_run_line(line: &str) -> Option<serde_json::Value> {
+    let parts: Vec<&str> = line.trim_end().splitn(3, '|').collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    let run_id = parts[0].trim();
+    if run_id.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({
+        "run_id": run_id,
+        "completed_at": nullable(parts[1]),
+        "output_dir": nullable(parts[2]),
+        "profile": profile_from_run_id(run_id),
+    }))
+}
+
+/// Run IDs are `YYYYMMDD_HHMMSS_<profile>`, and a profile name may itself contain underscores,
+/// so everything after the second one is the profile.
+fn profile_from_run_id(run_id: &str) -> serde_json::Value {
+    let parts: Vec<&str> = run_id.splitn(3, '_').collect();
+    match parts.get(2) {
+        Some(p) if !p.is_empty() => serde_json::Value::String((*p).to_string()),
+        _ => serde_json::Value::Null,
+    }
+}
+
+fn nullable(s: &str) -> serde_json::Value {
+    let t = s.trim();
+    if t.is_empty() {
+        serde_json::Value::Null
+    } else {
+        serde_json::Value::String(t.to_string())
+    }
+}
+
+/// ObjectScript for `mode=report`.
+///
+/// The report file is `<output dir><node name>_<instance>_<run id>.html`, measured as
+/// `/usr/irissys/mgr/57eb64844aa4_IRIS_20260907_135415_test.html`. `$ZU(110)` is the piece that
+/// matches — `%SYS.System.GetNodeName()` returns the same name upper-cased, and the file name is
+/// lower — but a host rename or a moved container breaks the reconstruction, so a miss falls
+/// back to matching `*_<run id>.html` in the directory the run recorded.
+///
+/// An empty `run_id` resolves to the newest completed run.
+pub fn sysperf_report_code(run_id: &str) -> String {
+    format!(
+        r#"ZN "%SYS"
+Set rid="{run_id}"
+If rid="" Set rid=$O(^IRIS.SystemPerformance("history",""),-1)
+Set node=$G(^IRIS.SystemPerformance("history",rid))
+Set dir=$P(node,"^",2)
+If dir="" Set dir=$G(^IRIS.SystemPerformance("logdir"))
+Set when=$S($P(node,"^",1)'="":$ZDT($P(node,"^",1),3),1:"")
+Set path=""
+If (rid'="")&(dir'="") {{
+  Set path=dir_$ZU(110)_"_"_##class(%SYS.System).GetInstanceName()_"_"_rid_".html"
+  If '##class(%File).Exists(path) {{
+    Set path="",rs=##class(%ResultSet).%New("%File:FileSet")
+    If rs.Execute(dir,"*_"_rid_".html") {{
+      While rs.Next() {{ Set path=rs.Get("Name") }}
+    }}
+  }}
+}}
+Set exists=0
+If path'="" Set exists=##class(%File).Exists(path)
+Write rid,"|",when,"|",dir,"|",$S(exists:path,1:""),"|",$S(exists:##class(%File).GetFileSize(path),1:""),"|",exists"#
+    )
+}
+
+/// [`sysperf_report_code`] with the run ID validated first. Empty is legal — it means the newest
+/// completed run — but anything outside the run-ID charset would break out of the literal.
+pub fn sysperf_report_code_checked(run_id: &str) -> Result<String, String> {
+    let rid = run_id.trim();
+    if !rid.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err(format!(
+            "invalid run_id '{rid}': only letters, digits and underscore are allowed. \
+             Run IDs look like 20260904_161059_test — mode=list_runs shows the completed ones, \
+             and omitting run_id reports on the newest."
+        ));
+    }
+    Ok(sysperf_report_code(rid))
+}
+
+/// Decode the single `run_id|completed_at|dir|path|size|exists` line from
+/// [`sysperf_report_code`].
+pub fn parse_report_line(line: &str) -> Option<serde_json::Value> {
+    let parts: Vec<&str> = line.trim_end().splitn(6, '|').collect();
+    if parts.len() < 6 {
+        return None;
+    }
+    let run_id = parts[0].trim();
+    if run_id.is_empty() {
+        return None;
+    }
+    let exists = parts[5].trim() == "1";
+    Some(serde_json::json!({
+        "run_id": run_id,
+        "completed_at": nullable(parts[1]),
+        "output_dir": nullable(parts[2]),
+        "report_path": nullable(parts[3]),
+        "size_bytes": parts[4].trim().parse::<i64>().ok(),
+        "exists": exists,
+    }))
+}
+
+/// Everything `iris_system_performance` reads off the request.
+///
+/// A struct rather than eight positional arguments: the four profile fields are all optional and
+/// mode-dependent, and at a call site `Some("test"), None, Some(1), Some(240)` says nothing about
+/// which is which.
+#[derive(Debug, Default, Clone)]
+pub struct SysPerfRequest<'a> {
+    pub mode: &'a str,
+    pub run_id: Option<&'a str>,
+    pub profile: Option<&'a str>,
+    pub description: Option<&'a str>,
+    pub interval_seconds: Option<i64>,
+    pub sample_count: Option<i64>,
+}
+
+impl<'a> SysPerfRequest<'a> {
+    pub fn new(mode: &'a str) -> Self {
+        Self {
+            mode,
+            ..Default::default()
+        }
+    }
+}
+
+/// Read a `|`-delimited listing that ends in `DONE|<count>`.
+///
+/// The sentinel is the point: a truncated read and an empty subtree both come back as no data
+/// lines, and reporting the first as `count: 0` is how a broken read looks like a healthy
+/// instance with nothing on it.
+fn parse_sysperf_listing<F>(
+    out: &str,
+    parse_line: F,
+) -> Result<(Vec<serde_json::Value>, usize), String>
+where
+    F: Fn(&str) -> Option<serde_json::Value>,
+{
+    let mut items = Vec::new();
+    let mut declared: Option<usize> = None;
+    for line in out.lines() {
+        let line = line.trim_end();
+        if let Some(rest) = line.strip_prefix("DONE|") {
+            declared = rest.trim().parse::<usize>().ok();
+            continue;
+        }
+        if let Some(v) = parse_line(line) {
+            items.push(v);
+        }
+    }
+    let Some(declared) = declared else {
+        return Err(
+            "IRIS did not finish the listing (no end marker) — the result is incomplete, \
+             not empty"
+                .to_string(),
+        );
+    };
+    Ok((items, declared))
+}
+
 pub async fn iris_system_performance_impl(
     iris: &IrisConnection,
     client: &reqwest::Client,
-    mode: &str,
-    run_id: Option<&str>,
-    profile: Option<&str>,
+    req: &SysPerfRequest<'_>,
 ) -> Result<CallToolResult, McpError> {
+    let SysPerfRequest {
+        mode,
+        run_id,
+        profile,
+        description,
+        interval_seconds,
+        sample_count,
+    } = *req;
     match SystemPerfMode::parse(mode) {
         None => ok_json(serde_json::json!({
             "success": false,
-            "error": format!("unknown mode '{}'; valid values: start, status, last_runid", mode),
+            "error": format!(
+                "unknown mode '{}'; valid values: {}",
+                mode,
+                SYSPERF_MODES.join(", ")
+            ),
         })),
         Some(SystemPerfMode::LastRunId) => {
             match iris
@@ -696,7 +1101,162 @@ pub async fn iris_system_performance_impl(
                 })),
             }
         }
+        Some(SystemPerfMode::ListProfiles) => {
+            let out = match iris
+                .execute_via_generator(sysperf_list_profiles_code(), "%SYS", client)
+                .await
+            {
+                Ok(o) => o,
+                Err(e) => return sysperf_failed(serde_json::json!(e.to_string())),
+            };
+            if is_generator_error(out.trim()) {
+                return sysperf_failed(serde_json::json!(out.trim()));
+            }
+            match parse_sysperf_listing(&out, parse_profile_line) {
+                Ok((profiles, declared)) => ok_json(serde_json::json!({
+                    "success": true,
+                    "mode": "list_profiles",
+                    "profiles": profiles,
+                    "count": declared,
+                })),
+                Err(e) => sysperf_failed(serde_json::json!(e)),
+            }
+        }
+        Some(SystemPerfMode::AddProfile) => {
+            let (name, desc, interval, count) = match (
+                sysperf_profile_name_checked(profile),
+                sysperf_description_checked(description),
+                sysperf_interval_checked(interval_seconds),
+                sysperf_sample_count_checked(sample_count),
+            ) {
+                (Ok(n), Ok(d), Ok(i), Ok(c)) => (n, d, i, c),
+                (n, d, i, c) => {
+                    // Report every bad field at once. Fixing one and being told about the next
+                    // is three round trips for one malformed call.
+                    let problems: Vec<String> = [n.err(), d.err(), i.err(), c.err()]
+                        .into_iter()
+                        .flatten()
+                        .collect();
+                    return sysperf_failed(serde_json::json!(problems.join("; ")));
+                }
+            };
+            let code = sysperf_add_profile_code(&name, &desc, interval, count);
+            let out = match iris.execute_via_generator(&code, "%SYS", client).await {
+                Ok(o) => o,
+                Err(e) => return sysperf_failed(serde_json::json!(e.to_string())),
+            };
+            let val = out.trim();
+            if is_generator_error(val) {
+                return sysperf_failed(serde_json::json!(val));
+            }
+            let (stored, result) = val.split_once('|').unwrap_or(("0", val));
+            if let Err(reason) = parse_profile_write_result(result) {
+                return sysperf_failed(serde_json::json!(reason));
+            }
+            if stored.trim() != "1" {
+                // addprofile said yes and the node is not there under the name that was asked
+                // for. That is the silent-rename case; do not report it as a success.
+                return sysperf_failed(serde_json::json!(format!(
+                    "IRIS reported success but stored no profile named '{name}' — the name was \
+                     rewritten. Check mode=list_profiles."
+                )));
+            }
+            ok_json(serde_json::json!({
+                "success": true,
+                "mode": "add_profile",
+                "profile": name,
+                "interval_seconds": interval,
+                "sample_count": count,
+                "duration_minutes": (interval * count) as f64 / 60.0,
+            }))
+        }
+        Some(SystemPerfMode::DeleteProfile) => {
+            let name = match sysperf_profile_name_checked(profile) {
+                Ok(n) => n,
+                Err(e) => return sysperf_failed(serde_json::json!(e)),
+            };
+            let code = sysperf_delete_profile_code(&name);
+            let out = match iris.execute_via_generator(&code, "%SYS", client).await {
+                Ok(o) => o,
+                Err(e) => return sysperf_failed(serde_json::json!(e.to_string())),
+            };
+            let val = out.trim();
+            if is_generator_error(val) {
+                return sysperf_failed(serde_json::json!(val));
+            }
+            match parse_profile_write_result(val) {
+                Ok(()) => ok_json(serde_json::json!({
+                    "success": true,
+                    "mode": "delete_profile",
+                    "profile": name,
+                })),
+                Err(reason) => sysperf_failed(serde_json::json!(reason)),
+            }
+        }
+        Some(SystemPerfMode::ListRuns) => {
+            let out = match iris
+                .execute_via_generator(&sysperf_list_runs_code(), "%SYS", client)
+                .await
+            {
+                Ok(o) => o,
+                Err(e) => return sysperf_failed(serde_json::json!(e.to_string())),
+            };
+            if is_generator_error(out.trim()) {
+                return sysperf_failed(serde_json::json!(out.trim()));
+            }
+            match parse_sysperf_listing(&out, parse_run_line) {
+                Ok((runs, declared)) => ok_json(serde_json::json!({
+                    "success": true,
+                    "mode": "list_runs",
+                    "runs": runs,
+                    "count": declared,
+                    "limit": SYSPERF_RUN_LIMIT,
+                })),
+                Err(e) => sysperf_failed(serde_json::json!(e)),
+            }
+        }
+        Some(SystemPerfMode::Report) => {
+            let code = match sysperf_report_code_checked(run_id.unwrap_or_default()) {
+                Ok(c) => c,
+                Err(e) => return sysperf_failed(serde_json::json!(e)),
+            };
+            let out = match iris.execute_via_generator(&code, "%SYS", client).await {
+                Ok(o) => o,
+                Err(e) => return sysperf_failed(serde_json::json!(e.to_string())),
+            };
+            let val = out.trim();
+            if is_generator_error(val) {
+                return sysperf_failed(serde_json::json!(val));
+            }
+            match parse_report_line(val) {
+                Some(mut report) => {
+                    report["success"] = serde_json::json!(true);
+                    report["mode"] = serde_json::json!("report");
+                    if report["exists"] == serde_json::json!(false) {
+                        // A run that is still collecting has no history node and no file yet.
+                        // Saying so beats handing back a path that is not there.
+                        report["note"] = serde_json::json!(
+                            "no report file for this run yet — a run writes its HTML only when \
+                             it completes (mode=status shows the remaining time)"
+                        );
+                    }
+                    ok_json(report)
+                }
+                None => sysperf_failed(serde_json::json!(format!(
+                    "no completed run to report on{}",
+                    match run_id.map(str::trim).filter(|s| !s.is_empty()) {
+                        Some(r) => format!(": '{r}' is not in the run history"),
+                        None => " — this instance has no SystemPerformance history".to_string(),
+                    }
+                ))),
+            }
+        }
     }
+}
+
+/// `{"success": false, "error": ...}` — the shape every SystemPerformance failure returns.
+fn sysperf_failed(error: serde_json::Value) -> Result<CallToolResult, McpError> {
+    ok_json(serde_json::json!({ "success": false, "error": error }))
 }
 
 pub async fn iris_mirror_status_impl(
