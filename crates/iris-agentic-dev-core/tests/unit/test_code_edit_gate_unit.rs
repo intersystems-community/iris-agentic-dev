@@ -401,3 +401,158 @@ fn blocks_keyword_with_tabs_and_newlines() {
     let cls = "Class My.X {\nMethod G() [ CodeMode\t=\t\n\tobjectgenerator ]\n{\n}\n}";
     assert!(check_compile_time_code_mode(cls, "My.X.cls").is_some());
 }
+
+// ── Compile-time code mode gate: comments and string literals (#135) ─────
+//
+// The gate used to uppercase the whole document and scan for CODEMODE with no syntax
+// awareness, so a class that merely *mentioned* the keyword was refused. Every test below
+// covers a document that declares no generator method.
+//
+// `does_not_false_positive_on_codemode_in_comment` above looked like it covered this and did
+// not: its comment says "CodeMode" with no value after it, which the raw scan skips anyway
+// for want of an `=`. A test named for the general property while exercising only the
+// degenerate case is how this shipped.
+
+#[test]
+fn a_line_comment_documenting_the_keyword_is_not_a_generator() {
+    // Reported case 1: a guardrail class cannot warn teammates off the very construct the
+    // gate enforces.
+    let cls = "Class Probe.FalsePos\n{\n\n\
+               /// Never use CodeMode = objectgenerator here without load-source.\n\
+               ClassMethod Ping() As %String\n{\n    Return \"fp\"\n}\n\n}";
+    assert!(
+        check_compile_time_code_mode(cls, "Probe.FalsePos.cls").is_none(),
+        "a doc comment mentioning the keyword declares no generator method"
+    );
+}
+
+#[test]
+fn a_string_literal_containing_the_keyword_is_not_a_generator() {
+    // Reported case 2: the keyword as a return value.
+    let cls = "Class Probe.FalsePosStr\n{\n\n\
+               ClassMethod Ping() As %String\n{\n    Return \"CodeMode = objectgenerator\"\n}\n\n}";
+    assert!(
+        check_compile_time_code_mode(cls, "Probe.FalsePosStr.cls").is_none(),
+        "a string literal is data, not a UDL keyword list"
+    );
+}
+
+#[test]
+fn a_block_comment_documenting_the_keyword_is_allowed() {
+    let cls = "Class My.X\n{\n/* CodeMode = objectgenerator is what we are avoiding */\n\
+               Method G()\n{\n}\n}";
+    assert!(check_compile_time_code_mode(cls, "My.X.cls").is_none());
+}
+
+#[test]
+fn a_semicolon_comment_documenting_the_keyword_is_allowed() {
+    let cls = "Class My.X\n{\nMethod G()\n{\n  ; CodeMode = objectgenerator is banned here\n  \
+               Write 1\n}\n}";
+    assert!(check_compile_time_code_mode(cls, "My.X.cls").is_none());
+}
+
+#[test]
+fn a_comment_holding_a_whole_bracketed_keyword_list_is_allowed() {
+    // The most useful documentation form, and the one an anchor-on-brackets fix alone would
+    // still refuse.
+    let cls = "Class My.Guard\n{\n\
+               /// Do not write `Method Foo() [ CodeMode = objectgenerator ]` in this package.\n\
+               Method G()\n{\n}\n}";
+    assert!(check_compile_time_code_mode(cls, "My.Guard.cls").is_none());
+}
+
+#[test]
+fn the_keyword_must_sit_in_a_udl_keyword_list() {
+    // Outside brackets the token cannot be a UDL keyword, whatever else it is.
+    let cls = "Class My.X\n{\nParameter NOTE = 3;\nMethod G()\n{\n  Set x = 1\n}\n}";
+    assert!(check_compile_time_code_mode(cls, "My.X.cls").is_none());
+}
+
+// ── The fix must not open a hole ─────────────────────────────────────────
+//
+// Blanking comments and strings is only safe if the blanking itself cannot be used to hide a
+// real generator. Each test below pairs a construct that could desynchronize a naive scanner
+// with a genuine `[ CodeMode = objectgenerator ]` that must still be caught.
+
+const REAL_GENERATOR: &str = "Method Pwn() [ CodeMode = objectgenerator ]\n{\n  Do evil\n}\n";
+
+#[test]
+fn a_semicolon_inside_a_string_does_not_hide_a_later_generator() {
+    // Strip `;` comments before tracking strings and this line eats the rest of the file.
+    let cls =
+        format!("Class My.Sneaky\n{{\nMethod A()\n{{\n  Set x = \"a;b\"\n}}\n{REAL_GENERATOR}}}");
+    assert!(
+        check_compile_time_code_mode(&cls, "My.Sneaky.cls").is_some(),
+        "a semicolon inside a string literal is not a comment"
+    );
+}
+
+#[test]
+fn an_apostrophe_in_a_comment_does_not_hide_a_later_generator() {
+    // A lone `"` inside a comment desynchronizes string tracking if comments are not
+    // consumed first.
+    let cls = format!(
+        "Class My.Sneaky\n{{\n/// Don't use a \" here and expect the gate to keep working.\n\
+         {REAL_GENERATOR}}}"
+    );
+    assert!(
+        check_compile_time_code_mode(&cls, "My.Sneaky.cls").is_some(),
+        "an unbalanced quote inside a comment must not blind the scan"
+    );
+}
+
+#[test]
+fn an_unterminated_block_comment_does_not_blind_the_gate() {
+    let cls = format!("Class My.Sneaky\n{{\n/* opened and never closed\n{REAL_GENERATOR}}}");
+    assert!(
+        check_compile_time_code_mode(&cls, "My.Sneaky.cls").is_some(),
+        "an unterminated comment must not swallow the rest of the document"
+    );
+}
+
+#[test]
+fn an_unterminated_string_does_not_blind_the_gate() {
+    let cls =
+        format!("Class My.Sneaky\n{{\nMethod A()\n{{\n  Set x = \"oops\n}}\n{REAL_GENERATOR}}}");
+    assert!(
+        check_compile_time_code_mode(&cls, "My.Sneaky.cls").is_some(),
+        "an unterminated string literal must not swallow the rest of the document"
+    );
+}
+
+#[test]
+fn a_generator_keyword_after_a_documenting_comment_is_still_blocked() {
+    let cls = format!(
+        "Class My.Mixed\n{{\n/// CodeMode = objectgenerator is discussed but not used above.\n\
+         {REAL_GENERATOR}}}"
+    );
+    assert!(check_compile_time_code_mode(&cls, "My.Mixed.cls").is_some());
+}
+
+#[test]
+fn a_doubled_quote_escape_does_not_end_the_string_early() {
+    // `""` is the ObjectScript escape, so the keyword stays inside one string literal.
+    let cls = "Class My.X\n{\nMethod G()\n{\n  \
+               Set x = \"say \"\"CodeMode = objectgenerator\"\" loudly\"\n}\n}";
+    assert!(check_compile_time_code_mode(cls, "My.X.cls").is_none());
+}
+
+// ── The refusal has to be actionable ────────────────────────────────────
+//
+// The old error named the document and nothing else, and told the caller to remove a keyword
+// that in the false-positive cases was a comment. An agent reading it has no way to find the
+// construct, so the likely outcome is rewriting working code.
+
+#[test]
+fn the_refusal_reports_the_line_number_and_the_line() {
+    let cls = "Class My.Evil\n{\n\nMethod Hack() [ CodeMode = objectgenerator ]\n{\n}\n\n}";
+    let r = check_compile_time_code_mode(cls, "My.Evil.cls").expect("must block");
+    assert_eq!(r["line"], 4, "the keyword is on line 4, got {}", r["line"]);
+    let text = r["line_text"].as_str().unwrap_or_default();
+    assert_eq!(text, "Method Hack() [ CodeMode = objectgenerator ]");
+    let msg = r["message"].as_str().unwrap_or_default();
+    assert!(
+        msg.contains("line 4"),
+        "the message must point at the line, got: {msg}"
+    );
+}

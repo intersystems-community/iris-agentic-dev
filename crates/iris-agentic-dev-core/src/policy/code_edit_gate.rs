@@ -99,6 +99,110 @@ pub fn check_objectscript_code_edit(code: &str, server_name: &str) -> Option<ser
     None
 }
 
+/// Replaces the body of every comment and string literal with spaces, keeping the document's
+/// length and line structure intact so byte offsets still map to the original text.
+///
+/// The gate needs this because `CodeMode = objectgenerator` is meaningful only as a UDL keyword.
+/// The same characters inside a comment are documentation and inside a string literal are data,
+/// and refusing those (#135) blocks a class from documenting the very rule the gate enforces.
+///
+/// Comments and strings are consumed in one pass rather than stripped in stages, because they
+/// interleave: `Set x = "a;b"` has no comment, and `/// don't` has no string. Handling them
+/// separately lets either construct desynchronize the scan and hide a real generator keyword
+/// further down the document.
+///
+/// An unterminated block comment or string literal is left **intact** instead of blanked to end
+/// of document. Blanking it would let `/*` on its own line switch the gate off for everything
+/// after it. UDL that unbalanced is not going to compile anyway, so scanning it raw costs
+/// nothing but closes the hole.
+fn blank_comments_and_strings(content: &str) -> String {
+    #[derive(PartialEq)]
+    enum State {
+        Code,
+        LineComment,
+        BlockComment,
+        Str,
+    }
+
+    let bytes = content.as_bytes();
+    let mut out: Vec<u8> = content.to_owned().into_bytes();
+    let mut state = State::Code;
+    // Where the currently open comment or string started, so an unterminated one can be restored.
+    let mut opened_at = 0usize;
+    let mut i = 0usize;
+
+    // Blanks one byte unless it is a newline: line numbers have to survive.
+    let blank = |out: &mut Vec<u8>, at: usize| {
+        if out[at] != b'\n' {
+            out[at] = b' ';
+        }
+    };
+
+    while i < bytes.len() {
+        let c = bytes[i];
+        let next = bytes.get(i + 1).copied();
+        match state {
+            State::Code => {
+                if c == b'/' && next == Some(b'/') {
+                    // Covers `//` and the `///` doc form alike.
+                    state = State::LineComment;
+                    opened_at = i;
+                } else if c == b'/' && next == Some(b'*') {
+                    state = State::BlockComment;
+                    opened_at = i;
+                    blank(&mut out, i);
+                    i += 1;
+                    blank(&mut out, i);
+                } else if c == b';' || (c == b'#' && next == Some(b';')) {
+                    state = State::LineComment;
+                    opened_at = i;
+                } else if c == b'"' {
+                    state = State::Str;
+                    opened_at = i;
+                    blank(&mut out, i);
+                }
+            }
+            State::LineComment => {
+                if c == b'\n' {
+                    state = State::Code;
+                } else {
+                    blank(&mut out, i);
+                }
+            }
+            State::BlockComment => {
+                blank(&mut out, i);
+                if c == b'*' && next == Some(b'/') {
+                    i += 1;
+                    blank(&mut out, i);
+                    state = State::Code;
+                }
+            }
+            State::Str => {
+                blank(&mut out, i);
+                if c == b'"' {
+                    if next == Some(b'"') {
+                        // `""` is the ObjectScript escape — still inside the literal.
+                        i += 1;
+                        blank(&mut out, i);
+                    } else {
+                        state = State::Code;
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+
+    // A line comment always ends at the newline or at EOF, so only these two can be left open.
+    if state == State::BlockComment || state == State::Str {
+        out.truncate(opened_at);
+        out.extend_from_slice(&bytes[opened_at..]);
+    }
+
+    // Every replacement was a single ASCII byte swapped for another, so this cannot fail.
+    String::from_utf8(out).unwrap_or_else(|_| content.to_string())
+}
+
 /// Gate: block UDL class source that uses compile-time code execution keywords.
 ///
 /// `CodeMode = objectgenerator` / `expression` / `call` cause IRIS to run arbitrary code
@@ -109,6 +213,12 @@ pub fn check_objectscript_code_edit(code: &str, server_name: &str) -> Option<ser
 ///
 /// Only `.cls` documents are scanned; routines (`.mac`/`.inc`) don't support CodeMode.
 ///
+/// The keyword counts only where UDL can act on it: outside comments and string literals, and
+/// inside a `[ ... ]` keyword list. Both conditions are needed. Anchoring on brackets alone
+/// still refuses `/// never write [ CodeMode = objectgenerator ]`, which is the most useful way
+/// to document the rule; blanking comments alone accepts the keyword loose in a method body,
+/// where it means nothing.
+///
 /// Returns `Some(error_json)` when blocked, `None` when safe.
 pub fn check_compile_time_code_mode(content: &str, doc_name: &str) -> Option<serde_json::Value> {
     // Only applies to class definitions.
@@ -116,25 +226,21 @@ pub fn check_compile_time_code_mode(content: &str, doc_name: &str) -> Option<ser
         return None;
     }
 
-    // Normalize: strip spaces/tabs within square-bracket annotations so that
-    // `[ CodeMode = objectgenerator ]` and `[CodeMode=objectgenerator]` both match.
-    // We don't strip ALL whitespace (unlike the execute gate) because class source
-    // is line-oriented — we just need to normalize within `[...]` annotation blocks.
-    //
-    // Strategy: scan for `CODEMODE` followed (ignoring whitespace and `=`) by one of
-    // the dangerous values. This catches all UDL forms:
-    //   Method Foo() [ CodeMode = objectgenerator ]
-    //   Method Foo() [CodeMode=objectgenerator]
-    //   Method Foo() [ CodeMode = objectgenerator, ...]
-    // The keyword MUST appear literally in UDL — there's no way to construct it
-    // dynamically because UDL is declarative text, not executable code.
+    // Scan a copy with comment and string bodies blanked. Offsets are preserved, so a hit still
+    // maps to the right line of the original document.
+    let scannable = blank_comments_and_strings(content);
+    let upper: String = scannable.to_uppercase();
 
-    let upper: String = content.to_uppercase();
+    // `[` and `]` are counted on the blanked copy, so a bracket inside a comment or a string
+    // cannot open a region. The `[` *operator* in ObjectScript code (`If x [ "a"`) can leave a
+    // region open, which only widens the scan — it never hides a keyword.
+    let bracket_depth_at = bracket_depths(&upper);
 
     // Find all occurrences of CODEMODE in the uppercased content.
     let mut search = 0;
     while let Some(pos) = upper[search..].find("CODEMODE") {
-        let after_keyword = search + pos + "CODEMODE".len();
+        let keyword_at = search + pos;
+        let after_keyword = keyword_at + "CODEMODE".len();
         // Skip whitespace and `=` after CODEMODE
         let rest = &upper[after_keyword..];
         let trimmed = rest.trim_start();
@@ -151,26 +257,35 @@ pub fn check_compile_time_code_mode(content: &str, doc_name: &str) -> Option<ser
             if trimmed.starts_with(mode) {
                 // Verify it's a whole token (followed by non-alphanumeric or EOF)
                 let after_mode = trimmed.strip_prefix(*mode).unwrap_or("");
-                if after_mode.is_empty()
-                    || !after_mode.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+                if (after_mode.is_empty()
+                    || !after_mode.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_'))
+                    && bracket_depth_at[keyword_at] > 0
                 {
+                    let (line_no, line_text) = locate(content, keyword_at);
                     return Some(serde_json::json!({
                         "success": false,
                         "error_code": "COMPILE_TIME_EXEC_BLOCKED",
                         "code_edit_blocked": true,
                         "document": doc_name,
                         "matched": format!("CodeMode = {}", mode.to_lowercase()),
+                        "line": line_no,
+                        "line_text": line_text,
                         "message": format!(
-                            "Document '{}' contains a compile-time code execution keyword \
-                             (CodeMode = {}). This allows arbitrary code to run during \
-                             compilation, bypassing runtime privilege restrictions. \
+                            "Document '{}' declares a compile-time code execution keyword \
+                             (CodeMode = {}) on line {}: {}. This allows arbitrary code to run \
+                             during compilation, bypassing runtime privilege restrictions. \
                              Only CodeMode = code (the default) is permitted.",
-                            doc_name, mode.to_lowercase()
+                            doc_name, mode.to_lowercase(), line_no, line_text
                         ),
-                        "remediation": "Remove the CodeMode keyword or use CodeMode = code \
-                                        (which is the default and can simply be omitted). \
-                                        If you need generator logic, implement it as a \
-                                        regular ClassMethod that is called explicitly.",
+                        "remediation": format!(
+                            "Remove the CodeMode keyword from the member declared on line {}, or \
+                             use CodeMode = code (which is the default and can simply be \
+                             omitted). If you need generator logic, implement it as a regular \
+                             ClassMethod that is called explicitly. Comments and string literals \
+                             are not scanned, so documenting the keyword is fine — only a UDL \
+                             keyword list is refused.",
+                            line_no
+                        ),
                     }));
                 }
             }
@@ -180,6 +295,35 @@ pub fn check_compile_time_code_mode(content: &str, doc_name: &str) -> Option<ser
     }
 
     None
+}
+
+/// Square-bracket nesting depth at every byte offset, so a match can be tested for being inside
+/// a UDL keyword list without re-scanning from the top each time.
+fn bracket_depths(scannable: &str) -> Vec<i32> {
+    let mut depths = Vec::with_capacity(scannable.len() + 1);
+    let mut depth = 0i32;
+    for b in scannable.bytes() {
+        depths.push(depth);
+        match b {
+            b'[' => depth += 1,
+            b']' => depth = (depth - 1).max(0),
+            _ => {}
+        }
+    }
+    depths.push(depth);
+    depths
+}
+
+/// The 1-based line number containing `offset`, and that line with surrounding space trimmed.
+fn locate(content: &str, offset: usize) -> (usize, String) {
+    let head = &content[..offset.min(content.len())];
+    let line_no = head.matches('\n').count() + 1;
+    let start = head.rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let end = content[start..]
+        .find('\n')
+        .map(|i| start + i)
+        .unwrap_or(content.len());
+    (line_no, content[start..end].trim().to_string())
 }
 
 /// Gate: block write-mode SQL that edits the code dictionary.
