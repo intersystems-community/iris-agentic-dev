@@ -465,8 +465,14 @@ async fn sysperf(
     )
 }
 
-// Every instance ships `test`, so a listing that does not contain it is a broken read, not an
-// instance with no profiles.
+// Every field `list_profiles` reports, read back off a profile this test defined.
+//
+// It used to look for the shipped `test` profile and assert its 30-second/10-sample numbers.
+// `^IRIS.SystemPerformance("profile",...)` is empty on a fresh instance — the default profiles are
+// created lazily, not at install — so on CI there was no `test` to find and the read looked broken
+// when it was not. Defining the profile here asserts the same parse against numbers this test
+// chose, which is a stronger check anyway: the expected values are not read from the thing under
+// test.
 #[tokio::test]
 #[ignore]
 async fn e2e_system_performance_list_profiles() {
@@ -480,6 +486,29 @@ async fn e2e_system_performance_list_profiles() {
         }
     };
 
+    // Unique per run, so a crashed earlier run cannot make this one fail on the duplicate refusal.
+    let name = format!(
+        "iad_lp_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    );
+    let description = "iris-agentic-dev list_profiles fixture, 30 s samples";
+    let added = sysperf(
+        &conn,
+        &client,
+        SysPerfRequest {
+            profile: Some(&name),
+            description: Some(description),
+            interval_seconds: Some(30),
+            sample_count: Some(10),
+            ..SysPerfRequest::new("add_profile")
+        },
+    )
+    .await;
+    assert_eq!(added["success"].as_bool(), Some(true), "got: {added}");
+
     let v = sysperf(&conn, &client, SysPerfRequest::new("list_profiles")).await;
     eprintln!("system_performance list_profiles response: {v}");
 
@@ -490,18 +519,30 @@ async fn e2e_system_performance_list_profiles() {
         Some(profiles.len() as u64),
         "the DONE count and the number of parsed lines disagree, so a line was dropped: {v}"
     );
-    let test = profiles
+    let mine = profiles
         .iter()
-        .find(|p| p["name"] == "test")
-        .unwrap_or_else(|| panic!("every IRIS instance ships a `test` profile; got: {v}"));
-    // `test` is 30-second samples, 10 of them — the 5 minutes its own description claims.
-    assert_eq!(test["interval_seconds"].as_i64(), Some(30), "got: {test}");
-    assert_eq!(test["sample_count"].as_i64(), Some(10), "got: {test}");
-    assert_eq!(test["duration_minutes"].as_f64(), Some(5.0), "got: {test}");
-    assert!(
-        !test["description"].as_str().unwrap_or("").is_empty(),
-        "got: {test}"
+        .find(|p| p["name"] == name.as_str())
+        .unwrap_or_else(|| panic!("{name} was added but is not in the listing: {v}"));
+    assert_eq!(mine["interval_seconds"].as_i64(), Some(30), "got: {mine}");
+    assert_eq!(mine["sample_count"].as_i64(), Some(10), "got: {mine}");
+    // 30 s × 10 is the 5 minutes the tool derives rather than reads.
+    assert_eq!(mine["duration_minutes"].as_f64(), Some(5.0), "got: {mine}");
+    assert_eq!(
+        mine["description"].as_str(),
+        Some(description),
+        "got: {mine}"
     );
+
+    let del = sysperf(
+        &conn,
+        &client,
+        SysPerfRequest {
+            profile: Some(&name),
+            ..SysPerfRequest::new("delete_profile")
+        },
+    )
+    .await;
+    assert_eq!(del["success"].as_bool(), Some(true), "got: {del}");
 }
 
 // Full add → list → duplicate-refusal → delete round trip. The profile name is unique per run

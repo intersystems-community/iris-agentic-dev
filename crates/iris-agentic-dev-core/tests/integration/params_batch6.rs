@@ -13,13 +13,16 @@
 //!   observable at all.
 //!
 //! Everything this suite writes to `iris-dev-iris` is named `IADP113…` and removed by the end of the
-//! test that created it. The container starts with two credentials and two lookup tables and must
-//! finish that way.
+//! test that created it, so the namespace ends each run holding exactly what it held at the start.
+//! The read tests do not rely on that state: what they read is created by `seed_interop_fixture()`,
+//! under `IADFixture…` names, and left in place deliberately.
 //!
 //! Requires `iris-dev-iris`: `IRIS_HOST=localhost IRIS_WEB_PORT=52780 IRIS_USERNAME=_SYSTEM
 //! IRIS_PASSWORD=SYS IRIS_NAMESPACE=USER`.
 
-use iris_agentic_dev_core::testing::{answer_text, live_env, require_iad_binary, McpSession};
+use iris_agentic_dev_core::testing::{
+    answer_text, live_env, require_iad_binary, seed_interop_fixture, McpSession,
+};
 
 /// `live_env()` plus both gates open. Nothing is inherited from the test runner's environment, so
 /// the gates have to be stated here even though a developer shell often has them set.
@@ -182,6 +185,11 @@ fn lookup_manage_read_actions_honor_table_key_and_namespace() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
+    // The fixture creates the table this reads, in its own gate-open session. Taking "the first
+    // non-system table that happens to exist" is what made this container-dependent: a fresh instance
+    // has none, so `list_tables` came back empty and the test failed on the assumption rather than on
+    // the parameter.
+    let fixture = seed_interop_fixture();
     let mut mcp = McpSession::start(&live_env());
 
     let tables = strings(
@@ -193,14 +201,11 @@ fn lookup_manage_read_actions_honor_table_key_and_namespace() {
         "tables",
     );
     assert!(
-        !tables.is_empty(),
-        "iris-dev-iris carries seeded lookup tables"
+        tables.iter().any(|t| t == fixture.lookup_table),
+        "`action=list_tables` must include the fixture's table `{}`: {tables:?}",
+        fixture.lookup_table
     );
-    let table = tables
-        .iter()
-        .find(|t| !t.starts_with('%'))
-        .unwrap_or_else(|| panic!("no non-system lookup table among {tables:?}"))
-        .clone();
+    let table = fixture.lookup_table.to_string();
 
     let keys = strings(
         &call(
@@ -210,7 +215,11 @@ fn lookup_manage_read_actions_honor_table_key_and_namespace() {
         ),
         "keys",
     );
-    assert!(!keys.is_empty(), "`{table}` should have entries");
+    assert_eq!(
+        keys,
+        vec![fixture.lookup_key.to_string()],
+        "`table` must select the fixture's table and `list_keys` return its one key"
+    );
 
     let got = call(
         &mut mcp,

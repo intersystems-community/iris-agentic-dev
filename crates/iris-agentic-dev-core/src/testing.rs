@@ -1519,3 +1519,204 @@ pub fn assert_source_contracts(contracts: &[ParamContract]) {
         }
     }
 }
+
+// ─── live interoperability fixture ──────────────────────────────────────────
+
+/// The interoperability data a live test asserts against, and the names it is filed under.
+///
+/// # Why a fixture and not the container's history
+///
+/// Seven tests in `params_batch5`, `params_batch6` and `test_mirror_and_freespace` shipped asserting
+/// against whatever `iris-dev-iris` happened to hold: "several thousand rows including complete
+/// sessions", "an Event Log with error entries", "two seeded rule sets", "seeded lookup tables".
+/// That is true of a container a developer has been working in for months and false of a fresh one,
+/// so the tests were green on every local run and red the first time CI's `iris-e2e` ran them —
+/// `limit=2` returned one row, `limit=20` returned four, the session lookup found no sessioned
+/// message, the body join returned nothing.
+///
+/// A test that depends on accumulated state is not testing the parameter it claims to test. Each of
+/// those assertions now runs against rows this function created.
+pub struct InteropFixture {
+    /// `SourceConfigName` on every seeded message header.
+    pub source: &'static str,
+    /// `TargetConfigName` on every seeded message header.
+    pub target: &'static str,
+    /// `MessageBodyClassName` on every seeded header, and a real table to join.
+    pub body_class: &'static str,
+    /// `ConfigName` on every seeded Event Log entry.
+    pub component: &'static str,
+    /// The name of the seeded `Ens.Rule.RuleSet` row.
+    pub rule_name: &'static str,
+    /// The name of the seeded `^Ens.LookupTable` subscript.
+    pub lookup_table: &'static str,
+    /// A key present in `lookup_table`.
+    pub lookup_key: &'static str,
+    /// The `SessionId` every seeded header shares. Always nonzero.
+    pub session_id: i64,
+    /// Seeded headers, at least [`InteropFixture::MESSAGES`].
+    pub messages: i64,
+    /// Seeded Event Log entries, at least [`InteropFixture::LOG_ENTRIES`].
+    pub log_entries: i64,
+}
+
+impl InteropFixture {
+    /// Headers the fixture guarantees. Chosen so a `limit=20` assertion has room to spare.
+    pub const MESSAGES: i64 = 30;
+    /// `Ens.Util.Log` entries of type Error the fixture guarantees.
+    pub const LOG_ENTRIES: i64 = 25;
+}
+
+/// Create the interoperability fixture in the live namespace, or return what is already there.
+///
+/// Idempotent by count: each of the four kinds of row is created only when the namespace holds fewer
+/// than the fixture promises, so a developer container is seeded once and a CI container is seeded on
+/// its first run. Nothing is deleted — these are fixtures, not test residue, and the names are all
+/// prefixed `IADFixture` so they are distinguishable from real traffic.
+///
+/// Runs through the `iris_execute` tool in its own session with the write gate open, so the tests
+/// that consume the fixture keep whatever gate posture they are actually testing.
+///
+/// # Panics
+///
+/// When the seed does not report success. A live test whose fixture silently failed to appear is the
+/// failure this function exists to remove, so there is no quiet path.
+pub fn seed_interop_fixture() -> InteropFixture {
+    const SOURCE: &str = "IADFixtureSource";
+    const TARGET: &str = "IADFixtureTarget";
+    const BODY_CLASS: &str = "Ens.StringContainer";
+    const COMPONENT: &str = "IADFixtureComponent";
+    const RULE: &str = "IADFixture.RuleSet";
+    const TABLE: &str = "IADFixtureLookup";
+    const KEY: &str = "IADFixtureKey";
+
+    let mut env = live_env();
+    env.push(("IRIS_WRITE_TOOLS_ENABLED".to_string(), "1".to_string()));
+
+    // One `iris_execute` for all four kinds of row: four round trips would cost four temp-class
+    // compiles. `New` is omitted deliberately — the generated method is a procedure block, where
+    // `New` of an undeclared variable is a <SYNTAX> error at compile time.
+    let code = format!(
+        r#"Set tHdrs=0
+Set tRS=##class(%SQL.Statement).%ExecDirect(,"SELECT COUNT(*) AS C FROM Ens.MessageHeader WHERE SourceConfigName='{SOURCE}'")
+If tRS.%Next() {{ Set tHdrs=tRS.%Get("C") }}
+Set tSession=0
+If tHdrs<{messages} {{
+  For i=1:1:{messages} {{
+    Set tBody=##class({BODY_CLASS}).%New("IAD fixture body "_i)
+    Set tSC=tBody.%Save()
+    If $$$ISERR(tSC) {{ Write "BODY|"_$SYSTEM.Status.GetErrorText(tSC),! Quit }}
+    Set tHdr=##class(Ens.MessageHeader).%New()
+    Set tHdr.SourceConfigName="{SOURCE}"
+    Set tHdr.TargetConfigName="{TARGET}"
+    Set tHdr.MessageBodyClassName="{BODY_CLASS}"
+    Set tHdr.MessageBodyId=tBody.%Id()
+    Set tSC=tHdr.%Save()
+    If $$$ISERR(tSC) {{ Write "HEADER|"_$SYSTEM.Status.GetErrorText(tSC),! Quit }}
+    If tSession=0 {{ Set tSession=tHdr.%Id() }}
+    Set tHdr.SessionId=tSession
+    Set tSC=tHdr.%Save()
+    If $$$ISERR(tSC) {{ Write "SESSION|"_$SYSTEM.Status.GetErrorText(tSC),! Quit }}
+  }}
+}}
+Set tLogs=0
+Set tRS=##class(%SQL.Statement).%ExecDirect(,"SELECT COUNT(*) AS C FROM Ens_Util.Log WHERE ConfigName='{COMPONENT}'")
+If tRS.%Next() {{ Set tLogs=tRS.%Get("C") }}
+If tLogs<{logs} {{
+  For i=1:1:{logs} {{
+    Set tLog=##class(Ens.Util.Log).%New()
+    Set tLog.Type=2
+    Set tLog.ConfigName="{COMPONENT}"
+    Set tLog.SourceClass="IADFixture.Seed"
+    Set tLog.SourceMethod="seed_interop_fixture"
+    Set tLog.Text="IAD fixture error entry "_i
+    Set tSC=tLog.%Save()
+    If $$$ISERR(tSC) {{ Write "LOG|"_$SYSTEM.Status.GetErrorText(tSC),! Quit }}
+  }}
+}}
+Set tRules=0
+Set tRS=##class(%SQL.Statement).%ExecDirect(,"SELECT COUNT(*) AS C FROM Ens_Rule.RuleSet WHERE Name='{RULE}'")
+If tRS.%Next() {{ Set tRules=tRS.%Get("C") }}
+If tRules=0 {{
+  Set tRule=##class(Ens.Rule.RuleSet).%New()
+  Set tRule.Name="{RULE}"
+  Set tRule.ShortDescription="Rule set seeded by seed_interop_fixture"
+  Set tRule.HostClass="EnsLib.MsgRouter.RoutingEngine"
+  Set tSC=tRule.%Save()
+  If $$$ISERR(tSC) {{ Write "RULE|"_$SYSTEM.Status.GetErrorText(tSC),! }}
+}}
+If '$DATA(^Ens.LookupTable("{TABLE}","{KEY}")) {{
+  Set tSC=##class(Ens.Util.LookupTable).%UpdateValue("{TABLE}","{KEY}","IAD fixture value",1)
+  If $$$ISERR(tSC) {{ Write "LOOKUP|"_$SYSTEM.Status.GetErrorText(tSC),! }}
+}}
+Set tRS=##class(%SQL.Statement).%ExecDirect(,"SELECT COUNT(*) AS C, MAX(SessionId) AS S FROM Ens.MessageHeader WHERE SourceConfigName='{SOURCE}'")
+If tRS.%Next() {{ Set tHdrs=tRS.%Get("C") Set tSession=tRS.%Get("S") }}
+Set tRS=##class(%SQL.Statement).%ExecDirect(,"SELECT COUNT(*) AS C FROM Ens_Util.Log WHERE ConfigName='{COMPONENT}'")
+If tRS.%Next() {{ Set tLogs=tRS.%Get("C") }}
+Write "OK|"_tHdrs_"|"_tLogs_"|"_tSession,!"#,
+        messages = InteropFixture::MESSAGES,
+        logs = InteropFixture::LOG_ENTRIES,
+    );
+
+    let answer = call_tool_with_env(
+        "iris_execute",
+        &serde_json::json!({"code": code, "namespace": "USER"}),
+        &env,
+    );
+    let text = answer
+        .pointer("/result/content/0/text")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("seeding the interop fixture returned no content: {answer}"));
+    let payload: serde_json::Value = serde_json::from_str(text)
+        .unwrap_or_else(|e| panic!("seed answer was not JSON ({e}): {text}"));
+    let output = payload
+        .get("output")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+
+    // `OK|<headers>|<logs>|<session>` is the last line; anything before it is a %Save failure the
+    // script reported rather than swallowed.
+    let summary = output
+        .lines()
+        .find(|l| l.starts_with("OK|"))
+        .unwrap_or_else(|| {
+            panic!("the interop fixture did not seed. Output: {output:?}\nAnswer: {payload}")
+        });
+    let fields: Vec<&str> = summary.trim().split('|').collect();
+    let number = |i: usize, what: &str| -> i64 {
+        fields
+            .get(i)
+            .and_then(|f| f.trim().parse().ok())
+            .unwrap_or_else(|| panic!("no {what} in the seed summary {summary:?}"))
+    };
+    let messages = number(1, "header count");
+    let log_entries = number(2, "log count");
+    let session_id = number(3, "session id");
+
+    assert!(
+        messages >= InteropFixture::MESSAGES,
+        "the fixture promises {} headers, IRIS reports {messages}: {output:?}",
+        InteropFixture::MESSAGES
+    );
+    assert!(
+        log_entries >= InteropFixture::LOG_ENTRIES,
+        "the fixture promises {} Event Log entries, IRIS reports {log_entries}: {output:?}",
+        InteropFixture::LOG_ENTRIES
+    );
+    assert!(
+        session_id > 0,
+        "the fixture's headers must share a nonzero SessionId; got {session_id}: {output:?}"
+    );
+
+    InteropFixture {
+        source: SOURCE,
+        target: TARGET,
+        body_class: BODY_CLASS,
+        component: COMPONENT,
+        rule_name: RULE,
+        lookup_table: TABLE,
+        lookup_key: KEY,
+        session_id,
+        messages,
+        log_entries,
+    }
+}

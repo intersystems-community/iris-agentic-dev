@@ -1,10 +1,14 @@
 //! Batch 5 against live IRIS: the thirty-three parameters of the five interoperability tools still
 //! reach their handlers, and the two that accept an integer-or-string still accept both.
 //!
-//! `iris-dev-iris` carries an Ensemble-enabled USER namespace with a real message archive
-//! (`Ens.MessageHeader`, several thousand rows including complete sessions), an Event Log with
-//! error entries, and two seeded rule sets, so most filters here are asserted against data rather
-//! than against error text.
+//! The data these filters are asserted against is created by `seed_interop_fixture()`, not found.
+//! This suite originally asserted against whatever the local container held — "several thousand
+//! rows including complete sessions", "an Event Log with error entries", "two seeded rule sets" —
+//! which is a description of one developer's container after months of work, not of a namespace.
+//! Every such assertion passed locally and failed the first time CI ran it against a fresh
+//! instance: `limit=2` got one row, `limit=20` got four, the session lookup found nothing to look
+//! up. Filters are still asserted against data rather than error text; the data is now the
+//! fixture's.
 //!
 //! What is proven live, and how:
 //!
@@ -43,7 +47,9 @@
 //! Requires `iris-dev-iris`: `IRIS_HOST=localhost IRIS_WEB_PORT=52780 IRIS_USERNAME=_SYSTEM
 //! IRIS_PASSWORD=SYS IRIS_NAMESPACE=USER`.
 
-use iris_agentic_dev_core::testing::{answer_text, live_env, require_iad_binary, McpSession};
+use iris_agentic_dev_core::testing::{
+    answer_text, live_env, require_iad_binary, seed_interop_fixture, McpSession,
+};
 
 fn payload(answer: &serde_json::Value) -> serde_json::Value {
     let text = answer
@@ -82,16 +88,19 @@ fn code_of(p: &serde_json::Value) -> String {
         .to_string()
 }
 
-/// `what` picks the sub-query, and the two log filters narrow it. `log_type` and `component` are
-/// asserted by contrast: the default (`error,warning`, no component) returns entries on this
-/// instance, and a value nothing matches returns none. Without the contrast a zero could just mean
-/// an empty Event Log.
+/// `what` picks the sub-query, and the two log filters narrow it.
+///
+/// `log_type` and `component` are asserted by contrast, because a zero on its own could just mean an
+/// empty Event Log. The contrast is drawn against the fixture's own entries rather than against the
+/// instance: they are all type Error under one `ConfigName`, so the same component asked for `error`
+/// returns them and asked for `info` returns none. Both halves of that are guaranteed by the seed.
 #[test]
 #[ignore = "requires live IRIS (iris-dev-iris) and the built binary"]
 fn interop_query_dispatches_on_what_and_narrows_the_event_log() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
+    let fixture = seed_interop_fixture();
     let mut mcp = McpSession::start(&live_env());
 
     let bogus = interop(&mut mcp, serde_json::json!({"what": "nonsense"}));
@@ -114,16 +123,63 @@ fn interop_query_dispatches_on_what_and_narrows_the_event_log() {
         "limit=2 must cap the Event Log rows: {two}"
     );
 
-    // `log_type`: `info` entries are not written by anything on this instance, so the default's
-    // non-empty answer and this empty one together prove the parameter is applied.
+    // `component` and `log_type` together, on the fixture's entries. Type 2 is Error on the
+    // `Ens.Util.Log.Type` valuelist (`,1,2,3,4,5,6` against `,Assert,Error,Warning,Info,Trace,
+    // Alert`), and asserting the code rather than just the row count is what catches a mapping that
+    // is shifted one place — which it was, so `error` selected Warning.
+    let errors = interop(
+        &mut mcp,
+        serde_json::json!({
+            "what": "logs", "component": fixture.component, "log_type": "error", "limit": 5
+        }),
+    );
+    let error_rows = rows(&errors, "logs");
+    assert_eq!(
+        error_rows.len(),
+        5,
+        "the fixture seeds {} Error entries under `{}`: {errors}",
+        fixture.log_entries,
+        fixture.component
+    );
+    for row in &error_rows {
+        assert_eq!(
+            row.get("ConfigName").and_then(|v| v.as_str()),
+            Some(fixture.component),
+            "`component` was dropped — this row came back anyway: {row}"
+        );
+        assert_eq!(
+            row.get("Type").and_then(|v| v.as_i64()),
+            Some(2),
+            "log_type=error must select Ens.Util.Log.Type 2, not its neighbour: {row}"
+        );
+    }
+
+    // The other half of the contrast: the fixture writes nothing of type Info, so the same component
+    // asked for `info` is empty. Together the two prove `log_type` narrows rather than being ignored.
     let info = interop(
         &mut mcp,
-        serde_json::json!({"what": "logs", "log_type": "info", "limit": 5}),
+        serde_json::json!({
+            "what": "logs", "component": fixture.component, "log_type": "info", "limit": 5
+        }),
     );
     assert_eq!(
         rows(&info, "logs").len(),
         0,
-        "log_type=info must exclude the error entries the default returns: {info}"
+        "log_type=info must exclude the fixture's Error entries: {info}"
+    );
+
+    // An unrecognized name applies no filter, which used to widen the query silently. It is reported
+    // now, and the report is part of the contract.
+    let typo = interop(
+        &mut mcp,
+        serde_json::json!({"what": "logs", "log_type": "eror", "limit": 1}),
+    );
+    assert_eq!(
+        typo.get("unknown_log_types")
+            .and_then(|v| v.as_array())
+            .map(|a| a.len()),
+        Some(1),
+        "an unrecognized log_type must be reported rather than quietly dropped: {typo}"
     );
 
     // `component`: same shape, on ConfigName.
@@ -146,8 +202,12 @@ fn interop_query_message_filters_reach_the_sql() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
+    let fixture = seed_interop_fixture();
     let mut mcp = McpSession::start(&live_env());
 
+    // The fixture guarantees 30 headers, so a 20-row window is full whatever else the namespace
+    // holds. Reading the filter values off `sample[0]` is what made this suite container-dependent:
+    // on a fresh instance there was no row 0 to read them from.
     let sample = rows(
         &interop(
             &mut mcp,
@@ -157,11 +217,7 @@ fn interop_query_message_filters_reach_the_sql() {
     );
     assert_eq!(sample.len(), 20, "limit=20 must return exactly 20 rows");
 
-    let source = sample[0]
-        .get("SourceConfigName")
-        .and_then(|v| v.as_str())
-        .unwrap_or_else(|| panic!("no SourceConfigName in {}", sample[0]))
-        .to_string();
+    let source = fixture.source.to_string();
     let by_source = rows(
         &interop(
             &mut mcp,
@@ -178,28 +234,42 @@ fn interop_query_message_filters_reach_the_sql() {
         );
     }
 
-    // `target` is a different column, so filtering on a *source* name must exclude rows the source
-    // filter returns. On this instance the busiest source is not a target of anything.
+    // `target` is a different column. The fixture's source and target names are distinct, so the two
+    // halves here separate "the filter was applied" from "the filter was applied to the right
+    // column": the target name returns the fixture's rows, and the source name returns none.
     let by_target = rows(
+        &interop(
+            &mut mcp,
+            serde_json::json!({"what": "messages", "target": fixture.target, "limit": 10}),
+        ),
+        "messages",
+    );
+    assert!(
+        !by_target.is_empty(),
+        "target={} returned nothing",
+        fixture.target
+    );
+    for row in &by_target {
+        assert_eq!(
+            row.get("TargetConfigName").and_then(|v| v.as_str()),
+            Some(fixture.target),
+            "target={} was applied to the wrong column: {row}",
+            fixture.target
+        );
+    }
+    let source_as_target = rows(
         &interop(
             &mut mcp,
             serde_json::json!({"what": "messages", "target": source, "limit": 10}),
         ),
         "messages",
     );
-    for row in &by_target {
-        assert_eq!(
-            row.get("TargetConfigName").and_then(|v| v.as_str()),
-            Some(source.as_str()),
-            "target={source} was applied to the wrong column: {row}"
-        );
-    }
+    assert!(
+        source_as_target.is_empty(),
+        "`target` must read TargetConfigName; nothing targets `{source}`: {source_as_target:?}"
+    );
 
-    let class = sample
-        .iter()
-        .find_map(|r| r.get("MessageBodyClassName").and_then(|v| v.as_str()))
-        .unwrap_or_else(|| panic!("no MessageBodyClassName anywhere in the sample"))
-        .to_string();
+    let class = fixture.body_class.to_string();
     let by_class = rows(
         &interop(
             &mut mcp,
@@ -242,36 +312,14 @@ fn session_id_and_since_id_accept_both_json_forms() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
+    // The fixture's headers all share one nonzero SessionId, so the value under test is known before
+    // the first call. This used to scan the newest rows for a sessioned message and take whatever it
+    // found, which failed two different ways: on a fresh instance nothing had a SessionId at all, and
+    // on a busy one a run of session-less headers at the head of the queue pushed the first sessioned
+    // message past the window. Neither is anything to do with `session_id`.
+    let fixture = seed_interop_fixture();
+    let session = fixture.session_id;
     let mut mcp = McpSession::start(&live_env());
-
-    // Sample deep enough that a run of session-less headers at the head of the queue cannot hide
-    // every sessioned message. This asked for 20 and went red once 22 session-less headers had
-    // accumulated: the first message carrying a SessionId sat at index 22, one past the window,
-    // while 107,065 of the namespace's 107,153 headers had one. The fixture had not disappeared,
-    // the sample was just too shallow to reach it.
-    let sample = rows(
-        &interop(
-            &mut mcp,
-            serde_json::json!({"what": "messages", "limit": 200}),
-        ),
-        "messages",
-    );
-    let with_session = sample
-        .iter()
-        .filter(|r| r.get("SessionId").and_then(|v| v.as_i64()).unwrap_or(0) > 0)
-        .count();
-    let session = sample
-        .iter()
-        .filter_map(|r| r.get("SessionId").and_then(|v| v.as_i64()))
-        .find(|id| *id > 0)
-        .unwrap_or_else(|| {
-            panic!(
-                "no message with a nonzero SessionId in the newest {} rows ({with_session} of \
-                 them carried one). This tests session_id routing, so it needs at least one \
-                 sessioned message; run a production in iris-dev-iris to create some.",
-                sample.len()
-            )
-        });
 
     let as_int = interop(
         &mut mcp,
@@ -299,12 +347,17 @@ fn session_id_and_since_id_accept_both_json_forms() {
     }
 
     // `since_id` is a watermark: every returned ID must be above it, which also proves the value
-    // was not silently replaced by a default.
-    let ids: Vec<i64> = sample
+    // was not silently replaced by a default. The fixture's own headers supply it, so there are
+    // guaranteed to be rows on both sides of the mark.
+    let ids: Vec<i64> = session_rows
         .iter()
         .filter_map(|r| r.get("ID").and_then(|v| v.as_i64()))
         .collect();
-    let watermark = ids[ids.len() / 2];
+    assert!(
+        ids.len() >= 2,
+        "the watermark needs rows on both sides of it; got {ids:?}"
+    );
+    let watermark = ids[ids.len() - 1];
 
     let as_int = interop(
         &mut mcp,
@@ -343,13 +396,17 @@ fn body_class_where_and_select_join_the_body_table() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
+    // The fixture's bodies are `Ens.StringContainer`, so the join has something to join to. It used
+    // to rely on the container already holding string-container messages.
+    let fixture = seed_interop_fixture();
     let mut mcp = McpSession::start(&live_env());
 
     let joined = interop(
         &mut mcp,
         serde_json::json!({
             "what": "messages",
-            "body_class": "Ens.StringContainer",
+            "source": fixture.source,
+            "body_class": fixture.body_class,
             "body_where": "1=1",
             "body_select": ["StringValue"],
             "limit": 2
@@ -357,7 +414,7 @@ fn body_class_where_and_select_join_the_body_table() {
     );
     assert_eq!(
         joined.get("body_table").and_then(|v| v.as_str()),
-        Some("Ens.StringContainer"),
+        Some(fixture.body_class),
         "`body_class` must resolve to a body table and be reported: {joined}"
     );
     let rows_joined = rows(&joined, "messages");
@@ -378,7 +435,8 @@ fn body_class_where_and_select_join_the_body_table() {
         &mut mcp,
         serde_json::json!({
             "what": "messages",
-            "body_class": "Ens.StringContainer",
+            "source": fixture.source,
+            "body_class": fixture.body_class,
             "body_where": "1=0",
             "body_select": ["StringValue"],
             "limit": 2
@@ -533,13 +591,16 @@ fn production_tools_honor_action_and_namespace() {
 }
 
 /// `iris_business_rule_info`: `action` selects list-or-get, `rule_name` selects which rule set, and
-/// `namespace` routes. All three are asserted against the seeded rule sets on this instance.
+/// `namespace` routes. All three are asserted against the fixture's rule set.
 #[test]
 #[ignore = "requires live IRIS (iris-dev-iris) and the built binary"]
 fn business_rule_info_honors_action_rule_name_and_namespace() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
+    // The fixture writes one `Ens_Rule.RuleSet` row, which is the table `action=list` reads. This
+    // asserted against "the seeded rule sets on this instance" and found none on a fresh one.
+    let fixture = seed_interop_fixture();
     let mut mcp = McpSession::start(&live_env());
 
     let listed = call(
@@ -549,14 +610,13 @@ fn business_rule_info_honors_action_rule_name_and_namespace() {
     );
     let rules = rows(&listed, "rules");
     assert!(
-        !rules.is_empty(),
-        "iris-dev-iris carries seeded rule sets: {listed}"
+        rules
+            .iter()
+            .any(|r| r.get("name").and_then(|v| v.as_str()) == Some(fixture.rule_name)),
+        "action=list must include the fixture's rule set `{}`: {listed}",
+        fixture.rule_name
     );
-    let name = rules[0]
-        .get("name")
-        .and_then(|v| v.as_str())
-        .unwrap_or_else(|| panic!("no name in {}", rules[0]))
-        .to_string();
+    let name = fixture.rule_name.to_string();
 
     let got = call(
         &mut mcp,

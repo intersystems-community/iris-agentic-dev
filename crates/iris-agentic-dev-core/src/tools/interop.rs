@@ -428,6 +428,52 @@ pub async fn interop_production_recover_impl(
     }
 }
 
+/// Every `log_type` name the Event Log filter accepts, in `Ens.Util.Log.Type` order.
+pub const LOG_TYPES: &[&str] = &["assert", "error", "warning", "info", "trace", "alert"];
+
+/// The `Ens.Util.Log.Type` code one `log_type` name selects.
+///
+/// `Type` is a VALUELIST property: `,1,2,3,4,5,6` against DISPLAYLIST
+/// `,Assert,Error,Warning,Info,Trace,Alert`. These codes are read off the compiled property on a
+/// live instance, not inferred.
+///
+/// The previous mapping was shifted one place — `error` selected `Type = 3`, which is Warning — so
+/// every severity came back as its neighbour. It survived because the default asks for
+/// `error,warning` and gets both rows whichever way round the two codes are, and because the tests
+/// that covered it re-implemented this match inline instead of calling it. `assert` and `trace` had
+/// no names at all and were silently unreachable.
+pub fn log_type_code(name: &str) -> Option<u8> {
+    match name.trim().to_lowercase().as_str() {
+        "assert" => Some(1),
+        "error" => Some(2),
+        "warning" => Some(3),
+        "info" => Some(4),
+        "trace" => Some(5),
+        "alert" => Some(6),
+        _ => None,
+    }
+}
+
+/// Splits a `log_type` list into its SQL conditions and the names that matched nothing.
+///
+/// The unmatched names are returned rather than dropped: `log_type="eror"` used to leave the filter
+/// empty, so a typo quietly widened the query to every severity instead of narrowing it.
+pub fn log_type_conditions(log_type: &str) -> (Vec<String>, Vec<String>) {
+    let mut conditions = Vec::new();
+    let mut unknown = Vec::new();
+    for lt in log_type.split(',') {
+        let name = lt.trim();
+        if name.is_empty() {
+            continue;
+        }
+        match log_type_code(name) {
+            Some(code) => conditions.push(format!("Type = {code}")),
+            None => unknown.push(name.to_string()),
+        }
+    }
+    (conditions, unknown)
+}
+
 pub async fn interop_logs_impl(
     iris: Option<&IrisConnection>,
     params: LogsParams,
@@ -437,16 +483,7 @@ pub async fn interop_logs_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
-    let mut conditions = vec![];
-    for lt in params.log_type.split(',') {
-        match lt.trim().to_lowercase().as_str() {
-            "error" => conditions.push("Type = 3"),
-            "warning" => conditions.push("Type = 2"),
-            "info" => conditions.push("Type = 1"),
-            "alert" => conditions.push("Type = 4"),
-            _ => {}
-        }
-    }
+    let (conditions, unknown_log_types) = log_type_conditions(&params.log_type);
     let type_filter = if conditions.is_empty() {
         String::new()
     } else {
@@ -462,9 +499,18 @@ pub async fn interop_logs_impl(
         .query(&sql, vec![], &iris.namespace.clone(), &client)
         .await
     {
-        Ok(resp) => ok_json(
-            serde_json::json!({"success": true, "logs": resp["result"]["content"], "count": resp["result"]["content"].as_array().map(|a| a.len()).unwrap_or(0)}),
-        ),
+        Ok(resp) => {
+            let mut out = serde_json::json!({"success": true, "logs": resp["result"]["content"], "count": resp["result"]["content"].as_array().map(|a| a.len()).unwrap_or(0)});
+            if !unknown_log_types.is_empty() {
+                out["unknown_log_types"] = serde_json::json!(unknown_log_types);
+                out["note"] = serde_json::json!(format!(
+                    "log_type values not recognized and not applied as a filter: {}. Accepted: {}.",
+                    unknown_log_types.join(", "),
+                    LOG_TYPES.join(", ")
+                ));
+            }
+            ok_json(out)
+        }
         Err(e) => err_json(
             if is_network_error(&e.to_string()) {
                 "IRIS_UNREACHABLE"

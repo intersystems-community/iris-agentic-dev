@@ -858,89 +858,111 @@ mod sql_escaping_and_building {
 }
 
 mod log_type_filtering {
+    //! These tests call `log_type_conditions` — the same function the handler calls.
+    //!
+    //! They used to inline a copy of the handler's `match` block and assert against the copy, so
+    //! they passed while the real mapping was shifted one place off the `Ens.Util.Log.Type`
+    //! valuelist. A test that re-implements the code under test proves only that the copy is
+    //! self-consistent.
+    //!
+    //! `Type` is `,1,2,3,4,5,6` against `,Assert,Error,Warning,Info,Trace,Alert`.
+
     use iris_agentic_dev_core::tools::interop::*;
+
+    /// Just the conditions, for the cases where the unknown list is not the point.
+    fn conds(log_type: &str) -> Vec<String> {
+        log_type_conditions(log_type).0
+    }
+
+    #[test]
+    fn every_name_maps_to_its_valuelist_position() {
+        assert_eq!(log_type_code("assert"), Some(1));
+        assert_eq!(log_type_code("error"), Some(2));
+        assert_eq!(log_type_code("warning"), Some(3));
+        assert_eq!(log_type_code("info"), Some(4));
+        assert_eq!(log_type_code("trace"), Some(5));
+        assert_eq!(log_type_code("alert"), Some(6));
+    }
+
+    #[test]
+    fn the_advertised_name_list_is_the_one_the_mapping_accepts() {
+        for name in LOG_TYPES {
+            assert!(
+                log_type_code(name).is_some(),
+                "LOG_TYPES advertises {name} but the mapping does not accept it"
+            );
+        }
+        assert_eq!(LOG_TYPES.len(), 6, "Ens.Util.Log.Type has six values");
+    }
 
     #[test]
     fn logs_params_alert_type() {
         let p: LogsParams = serde_json::from_str(r#"{"log_type":"alert"}"#).unwrap();
-        let mut conditions = vec![];
-        for lt in p.log_type.split(',') {
-            match lt.trim().to_lowercase().as_str() {
-                "error" => conditions.push("Type = 3"),
-                "warning" => conditions.push("Type = 2"),
-                "info" => conditions.push("Type = 1"),
-                "alert" => conditions.push("Type = 4"),
-                _ => {}
-            }
-        }
-        assert_eq!(conditions, vec!["Type = 4"]);
+        assert_eq!(conds(&p.log_type), vec!["Type = 6"]);
     }
 
     #[test]
     fn logs_params_info_type() {
         let p: LogsParams = serde_json::from_str(r#"{"log_type":"info"}"#).unwrap();
-        let mut conditions = vec![];
-        for lt in p.log_type.split(',') {
-            match lt.trim().to_lowercase().as_str() {
-                "error" => conditions.push("Type = 3"),
-                "warning" => conditions.push("Type = 2"),
-                "info" => conditions.push("Type = 1"),
-                "alert" => conditions.push("Type = 4"),
-                _ => {}
-            }
-        }
-        assert_eq!(conditions, vec!["Type = 1"]);
+        assert_eq!(conds(&p.log_type), vec!["Type = 4"]);
+    }
+
+    #[test]
+    fn the_default_selects_error_and_warning_not_their_neighbours() {
+        // The regression that hid the off-by-one: the default asks for both, so it returned rows
+        // either way round. Pin the codes, not just the count.
+        let p: LogsParams = serde_json::from_str("{}").unwrap();
+        assert_eq!(conds(&p.log_type), vec!["Type = 2", "Type = 3"]);
     }
 
     #[test]
     fn logs_params_mixed_types_with_invalid() {
         let p: LogsParams =
             serde_json::from_str(r#"{"log_type":"error,debug,warning,trace"}"#).unwrap();
-        let mut conditions = vec![];
-        for lt in p.log_type.split(',') {
-            match lt.trim().to_lowercase().as_str() {
-                "error" => conditions.push("Type = 3"),
-                "warning" => conditions.push("Type = 2"),
-                "info" => conditions.push("Type = 1"),
-                "alert" => conditions.push("Type = 4"),
-                _ => {}
-            }
-        }
-        assert_eq!(conditions.len(), 2); // only error and warning
+        let (conditions, unknown) = log_type_conditions(&p.log_type);
+        // `trace` is a real severity now, so only `debug` is unknown.
+        assert_eq!(conditions, vec!["Type = 2", "Type = 3", "Type = 5"]);
+        assert_eq!(unknown, vec!["debug"]);
+    }
+
+    #[test]
+    fn an_unrecognized_name_is_reported_rather_than_dropped() {
+        // `log_type="eror"` produced no conditions, so the filter vanished and the query silently
+        // widened to every severity. The name comes back so the caller can be told.
+        let (conditions, unknown) = log_type_conditions("eror");
+        assert!(conditions.is_empty());
+        assert_eq!(unknown, vec!["eror"]);
     }
 
     #[test]
     fn logs_params_all_valid_types() {
         let p: LogsParams =
             serde_json::from_str(r#"{"log_type":"error,warning,info,alert"}"#).unwrap();
-        let mut conditions = vec![];
-        for lt in p.log_type.split(',') {
-            match lt.trim().to_lowercase().as_str() {
-                "error" => conditions.push("Type = 3"),
-                "warning" => conditions.push("Type = 2"),
-                "info" => conditions.push("Type = 1"),
-                "alert" => conditions.push("Type = 4"),
-                _ => {}
-            }
-        }
-        assert_eq!(conditions.len(), 4);
+        assert_eq!(
+            conds(&p.log_type),
+            vec!["Type = 2", "Type = 3", "Type = 4", "Type = 6"]
+        );
     }
 
     #[test]
     fn logs_params_type_with_spaces() {
         let p: LogsParams =
             serde_json::from_str(r#"{"log_type":"  error  ,  warning  "}"#).unwrap();
-        let mut conditions = vec![];
-        for lt in p.log_type.split(',') {
-            match lt.trim().to_lowercase().as_str() {
-                "error" => conditions.push("Type = 3"),
-                "warning" => conditions.push("Type = 2"),
-                "info" => conditions.push("Type = 1"),
-                "alert" => conditions.push("Type = 4"),
-                _ => {}
-            }
-        }
-        assert_eq!(conditions.len(), 2);
+        let (conditions, unknown) = log_type_conditions(&p.log_type);
+        assert_eq!(conditions, vec!["Type = 2", "Type = 3"]);
+        assert!(unknown.is_empty(), "whitespace is not an unknown name");
+    }
+
+    #[test]
+    fn case_does_not_matter() {
+        assert_eq!(conds("ERROR,Warning"), vec!["Type = 2", "Type = 3"]);
+    }
+
+    #[test]
+    fn an_empty_list_yields_no_filter_and_no_complaint() {
+        let (conditions, unknown) = log_type_conditions(",, ,");
+        assert!(conditions.is_empty());
+        assert!(unknown.is_empty(), "empty segments are not names");
     }
 }
 

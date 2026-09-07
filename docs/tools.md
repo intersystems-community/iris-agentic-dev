@@ -964,7 +964,7 @@ Query production logs, queue depths, or message archive.
 | --------------- | --------------- | ----------------- | ----------------------------------------------------------- |
 | `what`          | string          | `"logs"`          | Enum: `"logs"` \| `"queues"` \| `"messages"`                |
 | `component`     | string          | —                 | `logs`: filter by business host name                        |
-| `log_type`      | string          | `"error,warning"` | `logs` only                                                 |
+| `log_type`      | string          | `"error,warning"` | `logs` only; comma-separated, see below                     |
 | `limit`         | int             | `50`              | Applies to `logs` and `messages`                            |
 | `source`        | string          | —                 | `messages`: filter by source                                |
 | `target`        | string          | —                 | `messages`: filter by target                                |
@@ -977,6 +977,11 @@ Query production logs, queue depths, or message archive.
 | `search_table`  | object          | —                 | `messages`: indexed Search Table search — see below         |
 | `namespace`     | string          | `"USER"`          |                                                             |
 | `server`        | string          | —                 | Named server; omit for default                              |
+
+`log_type` takes any comma-separated subset of `assert`, `error`, `warning`, `info`, `trace`,
+`alert` — the six values of `Ens.Util.Log.Type`, matched case-insensitively. A name that is not one
+of those six contributes no filter, and the response reports it under `unknown_log_types` rather
+than quietly widening the query to every severity.
 
 `search_table` takes `prop` (required), one of `value` or `value_like`, and optional
 `class` and `extent` (default `EnsLib.HL7.SearchTable`).
