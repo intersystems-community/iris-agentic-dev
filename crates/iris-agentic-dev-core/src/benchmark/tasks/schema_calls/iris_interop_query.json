@@ -1,9 +1,5 @@
 {
   "tool": "iris_interop_query",
   "request": "Show me the last 20 interoperability messages that passed through the component HL7.Router in the USER namespace.",
-  "expect_keys": [
-    "component",
-    "limit",
-    "namespace"
-  ]
+  "expect_keys": ["component", "limit", "namespace"]
 }

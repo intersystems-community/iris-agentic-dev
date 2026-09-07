@@ -1,9 +1,5 @@
 {
   "tool": "query_audit_log",
   "request": "Show me the 25 most recent LoginFailure audit events for the user _SYSTEM.",
-  "expect_keys": [
-    "event_type",
-    "user",
-    "limit"
-  ]
+  "expect_keys": ["event_type", "user", "limit"]
 }

@@ -1,9 +1,5 @@
 {
   "tool": "compare_namespace",
   "request": "Compare what is in the USER namespace on the instance registered as dev against the one registered as prod.",
-  "expect_keys": [
-    "namespace",
-    "server_a",
-    "server_b"
-  ]
+  "expect_keys": ["namespace", "server_a", "server_b"]
 }

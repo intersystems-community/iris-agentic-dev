@@ -1,8 +1,5 @@
 {
   "tool": "capability_matrix",
   "request": "Which IRIS capabilities does the user irisowner have on the instance registered as prod-a?",
-  "expect_keys": [
-    "server",
-    "user"
-  ]
+  "expect_keys": ["server", "user"]
 }

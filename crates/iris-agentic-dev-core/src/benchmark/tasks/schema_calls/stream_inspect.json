@@ -1,8 +1,5 @@
 {
   "tool": "stream_inspect",
   "request": "Show me the contents of the stream with OID 5@%Stream.GlobalCharacter in the USER namespace.",
-  "expect_keys": [
-    "oid",
-    "namespace"
-  ]
+  "expect_keys": ["oid", "namespace"]
 }

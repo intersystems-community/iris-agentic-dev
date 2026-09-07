@@ -1,8 +1,5 @@
 {
   "tool": "iris_namespace_create",
   "request": "Create a namespace called ANALYTICS, with its database at /usr/irissys/mgr/analytics/.",
-  "expect_keys": [
-    "name",
-    "db_path"
-  ]
+  "expect_keys": ["name", "db_path"]
 }

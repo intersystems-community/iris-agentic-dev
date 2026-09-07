@@ -1,8 +1,5 @@
 {
   "tool": "hl7_schema_inspect",
   "request": "Which fields does the PID segment carry in the HL7 2.5 schema?",
-  "expect_keys": [
-    "schema",
-    "segment"
-  ]
+  "expect_keys": ["schema", "segment"]
 }

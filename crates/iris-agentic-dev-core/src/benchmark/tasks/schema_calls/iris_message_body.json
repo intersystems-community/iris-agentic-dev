@@ -1,8 +1,5 @@
 {
   "tool": "iris_message_body",
   "request": "Show me the body of interoperability message 4711 in the USER namespace.",
-  "expect_keys": [
-    "message_id",
-    "namespace"
-  ]
+  "expect_keys": ["message_id", "namespace"]
 }

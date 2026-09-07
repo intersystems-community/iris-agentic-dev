@@ -1,7 +1,5 @@
 {
   "tool": "iris_admin",
   "request": "Which user accounts are defined on this instance?",
-  "expect_keys": [
-    "action"
-  ]
+  "expect_keys": ["action"]
 }

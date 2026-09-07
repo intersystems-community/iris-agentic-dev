@@ -1,8 +1,5 @@
 {
   "tool": "mermaid_production",
   "request": "Draw a diagram of the production Demo.Router in the USER namespace.",
-  "expect_keys": [
-    "production",
-    "namespace"
-  ]
+  "expect_keys": ["production", "namespace"]
 }

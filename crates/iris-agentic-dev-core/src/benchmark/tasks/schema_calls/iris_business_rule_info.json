@@ -1,8 +1,5 @@
 {
   "tool": "iris_business_rule_info",
   "request": "Show me what the business rule Demo.Router.MainRule does; it lives in the USER namespace.",
-  "expect_keys": [
-    "rule_name",
-    "namespace"
-  ]
+  "expect_keys": ["rule_name", "namespace"]
 }

@@ -1,7 +1,5 @@
 {
   "tool": "iris_database_stats",
   "request": "How much free space is left in the USER database?",
-  "expect_keys": [
-    "db"
-  ]
+  "expect_keys": ["db"]
 }

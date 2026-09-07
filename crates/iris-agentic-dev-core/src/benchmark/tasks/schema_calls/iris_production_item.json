@@ -1,9 +1,5 @@
 {
   "tool": "iris_production_item",
   "request": "Disable the business host HL7.FileIn in the production running in the USER namespace.",
-  "expect_keys": [
-    "action",
-    "item",
-    "namespace"
-  ]
+  "expect_keys": ["action", "item", "namespace"]
 }
