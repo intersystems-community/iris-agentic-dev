@@ -783,6 +783,9 @@ struct ParamMention {
     tools: Vec<String>,
     param: String,
     at: String,
+    /// The whole table row, cells joined by ` | `. Kept so a value-set check can read the default and
+    /// description columns without parsing the table a second time.
+    row: String,
 }
 
 fn table_cells(line: &str) -> Vec<String> {
@@ -879,6 +882,7 @@ fn documented_tool_params() -> Vec<ParamMention> {
                 tools: tool,
                 param: first,
                 at: line.at(),
+                row: cells.join(" | "),
             });
         }
     }
@@ -890,69 +894,49 @@ fn documented_tool_params() -> Vec<ParamMention> {
 /// The schema is what a conforming client reads before it builds a call, so a parameter missing
 /// from it cannot be passed — `stream_inspect`'s documented `max_chars` was never a field on the
 /// request struct, which means callers asking for 10 000 characters silently got 2 000.
+///
+/// The schema now answers this for all 81 tools (113 FR-012). It used to answer for 50: the rest
+/// advertised an open object, and this test fell through to grepping the handler body for the
+/// parameter name. That fallback is gone, and `the_schema_is_the_only_source_this_test_consults`
+/// keeps it gone — while it existed, "documented but undeclared" was a state the suite tolerated,
+/// which is the state `max_chars` shipped in.
 #[test]
 fn every_documented_tool_parameter_is_in_the_input_schema() {
     let schemas = &router().input_schemas;
     let mut missing: Vec<String> = Vec::new();
     let mut checked = 0usize;
-    let mut by_handler = 0usize;
-    let mut unlocatable: BTreeSet<String> = BTreeSet::new();
+    let mut undeclared: BTreeSet<String> = BTreeSet::new();
 
     for m in documented_tool_params() {
         let mut accepted = false;
         let mut examined = false;
-        let mut open_handler = false;
         let mut declares: BTreeSet<String> = BTreeSet::new();
 
         for tool in &m.tools {
             let Some(schema) = schemas.get(tool) else {
                 continue;
             };
-            match schema
-                .get("properties")
-                .and_then(|p| p.as_object())
-                .filter(|p| !p.is_empty())
-            {
-                Some(props) => {
-                    examined = true;
-                    declares.extend(props.keys().cloned());
-                    accepted |= props.contains_key(&m.param);
-                }
-                // An `AnyParams` tool advertises an open object, so the schema cannot answer the
-                // question — and this is the case the reporter hit. `stream_inspect` is documented
-                // with a `max_chars` parameter that appears nowhere in `crates/*/src`, so a caller
-                // asking for 10 000 characters silently gets everything anyway. Falling through to
-                // the handler is what catches it; skipping these tools is what let it ship.
-                None => match handler_body(tool) {
-                    Some(body) => {
-                        examined = true;
-                        open_handler = true;
-                        accepted |= body.contains(&format!("\"{}\"", m.param));
-                    }
-                    None => {
-                        unlocatable.insert(tool.clone());
-                    }
-                },
-            }
+            // No `properties` key at all. Unreachable — `tests/binary/schema_census.rs` asserts the
+            // count of such tools is zero — and collected rather than skipped so that if it does
+            // return, this test fails instead of quietly checking nothing.
+            let Some(props) = schema.get("properties").and_then(|p| p.as_object()) else {
+                undeclared.insert(tool.clone());
+                continue;
+            };
+            examined = true;
+            declares.extend(props.keys().cloned());
+            accepted |= props.contains_key(&m.param);
         }
 
         if !examined {
             continue;
         }
         checked += 1;
-        if open_handler {
-            by_handler += 1;
-        }
         if !accepted {
-            let how = if open_handler {
-                format!(
-                    "no handler among {:?} looks up \"{}\", so the documented parameter is ignored",
-                    m.tools, m.param
-                )
-            } else {
-                format!("the input schema of {:?} declares {declares:?}", m.tools)
-            };
-            missing.push(format!("{:?}({}) at {} — {how}", m.tools, m.param, m.at));
+            missing.push(format!(
+                "{:?}({}) at {} — the input schema of {:?} declares {declares:?}",
+                m.tools, m.param, m.at, m.tools
+            ));
         }
     }
 
@@ -968,25 +952,57 @@ fn every_documented_tool_parameter_is_in_the_input_schema() {
          the parameter tables"
     );
     assert!(
-        by_handler > 0,
-        "no documented parameter reached the handler check, so the open-parameter path — the one \
-         `max_chars` slipped through — is no longer exercised"
+        undeclared.is_empty(),
+        "{} tool(s) advertise no `properties` at all, so their documented parameters cannot be \
+         checked against a schema: {undeclared:?}",
+        undeclared.len()
     );
-    // Not a failure, but it is coverage this test does not have, and silence would read as
-    // "everything was checked".
-    if !unlocatable.is_empty() {
-        eprintln!(
-            "note: {} tool(s) take open parameters and no `async fn <name>(` handler was found for \
-             them, so their documented parameters were not checked: {unlocatable:?}",
-            unlocatable.len()
-        );
-    }
+}
+
+/// FR-012. The escape hatch stays deleted.
+///
+/// A test that can answer "the handler reads it" when the schema says otherwise is a test that
+/// permits an undeclared parameter, and the fallback survived one bug report already. Asserting on
+/// this file's own text is blunt, but it is the only thing that fails when someone reintroduces the
+/// fallback to make a stubborn tool pass — a deleted code path leaves nothing else to assert on.
+///
+/// `handler_body` itself stays: `every_iris_admin_action_parameter_is_read_by_the_dispatch` reads
+/// the dispatch source to check the per-action tables, which no input schema can answer because
+/// those parameters are conditional on `action`. What must not come back is calling it from the
+/// schema check.
+#[test]
+fn the_schema_is_the_only_source_this_test_consults() {
+    let this_file = include_str!("test_docs_contract.rs");
+    let schema_check = this_file
+        .split("fn every_documented_tool_parameter_is_in_the_input_schema()")
+        .nth(1)
+        .expect("the schema check must still exist under its own name");
+    // Up to the function's closing brace at column zero — not to the next `#[test]`, which would
+    // swallow the doc comment of the test below and its mention of the thing being forbidden.
+    let body = schema_check
+        .split("\n}\n")
+        .next()
+        .expect("split always yields one element");
+    assert!(
+        !body.contains("handler_body"),
+        "the handler-body fallback is back in the schema check — an undeclared parameter can pass \
+         again by being mentioned in the handler"
+    );
+
+    // And one call site, not two: the iris_admin action-table test.
+    assert_eq!(
+        this_file.matches("handler_body(\"").count(),
+        1,
+        "handler_body has grown a second caller; if that caller is a schema check, FR-012 is undone"
+    );
 }
 
 /// The body of the `#[tool]` method that serves `tool`, up to the next method.
 ///
-/// Tools that take `Parameters<AnyParams>` read their arguments by name out of the map, so the
-/// literal appearing in this slice is the evidence that the parameter is honoured.
+/// Only for parameters no input schema can declare: `iris_admin`'s per-action tables document names
+/// that are meaningful for one `action` and absent for the rest, so the evidence that one is honoured
+/// is the literal appearing in the dispatch. Not a schema fallback — see
+/// `the_schema_is_the_only_source_this_test_consults`.
 fn handler_body(tool: &str) -> Option<&'static str> {
     let src = sources();
     let start = src.find(&format!("async fn {tool}("))?;
@@ -1334,6 +1350,7 @@ fn documented_iris_admin_action_params() -> Vec<ParamMention> {
                 tools: vec!["iris_admin".to_string()],
                 param,
                 at: line.at(),
+                row: cells.join(" | "),
             });
         }
     }
@@ -1461,5 +1478,305 @@ fn the_skill_inventory_lists_every_bundled_skill() {
         "only {} embedded skill(s) were read — EMBEDDED_SKILLS is the source of truth for this \
          test and it appears empty",
         embedded.len()
+    );
+}
+
+// ── FR-009: the four-way parameter audit ─────────────────────────────────────
+
+/// The pre-conversion read set of the 31 `AnyParams` tools, parsed out of
+/// `specs/113-typed-tool-schemas/data-model.md`.
+///
+/// This is the fourth column, and it is the only one that cannot be regenerated from the code. The
+/// other three all read today's tree, so a parameter dropped during the conversion would vanish
+/// from the schema and from the handler at once and the remaining comparisons would agree with
+/// each other about a tool that lost a parameter. The table was extracted from the handlers before
+/// any struct existed; it is the receipt.
+fn frozen_inventory() -> BTreeMap<String, BTreeSet<String>> {
+    let path = repo_root().join("specs/113-typed-tool-schemas/data-model.md");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("must read {}: {e}", path.display()));
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let tools = tool_names();
+    for line in text.lines() {
+        let t = line.trim();
+        if !t.starts_with('|') {
+            continue;
+        }
+        let cells = raw_table_cells(t);
+        // tool | line | parameters read | n
+        if cells.len() != 4 {
+            continue;
+        }
+        let tool = cells[0].trim().trim_matches('`').to_string();
+        if !tools.contains(tool.as_str()) || cells[1].trim().parse::<u32>().is_err() {
+            continue;
+        }
+        let params: BTreeSet<String> = cells[2]
+            .split(',')
+            .map(|p| p.trim().trim_matches('`').to_string())
+            .filter(|p| is_param_ident(p))
+            .collect();
+        let claimed: usize = cells[3].trim().parse().unwrap_or_else(|_| {
+            panic!("the inventory row for `{tool}` must end with the parameter count")
+        });
+        assert_eq!(
+            params.len(),
+            claimed,
+            "the inventory row for `{tool}` claims {claimed} parameters but lists {}: {params:?}",
+            params.len()
+        );
+        out.insert(tool, params);
+    }
+    assert_eq!(
+        out.len(),
+        31,
+        "the frozen inventory must cover all 31 converted tools, parsed {}: {:?}",
+        out.len(),
+        out.keys().collect::<Vec<_>>()
+    );
+    out
+}
+
+/// Advertised property names for one tool, straight off the router.
+fn advertised(tool: &str) -> BTreeSet<String> {
+    router()
+        .input_schemas
+        .get(tool)
+        .and_then(|s| s.get("properties"))
+        .and_then(|p| p.as_object())
+        .map(|p| p.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// Every documented parameter that no tool named by its heading advertises.
+///
+/// Evaluated per mention rather than per tool: `### \`kb\` / \`kb_index\` / \`kb_recall\`` documents
+/// one table for three tools, and `top_k` belongs to exactly one of them. Crediting the mention to
+/// each tool in the heading and then requiring each to advertise it reports four disagreements that
+/// are not there — which is the first thing this test did.
+fn documented_but_unadvertised() -> Vec<String> {
+    let mut out = Vec::new();
+    for m in documented_tool_params() {
+        let known: Vec<&String> = m
+            .tools
+            .iter()
+            .filter(|t| router().input_schemas.contains_key(*t))
+            .collect();
+        if known.is_empty() {
+            continue;
+        }
+        if !known.iter().any(|t| advertised(t).contains(&m.param)) {
+            out.push(format!(
+                "{:?}: docs/tools.md promises `{}` at {} and none of them advertises it",
+                m.tools, m.param, m.at
+            ));
+        }
+    }
+    out
+}
+
+/// Parameters a handler reads that no schema needs to advertise, because something upstream of the
+/// handler consumes them.
+///
+/// Empty, and it should stay that way. `global_kill`'s `confirm_token` looked like a candidate — the
+/// destructive gate reads it before dispatch — but the tool advertises it anyway, which is the right
+/// answer: a caller has to be able to discover the token parameter to satisfy the gate. Any addition
+/// here has to argue why a parameter the code honours must stay invisible to clients.
+const READ_ELSEWHERE: &[(&str, &str)] = &[];
+
+#[test]
+fn the_four_parameter_sources_agree_for_every_tool() {
+    use iris_agentic_dev_core::testing::{handler_uses_field, read_keys};
+
+    let frozen = frozen_inventory();
+    let all: Vec<String> = router().input_schemas.keys().cloned().collect();
+
+    let mut problems: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+
+    for tool in &all {
+        let adv = advertised(tool);
+        let read = read_keys(tool);
+        checked += 1;
+
+        // 1. Read but not advertised — the handler honours a parameter no client can discover, and
+        //    with `deny_unknown_fields` in place it can no longer even be sent.
+        let hidden: Vec<&String> = read
+            .difference(&adv)
+            .filter(|p| !READ_ELSEWHERE.contains(&(tool.as_str(), p.as_str())))
+            .collect();
+        if !hidden.is_empty() {
+            problems.push(format!(
+                "{tool}: reads {hidden:?} but does not advertise them — unreachable, and now \
+                 rejected by serde"
+            ));
+        }
+
+        // 2. Advertised but nothing in the handler touches it. `read_keys` and the schema can share
+        //    a source once a tool is typed, so this reads the handler body directly.
+        let dead: Vec<&String> = adv
+            .difference(&read)
+            .filter(|p| !handler_uses_field(tool, p))
+            .collect();
+        if !dead.is_empty() {
+            problems.push(format!(
+                "{tool}: advertises {dead:?} and no line of the handler mentions them — this is \
+                 the `max_chars` shape: a promise with no reader"
+            ));
+        }
+
+        // 3. In the pre-conversion inventory but not advertised — a parameter the conversion lost.
+        if let Some(before) = frozen.get(tool) {
+            let lost: Vec<&String> = before.difference(&adv).collect();
+            if !lost.is_empty() {
+                problems.push(format!(
+                    "{tool}: read {lost:?} before the conversion and does not advertise them now — \
+                     a working call this feature broke"
+                ));
+            }
+        }
+    }
+
+    // 4. Documented but advertised by none of the tools its heading names.
+    problems.extend(documented_but_unadvertised());
+
+    assert!(
+        problems.is_empty(),
+        "{} parameter disagreement(s) across {checked} tools:\n  {}",
+        problems.len(),
+        problems.join("\n  ")
+    );
+    assert!(
+        checked >= 81,
+        "only {checked} tools were audited; the comparison must cover the whole surface or a \
+         missing tool reads as agreement"
+    );
+}
+
+/// The `max_chars` regression guard, docs and source halves.
+///
+/// `stream_inspect` shipped documented with a `max_chars` parameter that no code read, so a caller
+/// asking for 10 000 characters got the whole stream and no warning. Three places have to agree that
+/// it is gone: the schema must not declare it (`schema_batch7.rs`), the runtime must refuse it
+/// (`params_batch7.rs`), and the two checked here — `docs/tools.md` must not promise it, and no
+/// handler may read it. A guard in one place only would let the name come back through the other two.
+#[test]
+fn max_chars_is_absent_from_the_docs_and_from_every_handler() {
+    let docs = std::fs::read_to_string(repo_root().join("docs/tools.md")).expect("docs/tools.md");
+    let offenders: Vec<&str> = docs
+        .lines()
+        .filter(|l| l.contains("max_chars"))
+        .take(5)
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "`max_chars` is documented again in docs/tools.md. It was promised for five minor versions \
+         and read by nothing; re-documenting it re-creates the bug unless a handler reads it \
+         first:\n  {}",
+        offenders.join("\n  ")
+    );
+
+    // Prose is allowed — this repository writes about the bug in half a dozen module comments. What
+    // is not allowed is the name appearing as a wire key (`"max_chars"`) or as a struct field
+    // (`max_chars:`), which is what "a handler reads it" would look like.
+    let src = iris_agentic_dev_core::testing::rust_sources();
+    assert!(
+        !src.contains("\"max_chars\"") && !src.contains("max_chars:"),
+        "`max_chars` is back in crates/*/src as a parameter. If a stream length cap is being added, \
+         it needs a field on `StreamInspectParams` and a docs row in the same change — the original \
+         bug was the docs row arriving alone"
+    );
+    // The docs half is only worth anything if the extractor would have seen the row. Assert the
+    // parameter table for `stream_inspect` is still being found, so a renamed heading cannot turn
+    // this test into a check that a file does not contain a word.
+    let mentions = documented_tool_params()
+        .into_iter()
+        .filter(|m| m.tools.iter().any(|t| t == "stream_inspect"))
+        .count();
+    assert!(
+        mentions >= 3,
+        "only {mentions} documented parameter(s) were found for stream_inspect — the docs table is \
+         no longer being parsed, so the `max_chars` absence check above proves nothing"
+    );
+}
+
+/// Quoted value tokens in a docs table row: `` `"INT"` `` yields `INT`.
+///
+/// Only the backtick-and-quote form counts. `docs/tools.md` uses it for literal parameter values and
+/// nothing else, so it separates "here are the values" from prose that happens to mention a word.
+fn quoted_values(row: &str) -> BTreeSet<String> {
+    let mut out = BTreeSet::new();
+    let mut rest = row;
+    while let Some(start) = rest.find("`\"") {
+        let after = &rest[start + 2..];
+        match after.find("\"`") {
+            Some(end) => {
+                let value = &after[..end];
+                if !value.is_empty() && !value.contains('`') {
+                    out.insert(value.to_string());
+                }
+                rest = &after[end + 2..];
+            }
+            None => break,
+        }
+    }
+    out
+}
+
+/// FR-006, docs side. Where a parameter advertises an `enum`, the docs may not offer a value outside
+/// it.
+///
+/// `iris_doc.compiled_type` is why this exists (audit row F14): the table offered `"INT"` and `"OBJ"`,
+/// the handler answers `INVALID_PARAMS` for `"OBJ"`, and nothing compared the two. The enum contract
+/// test proves the declared set matches the handler's branches; this proves the docs match the
+/// declared set. Without it, the prose can drift back into promising a value that always fails.
+#[test]
+fn no_documented_value_falls_outside_the_declared_enum() {
+    let schemas = &router().input_schemas;
+    let mut problems: Vec<String> = Vec::new();
+    let mut checked = 0usize;
+
+    for m in documented_tool_params() {
+        for tool in &m.tools {
+            let Some(schema) = schemas.get(tool) else {
+                continue;
+            };
+            let Some(declared) = schema
+                .get("properties")
+                .and_then(|p| p.get(&m.param))
+                .and_then(|p| p.get("enum"))
+                .and_then(|e| e.as_array())
+            else {
+                continue;
+            };
+            let declared: BTreeSet<String> = declared
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect();
+            checked += 1;
+            let stray: Vec<String> = quoted_values(&m.row)
+                .into_iter()
+                .filter(|v| !declared.contains(v))
+                .collect();
+            if !stray.is_empty() {
+                problems.push(format!(
+                    "{tool}.{} at {} — docs offer {stray:?}, the schema declares {declared:?}",
+                    m.param, m.at
+                ));
+            }
+        }
+    }
+
+    assert!(
+        problems.is_empty(),
+        "{} documented value(s) are outside the declared enum, so a client following the docs would \
+         send a value the tool refuses:\n  {}",
+        problems.len(),
+        problems.join("\n  ")
+    );
+    assert!(
+        checked >= 5,
+        "only {checked} documented parameter(s) with a declared enum were compared — either the docs \
+         tables stopped parsing or the enums stopped being declared"
     );
 }

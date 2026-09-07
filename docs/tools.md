@@ -90,6 +90,29 @@ unless there is something non-obvious to say about it.
 
 ---
 
+## Parameters are declared, and the set is closed
+
+Every tool advertises its parameters in its `inputSchema`: names, JSON types, and — where
+the handler branches on a fixed set of values — an `enum`. 17 parameters across 15 tools
+carry one, `iris_admin.action` (25 values) being the largest. The parameter tables in this
+file describe the same contract in prose; the schema is what a client can read without
+parsing English.
+
+Every tool also sets `additionalProperties: false`. A parameter the tool does not declare
+is rejected with `UNKNOWN_PARAMETER` and the error lists the names it does accept. Until
+1.3.2, 31 tools advertised an open object with no properties at all, so a misspelled or
+invented parameter was dropped in silence — `stream_inspect` was documented with a
+character cap that no code read, and a caller asking for 10,000 characters got the whole
+stream and no warning. The name of that parameter is deliberately absent from this file:
+a guard in the test suite fails if it comes back, because the docs row is what created the
+bug in the first place.
+
+Six tools take no parameters at all and declare an empty property set: `agent_stats`,
+`check_config`, `iris_import_servers`, `iris_reload_pool`, `skill_community_list`,
+`skill_list`.
+
+---
+
 ## Tool catalog size
 
 This server exposes ~78–90 tools depending on toolset (`IRIS_TOOLSET=baseline|nostub|merged`),
@@ -202,7 +225,7 @@ Read, write, delete, insert lines, or list IRIS documents.
 | `pattern`                    | string   | —        | Glob filter for `list`, e.g. `"MyApp.*.cls"`                                        |
 | `category`                   | string   | —        | `"CLS"` \| `"MAC"` \| `"INT"` \| `"INC"` \| `"ALL"`                                 |
 | `max_results`                | int      | `200`    | Max 1000; for `list`                                                                |
-| `compiled_type`              | string   | `"INT"`  | `"INT"` \| `"OBJ"`; for `compiled` mode                                             |
+| `compiled_type`              | string   | `"INT"`  | `"INT"` is the only value; for `compiled` mode. OBJ returns `INVALID_PARAMS`        |
 | `allow_storage_regeneration` | bool     | `false`  | Required to proceed when IRIS strips Storage blocks on PUT                          |
 | `elicitation_id`             | string   | —        | SCM checkout dialog resume ID                                                       |
 | `elicitation_answer`         | string   | —        | SCM checkout dialog answer                                                          |
@@ -890,16 +913,26 @@ iris_production(action="set_autostart", production="MyApp.Production", enabled=t
 
 Query production logs, queue depths, or message archive.
 
-| Parameter       | Type   | Default           | Notes                                                |
-| --------------- | ------ | ----------------- | ---------------------------------------------------- |
-| `what`          | string | —                 | **Required.** `"logs"` \| `"queues"` \| `"messages"` |
-| `component`     | string | —                 | `logs`: filter by business host name                 |
-| `log_type`      | string | `"error,warning"` | `logs` only                                          |
-| `limit`         | int    | `50`              | Applies to `logs` and `messages`                     |
-| `source`        | string | —                 | `messages`: filter by source                         |
-| `target`        | string | —                 | `messages`: filter by target                         |
-| `message_class` | string | —                 | `messages`: filter by message class                  |
-| `namespace`     | string | `"USER"`          |                                                      |
+| Parameter       | Type            | Default           | Notes                                                       |
+| --------------- | --------------- | ----------------- | ----------------------------------------------------------- |
+| `what`          | string          | `"logs"`          | Enum: `"logs"` \| `"queues"` \| `"messages"`                |
+| `component`     | string          | —                 | `logs`: filter by business host name                        |
+| `log_type`      | string          | `"error,warning"` | `logs` only                                                 |
+| `limit`         | int             | `50`              | Applies to `logs` and `messages`                            |
+| `source`        | string          | —                 | `messages`: filter by source                                |
+| `target`        | string          | —                 | `messages`: filter by target                                |
+| `message_class` | string          | —                 | `messages`: filter by message class                         |
+| `session_id`    | int \| string   | —                 | `messages`: one session's messages; decimal string accepted |
+| `since_id`      | int \| string   | —                 | `messages`: tail after this header ID                       |
+| `body_class`    | string          | —                 | `messages`: body class to join, e.g. `Ens.StringContainer`  |
+| `body_where`    | string          | —                 | `messages`: SQL predicate on the joined body table          |
+| `body_select`   | array\<string\> | —                 | `messages`: body-table columns to add to each row           |
+| `search_table`  | object          | —                 | `messages`: indexed Search Table search — see below         |
+| `namespace`     | string          | `"USER"`          |                                                             |
+| `server`        | string          | —                 | Named server; omit for default                              |
+
+`search_table` takes `prop` (required), one of `value` or `value_like`, and optional
+`class` and `extent` (default `EnsLib.HL7.SearchTable`).
 
 ```text
 iris_interop_query(what="logs", log_type="error", limit=50)
@@ -919,6 +952,7 @@ Enable, disable, or get/set settings on an individual production config item.
 | `item`      | string               | —        | **Required.** Production item name                                              |
 | `settings`  | map\<string,string\> | `{}`     | For `set_settings`                                                              |
 | `namespace` | string               | `"USER"` |                                                                                 |
+| `server`    | string               | —        | Named server; omit for default                                                  |
 
 Works via Atelier HTTP — no Docker required.
 
@@ -939,6 +973,7 @@ Diff the running production config against the last source-controlled version.
 | ------------ | ------ | -------- | ---------------------------------------- |
 | `production` | string | —        | Defaults to currently running production |
 | `namespace`  | string | `"USER"` |                                          |
+| `server`     | string | —        | Named server; omit for default           |
 
 ```text
 iris_production_diff()
@@ -956,7 +991,12 @@ Read a message body by ID. Gated — see [Data safety gates](#data-safety-gates)
 | `message_id`     | string | —        | **Required.**                        |
 | `max_bytes`      | int    | `65536`  | Max 1 MB (1048576)                   |
 | `acknowledgePhi` | bool   | `false`  | Required when `dataPolicy = "allow"` |
+| `dataPolicy`     | string | `block`  | `block` \| `allow` \| `redact`       |
 | `namespace`      | string | `"USER"` |                                      |
+| `server`         | string | —        | Named server; omit for default       |
+
+The connection's `dataPolicy` is applied before the call's, so passing `allow` here
+cannot widen what `[policy.<server>]` restricted.
 
 ```text
 iris_message_body(message_id="123456")
@@ -974,6 +1014,7 @@ List or inspect Ensemble business rules.
 | `action`    | string | —        | **Required.** `"list"` \| `"get"` |
 | `rule_name` | string | —        |                                   |
 | `namespace` | string | `"USER"` |                                   |
+| `server`    | string | —        | Named server; omit for default    |
 
 ```text
 iris_business_rule_info(action="list")
@@ -1211,20 +1252,22 @@ List available HL7 2.x schema versions. Returns `HL7_NOT_AVAILABLE` if
 `EnsLib.HL7.Schema` is absent. Requires HealthShare or IRIS for Health — not present on
 plain IRIS regardless of edition.
 
-| Parameter | Type   | Default | Notes                          |
-| --------- | ------ | ------- | ------------------------------ |
-| `server`  | string | —       | Named server; omit for default |
+| Parameter   | Type   | Default | Notes                          |
+| ----------- | ------ | ------- | ------------------------------ |
+| `namespace` | string | —       | Namespace to list from         |
+| `server`    | string | —       | Named server; omit for default |
 
 ### `hl7_schema_inspect`
 
 Show segment definitions, field names, and data types for a specific HL7 schema version
 and optional segment filter.
 
-| Parameter | Type   | Default | Notes                                        |
-| --------- | ------ | ------- | -------------------------------------------- |
-| `schema`  | string | —       | **Required.** e.g. `"2.6"`                   |
-| `segment` | string | —       | Segment name filter, e.g. `"PID"` (optional) |
-| `server`  | string | —       | Named server; omit for default               |
+| Parameter   | Type   | Default | Notes                                        |
+| ----------- | ------ | ------- | -------------------------------------------- |
+| `schema`    | string | —       | **Required.** e.g. `"2.6"`                   |
+| `segment`   | string | —       | Segment name filter, e.g. `"PID"` (optional) |
+| `namespace` | string | —       | Namespace to read the schema from            |
+| `server`    | string | —       | Named server; omit for default               |
 
 ### `mermaid_class`
 
@@ -1342,13 +1385,13 @@ iris_admin(action="journal_search",
 For standalone journal access there is also a `journal_search` tool (Administration
 section below) that does not require `iris_admin`. It is **not** an alias — the two take
 different parameter names for the same concepts, and passing one tool's names to the
-other gets them dropped without an error:
+other is rejected with `UNKNOWN_PARAMETER`:
 
 | Concept       | `iris_admin(action="journal_search")` | standalone `journal_search` |
 | ------------- | ------------------------------------- | --------------------------- |
 | Time window   | `time_range={"from": …, "to": …}`     | `start` / `end`             |
 | Result cap    | `max_records` (default 100, max 1000) | `max_entries` (1–500)       |
-| PHI gate      | `dataPolicy="allow"` on the call      | connection `dataPolicy`     |
+| PHI gate      | connection `dataPolicy`               | connection `dataPolicy`     |
 | Global filter | `global_pattern`                      | `global_pattern`            |
 
 `global_pattern` is the only name they share.
@@ -1378,14 +1421,20 @@ Write actions require `IRIS_WRITE_TOOLS_ENABLED=1`.
 | `list_user_roles`    | `username` (string, required)                                                                              |
 | `journal_search`     | `global_pattern` (string), `time_range` (`{from, to}` ISO8601), `max_records` (int, default 100, max 1000) |
 
-`iris_admin` reads its arguments by key out of an open parameter map, so a key it does
-not recognise is dropped without an error — a filter typed as `type_filter` or
-`name_filter` returns the unfiltered result set, not a complaint.
+`action` is the only required parameter, and its 25 values are advertised as an enum, so a
+client can complete them and a value outside the list comes back as `INVALID_ACTION`.
+`server` routes the call to a named registered instance. Every other parameter is optional
+at the schema level and required by the action that reads it, per the tables here.
+
+The parameter set is closed: a filter typed as `type_filter` or `name_filter` is rejected
+with `UNKNOWN_PARAMETER` naming what the tool does accept. It used to be dropped silently,
+and the unfiltered result set came back looking like an answer.
 
 `view_processes` and `journal_search` redact PHI according to `dataPolicy` in
 `[policy.<server>]`, which defaults to `block`. It used to be a call parameter, which meant
-a caller could authorize its own bulk journal read by passing `dataPolicy: "allow"`. Passing
-it now does nothing. `journal_search` needs `dataPolicy = "allow"` on the connection.
+a caller could authorize its own bulk journal read by passing `dataPolicy: "allow"`. That
+key is no longer part of the schema, so passing it is now an `UNKNOWN_PARAMETER` error
+rather than a no-op. `journal_search` needs `dataPolicy = "allow"` on the connection.
 
 **Write actions** (require `IRIS_WRITE_TOOLS_ENABLED=1`):
 

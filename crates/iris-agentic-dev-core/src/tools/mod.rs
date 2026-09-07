@@ -24,7 +24,7 @@ use rmcp::{
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Arc;
 
 // 076-interface-modernization User Story 1: output-schema-only response shapes. Not
@@ -69,27 +69,6 @@ tokio::task_local! {
 // iris module directly.
 pub use crate::iris::connection::{mcp_peer, MCP_PEER};
 
-/// Wrapper for tools that accept free-form JSON parameters.
-/// Uses a manual JsonSchema impl to emit `{"type":"object"}` instead of
-/// schemars' default `{"title":"AnyValue"}`, which Claude Code rejects.
-#[derive(Debug, Deserialize)]
-pub struct AnyParams(pub serde_json::Value);
-
-impl JsonSchema for AnyParams {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
-        "AnyParams".into()
-    }
-    fn json_schema(_gen: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        schemars::json_schema!({"type": "object"})
-    }
-}
-
-impl std::ops::Deref for AnyParams {
-    type Target = serde_json::Value;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
 pub mod admin;
 pub mod admin_tools;
 pub mod comparison_tools;
@@ -106,6 +85,8 @@ pub mod log_store;
 pub mod nopws;
 pub mod observability;
 pub mod output_schemas;
+pub mod param_check;
+pub mod params;
 pub mod scm;
 pub mod search;
 pub mod server_tools;
@@ -747,6 +728,7 @@ fn replace_host_vars_with_positional(sql: &str, params: &[String]) -> String {
 pub use crate::telemetry::ToolCallRecord as ToolCallEntry;
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CompileParams {
     pub target: String,
     #[serde(default = "default_flags")]
@@ -767,6 +749,7 @@ pub struct CompileParams {
     pub server: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TestParams {
     pub pattern: String,
     /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
@@ -787,6 +770,7 @@ pub struct TestParams {
     /// "auto" detects %UnitTest.TestProduction subclasses and uses .Run() automatically.
     /// "testcase" forces %UnitTest.Manager::RunTest(). "testproduction" forces .Run().
     #[serde(default)]
+    #[schemars(extend("enum" = ["auto", "testcase", "testproduction"]))]
     pub test_type: Option<String>,
 }
 
@@ -794,6 +778,7 @@ fn default_test_timeout() -> u64 {
     60
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolsParams {
     pub query: String,
     #[serde(default = "default_limit")]
@@ -806,6 +791,7 @@ pub struct SymbolsParams {
     pub server: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct IntrospectParams {
     pub class_name: String,
     /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
@@ -816,6 +802,7 @@ pub struct IntrospectParams {
     pub server: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DebugMapParams {
     #[serde(default)]
     pub routine: String,
@@ -828,6 +815,7 @@ pub struct DebugMapParams {
     pub namespace: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GenerateClassParams {
     pub description: String,
     #[serde(default)]
@@ -840,6 +828,7 @@ pub struct GenerateClassParams {
     pub server: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GenerateTestParams {
     pub class_name: String,
     /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
@@ -850,31 +839,37 @@ pub struct GenerateTestParams {
     pub server: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SkillNameParams {
     pub name: String,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SkillSearchParams {
     pub query: String,
     #[serde(default = "default_limit")]
     pub top_k: usize,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct KbIndexParams {
     pub workspace_path: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct KbRecallParams {
     pub query: String,
     #[serde(default = "default_limit")]
     pub top_k: usize,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AgentHistoryParams {
     #[serde(default = "default_limit")]
     pub limit: usize,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TelemetryQueryParams {
     #[serde(default)]
     pub tool_name: Option<String>,
@@ -891,6 +886,7 @@ fn default_telemetry_query_limit() -> usize {
     500
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TelemetryExportTraceParams {
     #[serde(default)]
     pub session_id: Option<String>,
@@ -898,6 +894,7 @@ pub struct TelemetryExportTraceParams {
     pub since: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SymbolsLocalParams {
     pub query: String,
     pub workspace_path: Option<String>,
@@ -913,12 +910,14 @@ fn default_symbols_local_limit() -> usize {
     50
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CapturePacketParams {
     /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
     #[serde(default)]
     pub namespace: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ErrorLogsParams {
     /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
     #[serde(default)]
@@ -930,13 +929,25 @@ pub struct ErrorLogsParams {
     pub inline: bool,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CommunityPkgParams {
     pub name: String,
 }
+/// The parameter type for tools that genuinely take no arguments.
+///
+/// `deny_unknown_fields` is the point: without it, a call passing `{"server": "prod"}` to a
+/// no-argument tool succeeds against the default connection, which is not what the caller asked
+/// for. It also makes the emitted schema carry `additionalProperties: false`, so a client can tell
+/// "no parameters" apart from "parameters unspecified".
+/// schemars omits `properties` entirely for a fieldless struct, which reads to a client as
+/// "parameters unspecified" rather than "no parameters".
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[schemars(extend("properties" = serde_json::Map::new()))]
 pub struct NoParams {}
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GetLogParams {
     /// UUID of a stored log entry. If omitted, lists all stored entries.
     pub id: Option<String>,
@@ -951,6 +962,7 @@ pub struct GetLogParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SourceMapParams {
     /// Class name to build source map for (e.g. "Graph.KG.NKGAccel" or "Graph.KG.NKGAccel.cls").
     pub cls_name: String,
@@ -964,6 +976,7 @@ pub struct SourceMapParams {
 }
 // 053-doc-depth
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct IrisExecuteMethodParams {
     /// Class name e.g. "%Library.Integer" or "MyApp.Utils"
     pub class: String,
@@ -982,6 +995,7 @@ pub struct IrisExecuteMethodParams {
 
 /// Typed parameters for `iris_production`.
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct IrisProductionParams {
     /// Action to perform: status, start, stop, update, check, recover, get_autostart, set_autostart.
     #[serde(default = "default_production_action")]
@@ -1022,6 +1036,7 @@ fn default_production_timeout() -> u32 {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExecuteParams {
     pub code: String,
     /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
@@ -1052,6 +1067,7 @@ fn default_translate_sql() -> bool {
     true
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct QueryParams {
     /// SQL statement. Required for read/explain/write; optional for count (use `table` instead).
     #[serde(default)]
@@ -1071,6 +1087,7 @@ pub struct QueryParams {
     #[serde(default)]
     pub confirm: bool,
     /// Execution mode: "read" (default), "explain", "count", or "write".
+    #[schemars(extend("enum" = ["read", "explain", "count", "write"]))]
     pub mode: Option<String>,
     /// Table name for mode="count" when `query` is not provided.
     pub table: Option<String>,
@@ -1082,10 +1099,12 @@ pub struct QueryParams {
     pub server: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ListContainersParams {
     pub workspace_root: Option<String>,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SelectContainerParams {
     pub name: String,
     /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
@@ -1097,6 +1116,7 @@ pub struct SelectContainerParams {
     pub password: String,
 }
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct StartSandboxParams {
     #[serde(default)]
     pub name: String,
@@ -2292,6 +2312,15 @@ pub struct IrisTools {
     pub iris_audit_counter: Arc<crate::iris::iris_audit::AuditEmitCounter>,
     #[allow(dead_code)] // used by #[tool_router] macro-generated code
     tool_router: ToolRouter<IrisTools>,
+    /// Every registered tool's advertised parameters, read off `tool_router` once at construction
+    /// (113 FR-015). The validation sites in `call_tool` run on every call, and
+    /// `ToolRouter::list_all()` clones the whole catalog — schemas included — so doing that per
+    /// call would put a few hundred kilobytes of allocation in front of every tool invocation.
+    ///
+    /// Derived, never hand-written: the names a caller is told are accepted are the names the
+    /// client was served on `tools/list`. It is also why this is a field and not a global cache —
+    /// the router is pruned per `Toolset`, and a process can hold instances of more than one.
+    accepted_params: BTreeMap<String, param_check::AcceptedParams>,
 }
 
 #[tool_router]
@@ -2320,6 +2349,8 @@ impl IrisTools {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(60u64);
+        let router = Self::tool_router();
+        let accepted_params = param_check::accepted_parameters(&router.list_all());
         Ok(Self {
             connection: Arc::new(std::sync::Mutex::new(conn_state)),
             config_watcher: Arc::new(std::sync::Mutex::new(None)),
@@ -2343,7 +2374,8 @@ impl IrisTools {
             session: crate::telemetry::Session::new(),
             docker_only_attr_warned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             iris_audit_counter: crate::iris::iris_audit::AuditEmitCounter::new(),
-            tool_router: Self::tool_router(),
+            tool_router: router,
+            accepted_params,
         })
     }
     /// Convenience constructor for tests — same as `new` but with explicit toolset.
@@ -2693,6 +2725,7 @@ impl IrisTools {
             session: crate::telemetry::Session::new(),
             docker_only_attr_warned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             iris_audit_counter: crate::iris::iris_audit::AuditEmitCounter::new(),
+            accepted_params: param_check::accepted_parameters(&router.list_all()),
             tool_router: router,
         })
     }
@@ -4311,6 +4344,19 @@ impl IrisTools {
                                     "ssh {ssh_host} docker exec failed: {msg}. \
                                      Verify SSH connectivity and that Docker is running on the remote host."
                                 ),
+                                "execution_path": exec_path,
+                            }))
+                        } else if let Some(detail) = msg.strip_prefix(&format!(
+                            "{}: ",
+                            crate::iris::connection::ERR_CONTAINER_UNREACHABLE
+                        )) {
+                            // Nothing ran, so EXECUTION_FAILED sends the agent looking at its
+                            // ObjectScript. Name the container instead — the HTTP-fallback path
+                            // below already does, and a docker_only caller deserves the same answer.
+                            err_result(serde_json::json!({
+                                "success": false,
+                                "error_code": crate::iris::connection::ERR_CONTAINER_UNREACHABLE,
+                                "error": detail,
                                 "execution_path": exec_path,
                             }))
                         } else {
@@ -6850,8 +6896,9 @@ Methods:
     )]
     async fn iris_interop_query(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch5::IrisInteropQueryParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let what = p.get("what").and_then(|v| v.as_str()).unwrap_or("logs");
         let _iris_arc_hold: Option<Arc<IrisConnection>> =
             match p.get("server").and_then(|v| v.as_str()) {
@@ -6948,8 +6995,9 @@ Methods:
         output_schema = output_schemas::oneof_output_schema::<IrisContainersResponse>()    )]
     async fn iris_containers(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch2::IrisContainersParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let action = p.get("action").and_then(|v| v.as_str()).unwrap_or("list");
         let name = p
             .get("name")
@@ -6995,8 +7043,9 @@ Methods:
         output_schema = output_schemas::oneof_output_schema::<IrisProductionItemResponse>()    )]
     async fn iris_production_item(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch5::IrisProductionItemParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let action = p
             .get("action")
             .and_then(|v| v.as_str())
@@ -7055,8 +7104,9 @@ Methods:
     )]
     async fn iris_message_body(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch5::IrisMessageBodyParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let message_id = p
             .get("message_id")
             .and_then(|v| v.as_str())
@@ -7122,8 +7172,9 @@ Methods:
     )]
     async fn iris_business_rule_info(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch5::IrisBusinessRuleInfoParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let action = p
             .get("action")
             .and_then(|v| v.as_str())
@@ -7174,8 +7225,9 @@ Methods:
     )]
     async fn iris_production_diff(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch5::IrisProductionDiffParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let production = p
             .get("production")
             .and_then(|v| v.as_str())
@@ -7222,8 +7274,9 @@ Methods:
     )]
     async fn iris_credential_list(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch6::IrisCredentialListParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let iris_arc = self.iris_arc();
         let conn_ns = iris_arc
             .as_deref()
@@ -7247,8 +7300,9 @@ Methods:
     )]
     async fn iris_credential_manage(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch6::IrisCredentialManageParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let iris_arc = self.iris_arc();
         let conn_ns = iris_arc
             .as_deref()
@@ -7293,8 +7347,9 @@ Methods:
     )]
     async fn iris_lookup_manage(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch6::IrisLookupManageParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let iris_arc = self.iris_arc();
         let conn_ns = iris_arc
             .as_deref()
@@ -7332,8 +7387,9 @@ Methods:
     )]
     async fn iris_lookup_transfer(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch6::IrisLookupTransferParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let iris_arc = self.iris_arc();
         let conn_ns = iris_arc
             .as_deref()
@@ -7393,8 +7449,9 @@ Methods:
     )]
     async fn iris_admin(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch3::IrisAdminParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let action = p.get("action").and_then(|v| v.as_str()).unwrap_or("");
         let _iris_arc_hold: Option<Arc<IrisConnection>> =
             match p.get("server").and_then(|v| v.as_str()) {
@@ -8041,7 +8098,7 @@ Methods:
         description = "Hot-reload the IRIS connection pool from disk without restarting iad. Re-reads the workspace TOML config and the iad-native servers list, then atomically replaces the in-memory pool. Servers added or removed in the config file are available immediately. Returns {success, servers_loaded, servers, note} on success, or {success: false, error_code, error, note} if the config file cannot be parsed (the existing pool is preserved on parse errors). Error codes: TOML_PARSE_ERROR.",
         annotations(read_only_hint = true)
     )]
-    async fn iris_reload_pool(&self) -> Result<CallToolResult, McpError> {
+    async fn iris_reload_pool(&self, _: Parameters<NoParams>) -> Result<CallToolResult, McpError> {
         use crate::iris::{connection_pool, workspace_config};
 
         // Pre-validate the workspace TOML before swapping the pool.
@@ -8268,7 +8325,10 @@ Methods:
         description = "Import IRIS server definitions from VS Code / Cursor Server Manager into the iad-native config. Reads intersystems.servers from VS Code and Cursor settings.json. Servers already present in the iad-native config are skipped (no overwrite). Passwords are resolved from the OS keychain; servers where no keychain entry exists are imported without a password (listed in no_keychain). Returns {imported, skipped, no_keychain: [...]}. Restart iad after importing.",
         output_schema = output_schemas::oneof_output_schema::<IrisImportServersResponse>()
     )]
-    async fn iris_import_servers(&self) -> Result<CallToolResult, McpError> {
+    async fn iris_import_servers(
+        &self,
+        _: Parameters<NoParams>,
+    ) -> Result<CallToolResult, McpError> {
         use crate::iris::server_manager;
         use crate::iris::servers_config::{self, ServerEntry};
 
@@ -8438,8 +8498,9 @@ Methods:
     )]
     async fn compare_document(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch1::CompareDocumentParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let document = p
             .get("document")
             .and_then(|v| v.as_str())
@@ -8485,8 +8546,9 @@ Methods:
     )]
     async fn compare_namespace(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch1::CompareNamespaceParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let requested_ns = p
             .get("namespace")
             .and_then(|v| v.as_str())
@@ -8528,8 +8590,9 @@ Methods:
     )]
     async fn global_preview(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch1::GlobalPreviewParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let global = p
             .get("global")
             .and_then(|v| v.as_str())
@@ -8565,8 +8628,9 @@ Methods:
     )]
     async fn global_kill(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch1::GlobalKillParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let global = p
             .get("global")
             .and_then(|v| v.as_str())
@@ -8608,8 +8672,9 @@ Methods:
     )]
     async fn iris_namespace_list(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch2::IrisNamespaceListParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let server = p
             .get("server")
             .and_then(|v| v.as_str())
@@ -8627,8 +8692,9 @@ Methods:
     )]
     async fn iris_database_list(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch2::IrisDatabaseListParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let server = p
             .get("server")
             .and_then(|v| v.as_str())
@@ -8645,8 +8711,9 @@ Methods:
     )]
     async fn iris_system_performance(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch4::IrisSystemPerformanceParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let server = p
             .get("server")
             .and_then(|v| v.as_str())
@@ -8684,8 +8751,9 @@ Methods:
     )]
     async fn iris_mirror_status(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch4::IrisMirrorStatusParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let server = p
             .get("server")
             .and_then(|v| v.as_str())
@@ -8703,8 +8771,9 @@ Methods:
     )]
     async fn iris_namespace_create(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch2::IrisNamespaceCreateParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let name = p
             .get("name")
             .and_then(|v| v.as_str())
@@ -8733,8 +8802,9 @@ Methods:
     )]
     async fn iris_database_stats(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch2::IrisDatabaseStatsParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let db = p.get("db").and_then(|v| v.as_str()).map(|s| s.to_string());
         let server = p
             .get("server")
@@ -8756,8 +8826,9 @@ Methods:
     )]
     async fn journal_search(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch4::JournalSearchParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let start = p
             .get("start")
             .and_then(|v| v.as_str())
@@ -8793,8 +8864,9 @@ Methods:
     )]
     async fn query_audit_log(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch4::QueryAuditLogParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let user = p
             .get("user")
             .and_then(|v| v.as_str())
@@ -8834,8 +8906,9 @@ Methods:
         output_schema = output_schemas::oneof_output_schema::<StreamInspectResponse>()    )]
     async fn stream_inspect(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch7::StreamInspectParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let oid = p
             .get("oid")
             .and_then(|v| v.as_str())
@@ -8865,8 +8938,9 @@ Methods:
     )]
     async fn my_access(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch4::MyAccessParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let server = p
             .get("server")
             .and_then(|v| v.as_str())
@@ -8884,8 +8958,9 @@ Methods:
     )]
     async fn capability_matrix(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch4::CapabilityMatrixParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let user = p
             .get("user")
             .and_then(|v| v.as_str())
@@ -8910,8 +8985,9 @@ Methods:
     )]
     async fn hl7_schema_list(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch7::Hl7SchemaListParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let requested_ns = p
             .get("namespace")
             .and_then(|v| v.as_str())
@@ -8934,8 +9010,9 @@ Methods:
     )]
     async fn hl7_schema_inspect(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch7::Hl7SchemaInspectParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let schema = p
             .get("schema")
             .and_then(|v| v.as_str())
@@ -8976,8 +9053,9 @@ Methods:
     )]
     async fn mermaid_class(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch7::MermaidClassParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let class = p
             .get("class")
             .and_then(|v| v.as_str())
@@ -9007,8 +9085,9 @@ Methods:
     )]
     async fn mermaid_production(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch7::MermaidProductionParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let production = p
             .get("production")
             .and_then(|v| v.as_str())
@@ -9038,8 +9117,9 @@ Methods:
     )]
     async fn resolve_storage(
         &self,
-        Parameters(p): Parameters<AnyParams>,
+        Parameters(params): Parameters<params::batch7::ResolveStorageParams>,
     ) -> Result<CallToolResult, McpError> {
+        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let class = p
             .get("class")
             .and_then(|v| v.as_str())
@@ -9102,6 +9182,31 @@ impl ServerHandler for IrisTools {
                         return refusal.map(Into::into);
                     }
 
+                    // Unknown-parameter check, second (113 FR-015/FR-016). Second because the gate
+                    // is the security answer and it outranks the usability one: a caller with
+                    // writes disabled who also misspells a key on `global_kill` is told the gate
+                    // refused, not that they made a typo. And ahead of `tool_router.call`, so a
+                    // rejected call never enters the handler — nothing half-applies.
+                    //
+                    // One site for all 81 tools, off the advertised schema. A per-handler check is
+                    // one the eighty-second tool forgets.
+                    let advertised = self.accepted_params.get(request.name.as_ref());
+                    if let Some(accepted) = advertised {
+                        let unknown =
+                            param_check::unknown_keys(request.arguments.as_ref(), &accepted.names);
+                        if !unknown.is_empty() {
+                            self.record_call(&request.name, false);
+                            return err_result(serde_json::json!({
+                                "success": false,
+                                "error_code": param_check::ERR_UNKNOWN_PARAMETER,
+                                "error": param_check::unknown_parameter_message(
+                                    &request.name, &unknown, &accepted.names,
+                                ),
+                            }))
+                            .map(Into::into);
+                        }
+                    }
+
                     // T019: warn once when the connection is docker_only so operators know
                     // that HTTP headers (including User-Agent) cannot be set on this transport.
                     {
@@ -9129,9 +9234,43 @@ impl ServerHandler for IrisTools {
                         }
                     }
 
+                    // Located before dispatch because `request` is consumed by the call context, and
+                    // the answer to "which parameter was the wrong shape" needs the arguments.
+                    // Usually empty, and cheap when it is: the walk only visits keys the caller
+                    // actually sent. Nothing is refused on the strength of it — serde stays the
+                    // authority on what deserializes, so a schema this check reads differently from
+                    // the struct behind it can only make a message less specific, never reject a
+                    // call that used to work (FR-004).
+                    let mismatches = advertised
+                        .map(|a| {
+                            param_check::type_mismatches(request.arguments.as_ref(), &a.properties)
+                        })
+                        .unwrap_or_default();
+                    let tool_name = request.name.to_string();
+
                     let tcc =
                         rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-                    self.tool_router.call(tcc).await
+                    let answer = self.tool_router.call(tcc).await;
+
+                    // Normalize rmcp's deserialization refusal into the project's refusal shape
+                    // (113 FR-017). rmcp answers a bad argument type with bare `isError` text and no
+                    // `error_code`, which a client cannot branch on and a `structuredContent` reader
+                    // cannot see at all. Only that one refusal is rewritten; every handler answer,
+                    // success or failure, passes through untouched.
+                    if let Ok(rmcp::model::CallToolResponse::Complete(ref result)) = answer {
+                        if let Some(serde_text) = param_check::deserialization_failure(result) {
+                            self.record_call(&tool_name, false);
+                            return err_result(serde_json::json!({
+                                "success": false,
+                                "error_code": param_check::ERR_INVALID_PARAMS,
+                                "error": param_check::invalid_params_message(
+                                    &tool_name, &mismatches, &serde_text,
+                                ),
+                            }))
+                            .map(Into::into);
+                        }
+                    }
+                    answer
                 }),
             )
             .await
@@ -9193,7 +9332,13 @@ impl ServerHandler for IrisTools {
         _context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::ListToolsResult, rmcp::ErrorData> {
         let mut tools = self.tool_router.list_all();
+        let suppressed = std::env::var("IRIS_SUPPRESS_TOOL_DESCRIPTION")
+            .map(|v| parse_suppressed_descriptions(&v))
+            .unwrap_or_default();
         for tool in tools.iter_mut() {
+            if suppressed.contains(tool.name.as_ref()) {
+                tool.description = Some(std::borrow::Cow::Borrowed(""));
+            }
             let schema = std::sync::Arc::make_mut(&mut tool.input_schema);
             normalize_schema_openapi3(schema);
             // Strip outputSchema from tools/list — clients (Cursor, VS Code) do not use it
@@ -9222,6 +9367,27 @@ impl ServerHandler for IrisTools {
 /// above every current toolset's real tool count rather than at a value that would actually
 /// paginate by default.
 const DEFAULT_LIST_TOOLS_PAGE_SIZE: usize = 200;
+
+/// Tool names read out of `IRIS_SUPPRESS_TOOL_DESCRIPTION`.
+///
+/// The variable exists so an eval run can ask one question the rest of the suite cannot: is the
+/// advertised schema enough on its own? Blanking a tool's prose leaves its `inputSchema` as the
+/// only contract, which is what SC-007 measures. The schema is never touched — a flag that removed
+/// the properties too would make every task fail and look like evidence the schemas are
+/// insufficient.
+///
+/// Commas and whitespace both separate, and empty segments are dropped, so an unset variable and
+/// one set to `""` behave identically. `*` is not special: it parses as a literal tool name and
+/// therefore matches nothing, because a run with every description blanked could not tell which
+/// tool's schema carried the call.
+pub fn parse_suppressed_descriptions(value: &str) -> std::collections::BTreeSet<String> {
+    value
+        .split([',', ' ', '\t', '\n'])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
 
 /// Slice a `list_tools` catalog (already sorted deterministically by
 /// `ToolRouter::list_all()`) into one page, given an opaque cursor from a prior response.
@@ -10986,28 +11152,53 @@ impl IrisTools {
             crate::tools::scm::ScmParams,
             iris_source_control
         );
-        // AnyParams-based dispatchers (admin, production, interop)
-        macro_rules! dispatch_any {
-            ($name:expr, $method:ident) => {
-                if tool == $name {
-                    return self
-                        .$method(Parameters(AnyParams(params)))
-                        .await
-                        .map_err(|e| format!("{e:?}"));
-                }
-            };
-        }
-        dispatch_any!("iris_admin", iris_admin);
+        dispatch!("iris_admin", params::batch3::IrisAdminParams, iris_admin);
         dispatch!("iris_production", IrisProductionParams, iris_production);
-        dispatch_any!("iris_interop_query", iris_interop_query);
-        dispatch_any!("iris_production_item", iris_production_item);
-        dispatch_any!("iris_credential_list", iris_credential_list);
-        dispatch_any!("iris_credential_manage", iris_credential_manage);
-        dispatch_any!("iris_lookup_manage", iris_lookup_manage);
-        dispatch_any!("iris_lookup_transfer", iris_lookup_transfer);
-        dispatch_any!("iris_message_body", iris_message_body);
-        dispatch_any!("iris_business_rule_info", iris_business_rule_info);
-        dispatch_any!("iris_production_diff", iris_production_diff);
+        dispatch!(
+            "iris_interop_query",
+            params::batch5::IrisInteropQueryParams,
+            iris_interop_query
+        );
+        dispatch!(
+            "iris_production_item",
+            params::batch5::IrisProductionItemParams,
+            iris_production_item
+        );
+        dispatch!(
+            "iris_credential_list",
+            params::batch6::IrisCredentialListParams,
+            iris_credential_list
+        );
+        dispatch!(
+            "iris_credential_manage",
+            params::batch6::IrisCredentialManageParams,
+            iris_credential_manage
+        );
+        dispatch!(
+            "iris_lookup_manage",
+            params::batch6::IrisLookupManageParams,
+            iris_lookup_manage
+        );
+        dispatch!(
+            "iris_lookup_transfer",
+            params::batch6::IrisLookupTransferParams,
+            iris_lookup_transfer
+        );
+        dispatch!(
+            "iris_message_body",
+            params::batch5::IrisMessageBodyParams,
+            iris_message_body
+        );
+        dispatch!(
+            "iris_business_rule_info",
+            params::batch5::IrisBusinessRuleInfoParams,
+            iris_business_rule_info
+        );
+        dispatch!(
+            "iris_production_diff",
+            params::batch5::IrisProductionDiffParams,
+            iris_production_diff
+        );
         dispatch!(
             "iris_generate",
             crate::tools::info::GenerateParams,
@@ -11083,7 +11274,11 @@ impl IrisTools {
             iris_generate_class
         );
         dispatch!("iris_generate_test", GenerateTestParams, iris_generate_test);
-        dispatch_any!("iris_containers", iris_containers);
+        dispatch!(
+            "iris_containers",
+            params::batch2::IrisContainersParams,
+            iris_containers
+        );
         dispatch!("skill_propose", NoParams, skill_propose);
         dispatch!("skill_optimize", SkillNameParams, skill_optimize);
         dispatch!("skill_share", SkillNameParams, skill_share);
@@ -11102,7 +11297,7 @@ impl IrisTools {
         );
         if tool == "iris_import_servers" {
             return self
-                .iris_import_servers()
+                .iris_import_servers(Parameters(NoParams {}))
                 .await
                 .map_err(|e| format!("{e:?}"));
         }
@@ -11126,26 +11321,98 @@ impl IrisTools {
         dispatch!("iris_ws_exec", ws_tools::WsExecParams, iris_ws_exec);
         dispatch!("iris_ws_close", ws_tools::WsCloseParams, iris_ws_close);
         // 072-c: comparison, namespace/db admin, observability, security, HL7, mermaid, storage
-        dispatch_any!("capability_matrix", capability_matrix);
-        dispatch_any!("compare_document", compare_document);
-        dispatch_any!("compare_namespace", compare_namespace);
-        dispatch_any!("global_kill", global_kill);
-        dispatch_any!("global_preview", global_preview);
-        dispatch_any!("hl7_schema_inspect", hl7_schema_inspect);
-        dispatch_any!("hl7_schema_list", hl7_schema_list);
-        dispatch_any!("iris_database_list", iris_database_list);
-        dispatch_any!("iris_database_stats", iris_database_stats);
-        dispatch_any!("iris_mirror_status", iris_mirror_status);
-        dispatch_any!("iris_system_performance", iris_system_performance);
-        dispatch_any!("iris_namespace_create", iris_namespace_create);
-        dispatch_any!("iris_namespace_list", iris_namespace_list);
-        dispatch_any!("journal_search", journal_search);
-        dispatch_any!("mermaid_class", mermaid_class);
-        dispatch_any!("mermaid_production", mermaid_production);
-        dispatch_any!("my_access", my_access);
-        dispatch_any!("query_audit_log", query_audit_log);
-        dispatch_any!("resolve_storage", resolve_storage);
-        dispatch_any!("stream_inspect", stream_inspect);
+        dispatch!(
+            "capability_matrix",
+            params::batch4::CapabilityMatrixParams,
+            capability_matrix
+        );
+        dispatch!(
+            "compare_document",
+            params::batch1::CompareDocumentParams,
+            compare_document
+        );
+        dispatch!(
+            "compare_namespace",
+            params::batch1::CompareNamespaceParams,
+            compare_namespace
+        );
+        dispatch!("global_kill", params::batch1::GlobalKillParams, global_kill);
+        dispatch!(
+            "global_preview",
+            params::batch1::GlobalPreviewParams,
+            global_preview
+        );
+        dispatch!(
+            "hl7_schema_inspect",
+            params::batch7::Hl7SchemaInspectParams,
+            hl7_schema_inspect
+        );
+        dispatch!(
+            "hl7_schema_list",
+            params::batch7::Hl7SchemaListParams,
+            hl7_schema_list
+        );
+        dispatch!(
+            "iris_database_list",
+            params::batch2::IrisDatabaseListParams,
+            iris_database_list
+        );
+        dispatch!(
+            "iris_database_stats",
+            params::batch2::IrisDatabaseStatsParams,
+            iris_database_stats
+        );
+        dispatch!(
+            "iris_mirror_status",
+            params::batch4::IrisMirrorStatusParams,
+            iris_mirror_status
+        );
+        dispatch!(
+            "iris_system_performance",
+            params::batch4::IrisSystemPerformanceParams,
+            iris_system_performance
+        );
+        dispatch!(
+            "iris_namespace_create",
+            params::batch2::IrisNamespaceCreateParams,
+            iris_namespace_create
+        );
+        dispatch!(
+            "iris_namespace_list",
+            params::batch2::IrisNamespaceListParams,
+            iris_namespace_list
+        );
+        dispatch!(
+            "journal_search",
+            params::batch4::JournalSearchParams,
+            journal_search
+        );
+        dispatch!(
+            "mermaid_class",
+            params::batch7::MermaidClassParams,
+            mermaid_class
+        );
+        dispatch!(
+            "mermaid_production",
+            params::batch7::MermaidProductionParams,
+            mermaid_production
+        );
+        dispatch!("my_access", params::batch4::MyAccessParams, my_access);
+        dispatch!(
+            "query_audit_log",
+            params::batch4::QueryAuditLogParams,
+            query_audit_log
+        );
+        dispatch!(
+            "resolve_storage",
+            params::batch7::ResolveStorageParams,
+            resolve_storage
+        );
+        dispatch!(
+            "stream_inspect",
+            params::batch7::StreamInspectParams,
+            stream_inspect
+        );
         // 065: doc search
         dispatch!(
             "iris_doc_search",
@@ -11154,7 +11421,10 @@ impl IrisTools {
         );
         // 093: hot-reload pool
         if tool == "iris_reload_pool" {
-            return self.iris_reload_pool().await.map_err(|e| format!("{e:?}"));
+            return self
+                .iris_reload_pool(Parameters(NoParams {}))
+                .await
+                .map_err(|e| format!("{e:?}"));
         }
         Err(format!("unknown tool: {tool}"))
     }

@@ -80,6 +80,11 @@ pub struct McpCommand {
     /// Use when you want IRIS tools only with no skill management surface.
     #[arg(long, env = "IRIS_NO_SKILLS")]
     pub no_skills: bool,
+    /// Advertise the named tool with an empty description in tools/list, leaving its input
+    /// schema intact. Repeatable. For eval runs that measure whether a tool's schema is
+    /// sufficient on its own; not something a normal client should set.
+    #[arg(long = "suppress-tool-description", value_name = "TOOL")]
+    pub suppress_tool_description: Vec<String>,
 }
 
 impl McpCommand {
@@ -109,6 +114,20 @@ impl McpCommand {
     }
 
     pub async fn run(self) -> Result<()> {
+        // The flag and `IRIS_SUPPRESS_TOOL_DESCRIPTION` name the same set, and `list_tools` reads
+        // the variable, so the flag folds into it rather than being carried separately down to the
+        // tool router. Folding rather than overwriting: an operator who set the variable and then
+        // passed the flag meant both, and silently dropping one is the #111 failure again.
+        if !self.suppress_tool_description.is_empty() {
+            let mut names = std::env::var("IRIS_SUPPRESS_TOOL_DESCRIPTION").unwrap_or_default();
+            for name in &self.suppress_tool_description {
+                if !names.is_empty() {
+                    names.push(',');
+                }
+                names.push_str(name);
+            }
+            std::env::set_var("IRIS_SUPPRESS_TOOL_DESCRIPTION", names);
+        }
         let toolset = Toolset::from_str(&self.toolset);
         tracing::info!(
             "iris-agentic-dev mcp starting — toolset={}",
@@ -391,6 +410,7 @@ mod tests {
             workspace: ".".into(),
             toolset: "merged".into(),
             no_skills: false,
+            suppress_tool_description: Vec::new(),
         }
     }
 
@@ -544,6 +564,7 @@ mod tests {
             workspace: ".".into(),
             toolset: "merged".into(),
             no_skills: false,
+            suppress_tool_description: Vec::new(),
         };
 
         let handle = tokio::spawn(cmd.run());
@@ -575,6 +596,7 @@ mod tests {
             workspace: ".".into(),
             toolset: "merged".into(),
             no_skills: false,
+            suppress_tool_description: Vec::new(),
         };
         assert_eq!(cmd.transport, "grpc");
     }

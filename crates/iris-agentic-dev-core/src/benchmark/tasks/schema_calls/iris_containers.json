@@ -1,0 +1,7 @@
+{
+  "tool": "iris_containers",
+  "request": "Which IRIS containers are running on this machine?",
+  "expect_keys": [
+    "action"
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "tool": "iris_system_performance",
+  "request": "Kick off a 30-minute performance profile on this instance.",
+  "expect_keys": [
+    "mode",
+    "profile"
+  ]
+}

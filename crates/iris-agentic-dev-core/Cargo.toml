@@ -581,6 +581,9 @@ path = "tests/unit/test_gate_check.rs"
 [[test]]
 name = "test_docs_contract"
 path = "tests/unit/test_docs_contract.rs"
+# The four-way parameter audit reads `read_keys` / `handler_uses_field` from the shared testing
+# helpers rather than keeping a second copy of the handler scanner in this file.
+required-features = ["testing"]
 
 [[test]]
 name = "test_vscode_payload"
@@ -696,4 +699,142 @@ required-features = ["testing"]
 [[test]]
 name = "test_cli_dispatch_helpers"
 path = "tests/unit/test_cli_dispatch_helpers.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_params_schema"
+path = "tests/unit/test_params_schema.rs"
+
+[[test]]
+name = "handler_keys"
+path = "tests/unit/handler_keys.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "schema_census"
+path = "tests/binary/schema_census.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "schema_batch1"
+path = "tests/binary/schema_batch1.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "params_batch1"
+path = "tests/integration/params_batch1.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "schema_batch2"
+path = "tests/binary/schema_batch2.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "params_batch2"
+path = "tests/integration/params_batch2.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "schema_batch3"
+path = "tests/binary/schema_batch3.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "params_batch3"
+path = "tests/integration/params_batch3.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "schema_batch4"
+path = "tests/binary/schema_batch4.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "params_batch4"
+path = "tests/integration/params_batch4.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "schema_batch5"
+path = "tests/binary/schema_batch5.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "params_batch5"
+path = "tests/integration/params_batch5.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "schema_batch6"
+path = "tests/binary/schema_batch6.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "params_batch6"
+path = "tests/integration/params_batch6.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "schema_batch7"
+path = "tests/binary/schema_batch7.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "params_batch7"
+path = "tests/integration/params_batch7.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "enum_rejection"
+path = "tests/integration/enum_rejection.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_enum_contract"
+path = "tests/unit/test_enum_contract.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_param_rejection"
+path = "tests/unit/test_param_rejection.rs"
+
+[[test]]
+name = "rejection_message"
+path = "tests/binary/rejection_message.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "rejection_order"
+path = "tests/integration/rejection_order.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "invalid_params"
+path = "tests/binary/invalid_params.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_suppress_description"
+path = "tests/unit/test_suppress_description.rs"
+# Reads BEHAVIOR_ENV_VARS to prove the new variable is registered there.
+required-features = ["testing"]
+
+[[test]]
+name = "suppress_description"
+path = "tests/binary/suppress_description.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "test_schema_tasks"
+path = "tests/unit/test_schema_tasks.rs"
+
+[[test]]
+name = "schema_task_coverage"
+path = "tests/binary/schema_task_coverage.rs"
+required-features = ["testing"]
+
+[[test]]
+name = "sc007_schema_only"
+path = "tests/integration/sc007_schema_only.rs"
 required-features = ["testing"]

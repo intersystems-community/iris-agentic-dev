@@ -15,6 +15,7 @@ const MAX_HITS: u8 = 10;
 const EXCERPT_LEN: usize = 600;
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct IrisDocSearchParams {
     pub query: String,
     pub version: Option<String>,

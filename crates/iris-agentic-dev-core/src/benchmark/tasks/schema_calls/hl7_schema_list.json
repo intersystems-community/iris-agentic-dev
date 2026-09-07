@@ -1,0 +1,7 @@
+{
+  "tool": "hl7_schema_list",
+  "request": "Which HL7 schemas are installed in the HSCUSTOM namespace?",
+  "expect_keys": [
+    "namespace"
+  ]
+}

@@ -234,10 +234,15 @@ fn test_e2e_select_container_updates_check_config() {
     }
     // In a single MCP session: select container, then check_config
     // iris_select_container consolidated into iris_containers(action=select) — FR-007.
+    //
+    // Both calls used to pass `namespace: "USER"`. `iris_containers` has never read a namespace —
+    // selecting a container rewrites the connection, and the namespace comes from the connection
+    // config — so the key was accepted and dropped. Spec 113 made the schema closed, which turned a
+    // silent no-op into a refusal; the fix is to stop sending it (audit row F12).
     let mut msgs = init_msgs();
     msgs.push(serde_json::json!({
         "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"iris_containers","arguments":{"action":"select","name":select_container_name(),"namespace":"USER"}}
+        "params":{"name":"iris_containers","arguments":{"action":"select","name":select_container_name()}}
     }));
     msgs.push(serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
@@ -276,7 +281,7 @@ fn test_e2e_select_container_execute_uses_new_connection() {
     let mut msgs = init_msgs();
     msgs.push(serde_json::json!({
         "jsonrpc":"2.0","id":2,"method":"tools/call",
-        "params":{"name":"iris_containers","arguments":{"action":"select","name":select_container_name(),"namespace":"USER"}}
+        "params":{"name":"iris_containers","arguments":{"action":"select","name":select_container_name()}}
     }));
     msgs.push(serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",

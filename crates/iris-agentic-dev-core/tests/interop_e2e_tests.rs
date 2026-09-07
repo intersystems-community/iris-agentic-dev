@@ -181,8 +181,10 @@ fn interop_logs_returns_structured_entries() {
     let responses = mcp_exchange(&[
         serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"e2e","version":"0.1"}}}),
         serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}),
-        // iris_interop_query replaces interop_logs
-        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"iris_interop_query","arguments":{"query_type":"error_log","limit":5}}}),
+        // iris_interop_query replaces interop_logs. The parameter is `what` and the value is
+        // `logs` — this call used to say `query_type: "error_log"`, neither of which the handler
+        // ever read, and it passed anyway because `AnyParams` accepted any key.
+        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"iris_interop_query","arguments":{"what":"logs","limit":5}}}),
     ]);
 
     let resp = find_response(&responses, 2).expect("no tool response");
@@ -200,8 +202,8 @@ fn interop_queues_returns_array() {
     let responses = mcp_exchange(&[
         serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"e2e","version":"0.1"}}}),
         serde_json::json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}),
-        // iris_interop_query replaces interop_queues
-        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"iris_interop_query","arguments":{"query_type":"queues"}}}),
+        // iris_interop_query replaces interop_queues; the parameter is `what`.
+        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"iris_interop_query","arguments":{"what":"queues"}}}),
     ]);
 
     let resp = find_response(&responses, 2).expect("no tool response");

@@ -1,0 +1,7 @@
+{
+  "tool": "iris_database_list",
+  "request": "List the databases on the instance registered as dev.",
+  "expect_keys": [
+    "server"
+  ]
+}

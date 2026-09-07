@@ -1,0 +1,8 @@
+{
+  "tool": "global_kill",
+  "request": "Delete the scratch global ^ZTestScratch. My confirmation token is 8f31c0.",
+  "expect_keys": [
+    "global",
+    "confirm_token"
+  ]
+}

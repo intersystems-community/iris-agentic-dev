@@ -50,6 +50,7 @@ fn err_json(code: &str, msg: &str) -> Result<rmcp::model::CallToolResult, rmcp::
 // ── Tool 1: resolve_dynamic_dispatch ─────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ResolveDynamicDispatchParams {
     /// Method name to search for (e.g. "ExecuteQuery", "Connect", "OnProcessInput").
     pub method_name: String,
@@ -153,6 +154,7 @@ pub async fn handle_resolve_dynamic_dispatch(
 // ── Tool 2: extract_message_map_routing ───────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ExtractMessageMapParams {
     /// Fully qualified Ensemble class name (e.g. "HS.Flash.Router").
     pub class_name: String,
@@ -358,6 +360,7 @@ async fn detect_bpl_dtl_routing(
 // ── Tool 3: find_subclass_implementations ────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct FindSubclassImplementationsParams {
     /// Method name (e.g. "OnProcessInput", "Execute").
     pub method_name: String,

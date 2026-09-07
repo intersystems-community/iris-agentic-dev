@@ -1,0 +1,9 @@
+{
+  "tool": "compare_document",
+  "request": "The class User.Order behaves differently on our dev box than on prod. Show me how the two copies differ; both instances are registered, as dev and prod.",
+  "expect_keys": [
+    "document",
+    "server_a",
+    "server_b"
+  ]
+}

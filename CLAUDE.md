@@ -27,14 +27,18 @@ docker ps --filter name=iris-dev-iris
 cargo build                          # build
 cargo clippy -- -D warnings          # lint (CI enforces clean)
 cargo fmt --all                      # format (CI enforces clean)
-cargo test                           # unit tests (no IRIS required)
-cargo test -- --include-ignored      # full suite (requires live container)
+cargo test --features testing        # unit tests (no IRIS required)
+cargo test --features testing -- --include-ignored   # full suite (requires live container)
 ```
+
+Always pass `--features testing`. A third of the test binaries declare
+`required-features = ["testing"]`, and cargo skips them silently without it — a bare `cargo test`
+reports green while never compiling the contract suites. CI passes the flag on every job.
 
 For integration/e2e tests always use `--test-threads=1`:
 
 ```bash
-cargo test --test '*' -- --test-threads=1 --include-ignored
+cargo test --features testing --test '*' -- --test-threads=1 --include-ignored
 ```
 
 ## Testing Philosophy — NON-NEGOTIABLE
@@ -98,6 +102,8 @@ Before closing any release (tagging, publishing, merging release branch):
 
 ## Active Technologies
 
+- Rust 2021 + `rmcp` 3.1.3, `schemars` 1 (`#[schemars(extend(...))]` for enums), `serde` — no new dependency (113-typed-tool-schemas)
+
 - Rust 2021 + `rmcp`, `tokio`, `serde`/`serde_json`/`toml`; config in `.iris-agentic-dev.toml`, no database (085-write-gate-integrity)
 
 - Dockerfile (no specific version), Bash (GHA steps), Markdown + `gcr.io/distroless/static-debian12` (base image), `docker/build-push-action@v6`, `docker/metadata-action@v5` (068-windows-docker)
@@ -107,6 +113,7 @@ Before closing any release (tagging, publishing, merging release branch):
 
 ## Recent Changes
 
+- 113-typed-tool-schemas (planned, not implemented): per-tool params structs replace `AnyParams` so all 81 tools advertise their properties/types/enums; `#[serde(deny_unknown_fields)]` everywhere (0 of 81 tools emit `additionalProperties: false` today); one `UNKNOWN_PARAMETER` validation site in `call_tool` after `gate_check`; plan at `specs/113-typed-tool-schemas/plan.md`
 - 089-iris-perf-monitoring: new `iris_mirror_status` tool (`%SYSTEM.Mirror` classmethods in %SYS); `iris_database_list` extended with `size_mb`/`free_space_mb`/`max_size_mb`/`free_pct` from `%SYS.DatabaseQuery:FreeSpace`; `my_access`/`capability_matrix` roles decoded from `$LB` via `$LISTTOSTRING`; Server Manager path prefix double-slash fixed; plan at `specs/089-iris-perf-monitoring/plan.md`
 - 088-windows-vscdb-credential-fallback: `resolve_credential` on Windows now falls back to `state.vscdb` (safeStorage / AES-256-GCM) when Windows Credential Manager has no entry; `vscode_payload.rs` moved to core; DPAPI error message includes current Windows username; `check-sm-credential` delegates to core
 - 087-execute-gate-bypass: `iris_execute` now enforces the destructive gate when `Kill ^<global>` appears literally in the code string; `contains_global_kill` in `write_gate.rs`; 22 unit tests + 4 live IRIS tests; indirection gap documented in spec and error message

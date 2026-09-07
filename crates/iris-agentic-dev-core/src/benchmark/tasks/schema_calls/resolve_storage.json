@@ -1,0 +1,8 @@
+{
+  "tool": "resolve_storage",
+  "request": "Which global does Sample.Person store its data in? The class is in the USER namespace.",
+  "expect_keys": [
+    "class",
+    "namespace"
+  ]
+}

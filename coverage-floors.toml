@@ -37,6 +37,7 @@ overall = 88
 "src/benchmark/container.rs"          = 43
 "src/benchmark/llm.rs"                = 85
 "src/benchmark/mod.rs"                = 52
+"src/benchmark/schema_tasks.rs"        = 86
 
 # top-level modules
 "src/elicitation.rs"                  = 97
@@ -113,6 +114,8 @@ overall = 88
 "src/tools/nopws.rs"                  = 98
 "src/tools/observability.rs"          = 17
 "src/tools/output_schemas.rs"         = 98
+"src/tools/param_check.rs"            = 93
+"src/tools/params/mod.rs"             = 98
 "src/tools/storage_guard.rs"          = 98
 "src/tools/scm.rs"                    = 58
 "src/tools/search.rs"                 = 53

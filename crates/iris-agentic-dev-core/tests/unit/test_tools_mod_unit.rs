@@ -1001,7 +1001,9 @@ async fn call_for_test_iris_interop_query_no_iris() {
     let _result = tools
         .call_for_test(
             "iris_interop_query",
-            serde_json::json!({"query_type": "messages"}),
+            // `what`, not `query_type`. This call said `query_type` for two years and passed,
+            // because `AnyParams` accepted any key and the handler defaulted to `logs`.
+            serde_json::json!({"what": "messages"}),
         )
         .await;
 }

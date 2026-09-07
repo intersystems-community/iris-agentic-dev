@@ -1,0 +1,10 @@
+{
+  "tool": "journal_search",
+  "request": "Find journal entries touching globals whose names start with Sample, between 2026-09-01 and 2026-09-02, and stop after 100 of them.",
+  "expect_keys": [
+    "global_pattern",
+    "start",
+    "end",
+    "max_entries"
+  ]
+}

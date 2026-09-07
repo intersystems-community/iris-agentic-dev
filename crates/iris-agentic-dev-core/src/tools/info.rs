@@ -24,6 +24,7 @@ fn default_limit() -> usize {
 // ── iris_info ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct InfoParams {
     /// What to fetch: documents, modified, namespace, metadata, jobs, csp_apps, csp_debug, sa_schema
     pub what: String,
@@ -111,6 +112,7 @@ pub async fn handle_iris_info(
 // ── iris_macro ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct MacroParams {
     /// Action: list, signature, location, definition, expand
     pub action: String,
@@ -194,6 +196,7 @@ pub async fn handle_iris_macro(
 // ── iris_debug ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DebugParams {
     /// Action: map_int, error_logs, capture, source_map
     pub action: String,
@@ -282,11 +285,13 @@ pub async fn handle_iris_debug(
 // Copilot, Claude Code, or any MCP client.
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct GenerateParams {
     /// What to generate — natural language description, e.g. "a Patient class with Name and DOB properties"
     pub description: String,
     /// Type: "class" (default) or "test"
     #[serde(default = "default_type")]
+    #[schemars(extend("enum" = ["class", "test"]))]
     pub gen_type: String,
     /// Existing class name to generate tests for (gen_type=test only)
     pub class_name: Option<String>,
@@ -412,6 +417,7 @@ pub async fn handle_iris_generate(
 // ── iris_table_info ───────────────────────────────────────────────────────────
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TableInfoParams {
     /// SQL table name in Schema.Table format (e.g. "SQLUser.MyTable" or "MyApp.Orders").
     pub table: String,

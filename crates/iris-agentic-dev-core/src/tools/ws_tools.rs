@@ -10,8 +10,9 @@ use serde::Deserialize;
 // ── Params structs ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WsOpenParams {
-    /// Named registered IRIS instance to open the session on. Defaults to the active connection.
+    /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
     #[serde(default)]
     pub server: Option<String>,
     /// IRIS namespace for the terminal session. Defaults to the connection's default namespace.
@@ -20,6 +21,7 @@ pub struct WsOpenParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WsExecParams {
     /// Session token returned by `iris_ws_open`.
     pub session: String,
@@ -28,6 +30,7 @@ pub struct WsExecParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WsCloseParams {
     /// Session token returned by `iris_ws_open`.
     pub session: String,

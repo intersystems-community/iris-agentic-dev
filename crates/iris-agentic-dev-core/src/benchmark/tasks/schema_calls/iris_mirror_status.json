@@ -1,0 +1,7 @@
+{
+  "tool": "iris_mirror_status",
+  "request": "Is mirroring healthy on the instance registered as prod-a?",
+  "expect_keys": [
+    "server"
+  ]
+}

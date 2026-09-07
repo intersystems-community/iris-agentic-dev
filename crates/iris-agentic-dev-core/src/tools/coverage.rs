@@ -10,8 +10,10 @@ fn err_json(code: &str, msg: &str) -> serde_json::Value {
 // ── Params ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct IrisCoverageParams {
     /// Mode: "start" | "stop" | "report" | "run" | "check"
+    #[schemars(extend("enum" = ["start", "stop", "report", "run", "check"]))]
     pub mode: String,
     /// Explicit list of class names (without .1) — mutually exclusive with package
     pub classes: Option<Vec<String>>,

@@ -48,6 +48,7 @@ impl ScmAction {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ScmParams {
     /// Action: status, menu, checkout, execute
     pub action: String,

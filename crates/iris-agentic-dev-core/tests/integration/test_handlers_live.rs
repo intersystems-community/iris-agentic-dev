@@ -1671,7 +1671,7 @@ async fn test_dispatch_iris_query_with_params() {
             "iris_query",
             serde_json::json!({
                 "query": "SELECT Name FROM %Dictionary.ClassDefinition WHERE Name = ?",
-                "params": ["%Library.Object"],
+                "parameters": ["%Library.Object"],
                 "namespace": "USER"
             }),
         )
@@ -1739,7 +1739,7 @@ async fn test_dispatch_iris_search_with_limit() {
             serde_json::json!({
                 "query": "Object",
                 "namespace": "USER",
-                "limit": 3
+                "documents": ["%Library.*.cls"]
             }),
         )
         .await;
@@ -2421,7 +2421,7 @@ async fn test_dispatch_iris_lookup_manage_get_nonexistent() {
             "iris_lookup_manage",
             serde_json::json!({
                 "action": "get",
-                "table_name": "NonExistentTable9999",
+                "table": "NonExistentTable9999",
                 "key": "somekey",
                 "namespace": "USER"
             }),
@@ -2446,7 +2446,7 @@ async fn test_dispatch_iris_lookup_manage_list_keys() {
             "iris_lookup_manage",
             serde_json::json!({
                 "action": "list_keys",
-                "table_name": "NonExistentTable9999",
+                "table": "NonExistentTable9999",
                 "namespace": "USER"
             }),
         )
@@ -2599,7 +2599,7 @@ async fn test_dispatch_iris_search_in_class() {
             "iris_search",
             serde_json::json!({
                 "query": "Property Name",
-                "document": "%Library.Object.cls",
+                "documents": ["%Library.Object.cls"],
                 "namespace": "USER"
             }),
         )
@@ -2622,9 +2622,9 @@ async fn test_dispatch_iris_search_class_type() {
             "iris_search",
             serde_json::json!({
                 "query": "Extends %Persistent",
-                "doc_type": "CLS",
+                "category": "CLS",
                 "namespace": "USER",
-                "limit": 5
+                "documents": ["%Library.*.cls"]
             }),
         )
         .await;
@@ -2919,7 +2919,7 @@ async fn test_dispatch_find_subclass_implementations() {
             serde_json::json!({
                 "query": "Extends %Persistent",
                 "namespace": "USER",
-                "limit": 3
+                "documents": ["%Library.*.cls"]
             }),
         )
         .await;
@@ -3265,7 +3265,7 @@ async fn test_dispatch_iris_production_status_full() {
             serde_json::json!({
                 "action": "status",
                 "namespace": "USER",
-                "full_status": true
+                "full": true
             }),
         )
         .await;
@@ -3434,7 +3434,7 @@ async fn test_dispatch_iris_search_case_sensitive() {
                 "query": "Object",
                 "namespace": "USER",
                 "case_sensitive": true,
-                "limit": 5
+                "documents": ["%Library.*.cls"]
             }),
         )
         .await;
@@ -3458,7 +3458,7 @@ async fn test_dispatch_iris_search_regex_mode() {
                 "query": "Class.*Definition",
                 "namespace": "USER",
                 "regex": true,
-                "limit": 5
+                "documents": ["%Library.*.cls"]
             }),
         )
         .await;
@@ -3482,7 +3482,7 @@ async fn test_dispatch_iris_search_with_category() {
                 "query": "Date",
                 "namespace": "USER",
                 "category": "CLS",
-                "limit": 5
+                "documents": ["%Library.*.cls"]
             }),
         )
         .await;
@@ -3645,7 +3645,7 @@ async fn test_dispatch_iris_get_log_cconsole() {
         .call_for_test(
             "iris_get_log",
             serde_json::json!({
-                "log_type": "cconsole",
+                // No log-type selector on this tool; see test_dispatch_iris_get_log_app.
                 "limit": 10
             }),
         )
@@ -3670,7 +3670,7 @@ async fn test_dispatch_iris_table_info_columns() {
             "iris_table_info",
             serde_json::json!({
                 "table": "%Dictionary.ClassDefinition",
-                "action": "columns",
+                // `iris_table_info` has no `action`; columns come back always.
                 "namespace": "USER"
             }),
         )
@@ -4210,7 +4210,7 @@ async fn test_dispatch_iris_table_info_indexes() {
             "iris_table_info",
             serde_json::json!({
                 "table": "%Dictionary.ClassDefinition",
-                "action": "indexes",
+                // No `action` on this tool; indexes come back with the table.
                 "namespace": "USER"
             }),
         )
@@ -4233,7 +4233,6 @@ async fn test_dispatch_iris_table_info_row_count() {
             "iris_table_info",
             serde_json::json!({
                 "table": "%Dictionary.ClassDefinition",
-                "action": "columns",
                 "include_row_count": true,
                 "namespace": "USER"
             }),
@@ -4447,7 +4446,8 @@ async fn test_dispatch_iris_get_log_app() {
         .call_for_test(
             "iris_get_log",
             serde_json::json!({
-                "log_type": "app",
+                // `iris_get_log` reads a stored log entry by `id`; it has no log-type
+                // selector, and never had one. This said `log_type: "app"`.
                 "limit": 5
             }),
         )
@@ -4470,9 +4470,9 @@ async fn test_dispatch_iris_get_log_with_id() {
         .call_for_test(
             "iris_get_log",
             serde_json::json!({
-                "log_type": "cconsole",
-                "limit": 5,
-                "store": true
+                // Neither `log_type` nor `store` exists on this tool; listing stored
+                // entries is what an id-less call does.
+                "limit": 5
             }),
         )
         .await;
@@ -6480,7 +6480,7 @@ async fn test_dispatch_kb_index_empty_dir() {
         .call_for_test(
             "kb_index",
             serde_json::json!({
-                "path": dir.path().to_str().unwrap()
+                "workspace_path": dir.path().to_str().unwrap()
             }),
         )
         .await;
@@ -7230,7 +7230,7 @@ async fn test_dispatch_kb_recall_empty() {
     let result = tools
         .call_for_test(
             "kb_recall",
-            serde_json::json!({ "query": "nonexistent topic xyz 99999", "namespace": "USER" }),
+            serde_json::json!({ "query": "nonexistent topic xyz 99999" }),
         )
         .await;
     let v = parse_result(result);
@@ -7254,7 +7254,7 @@ async fn test_dispatch_iris_symbols_v2() {
             serde_json::json!({
                 "query": "%SYS.Namespace",
                 "namespace": "USER",
-                "max_results": 5
+                "limit": 5
             }),
         )
         .await;
@@ -7354,7 +7354,8 @@ async fn test_dispatch_iris_get_log_v2() {
     let result = tools
         .call_for_test(
             "iris_get_log",
-            serde_json::json!({ "namespace": "USER", "max_lines": 10 }),
+            // The cap is `limit`, not `max_lines`, and this tool takes no `namespace`.
+            serde_json::json!({ "limit": 10 }),
         )
         .await;
     let v = parse_result(result);
@@ -7376,7 +7377,8 @@ async fn test_dispatch_resolve_dynamic_dispatch_v2() {
         .call_for_test(
             "resolve_dynamic_dispatch",
             serde_json::json!({
-                "class_name": "%SYS.Namespace",
+                // The scope is a package prefix, not a class name.
+                "package_prefix": "%SYS",
                 "method_name": "List",
                 "namespace": "USER"
             }),
@@ -7615,7 +7617,7 @@ async fn test_dispatch_kb_umbrella_recall() {
     let result = tools
         .call_for_test(
             "kb",
-            serde_json::json!({ "action": "recall", "query": "test query xyz", "namespace": "USER" }),
+            serde_json::json!({ "action": "recall", "query": "test query xyz" }),
         )
         .await;
     let v = parse_result(result);
@@ -8383,7 +8385,7 @@ async fn test_dispatch_iris_production_item_enable_nonexistent() {
             "iris_production_item",
             serde_json::json!({
                 "action": "enable",
-                "item_name": "IrisDevTest.NonExistentItem",
+                "item": "IrisDevTest.NonExistentItem",
                 "namespace": "USER"
             }),
         )
@@ -8406,7 +8408,7 @@ async fn test_dispatch_iris_production_item_disable_nonexistent() {
             "iris_production_item",
             serde_json::json!({
                 "action": "disable",
-                "item_name": "IrisDevTest.NonExistentItem",
+                "item": "IrisDevTest.NonExistentItem",
                 "namespace": "USER"
             }),
         )
@@ -8430,7 +8432,7 @@ async fn test_dispatch_iris_production_item_set_settings_empty() {
             "iris_production_item",
             serde_json::json!({
                 "action": "set_settings",
-                "item_name": "IrisDevTest.AnyItem",
+                "item": "IrisDevTest.AnyItem",
                 "namespace": "USER",
                 "settings": {}
             }),
@@ -8454,7 +8456,7 @@ async fn test_dispatch_iris_production_item_invalid_action_v3() {
             "iris_production_item",
             serde_json::json!({
                 "action": "bogus_action",
-                "item_name": "SomeItem",
+                "item": "SomeItem",
                 "namespace": "USER"
             }),
         )
@@ -9132,7 +9134,7 @@ async fn test_dispatch_agent_history_with_calls() {
     let _ = tools
         .call_for_test(
             "iris_info",
-            serde_json::json!({"action": "version", "namespace": "USER"}),
+            serde_json::json!({"what": "namespace", "namespace": "USER"}),
         )
         .await;
     let _ = tools
@@ -9144,7 +9146,8 @@ async fn test_dispatch_agent_history_with_calls() {
     let result = tools
         .call_for_test(
             "agent_history",
-            serde_json::json!({ "what": "history", "limit": 10 }),
+            // `agent_history` takes only `limit`. This said `what: "history"` and passed.
+            serde_json::json!({ "limit": 10 }),
         )
         .await;
     let v = parse_result(result);
@@ -9166,7 +9169,7 @@ async fn test_dispatch_skill_describe_not_found_v2() {
     let result = tools
         .call_for_test(
             "skill",
-            serde_json::json!({ "action": "describe", "name": "nonexistent-skill-xyz999", "namespace": "USER" }),
+            serde_json::json!({ "action": "describe", "name": "nonexistent-skill-xyz999" }),
         )
         .await;
     let v = parse_result(result);
@@ -9191,7 +9194,7 @@ async fn test_dispatch_iris_production_item_set_settings_nonempty() {
             "iris_production_item",
             serde_json::json!({
                 "action": "set_settings",
-                "item_name": "IrisDevNonExistentItem99999",
+                "item": "IrisDevNonExistentItem99999",
                 "settings": {"LogTraceEvents": "1"},
                 "namespace": "USER"
             }),
@@ -9360,7 +9363,8 @@ async fn test_dispatch_iris_credential_manage_invalid_action() {
     let result = tools
         .call_for_test(
             "iris_credential_manage",
-            serde_json::json!({"action": "bogus_action", "name": "TestCred", "namespace": "USER"}),
+            // The identifier is `id`; this said `name`, which the tool never read.
+            serde_json::json!({"action": "bogus_action", "id": "TestCred", "namespace": "USER"}),
         )
         .await;
     let v = parse_result(result);
@@ -9402,7 +9406,8 @@ async fn test_dispatch_iris_symbols_local_nonexistent_path() {
     let result = tools
         .call_for_test(
             "iris_symbols_local",
-            serde_json::json!({"query": "IrisDevNonExistentClass99999.*", "namespace": "USER"}),
+            // Local symbol search reads the workspace, not a namespace.
+            serde_json::json!({"query": "IrisDevNonExistentClass99999.*"}),
         )
         .await;
     let v = parse_result(result);
@@ -9453,10 +9458,7 @@ async fn test_dispatch_skill_propose_with_history_v2() {
             .await;
     }
     let result = tools
-        .call_for_test(
-            "skill",
-            serde_json::json!({"action": "propose", "namespace": "USER"}),
-        )
+        .call_for_test("skill", serde_json::json!({"action": "propose"}))
         .await;
     let v = parse_result(result);
     assert!(
@@ -9531,7 +9533,7 @@ async fn test_dispatch_skill_community_invalid_action() {
     let result = tools
         .call_for_test(
             "skill_community",
-            serde_json::json!({"action": "bogus_action_xyz", "namespace": "USER"}),
+            serde_json::json!({"action": "bogus_action_xyz"}),
         )
         .await;
     let v = parse_result(result);
@@ -9980,7 +9982,7 @@ async fn test_dispatch_iris_symbols_local_limit_one() {
             "iris_symbols_local",
             serde_json::json!({
                 "query": "*",
-                "workspace": workspace,
+                "workspace_path": workspace,
                 "limit": 1
             }),
         )
@@ -15326,7 +15328,9 @@ async fn test_admin_actions_iris_unreachable_no_connection() {
         serde_json::json!({"action": "list_user_roles", "username": "testuser"}),
         serde_json::json!({"action": "get_webapp", "path": "/csp/test"}),
         serde_json::json!({"action": "check_permission", "resource": "%Admin_Operate", "permission": "USE"}),
-        serde_json::json!({"action": "create_user", "username": "testuser", "password": "pass", "roles": []}),
+        // `roles` is a comma-separated string, and always was: the handler reads it with `as_str()`,
+        // so the `[]` this payload used to send was discarded before 113 declared the type.
+        serde_json::json!({"action": "create_user", "username": "testuser", "password": "pass", "roles": "%All"}),
         serde_json::json!({"action": "update_user", "username": "testuser", "enabled": true}),
         serde_json::json!({"action": "delete_user", "username": "testuser"}),
         serde_json::json!({"action": "create_namespace", "name": "TESTNS", "code_database": "USER", "data_database": "USER"}),
@@ -15415,7 +15419,9 @@ async fn test_admin_generator_error_paths_via_wiremock() {
     let gen_actions = [
         serde_json::json!({"action": "list_databases"}),
         serde_json::json!({"action": "list_webapps"}),
-        serde_json::json!({"action": "create_user", "username": "testuser", "password": "pass", "roles": []}),
+        // `roles` is a comma-separated string, and always was: the handler reads it with `as_str()`,
+        // so the `[]` this payload used to send was discarded before 113 declared the type.
+        serde_json::json!({"action": "create_user", "username": "testuser", "password": "pass", "roles": "%All"}),
         serde_json::json!({"action": "update_user", "username": "testuser", "enabled": true}),
         serde_json::json!({"action": "delete_user", "username": "testuser"}),
         serde_json::json!({"action": "create_namespace", "name": "TESTNS", "code_database": "USER", "data_database": "USER"}),
@@ -15595,7 +15601,9 @@ async fn test_admin_write_ops_interop_error_via_wiremock() {
     let tools = make_wiremock_tools(&server);
 
     let write_actions = [
-        serde_json::json!({"action": "create_user", "username": "testuser", "password": "pass", "roles": []}),
+        // `roles` is a comma-separated string, and always was: the handler reads it with `as_str()`,
+        // so the `[]` this payload used to send was discarded before 113 declared the type.
+        serde_json::json!({"action": "create_user", "username": "testuser", "password": "pass", "roles": "%All"}),
         serde_json::json!({"action": "update_user", "username": "testuser", "enabled": true}),
         serde_json::json!({"action": "delete_user", "username": "testuser"}),
         serde_json::json!({"action": "create_namespace", "name": "TESTNS", "code_database": "USER", "data_database": "USER"}),

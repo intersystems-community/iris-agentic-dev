@@ -1,0 +1,10 @@
+{
+  "tool": "iris_lookup_manage",
+  "request": "In the USER namespace, set the key ADT in the lookup table RouteMap to the value Epic.",
+  "expect_keys": [
+    "action",
+    "table",
+    "key",
+    "value"
+  ]
+}

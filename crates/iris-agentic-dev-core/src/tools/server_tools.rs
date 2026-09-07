@@ -16,6 +16,7 @@ pub const REMOVE_NOT_ALLOWED: &str = "REMOVE_NOT_ALLOWED";
 // ── Params structs ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AddServerParams {
     /// Unique name for this server (used in the `server` param of other tools).
     pub name: String,
@@ -32,10 +33,12 @@ pub struct AddServerParams {
     /// Optional human-readable description.
     pub description: Option<String>,
     /// URL scheme: `"http"` (default) or `"https"`.
+    #[schemars(extend("enum" = ["http", "https"]))]
     pub scheme: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RemoveServerParams {
     /// Name of the server to remove. Must be sourced from the iad-native config.
     pub name: String,
@@ -46,6 +49,7 @@ pub struct RemoveServerParams {
 /// Accepts either a pool-registered server name OR ad-hoc connection params.
 /// When `host` is provided, bypasses the pool and probes the target directly.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TestServerParams {
     /// Name of a registered server to probe. Mutually exclusive with `host`.
     pub name: Option<String>,
@@ -64,6 +68,7 @@ pub struct TestServerParams {
 
 /// Optional params for `iris_servers` (098-server-probe).
 #[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct IrisServersParams {
     /// When `true`, probe each server for reachability and include
     /// `reachable`, `latency_ms`, and `error` fields in the response.

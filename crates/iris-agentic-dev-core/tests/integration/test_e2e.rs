@@ -2161,8 +2161,7 @@ fn e2e_search_category_filter() {
         serde_json::json!({
             "query": "Director",
             "namespace": "USER",
-            "category": "CLS",
-            "max_results": 5
+            "category": "CLS"
         }),
     );
     assert!(
@@ -2193,8 +2192,7 @@ fn e2e_search_regex_option() {
             "query": "Director$",
             "namespace": "USER",
             "regex": true,
-            "category": "CLS",
-            "max_results": 5
+            "category": "CLS"
         }),
     );
     assert!(
@@ -4036,8 +4034,7 @@ fn e2e_search_case_insensitive_default() {
         serde_json::json!({
             "query": "director",
             "namespace": "USER",
-            "category": "CLS",
-            "max_results": 5
+            "category": "CLS"
         }),
     );
     assert!(
@@ -4073,8 +4070,7 @@ fn e2e_search_mac_category() {
         serde_json::json!({
             "query": "Main",
             "namespace": "USER",
-            "category": "MAC",
-            "max_results": 5
+            "category": "MAC"
         }),
     );
     assert!(
@@ -4091,8 +4087,7 @@ fn e2e_search_nonexistent_content_returns_empty() {
         "iris_search",
         serde_json::json!({
             "query": "ZZZNOMATCHXXX999",
-            "namespace": "USER",
-            "max_results": 5
+            "namespace": "USER"
         }),
     );
     assert!(
@@ -4111,25 +4106,29 @@ fn e2e_search_nonexistent_content_returns_empty() {
     }
 }
 
+/// `max_results` is not and never was an `iris_search` parameter — it belongs to
+/// `iris_doc(mode="list")`. Five tests in this file sent it to `iris_search`, and the one below was
+/// named for enforcing it: it asserted the cap was honoured, inside an `if success` that the open
+/// schema let through with an uncapped result set. That is the `max_chars` bug wearing a different
+/// name (audit row F10). Spec 113's closed schema refuses the key instead, and this test now measures
+/// the refusal, because a test that claims to check a cap must fail when there is no cap.
 #[test]
-fn e2e_search_max_results_respected() {
+fn e2e_search_refuses_max_results_because_it_is_not_a_search_parameter() {
     require_iris!();
     let result = call_tool(
         "iris_search",
         serde_json::json!({
             "query": "Class",
             "namespace": "USER",
+            "documents": ["*.cls"],
             "max_results": 2
         }),
     );
-    if result["success"] == true {
-        let results = result["results"].as_array().cloned().unwrap_or_default();
-        assert!(
-            results.len() <= 2,
-            "max_results=2 must not return more: {} results",
-            results.len()
-        );
-    }
+    assert!(
+        result["success"] != true,
+        "iris_search must not accept `max_results` — it has no result cap, so honouring the key \
+         would mean silently returning everything: {result}"
+    );
 }
 
 #[test]
@@ -4151,7 +4150,7 @@ fn e2e_search_result_has_document_and_context() {
         serde_json::json!({
             "query": unique,
             "namespace": "USER",
-            "max_results": 3
+            "documents": ["Test022.*.cls"]
         }),
     );
     if result["success"] == true {
@@ -5471,7 +5470,11 @@ fn e2e_message_body_nonexistent_id_returns_error() {
         "iris_message_body",
         serde_json::json!({
             "message_id": "999999999",
-            "acknowledge_phi": true,
+            // The wire name is camelCase: the PHI gate reads `acknowledgePhi` out of the raw
+            // arguments before dispatch, and `docs/tools.md` documents it that way. This test sent
+            // the snake_case spelling, so the acknowledgement it thought it was making never
+            // arrived — the call was passing for the wrong reason (audit row F11).
+            "acknowledgePhi": true,
             "namespace": "USER"
         }),
     );

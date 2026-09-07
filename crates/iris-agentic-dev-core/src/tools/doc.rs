@@ -42,6 +42,7 @@ impl DocMode {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct IrisDocParams {
     /// Operation, one of: get, put, delete, head, fragment, compiled, list, insert,
     /// delete_lines. Defaults to "get". get=fetch source, put=write whole doc,
@@ -65,6 +66,7 @@ pub struct IrisDocParams {
     /// Elicitation resume ID (from a prior elicitation_required response)
     pub elicitation_id: Option<String>,
     /// User's answer to the elicitation question ("yes" or "no")
+    #[schemars(extend("enum" = ["yes", "no"]))]
     pub elicitation_answer: Option<String>,
     /// If true and mode=put, compile the document after writing (default false).
     /// Saves a round-trip vs calling iris_doc(put) then iris_compile separately.
@@ -91,12 +93,15 @@ pub struct IrisDocParams {
     /// Only omit it for an append (mode=insert with no `line`), which is non-destructive.
     pub expected: Option<String>,
     // mode=compiled params
-    /// Compiled form type: "INT" (default) or "OBJ"
+    /// Compiled form type. Only "INT" (the default) is implemented; "OBJ" is rejected with
+    /// INVALID_PARAMS, so the enum offers the one value that works.
+    #[schemars(extend("enum" = ["INT"]))]
     pub compiled_type: Option<String>,
     // mode=list params
     /// Glob pattern for mode=list (required, e.g. "User.*" or "MyApp.*.cls")
     pub pattern: Option<String>,
     /// Document category filter: "CLS", "MAC", "INT", "INC", or "ALL" (default "ALL")
+    #[schemars(extend("enum" = ["CLS", "MAC", "INT", "INC", "ALL"]))]
     pub category: Option<String>,
     /// Max results for mode=list (default 200, max 1000)
     #[serde(default, deserialize_with = "de_opt_i64_lenient")]

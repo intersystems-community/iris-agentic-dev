@@ -7,6 +7,7 @@ use serde::Deserialize;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SearchParams {
     pub query: String,
     #[serde(default)]

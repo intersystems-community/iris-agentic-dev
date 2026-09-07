@@ -258,13 +258,39 @@ ASSERTS = re.compile(
 )
 
 
-def check_empty_tests() -> list[Finding]:
+ASSERT_HELPER_DECL = re.compile(
+    r"\bfn[ \t]+(assert_[A-Za-z0-9_]+)[ \t]*(?:<[^>(]*>)?[ \t]*\("
+)
+ASSERT_HELPER_CALL = re.compile(r"\b(assert_[A-Za-z0-9_]+)[ \t]*\(")
+
+
+def asserting_helpers(texts) -> set[str]:
+    """Names of `assert_*` functions whose own body asserts.
+
+    A test reading `assert_advertised_contracts(BATCH1)` does assert — the assertion is one
+    call away, in a helper fourteen tests share, and inlining it fourteen times to satisfy a
+    regex would be the gate driving the code rather than the other way round. Naming alone
+    is not enough to trust, though: `fn assert_nothing() {}` would sail through. So a call
+    counts as an assertion only when the helper it names carries one itself.
+    """
+    helpers: set[str] = set()
+    for text in texts:
+        for m in ASSERT_HELPER_DECL.finditer(text):
+            span = body_after(text, m.end())
+            if span and ASSERTS.search(strip_comments(text[span[0] : span[1]])):
+                helpers.add(m.group(1))
+    return helpers
+
+
+def empty_tests_findings(files: dict[str, str]) -> list[Finding]:
     found = []
-    for path in src_files() + test_files():
-        text = path.read_text(errors="replace")
+    helpers = asserting_helpers(files.values())
+    for path, text in files.items():
         for name, line, body, attrs in test_fns(text):
             code = strip_comments(body)
             if ASSERTS.search(code):
+                continue
+            if any(c in helpers for c in ASSERT_HELPER_CALL.findall(code)):
                 continue
             # `#[should_panic(expected = "...")]` puts the assertion in the attribute: the
             # test fails if the call returns, and fails if it panics with the wrong message.
@@ -278,13 +304,19 @@ def check_empty_tests() -> list[Finding]:
             found.append(
                 Finding(
                     "empty-tests",
-                    f"{rel(path)}:{line}",
+                    f"{path}:{line}",
                     f"`{name}` asserts nothing — no assert!, unwrap, expect, or `?`. It "
                     "reports ok without checking anything. Assert something, or delete it "
                     "and put the reason in a comment.",
                 )
             )
     return found
+
+
+def check_empty_tests() -> list[Finding]:
+    return empty_tests_findings(
+        {rel(p): p.read_text(errors="replace") for p in src_files() + test_files()}
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -493,16 +525,20 @@ DEVICE_CLASSES = re.compile(
 IO_SNAPSHOT = re.compile(r"Set t?io=\$IO", re.I)
 
 
-def check_device_capture() -> list[Finding]:
+def device_capture_findings(files: dict[str, str]) -> list[Finding]:
     found = []
-    for path in src_files():
+    for path, raw in files.items():
         # A gate's whole job is to name the dangerous APIs. `src/policy/` holds blocklist
         # token constants and the doc comments explaining them — nothing there is ever handed
         # to IRIS, so a hit is guaranteed noise. Noise is what teaches people to bypass a
         # gate, which is the failure this suite exists to prevent.
-        if "/src/policy/" in rel(path):
+        if "/src/policy/" in path:
             continue
-        text = blank_inline_tests(path.read_text(errors="replace"))
+        # `mask_comments` for the same reason `/src/policy/` is skipped: a doc comment naming
+        # `waittime^SystemPerformance` to explain what the routine answers is documentation,
+        # not a call, and nothing in a comment is ever handed to IRIS. Offsets survive the
+        # mask, so the reported line still points at the real line.
+        text = mask_comments(blank_inline_tests(raw))
         lines = text.splitlines()
         # $IO discipline is per-ObjectScript-block, and blocks here are raw string
         # literals. Approximate a block by a 40-line window, which is longer than any
@@ -517,7 +553,7 @@ def check_device_capture() -> list[Finding]:
             found.append(
                 Finding(
                     "device-capture",
-                    f"{rel(path)}:{i}",
+                    f"{path}:{i}",
                     f"calls `{hit.group(0)}`, which can switch the current device, with no "
                     "$IO snapshot within 20 lines. Wrap it: `Set tIO=$IO` / call / "
                     "`Use tIO`, then Write. Otherwise the output lands on the callee's "
@@ -525,6 +561,10 @@ def check_device_capture() -> list[Finding]:
                 )
             )
     return found
+
+
+def check_device_capture() -> list[Finding]:
+    return device_capture_findings(_src_texts())
 
 
 # ---------------------------------------------------------------------------
@@ -803,6 +843,329 @@ def check_tool_name_refs() -> list[Finding]:
     return out
 
 
+# ---------------------------------------------------------------------------
+# undeclared-params
+#
+# Shipped instance: 31 of 81 tools took `Parameters<AnyParams>`, a newtype around
+# `serde_json::Value`. schemars has nothing to reflect from that, so each of those tools
+# advertised `inputSchema: {"type": "object"}` — no properties, no types, no enums — and every
+# key a caller got wrong was silently dropped. `stream_inspect` documented a `max_chars`
+# parameter that existed nowhere in `crates/*/src`: a caller asking for 10,000 characters
+# received the entire stream, with no error, for five minor versions.
+#
+# Feature 113 converted all 31 to typed params structs. Three shapes reopen the hole:
+#
+#   1. An untyped referent — `Parameters<serde_json::Value>` is `AnyParams` under a new name.
+#   2. A params struct without `#[serde(deny_unknown_fields)]` — it declares its parameters
+#      and still accepts everything else, which documents the surface without constraining it.
+#      That is exactly the state `max_chars` lived in.
+#   3. A `#[serde(flatten)]` field typed `Value` or `Map` — this satisfies both rules above
+#      and accepts every key again, so the first two alone are not a guard.
+# ---------------------------------------------------------------------------
+
+STRUCT_DECL = re.compile(
+    r"^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?struct[ \t]+([A-Za-z0-9_]+)", re.M
+)
+FIELD_DECL = re.compile(
+    r"^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?([a-z_][A-Za-z0-9_]*)[ \t]*:[ \t]*([^,\n]+)",
+    re.M,
+)
+OPEN_REFERENT = re.compile(r"Parameters<\s*(?:serde_json::)?(Value|AnyParams)\s*>")
+FLATTEN_INTO_ANYTHING = re.compile(r"\bValue\b|\bMap<")
+
+
+def attr_run(text: str, decl_start: int) -> str:
+    """The attributes and doc comments immediately above the item starting at `decl_start`.
+
+    Walks lines backwards while they still look like part of one attribute block, so a
+    `#[derive(...)]` split across lines and the doc comment above it both come back as one
+    string. Stops at the first line of real code, which is what keeps the run belonging to
+    this item rather than the previous one.
+    """
+    out: list[str] = []
+    for ln in reversed(text[:decl_start].splitlines()):
+        s = ln.strip()
+        if not s or s.startswith(("#[", "//", "*", "/*", "]", ")", '"')):
+            if not s and not out:
+                continue
+            if not s:
+                break
+            out.append(ln)
+            continue
+        break
+    return "\n".join(reversed(out))
+
+
+def struct_items(text: str):
+    """Yield (name, decl_start, body) for every struct declaration with a `{...}` body."""
+    for m in STRUCT_DECL.finditer(text):
+        span = body_after(text, m.end())
+        if span is None:
+            continue
+        # A struct declared `struct X(Y);` has no brace body of its own; `body_after` would
+        # hand back the next unrelated block, so require the brace to follow immediately.
+        if text[m.end() : span[0]].strip() not in ("", "{"):
+            continue
+        yield m.group(1), m.start(), text[span[0] : span[1]], span[0]
+
+
+def params_referents(files: dict[str, str]) -> set[str]:
+    """Every struct named in a `Parameters<…>` position, reduced to its last path segment.
+
+    This is what makes the check about schemas rather than about naming: only a referent's
+    schema is published to a client, so only a referent can accept a key nobody declared.
+    `interop.rs` is full of internal `…Params` argument bundles built in Rust by a dispatcher
+    that already validated its own parameters — those never see a JSON object from outside.
+    """
+    out: set[str] = set()
+    for raw in files.values():
+        for m in PARAMS_REFERENT.finditer(mask_comments(raw)):
+            out.add(m.group(1).split("::")[-1])
+    return out
+
+
+def schema_bearing_params(files: dict[str, str]) -> set[str]:
+    """The referents, plus the params types they hold as fields.
+
+    A field typed `Vec<SearchTableParam>` is published as a nested schema and deserialized from
+    a client's JSON, so it can accept an undeclared key exactly like the outer struct. Two
+    passes cover the nesting this tree has; a fixed point is not worth the machinery.
+    """
+    names = params_referents(files)
+    for _ in range(2):
+        for raw in files.values():
+            text = blank_inline_tests(raw)
+            for name, _decl, body, _start in struct_items(text):
+                if name not in names:
+                    continue
+                for f in FIELD_DECL.finditer(body):
+                    for token in re.findall(r"[A-Za-z0-9_]+", f.group(2)):
+                        if token.endswith(("Params", "Param")):
+                            names.add(token)
+    return names
+
+
+def is_params_struct(name: str, attrs: str, referents: set[str]) -> bool:
+    """A struct that a tool deserializes a client's arguments into.
+
+    Three conditions, because each one alone is wrong: the name (`…Params`, or `…Param` for the
+    element type of a list parameter), the two derives that make it one (`Deserialize` reads the
+    arguments, `JsonSchema` publishes them — an output struct derives `Serialize` instead), and
+    an actual `Parameters<…>` use.
+    """
+    if not (name.endswith("Params") or name.endswith("Param")):
+        return False
+    if not ("Deserialize" in attrs and "JsonSchema" in attrs):
+        return False
+    return name in referents
+
+
+def undeclared_params_findings(files: dict[str, str]) -> list[Finding]:
+    """The three shapes, over a `{path: text}` mapping so a canary can pass a sample."""
+    found: list[Finding] = []
+    referents = schema_bearing_params(files)
+    for path, raw in sorted(files.items()):
+        # Comments quote `Parameters<AnyParams>` while explaining why it is gone — mask them
+        # or the explanation is reported as the defect.
+        code = mask_comments(blank_inline_tests(raw))
+
+        def line_of(offset: int) -> int:
+            return code.count("\n", 0, offset) + 1
+
+        for m in OPEN_REFERENT.finditer(code):
+            found.append(
+                Finding(
+                    "undeclared-params",
+                    f"{path}:{line_of(m.start())}",
+                    f"takes `Parameters<{m.group(1)}>`, which reflects to a client as "
+                    '`{"type": "object"}` — no properties, no types, no enums, and every '
+                    "misspelled key silently dropped. Declare a params struct with "
+                    "`#[derive(Deserialize, JsonSchema)]` and `#[serde(deny_unknown_fields)]`.",
+                )
+            )
+
+        for name, decl_start, body, body_start in struct_items(code):
+            attrs = attr_run(code, decl_start)
+            if not is_params_struct(name, attrs, referents):
+                continue
+            if "deny_unknown_fields" not in attrs:
+                found.append(
+                    Finding(
+                        "undeclared-params",
+                        f"{path}:{line_of(decl_start)}",
+                        f"`{name}` declares its parameters without "
+                        "`#[serde(deny_unknown_fields)]`, so the schema says "
+                        "`additionalProperties` is allowed and a misspelled key is accepted "
+                        "and ignored. That is the state the phantom `max_chars` parameter "
+                        "shipped in.",
+                    )
+                )
+            for f in FIELD_DECL.finditer(body):
+                fattrs = attr_run(body, f.start())
+                if "flatten" not in fattrs:
+                    continue
+                if not FLATTEN_INTO_ANYTHING.search(f.group(2)):
+                    continue
+                found.append(
+                    Finding(
+                        "undeclared-params",
+                        f"{path}:{line_of(body_start + f.start())}",
+                        f"`{name}.{f.group(1)}` flattens `{f.group(2).strip()}` into the "
+                        "parameter set, which accepts every key again while the struct still "
+                        "looks closed. Name the parameters instead.",
+                    )
+                )
+    return found
+
+
+# ---------------------------------------------------------------------------
+# prose-only-enum
+#
+# Shipped instance: `iris_system_performance` documented `mode: start | status | last_runid`
+# and `iris_admin` branched on fourteen `action` values, and in both cases the fixed value set
+# existed only in the English description. A client could not validate a value, could not offer
+# completion, and a wrong value cost a round-trip to find out. Worse, the GEPA optimizer
+# rewrites exactly that prose, so the only copy of the value set was the copy being edited by a
+# tool with no idea it was load-bearing.
+#
+# This is the measurable half of SC-004: a description that spells out a value set for a
+# parameter must be backed by that parameter advertising the set. Only two shapes are read as a
+# value set — `name: a | b | c`, and a comma list introduced by "one of" — because English prose
+# is full of commas and a looser pattern would flag sentences instead of contracts.
+#
+# `profile` on `iris_system_performance` is the case that proves the exemption is needed: IRIS
+# ships six profiles and an instance may define more, so the set is not fixed. Saying "not an
+# enum" in the field's doc comment is how that gets recorded — a sentence in the source, in
+# review, rather than a silent omission.
+# ---------------------------------------------------------------------------
+
+TOOL_ATTR = re.compile(r"#\[tool\(")
+TOOL_DESC = re.compile(r'description\s*=\s*"((?:[^"\\]|\\.)*)"')
+TOOL_FN = re.compile(r"async fn ([a-z0-9_]+)\s*\(")
+PARAMS_REFERENT = re.compile(r"Parameters<([A-Za-z0-9_:]+)>")
+ENUM_DECL = re.compile(
+    r"^[ \t]*(?:pub(?:\([^)]*\))?[ \t]+)?enum[ \t]+([A-Za-z0-9_]+)", re.M
+)
+
+# `mode: start | status | last_runid` — a parameter name, then a pipe-separated token list.
+PIPE_VALUES = re.compile(
+    r"`?([a-z_][a-z0-9_]*)`?[ \t]*(?:\(optional\)[ \t]*)?[:=][ \t]*"
+    r"(`?\"?[A-Za-z0-9_.\-]+\"?`?(?:[ \t]*\|[ \t]*`?\"?[A-Za-z0-9_.\-]+\"?`?)+)"
+)
+# `profile: for mode=start, one of test, 30mins, 4hours` — a comma list with an explicit
+# lead-in. Without the lead-in this would match any sentence containing a comma.
+ONE_OF_VALUES = re.compile(
+    r"`?([a-z_][a-z0-9_]*)`?[^.]{0,60}?\b(?:one of|valid values(?: are)?)\b[ \t]*:?[ \t]*"
+    r"((?:`?[A-Za-z0-9_.\-]+`?[^,.]{0,40},[ \t]*)+(?:or[ \t]+)?`?[A-Za-z0-9_.\-]+`?)"
+)
+
+
+def tool_blocks(text: str):
+    """Yield (tool_name, description, params_struct, line) for every `#[tool(...)]` handler.
+
+    The tool name is the handler's function name, which is what rmcp advertises. The params
+    struct is the referent in the signature, reduced to its last path segment — the batch
+    modules are addressed as `params::batch4::X` at the call site and declared as `X`.
+    """
+    starts = [m.start() for m in TOOL_ATTR.finditer(text)] + [len(text)]
+    for i in range(len(starts) - 1):
+        seg = text[starts[i] : starts[i + 1]]
+        desc = TOOL_DESC.search(seg)
+        fn = TOOL_FN.search(seg)
+        if not desc or not fn:
+            continue
+        open_brace = seg.find("{", fn.end())
+        sig = seg[fn.end() : open_brace if open_brace > 0 else len(seg)]
+        ref = PARAMS_REFERENT.search(sig)
+        yield (
+            fn.group(1),
+            desc.group(1).replace('\\"', '"'),
+            ref.group(1).split("::")[-1] if ref else None,
+            text.count("\n", 0, starts[i] + desc.start()) + 1,
+        )
+
+
+def advertised_value_sets(description: str) -> dict[str, str]:
+    """Parameter name -> the value list the description spells out for it."""
+    sets: dict[str, str] = {}
+    for pattern in (PIPE_VALUES, ONE_OF_VALUES):
+        for m in pattern.finditer(description):
+            sets.setdefault(m.group(1), m.group(2).strip().rstrip("."))
+    return sets
+
+
+def params_field_index(
+    files: dict[str, str],
+) -> tuple[dict[str, dict[str, str]], set[str]]:
+    """`{struct: {field: attrs+type}}` and the set of enum type names declared in the tree.
+
+    Doc comments are kept here: the "not an enum" exemption is written in one, so this is the
+    one index that must read them.
+    """
+    index: dict[str, dict[str, str]] = {}
+    enums: set[str] = set()
+    referents = schema_bearing_params(files)
+    for raw in files.values():
+        text = blank_inline_tests(raw)
+        enums.update(m.group(1) for m in ENUM_DECL.finditer(text))
+        for name, decl_start, body, _ in struct_items(text):
+            if not is_params_struct(name, attr_run(text, decl_start), referents):
+                continue
+            fields = index.setdefault(name, {})
+            for f in FIELD_DECL.finditer(body):
+                fields[f.group(1)] = attr_run(body, f.start()) + "\n" + f.group(2)
+    return index, enums
+
+
+def prose_only_enum_findings(files: dict[str, str]) -> list[Finding]:
+    index, enums = params_field_index(files)
+    found: list[Finding] = []
+    for path, raw in sorted(files.items()):
+        code = mask_comments(blank_inline_tests(raw))
+        for tool, description, struct, line in tool_blocks(code):
+            fields = index.get(struct or "")
+            if fields is None:
+                continue
+            for param, values in sorted(advertised_value_sets(description).items()):
+                declared = fields.get(param)
+                # A parameter the description names and the struct does not is a different
+                # bug, and `test_docs_contract.rs` already fails on it.
+                if declared is None:
+                    continue
+                if 'extend("enum"' in declared:
+                    continue
+                if any(re.search(rf"\b{e}\b", declared) for e in enums):
+                    continue
+                if "not an enum" in declared:
+                    continue
+                found.append(
+                    Finding(
+                        "prose-only-enum",
+                        f"{path}:{line}",
+                        f"`{tool}` documents a fixed value set for `{param}` "
+                        f"({values}) that the parameter does not advertise. The prose is the "
+                        "only copy of the contract, so a client cannot validate a value and "
+                        "the description optimizer can delete the set without noticing. Add "
+                        '`#[schemars(extend("enum" = [...]))]` to '
+                        f"`{struct}.{param}`, or say in its doc comment why this is `not an "
+                        'enum" (the way `profile` does).',
+                    )
+                )
+    return found
+
+
+def _src_texts() -> dict[str, str]:
+    return {rel(p): p.read_text(errors="replace") for p in src_files()}
+
+
+def check_undeclared_params() -> list[Finding]:
+    return undeclared_params_findings(_src_texts())
+
+
+def check_prose_only_enum() -> list[Finding]:
+    return prose_only_enum_findings(_src_texts())
+
+
 CHECKS = {
     "vacuous-tests": check_vacuous_tests,
     "empty-tests": check_empty_tests,
@@ -816,6 +1179,8 @@ CHECKS = {
     "binary-path": check_binary_path,
     "empty-config-value": check_empty_config_value,
     "stale-coverage-objects": check_stale_coverage_objects,
+    "undeclared-params": check_undeclared_params,
+    "prose-only-enum": check_prose_only_enum,
 }
 
 # Findings in these classes always fail the gate, baseline or not: the class is fully
@@ -827,6 +1192,8 @@ NO_BASELINE = {
     "binary-path",
     "empty-config-value",
     "stale-coverage-objects",
+    "undeclared-params",
+    "prose-only-enum",
 }
 
 

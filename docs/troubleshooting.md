@@ -23,6 +23,47 @@
 | `HTTP_EXECUTION_FAILED` from `iris_execute`                   | Atelier execution failed and no Docker fallback                        | Verify Atelier endpoint reachable; set `IRIS_CONTAINER` for Docker fallback                   |
 | `IRIS_UNREACHABLE`                                            | No IRIS connection discoverable                                        | Run `check_config` to see discovery state; check host/port/credentials                        |
 | `FILE_NOT_FOUND` from `iris_compile` or `compile`             | Local file path does not exist on disk                                 | Check the file path — the compile command requires the file to exist locally before uploading |
+| `UNKNOWN_PARAMETER`                                           | Call passed a parameter the tool does not declare                      | Use one of the names the error lists; see [Unknown parameters](#unknown-parameters)           |
+| `INVALID_ACTION`                                              | `action`/`mode`/`what` value outside the tool's enum                   | Read the enum out of the tool's `inputSchema`; see [Unknown parameters](#unknown-parameters)  |
+
+---
+
+## Unknown parameters
+
+Every tool declares its parameters and accepts nothing else. A name the tool does not
+declare comes back as `UNKNOWN_PARAMETER`, with the full accepted list and a spelling
+suggestion when the name is one edit away:
+
+```json
+{
+  "success": false,
+  "error_code": "UNKNOWN_PARAMETER",
+  "error": "stream_inspect does not accept \"max_chars\". Accepted parameters: namespace, oid, server."
+}
+```
+
+```json
+{
+  "success": false,
+  "error_code": "UNKNOWN_PARAMETER",
+  "error": "global_preview does not accept \"globl\". Accepted parameters: count, global, server. Did you mean \"global\"?"
+}
+```
+
+The check runs before the tool does, so a rejected call changes nothing on the server. It
+runs _after_ the write and destructive gates: with writes disabled, a misspelled key on
+`global_kill` is answered by the gate, because the security refusal is the more important
+one.
+
+Through 1.3.2, 31 tools advertised an open object with no declared properties and dropped
+unrecognised keys in silence. If a call that used to appear to work now fails with
+`UNKNOWN_PARAMETER`, it was never doing what the parameter name suggested —
+`stream_inspect(max_chars=10000)` returned the entire stream, every time.
+
+A tool that reads a fixed set of values for `action`, `mode`, or `what` advertises them as
+a JSON Schema `enum`. Anything outside the list is `INVALID_ACTION`, and the enum in the
+tool's `inputSchema` is the authoritative list. `iris_admin.action` has 25 values; the
+current set for every tool is in [docs/tools.md](tools.md).
 
 ---
 

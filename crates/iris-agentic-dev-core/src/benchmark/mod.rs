@@ -5,6 +5,7 @@
 pub mod cli_dispatch;
 pub mod container;
 pub mod llm;
+pub mod schema_tasks;
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;

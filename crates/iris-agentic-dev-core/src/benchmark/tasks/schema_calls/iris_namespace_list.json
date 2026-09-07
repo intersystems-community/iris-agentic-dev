@@ -1,0 +1,7 @@
+{
+  "tool": "iris_namespace_list",
+  "request": "Which namespaces exist on the instance registered as dev?",
+  "expect_keys": [
+    "server"
+  ]
+}

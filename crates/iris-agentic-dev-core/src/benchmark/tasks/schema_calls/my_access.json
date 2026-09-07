@@ -1,0 +1,7 @@
+{
+  "tool": "my_access",
+  "request": "What am I allowed to do on the instance registered as dev?",
+  "expect_keys": [
+    "server"
+  ]
+}

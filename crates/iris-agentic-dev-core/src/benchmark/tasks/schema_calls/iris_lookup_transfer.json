@@ -1,0 +1,9 @@
+{
+  "tool": "iris_lookup_transfer",
+  "request": "Export the lookup table RouteMap out of the USER namespace as XML so I can check it into source control.",
+  "expect_keys": [
+    "action",
+    "table",
+    "namespace"
+  ]
+}

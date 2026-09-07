@@ -62,6 +62,7 @@ async fn xecute(
 // ── skill ─────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SkillParams {
     /// Action: list, describe, search, forget, propose
     pub action: String,
@@ -219,6 +220,7 @@ pub async fn handle_skill(
 // ── skill_community ───────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SkillCommunityParams {
     /// Action: list or install
     pub action: String,
@@ -287,6 +289,7 @@ pub async fn handle_skill_community(
 // ── kb ────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct KbParams {
     /// Action: index or recall
     pub action: String,
@@ -389,6 +392,7 @@ pub async fn handle_kb(
 // ── agent_info ────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct AgentInfoParams {
     /// What to return: stats or history
     pub what: String,
