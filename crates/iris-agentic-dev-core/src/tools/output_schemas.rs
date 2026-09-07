@@ -3331,6 +3331,15 @@ pub struct CheckConfigOk {
     /// Where the server watches for `.iris-agentic-dev.toml` hot-reload — write a config
     /// file to this exact path to switch connections mid-session without a restart.
     pub config_watch_path: Option<String>,
+    /// Whether TLS certificate validation is on for IRIS-bound requests — the effective state,
+    /// after `IRIS_INSECURE`, `IRIS_TLS_VERIFY`, and a `tls_verify` config key have all had their
+    /// say (#127). `false` means certificates are not checked at all, which nothing else in the
+    /// output would tell you: a bad cert produces no complaint anywhere.
+    ///
+    /// There is no `tls_verify_source` companion to the two gate fields, because a config-file
+    /// declaration reaches the client by way of `IRIS_TLS_VERIFY`, so by the time this is read the
+    /// two are indistinguishable. Naming a source here would mean guessing one.
+    pub tls_verify: bool,
     pub objectscript_workspace: Option<String>,
     pub capabilities: CheckConfigCapabilities,
     /// Present only when the last config-file parse attempt failed.

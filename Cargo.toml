@@ -38,7 +38,11 @@ which = "6"
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 # IRIS HTTP client
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "cookies"], default-features = false }
+# `rustls-tls-native-roots`, not `rustls-tls`: the latter bundles webpki roots and never reads the
+# OS trust store, so a gateway serving a cert from a locally-installed CA (mkcert) failed the
+# handshake here while curl on the same machine accepted it (#127). tokio-tungstenite in the core
+# crate already asked for native roots, so the two clients disagreed about which certs were valid.
+reqwest = { version = "0.12", features = ["json", "rustls-tls-native-roots", "cookies"], default-features = false }
 # Docker discovery
 bollard = "0.21"
 # Serialization

@@ -5186,7 +5186,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active, (4) confirm which build of this MCP server is actually running (server_version) when multiple installs/forks may be registered. To switch connection mid-session without restart: call check_config first to get config_watch_path, then write a .iris-agentic-dev.toml to that exact path, then call any tool — the reload fires automatically. Fields: server_version, connected, connection_source (http|docker|disconnected), host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled, write_tools_source, destructive_tools_enabled, destructive_tools_source, capabilities. The two *_source fields say what decided each gate (operator_env|config_file|legacy_allow_prod|inferred_system_mode|inferred_namespace|inferred_default|fail_closed), so a gate you did not ask for is one field lookup rather than a guess. Skill: iris-agentic-dev.",
+        description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active, (4) confirm which build of this MCP server is actually running (server_version) when multiple installs/forks may be registered. To switch connection mid-session without restart: call check_config first to get config_watch_path, then write a .iris-agentic-dev.toml to that exact path, then call any tool — the reload fires automatically. Fields: server_version, connected, connection_source (http|docker|disconnected), host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled, write_tools_source, destructive_tools_enabled, destructive_tools_source, tls_verify, capabilities. The two *_source fields say what decided each gate (operator_env|config_file|legacy_allow_prod|inferred_system_mode|inferred_namespace|inferred_default|fail_closed), so a gate you did not ask for is one field lookup rather than a guess. Skill: iris-agentic-dev.",
         annotations(read_only_hint = true),
         output_schema = schema_for_output::<CheckConfigOk>()    )]
     async fn check_config(
@@ -5310,6 +5310,9 @@ impl IrisTools {
             "destructive_tools_enabled": conn.gates.destructive_enabled,
             "destructive_tools_source": conn.gates.destructive_source.as_str(),
             "config_watch_path": config_watcher_path,
+            // Read through the same resolver every IRIS-bound client uses, so the report cannot
+            // claim validation the requests do not do (#127).
+            "tls_verify": !crate::iris::connection::tls_insecure_from_env(),
             "objectscript_workspace": objectscript_workspace,
             "capabilities": capabilities,
         });

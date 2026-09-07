@@ -142,6 +142,36 @@ fn sanitized_agent_label() -> Option<String> {
     })
 }
 
+/// Decide whether to skip TLS certificate validation, given the two env var values.
+///
+/// Takes the values rather than reading the environment so the truth table can be tested without
+/// `set_var`. Call [`tls_insecure_from_env`] for the env-reading form.
+///
+/// `IRIS_INSECURE` is checked first and wins. `IRIS_INSECURE=false` is not an instruction to
+/// validate, only the absence of one, so `IRIS_TLS_VERIFY` still gets to speak — a shell that
+/// exports the first variable for tidiness must not silently override a `tls_verify = false`
+/// config. Anything unrecognised means validate: `IRIS_INSECURE=yes` is a typo, not consent, and
+/// failing closed produces a legible handshake error instead of silently unvalidated TLS.
+///
+/// Every caller must come through here. Four hand-copied versions of this decision used to exist
+/// and two of them read only `IRIS_INSECURE`, so `IRIS_TLS_VERIFY=false` was honoured for a single
+/// `iris_doc` get and ignored for a batch get and for every websocket (#127).
+pub fn tls_insecure(iris_insecure: Option<&str>, iris_tls_verify: Option<&str>) -> bool {
+    if let Some(v) = iris_insecure {
+        if v == "true" || v == "1" {
+            return true;
+        }
+    }
+    matches!(iris_tls_verify, Some("false") | Some("0"))
+}
+
+/// [`tls_insecure`] applied to `IRIS_INSECURE` and `IRIS_TLS_VERIFY`.
+pub fn tls_insecure_from_env() -> bool {
+    let insecure = std::env::var("IRIS_INSECURE").ok();
+    let verify = std::env::var("IRIS_TLS_VERIFY").ok();
+    tls_insecure(insecure.as_deref(), verify.as_deref())
+}
+
 /// Build a `reqwest::Client` that identifies this tool on every IRIS-bound request.
 ///
 /// Every client that sends requests to an IRIS Atelier REST endpoint MUST go through this
@@ -937,14 +967,7 @@ impl IrisConnection {
     /// TLS certificate validation is enabled by default; set `IRIS_INSECURE=true` to disable.
     /// Short-timeout client used only for the startup probe — fail fast rather than hanging.
     pub fn probe_client() -> anyhow::Result<reqwest::Client> {
-        let insecure = std::env::var("IRIS_INSECURE")
-            .ok()
-            .map(|v| v == "true" || v == "1")
-            .unwrap_or_else(|| {
-                std::env::var("IRIS_TLS_VERIFY")
-                    .map(|v| v == "false" || v == "0")
-                    .unwrap_or(false)
-            });
+        let insecure = tls_insecure_from_env();
         Ok(reqwest::Client::builder()
             .user_agent(user_agent(caller_mode()))
             .connect_timeout(std::time::Duration::from_secs(5))
@@ -957,14 +980,7 @@ impl IrisConnection {
 
     pub fn http_client() -> anyhow::Result<reqwest::Client> {
         // IRIS_INSECURE=true or IRIS_TLS_VERIFY=false both disable TLS cert validation.
-        let insecure = std::env::var("IRIS_INSECURE")
-            .ok()
-            .map(|v| v == "true" || v == "1")
-            .unwrap_or_else(|| {
-                std::env::var("IRIS_TLS_VERIFY")
-                    .map(|v| v == "false" || v == "0")
-                    .unwrap_or(false)
-            });
+        let insecure = tls_insecure_from_env();
         Ok(reqwest::Client::builder()
             // Identifies agent traffic in Web Gateway / IIS / Apache access logs and to
             // `%request.CgiEnvs("HTTP_USER_AGENT")`. Without it IRIS sees an empty

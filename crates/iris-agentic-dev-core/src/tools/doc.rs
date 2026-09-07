@@ -372,9 +372,9 @@ async fn handle_get(
     if !p.names.is_empty() {
         // Build a fresh client for batch gets with a shorter timeout so concurrent
         // requests fail fast and the handler returns within the MCP response deadline.
-        let insecure = std::env::var("IRIS_INSECURE")
-            .map(|v| v == "true" || v == "1")
-            .unwrap_or(false);
+        // Via the shared resolver: this copy read only IRIS_INSECURE, so a caller who set
+        // IRIS_TLS_VERIFY=false got working single gets and failing batch gets (#127).
+        let insecure = crate::iris::connection::tls_insecure_from_env();
         let batch_client =
             iris_http_client(Some(std::time::Duration::from_secs(5)), insecure, false)
                 .unwrap_or_else(|_| client.clone());

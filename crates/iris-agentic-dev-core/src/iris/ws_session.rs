@@ -333,9 +333,9 @@ impl Default for WsSessionPool {
 /// `"k=v; k2=v2"` cookie string for use in the WS handshake.
 async fn get_csp_session_cookie(conn: &IrisConnection) -> Result<String, McpError> {
     // Use a fresh client without cookie_store so we can see raw Set-Cookie headers.
-    let insecure = std::env::var("IRIS_INSECURE")
-        .map(|v| v == "1" || v == "true")
-        .unwrap_or(false);
+    // Via the shared resolver: this copy read only IRIS_INSECURE, so IRIS_TLS_VERIFY=false could
+    // not get a websocket its own cookie fetch (#127).
+    let insecure = crate::iris::connection::tls_insecure_from_env();
     let client = iris_http_client(None, insecure, false)
         .map_err(|e| McpError::internal_error(format!("HTTP client build failed: {e}"), None))?;
 

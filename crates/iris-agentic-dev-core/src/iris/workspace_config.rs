@@ -21,6 +21,16 @@ pub struct WorkspaceConfig {
     /// URL scheme: "http" or "https". Defaults to "http".
     /// Set to "https" for TLS-protected IRIS web gateways.
     pub scheme: Option<String>,
+    /// Validate the gateway's TLS certificate. Defaults to `true` (absent = validate).
+    ///
+    /// Set `false` for a self-signed cert that is not in the OS trust store. A cert from a
+    /// locally-installed CA (mkcert and friends) needs nothing here — the HTTP client reads the
+    /// OS trust store, so those verify normally.
+    ///
+    /// Exported as `IRIS_TLS_VERIFY`, which is what the HTTP and websocket clients read, and
+    /// declaring it here wins over an inherited env var the way every other connection setting
+    /// does (#127). `None` means "declare nothing", leaving any env var in force.
+    pub tls_verify: Option<bool>,
     pub username: Option<String>,
     pub password: Option<String>,
     /// When true, skip HTTP/Atelier REST and use docker exec exclusively.
@@ -715,6 +725,10 @@ pub fn build_workspace_config_json(
             "container": cfg.workspace.container,
             "namespace": cfg.workspace.namespace,
             "running": running,
+            // Null when undeclared. check_config makes no network calls, so this is the only
+            // place an operator sees that certificate validation is off before wondering why a
+            // bad cert never complained.
+            "tls_verify": cfg.workspace.tls_verify,
         })
     }
 }
@@ -740,6 +754,17 @@ pub fn workspace_config_to_connection(
     }
     if !cfg.enabled_tools.is_empty() && std::env::var("IRIS_ENABLED_TOOLS").is_err() {
         std::env::set_var("IRIS_ENABLED_TOOLS", cfg.enabled_tools.join(","));
+    }
+
+    // tls_verify is a connection setting, so the config wins over the environment — the opposite
+    // of the two tool-list keys above. Clearing IRIS_INSECURE on the way past matters: the
+    // resolver checks it first, so an inherited IRIS_INSECURE=true would make `tls_verify = true`
+    // a no-op, and the config would say "validate" while the process did not (#127).
+    if let Some(verify) = cfg.tls_verify {
+        std::env::set_var("IRIS_TLS_VERIFY", if verify { "true" } else { "false" });
+        if verify {
+            std::env::remove_var("IRIS_INSECURE");
+        }
     }
 
     // The two gate keys are NOT exported to the environment (085 FR-001/FR-002). They used to be
@@ -1145,6 +1170,7 @@ mod tests {
             username: None,
             password: None,
             scheme: None,
+            tls_verify: None,
             web_prefix: None,
             docker_only: false,
             nopws: false,
@@ -1170,6 +1196,7 @@ mod tests {
             username: None,
             password: None,
             scheme: None,
+            tls_verify: None,
             web_prefix: None,
             docker_only: false,
             nopws: false,
@@ -1196,6 +1223,7 @@ mod tests {
             username: None,
             password: None,
             scheme: None,
+            tls_verify: None,
             web_prefix: None,
             docker_only: false,
             nopws: false,
@@ -1242,6 +1270,7 @@ mod tests {
             username: None,
             password: None,
             scheme: Some("http".to_string()),
+            tls_verify: None,
             web_prefix: Some("iriscore".to_string()),
             docker_only: false,
             nopws: false,
@@ -1271,6 +1300,7 @@ mod tests {
             username: None,
             password: None,
             scheme: None,
+            tls_verify: None,
             web_prefix: None,
             docker_only: false,
             nopws: false,
@@ -1306,6 +1336,7 @@ mod tests {
             username: Some("myuser".to_string()),
             password: Some("mypass".to_string()),
             scheme: None,
+            tls_verify: None,
             web_prefix: None,
             docker_only: false,
             nopws: false,
@@ -1340,6 +1371,7 @@ mod tests {
             username: None,
             password: None,
             scheme: None,
+            tls_verify: None,
             web_prefix: None,
             docker_only: true,
             nopws: false,

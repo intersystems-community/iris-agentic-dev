@@ -21,3 +21,4 @@ mod schema_batch7;
 mod schema_census;
 mod schema_task_coverage;
 mod suppress_description;
+mod tls_trust_127;

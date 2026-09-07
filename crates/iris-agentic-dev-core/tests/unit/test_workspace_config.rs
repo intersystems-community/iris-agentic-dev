@@ -2272,3 +2272,141 @@ enabled_tools = ["iris_query"]
     );
     std::env::remove_var("IRIS_ENABLED_TOOLS");
 }
+
+// ── tls_verify (#127) ─────────────────────────────────────────────────────────
+//
+// `IRIS_INSECURE` / `IRIS_TLS_VERIFY` existed only as process environment, so the one connection
+// setting you might genuinely want to vary per project was the one setting a project-local config
+// file could not express. These parse the TOML string rather than building the struct, because the
+// failure being guarded against is serde silently ignoring a key that no field claims.
+
+#[test]
+fn test_load_parses_tls_verify_false() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        r#"
+host = "localhost"
+web_port = 9443
+scheme = "https"
+tls_verify = false
+"#,
+    );
+    let cfg = load_workspace_config(Some(dir.path().to_str().unwrap())).unwrap();
+    assert_eq!(cfg.tls_verify, Some(false));
+}
+
+#[test]
+fn test_load_parses_tls_verify_true() {
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(&dir, "host = \"localhost\"\ntls_verify = true\n");
+    let cfg = load_workspace_config(Some(dir.path().to_str().unwrap())).unwrap();
+    assert_eq!(cfg.tls_verify, Some(true));
+}
+
+#[test]
+fn test_tls_verify_absent_is_none_not_a_default() {
+    // `None` has to stay distinguishable from `Some(true)`: absent means "don't touch the
+    // environment", which is what lets an env var still work when no config declares the key.
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(&dir, r#"host = "localhost""#);
+    let cfg = load_workspace_config(Some(dir.path().to_str().unwrap())).unwrap();
+    assert_eq!(cfg.tls_verify, None);
+}
+
+#[test]
+fn test_tls_verify_false_exports_iris_tls_verify() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    std::env::remove_var("IRIS_TLS_VERIFY");
+    std::env::remove_var("IRIS_INSECURE");
+
+    let toml_str = r#"
+host = "localhost"
+web_port = 9443
+scheme = "https"
+tls_verify = false
+"#;
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    let _ = workspace_config_to_connection(&fleet.workspace, "USER");
+
+    assert_eq!(
+        std::env::var("IRIS_TLS_VERIFY").unwrap_or_default(),
+        "false",
+        "tls_verify = false must reach the HTTP client, which reads the env var"
+    );
+    std::env::remove_var("IRIS_TLS_VERIFY");
+}
+
+#[test]
+fn test_tls_verify_true_clears_a_stale_iris_insecure() {
+    // The resolver checks IRIS_INSECURE first, so leaving it set would make `tls_verify = true`
+    // a no-op — the config would say "validate" and the process would not.
+    let _lock = ENV_LOCK.lock().unwrap();
+    std::env::set_var("IRIS_INSECURE", "true");
+
+    let toml_str = "host = \"localhost\"\ntls_verify = true\n";
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    let _ = workspace_config_to_connection(&fleet.workspace, "USER");
+
+    assert!(
+        std::env::var("IRIS_INSECURE").is_err(),
+        "tls_verify = true must clear IRIS_INSECURE, got {:?}",
+        std::env::var("IRIS_INSECURE")
+    );
+    assert_eq!(std::env::var("IRIS_TLS_VERIFY").unwrap_or_default(), "true");
+    std::env::remove_var("IRIS_TLS_VERIFY");
+}
+
+#[test]
+fn test_tls_verify_in_config_overrides_the_env_var() {
+    // Documented precedence is toml > env for connection settings, and this is one. The tool-list
+    // keys deliberately go the other way; don't copy their pattern here.
+    let _lock = ENV_LOCK.lock().unwrap();
+    std::env::set_var("IRIS_TLS_VERIFY", "true");
+    std::env::remove_var("IRIS_INSECURE");
+
+    let toml_str = "host = \"localhost\"\ntls_verify = false\n";
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    let _ = workspace_config_to_connection(&fleet.workspace, "USER");
+
+    assert_eq!(
+        std::env::var("IRIS_TLS_VERIFY").unwrap_or_default(),
+        "false",
+        "the config file must win over a pre-set env var"
+    );
+    std::env::remove_var("IRIS_TLS_VERIFY");
+}
+
+#[test]
+fn test_tls_verify_absent_leaves_the_env_var_alone() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    std::env::set_var("IRIS_TLS_VERIFY", "false");
+
+    let toml_str = "host = \"localhost\"\n";
+    let fleet = load_fleet_config_from_str(toml_str).unwrap();
+    let _ = workspace_config_to_connection(&fleet.workspace, "USER");
+
+    assert_eq!(
+        std::env::var("IRIS_TLS_VERIFY").unwrap_or_default(),
+        "false",
+        "a config that declares nothing must not overwrite the environment"
+    );
+    std::env::remove_var("IRIS_TLS_VERIFY");
+}
+
+#[test]
+fn test_check_config_reports_tls_verify() {
+    // check_config makes no network calls, so this is the only place an operator can see that
+    // certificate validation is off before wondering why nothing complained about a bad cert.
+    let dir = tempfile::TempDir::new().unwrap();
+    write_toml(
+        &dir,
+        "container = \"iris-dev-iris\"\nhost = \"localhost\"\ntls_verify = false\n",
+    );
+    let json = build_workspace_config_json(Some(dir.path().to_str().unwrap()), &[]);
+    assert_eq!(
+        json["tls_verify"],
+        serde_json::json!(false),
+        "check_config must surface tls_verify, got: {json}"
+    );
+}

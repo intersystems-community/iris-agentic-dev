@@ -282,11 +282,45 @@ shell](tools.md#discovery-from-a-shell).
 | `IRIS_NAMESPACE`           | `USER`      | Default namespace                                                                                                                                                                             |
 | `IRIS_CONTAINER`           | _(empty)_   | Docker container name — required for Docker-dependent tools                                                                                                                                   |
 | `IRIS_SERVER_NAME`         | _(empty)_   | Server Manager server name when multiple are configured                                                                                                                                       |
+| `IRIS_TLS_VERIFY`          | `true`      | Set `false` (or `0`) to skip TLS certificate validation. Same effect as `tls_verify = false` in the config file, which wins over this variable.                                               |
+| `IRIS_INSECURE`            | `false`     | Blunter alias: `true` (or `1`) skips TLS certificate validation and outranks `IRIS_TLS_VERIFY`. Any other value, including a typo, means validate.                                            |
 | `OBJECTSCRIPT_WORKSPACE`   | `$PWD`      | Workspace root for `.iris-agentic-dev.toml` lookup                                                                                                                                            |
 | `IRIS_SEARCH_SYNC_TIMEOUT` | `30`        | Seconds to wait for synchronous search before falling back to async polling                                                                                                                   |
 | `IRIS_DISABLED_TOOLS`      | _(empty)_   | Comma-separated tool names to exclude, e.g. `iris_source_control,iris_admin`                                                                                                                  |
 | `IRIS_ENABLED_TOOLS`       | _(empty)_   | Comma-separated allowlist — when set, ONLY these tools remain, regardless of `--toolset`. Empty means no allowlist, not "expose zero tools." `IRIS_DISABLED_TOOLS` wins for any name in both. |
 | `IRIS_NO_SKILLS`           | `false`     | Set to `true` to remove all skill, KB, and learning-agent tools from `tools/list` and skip `--subscribe` fetching. Equivalent to `--no-skills`.                                               |
+
+---
+
+## TLS certificate validation
+
+Over `https`, certificates are validated against the **operating system** trust store, so a
+gateway serving a cert from a CA you installed locally (mkcert, a corporate internal CA)
+works without extra configuration. If `curl` on the same machine accepts the cert,
+iris-agentic-dev does too.
+
+To connect to a gateway whose cert cannot be validated — self-signed, expired, or a hostname
+mismatch — turn validation off for that project:
+
+```toml
+# .iris-agentic-dev.toml
+host = "iris.internal"
+web_port = 443
+scheme = "https"
+tls_verify = false
+```
+
+Leave `tls_verify` out to validate. It is a connection setting, so a value in the config file
+wins over `IRIS_TLS_VERIFY` in the environment — the opposite of the two tool-list variables.
+`IRIS_INSECURE=true` outranks both; any unrecognised value means validate, so a typo fails
+closed with a handshake error rather than quietly skipping the check.
+
+`check_config` reports the resolved state as `tls_verify`. It makes no network calls, so this
+is the only place to see that validation is off before a bad cert goes unremarked:
+
+```json
+{ "tls_verify": false }
+```
 
 ---
 

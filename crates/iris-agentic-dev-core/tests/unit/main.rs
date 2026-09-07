@@ -100,6 +100,7 @@ mod test_telemetry_redact;
 mod test_telemetry_types;
 mod test_test_target_layout;
 mod test_testing_helpers;
+mod test_tls_trust_127;
 mod test_tool_catalogue;
 mod test_tool_category_coverage;
 mod test_tools_fixes;
