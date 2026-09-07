@@ -107,5 +107,6 @@ mod test_toolset;
 mod test_trace_export;
 mod test_user_agent;
 mod test_vscode_payload;
+mod test_workflow_yaml;
 mod test_workspace_config;
 mod test_workspace_config_paths;

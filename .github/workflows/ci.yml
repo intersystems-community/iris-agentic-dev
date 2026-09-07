@@ -52,7 +52,9 @@ jobs:
       # test_mcp_binary_config is a module of the aggregated `bin_integration` target now, so it
       # needs the target name plus a filter.
       - name: Binary config integration tests
-        run: cargo test --locked -j1 -p iris-agentic-dev --features testing --test bin_integration test_mcp_binary_config:: -- --include-ignored --test-threads=1
+        # Quoted: the `::` module filter puts a colon-space in the scalar, which YAML would
+        # otherwise read as a nested mapping and reject the whole workflow at startup.
+        run: "cargo test --locked -j1 -p iris-agentic-dev --features testing --test bin_integration test_mcp_binary_config:: -- --include-ignored --test-threads=1"
         env:
           RUST_LOG: warn
           RUSTFLAGS: "-C link-arg=-fuse-ld=mold"
@@ -547,8 +549,9 @@ jobs:
       - name: Docs contract (docs/tools.md, docs/connecting.md, iad SKILL.md)
         # test_docs_contract is a module of the aggregated `unit` target now, so it needs
         # the target name plus a filter, and `--features testing` because the aggregate
-        # requires it.
-        run: cargo test --locked -p iris-agentic-dev-core --features testing --test unit test_docs_contract::
+        # requires it. Quoted for the same reason as the bin_integration step above: the
+        # trailing `::` leaves a colon-space that YAML would read as a nested mapping.
+        run: "cargo test --locked -p iris-agentic-dev-core --features testing --test unit test_docs_contract::"
 
   cross-compile-check:
     runs-on: ubuntu-latest
