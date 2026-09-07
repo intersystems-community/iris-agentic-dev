@@ -81,7 +81,9 @@ git push github vX.Y.Z
 - [ ] `build-vsix` job passes (npm test includes `serverVersion.test.cjs` — it checks package.json matches Cargo.toml)
 - [ ] `publish-vsix` job passes (VS Code Marketplace upload)
 - [ ] `update-homebrew-tap` job passes
-- [ ] GitHub release page shows VSIX, Linux/macOS/Windows tarballs, and checksums
+- [ ] GitHub release page shows six assets: the VSIX plus five bare binaries (linux-x86_64,
+      linux-aarch64, macos-x86_64, macos-arm64, windows-x86_64.exe). They are not tarballs, and
+      checksums live in the Homebrew formula rather than as release assets.
 
 ## 8. Post-release
 
