@@ -93,7 +93,7 @@ unless there is something non-obvious to say about it.
 ## Parameters are declared, and the set is closed
 
 Every tool advertises its parameters in its `inputSchema`: names, JSON types, and — where
-the handler branches on a fixed set of values — an `enum`. 29 parameters across 25 tools
+the handler branches on a fixed set of values — an `enum`. 28 parameters across 24 tools
 carry one, `iris_admin.action` (25 values) being the largest. The parameter tables in this
 file describe the same contract in prose; the schema is what a client can read without
 parsing English.
@@ -108,7 +108,7 @@ still reaches the handler and still comes back with the handler's own message na
 values it accepts.
 
 Every tool also sets `additionalProperties: false`. A parameter the tool does not declare
-is rejected with `UNKNOWN_PARAMETER` and the error lists the names it does accept. Until
+is rejected with `UNKNOWN_PARAMETER` and the error lists the names it does accept. Through
 1.3.2, 31 tools advertised an open object with no properties at all, so a misspelled or
 invented parameter was dropped in silence — `stream_inspect` was documented with a
 character cap that no code read, and a caller asking for 10,000 characters got the whole
@@ -124,10 +124,10 @@ Six tools take no parameters at all and declare an empty property set: `agent_st
 
 ## Tool catalog size
 
-This server exposes ~78–90 tools depending on toolset (`IRIS_TOOLSET=baseline|nostub|merged`),
-with full schemas and descriptions — on the order of 15–25K tokens if a client loads the whole
-catalog on every connection. Two independent ways to avoid paying that cost, and you don't have
-to pick just one:
+This server exposes 80 to 84 tools depending on toolset (`IRIS_TOOLSET=baseline|nostub|merged`),
+with full schemas and descriptions: 94 KB to 107 KB of JSON, roughly 26K to 30K tokens, if a
+client loads the whole catalog on every connection. Two independent ways to avoid paying that
+cost, and you don't have to pick just one:
 
 - **Client-side, zero server changes needed**: Anthropic's [Tool Search
   Tool](https://docs.claude.com/en/docs/agents-and-tools/tool-use/tool-search-tool)
@@ -155,23 +155,27 @@ Neither path connects to IRIS. Discovery works with no container running, no cre
 a closed port:
 
 ```bash
-iris-agentic-dev tool --list                    # 81 names + summaries
-iris-agentic-dev tool iris_query --schema       # one tool's contract
+iris-agentic-dev tool --list                      # 81 names + summaries
+iris-agentic-dev tool --list --json               # same, as {"count": 81, "tools": [...]}
+iris-agentic-dev tool iris_query --schema         # one tool's contract
 iris-agentic-dev tool iris_query --schema --json  # same, as one JSON document
 ```
+
+`--json` works on both paths. `--list` with a tool name is an error rather than a silent
+preference for one or the other.
 
 Why it exists — measured against this tree:
 
 | Reading the surface via              | Bytes   |
 | ------------------------------------ | ------- |
-| MCP `tools/list` (81 tools, compact) | 105,111 |
-| `tool --list`                        | 7,670   |
+| MCP `tools/list` (81 tools, compact) | 106,658 |
+| `tool --list`                        | 7,648   |
 | `tool <name> --schema`, smallest     | 231     |
 | `tool <name> --schema`, median       | 1,357   |
 | `tool <name> --schema`, largest      | 10,134  |
 
-An agent with only a shell reads the whole surface for 7.7 KB and then pays for the one or two
-schemas it actually needs, instead of 105 KB up front. A wrong name is refused with the nearest
+An agent with only a shell reads the whole surface for 7.6 KB and then pays for the one or two
+schemas it actually needs, instead of 107 KB up front. A wrong name is refused with the nearest
 accepted name, the same suggestion `UNKNOWN_PARAMETER` uses for misspelled parameters.
 
 `IRIS_TOOLSET` applies to `--list`, so the CLI lists the tier the server would serve.

@@ -39,11 +39,21 @@ matters too: without it the first failing target aborts the run and you never se
 
 ## 4. Docs and release notes
 
+- [ ] Drain `specs/next-release-notes.md` into `docs/release-notes/vX.Y.Z.md`, then reset it to an
+      empty staging state naming the release you just cut as the new baseline
 - [ ] `docs/release-notes/vX.Y.Z.md` written
 - [ ] Run `/no-ai-slop` detect on the release notes — address all findings
 - [ ] All links in the release notes resolve (no 404s, no wrong anchors)
 - [ ] Homebrew install command in README matches current tap formula
 - [ ] `docs/connecting.md`, `docs/tools.md` updated if tool surface changed
+
+The drain step is first because it is the one that gets skipped. `specs/next-release-notes.md` sat
+at v1.0.0 through fourteen tags because nothing here told anyone to empty it. Note that
+`.markdownlint-cli2.jsonc` ignores `specs/**`, so linting that file in place reports
+"Linting: 0 file(s)" — `prettier --write` still applies.
+
+Any measured figure in the notes (byte counts, tool counts, coverage percentages) has to be
+re-measured against the tree you are tagging, not copied forward from the spec that introduced it.
 
 ## 5. Skill regression baseline
 
