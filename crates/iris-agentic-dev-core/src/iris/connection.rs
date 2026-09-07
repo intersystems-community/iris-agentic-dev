@@ -156,13 +156,18 @@ fn sanitized_agent_label() -> Option<String> {
 /// Every caller must come through here. Four hand-copied versions of this decision used to exist
 /// and two of them read only `IRIS_INSECURE`, so `IRIS_TLS_VERIFY=false` was honoured for a single
 /// `iris_doc` get and ignored for a batch get and for every websocket (#127).
-pub fn tls_insecure(iris_insecure: Option<&str>, iris_tls_verify: Option<&str>) -> bool {
-    if let Some(v) = iris_insecure {
+///
+/// The parameters are named for what they hold rather than after the variables themselves: the
+/// tool-name gate reads a bare snake-cased `iris_…` identifier in a signature as a reference to a
+/// tool the router does not have, since it recognises `fn` and `let` declarations but not a
+/// parameter list.
+pub fn tls_insecure(insecure_var: Option<&str>, tls_verify_var: Option<&str>) -> bool {
+    if let Some(v) = insecure_var {
         if v == "true" || v == "1" {
             return true;
         }
     }
-    matches!(iris_tls_verify, Some("false") | Some("0"))
+    matches!(tls_verify_var, Some("false") | Some("0"))
 }
 
 /// [`tls_insecure`] applied to `IRIS_INSECURE` and `IRIS_TLS_VERIFY`.

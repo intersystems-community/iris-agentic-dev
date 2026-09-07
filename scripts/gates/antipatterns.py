@@ -219,10 +219,57 @@ def test_fns(text: str):
         )
 
 
+# Rust string and char literals, which both scanners below have to step over whole. A `/*`
+# or `//` inside one is data, not a comment: the test fixture for #135 held the text
+# `/* opened and never closed` in a `format!` string, the stripper read it as a real comment,
+# found no `*/`, and blanked the assertion after it plus the rest of the file. The test that
+# proves the gate is not blinded by an unterminated comment was reported as asserting nothing.
+RAW_STR_OPEN = re.compile(r"b?r(#*)\"")
+CHAR_LIT = re.compile(r"'(?:\\.|[^'\\\n])'")
+
+
+def literal_end(code: str, i: int) -> int | None:
+    """Index just past the literal starting at `i`, or None if none starts there.
+
+    An unterminated literal runs to end of input, which matches how the comment scanners
+    treat an unterminated comment: consume the rest rather than resynchronising on a guess.
+    """
+    ch = code[i]
+    prev = code[i - 1] if i else " "
+    if ch in "br" and not (prev.isalnum() or prev == "_"):
+        raw = RAW_STR_OPEN.match(code, i)
+        if raw:
+            close = '"' + raw.group(1)
+            end = code.find(close, raw.end())
+            return len(code) if end < 0 else end + len(close)
+    if ch == '"' or (ch == "b" and code[i + 1 : i + 2] == '"'):
+        j = i + (1 if ch == '"' else 2)
+        while j < len(code):
+            if code[j] == "\\":
+                j += 2
+                continue
+            if code[j] == '"':
+                return j + 1
+            j += 1
+        return len(code)
+    if ch == "'":
+        # Only a complete char literal. `&'a str` is a lifetime, and reading it as an open
+        # quote would swallow everything up to the next apostrophe in the file.
+        lit = CHAR_LIT.match(code, i)
+        if lit:
+            return lit.end()
+    return None
+
+
 def strip_comments(code: str) -> str:
     out = []
     i = 0
     while i < len(code):
+        lit = literal_end(code, i)
+        if lit is not None:
+            out.append(code[i:lit])
+            i = lit
+            continue
         if code[i : i + 2] == "//":
             nl = code.find("\n", i)
             i = len(code) if nl < 0 else nl
@@ -249,6 +296,10 @@ def mask_comments(code: str) -> str:
     out = list(code)
     i = 0
     while i < len(code):
+        lit = literal_end(code, i)
+        if lit is not None:
+            i = lit
+            continue
         if code[i : i + 2] == "//":
             nl = code.find("\n", i)
             end = len(code) if nl < 0 else nl

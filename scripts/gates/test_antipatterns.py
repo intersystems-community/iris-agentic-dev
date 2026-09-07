@@ -583,9 +583,93 @@ fn batch1_handlers_read_their_contract() {
 }
 """
 
+# A fixture that is *about* an unterminated block comment has to contain one. The comment
+# stripper read the `/*` inside this string literal as the start of a real comment, found no
+# `*/`, and swallowed the assertion and every line after it in the file — so the test that
+# proves the gate is not blinded by an unterminated comment was itself reported as asserting
+# nothing (#135's own test, flagged in CI run 34163864517).
+STRING_HELD_COMMENT_OPENER = """
+#[test]
+fn an_unterminated_block_comment_does_not_blind_the_gate() {
+    let cls = format!("Class My.Sneaky\\n/* opened and never closed\\n{REAL_GENERATOR}");
+    assert!(check_compile_time_code_mode(&cls, "My.Sneaky.cls").is_some());
+}
+
+#[test]
+fn a_later_test_in_the_same_file_still_gets_read() {
+    assert!(check_compile_time_code_mode("Class A {}", "A.cls").is_none());
+}
+"""
+
+STRING_HELD_LINE_COMMENT = """
+#[test]
+fn a_double_slash_in_a_literal_is_not_a_comment() {
+    let url = "https://host:52780/api/atelier/"; assert!(url.starts_with("https"));
+}
+"""
+
+
+def test_comment_masking_skips_string_literals() -> None:
+    print("comment masking")
+
+    code = 'let a = "/* not a comment";\nassert!(a.len() > 0);\n'
+    check(
+        "strip_comments keeps code after a `/*` held in a string literal",
+        "assert!" in ap.strip_comments(code),
+        ap.strip_comments(code),
+    )
+    check(
+        "mask_comments keeps code after a `/*` held in a string literal",
+        "assert!" in ap.mask_comments(code),
+        ap.mask_comments(code),
+    )
+
+    masked = ap.mask_comments(code)
+    check(
+        "mask_comments preserves length, so reported line numbers stay right",
+        len(masked) == len(code),
+        f"{len(masked)} vs {len(code)}",
+    )
+
+    commented = 'let a = 1; /* real "quoted" comment */ assert!(a == 1);\n'
+    check(
+        "a quote inside a real comment does not start a literal",
+        'real "quoted" comment' not in ap.mask_comments(commented),
+        ap.mask_comments(commented),
+    )
+
+    raw = 'let a = r#"/* inside a raw string "#; assert!(a.len() > 0);\n'
+    check(
+        "a raw string literal hides a `/*` too",
+        "assert!" in ap.mask_comments(raw),
+        ap.mask_comments(raw),
+    )
+
+    escaped = 'let a = "ends with a backslash \\\\"; /* c */ assert!(true);\n'
+    check(
+        "an escaped backslash ends the literal it belongs to",
+        "assert!" in ap.mask_comments(escaped)
+        and "/* c */" not in ap.mask_comments(escaped),
+        ap.mask_comments(escaped),
+    )
+
 
 def test_empty_tests() -> None:
     print("empty-tests")
+
+    found = ap.empty_tests_findings({"tests/b1.rs": STRING_HELD_COMMENT_OPENER})
+    check(
+        "silent on a test whose fixture string holds an unterminated `/*`",
+        not found,
+        messages(found),
+    )
+
+    found = ap.empty_tests_findings({"tests/b1.rs": STRING_HELD_LINE_COMMENT})
+    check(
+        "silent on a test whose fixture string holds a `//`",
+        not found,
+        messages(found),
+    )
 
     found = ap.empty_tests_findings(
         {"src/testing.rs": ASSERTING_HELPER, "tests/b1.rs": DELEGATING_TEST}
@@ -732,6 +816,7 @@ def main() -> int:
     test_undeclared_params()
     test_prose_only_enum()
     test_prose_only_enum_unseen_shapes()
+    test_comment_masking_skips_string_literals()
     test_empty_tests()
     test_device_capture()
     test_both_classes_are_never_baselined()
