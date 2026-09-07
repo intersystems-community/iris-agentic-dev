@@ -59,6 +59,7 @@ mod test_live_reload;
 mod test_llm_usage;
 mod test_lockfile_sync;
 mod test_mcp_peer_identity;
+mod test_no_tracked_local_config;
 mod test_nopws_detection;
 mod test_nopws_execute;
 mod test_output_schema;

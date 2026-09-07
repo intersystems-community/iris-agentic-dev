@@ -1,9 +1,0 @@
-# iris-agentic-dev workspace configuration
-# OrbStack maps iris-dev-iris:52773 to a dynamic host port (52780).
-# Without explicit host+web_port the MCP probes 52773/41773/51773/8080
-# and misses it entirely, falling back to docker exec.
-container = "iris-dev-iris"
-host = "localhost"
-web_port = 52780
-namespace = "USER"
-username = "_SYSTEM"

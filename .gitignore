@@ -93,3 +93,9 @@ __pycache__/
 
 # Mermaid VS Code extension output — machine-specific, not repo guidance
 .github/instructions/mermaid.instructions.md
+
+# Machine-local connection config: container name, host, web port. It outranks
+# environment variables (FR-006), so a committed copy points CI at whichever
+# container this developer happens to run — see
+# tests/unit/test_no_tracked_local_config.rs.
+/.iris-agentic-dev.toml
