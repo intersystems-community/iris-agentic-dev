@@ -244,18 +244,34 @@ fn session_id_and_since_id_accept_both_json_forms() {
     };
     let mut mcp = McpSession::start(&live_env());
 
+    // Sample deep enough that a run of session-less headers at the head of the queue cannot hide
+    // every sessioned message. This asked for 20 and went red once 22 session-less headers had
+    // accumulated: the first message carrying a SessionId sat at index 22, one past the window,
+    // while 107,065 of the namespace's 107,153 headers had one. The fixture had not disappeared,
+    // the sample was just too shallow to reach it.
     let sample = rows(
         &interop(
             &mut mcp,
-            serde_json::json!({"what": "messages", "limit": 20}),
+            serde_json::json!({"what": "messages", "limit": 200}),
         ),
         "messages",
     );
+    let with_session = sample
+        .iter()
+        .filter(|r| r.get("SessionId").and_then(|v| v.as_i64()).unwrap_or(0) > 0)
+        .count();
     let session = sample
         .iter()
         .filter_map(|r| r.get("SessionId").and_then(|v| v.as_i64()))
         .find(|id| *id > 0)
-        .unwrap_or_else(|| panic!("no message with a nonzero SessionId in the newest 20 rows"));
+        .unwrap_or_else(|| {
+            panic!(
+                "no message with a nonzero SessionId in the newest {} rows ({with_session} of \
+                 them carried one). This tests session_id routing, so it needs at least one \
+                 sessioned message; run a production in iris-dev-iris to create some.",
+                sample.len()
+            )
+        });
 
     let as_int = interop(
         &mut mcp,
