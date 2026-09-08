@@ -41,10 +41,11 @@ Two passes were needed. Findings from the first pass and what changed:
 - **CHK007 failed initially.** SC-004 read "the gate covers more skills", which is not a number.
   It now states one of nine rising to at least six of nine. SC-010 was added because the cost
   argument needed an outcome, not just a table.
-- **CHK012 failed initially.** The scorer diagnosis was written as fact. It is an inference from
-  a perfect correlation plus a missing credential, and the run artifact does not persist the
-  evidence that would confirm it. That is now stated as an assumption, and confirming it is
-  named as the first task of Story 1.
+- **CHK012 failed initially.** The scorer diagnosis was written as fact, on the strength of a
+  perfect correlation plus a missing credential. It was demoted to an assumption, and then the
+  clarification session read the scoring code and confirmed it: the failure handler returns a
+  score of zero, the client needs Bedrock or an API key, and the nightly supplies neither. The
+  assumption is now the code evidence.
 - **CHK003 partial and accepted.** Statistical power cannot be specified without stating a
   minimum detectable effect, a significance level, and an item count. Those three numbers are
   the requirement. The surrounding prose explains what they buy in plain terms ("three items
@@ -54,9 +55,10 @@ Two passes were needed. Findings from the first pass and what changed:
   skills are all named in Out of Scope. Replacing a benchmark task is explicitly in scope, since
   Story 3 cannot conclude without that option.
 
-Open item carried to planning, not a checklist failure: constitution clarification prompt 3
-caps a spec at 40 tasks. Twenty-two functional requirements across four stories will be close to
-that cap. The natural split, if it exceeds 40, is Stories 1 and 2 (make the measurement real and
-make the gate cover everything) as one spec and Stories 3 and 4 (retire the null task sets and
-size the measurement) as a follow-on, because Stories 3 and 4 depend on Story 1's output and
-nothing depends on them.
+Settled in the 2026-09-08 clarification session, not a checklist failure: constitution
+clarification prompt 3 caps a spec at 40 tasks, and twenty-two functional requirements across four
+stories would have crowded it. 118 now ships Stories 1 and 2 (make the measurement real, make the
+gate cover everything). Stories 3 and 4 (retire the null task sets, size the measurement) stay
+written out in the spec and ship as a follow-on, because they depend on Story 1's output and
+nothing depends on them. The deferred requirements and success criteria are marked as such in
+`spec.md`.

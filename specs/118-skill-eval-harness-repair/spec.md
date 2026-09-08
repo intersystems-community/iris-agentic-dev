@@ -33,6 +33,10 @@ per arm is three items versus one.
 Four things are wrong at once, and they interact. The stories below are ordered so that each
 one is worth shipping alone, and so that the earlier ones make the later ones measurable.
 
+This spec builds Stories 1 and 2: make the measurement real, and make the gate cover every skill
+it claims to. Stories 3 and 4 stay written out below and ship as a follow-on, because their
+verdicts are only trustworthy once the scorer works, and nothing depends on them.
+
 ### User Story 1 - A score of zero means the agent failed, not that the scorer did (Priority: P1)
 
 Six of the nine skills report exactly 0% in both arms. Those six are exactly the six whose
@@ -109,7 +113,7 @@ comparable" instead of a Δ.
 
 ---
 
-### User Story 3 - No task set stays in the corpus that measures nothing (Priority: P3)
+### User Story 3 - No task set stays in the corpus that measures nothing (Priority: P3, deferred)
 
 Seven task sets scored identically in both arms: the four ObjectScript pattern skills,
 iris-connectivity, objectscript-unit-test at 0-vs-0, and ensemble-production at 10-vs-10. A
@@ -143,7 +147,7 @@ or carries a recorded verdict and a deletion or replacement.
 
 ---
 
-### User Story 4 - The gate fires on effects, not on coin flips (Priority: P4)
+### User Story 4 - The gate fires on effects, not on coin flips (Priority: P4, deferred)
 
 At five runs over two tasks a skill contributes ten scored items per arm, so the smallest
 reportable difference is ten percentage points and the standard error of a lift change is
@@ -200,7 +204,25 @@ other and that the gate does not fire.
 - A skill is added with an eval config and no baseline. That is a new skill, not a regression,
   and must be reported distinctly from "not comparable".
 
+## Clarifications
+
+### Session 2026-09-08
+
+- Q: The judge is Claude Haiku via the Anthropic SDK and the nightly only supplies
+  `OPENAI_API_KEY`. How should the scorer authenticate in CI? → A: AWS Bedrock credentials.
+- Q: 22 FRs across four stories will crowd the 40-task cap. Split the spec? → A: Stories 1 and
+  2 ship as 118; Stories 3 and 4 become a follow-on.
+- Q: Which provenance mismatches make a baseline entry not comparable? → A: task identifiers,
+  scoring mode and scorer model identity block the comparison; tool-surface revision is
+  recorded and printed but advisory.
+- Q: With the power work deferred, what does 118 gate on after it rebaselines? → A: nothing.
+  Every skill gets a fresh entry and a printed Δ, and no per-skill result fails the run until
+  119 sizes the measurement.
+
 ## Requirements _(mandatory)_
+
+Stories 1 and 2 are this spec. Stories 3 and 4 keep their requirements below, marked deferred,
+because they are the follow-on's scope and reading them here is what makes the split legible.
 
 ### Functional Requirements
 
@@ -208,14 +230,18 @@ other and that the gate does not fire.
 
 - **FR-001**: The harness MUST verify that everything its scorer needs is present and reachable
   before the first billable agent session of a run, and MUST stop and name what is missing when
-  it is not.
+  it is not. The scorer authenticates through AWS Bedrock, so the check MUST cover the Bedrock
+  credentials the nightly supplies and MUST make one real scoring call, not just an env-var
+  presence test — a present-but-unauthorised role is the failure mode that produced the zeros.
 - **FR-002**: A scoring failure MUST be recorded as an unscored item, distinct from a score of
   zero, and MUST NOT contribute to either arm's pass rate.
 - **FR-003**: A run in which more than one scored item in ten came back unscored MUST be
   reported as invalid, MUST NOT be compared against a baseline, and MUST NOT update one.
 - **FR-004**: Every result record MUST name, per skill, the scoring mode used and the identity
   of the model that produced the scores. The current record names one model for the whole run
-  and names the wrong one.
+  and names the wrong one. It MUST record the model the client actually resolved, not the
+  constant it was requested under: on Bedrock this account maps the judge's Haiku constant to
+  `us.anthropic.claude-sonnet-4-6`, so a record that says "haiku" would be false.
 - **FR-005**: The harness MUST report, per skill and per arm, how many items were scored, how
   many were unscored, and the minimum detectable effect those counts buy.
 
@@ -226,18 +252,25 @@ other and that the gate does not fire.
 - **FR-007**: A baseline entry MUST record the provenance of its measurement: the date, the run
   identifier, the task identifiers used, the items scored per arm, the scoring mode and scorer
   identity, and the revision of the tool surface the agent saw.
-- **FR-008**: The harness MUST refuse to report a Δ against a baseline entry whose provenance
-  no longer matches the current run, and MUST report that skill as not comparable.
-- **FR-009**: The aggregate gate MUST distinguish four per-skill outcomes: regressed, held, new
-  skill, and not comparable. Not comparable for a skill that is supposed to be gated MUST fail
-  the run.
+- **FR-008**: The harness MUST refuse to report a Δ against a baseline entry whose task
+  identifiers, scoring mode or scorer model identity differ from the current run's, and MUST
+  report that skill as not comparable. A changed tool-surface revision MUST be recorded and
+  printed beside the Δ but MUST NOT by itself block the comparison: the tool surface changes on
+  most releases, and blocking on it would leave every entry permanently incomparable.
+- **FR-009**: The aggregate MUST distinguish four per-skill outcomes: regressed, held, new
+  skill, and not comparable. In this spec no per-skill outcome fails the run — the numbers are
+  reported and nothing is gated on them, because the measurement is not yet powered enough for
+  a failure to mean anything. The run itself MUST still fail on integrity conditions: an
+  invalid run under FR-003, a preflight failure under FR-001, or a threshold mismatch under
+  FR-010. Turning the per-skill outcomes into gate failures is the follow-on's FR-018.
 - **FR-010**: The regression threshold the aggregate step reports under MUST be the threshold it
   gates under. If the per-skill results were computed under a different threshold, the aggregate
   MUST recompute from the stored numbers or fail.
 - **FR-011**: After the rebaseline, every skill with an eval config MUST have either a baseline
-  entry or a recorded reason it is intentionally ungated.
+  entry or a recorded reason it is intentionally ungated. Every entry MUST be measured under the
+  repaired scorer; no pre-repair number survives the rebaseline.
 
-**Task-set signal**
+**Task-set signal** — deferred to the follow-on spec
 
 - **FR-012**: The harness MUST flag any skill whose two arms produced the same pass rate, and
   MUST NOT show that skill as ok.
@@ -254,7 +287,7 @@ other and that the gate does not fire.
   namespace the harness does not create. Two tasks in the current corpus name a namespace the
   harness never provisions.
 
-**Power and budget**
+**Power and budget** — deferred to the follow-on spec, except FR-023
 
 - **FR-017**: The harness MUST state its minimum detectable effect: a 25 percentage point change
   in lift, at one-sided significance 0.10 and 80% power, which needs 35 scored items per arm.
@@ -269,11 +302,17 @@ other and that the gate does not fire.
 - **FR-021**: The estimated cost of a scheduled run MUST be checked against a declared cap
   before any agent session starts, and exceeding the cap MUST fail the run. The cap MUST be at
   or below the current envelope of $5.47 estimated per night and $38.29 estimated per week.
-- **FR-022**: Every behaviour this spec changes MUST have a unit test written before the change,
-  covering at minimum: the unscored-item path, the invalid-run threshold, baseline merge
-  semantics, provenance mismatch, the item floor, the single regression threshold, and the
-  budget cap. Tests that need a live agent or scorer MUST be marked as such and MUST be covered
-  by a documented command.
+- **FR-022** (this spec): Every behaviour this spec changes MUST have a unit test written before
+  the change, covering at minimum: the preflight scoring call, the unscored-item path, the
+  invalid-run threshold, baseline merge semantics, provenance mismatch on each blocking field,
+  the advisory tool-surface field, and the four per-skill outcomes. Tests that need a live agent
+  or scorer MUST be marked as such and MUST be covered by a documented command. The item floor,
+  the single threshold and the budget cap get the same treatment in the follow-on.
+- **FR-023** (this spec): The cost estimator's per-scoring-call constant MUST be re-derived for
+  the scorer the harness actually runs. It is $0.001, priced for Haiku on the direct API; the
+  Bedrock path resolves to a Sonnet-class model, so every cost figure in this spec and every cap
+  in the follow-on is computed from a wrong constant until this lands. It stays in 118 because
+  the follow-on's budget cap is meaningless without it.
 
 ### Key Entities
 
@@ -296,11 +335,13 @@ other and that the gate does not fire.
 - `.specify/feature.json` pointed at `specs/113-typed-tool-schemas`, which shipped in v1.4.0 and
   is an ancestor of the current head. It is not in flight, so I replaced it with this feature
   directory.
-- The scorer diagnosis in Story 1 is an inference from a perfect correlation (six judge-scored
-  skills at 0-vs-0, three pattern-scored skills non-zero) plus the absence of any scorer
-  credential in the workflow environment. It is not yet confirmed against a logged scorer error,
-  because the run artifact does not persist scorer reasons. FR-013 is what makes the next
-  occurrence self-evidencing; confirming this one is the first task of Story 1.
+- The scorer diagnosis in Story 1 is confirmed in code, not inferred. `score_result` in
+  `benchmark/021/runner/judge.py` retries once and then returns `{"score": 0, "reasoning":
+"Judge error: ..."}`; its client comes from `runner/_client.py`, which needs Bedrock
+  credentials or `ANTHROPIC_API_KEY`; `.github/workflows/skill-regression.yml` supplies neither,
+  only the `OPENAI_API_KEY` that drives the opencode agent sessions. The judge already returns a
+  per-item reason, so the evidence existed and the aggregation discarded it — which is what
+  FR-013 fixes in the follow-on.
 - Specs 113 and 114 changed the tool surface on 2026-09-07, after the 2026-08-18 baseline write.
   That invalidates the baseline for the skills whose lift is measured with the tool surface
   present. It does not by itself invalidate iris-vector-ai's entry, because that skill's lift is
@@ -310,7 +351,10 @@ other and that the gate does not fire.
 - The cost figures in this spec are the harness's own dry-run estimates at five runs per skill,
   not billed amounts. They price an agent session at $0.020 and a scorer call at $0.001. Those
   constants were last corrected on 2026-09-07 against a measured session duration, so I treat
-  them as the best available estimate and the caps in FR-021 are stated in the same units.
+  them as the best available estimate and the caps in FR-021 are stated in the same units. The
+  scorer constant is now known to be wrong: routing the judge through Bedrock resolves to a
+  Sonnet-class model on this account, not Haiku. FR-023 re-derives it, and the figures below
+  should be read as a floor until it does.
 - The two-tier schedule in the cost table below is the cheapest arrangement I found that
   reaches the item floor. The plan phase may find a better one; FR-021's cap is the binding
   constraint, not the schedule.
@@ -369,32 +413,51 @@ No blocking specs. Specs 113 and 114 are already merged and are the reason the b
 stale, not a prerequisite. This spec touches only the Python harness under `tests/e2e/` and
 `benchmark/021/`, the nightly workflow, and the task corpus; it changes no Rust and no tool.
 
+It needs one thing from outside the repo: the nightly workflow has to reach Bedrock. Whatever
+grants that — an OIDC role or static credentials — is a repo settings change, not code, and
+FR-001 is what turns a missing grant into a named failure instead of a table of zeros.
+
+Stories 3 and 4 become the follow-on spec and depend on this one landing first.
+
 ## Bug Classes and Detectors
 
 Constitution governance requires a detector per bug class, not just a fix per instance.
 
-| Class                                 | Instance                                                                                          | Detector                                                                                                              |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Scorer failure scored as zero         | Six skills reported 0-vs-0 for at least one night because the scorer could not authenticate       | Preflight reachability check (FR-001) plus a unit test asserting a scorer failure yields an unscored item, not a zero |
-| Whole-file baseline replace           | The baseline shrank to one entry in an unrelated commit                                           | Unit test: a single-skill update preserves every other entry (FR-006)                                                 |
-| Comparison against unlike measurement | A Δ reported against a baseline measured under a different scoring path and tool surface          | Provenance stored and checked; "not comparable" is an outcome (FR-007, FR-008)                                        |
-| Null task set kept in the corpus      | Seven task sets returned identical arms and stayed in the nightly schedule                        | Flat-arm flag in the report plus corpus validation failing on a recorded null verdict (FR-012, FR-015)                |
-| Gate threshold under the noise floor  | A 5-point threshold with a 20-point escape hatch on a measurement with an 18-point standard error | Threshold derived from the item count and asserted against it; item floor gates gating (FR-018, FR-020)               |
-| Budget checked after spending         | The dry-run estimate existed but nothing enforced it                                              | Declared cap asserted before the first session (FR-021)                                                               |
+| Class                                                             | Instance                                                                                          | Detector                                                                                                              |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Scorer failure scored as zero                                     | Six skills reported 0-vs-0 for at least one night because the scorer could not authenticate       | Preflight reachability check (FR-001) plus a unit test asserting a scorer failure yields an unscored item, not a zero |
+| Whole-file baseline replace                                       | The baseline shrank to one entry in an unrelated commit                                           | Unit test: a single-skill update preserves every other entry (FR-006)                                                 |
+| Comparison against unlike measurement                             | A Δ reported against a baseline measured under a different scoring path and tool surface          | Provenance stored and checked; "not comparable" is an outcome (FR-007, FR-008)                                        |
+| Reported identity is the requested constant, not the resolved one | The record names the judge's Haiku constant while Bedrock resolves it to sonnet-4-6               | Unit test: the result record carries the model id the client returned (FR-004)                                        |
+| Cost constant priced for a model the harness does not run         | $0.001 per scoring call, priced for Haiku on the direct API                                       | Unit test tying the constant to the resolved scorer model (FR-023)                                                    |
+| Null task set kept in the corpus (deferred)                       | Seven task sets returned identical arms and stayed in the nightly schedule                        | Flat-arm flag in the report plus corpus validation failing on a recorded null verdict (FR-012, FR-015)                |
+| Gate threshold under the noise floor (deferred)                   | A 5-point threshold with a 20-point escape hatch on a measurement with an 18-point standard error | Threshold derived from the item count and asserted against it; item floor gates gating (FR-018, FR-020)               |
+| Budget checked after spending (deferred)                          | The dry-run estimate existed but nothing enforced it                                              | Declared cap asserted before the first session (FR-021)                                                               |
 
 ## Success Criteria _(mandatory)_
 
 ### Measurable Outcomes
 
+This spec is done when SC-002 through SC-005, SC-013 and SC-014 hold. The rest belong to the
+follow-on and are listed so the split does not lose them.
+
+- **SC-002**: Zero items in any run carry a score that came from a scorer that failed to answer.
+- **SC-003**: A run whose Bedrock scoring path is unreachable stops before the first agent
+  session and names what it could not reach, spending nothing.
+- **SC-004**: Every skill with an eval config has either a baseline entry measured under the
+  repaired scorer or a recorded reason it is ungated. Entries rise from one of nine to nine of
+  nine; skills able to fail the run stay at zero until the follow-on.
+- **SC-005**: Updating the baseline from a one-skill run leaves every other entry byte-identical.
+- **SC-013**: Every skill's row prints the scoring mode, the scorer model the client actually
+  resolved, items scored and unscored per arm, and its Δ. A tool-surface change appears on the
+  row it affects without suppressing that row's Δ.
+- **SC-014**: The per-scoring-call cost constant matches the model the harness runs, and the
+  nightly estimate is recomputed from it.
+
+Deferred to the follow-on:
+
 - **SC-001**: No skill in a valid run reports the same pass rate in both arms without a recorded
   verdict explaining why. The nine-skill table has zero unexplained flat rows.
-- **SC-002**: Zero items in any gating run carry a score that came from a scorer that failed to
-  answer.
-- **SC-003**: A run with the scoring credential removed stops before the first agent session and
-  names the missing credential, spending nothing.
-- **SC-004**: Every skill with an eval config has either a baseline entry or a recorded reason it
-  is ungated. Skills able to fail the gate rise from one of nine to at least six of nine.
-- **SC-005**: Updating the baseline from a one-skill run leaves every other entry byte-identical.
 - **SC-006**: Every gated skill reports at least 35 scored items per arm and at least four
   distinct tasks.
 - **SC-007**: For every gated skill, the threshold it is gated on is greater than or equal to the
