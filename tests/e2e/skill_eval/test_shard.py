@@ -16,6 +16,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 
 from tests.e2e.skill_eval.evaluator import SkillResult
 from tests.e2e.skill_eval.shard import covered_skills, merge_results
@@ -350,7 +352,13 @@ def test_merge_results_cli_writes_a_combined_result_file(tmp_path):
     measured = sorted(s["skill"] for s in combined["skills"] if s["lift"] is not None)
     assert measured == ["alpha", "beta"]
     # The real covered skills had no shard here, so they come back as holes, not as passes.
-    holes = {s["skill"] for s in combined["skills"] if s["no_task_coverage"]}
+    # A hole is `not_comparable` with a reason, not `no_task_coverage`: these skills have tasks,
+    # and saying otherwise would blame the corpus for a shard that failed to upload.
+    holes = {
+        s["skill"]
+        for s in combined["skills"]
+        if s["outcome_reason"] == "shard produced no result"
+    }
     assert holes == set(covered_skills(_SKILLS_PACK_DIR, _TASKS_SKILLS_DIR))
 
 
@@ -419,3 +427,151 @@ def test_merge_results_cli_needs_no_iris_and_no_api_key(tmp_path):
         timeout=120,
     )
     assert proc.returncode == 0, f"{proc.stdout}\n{proc.stderr}"
+
+
+# ── 118 T026: what the merge has to say about the night ──────────────────────
+
+
+def _arm(pass_rate, total=12, unscored=0):
+    scored = total - unscored
+    return {
+        "items_total": total,
+        "items_scored": scored,
+        "items_unscored": unscored,
+        "items_passed": 0 if pass_rate is None else round(pass_rate * scored),
+        "pass_rate": pass_rate,
+    }
+
+
+def _measured(skill, lift=0.1, unscored=0, total=12, outcome="held"):
+    result = _result(skill, lift=lift)
+    result.outcome = outcome
+    result.arms = {
+        "baseline": _arm(0.5, total=total, unscored=unscored),
+        "skill": _arm(0.6, total=total),
+    }
+    result.threshold_applied = 0.05
+    return result
+
+
+def _write_shard(directory, run_id, results, threshold=0.05, run_valid=True):
+    from tests.e2e.skill_eval.reporter import EvalRun, write_result
+
+    return write_result(
+        EvalRun(
+            run_id=run_id,
+            model="openai/gpt-4.1",
+            judge_model="claude-sonnet-4-6",
+            timestamp="2026-09-12T00:00:00Z",
+            regression_threshold=threshold,
+            skills=results,
+            summary={"run_valid": run_valid},
+            run_valid=run_valid,
+        ),
+        str(directory),
+    )
+
+
+def test_the_merged_unscored_share_is_recomputed_over_all_items(tmp_path):
+    """Averaging shares would let a two-item shard outweigh a forty-item one.
+
+    Shard A: 2 unscored of 24. Shard B: 0 of 24. The night is 2/48 = 4.2%, not the mean of
+    8.3% and 0% — and the 10% gate has to read the night.
+    """
+    from tests.e2e.skill_eval.shard import merge_shards
+
+    _write_shard(tmp_path, "2026-09-12T000001", [_measured("alpha", unscored=2)])
+    _write_shard(tmp_path, "2026-09-12T000002", [_measured("beta")])
+    merged = merge_shards(str(tmp_path))
+    assert merged.items_total == 48
+    assert merged.items_unscored == 2
+    assert merged.items_unscored_share == pytest.approx(2 / 48, abs=1e-4)
+
+
+def test_merged_run_valid_is_the_and_of_the_shards(tmp_path):
+    """One shard that measured nothing makes the night's numbers partial, not fine."""
+    from tests.e2e.skill_eval.shard import merge_shards
+
+    _write_shard(tmp_path, "2026-09-12T000001", [_measured("alpha")], run_valid=True)
+    _write_shard(tmp_path, "2026-09-12T000002", [_measured("beta")], run_valid=False)
+    assert merge_shards(str(tmp_path)).run_valid is False
+
+
+def test_merged_run_valid_is_true_when_every_shard_was(tmp_path):
+    from tests.e2e.skill_eval.shard import merge_shards
+
+    _write_shard(tmp_path, "2026-09-12T000001", [_measured("alpha")])
+    _write_shard(tmp_path, "2026-09-12T000002", [_measured("beta")])
+    assert merge_shards(str(tmp_path)).run_valid is True
+
+
+def test_a_threshold_mismatch_between_shards_is_reported_with_both_values(tmp_path):
+    """FR-010. Half a table judged under a different rule is not one table."""
+    from tests.e2e.skill_eval.shard import merge_shards
+
+    _write_shard(tmp_path, "2026-09-12T000001", [_measured("alpha")], threshold=0.05)
+    _write_shard(tmp_path, "2026-09-12T000002", [_measured("beta")], threshold=0.20)
+    merged = merge_shards(str(tmp_path))
+    assert merged.threshold_conflict == [0.05, 0.2]
+    assert merged.threshold is None, "there is no one threshold to print"
+
+
+def test_one_threshold_across_shards_is_the_runs_threshold(tmp_path):
+    from tests.e2e.skill_eval.shard import merge_shards
+
+    _write_shard(tmp_path, "2026-09-12T000001", [_measured("alpha")], threshold=0.05)
+    _write_shard(tmp_path, "2026-09-12T000002", [_measured("beta")], threshold=0.05)
+    merged = merge_shards(str(tmp_path))
+    assert merged.threshold == pytest.approx(0.05)
+    assert merged.threshold_conflict == []
+
+
+def test_the_merge_names_the_rerun_and_the_run_id_it_discarded(tmp_path):
+    """A silently deduplicated table cannot be told from one that never had a duplicate."""
+    from tests.e2e.skill_eval.shard import merge_shards
+
+    _write_shard(tmp_path, "2026-09-12T034002", [_measured("alpha", lift=0.1)])
+    _write_shard(tmp_path, "2026-09-12T040211", [_measured("alpha", lift=0.5)])
+    merged = merge_shards(str(tmp_path))
+    assert [r.lift for r in merged.results] == [0.5]
+    assert merged.reruns == {"alpha": "2026-09-12T034002"}
+
+
+def test_no_rerun_means_no_rerun_record(tmp_path):
+    from tests.e2e.skill_eval.shard import merge_shards
+
+    _write_shard(tmp_path, "2026-09-12T040211", [_measured("alpha")])
+    assert merge_shards(str(tmp_path)).reruns == {}
+
+
+def test_a_shard_that_uploaded_nothing_is_not_comparable_not_a_failure(tmp_path):
+    """FR-009: nothing per-skill fails the run in 118. A hole is a named hole."""
+    from tests.e2e.skill_eval.shard import missing_shard_result
+
+    result = missing_shard_result("iris-ai-hub")
+    assert result.skill == "iris-ai-hub"
+    assert result.outcome == "not_comparable"
+    assert result.outcome_reason == "shard produced no result"
+    assert result.regression_flag is False
+    assert result.lift is None
+    assert result.no_task_coverage is False, (
+        "the skill has tasks; the shard is what went missing"
+    )
+
+
+def test_merge_shards_counts_the_shards_it_read(tmp_path):
+    from tests.e2e.skill_eval.shard import merge_shards
+
+    _write_shard(tmp_path, "2026-09-12T000001", [_measured("alpha")])
+    _write_shard(tmp_path, "2026-09-12T000002", [_measured("beta")])
+    assert merge_shards(str(tmp_path)).shards_read == 2
+
+
+def test_merge_results_is_still_the_result_list(tmp_path):
+    """`merge_results` keeps its shape: the CLI and the older tests read it as a list."""
+    from tests.e2e.skill_eval.shard import merge_shards
+
+    _write_shard(tmp_path, "2026-09-12T000001", [_measured("alpha")])
+    assert [r.skill for r in merge_results(str(tmp_path))] == [
+        r.skill for r in merge_shards(str(tmp_path)).results
+    ]

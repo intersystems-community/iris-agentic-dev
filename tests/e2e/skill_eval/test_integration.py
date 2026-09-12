@@ -1,12 +1,15 @@
 """Integration tests for skill eval suite — T015-T019, T033-T034."""
+
 import json
 import os
 import subprocess
 import sys
-import tempfile
 import pytest
-from tests.e2e.skill_eval.evaluator import SkillEvalConfig, SkillResult, compare_to_baseline
-from tests.e2e.skill_eval.baseline import save_baseline, load_baseline
+from tests.e2e.skill_eval.evaluator import (
+    SkillResult,
+    compare_to_baseline,
+)
+from tests.e2e.skill_eval.baseline import save_baseline
 
 
 MODEL = "openai/gpt-4.1"
@@ -31,6 +34,7 @@ def iris_available():
 
 
 # ── US1: Fire-rate ─────────────────────────────────────────────────────────────
+
 
 @pytest.mark.us1
 def test_fire_rate_objectscript_review(openai_key):
@@ -60,27 +64,61 @@ def test_lift_objectscript_review(openai_key, iris_available):
 
     port = iris_available["web_port"]
     container = iris_available["container"]
-    baseline = run_task_and_score("DBG-01", None, openai_key, MODEL, iris_web_port=port, iris_container=container)
-    skill = run_task_and_score("DBG-01", "objectscript-review", openai_key, MODEL, iris_web_port=port, iris_container=container)
+    baseline = run_task_and_score(
+        "DBG-01", None, openai_key, MODEL, iris_web_port=port, iris_container=container
+    )
+    skill = run_task_and_score(
+        "DBG-01",
+        "objectscript-review",
+        openai_key,
+        MODEL,
+        iris_web_port=port,
+        iris_container=container,
+    )
     result = compute_lift_from_scores([baseline], [skill])
-    assert result["lift"] >= 0, f"Lift should be non-negative on single run; got {result['lift']}"
+    assert result["lift"] >= 0, (
+        f"Lift should be non-negative on single run; got {result['lift']}"
+    )
 
 
 # ── US2: Regression detection ─────────────────────────────────────────────────
+
+# A Δ is only computed when the entry and the run agree on what was measured and how, so both
+# sides of these two tests carry the same provenance. Dropping it is the whole point of 118:
+# without it the comparison is refused, not silently taken.
+_PROV = {
+    "run_id": "2026-09-12T000000",
+    "task_ids": ["DBG-01"],
+    "scoring_mode": "judge",
+    "scorer_model": "claude-sonnet-4-6",
+    "scorer_model_requested": "claude-sonnet-4-6",
+    "tool_surface": "81 tools",
+    "runs": 3,
+}
+
 
 @pytest.mark.us2
 def test_regression_detection():
     """Injecting a fake baseline with higher lift triggers regression_flag."""
     result = SkillResult(
         skill="objectscript-review",
-        fire_rate=1.0, implicit_fire_rate=None, isolation_fire_rate=None,
-        pass_rate_baseline=0.71, pass_rate_skill=0.81,
-        lift=0.10, lift_delta=None, regression_flag=False,
-        new_skill=False, no_task_coverage=False, task_ids_used=["DBG-01"],
+        fire_rate=1.0,
+        implicit_fire_rate=None,
+        isolation_fire_rate=None,
+        pass_rate_baseline=0.71,
+        pass_rate_skill=0.81,
+        lift=0.10,
+        lift_delta=None,
+        regression_flag=False,
+        new_skill=False,
+        no_task_coverage=False,
+        task_ids_used=["DBG-01"],
+        provenance=dict(_PROV),
     )
-    baseline = {"objectscript-review": {"lift": 0.99}}
+    baseline = {"objectscript-review": {"lift": 0.99, "provenance": dict(_PROV)}}
     updated = compare_to_baseline(result, baseline, threshold=0.05)
     assert updated.regression_flag is True
+    assert updated.outcome == "regressed"
     assert updated.lift_delta == pytest.approx(0.10 - 0.99, abs=0.01)
 
 
@@ -89,14 +127,23 @@ def test_no_regression_on_improvement():
     """Higher lift than baseline does not trigger regression_flag."""
     result = SkillResult(
         skill="objectscript-review",
-        fire_rate=1.0, implicit_fire_rate=None, isolation_fire_rate=None,
-        pass_rate_baseline=0.71, pass_rate_skill=1.0,
-        lift=0.29, lift_delta=None, regression_flag=False,
-        new_skill=False, no_task_coverage=False, task_ids_used=["DBG-01"],
+        fire_rate=1.0,
+        implicit_fire_rate=None,
+        isolation_fire_rate=None,
+        pass_rate_baseline=0.71,
+        pass_rate_skill=1.0,
+        lift=0.29,
+        lift_delta=None,
+        regression_flag=False,
+        new_skill=False,
+        no_task_coverage=False,
+        task_ids_used=["DBG-01"],
+        provenance=dict(_PROV),
     )
-    baseline = {"objectscript-review": {"lift": 0.10}}
+    baseline = {"objectscript-review": {"lift": 0.10, "provenance": dict(_PROV)}}
     updated = compare_to_baseline(result, baseline, threshold=0.05)
     assert updated.regression_flag is False
+    assert updated.outcome == "held"
     assert updated.lift_delta > 0
 
 
@@ -104,15 +151,23 @@ def test_no_regression_on_improvement():
 def test_update_baseline_writes_diff(tmp_path):
     """save_baseline writes file; compute_diff produces diff for changed skill."""
     from tests.e2e.skill_eval.baseline import compute_diff
+
     baseline_path = str(tmp_path / "baseline.json")
     old = {"objectscript-review": {"lift": 0.29}}
 
     result = SkillResult(
         skill="objectscript-review",
-        fire_rate=1.0, implicit_fire_rate=None, isolation_fire_rate=None,
-        pass_rate_baseline=0.71, pass_rate_skill=0.81,
-        lift=0.10, lift_delta=None, regression_flag=True,
-        new_skill=False, no_task_coverage=False, task_ids_used=["DBG-01"],
+        fire_rate=1.0,
+        implicit_fire_rate=None,
+        isolation_fire_rate=None,
+        pass_rate_baseline=0.71,
+        pass_rate_skill=0.81,
+        lift=0.10,
+        lift_delta=None,
+        regression_flag=True,
+        new_skill=False,
+        no_task_coverage=False,
+        task_ids_used=["DBG-01"],
     )
     save_baseline([result], baseline_path)
     assert os.path.exists(baseline_path)
@@ -124,6 +179,7 @@ def test_update_baseline_writes_diff(tmp_path):
 
 
 # ── US3: Domain isolation ─────────────────────────────────────────────────────
+
 
 @pytest.mark.us3
 def test_isolation_iris_vector_ai(openai_key):
@@ -140,6 +196,7 @@ def test_isolation_iris_vector_ai(openai_key):
 
 
 # ── CLI tests ─────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.cli
 def test_dry_run_no_llm_calls():
@@ -162,19 +219,25 @@ def test_single_skill_full_run(openai_key, iris_available, tmp_path):
     result_dir = str(tmp_path / "results")
     proc = subprocess.run(
         [
-            sys.executable, "-m", "tests.e2e.skill_eval",
-            "--skill", "objectscript-review",
+            sys.executable,
+            "-m",
+            "tests.e2e.skill_eval",
+            "--skill",
+            "objectscript-review",
             "--yes",
-            "--output", result_dir,
+            "--output",
+            result_dir,
         ],
         cwd=os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")),
         capture_output=True,
         text=True,
         timeout=300,
-        env={**os.environ,
-             "OPENAI_API_KEY": openai_key,
-             "IRIS_CONTAINER": iris_available["container"],
-             "IRIS_WEB_PORT": iris_available["web_port"]},
+        env={
+            **os.environ,
+            "OPENAI_API_KEY": openai_key,
+            "IRIS_CONTAINER": iris_available["container"],
+            "IRIS_WEB_PORT": iris_available["web_port"],
+        },
     )
     assert proc.returncode in (0, 1), f"stderr: {proc.stderr[:500]}"
     result_files = [f for f in os.listdir(result_dir) if f.startswith("skill-eval-")]

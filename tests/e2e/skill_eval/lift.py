@@ -82,10 +82,22 @@ def compute_lift_from_scores(
             if isinstance(s, dict) and s.get("scorer_model")
         }
     )
+    modes = sorted(
+        {
+            s.get("scoring_mode")
+            for s in all_items
+            if isinstance(s, dict) and s.get("scoring_mode")
+        }
+    )
     return {
         "pass_rate_baseline": _round_or_none(baseline.pass_rate),
         "pass_rate_skill": _round_or_none(skill.pass_rate),
         "lift": _round_or_none(lift),
+        # The two arms with their denominators, which is what makes `22/24` printable and what
+        # the baseline entry stores. A bare float cannot say how much of it was measured.
+        "arms": {"baseline": baseline.to_dict(), "skill": skill.to_dict()},
+        # One mode, or `mixed` when a skill's tasks were scored by more than one path.
+        "scoring_mode": modes[0] if len(modes) == 1 else ("mixed" if modes else None),
         "items_total": baseline.items_total + skill.items_total,
         "items_scored_baseline": baseline.items_scored,
         "items_unscored_baseline": baseline.items_unscored,

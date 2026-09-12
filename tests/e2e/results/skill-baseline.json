@@ -1,8 +1,23 @@
 {
-  "iris-vector-ai": {
-    "fire_rate": 1.0,
-    "lift": 0.25,
-    "pass_rate_baseline": 0.33,
-    "pass_rate_skill": 0.58
+  "schema": 2,
+  "skills": {
+    "iris-vector-ai": {
+      "fire_rate": 1.0,
+      "items": null,
+      "lift": 0.25,
+      "pass_rate_baseline": 0.33,
+      "pass_rate_skill": 0.58,
+      "provenance": null
+    }
+  },
+  "ungated_skills": {
+    "ensemble-production": "no post-repair measurement yet — rebaselined by 118 Phase 5",
+    "iris-ai-hub": "no post-repair measurement yet — rebaselined by 118 Phase 5",
+    "iris-connectivity": "no post-repair measurement yet — rebaselined by 118 Phase 5",
+    "objectscript-guardrails": "no post-repair measurement yet — rebaselined by 118 Phase 5",
+    "objectscript-list-patterns": "no post-repair measurement yet — rebaselined by 118 Phase 5",
+    "objectscript-review": "no post-repair measurement yet — rebaselined by 118 Phase 5",
+    "objectscript-sql-patterns": "no post-repair measurement yet — rebaselined by 118 Phase 5",
+    "objectscript-unit-test": "no post-repair measurement yet — rebaselined by 118 Phase 5"
   }
 }

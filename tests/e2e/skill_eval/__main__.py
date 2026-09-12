@@ -1,6 +1,7 @@
 """CLI entry point: python -m tests.e2e.skill_eval [OPTIONS] — T027."""
 
 import argparse
+import dataclasses
 import datetime
 import json
 import os
@@ -23,6 +24,7 @@ from tests.e2e.skill_eval.cost_estimator import (
     merge_scorer_costs,
 )
 from tests.e2e.skill_eval.preflight import preflight
+from tests.e2e.skill_eval.provenance import Provenance
 from tests.e2e.skill_eval.reporter import EvalRun, print_summary, write_result
 from tests.e2e.skill_eval.scoring import (
     EXIT_INTEGRITY,
@@ -30,7 +32,11 @@ from tests.e2e.skill_eval.scoring import (
     EXIT_PREFLIGHT,
     baseline_write_allowed,
 )
-from tests.e2e.skill_eval.shard import covered_skills, merge_results
+from tests.e2e.skill_eval.shard import (
+    covered_skills,
+    merge_shards,
+    missing_shard_result,
+)
 
 _SKILLS_PACK_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "skills", "skills")
@@ -121,6 +127,8 @@ def _run_skill(
         "items_scored": 0,
         "items_unscored": 0,
         "scorer_cost": None,
+        "arms": None,
+        "scoring_mode": None,
     }
     if config.benchmark_tasks:
         print(
@@ -157,8 +165,44 @@ def _run_skill(
         new_skill=False,
         no_task_coverage=False,
         task_ids_used=lift_data.get("task_ids_used", []),
+        arms=lift_data.get("arms"),
     )
     return result, lift_data
+
+
+def _provenance(run_id: str, lift_data: dict, probe, runs: int) -> dict:
+    """What this measurement was taken under, so a later run can say whether it compares.
+
+    Recorded per skill rather than per run because a sharded night measures each skill in its
+    own job, on its own runner, against its own container.
+    """
+    from runner._client import haiku_model
+
+    return dataclasses.asdict(
+        Provenance(
+            run_id=run_id,
+            task_ids=sorted(lift_data.get("task_ids_used") or []),
+            scoring_mode=lift_data.get("scoring_mode") or "judge",
+            scorer_model=probe.scorer_model,
+            scorer_model_requested=haiku_model(),
+            tool_surface=probe.tool_surface or "none",
+            runs=runs,
+        )
+    )
+
+
+def _resolved(results, field: str):
+    """The one value every skill's provenance agrees on, or all of them when they don't."""
+    values = sorted(
+        {
+            (r.provenance or {}).get(field)
+            for r in results
+            if (r.provenance or {}).get(field)
+        }
+    )
+    if not values:
+        return None
+    return values[0] if len(values) == 1 else ", ".join(values)
 
 
 def _merge_and_report(args) -> int:
@@ -168,9 +212,22 @@ def _merge_and_report(args) -> int:
     to the baseline on its own, but nothing decides whether the *night* passed until the
     shards are back together. Exits 1 on any regression, exactly as the single-job run did.
     """
-    results = merge_results(args.merge_results)
+    merged = merge_shards(args.merge_results)
+    results = merged.results
     if not results:
         print(f"No shard results found under {args.merge_results}", file=sys.stderr)
+
+    # FR-010: one rule for the whole table. Two thresholds means half of it was judged under a
+    # rule the other half was not, and the footer would print one of them as if it were both.
+    if merged.threshold_conflict:
+        print(
+            "Shards disagree on the regression threshold: "
+            + " and ".join(f"{t:.2f}" for t in merged.threshold_conflict)
+            + ". The outcomes were not all computed under the same rule, so there is no one "
+            "table to publish.",
+            file=sys.stderr,
+        )
+        return EXIT_INTEGRITY
 
     reported = {r.skill for r in results}
     # A shard that timed out or failed to upload leaves no result at all. Reporting only what
@@ -181,7 +238,7 @@ def _merge_and_report(args) -> int:
         if s not in reported
     ]
     for skill in missing:
-        results.append(_make_uncovered_result(skill))
+        results.append(missing_shard_result(skill))
 
     regressions = [r.skill for r in results if r.regression_flag]
     improvements = [
@@ -191,18 +248,27 @@ def _merge_and_report(args) -> int:
     run = EvalRun(
         run_id=datetime.datetime.utcnow().strftime("%Y-%m-%dT%H%M%S"),
         model=args.model,
-        # The merge job calls no scorer, so it has no model of its own to report. The shards
-        # recorded theirs; carrying it through the merged file is Phase 4 (provenance).
-        judge_model=None,
+        # The merge job calls no scorer of its own; this is what the shards reported scoring
+        # with, read back out of their provenance.
+        judge_model=_resolved(results, "scorer_model"),
         timestamp=datetime.datetime.utcnow().isoformat() + "Z",
-        regression_threshold=args.regression_threshold,
+        regression_threshold=(
+            merged.threshold
+            if merged.threshold is not None
+            else args.regression_threshold
+        ),
         skills=results,
         summary={
             "regressions": regressions,
             "improvements": improvements,
             "uncovered": missing,
-            "shards_merged": len(reported),
+            "shards_merged": merged.shards_read,
         },
+        scorer_model_requested=_resolved(results, "scorer_model_requested"),
+        tool_surface=_resolved(results, "tool_surface"),
+        run_valid=merged.run_valid,
+        items_unscored_share=merged.items_unscored_share,
+        reruns=merged.reruns,
     )
     print_summary(run)
     if missing:
@@ -364,6 +430,7 @@ def main():
     baseline = load_baseline(_DEFAULT_BASELINE)
 
     # Run evaluations
+    run_id = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H%M%S")
     results: list[SkillResult] = []
     invalid_skills: list[str] = []
     cost_records: list[dict] = []
@@ -377,6 +444,9 @@ def main():
             iris_web_port,
             iris_container,
         )
+        # Recorded before the comparison, because the comparison reads it: a Δ is only computed
+        # when this run's task set, scale, and grader match the ones the entry was measured with.
+        result.provenance = _provenance(run_id, lift_data, probe, args.runs)
         if lift_data.get("scorer_cost"):
             cost_records.append(lift_data["scorer_cost"])
         if lift_data.get("run_valid", True):
@@ -409,7 +479,7 @@ def main():
     run_valid = not invalid_skills
     actual_cost = merge_scorer_costs(cost_records)
     run = EvalRun(
-        run_id=datetime.datetime.utcnow().strftime("%Y-%m-%dT%H%M%S"),
+        run_id=run_id,
         model=args.model,
         judge_model=probe.scorer_model,
         timestamp=datetime.datetime.utcnow().isoformat() + "Z",
@@ -425,6 +495,10 @@ def main():
             "invalid_skills": invalid_skills,
             "tool_surface": probe.tool_surface,
         },
+        scorer_model_requested=_resolved(results, "scorer_model_requested"),
+        tool_surface=probe.tool_surface,
+        run_valid=run_valid,
+        reruns=None,
     )
 
     print_summary(run)
