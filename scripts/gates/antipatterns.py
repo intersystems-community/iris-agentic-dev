@@ -34,6 +34,7 @@ Exit: 0 = no new findings, 2 = at least one new finding (or a stale baseline ent
 
 from __future__ import annotations
 
+import ast
 import collections
 import hashlib
 import pathlib
@@ -84,7 +85,7 @@ class Finding:
 # ---------------------------------------------------------------------------
 
 
-def _rs_files(*globs: str) -> list[pathlib.Path]:
+def _glob_files(*globs: str) -> list[pathlib.Path]:
     out: set[pathlib.Path] = set()
     for g in globs:
         out.update(ROOT.glob(g))
@@ -92,11 +93,26 @@ def _rs_files(*globs: str) -> list[pathlib.Path]:
 
 
 def src_files() -> list[pathlib.Path]:
-    return _rs_files("crates/*/src/**/*.rs")
+    return _glob_files("crates/*/src/**/*.rs")
 
 
 def test_files() -> list[pathlib.Path]:
-    return _rs_files("crates/*/tests/**/*.rs")
+    return _glob_files("crates/*/tests/**/*.rs")
+
+
+def py_files() -> list[pathlib.Path]:
+    """The Python that measures this project: the eval harness, its scorer, these gates.
+
+    Not `**/*.py` from the root — that would pull in `.venv`, `node_modules`, and anything a
+    tool drops in `target/`, and a detector whose file set nobody can predict gets read as
+    noise.
+    """
+    return _glob_files(
+        "tests/e2e/**/*.py",
+        "benchmark/**/*.py",
+        "scripts/**/*.py",
+        "tools/gepa-optimizer/**/*.py",
+    )
 
 
 def rel(p: pathlib.Path) -> str:
@@ -1424,8 +1440,114 @@ def prose_only_enum_findings(files: dict[str, str]) -> list[Finding]:
     return found
 
 
+# ---------------------------------------------------------------------------
+# scored-exception
+# ---------------------------------------------------------------------------
+
+
+def _score_literal(expr: ast.expr) -> ast.Constant | None:
+    """The `score` key's literal number in a dict expression, if it has one.
+
+    Two spellings, because both appear in this tree: `{"score": 0}` and `dict(score=0)`.
+    A `None` score is the fix, not the bug, so only int and float count — and `bool` is
+    excluded because `isinstance(True, int)` is true and `{"score": False}` is nobody's
+    verdict.
+    """
+    candidates: list[ast.expr] = []
+    if isinstance(expr, ast.Dict):
+        for key, value in zip(expr.keys, expr.values):
+            if isinstance(key, ast.Constant) and key.value == "score":
+                candidates.append(value)
+    elif (
+        isinstance(expr, ast.Call)
+        and isinstance(expr.func, ast.Name)
+        and expr.func.id == "dict"
+    ):
+        candidates += [kw.value for kw in expr.keywords if kw.arg == "score"]
+    for value in candidates:
+        if (
+            isinstance(value, ast.Constant)
+            and isinstance(value.value, (int, float))
+            and not isinstance(value.value, bool)
+        ):
+            return value
+    return None
+
+
+def _function_name_at(tree: ast.Module):
+    """A line number → enclosing function name lookup, innermost span winning."""
+    spans: list[tuple[int, int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            spans.append((node.lineno, node.end_lineno or node.lineno, node.name))
+    spans.sort(key=lambda s: s[1] - s[0])
+
+    def at(line: int) -> str:
+        for start, end, name in spans:
+            if start <= line <= end:
+                return name
+        return "<module>"
+
+    return at
+
+
+def scored_exception_findings(files: dict[str, str]) -> list[Finding]:
+    """A score literal returned from an `except` handler.
+
+    `judge.py` answered an unreachable scorer with `{"score": 0}`, so a scorer that never
+    ran was indistinguishable from an agent that failed every task — the nightly spent a
+    month reporting a real 0% pass rate it had never measured. An unscorable item has to
+    say so (`scored: false`, `score: null`); it must not land on the 0–3 scale.
+
+    Takes a `{path: text}` mapping so a canary can pass a sample.
+    """
+    found: list[Finding] = []
+    for path, raw in sorted(files.items()):
+        try:
+            tree = ast.parse(raw)
+        except SyntaxError as e:
+            found.append(
+                Finding(
+                    "scored-exception",
+                    f"{path}:{e.lineno or 0}",
+                    f"does not parse ({e.msg}), so this detector cannot clear it. "
+                    "A file the scanner skips is not a file the scanner passed.",
+                )
+            )
+            continue
+        name_at = _function_name_at(tree)
+        seen: set[int] = set()
+        for handler in ast.walk(tree):
+            if not isinstance(handler, ast.ExceptHandler):
+                continue
+            for node in ast.walk(handler):
+                # `ast.walk` from an outer handler re-visits a nested one's returns.
+                if not isinstance(node, ast.Return) or node.value is None:
+                    continue
+                literal = _score_literal(node.value)
+                if literal is None or node.lineno in seen:
+                    continue
+                seen.add(node.lineno)
+                found.append(
+                    Finding(
+                        "scored-exception",
+                        f"{path}:{node.lineno}",
+                        f"`{name_at(node.lineno)}` returns score {literal.value!r} from "
+                        "an `except` handler. A scorer that could not answer has not "
+                        "measured a zero — return the unscored verdict "
+                        "(`scored: False`, `score: None`) so the item is excluded from "
+                        "the pass rate instead of counted as a failure.",
+                    )
+                )
+    return found
+
+
 def _src_texts() -> dict[str, str]:
     return {rel(p): p.read_text(errors="replace") for p in src_files()}
+
+
+def _py_texts() -> dict[str, str]:
+    return {rel(p): p.read_text(errors="replace") for p in py_files()}
 
 
 def check_undeclared_params() -> list[Finding]:
@@ -1434,6 +1556,10 @@ def check_undeclared_params() -> list[Finding]:
 
 def check_prose_only_enum() -> list[Finding]:
     return prose_only_enum_findings(_src_texts())
+
+
+def check_scored_exception() -> list[Finding]:
+    return scored_exception_findings(_py_texts())
 
 
 CHECKS = {
@@ -1451,6 +1577,7 @@ CHECKS = {
     "stale-coverage-objects": check_stale_coverage_objects,
     "undeclared-params": check_undeclared_params,
     "prose-only-enum": check_prose_only_enum,
+    "scored-exception": check_scored_exception,
 }
 
 # Findings in these classes always fail the gate, baseline or not: the class is fully
@@ -1464,6 +1591,7 @@ NO_BASELINE = {
     "stale-coverage-objects",
     "undeclared-params",
     "prose-only-enum",
+    "scored-exception",
 }
 
 

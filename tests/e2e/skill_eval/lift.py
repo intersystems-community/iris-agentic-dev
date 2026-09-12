@@ -1,34 +1,104 @@
 """Lift measurement via OpenCode harness + benchmark judge — T014."""
+
 import os
-import sys
 from typing import TYPE_CHECKING
+
+from tests.e2e.skill_eval import cost_estimator, scoring
 
 if TYPE_CHECKING:
     from tests.e2e.skill_eval.evaluator import SkillEvalConfig
 
 _BENCHMARK_TASKS_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "benchmark", "021", "tasks")
+    os.path.join(
+        os.path.dirname(__file__), "..", "..", "..", "benchmark", "021", "tasks"
+    )
 )
 _SKILLS_PACK_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "..", "skills", "skills")
 )
 
 
-def compute_pass_rate(scores: list[dict]) -> float:
-    """Pass = score >= 2."""
-    if not scores:
-        return 0.0
-    passed = sum(1 for s in scores if s.get("score", 0) >= 2)
-    return passed / len(scores)
+# One implementation of "pass = score >= 2, over the items that were scored". The local copy
+# this replaces counted unscored items in its denominator, so a run whose scorer was
+# unreachable reported a real-looking rate.
+compute_pass_rate = scoring.compute_pass_rate
 
 
-def compute_lift_from_scores(baseline_scores: list[dict], skill_scores: list[dict]) -> dict:
-    pr_baseline = compute_pass_rate(baseline_scores)
-    pr_skill = compute_pass_rate(skill_scores)
+def verdict_from_assertions(passed: bool, assertions: list) -> dict:
+    """The verdict for tool-assertion scoring: deterministic, scored, no model involved."""
     return {
-        "pass_rate_baseline": round(pr_baseline, 4),
-        "pass_rate_skill": round(pr_skill, 4),
-        "lift": round(pr_skill - pr_baseline, 4),
+        "scored": True,
+        "score": 3 if passed else 0,
+        "reasoning": (
+            "tool assertions passed"
+            if passed
+            else f"missing required tools: {assertions}"
+        ),
+        "scoring_mode": "assertion",
+        "scorer_model": None,
+        "input_tokens": None,
+        "output_tokens": None,
+    }
+
+
+def verdict_from_patterns(score: int, reasoning: str) -> dict:
+    """The verdict for compile-and-pattern scoring in no-MCP mode. Also model-free."""
+    return {
+        "scored": True,
+        "score": score,
+        "reasoning": reasoning,
+        "scoring_mode": "pattern",
+        "scorer_model": None,
+        "input_tokens": None,
+        "output_tokens": None,
+    }
+
+
+def _round_or_none(value):
+    return None if value is None else round(value, 4)
+
+
+def compute_lift_from_scores(
+    baseline_scores: list[dict], skill_scores: list[dict]
+) -> dict:
+    """Both arms' rates, their denominators, and whether the run measured enough to compare.
+
+    `lift` is `None` when either arm scored nothing. Subtracting from an unmeasured number
+    produces a plausible `0.0`, which is how "the credential was missing" got published as
+    "the skill made no difference".
+    """
+    baseline = scoring.ArmResult.from_items(baseline_scores)
+    skill = scoring.ArmResult.from_items(skill_scores)
+    all_items = list(baseline_scores) + list(skill_scores)
+
+    lift = None
+    if baseline.pass_rate is not None and skill.pass_rate is not None:
+        lift = skill.pass_rate - baseline.pass_rate
+
+    models = sorted(
+        {
+            s.get("scorer_model")
+            for s in all_items
+            if isinstance(s, dict) and s.get("scorer_model")
+        }
+    )
+    return {
+        "pass_rate_baseline": _round_or_none(baseline.pass_rate),
+        "pass_rate_skill": _round_or_none(skill.pass_rate),
+        "lift": _round_or_none(lift),
+        "items_total": baseline.items_total + skill.items_total,
+        "items_scored_baseline": baseline.items_scored,
+        "items_unscored_baseline": baseline.items_unscored,
+        "items_scored_skill": skill.items_scored,
+        "items_unscored_skill": skill.items_unscored,
+        "items_scored": baseline.items_scored + skill.items_scored,
+        "items_unscored": baseline.items_unscored + skill.items_unscored,
+        "unscored_share": round(scoring.unscored_share(all_items), 4),
+        "run_valid": scoring.run_is_valid(all_items),
+        "scorer_models": models,
+        # What the scoring calls actually charged, from the usage the scorer reported. The
+        # estimate printed before the run is a projection; this is the bill.
+        "scorer_cost": cost_estimator.scorer_cost(all_items),
     }
 
 
@@ -42,12 +112,14 @@ def format_transcript(events: list[dict]) -> list[dict]:
             if state.get("status") != "completed":
                 continue
             tool = part.get("tool", "")
-            turns.append({
-                "role": "assistant",
-                "tool_name": tool,
-                "args": state.get("input", {}),
-                "tool_result": str(state.get("output", ""))[:300],
-            })
+            turns.append(
+                {
+                    "role": "assistant",
+                    "tool_name": tool,
+                    "args": state.get("input", {}),
+                    "tool_result": str(state.get("output", ""))[:300],
+                }
+            )
         elif event.get("type") == "text":
             part = event["part"]
             if part.get("time", {}).get("end"):
@@ -58,12 +130,18 @@ def format_transcript(events: list[dict]) -> list[dict]:
 def _apply_global_fixture(fx: dict, iris_host: str, iris_web_port: str) -> None:
     """Set a global subscript via Atelier execute."""
     import requests
+
     name = fx.get("name", "^BenchData").lstrip("^")
     subscript = fx.get("subscript", "")
     value = fx.get("value", "")
     code = f'Set ^{name}("{subscript}") = "{value}"'
     url = f"http://{iris_host}:{iris_web_port}/api/atelier/v1/USER/action/query"
-    requests.post(url, json={"query": f"CALL %SYSTEM.SQL.Execute('{code}')"}, auth=("_SYSTEM", "SYS"), timeout=10)
+    requests.post(
+        url,
+        json={"query": f"CALL %SYSTEM.SQL.Execute('{code}')"},
+        auth=("_SYSTEM", "SYS"),
+        timeout=10,
+    )
 
 
 def run_task_and_score(
@@ -85,7 +163,6 @@ def run_task_and_score(
     from tests.e2e.skill_eval.fire_rate import _install_skill_local
 
     # Ensure benchmark judge is importable
-    import tests.e2e.skill_eval  # triggers sys.path shim
     from runner.judge import score_result
 
     # Look in targeted tasks dir first, then fall back to benchmark tasks dir
@@ -93,7 +170,11 @@ def run_task_and_score(
         os.path.join(os.path.dirname(__file__), "..", "tasks", "skills", "targeted")
     )
     targeted_path = os.path.join(_TARGETED_DIR, f"{task_id}.yaml")
-    task_path = targeted_path if os.path.exists(targeted_path) else os.path.join(_BENCHMARK_TASKS_DIR, f"{task_id}.yaml")
+    task_path = (
+        targeted_path
+        if os.path.exists(targeted_path)
+        else os.path.join(_BENCHMARK_TASKS_DIR, f"{task_id}.yaml")
+    )
     with open(task_path) as f:
         try:
             task_dict = yaml.safe_load(f)
@@ -117,7 +198,9 @@ def run_task_and_score(
         if fx.get("type") == "cls" and "content" in fx
     ]
     if cls_fixtures:
-        load_all_fixtures(cls_fixtures, iris_host=iris_host, iris_web_port=iris_web_port)
+        load_all_fixtures(
+            cls_fixtures, iris_host=iris_host, iris_web_port=iris_web_port
+        )
 
     # Apply global fixtures via iris_execute
     for fx in task_dict.get("fixtures", []):
@@ -137,16 +220,22 @@ def run_task_and_score(
         if skill_name_or_none:
             try:
                 from tests.e2e.readme_validator import ReadmeValidator
-                ReadmeValidator(skills_dir=env.skills_dir).install_skill(skill_name_or_none)
+
+                ReadmeValidator(skills_dir=env.skills_dir).install_skill(
+                    skill_name_or_none
+                )
             except (ValueError, Exception):
                 _install_skill_local(skill_name_or_none, env.skills_dir)
         # Use a fresh temp workdir so previous eval artifacts don't pollute the session
         # Keep the workdir alive after collect_events so we can read written files
         import tempfile
+
         workdir_obj = tempfile.TemporaryDirectory(prefix="iad-eval-workdir-")
         workdir = workdir_obj.name
         try:
-            events = collect_events(prompt, env.env_vars(), model=model, working_dir=workdir)
+            events = collect_events(
+                prompt, env.env_vars(), model=model, working_dir=workdir
+            )
         finally:
             pass  # workdir_obj cleanup happens below
 
@@ -154,45 +243,76 @@ def run_task_and_score(
     tool_assertions = task_dict.get("tool_assertions", [])
     if tool_assertions:
         from tests.e2e.assertions import check_tool_called
+
         passed = all(
             check_tool_called(events, *_parse_assertion_tool(a))
             for a in tool_assertions
         )
-        score = 3 if passed else 0
-        reasoning = "tool assertions passed" if passed else f"missing required tools: {tool_assertions}"
-        return {"score": score, "reasoning": reasoning, "task_id": task_id, "condition": skill_name_or_none or "baseline"}
+        return {
+            **verdict_from_assertions(passed, tool_assertions),
+            "task_id": task_id,
+            "condition": skill_name_or_none or "baseline",
+        }
 
     # For no-MCP (light-skills) mode: extract written file content and present as response
     # The model writes .cls files locally; judge should assess the code quality, not tool use
     if no_mcp:
-        written_content = _read_cls_files_from_workdir(workdir) or _extract_written_content(events)
+        written_content = _read_cls_files_from_workdir(
+            workdir
+        ) or _extract_written_content(events)
         workdir_obj.cleanup()
         if written_content:
             expected = task_dict.get("expected_behavior", "")
             patterns_met = _check_expected_patterns(written_content, expected)
             tags = task_dict.get("tags", [])
-            is_objectscript = any(t in tags for t in ["objectscript", "cls", "ens-director"]) or \
-                              "Class " in written_content[:200]
+            is_objectscript = (
+                any(t in tags for t in ["objectscript", "cls", "ens-director"])
+                or "Class " in written_content[:200]
+            )
 
             if is_objectscript:
                 # ObjectScript: try to compile for verification
-                compile_result = _try_compile_via_atelier(written_content, iris_host, iris_web_port)
+                compile_result = _try_compile_via_atelier(
+                    written_content, iris_host, iris_web_port
+                )
                 compiled_ok = "Compiled OK" in compile_result
                 if compiled_ok and patterns_met:
-                    score, reasoning = 3, "Compiled OK and meets expected behavior patterns"
+                    score, reasoning = (
+                        3,
+                        "Compiled OK and meets expected behavior patterns",
+                    )
                 elif compiled_ok:
-                    score, reasoning = 2, "Compiled OK but expected behavior patterns not fully met"
+                    score, reasoning = (
+                        2,
+                        "Compiled OK but expected behavior patterns not fully met",
+                    )
                 elif patterns_met:
-                    score, reasoning = 1, f"Expected patterns present but did not compile: {compile_result}"
+                    score, reasoning = (
+                        1,
+                        f"Expected patterns present but did not compile: {compile_result}",
+                    )
                 else:
-                    score, reasoning = 0, f"Did not compile and patterns not met: {compile_result}"
+                    score, reasoning = (
+                        0,
+                        f"Did not compile and patterns not met: {compile_result}",
+                    )
             else:
                 # Python / SQL / other: pattern-only scoring (no compile step)
                 if patterns_met:
-                    score, reasoning = 3, "All expected patterns present, no forbidden patterns found"
+                    score, reasoning = (
+                        3,
+                        "All expected patterns present, no forbidden patterns found",
+                    )
                 else:
-                    score, reasoning = 0, "Expected patterns missing or forbidden patterns present"
-            return {"score": score, "reasoning": reasoning, "task_id": task_id, "condition": skill_name_or_none or "baseline"}
+                    score, reasoning = (
+                        0,
+                        "Expected patterns missing or forbidden patterns present",
+                    )
+            return {
+                **verdict_from_patterns(score, reasoning),
+                "task_id": task_id,
+                "condition": skill_name_or_none or "baseline",
+            }
     try:
         workdir_obj.cleanup()
     except Exception:
@@ -200,7 +320,8 @@ def run_task_and_score(
 
     turns = format_transcript(events)
     tool_count = sum(
-        1 for e in events
+        1
+        for e in events
         if e.get("type") == "tool_use"
         and e.get("part", {}).get("state", {}).get("status") == "completed"
         and e.get("part", {}).get("tool") != "skill"
@@ -215,17 +336,25 @@ def _check_expected_patterns(content: str, expected_behavior: str) -> bool:
     import re
 
     # ── Required patterns: API names in backticks from expected_behavior ──
-    api_names = re.findall(r'`([^`]+)`|\b(Ens\.Director\.\w+|##class\([^)]+\)|\$\$\$\w+)\b', expected_behavior)
+    api_names = re.findall(
+        r"`([^`]+)`|\b(Ens\.Director\.\w+|##class\([^)]+\)|\$\$\$\w+)\b",
+        expected_behavior,
+    )
     required = [a for pair in api_names for a in pair if a]
 
     # ── Forbidden patterns: anything after NOT in expected_behavior ──
     # Extract "NOT X" patterns — these MUST be absent
-    forbidden_raw = re.findall(r'NOT\s+`([^`]+)`|NOT\s+([\w<>=:]+)', expected_behavior)
+    forbidden_raw = re.findall(r"NOT\s+`([^`]+)`|NOT\s+([\w<>=:]+)", expected_behavior)
     forbidden = [a for pair in forbidden_raw for a in pair if a]
 
     # Explicit pgvector / wrong-syntax guards for vector tasks
     if "VECTOR_COSINE" in expected_behavior:
-        forbidden += ["<=>", "<->", "::vector", "LIMIT "]  # LIMIT not TOP is pgvector style
+        forbidden += [
+            "<=>",
+            "<->",
+            "::vector",
+            "LIMIT ",
+        ]  # LIMIT not TOP is pgvector style
 
     if required:
         hits = sum(1 for p in required if p in content)
@@ -239,12 +368,16 @@ def _check_expected_patterns(content: str, expected_behavior: str) -> bool:
     return True
 
 
-def _try_compile_via_atelier(cls_content: str, iris_host: str, iris_web_port: str) -> str:
+def _try_compile_via_atelier(
+    cls_content: str, iris_host: str, iris_web_port: str
+) -> str:
     """Load and compile a class via Atelier REST. Returns 'compiled OK' or error string."""
     try:
-        import requests, re
+        import requests
+        import re
+
         # Extract class name from content
-        m = re.search(r'^Class\s+([\w.]+)', cls_content, re.MULTILINE)
+        m = re.search(r"^Class\s+([\w.]+)", cls_content, re.MULTILINE)
         if not m:
             return "Could not determine class name"
         cls_name = m.group(1)
@@ -254,12 +387,15 @@ def _try_compile_via_atelier(cls_content: str, iris_host: str, iris_web_port: st
         r = requests.put(
             f"{base}/doc/{cls_name}.cls?ignoreConflict=1",
             json={"enc": False, "content": cls_content.splitlines()},
-            auth=auth, timeout=30
+            auth=auth,
+            timeout=30,
         )
         if r.status_code not in (200, 201):
             return f"PUT failed: HTTP {r.status_code}"
         # Compile
-        r2 = requests.post(f"{base}/action/compile", json=[f"{cls_name}.cls"], auth=auth, timeout=30)
+        r2 = requests.post(
+            f"{base}/action/compile", json=[f"{cls_name}.cls"], auth=auth, timeout=30
+        )
         result = r2.json().get("result", {})
         errors = [s for s in result.get("status", []) if "ERROR" in str(s).upper()]
         if errors:
@@ -310,6 +446,7 @@ def _extract_written_content(events: list[dict]) -> str:
         return best
     # Fall back: extract fenced code blocks from text output (objectscript/cls/sql blocks)
     import re as _re
+
     texts = [
         e["part"].get("text", "")
         for e in events
@@ -349,12 +486,24 @@ def measure_lift(
     for task_id in config.benchmark_tasks:
         for _ in range(n_runs):
             b = run_task_and_score(
-                task_id, None, openai_api_key, model, iris_host, iris_web_port, iris_container,
+                task_id,
+                None,
+                openai_api_key,
+                model,
+                iris_host,
+                iris_web_port,
+                iris_container,
                 no_mcp=config.no_mcp_for_benchmark,
             )
             baseline_scores.append(b)
             s = run_task_and_score(
-                task_id, config.skill, openai_api_key, model, iris_host, iris_web_port, iris_container,
+                task_id,
+                config.skill,
+                openai_api_key,
+                model,
+                iris_host,
+                iris_web_port,
+                iris_container,
                 no_mcp=config.no_mcp_for_benchmark,
             )
             skill_scores.append(s)

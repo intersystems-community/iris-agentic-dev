@@ -51,8 +51,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install Python dependencies
-        # The harness unit tests import yaml and requests only — no LLM client, no container.
-        run: pip install pyyaml pytest requests
+        # The unit tests need yaml and requests only. `anthropic[bedrock]` is here for the
+        # preflight step below, which makes one real scoring call — the Bedrock extra pulls
+        # boto3, without which AnthropicBedrock cannot be constructed at all.
+        run: pip install pyyaml pytest requests 'anthropic[bedrock]'
 
       - name: Run unit tests for skill_eval harness
         run: |
@@ -66,6 +68,30 @@ jobs:
             -q
         env:
           PYTHONPATH: ${{ github.workspace }}
+
+      - name: Install the released iris-agentic-dev binary
+        # The nightly ran for weeks with no iad tools in any session: isolated_env.py held the
+        # literal Homebrew path, which no GHA runner has. Every transcript was a bare model
+        # answering an IRIS question, and the judge scored it as the skill failing.
+        run: |
+          mkdir -p "$RUNNER_TEMP/iad"
+          gh release download --repo "$GITHUB_REPOSITORY" \
+            --pattern iris-agentic-dev-linux-x86_64 --dir "$RUNNER_TEMP/iad"
+          mv "$RUNNER_TEMP/iad/iris-agentic-dev-linux-x86_64" "$RUNNER_TEMP/iad/iris-agentic-dev"
+          chmod +x "$RUNNER_TEMP/iad/iris-agentic-dev"
+          echo "IAD_BINARY=$RUNNER_TEMP/iad/iris-agentic-dev" >> "$GITHUB_ENV"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Preflight — corpus, scorer, binary, tool surface
+        # One call, well under a cent, before the matrix starts nine containers. Exit 2 here
+        # means nothing was spent; nine shards each rediscovering a missing credential means
+        # nine opencode installs and nine IRIS starts to report the same one fact.
+        run: python -m tests.e2e.skill_eval --preflight-only
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+          AWS_REGION: us-east-1
 
       - name: Build the shard matrix
         id: matrix
@@ -116,8 +142,23 @@ jobs:
             openai \
             litellm \
             pytest \
-            anthropic \
+            'anthropic[bedrock]' \
             iris-devtester
+
+      - name: Install the released iris-agentic-dev binary
+        # Every session in this job needs it. Without it the eval measures a model with no
+        # tools, which is not what any of these skills are about.
+        run: |
+          mkdir -p "$RUNNER_TEMP/iad"
+          gh release download --repo "$GITHUB_REPOSITORY" \
+            --pattern iris-agentic-dev-linux-x86_64 --dir "$RUNNER_TEMP/iad"
+          mv "$RUNNER_TEMP/iad/iris-agentic-dev-linux-x86_64" "$RUNNER_TEMP/iad/iris-agentic-dev"
+          chmod +x "$RUNNER_TEMP/iad/iris-agentic-dev"
+          echo "IAD_BINARY=$RUNNER_TEMP/iad/iris-agentic-dev" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/iad/iris-agentic-dev" tool --list --json | python -c \
+            'import json,sys; print("tool surface:", len(json.load(sys.stdin)["tools"]), "tools")'
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Start IRIS community container
         run: |
@@ -197,7 +238,15 @@ jobs:
             --model "openai/gpt-4.1"
         env:
           PYTHONPATH: ${{ github.workspace }}
+          # OPENAI_API_KEY runs the agent sessions. It is not the scorer's key, and it was the
+          # only one this step passed — which is the whole reason the nightly published a 0%
+          # pass rate for six of nine skills instead of "the scorer was never reachable".
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AWS_BEARER_TOKEN_BEDROCK: ${{ secrets.AWS_BEARER_TOKEN_BEDROCK }}
+          # Literal, not a secret: the region is not sensitive, and a blank one silently sent
+          # every scoring call to the SDK's us-east-1 default.
+          AWS_REGION: us-east-1
+          IAD_BINARY: ${{ env.IAD_BINARY }}
           IRIS_HOST: localhost
           IRIS_WEB_PORT: "52773"
           IRIS_USERNAME: ${{ env.IRIS_USERNAME }}

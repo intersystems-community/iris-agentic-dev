@@ -749,13 +749,135 @@ def test_device_capture() -> None:
 
 
 # ---------------------------------------------------------------------------
+# scored-exception
+# ---------------------------------------------------------------------------
+
+# The shape that shipped: an unreachable scorer answers with a number on the scale, so the
+# report cannot tell "the agent failed every task" from "nothing was ever scored".
+SCORE_FROM_HANDLER = """
+def score_result(task, result):
+    try:
+        parsed = json.loads(client.messages.create(**kw).content[0].text)
+        return {"score": int(parsed["score"]), "reasoning": parsed.get("reasoning", "")}
+    except Exception as e:
+        return {"score": 0, "reasoning": f"Judge error: {e}"}
+"""
+
+SCORE_FROM_HANDLER_FIXED = """
+def score_result(task, result):
+    try:
+        parsed = json.loads(client.messages.create(**kw).content[0].text)
+        return {"scored": True, "score": int(parsed["score"]), "reasoning": ""}
+    except Exception as e:
+        return {"scored": False, "score": None, "reasoning": f"scorer unreachable: {e}"}
+"""
+
+# `dict(score=0)` is the same fabrication with different punctuation. A detector that only
+# knows the brace form gets defeated by whoever reaches for the other one.
+SCORE_FROM_HANDLER_DICT_CALL = """
+def score_result(task, result):
+    try:
+        return dict(score=parsed["score"], reasoning="")
+    except Exception as e:
+        return dict(score=0, reasoning=str(e))
+"""
+
+SCORE_FROM_HANDLER_FLOAT = """
+def score_result(task, result):
+    try:
+        return {"score": parsed["score"]}
+    except Exception as e:
+        return {"score": 0.0, "reasoning": str(e)}
+"""
+
+# A handler that gives up honestly. Nothing lands on the scale, so nothing to report.
+HANDLER_RERAISES = """
+def score_result(task, result):
+    try:
+        return {"score": parsed["score"]}
+    except KeyError as e:
+        raise ValueError(f"malformed scorer response: {e}") from e
+"""
+
+# The near-miss: a test naming the zero it expects, and a fixture handing one back. Both sit
+# outside any handler, and both are legitimate — a real zero is a real verdict.
+ZERO_OUTSIDE_A_HANDLER = """
+def a_failing_verdict():
+    return {"score": 0, "reasoning": "the agent never called a tool"}
+
+
+def test_a_bad_transcript_scores_zero():
+    assert score_result(task, transcript) == {"score": 0, "reasoning": "no tool call"}
+"""
+
+
+def test_scored_exception() -> None:
+    print("scored-exception")
+
+    found = ap.scored_exception_findings(
+        {"benchmark/021/runner/judge.py": SCORE_FROM_HANDLER}
+    )
+    check(
+        "fires on a score returned from an except handler",
+        len(found) == 1 and "`score_result`" in found[0].message,
+        messages(found),
+    )
+
+    found = ap.scored_exception_findings({"a.py": SCORE_FROM_HANDLER_FIXED})
+    check(
+        "silent once the handler returns the unscored verdict",
+        not found,
+        messages(found),
+    )
+
+    found = ap.scored_exception_findings({"a.py": SCORE_FROM_HANDLER_DICT_CALL})
+    check("fires on the dict(score=0) spelling", len(found) == 1, messages(found))
+
+    found = ap.scored_exception_findings({"a.py": SCORE_FROM_HANDLER_FLOAT})
+    check(
+        "fires on a float score, which is out of range as well as fabricated",
+        len(found) == 1 and "0.0" in found[0].message,
+        messages(found),
+    )
+
+    found = ap.scored_exception_findings({"a.py": HANDLER_RERAISES})
+    check("leaves a handler that re-raises alone", not found, messages(found))
+
+    found = ap.scored_exception_findings({"a.py": ZERO_OUTSIDE_A_HANDLER})
+    check(
+        "does not read a real zero verdict outside a handler as a finding",
+        not found,
+        messages(found),
+    )
+
+    # A file the scanner cannot parse is a file the scanner has not cleared, and saying so is
+    # the only honest outcome — the alternative is a silent skip that reports clean.
+    found = ap.scored_exception_findings({"a.py": "def broken(:\n    pass\n"})
+    check(
+        "reports a file it cannot parse rather than skipping it",
+        len(found) == 1 and "does not parse" in found[0].message,
+        messages(found),
+    )
+
+    # This canary read "finds the known instance in the real tree" until 118 T013 rewrote
+    # `judge.py`'s failure path to return an unscored verdict. The class is now clean, which is
+    # what lets `scored-exception` be never-baselined: any finding here is new.
+    found = ap.check_scored_exception()
+    check(
+        "reports zero on the real tree",
+        not found,
+        messages(found),
+    )
+
+
+# ---------------------------------------------------------------------------
 # The harness itself
 # ---------------------------------------------------------------------------
 
 
 def test_both_classes_are_never_baselined() -> None:
     print("registration")
-    for name in ("undeclared-params", "prose-only-enum"):
+    for name in ("undeclared-params", "prose-only-enum", "scored-exception"):
         check(f"{name} is registered in CHECKS", name in ap.CHECKS)
         check(f"{name} is never baselined", name in ap.NO_BASELINE)
     baseline = ap.load_baseline()
@@ -819,6 +941,7 @@ def main() -> int:
     test_comment_masking_skips_string_literals()
     test_empty_tests()
     test_device_capture()
+    test_scored_exception()
     test_both_classes_are_never_baselined()
     test_baseline_key_ignores_line_numbers()
     test_baseline_counts_repeats()

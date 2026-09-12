@@ -1,9 +1,12 @@
 """IsolatedEnv — per-run isolation via OPENCODE_CONFIG_CONTENT + OPENCODE_DB."""
+
 import json
 import os
 import shutil
 import tempfile
 import time
+
+from tests.e2e.skill_eval import provenance
 
 
 class IsolatedEnv:
@@ -39,13 +42,35 @@ class IsolatedEnv:
             shutil.rmtree(self._tmpdir, ignore_errors=True)
         return False
 
-    def with_mcp(self, iris_host: str, iris_web_port: str, iris_container: str,
-                 iris_namespace: str = "USER", iris_username: str = "_SYSTEM",
-                 iris_password: str = "SYS") -> "IsolatedEnv":
+    def with_mcp(
+        self,
+        iris_host: str,
+        iris_web_port: str,
+        iris_container: str,
+        iris_namespace: str = "USER",
+        iris_username: str = "_SYSTEM",
+        iris_password: str = "SYS",
+        binary: str | None = None,
+    ) -> "IsolatedEnv":
+        """Configure the iad MCP server for this session.
+
+        `binary` is resolved rather than assumed. It used to be the literal Homebrew path,
+        which does not exist on a GitHub runner — so every nightly session started with no
+        iad tools, and the harness scored the toolless transcripts and published the zeros.
+        Raising when nothing resolves is the point: an MCP entry naming a missing file is
+        valid JSON, so the old failure was silent all the way to the report.
+        """
+        resolved = binary or provenance.resolve_binary()
+        if not resolved:
+            searched = "; ".join(c.describe() for c in provenance.binary_candidates())
+            raise RuntimeError(
+                "no iris-agentic-dev binary resolved, so this session would run with no iad "
+                f"tools and score as though the skill failed. Searched — {searched}"
+            )
         self._mcp_config = {
             "iris-agentic-dev": {
                 "type": "local",
-                "command": ["/opt/homebrew/bin/iris-agentic-dev", "mcp"],
+                "command": [resolved, "mcp"],
                 "enabled": True,
                 "environment": {
                     "IRIS_HOST": iris_host,

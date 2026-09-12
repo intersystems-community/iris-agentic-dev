@@ -1,8 +1,9 @@
 """Stdout summary table and JSON result writer — T010."""
+
 import dataclasses
 import json
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from tests.e2e.skill_eval.evaluator import SkillResult
@@ -12,7 +13,7 @@ if TYPE_CHECKING:
 class EvalRun:
     run_id: str
     model: str
-    judge_model: str
+    judge_model: Optional[str]
     timestamp: str
     regression_threshold: float
     skills: "list[SkillResult]"
@@ -24,19 +25,21 @@ def print_summary(run: EvalRun) -> None:
     header = f"\nSkill Evaluation Results — {run.timestamp}"
     print(header)
     print("=" * len(header.strip()))
-    print(f"{'Skill':<35} {'Fire%':>6} {'Impl%':>6} {'Base':>6} {'Skill':>6} {'Lift':>7} {'Δ':>7}  {'Status'}")
+    print(
+        f"{'Skill':<35} {'Fire%':>6} {'Impl%':>6} {'Base':>6} {'Skill':>6} {'Lift':>7} {'Δ':>7}  {'Status'}"
+    )
     print("-" * 88)
 
     def fmt_pct(v):
-        return f"{v*100:.0f}%" if v is not None else "  n/a"
+        return f"{v * 100:.0f}%" if v is not None else "  n/a"
 
     def fmt_lift(v):
         if v is None:
             return "   n/a"
         sign = "+" if v >= 0 else ""
-        return f"{sign}{v*100:.0f}%"
+        return f"{sign}{v * 100:.0f}%"
 
-    for r in sorted(run.skills, key=lambda x: (x.lift or 0), reverse=True):
+    for r in sorted(run.skills, key=lambda x: x.lift or 0, reverse=True):
         status = "✓"
         if r.no_task_coverage:
             status = "(no coverage)"
@@ -60,7 +63,9 @@ def print_summary(run: EvalRun) -> None:
         print()
     print(f"Improvements: {len(improvements)}")
     if uncovered:
-        print(f"No task coverage: {len(uncovered)} skills (add eval.yaml to cover them)")
+        print(
+            f"No task coverage: {len(uncovered)} skills (add eval.yaml to cover them)"
+        )
     cost = run.summary.get("estimated_cost_usd")
     if cost:
         print(f"Estimated cost: ~${cost:.2f} USD")

@@ -1,9 +1,11 @@
 """LLM-as-judge scoring using Claude Haiku as arbiter (Bedrock or direct API)."""
+
 import json
+
 try:
-    from ._client import make_client, haiku_model
+    from ._client import CREDENTIAL_VARS, haiku_model, make_client, resolved_model
 except ImportError:
-    from _client import make_client, haiku_model
+    from _client import CREDENTIAL_VARS, haiku_model, make_client, resolved_model
 
 RUBRIC = """You are evaluating an AI coding agent's performance on an IRIS development task.
 
@@ -49,8 +51,57 @@ PATH_LABELS = {
 }
 
 
+def unscored(reason: str) -> dict:
+    """The verdict for an item the scorer did not score.
+
+    `score: None`, never `0`. A zero is a measurement — the model read the transcript and
+    rejected it — and this function exists for the case where no model read anything. The
+    two used to be the same value, so the 2026-08 nightlies published nine skills at a 0%
+    pass rate that nothing had scored.
+    """
+    return {
+        "scored": False,
+        "score": None,
+        "reasoning": reason,
+        "scoring_mode": "judge",
+        "scorer_model": None,
+        "input_tokens": None,
+        "output_tokens": None,
+    }
+
+
+def _usage(msg) -> tuple:
+    """Token counts from the response, or `(None, None)` if it carries none.
+
+    Missing usage costs the cost estimate, not the measurement — the score is still real.
+    """
+    usage = getattr(msg, "usage", None)
+    if usage is None:
+        return None, None
+    return getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None)
+
+
+def _validated_score(raw):
+    """The score if it is on the 0–3 scale, else a message saying why it is not.
+
+    Returns `(score, None)` or `(None, reason)`. `7` is not clamped to `3`: an unmeasured
+    number in the middle of the scale is the same lie as a fabricated zero and harder to
+    spot. `bool` is excluded because `True` is an `int` and is not a verdict.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return None, f"scorer returned {raw!r}, which is not a 0-3 score"
+    if raw not in (0, 1, 2, 3):
+        return None, f"scorer returned {raw!r}, out of the 0-3 range"
+    return raw, None
+
+
 def score_result(task: dict, result: dict) -> dict:
-    """Score a task result using Claude Haiku as judge. Returns {score, reasoning}."""
+    """Score a task result with the judge model. Returns the verdict in contracts/scoring.md.
+
+    Never raises for a scorer failure and never returns a score it did not get from the
+    model: an unreachable scorer, an unparseable answer, and an off-scale number all come
+    back `scored: False`.
+    """
     transcript = _format_transcript(result.get("transcript", []))
     category = task.get("category", "")
     if category == "PYPR":
@@ -68,7 +119,15 @@ def score_result(task: dict, result: dict) -> dict:
         category_note=category_note,
     )
 
-    client = make_client()
+    try:
+        client = make_client()
+    except Exception as e:
+        return unscored(
+            f"scorer unreachable: client could not be built ({e}). Looked for "
+            f"{', '.join(CREDENTIAL_VARS)}"
+        )
+
+    reason = "scorer made no attempt"
     for attempt in range(2):
         try:
             msg = client.messages.create(
@@ -76,17 +135,44 @@ def score_result(task: dict, result: dict) -> dict:
                 max_tokens=256,
                 messages=[{"role": "user", "content": prompt}],
             )
-            text = msg.content[0].text.strip()
-            parsed = json.loads(text)
-            score = int(parsed["score"])
-            if score not in (0, 1, 2, 3):
-                raise ValueError(f"score out of range: {score}")
-            return {"score": score, "reasoning": parsed.get("reasoning", "")}
         except Exception as e:
-            if attempt == 1:
-                return {"score": 0, "reasoning": f"Judge error: {e}"}
+            # Retried once: Bedrock throttles. Both attempts failing is a real failure,
+            # and a failure has no score.
+            reason = (
+                f"scorer unreachable: {haiku_model()} call failed ({e}). Looked for "
+                f"{', '.join(CREDENTIAL_VARS)}"
+            )
+            continue
 
-    return {"score": 0, "reasoning": "Judge failed after retries"}
+        text = str(msg.content[0].text).strip()
+        try:
+            parsed = json.loads(text)
+        except Exception:
+            reason = f"scorer answer did not parse as JSON: {text[:200]!r}"
+            continue
+        if not isinstance(parsed, dict) or "score" not in parsed:
+            reason = f"scorer answer carried no score: {text[:200]!r}"
+            continue
+        score, problem = _validated_score(parsed["score"])
+        if problem:
+            reason = problem
+            continue
+
+        input_tokens, output_tokens = _usage(msg)
+        return {
+            "scored": True,
+            "score": score,
+            "reasoning": parsed.get("reasoning", ""),
+            "scoring_mode": "judge",
+            # Never the requested constant on its own: that is how every stored number came
+            # to be attributed to a Haiku id while Bedrock served Sonnet.
+            "scorer_model": resolved_model(msg)
+            or f"unreported (requested {haiku_model()})",
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+        }
+
+    return unscored(reason)
 
 
 def _format_transcript(turns: list) -> str:
@@ -94,7 +180,9 @@ def _format_transcript(turns: list) -> str:
     for turn in turns:
         role = turn.get("role", "?")
         if turn.get("tool_name"):
-            lines.append(f"[{role}] tool_call: {turn['tool_name']}({json.dumps(turn.get('args', {}))[:120]})")
+            lines.append(
+                f"[{role}] tool_call: {turn['tool_name']}({json.dumps(turn.get('args', {}))[:120]})"
+            )
         if turn.get("tool_result"):
             lines.append(f"[tool_result] {str(turn['tool_result'])[:200]}")
         if turn.get("text"):

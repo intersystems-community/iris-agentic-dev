@@ -16,8 +16,20 @@ from tests.e2e.skill_eval.evaluator import (
     SkillResult,
 )
 from tests.e2e.skill_eval.baseline import load_baseline, save_baseline, compute_diff
-from tests.e2e.skill_eval.cost_estimator import estimate, format_dry_run
+from tests.e2e.skill_eval.cost_estimator import (
+    estimate,
+    format_dry_run,
+    format_scorer_cost,
+    merge_scorer_costs,
+)
+from tests.e2e.skill_eval.preflight import preflight
 from tests.e2e.skill_eval.reporter import EvalRun, print_summary, write_result
+from tests.e2e.skill_eval.scoring import (
+    EXIT_INTEGRITY,
+    EXIT_MEASURED,
+    EXIT_PREFLIGHT,
+    baseline_write_allowed,
+)
 from tests.e2e.skill_eval.shard import covered_skills, merge_results
 
 _SKILLS_PACK_DIR = os.path.abspath(
@@ -52,7 +64,13 @@ def _make_uncovered_result(skill_name: str) -> SkillResult:
 
 def _run_skill(
     config, openai_key, model, n_runs, iris_host, iris_web_port, iris_container
-) -> SkillResult:
+) -> tuple:
+    """Measure one skill. Returns `(SkillResult, lift_data)`.
+
+    The raw `lift_data` travels with the result because it carries the scored/unscored counts
+    and `run_valid`, and the caller needs those to decide whether the run may touch the
+    baseline. `SkillResult` grows those fields in Phase 4.
+    """
     from tests.e2e.skill_eval.fire_rate import measure_fire_rate
     from tests.e2e.skill_eval.lift import measure_lift
     from tests.e2e.skill_eval.isolation import check_isolation
@@ -98,6 +116,11 @@ def _run_skill(
         "pass_rate_skill": None,
         "lift": None,
         "task_ids_used": [],
+        # A skill with no benchmark tasks measured nothing to invalidate.
+        "run_valid": True,
+        "items_scored": 0,
+        "items_unscored": 0,
+        "scorer_cost": None,
     }
     if config.benchmark_tasks:
         print(
@@ -113,9 +136,15 @@ def _run_skill(
             iris_web_port=iris_web_port,
             iris_container=iris_container,
         )
-        print(f"  [{config.skill}] lift={lift_data.get('lift')}", flush=True)
+        scored = lift_data.get("items_scored", 0)
+        unscored = lift_data.get("items_unscored", 0)
+        print(
+            f"  [{config.skill}] lift={lift_data.get('lift')} "
+            f"({scored}/{scored + unscored} scored)",
+            flush=True,
+        )
 
-    return SkillResult(
+    result = SkillResult(
         skill=config.skill,
         fire_rate=fire_rate,
         implicit_fire_rate=implicit_fire_rate,
@@ -129,6 +158,7 @@ def _run_skill(
         no_task_coverage=False,
         task_ids_used=lift_data.get("task_ids_used", []),
     )
+    return result, lift_data
 
 
 def _merge_and_report(args) -> int:
@@ -161,7 +191,9 @@ def _merge_and_report(args) -> int:
     run = EvalRun(
         run_id=datetime.datetime.utcnow().strftime("%Y-%m-%dT%H%M%S"),
         model=args.model,
-        judge_model="openai/gpt-4.1",
+        # The merge job calls no scorer, so it has no model of its own to report. The shards
+        # recorded theirs; carrying it through the merged file is Phase 4 (provenance).
+        judge_model=None,
         timestamp=datetime.datetime.utcnow().isoformat() + "Z",
         regression_threshold=args.regression_threshold,
         skills=results,
@@ -226,14 +258,38 @@ def main():
         help="Print covered skill names as a JSON array and exit (builds the CI matrix)",
     )
     parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help=(
+            "Run the preflight checks and exit — 0 ready, 2 not. Costs one small scoring "
+            "call. Runs once in CI so a missing credential is reported before the matrix "
+            "starts nine containers to discover it nine times."
+        ),
+    )
+    parser.add_argument(
         "--merge-results",
         metavar="DIR",
         help="Merge per-shard skill-eval-*.json under DIR into one summary and exit",
     )
     args = parser.parse_args()
 
+    # Before anything spends: corpus, scorer, binary, tool surface. Skipped for the three
+    # modes that start no session. Exit 2 means nothing was spent — the distinction from 1
+    # is the point of having both codes.
+    probe = preflight(args)
+    if not probe.ok:
+        print(f"preflight: {probe.failure}", file=sys.stderr)
+        sys.exit(EXIT_PREFLIGHT)
+    if not probe.skipped:
+        print(
+            f"preflight ok — scorer {probe.scorer_model} via {probe.auth_source}, "
+            f"tools {probe.tool_surface} at {probe.binary}"
+        )
+    if args.preflight_only:
+        sys.exit(EXIT_MEASURED)
+
     # Both shard-support modes are pure file IO. They run in CI jobs that hold no secrets and
-    # start no container, so neither may reach the OPENAI_API_KEY check below.
+    # start no container.
     if args.list_skills:
         print(json.dumps(covered_skills(_SKILLS_PACK_DIR, _TASKS_SKILLS_DIR)))
         sys.exit(0)
@@ -241,10 +297,9 @@ def main():
     if args.merge_results:
         sys.exit(_merge_and_report(args))
 
+    # The agent key. Not checked here: `preflight()` above owns every reason a run must not
+    # start, and a second exit-2 site outside it drifts from the contract in scoring.md.
     openai_key = os.environ.get("OPENAI_API_KEY", "")
-    if not openai_key:
-        print("ERROR: OPENAI_API_KEY not set", file=sys.stderr)
-        sys.exit(2)
 
     iris_container = os.environ.get("IRIS_CONTAINER", "iris-dev-iris")
     iris_web_port = os.environ.get("IRIS_WEB_PORT", "52780")
@@ -310,8 +365,10 @@ def main():
 
     # Run evaluations
     results: list[SkillResult] = []
+    invalid_skills: list[str] = []
+    cost_records: list[dict] = []
     for cfg in configs:
-        result = _run_skill(
+        result, lift_data = _run_skill(
             cfg,
             openai_key,
             args.model,
@@ -320,9 +377,22 @@ def main():
             iris_web_port,
             iris_container,
         )
-        result = compare_to_baseline(
-            result, baseline, threshold=args.regression_threshold
-        )
+        if lift_data.get("scorer_cost"):
+            cost_records.append(lift_data["scorer_cost"])
+        if lift_data.get("run_valid", True):
+            result = compare_to_baseline(
+                result, baseline, threshold=args.regression_threshold
+            )
+        else:
+            # Too much of this skill went unscored to compare it to anything. A Δ against a
+            # rate computed over three of twenty-four items is noise wearing a number.
+            invalid_skills.append(cfg.skill)
+            print(
+                f"  [{cfg.skill}] {lift_data.get('items_unscored')} of "
+                f"{lift_data.get('items_total')} items unscored "
+                f"({lift_data.get('unscored_share')}) — no comparison, no baseline write",
+                flush=True,
+            )
         results.append(result)
 
     # Add uncovered skills
@@ -336,10 +406,12 @@ def main():
     ]
     uncovered_names = [r.skill for r in results if r.no_task_coverage]
 
+    run_valid = not invalid_skills
+    actual_cost = merge_scorer_costs(cost_records)
     run = EvalRun(
         run_id=datetime.datetime.utcnow().strftime("%Y-%m-%dT%H%M%S"),
         model=args.model,
-        judge_model="openai/gpt-4.1",
+        judge_model=probe.scorer_model,
         timestamp=datetime.datetime.utcnow().isoformat() + "Z",
         regression_threshold=args.regression_threshold,
         skills=results,
@@ -348,18 +420,30 @@ def main():
             "improvements": improvements,
             "uncovered": uncovered_names,
             "estimated_cost_usd": est["cost_usd"],
+            "scorer_cost": actual_cost,
+            "run_valid": run_valid,
+            "invalid_skills": invalid_skills,
+            "tool_surface": probe.tool_surface,
         },
     )
 
     print_summary(run)
+    print(format_scorer_cost(actual_cost))
     path = write_result(run, args.output)
     print(f"\nResults written to: {path}")
 
-    # First-run baseline creation (FR-006)
-    if not os.path.exists(_DEFAULT_BASELINE):
+    # An invalid run may not reach the durable file, first write or not. The 2026-08 baseline
+    # holds nine entries of fabricated zeros because a run was asked to write them and nothing
+    # checked whether it had measured anything.
+    if not run_valid:
+        print(
+            f"\nBaseline not written: {', '.join(invalid_skills)} scored too little to be a "
+            "reference measurement."
+        )
+    elif not os.path.exists(_DEFAULT_BASELINE):
         save_baseline(results, _DEFAULT_BASELINE)
         print("No baseline found — created from this run.")
-    elif args.update_baseline:
+    elif baseline_write_allowed(run_valid, args.update_baseline):
         diff = compute_diff(baseline, results)
         save_baseline(results, _DEFAULT_BASELINE)
         print("\nBaseline updated. Changes:")
@@ -374,7 +458,12 @@ def main():
         else:
             print("  (no changes)")
 
-    sys.exit(1 if regressions else 0)
+    # 1 covers both an integrity failure and a regression; only the message distinguishes
+    # them. A reported regression is not yet blocking on its own (research R12) — it becomes
+    # so after a night of real numbers — but an invalid run always is.
+    if not run_valid:
+        sys.exit(EXIT_INTEGRITY)
+    sys.exit(EXIT_INTEGRITY if regressions else EXIT_MEASURED)
 
 
 if __name__ == "__main__":
