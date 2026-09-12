@@ -1614,13 +1614,23 @@ calls.
 Execute ObjectScript in an existing session. The session context (variables, open
 devices) persists across calls.
 
-| Parameter | Type   | Default | Notes                                   |
-| --------- | ------ | ------- | --------------------------------------- |
-| `session` | string | —       | **Required.** Token from `iris_ws_open` |
-| `code`    | string | —       | **Required.** ObjectScript to run       |
+| Parameter   | Type    | Default | Notes                                          |
+| ----------- | ------- | ------- | ---------------------------------------------- |
+| `session`   | string  | —       | **Required.** Token from `iris_ws_open`        |
+| `code`      | string  | —       | **Required.** ObjectScript to run              |
+| `confirmed` | boolean | `false` | Confirm execution on a `subject`-role instance |
 
 The per-frame timeout is a fixed 30 seconds, not a parameter. On timeout the session
 stays open; call `iris_ws_close` to release it.
+
+`code` goes through the same gates as `iris_execute`: the code-edit hard-block
+(`CODE_EDIT_BLOCKED` — `$system.OBJ`, `%Dictionary.*Definition`, `%RoutineMgr`, direct writes
+to `^oddDEF` and the other code-storage globals), the `mcpTemplate` environment gate, the PHI
+gates, and the destructive tier for a literal `Kill ^<global>`. A refused call sends nothing to
+IRIS, so the session's variables are exactly as they were.
+
+Through v1.4.1 it ran none of those, so a WebSocket session was a way around all of them
+([#137](https://github.com/intersystems-community/iris-agentic-dev/issues/137)).
 
 ### `iris_ws_close`
 

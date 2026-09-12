@@ -2,7 +2,8 @@
 //!
 //! `dispatch_gate()` is the single pre-dispatch check that runs before every tool call.
 //! Gate evaluation order (fixed):
-//!   [0] Code-edit hard-block (non-configurable; scans iris_execute code / iris_query write SQL)
+//!   [0] Code-edit hard-block (non-configurable; scans the `code` of every tool in
+//!       `CODE_EXEC_TOOLS`, the class/method of iris_execute_method, and iris_query write SQL)
 //!   [1] Environment template (mcpTemplate)
 //!   [2] Bulk-PHI hard-block (dataPolicy + bulk-PHI tool list)
 //!   [3] System global blocklist (hardcoded + custom)
@@ -22,6 +23,20 @@ use crate::iris::workspace_config::ConnectionPolicy;
 
 /// The return type for all gate checks: `Ok(())` = permitted, `Err(json)` = blocked.
 pub type GateResult = Result<(), serde_json::Value>;
+
+/// The tools whose `code` parameter carries caller-supplied ObjectScript, and whose contents gate
+/// `[0]` therefore has to scan.
+///
+/// A declared list rather than a chain of `tool_name ==` comparisons, because the chain is how
+/// issue #137 happened: `iris_ws_exec` runs arbitrary ObjectScript in a terminal session, shipped
+/// without a branch here, and the gate that is documented as non-configurable did not fire on it at
+/// all. Adding a tool to this list is one line; forgetting to is a test failure
+/// (`tests/unit/test_ws_exec_gate.rs` checks it against every tool in the router that has a `code`
+/// parameter).
+///
+/// `iris_execute_method` and `iris_query` are not here — they carry the code to run as
+/// `class`/`method` and `query`, and have their own branches below.
+pub const CODE_EXEC_TOOLS: &[&str] = &["iris_execute", "iris_ws_exec"];
 
 /// Run all security gates for a tool call before any IRIS operation executes.
 ///
@@ -43,7 +58,7 @@ pub fn dispatch_gate(
     // [0] Code-edit hard-block — non-configurable, fires regardless of policy presence.
     // Blocks editing class/routine code through arbitrary-execution tools, which otherwise
     // sidestep the system blocklist (that gate only fires on tools carrying a global_name).
-    if tool_name == "iris_execute" {
+    if CODE_EXEC_TOOLS.contains(&tool_name) {
         if let Some(code) = params.get("code").and_then(|v| v.as_str()) {
             if let Some(err) =
                 crate::policy::code_edit_gate::check_objectscript_code_edit(code, server_name)

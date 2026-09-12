@@ -27,6 +27,9 @@ pub struct WsExecParams {
     pub session: String,
     /// ObjectScript code to execute in the terminal session.
     pub code: String,
+    /// Set to true to confirm execution on a subject-role instance (role-gate bypass).
+    #[serde(default)]
+    pub confirmed: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

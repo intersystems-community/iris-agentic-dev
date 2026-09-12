@@ -112,3 +112,4 @@ mod test_vscode_payload;
 mod test_workflow_yaml;
 mod test_workspace_config;
 mod test_workspace_config_paths;
+mod test_ws_exec_gate;

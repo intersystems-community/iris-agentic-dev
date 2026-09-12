@@ -3390,6 +3390,114 @@ impl IrisTools {
         let _ = log.write(&entry);
     }
 
+    /// The gate sequence every arbitrary-execution tool runs before it sends a line to IRIS.
+    ///
+    /// Returns `Some(refusal)` when the call is blocked, `None` when it may proceed. The refusal is
+    /// the error body to hand to `err_result`.
+    ///
+    /// One function rather than a copy per handler, because the copy is what went wrong: `iris_execute`
+    /// carried this sequence inline and `iris_ws_exec` — the same capability over a WebSocket
+    /// terminal — carried none of it, so `Do $system.OBJ.Delete(…)` was refused on one tool and run
+    /// on the other (#137). Both call this now, and a third arbitrary-execution tool has one thing to
+    /// call rather than eighty lines to remember to copy.
+    ///
+    /// Order matters and matches the original: `dispatch_gate` (code-edit, env template, PHI,
+    /// blocklist), then the server-manager policy gate, then the audit entry, then the role gate,
+    /// then the literal `Kill ^<global>` destructive check. Every refusal is audited as `blocked`
+    /// before it returns; a permitted call is audited as `allowed`.
+    fn arbitrary_exec_gate(
+        &self,
+        tool_name: &str,
+        params_json: serde_json::Value,
+        code: &str,
+        confirmed: bool,
+    ) -> Option<serde_json::Value> {
+        let (sm_server, policy) = self.active_server_manager_policy();
+        let server = sm_server.as_deref().unwrap_or("");
+
+        if let Err(gate) =
+            crate::policy::gate::dispatch_gate(tool_name, server, policy.as_ref(), &params_json)
+        {
+            self.write_audit_entry(
+                tool_name,
+                server,
+                policy.as_ref(),
+                "blocked",
+                Some("policy"),
+                None,
+                params_json,
+            );
+            return Some(gate);
+        }
+        if let Some(gate) =
+            crate::iris::server_manager::policy_gate(tool_name, server, policy.as_ref())
+        {
+            let allowed = gate["allowed_categories"].as_array().map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect()
+            });
+            self.write_audit_entry(
+                tool_name,
+                server,
+                policy.as_ref(),
+                "blocked",
+                Some("policy"),
+                allowed,
+                params_json,
+            );
+            return Some(gate);
+        }
+        self.write_audit_entry(
+            tool_name,
+            server,
+            policy.as_ref(),
+            "allowed",
+            None,
+            None,
+            params_json,
+        );
+
+        let (role, instance_name) = self.instance_role();
+        if let Some(gate) = crate::iris::workspace_config::check_role_gate(
+            &role,
+            tool_name,
+            confirmed,
+            &instance_name,
+            false,
+        ) {
+            return Some(gate);
+        }
+
+        // Spec 087: content-sensitive destructive gate. These tools are write-gated via
+        // CLASSIFICATION (so write_tools_enabled=false is already refused by call_tool dispatch),
+        // but the destructive tier is not detectable statically for the general case. This check
+        // catches the obvious literal form — `Kill ^<global>` — before any IRIS call.
+        // Indirect vectors (Kill @var, Xecute, ##class dispatch, &sql) are not detected here;
+        // the error message says so explicitly so callers cannot mistake this for a full block.
+        if crate::tools::write_gate::contains_global_kill(code) {
+            let gates = self.connection.lock().unwrap().gates;
+            if !gates.destructive_enabled {
+                return Some(serde_json::json!({
+                    "success": false,
+                    "error_code": crate::tools::write_gate::ERR_DESTRUCTIVE_GATE,
+                    "error": format!(
+                        "{tool_name} contains a Kill ^<global> expression and the destructive \
+                         tier is disabled (source: {}). Set destructive_tools_enabled = true in \
+                         .iris-agentic-dev.toml to allow destructive operations. Note: this check \
+                         applies to literal Kill ^ patterns in the code string only. Indirect kill \
+                         operations (via variables, Xecute, or class methods) are not detected \
+                         here — IRIS-side credentials and the mcpTemplate env gate are the \
+                         appropriate controls for those.",
+                        gates.destructive_source.as_str()
+                    ),
+                }));
+            }
+        }
+
+        None
+    }
+
     #[tool(
         description = "Compile an ObjectScript class, routine, or wildcard package on IRIS via Atelier REST. Supports 'MyApp.*.cls' for package-level compilation. Also accepts a local file path as `target` — uploads it first, then compiles. Returns structured errors with line numbers, columns, and severity. On a successful single-document compile, `content` carries the post-compile source (the compiler can rewrite it beyond what was submitted, e.g. auto-mapping a new property into Storage) — use it to sync a local file without a separate `iris_doc(get)`; `content` is omitted for wildcard/package compiles. No Python required. Skill: objectscript-tdd for the compile-test-fix loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         output_schema = output_schemas::oneof_output_schema::<IrisCompileResponse>()
@@ -4325,89 +4433,11 @@ impl IrisTools {
         // routing is directly observable per call instead of inferred.
         let auth_user = iris.username.clone();
         let svc_env = std::env::var("IRIS_SERVICE_USERNAME").unwrap_or_default();
-        let (sm_server, policy) = self.active_server_manager_policy();
         let params_json = serde_json::json!({ "namespace": &namespace, "code": p.code });
-        if let Err(gate) = crate::policy::gate::dispatch_gate(
-            "iris_execute",
-            sm_server.as_deref().unwrap_or(""),
-            policy.as_ref(),
-            &params_json,
-        ) {
-            self.write_audit_entry(
-                "iris_execute",
-                sm_server.as_deref().unwrap_or(""),
-                policy.as_ref(),
-                "blocked",
-                Some("policy"),
-                None,
-                params_json,
-            );
-            return err_result(gate);
-        }
-        if let Some(gate) = crate::iris::server_manager::policy_gate(
-            "iris_execute",
-            sm_server.as_deref().unwrap_or(""),
-            policy.as_ref(),
-        ) {
-            let allowed = gate["allowed_categories"].as_array().map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            });
-            self.write_audit_entry(
-                "iris_execute",
-                sm_server.as_deref().unwrap_or(""),
-                policy.as_ref(),
-                "blocked",
-                Some("policy"),
-                allowed,
-                params_json,
-            );
-            return err_result(gate);
-        }
-        self.write_audit_entry(
-            "iris_execute",
-            sm_server.as_deref().unwrap_or(""),
-            policy.as_ref(),
-            "allowed",
-            None,
-            None,
-            params_json,
-        );
-        let (role, instance_name) = self.instance_role();
-        if let Some(gate) = crate::iris::workspace_config::check_role_gate(
-            &role,
-            "iris_execute",
-            p.confirmed,
-            &instance_name,
-            false,
-        ) {
-            return err_result(gate);
-        }
-        // Spec 087: content-sensitive destructive gate. `iris_execute` is write-gated via
-        // CLASSIFICATION (so write_tools_enabled=false is already refused by call_tool dispatch),
-        // but the destructive tier is not detectable statically for the general case. This check
-        // catches the obvious literal form — `Kill ^<global>` — before any IRIS call.
-        // Indirect vectors (Kill @var, Xecute, ##class dispatch, &sql) are not detected here;
-        // the error message says so explicitly so callers cannot mistake this for a full block.
-        if crate::tools::write_gate::contains_global_kill(&p.code) {
-            let gates = self.connection.lock().unwrap().gates;
-            if !gates.destructive_enabled {
-                return err_result(serde_json::json!({
-                    "success": false,
-                    "error_code": crate::tools::write_gate::ERR_DESTRUCTIVE_GATE,
-                    "error": format!(
-                        "iris_execute contains a Kill ^<global> expression and the destructive \
-                         tier is disabled (source: {}). Set destructive_tools_enabled = true in \
-                         .iris-agentic-dev.toml to allow destructive operations. Note: this check \
-                         applies to literal Kill ^ patterns in the code string only. Indirect kill \
-                         operations (via variables, Xecute, or class methods) are not detected \
-                         here — IRIS-side credentials and the mcpTemplate env gate are the \
-                         appropriate controls for those.",
-                        gates.destructive_source.as_str()
-                    ),
-                }));
-            }
+        if let Some(refusal) =
+            self.arbitrary_exec_gate("iris_execute", params_json, &p.code, p.confirmed)
+        {
+            return err_result(refusal);
         }
         tracing::info!(namespace = %namespace, translate_sql = p.translate_sql, use_session = p.use_session, "iris_execute");
         let client = exec_client.as_ref();
@@ -8624,6 +8654,28 @@ Methods:
         Parameters(p): Parameters<ws_tools::WsExecParams>,
     ) -> Result<CallToolResult, McpError> {
         use crate::iris::ws_session::WsSessionPool;
+
+        // #137: the same gates `iris_execute` runs, and for the same reason — this tool takes
+        // arbitrary ObjectScript. It ran none of them until now, so a WebSocket session was a way
+        // around the code-edit hard-block, the env template, the PHI gates and the destructive tier
+        // all at once. The check is here rather than after `exec` so a refused call sends nothing to
+        // IRIS and leaves the session's variables alone.
+        //
+        // The namespace comes out of the session token, which is where it was decided —
+        // `iris_ws_exec` takes no namespace parameter — so the audit entry names the namespace the
+        // code would have run in.
+        let session_namespace = WsSessionPool::parse_token(&p.session)
+            .map(|(_, ns, _)| ns.to_string())
+            .unwrap_or_default();
+        let params_json = serde_json::json!({
+            "namespace": session_namespace,
+            "code": p.code,
+        });
+        if let Some(refusal) =
+            self.arbitrary_exec_gate("iris_ws_exec", params_json, &p.code, p.confirmed)
+        {
+            return err_result(refusal);
+        }
 
         let output = WsSessionPool::exec(&self.ws_pool, &p.session, &p.code).await?;
 
