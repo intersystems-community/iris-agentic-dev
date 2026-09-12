@@ -184,23 +184,28 @@ other and that the gate does not fire.
 
 ### Edge Cases
 
-- A shard times out and uploads nothing. The merge already backfills it as a named hole; that
-  hole must count as "not comparable" for a gated skill, which fails the run, rather than
-  disappearing from the average.
+- A shard times out and uploads nothing. The merge already backfills it as a named hole. In this
+  spec the hole is reported as "not comparable" for that skill and does not fail the run —
+  nothing per-skill fails the run here (FR-009), and making one hole the exception would be a
+  gate hiding inside a spec that gates nothing. Turning it into a failure is SC-012, deferred
+  with the rest of the gating.
 - Two shards report the same skill because one was re-run. The later run wins today by
   string-comparing run identifiers; that stays, but the report must say a re-run was merged.
 - The scorer answers with valid JSON and an out-of-range score. That is a scorer failure, not a
-  zero.
+  zero. An out-of-range number is the same class of lie as a fabricated zero: it enters the
+  measurement on the scoring scale without having been measured.
 - Every skill's explicit fire-rate probe reads 100%. The probe prompt names the skill outright,
-  so a saturated reading is the expected reading and carries no information. A probe that has
-  been saturated across consecutive runs must be reported as uninformative rather than as a
-  pass, so it is not mistaken for evidence.
+  so a saturated reading is the expected reading and carries no information. Reporting a
+  saturated probe as uninformative rather than as a pass is deferred with Story 3 — it belongs
+  with FR-012's flat-arm flag, which is the same judgement applied to the other column, and
+  nothing in this spec reads the probe.
 - A baseline entry exists for a skill whose eval config has since been deleted. The comparison
   must say so rather than silently dropping the entry on the next update.
 - The task corpus is rewritten mid-run by the agent under evaluation. This has happened once
   and the corpus validation added afterwards catches it at startup; that validation must keep
-  running before any billable session and must now also cover the namespace and provenance
-  checks this spec adds.
+  running before any billable session, which means it runs inside this spec's preflight rather
+  than beside it. Extending it to cover namespaces a task names and the harness never creates is
+  FR-016, deferred.
 - A skill is added with an eval config and no baseline. That is a new skill, not a regression,
   and must be reported distinctly from "not comparable".
 
@@ -242,8 +247,10 @@ because they are the follow-on's scope and reading them here is what makes the s
   and names the wrong one. It MUST record the model the client actually resolved, not the
   constant it was requested under: on Bedrock this account maps the judge's Haiku constant to
   `us.anthropic.claude-sonnet-4-6`, so a record that says "haiku" would be false.
-- **FR-005**: The harness MUST report, per skill and per arm, how many items were scored, how
-  many were unscored, and the minimum detectable effect those counts buy.
+- **FR-005**: The harness MUST report, per skill and per arm, how many items were scored and how
+  many were unscored. The minimum detectable effect those counts buy is FR-017's, deferred with
+  it: printing an effect size here would mean stating a number whose derivation lands in the
+  follow-on.
 
 **Gate coverage**
 
@@ -267,8 +274,19 @@ because they are the follow-on's scope and reading them here is what makes the s
   gates under. If the per-skill results were computed under a different threshold, the aggregate
   MUST recompute from the stored numbers or fail.
 - **FR-011**: After the rebaseline, every skill with an eval config MUST have either a baseline
-  entry or a recorded reason it is intentionally ungated. Every entry MUST be measured under the
-  repaired scorer; no pre-repair number survives the rebaseline.
+  entry or a recorded reason it is intentionally ungated. The reason MUST live in the baseline
+  file itself, as a named field beside the entries rather than in prose somewhere else, so the
+  reader that checks coverage is the reader that already has the file open. Every entry MUST be
+  measured under the repaired scorer; no pre-repair number survives the rebaseline.
+
+- **FR-024**: The tool surface a measurement was taken under MUST be the one the agent actually
+  had. The harness MUST resolve the binary it starts the MCP server with rather than assuming a
+  fixed install path, MUST record the resolved surface — including a value meaning "no binary
+  resolved" — and the nightly MUST install a binary before any lift measurement. Today the path
+  is hard-coded to a local install that does not exist on the runner, so six of the nine skills
+  were measured with none of the tools their lift is supposed to be about. Without this, FR-011's
+  rebaseline would store nine entries measured toolless, and the surface FR-007 records would be
+  a fiction.
 
 **Task-set signal** — deferred to the follow-on spec
 
@@ -413,9 +431,12 @@ No blocking specs. Specs 113 and 114 are already merged and are the reason the b
 stale, not a prerequisite. This spec touches only the Python harness under `tests/e2e/` and
 `benchmark/021/`, the nightly workflow, and the task corpus; it changes no Rust and no tool.
 
-It needs one thing from outside the repo: the nightly workflow has to reach Bedrock. Whatever
-grants that — an OIDC role or static credentials — is a repo settings change, not code, and
-FR-001 is what turns a missing grant into a named failure instead of a table of zeros.
+It needs two things the nightly workflow does not have. It has to reach Bedrock: the
+`AWS_BEARER_TOKEN_BEDROCK` secret was added to repo settings on 2026-09-08, so what is left is
+passing it into the eval step, which today supplies only `OPENAI_API_KEY` — a credential the scorer
+does not use. FR-001 is what turns a missing grant into a named failure instead of a table of zeros.
+It also has to be able to download a released binary, which FR-024 needs and which the job does not
+do today. Both are inside this branch now; neither is a settings change.
 
 Stories 3 and 4 become the follow-on spec and depend on this one landing first.
 
@@ -430,6 +451,7 @@ Constitution governance requires a detector per bug class, not just a fix per in
 | Comparison against unlike measurement                             | A Δ reported against a baseline measured under a different scoring path and tool surface          | Provenance stored and checked; "not comparable" is an outcome (FR-007, FR-008)                                        |
 | Reported identity is the requested constant, not the resolved one | The record names the judge's Haiku constant while Bedrock resolves it to sonnet-4-6               | Unit test: the result record carries the model id the client returned (FR-004)                                        |
 | Cost constant priced for a model the harness does not run         | $0.001 per scoring call, priced for Haiku on the direct API                                       | Unit test tying the constant to the resolved scorer model (FR-023)                                                    |
+| Hard-coded install path measured as a working environment         | The harness started the MCP server from a laptop-only path, so six skills were measured toolless  | Integration test asserting the agent's tool count is non-zero, plus the surface recorded per measurement (FR-024)     |
 | Null task set kept in the corpus (deferred)                       | Seven task sets returned identical arms and stayed in the nightly schedule                        | Flat-arm flag in the report plus corpus validation failing on a recorded null verdict (FR-012, FR-015)                |
 | Gate threshold under the noise floor (deferred)                   | A 5-point threshold with a 20-point escape hatch on a measurement with an 18-point standard error | Threshold derived from the item count and asserted against it; item floor gates gating (FR-018, FR-020)               |
 | Budget checked after spending (deferred)                          | The dry-run estimate existed but nothing enforced it                                              | Declared cap asserted before the first session (FR-021)                                                               |

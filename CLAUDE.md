@@ -150,6 +150,8 @@ Constitution → Development Workflow → Issue Closure.
 
 ## Active Technologies
 
+- Python 3.11 + `anthropic`, `pyyaml`, `pytest`; results as JSON under `tests/e2e/results/`, no new dependency (118-skill-eval-harness-repair)
+
 - Rust 2021 + `rmcp` 3.1.3, `schemars` 1 (`#[schemars(extend(...))]` for enums), `serde` — no new dependency (113-typed-tool-schemas)
 
 - Rust 2021 + `rmcp`, `tokio`, `serde`/`serde_json`/`toml`; config in `.iris-agentic-dev.toml`, no database (085-write-gate-integrity)
@@ -161,6 +163,7 @@ Constitution → Development Workflow → Issue Closure.
 
 ## Recent Changes
 
+- 118-skill-eval-harness-repair: the skill-eval scorer returns an unscored verdict instead of `score: 0` when it cannot reach the model, so a missing credential stops reading as total failure; pass rates count scored items only; a preflight makes one real scoring call before the first billable session; baseline file goes to schema 2 with provenance and merge-by-skill (the old `save_baseline` overwrote all nine entries from one run); the nightly also ran with no iad tools at all — `tests/e2e/isolated_env.py` hard-coded the Homebrew binary path, which does not exist on the runner; plan at `specs/118-skill-eval-harness-repair/plan.md`
 - 114-tool-surface-discovery: `tool --list` / `tool <name> --schema` / `--json` read the tool router with no IRIS connection (7,648 B for the whole surface against 106,658 B for MCP `tools/list`); `tool_catalogue()` + `summarize_description()` in `tools/mod.rs` are the one source both arms read; `prose-only-enum` repaired — it was at zero because `TOOL_DESC` lacked `re.S` (so `iris_admin`'s backslash-continued description was never parsed) and `FIELD_DECL` could not read `pub r#type:`; twelve dispatcher value sets now declared, checked against the handler's own match arms rather than against prose; plan at `specs/114-tool-surface-discovery/plan.md`
 - 113-typed-tool-schemas: per-tool params structs replace `AnyParams` so all 81 tools advertise their properties/types/enums; `#[serde(deny_unknown_fields)]` everywhere, so all 81 emit `additionalProperties: false`; one `UNKNOWN_PARAMETER` validation site in `call_tool` after `gate_check`; plan at `specs/113-typed-tool-schemas/plan.md`
 - 089-iris-perf-monitoring: new `iris_mirror_status` tool (`%SYSTEM.Mirror` classmethods in %SYS); `iris_database_list` extended with `size_mb`/`free_space_mb`/`max_size_mb`/`free_pct` from `%SYS.DatabaseQuery:FreeSpace`; `my_access`/`capability_matrix` roles decoded from `$LB` via `$LISTTOSTRING`; Server Manager path prefix double-slash fixed; plan at `specs/089-iris-perf-monitoring/plan.md`
