@@ -2,7 +2,8 @@
 
 ## Status
 
-Draft — implementation in progress on `119-ws-exec-gate-bypass`.
+Implemented — merged to master (`ccd9c58`). Not yet released; ships in the next release.
+Issue #137 stays open until the reporter confirms.
 
 Reported as [#137](https://github.com/intersystems-community/iris-agentic-dev/issues/137) by
 `devecchijr` on 2026-09-08. Reproducible on v1.3.0 and v1.4.1.

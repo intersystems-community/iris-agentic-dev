@@ -2,7 +2,8 @@
 
 **Feature Branch**: `116-servers-json-web-prefix`
 **Created**: 2026-09-07
-**Status**: Draft
+**Status**: Implemented — merged to master (`ed8064c`). Not yet released; ships in the next
+release. Issue #129 stays open until the reporter confirms.
 **Input**: GitHub issue [#129](https://github.com/intersystems-community/iris-agentic-dev/issues/129)
 (isc-ndittber): "iad-native server registry (servers.json) can't store a web-server path prefix —
 instances behind a gateway prefix are unreachable"
