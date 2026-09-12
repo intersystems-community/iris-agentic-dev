@@ -231,14 +231,33 @@ def test_the_shipped_rate_table_prices_the_model_the_scorer_asks_for():
     """The requested model must be priceable, or every run prints an unpriced cost.
 
     Keyed on `_client.haiku_model()` rather than a literal so a change there fails here
-    instead of silently landing in the unpriced bucket.
+    instead of silently landing in the unpriced bucket. Asserted through `_rate_for` and not
+    as dict membership: `haiku_model()` is Bedrock's id on a machine with a Bedrock credential
+    and the dated direct id (`claude-haiku-4-5-20251001`) on one without, and both must price.
+    Dict membership passed on my laptop and failed on the runner for exactly that reason.
     """
     import tests.e2e.skill_eval  # noqa: F401  — sys.path shim for `runner`
     from runner._client import haiku_model
 
-    assert haiku_model() in cost_estimator.SCORER_RATES, (
+    assert cost_estimator._rate_for(haiku_model()) is not None, (
         f"{haiku_model()} has no declared rate, so the run's cost cannot be derived"
     )
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "us.anthropic.claude-sonnet-4-6",
+        "us.anthropic.claude-sonnet-4-6-20260514-v1:0",
+        "claude-sonnet-4-6",
+        "claude-haiku-4-5-20251001",
+        "claude-haiku-4-5",
+    ],
+    ids=["bedrock-crx", "bedrock-concrete", "direct", "direct-dated", "direct-bare"],
+)
+def test_both_id_shapes_price(model):
+    """Bedrock ids and dated direct ids are the same models under two naming schemes."""
+    assert cost_estimator._rate_for(model) is not None
 
 
 def test_merging_per_skill_costs_adds_up_to_the_run():

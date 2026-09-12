@@ -280,7 +280,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install Python dependencies
-        run: pip install pyyaml
+        # `anthropic` is here only because importing the CLI imports the scorer client. The
+        # merge job makes no scoring call — the shards already did — but a merge that cannot
+        # import is a night's results thrown away for a missing package.
+        run: pip install pyyaml anthropic
 
       - name: Download shard results
         uses: actions/download-artifact@v7
