@@ -194,12 +194,19 @@ List all registered IRIS instances from all configuration sources (iad-native co
 Code Server Manager settings, workspace fleet config, environment variables). Shows name,
 host, port, namespace, source, and reachability status.
 
+Every entry carries `base_url`, the URL iad actually calls. Entries served under a web path
+prefix also carry `web_prefix` (the key is absent when there is no prefix). Two instances
+behind the same gateway share a host and port, so `base_url` is the field that tells them
+apart.
+
 Default (`probe` omitted or `false`): fast path — `reachable` is `null` per entry, no HTTP
 requests made.
 
 Pass `probe: true` to fan out a parallel Atelier REST probe to every server in the pool
 (5-second timeout each). Each entry then includes `reachable`, `auth`, `latency_ms`,
-`iris_version`, `atelier_version`, and `error`.
+`iris_version`, `atelier_version`, and `error`. The probe requests each entry's own
+`base_url`; through 1.4.1 it rebuilt a URL from host and port, so a prefixed instance was
+reported healthy on the strength of the gateway root answering.
 
 ### `iris_add_server`
 
@@ -208,10 +215,34 @@ Register a new IRIS instance. Writes server details to
 the password never appears in any config file. Uses the same keychain format as VS Code
 Server Manager, so credentials are shared automatically if both tools are installed.
 
-Parameters: `name`, `host`, `port`, `namespace`, `username`, `password`, `description`
-(optional), `scheme` (optional, default `"http"`).
+| Parameter     | Type   | Default  | Notes                                                       |
+| ------------- | ------ | -------- | ----------------------------------------------------------- |
+| `name`        | string | —        | Referenced by the `server` param of every other tool        |
+| `host`        | string | —        | Hostname or IP                                              |
+| `port`        | number | —        | Web port                                                    |
+| `namespace`   | string | —        | Default namespace for calls to this server                  |
+| `username`    | string | —        | IRIS username                                               |
+| `password`    | string | —        | Goes to the keychain, not to disk                           |
+| `description` | string | none     | Free text                                                   |
+| `scheme`      | string | `"http"` | `"http"` or `"https"`                                       |
+| `web_prefix`  | string | none     | Path prefix the web server is served under, e.g. `/hs20261` |
 
-After adding a server, restart iad for the new connection to appear in the pool.
+Pass `web_prefix` when the instance sits behind a shared web gateway and Atelier answers at
+`/<prefix>/api/atelier/` rather than at `/api/atelier/`. HealthShare and multi-instance
+gateway deployments work this way. It takes a path only — a value carrying a scheme or a
+host is refused with `INVALID_PARAMS`, since concatenating it onto the base URL would
+produce a nonsense address that fails much later as a connection error. Leading and
+trailing slashes are optional: `hs20261`, `/hs20261`, `hs20261/`, and `/hs20261/` all
+resolve to the same URL. Multi-segment prefixes (`/gw/hs20261`) work.
+
+`webServer.pathPrefix` is accepted as an alias when reading `servers.json` by hand, so a
+block copied out of VS Code settings loads without renaming the key.
+
+Re-registering an existing name updates that entry in place and keeps its stored password,
+so a forgotten prefix can be added without re-entering the credential.
+
+After adding a server, restart iad (or call `iris_reload_pool`) for the new connection to
+appear in the pool.
 
 ### `iris_remove_server` ☠
 
@@ -238,17 +269,20 @@ Probe an IRIS server for reachability. Returns `reachable`, `auth`, `iris_versio
 
 Two modes:
 
-- **Named server** (`name`): looks up the server in the connection pool and probes it.
+- **Named server** (`name`): looks up the server in the connection pool and probes the URL
+  that server actually uses, web path prefix included.
 - **Ad-hoc** (`host`, optional `web_port`, `username`, `password`): probes a server that is
   not in the pool. Useful for discovery before calling `iris_add_server`. Default port is
   52773; default credentials are `_SYSTEM`/`""`. Returns `reachable: true, auth: false` when
-  the server responds with HTTP 401 (reachable but credentials wrong).
+  the server responds with HTTP 401 (reachable but credentials wrong). This mode has no
+  prefix parameter and probes the root; register the server first to probe a prefixed path.
 
 ### `iris_import_servers`
 
 One-time import of IRIS server definitions from VS Code or Cursor settings into the
 iad-native config. Reads passwords from the existing OS keychain — no re-entry required.
 Reports servers imported, skipped (already present), and those with no keychain entry.
+A profile's `webServer.pathPrefix` is carried across as `web_prefix`.
 
 ---
 

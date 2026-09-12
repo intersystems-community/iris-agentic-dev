@@ -22,7 +22,17 @@ Rules for anything written here:
 
 ## What's new
 
-Nothing staged.
+- `iris_add_server` takes a `web_prefix` parameter, and `servers.json` stores it. An instance
+  published under a path — `http://gateway:8080/hs20261/api/atelier/`, the usual HealthShare
+  layout — could not be described in the registry at all, so registering one produced an entry
+  pointing at the gateway root. VS Code Server Manager profiles already carried the prefix as
+  `webServer.pathPrefix`, which iad read; the native registry was the gap. That spelling is
+  accepted as an alias on the JSON key, so a block copied out of `settings.json` loads
+  unchanged, and `iris_import_servers` now carries the prefix across. Slashes are optional and
+  multi-segment prefixes work. Re-registering an existing name updates it in place and keeps
+  the stored password, so you can add a forgotten prefix without re-entering the credential.
+  A prefix carrying a scheme or a host is refused at registration rather than becoming a
+  connection error later. Reported by @isc-ndittber (#129).
 
 ## Notable fixes
 
@@ -40,6 +50,13 @@ Nothing staged.
   it. That is what did not exist before: `iris_ws_exec` was the fourth tool to ship past this
   gate, after `iris_global` set/kill, `iris_lookup_manage` set/delete, and
   `iris_execute_method`.
+
+- `iris_servers` reports each entry's `base_url` and, where there is one, its `web_prefix`.
+  Two instances behind one gateway share a host and port, so the old listing gave you no way
+  to tell them apart.
+- `iris_test_server` and `iris_servers(probe: true)` probe the URL the server actually uses.
+  Both rebuilt one from host and port, so a prefixed instance came back healthy on the
+  strength of the gateway root answering while every real call went somewhere else.
 
 ## Breaking changes
 

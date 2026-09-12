@@ -174,6 +174,38 @@ impl ConnectionPoolBuilder {
     }
 }
 
+// ── Base URL assembly ─────────────────────────────────────────────────────────
+
+/// The path segment a web prefix contributes to a base URL: `""` or `"/<prefix>"`.
+///
+/// One rule for every source. `servers.json` used to have no prefix at all, so the same deployment
+/// resolved to a working URL through a VS Code Server Manager profile and to the gateway root
+/// through `iris_add_server` (issue #129). Both branches of `load_pool` call this now, so a second
+/// normalisation rule cannot drift in beside the first.
+///
+/// `None`, `""`, `"/"`, and whitespace all mean no prefix — a bare trailing slash here becomes a
+/// doubled slash in the Atelier path, which is the Server Manager bug 089 fixed.
+pub fn web_prefix_path_part(prefix: Option<&str>) -> String {
+    let trimmed = prefix.unwrap_or_default().trim().trim_matches('/');
+    if trimmed.is_empty() {
+        String::new()
+    } else {
+        format!("/{trimmed}")
+    }
+}
+
+/// The base URL for one `servers.json` entry.
+pub fn native_base_url(entry: &crate::iris::servers_config::ServerEntry) -> String {
+    let scheme = entry.scheme.as_deref().unwrap_or("http");
+    format!(
+        "{}://{}:{}{}",
+        scheme,
+        entry.host,
+        entry.port,
+        web_prefix_path_part(entry.web_prefix.as_deref())
+    )
+}
+
 // ── load_pool ─────────────────────────────────────────────────────────────────
 
 /// Load a `ConnectionPool` from all configured sources in priority order.
@@ -199,8 +231,7 @@ pub fn load_pool(config_file: Option<&std::path::Path>) -> ConnectionPool {
     let native_cfg = servers_config::load_native_config();
     let native_default = native_cfg.default.clone();
     for (name, entry) in &native_cfg.servers {
-        let scheme = entry.scheme.as_deref().unwrap_or("http");
-        let base_url = format!("{}://{}:{}", scheme, entry.host, entry.port);
+        let base_url = native_base_url(entry);
         let is_default = native_default.as_deref() == Some(name.as_str());
         let conn = IrisConnection::new(
             base_url,
@@ -238,11 +269,7 @@ pub fn load_pool(config_file: Option<&std::path::Path>) -> ConnectionPool {
     for sm_path in &sm_paths {
         let profiles = server_manager::parse_sm_settings(sm_path);
         for profile in profiles {
-            let path_part = profile
-                .path_prefix
-                .as_deref()
-                .map(|p| format!("/{}", p.trim_matches('/')))
-                .unwrap_or_default();
+            let path_part = web_prefix_path_part(profile.path_prefix.as_deref());
             let base_url = format!(
                 "{}://{}:{}{}",
                 profile.scheme, profile.host, profile.port, path_part

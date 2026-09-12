@@ -35,6 +35,11 @@ pub struct AddServerParams {
     /// URL scheme: `"http"` (default) or `"https"`.
     #[schemars(extend("enum" = ["http", "https"]))]
     pub scheme: Option<String>,
+    /// URL path prefix the web server is served under, e.g. `"/hs20261"` when Atelier answers at
+    /// `/hs20261/api/atelier/`. Required for instances behind a shared gateway; omit for an
+    /// instance served at the root. A path only — no scheme or host.
+    #[serde(default)]
+    pub web_prefix: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -100,6 +105,27 @@ pub async fn probe_server(
     username: &str,
     password: &str,
 ) -> ProbeResult {
+    probe_base_url(
+        &format!("http://{host}:{web_port}"),
+        namespace,
+        username,
+        password,
+    )
+    .await
+}
+
+/// Probe an already-assembled base URL — `scheme://host:port` plus any web path prefix.
+///
+/// The `host`/`port` form above cannot describe an instance behind a gateway prefix: it probes the
+/// gateway root, which answers, so `iris_test_server` reported a prefixed entry as healthy while
+/// every real call went somewhere else (issue #129). Anything holding a pool connection should
+/// probe its `base_url` instead.
+pub async fn probe_base_url(
+    base_url: &str,
+    namespace: &str,
+    username: &str,
+    password: &str,
+) -> ProbeResult {
     use crate::iris::connection::IrisConnection;
     use std::time::Instant;
 
@@ -118,7 +144,7 @@ pub async fn probe_server(
         }
     };
 
-    let url = format!("http://{host}:{web_port}/api/atelier/");
+    let url = format!("{}/api/atelier/", base_url.trim_end_matches('/'));
     let start = Instant::now();
 
     let result = tokio::time::timeout(

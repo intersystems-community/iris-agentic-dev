@@ -89,6 +89,10 @@ pub struct ServerEntry {
     pub namespace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
+    /// URL path prefix the instance is served under, e.g. `"/hs20261"`. Absent when the instance is
+    /// served at the web server's root, which is most of them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub web_prefix: Option<String>,
     /// Always `null` today — `iris_servers` never probes connectivity itself; call
     /// `iris_test_server` for that. Modeled as `Option<bool>`, not a fixed null, since a future
     /// change could populate it.

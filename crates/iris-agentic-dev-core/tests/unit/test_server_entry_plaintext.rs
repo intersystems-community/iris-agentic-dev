@@ -52,6 +52,7 @@ fn server_entry_credential_some_serializes_to_json() {
         username: "_SYSTEM".to_string(),
         description: None,
         scheme: None,
+        web_prefix: None,
         password: Some("secret".to_string()),
     };
     let json = serde_json::to_string(&entry).expect("serialize should succeed");
@@ -74,6 +75,7 @@ fn server_entry_credential_none_omitted_from_serialization() {
         username: "_SYSTEM".to_string(),
         description: None,
         scheme: None,
+        web_prefix: None,
         password: None,
     };
     let json = serde_json::to_string(&entry).expect("serialize should succeed");
@@ -101,6 +103,7 @@ fn server_entry_credential_survives_file_roundtrip() {
             username: "_SYSTEM".to_string(),
             description: None,
             scheme: None,
+            web_prefix: None,
             password: Some("SYS".to_string()),
         },
     );

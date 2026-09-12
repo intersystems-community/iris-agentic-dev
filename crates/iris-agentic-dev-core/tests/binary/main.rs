@@ -20,6 +20,7 @@ mod schema_batch6;
 mod schema_batch7;
 mod schema_census;
 mod schema_task_coverage;
+mod servers_json_web_prefix;
 mod suppress_description;
 mod tls_trust_127;
 mod ws_exec_gate;

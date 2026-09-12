@@ -8015,7 +8015,7 @@ Methods:
     // ── 072: server management tools ─────────────────────────────────────────
 
     #[tool(
-        description = "List all IRIS server instances registered in the connection pool. Returns an array of {name, host, port, namespace, username, source, reachable} objects. `source` values: iad-native (added via iris_add_server), vscode (from VS Code/Cursor Server Manager), fleet (from workspace TOML), env (from IRIS_HOST env var). Default: `reachable` is null (fast path). Pass `probe: true` to probe all servers in parallel (5 s timeout each) and include reachable, auth, latency_ms, error fields.",
+        description = "List all IRIS server instances registered in the connection pool. Returns an array of {name, host, port, namespace, username, source, reachable} objects, plus `web_prefix` for any instance served under a URL path prefix rather than at the web server's root. `source` values: iad-native (added via iris_add_server), vscode (from VS Code/Cursor Server Manager), fleet (from workspace TOML), env (from IRIS_HOST env var). Default: `reachable` is null (fast path). Pass `probe: true` to probe all servers in parallel (5 s timeout each) and include reachable, auth, latency_ms, error fields.",
         annotations(read_only_hint = true),
         output_schema = schema_for_output::<IrisServersResponse>()
     )]
@@ -8035,6 +8035,11 @@ Methods:
             name: String,
             host: String,
             port: u16,
+            /// The resolved URL, prefix included. Probing `host`/`port` alone reported a
+            /// gateway-prefixed entry as healthy while every real call went to the gateway root
+            /// (issue #129).
+            base_url: String,
+            web_prefix: Option<String>,
             namespace: String,
             username: String,
             password: String,
@@ -8064,6 +8069,8 @@ Methods:
                             name: name.to_string(),
                             host,
                             port,
+                            base_url: conn.base_url.clone(),
+                            web_prefix: extract_web_prefix_from_url(&conn.base_url),
                             namespace: conn.namespace.clone(),
                             username: conn.username.clone(),
                             password: conn.password.clone(),
@@ -8081,12 +8088,11 @@ Methods:
             let futures: Vec<_> = metas
                 .iter()
                 .map(|m| {
-                    let host = m.host.clone();
-                    let port = m.port;
+                    let base_url = m.base_url.clone();
                     let ns = m.namespace.clone();
                     let user = m.username.clone();
                     let pass = m.password.clone();
-                    async move { server_tools::probe_server(&host, port, &ns, &user, &pass).await }
+                    async move { server_tools::probe_base_url(&base_url, &ns, &user, &pass).await }
                 })
                 .collect();
             let probe_results = join_all(futures).await;
@@ -8108,6 +8114,9 @@ Methods:
                         "iris_version": probe.iris_version,
                         "atelier_version": probe.atelier_version,
                     });
+                    if let Some(prefix) = m.web_prefix {
+                        entry["web_prefix"] = serde_json::Value::String(prefix);
+                    }
                     if m.has_plaintext {
                         entry["has_plaintext_credential"] = serde_json::Value::Bool(true);
                     }
@@ -8128,6 +8137,9 @@ Methods:
                         "source": m.source,
                         "reachable": serde_json::Value::Null,
                     });
+                    if let Some(prefix) = m.web_prefix {
+                        entry["web_prefix"] = serde_json::Value::String(prefix);
+                    }
                     if m.has_plaintext {
                         entry["has_plaintext_credential"] = serde_json::Value::Bool(true);
                     }
@@ -8140,7 +8152,7 @@ Methods:
     }
 
     #[tool(
-        description = "Add a new IRIS server to the iad-native configuration. The credential is stored in the OS keychain when available. On headless hosts (MCP in Claude Desktop, Remote SSH, CI) where no keychain exists, the credential is stored in plaintext in servers.json as a fallback — the response includes stored_plaintext: true and a warning in that case. The running pool does not hot-reload; restart iad after adding a server to make it available via the `server` param. Returns {added: true, name, note}.",
+        description = "Add a new IRIS server to the iad-native configuration. Pass `web_prefix` (e.g. \"/hs20261\") for an instance behind a shared web gateway — without it the entry resolves to the gateway root and every call goes to the wrong place; registering the same name again updates the entry. The credential is stored in the OS keychain when available. On headless hosts (MCP in Claude Desktop, Remote SSH, CI) where no keychain exists, the credential is stored in plaintext in servers.json as a fallback — the response includes stored_plaintext: true and a warning in that case. The running pool does not hot-reload; restart iad after adding a server to make it available via the `server` param. Returns {added: true, name, note}.",
         output_schema = output_schemas::oneof_output_schema::<IrisAddServerResponse>()
     )]
     async fn iris_add_server(
@@ -8158,8 +8170,21 @@ Methods:
             }));
         }
 
-        // Load, merge, save.
+        // A prefix that cannot work is refused here rather than written and left to fail as a 404
+        // from the gateway root (#129).
+        if let Some(prefix) = p.web_prefix.as_deref() {
+            if let Err(message) = servers_config::validate_web_prefix(prefix) {
+                return err_result(serde_json::json!({
+                    "error_code": "INVALID_PARAMS",
+                    "message": message
+                }));
+            }
+        }
+
+        // Load, merge, save. Re-registering a name keeps any plaintext credential already on the
+        // entry, so correcting a prefix does not silently drop the password on a keychain-less host.
         let mut cfg = servers_config::load_native_config();
+        let existing_password = cfg.servers.get(&p.name).and_then(|e| e.password.clone());
         cfg.servers.insert(
             p.name.clone(),
             ServerEntry {
@@ -8169,7 +8194,8 @@ Methods:
                 username: p.username.clone(),
                 description: p.description.clone(),
                 scheme: p.scheme.clone(),
-                password: None,
+                web_prefix: p.web_prefix.clone(),
+                password: existing_password,
             },
         );
         if let Err(e) = servers_config::save_native_config(&cfg) {
@@ -8577,6 +8603,9 @@ Methods:
                     username: profile.username.clone(),
                     description: None,
                     scheme: Some(profile.scheme.clone()),
+                    // Carried over, or the import turns a working VS Code profile into an entry
+                    // pointing at the gateway root (#129).
+                    web_prefix: profile.path_prefix.clone(),
                     password: None,
                 },
             );

@@ -122,15 +122,8 @@ pub fn instance_base_url(inst: &InstanceConfig) -> String {
         .map(|s| s.trim_matches('/'))
         .filter(|s| !s.is_empty())
         .unwrap_or("http");
-    match inst
-        .web_prefix
-        .as_deref()
-        .map(|p| p.trim_matches('/'))
-        .filter(|p| !p.is_empty())
-    {
-        Some(prefix) => format!("{scheme}://{host}:{port}/{prefix}"),
-        None => format!("{scheme}://{host}:{port}"),
-    }
+    let prefix = crate::iris::connection_pool::web_prefix_path_part(inst.web_prefix.as_deref());
+    format!("{scheme}://{host}:{port}{prefix}")
 }
 
 /// Environment template gate: controls which tool categories are available on a connection.

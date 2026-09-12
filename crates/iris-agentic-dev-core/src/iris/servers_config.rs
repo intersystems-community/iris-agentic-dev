@@ -13,6 +13,15 @@ pub struct ServerEntry {
     pub description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub scheme: Option<String>,
+    /// URL path prefix the IRIS web server is served under, e.g. `"/hs20261"` for a HealthShare
+    /// instance behind a shared gateway. Same meaning as `web_prefix` in
+    /// `.iris-agentic-dev.toml` and `webServer.pathPrefix` in a VS Code Server Manager profile,
+    /// whose spelling is accepted as an alias here.
+    ///
+    /// Stored as the operator typed it; normalised when the URL is built
+    /// (`connection_pool::web_prefix_path_part`). `None` and `Some("")` both mean no prefix.
+    #[serde(default, alias = "pathPrefix", skip_serializing_if = "Option::is_none")]
+    pub web_prefix: Option<String>,
     /// Plaintext credential stored as a fallback when the OS keychain is unavailable
     /// (e.g. headless MCP contexts, Remote SSH). Keychain takes priority when present.
     /// Never returned in any tool response — only read for connection auth.
@@ -109,6 +118,25 @@ pub fn save_native_config(cfg: &ServersConfig) -> Result<(), Box<dyn std::error:
     save_to_path(cfg, &native_config_path())
 }
 
+/// Check a `web_prefix` before it is written to the registry.
+///
+/// Only one shape is refused: a prefix carrying a scheme or a host. Concatenated onto the base URL
+/// it produces `http://host:8080http://other/hs`, which fails later as a connection error with
+/// nothing pointing at the prefix. Everything else — empty, bare, slash-wrapped, multi-segment — is
+/// accepted and normalised at URL-build time.
+///
+/// Returns `Err(message)` quoting what was passed.
+pub fn validate_web_prefix(prefix: &str) -> Result<(), String> {
+    let trimmed = prefix.trim();
+    if trimmed.contains("://") || trimmed.starts_with("//") {
+        return Err(format!(
+            "web_prefix must be a path only, e.g. \"/hs20261\" — got \"{prefix}\". \
+             The scheme, host, and port come from the entry's own scheme/host/port fields."
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +153,7 @@ mod tests {
                 username: "_SYSTEM".to_string(),
                 description: Some("Dev container".to_string()),
                 scheme: Some("http".to_string()),
+                web_prefix: None,
                 password: None,
             },
         );
@@ -137,6 +166,7 @@ mod tests {
                 username: "admin".to_string(),
                 description: None,
                 scheme: Some("https".to_string()),
+                web_prefix: None,
                 password: None,
             },
         );

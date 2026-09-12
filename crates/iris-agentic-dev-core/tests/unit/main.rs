@@ -80,6 +80,7 @@ mod test_scm_unit;
 mod test_search_unit;
 mod test_server_entry_plaintext;
 mod test_server_manager;
+mod test_servers_json_web_prefix;
 mod test_skill_discovery_tools;
 mod test_skill_frontmatter;
 mod test_skill_install;

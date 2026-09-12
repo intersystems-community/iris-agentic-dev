@@ -197,6 +197,59 @@ available.
 `has_plaintext_credential: true` so you can identify them and migrate credentials when
 needed.
 
+### The servers.json file
+
+Each entry holds the parts of one base URL plus the namespace and username to use with it.
+Only `host`, `port`, `namespace`, and `username` are required; `scheme` defaults to `http`.
+
+```json
+{
+  "version": 1,
+  "default": "dev",
+  "servers": {
+    "dev": {
+      "host": "localhost",
+      "port": 52780,
+      "namespace": "USER",
+      "username": "_SYSTEM",
+      "description": "Dev container",
+      "scheme": "http"
+    },
+    "hs-test": {
+      "host": "gateway.example.com",
+      "port": 8080,
+      "namespace": "HSCUSTOM",
+      "username": "hsadmin",
+      "web_prefix": "/hs20261"
+    }
+  }
+}
+```
+
+You can edit the file by hand — iad picks the change up on the next call, and
+`iris_reload_pool` forces it immediately. Unknown keys are ignored, so a file written by a
+newer iad still loads on an older one.
+
+### Instances behind a web gateway
+
+`web_prefix` is the path the IRIS web server is served under. Without it, `hs-test` above
+would be called at `http://gateway.example.com:8080/api/atelier/`, which is either a 404 or,
+worse, some other instance sharing the gateway. With it, iad calls
+`http://gateway.example.com:8080/hs20261/api/atelier/`.
+
+This is how HealthShare instances and multi-instance gateway deployments are usually
+published. If Atelier answers at a path rather than at the root, you need the prefix — the
+symptom of a missing one is a 404 from every tool while the host and port look right.
+
+Leading and trailing slashes are optional and multi-segment prefixes work, so `hs20261`,
+`/hs20261/`, and `/gw/hs20261` are all fine. The value is a path only: a scheme or host in it
+is refused at registration. `webServer.pathPrefix`, the VS Code Server Manager spelling, is
+accepted as an alias for the same key, so a block copied out of `settings.json` loads
+unchanged. `iris_import_servers` carries the prefix across automatically.
+
+The equivalent for a server declared in `.iris-agentic-dev.toml` is `web_prefix` on the
+`[instance.<name>]` block.
+
 ---
 
 ## Per-connection policy (fleet / operate mode)
