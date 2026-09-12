@@ -126,8 +126,8 @@ FR-011. Not code — one workflow-dispatch run, and it is the deliverable of Sto
 because both causes of the zeros have to be fixed first: an entry measured with a working scorer and
 no tools would satisfy FR-011's wording and be worthless.
 
-- [ ] T033 [US2] Workflow-dispatch `skill-regression.yml` with `update_baseline: true` across all nine skills; verify nine v2 entries, each with provenance, non-zero arms, and a resolved tool surface that is not `"none"`. Any skill that ends the run without an entry gets a reason written into `ungated_skills` in the same commit, so T023's census test passes on the file as shipped (FR-011)
-- [ ] T034 [US2] Commit the regenerated `tests/e2e/results/skill-baseline.json` with the run id and the resolved scorer model in the commit message, so the file's provenance is checkable from git as well as from its own contents
+- [x] T033 [US2] Workflow-dispatch `skill-regression.yml` with `update_baseline: true` across all nine skills; verify nine v2 entries, each with provenance, non-zero arms, and a resolved tool surface that is not `"none"`. Any skill that ends the run without an entry gets a reason written into `ungated_skills` in the same commit, so T023's census test passes on the file as shipped (FR-011)
+- [x] T034 [US2] Commit the regenerated `tests/e2e/results/skill-baseline.json` with the run id and the resolved scorer model in the commit message, so the file's provenance is checkable from git as well as from its own contents
 
 ---
 

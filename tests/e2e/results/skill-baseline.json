@@ -1,20 +1,96 @@
 {
   "schema": 2,
   "skills": {
+    "ensemble-production": {
+      "fire_rate": 1.0,
+      "items": {
+        "baseline": {
+          "items_passed": 1,
+          "items_scored": 10,
+          "items_total": 10,
+          "items_unscored": 0,
+          "pass_rate": 0.1
+        },
+        "skill": {
+          "items_passed": 0,
+          "items_scored": 10,
+          "items_total": 10,
+          "items_unscored": 0,
+          "pass_rate": 0.0
+        }
+      },
+      "lift": -0.1,
+      "pass_rate_baseline": 0.1,
+      "pass_rate_skill": 0.0,
+      "provenance": {
+        "harness_commit": "5137bfb",
+        "measured_at": "2026-09-12T17:25:42Z",
+        "run_id": "2026-09-12T171542",
+        "runs": 5,
+        "scorer_model": "claude-sonnet-4-6",
+        "scorer_model_requested": "us.anthropic.claude-sonnet-4-6",
+        "scoring_mode": "pattern",
+        "task_ids": [
+          "ENSEMBLE-APPROACH-CHOICE",
+          "ENSEMBLE-PYPROD"
+        ],
+        "tool_surface": "1.4.1+fa0b694f8725"
+      }
+    },
+    "iris-ai-hub": {
+      "fire_rate": 1.0,
+      "items": {
+        "baseline": {
+          "items_passed": 12,
+          "items_scored": 30,
+          "items_total": 30,
+          "items_unscored": 0,
+          "pass_rate": 0.4
+        },
+        "skill": {
+          "items_passed": 9,
+          "items_scored": 30,
+          "items_total": 30,
+          "items_unscored": 0,
+          "pass_rate": 0.3
+        }
+      },
+      "lift": -0.1,
+      "pass_rate_baseline": 0.4,
+      "pass_rate_skill": 0.3,
+      "provenance": {
+        "harness_commit": "5137bfb",
+        "measured_at": "2026-09-12T17:48:20Z",
+        "run_id": "2026-09-12T171547",
+        "runs": 5,
+        "scorer_model": "claude-sonnet-4-6",
+        "scorer_model_requested": "us.anthropic.claude-sonnet-4-6",
+        "scoring_mode": "pattern",
+        "task_ids": [
+          "AI-HUB-AGENT-OPERATION",
+          "AI-HUB-MESSAGE-CLASSES",
+          "AI-HUB-PRODUCTION-ITEMS",
+          "AI-HUB-PYTHON-VS-OBJECTSCRIPT",
+          "AI-HUB-TOOLSET-XDATA",
+          "AI-HUB-WORKFLOW-SUSPEND"
+        ],
+        "tool_surface": "1.4.1+fa0b694f8725"
+      }
+    },
     "iris-connectivity": {
       "fire_rate": 1.0,
       "items": {
         "baseline": {
           "items_passed": 0,
-          "items_scored": 3,
-          "items_total": 3,
+          "items_scored": 5,
+          "items_total": 5,
           "items_unscored": 0,
           "pass_rate": 0.0
         },
         "skill": {
           "items_passed": 0,
-          "items_scored": 3,
-          "items_total": 3,
+          "items_scored": 5,
+          "items_total": 5,
           "items_unscored": 0,
           "pass_rate": 0.0
         }
@@ -23,35 +99,231 @@
       "pass_rate_baseline": 0.0,
       "pass_rate_skill": 0.0,
       "provenance": {
-        "harness_commit": "8b47e69",
-        "measured_at": "2026-09-12T16:41:18Z",
-        "run_id": "2026-09-12T163509",
-        "runs": 3,
+        "harness_commit": "5137bfb",
+        "measured_at": "2026-09-12T17:26:34Z",
+        "run_id": "2026-09-12T171557",
+        "runs": 5,
         "scorer_model": "claude-sonnet-4-6",
         "scorer_model_requested": "us.anthropic.claude-sonnet-4-6",
         "scoring_mode": "judge",
         "task_ids": [
           "IRIS-PYTHON-CONNECT"
         ],
-        "tool_surface": "1.4.0+fa0b694f8725"
+        "tool_surface": "1.4.1+fa0b694f8725"
       }
     },
     "iris-vector-ai": {
       "fire_rate": 1.0,
-      "items": null,
-      "lift": 0.25,
-      "pass_rate_baseline": 0.33,
-      "pass_rate_skill": 0.58,
-      "provenance": null
+      "items": {
+        "baseline": {
+          "items_passed": 1,
+          "items_scored": 10,
+          "items_total": 10,
+          "items_unscored": 0,
+          "pass_rate": 0.1
+        },
+        "skill": {
+          "items_passed": 3,
+          "items_scored": 10,
+          "items_total": 10,
+          "items_unscored": 0,
+          "pass_rate": 0.3
+        }
+      },
+      "lift": 0.2,
+      "pass_rate_baseline": 0.1,
+      "pass_rate_skill": 0.3,
+      "provenance": {
+        "harness_commit": "5137bfb",
+        "measured_at": "2026-09-12T17:27:55Z",
+        "run_id": "2026-09-12T171539",
+        "runs": 5,
+        "scorer_model": "claude-sonnet-4-6",
+        "scorer_model_requested": "us.anthropic.claude-sonnet-4-6",
+        "scoring_mode": "pattern",
+        "task_ids": [
+          "VECTOR-PYTHON-SEARCH",
+          "VECTOR-TOVECTOR-MISMATCH"
+        ],
+        "tool_surface": "1.4.1+fa0b694f8725"
+      }
+    },
+    "objectscript-guardrails": {
+      "fire_rate": 1.0,
+      "items": {
+        "baseline": {
+          "items_passed": 4,
+          "items_scored": 5,
+          "items_total": 5,
+          "items_unscored": 0,
+          "pass_rate": 0.8
+        },
+        "skill": {
+          "items_passed": 5,
+          "items_scored": 5,
+          "items_total": 5,
+          "items_unscored": 0,
+          "pass_rate": 1.0
+        }
+      },
+      "lift": 0.2,
+      "pass_rate_baseline": 0.8,
+      "pass_rate_skill": 1.0,
+      "provenance": {
+        "harness_commit": "5137bfb",
+        "measured_at": "2026-09-12T17:27:27Z",
+        "run_id": "2026-09-12T171550",
+        "runs": 5,
+        "scorer_model": "claude-sonnet-4-6",
+        "scorer_model_requested": "us.anthropic.claude-sonnet-4-6",
+        "scoring_mode": "judge",
+        "task_ids": [
+          "TIMESTAMP-FORMAT"
+        ],
+        "tool_surface": "1.4.1+fa0b694f8725"
+      }
+    },
+    "objectscript-list-patterns": {
+      "fire_rate": 1.0,
+      "items": {
+        "baseline": {
+          "items_passed": 0,
+          "items_scored": 5,
+          "items_total": 5,
+          "items_unscored": 0,
+          "pass_rate": 0.0
+        },
+        "skill": {
+          "items_passed": 0,
+          "items_scored": 5,
+          "items_total": 5,
+          "items_unscored": 0,
+          "pass_rate": 0.0
+        }
+      },
+      "lift": 0.0,
+      "pass_rate_baseline": 0.0,
+      "pass_rate_skill": 0.0,
+      "provenance": {
+        "harness_commit": "5137bfb",
+        "measured_at": "2026-09-12T17:33:44Z",
+        "run_id": "2026-09-12T171549",
+        "runs": 5,
+        "scorer_model": "claude-sonnet-4-6",
+        "scorer_model_requested": "us.anthropic.claude-sonnet-4-6",
+        "scoring_mode": "judge",
+        "task_ids": [
+          "LIST-ITERATE"
+        ],
+        "tool_surface": "1.4.1+fa0b694f8725"
+      }
+    },
+    "objectscript-review": {
+      "fire_rate": 1.0,
+      "items": {
+        "baseline": {
+          "items_passed": 3,
+          "items_scored": 5,
+          "items_total": 5,
+          "items_unscored": 0,
+          "pass_rate": 0.6
+        },
+        "skill": {
+          "items_passed": 4,
+          "items_scored": 5,
+          "items_total": 5,
+          "items_unscored": 0,
+          "pass_rate": 0.8
+        }
+      },
+      "lift": 0.2,
+      "pass_rate_baseline": 0.6,
+      "pass_rate_skill": 0.8,
+      "provenance": {
+        "harness_commit": "5137bfb",
+        "measured_at": "2026-09-12T17:25:46Z",
+        "run_id": "2026-09-12T171542",
+        "runs": 5,
+        "scorer_model": "claude-sonnet-4-6",
+        "scorer_model_requested": "us.anthropic.claude-sonnet-4-6",
+        "scoring_mode": "judge",
+        "task_ids": [
+          "STATUS-CHECK"
+        ],
+        "tool_surface": "1.4.1+fa0b694f8725"
+      }
+    },
+    "objectscript-sql-patterns": {
+      "fire_rate": 1.0,
+      "items": {
+        "baseline": {
+          "items_passed": 0,
+          "items_scored": 5,
+          "items_total": 5,
+          "items_unscored": 0,
+          "pass_rate": 0.0
+        },
+        "skill": {
+          "items_passed": 0,
+          "items_scored": 5,
+          "items_total": 5,
+          "items_unscored": 0,
+          "pass_rate": 0.0
+        }
+      },
+      "lift": 0.0,
+      "pass_rate_baseline": 0.0,
+      "pass_rate_skill": 0.0,
+      "provenance": {
+        "harness_commit": "5137bfb",
+        "measured_at": "2026-09-12T17:30:30Z",
+        "run_id": "2026-09-12T171546",
+        "runs": 5,
+        "scorer_model": "claude-sonnet-4-6",
+        "scorer_model_requested": "us.anthropic.claude-sonnet-4-6",
+        "scoring_mode": "judge",
+        "task_ids": [
+          "SQLCODE-SILENT"
+        ],
+        "tool_surface": "1.4.1+fa0b694f8725"
+      }
+    },
+    "objectscript-unit-test": {
+      "fire_rate": 1.0,
+      "items": {
+        "baseline": {
+          "items_passed": 0,
+          "items_scored": 10,
+          "items_total": 10,
+          "items_unscored": 0,
+          "pass_rate": 0.0
+        },
+        "skill": {
+          "items_passed": 0,
+          "items_scored": 10,
+          "items_total": 10,
+          "items_unscored": 0,
+          "pass_rate": 0.0
+        }
+      },
+      "lift": 0.0,
+      "pass_rate_baseline": 0.0,
+      "pass_rate_skill": 0.0,
+      "provenance": {
+        "harness_commit": "5137bfb",
+        "measured_at": "2026-09-12T17:26:51Z",
+        "run_id": "2026-09-12T171545",
+        "runs": 5,
+        "scorer_model": "claude-sonnet-4-6",
+        "scorer_model_requested": "us.anthropic.claude-sonnet-4-6",
+        "scoring_mode": "judge",
+        "task_ids": [
+          "GEN-01",
+          "GEN-02"
+        ],
+        "tool_surface": "1.4.1+fa0b694f8725"
+      }
     }
   },
-  "ungated_skills": {
-    "ensemble-production": "no post-repair measurement yet — rebaselined by 118 Phase 5",
-    "iris-ai-hub": "no post-repair measurement yet — rebaselined by 118 Phase 5",
-    "objectscript-guardrails": "no post-repair measurement yet — rebaselined by 118 Phase 5",
-    "objectscript-list-patterns": "no post-repair measurement yet — rebaselined by 118 Phase 5",
-    "objectscript-review": "no post-repair measurement yet — rebaselined by 118 Phase 5",
-    "objectscript-sql-patterns": "no post-repair measurement yet — rebaselined by 118 Phase 5",
-    "objectscript-unit-test": "no post-repair measurement yet — rebaselined by 118 Phase 5"
-  }
+  "ungated_skills": {}
 }

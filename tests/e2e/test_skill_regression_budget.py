@@ -201,3 +201,30 @@ def test_an_aggregate_job_merges_the_shards_and_gates_on_them():
             f"job `{name}` merges shard results but does not need `{eval_name}` — it would "
             f"run before the shards finish"
         )
+
+
+def test_no_eval_result_file_is_tracked_in_git():
+    """A tracked `skill-eval-*.json` rides along in every shard's artifact.
+
+    Each shard uploads `tests/e2e/results/skill-eval-*.json`, which is a glob over the whole
+    directory — so 35 result files from May and June, force-added past the `*.json` in that
+    directory's own `.gitignore`, arrived in all nine artifacts. Run 34707534110's merge read
+    324 files to find nine, and its footer reported seven skills as re-runs that discarded a
+    2026-05-31 result. The newest `run_id` still won, so the numbers were right; a stale file
+    with a later id would have been published instead.
+    """
+    import subprocess
+
+    tracked = subprocess.run(
+        ["git", "ls-files", "tests/e2e/results/"],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
+    stale = [p for p in tracked if os.path.basename(p).startswith("skill-eval-")]
+    assert not stale, (
+        f"{len(stale)} eval result file(s) are tracked: {stale[:3]}. They are ignored by "
+        f"tests/e2e/results/.gitignore for a reason — every shard artifact carries all of "
+        f"them. `git rm` them; only skill-baseline.json belongs in the repo."
+    )
