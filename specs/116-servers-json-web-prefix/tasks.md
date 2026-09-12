@@ -27,7 +27,7 @@ it.
 ## Phase 2: Implementation
 
 - [x] T009 `src/iris/servers_config.rs` — `web_prefix: Option<String>` with `#[serde(default,
-  alias = "pathPrefix", skip_serializing_if = "Option::is_none")]`, plus
+alias = "pathPrefix", skip_serializing_if = "Option::is_none")]`, plus
       `validate_web_prefix` refusing a value carrying a scheme or host.
 - [x] T010 `src/iris/connection_pool.rs` — `web_prefix_path_part` and `native_base_url`; the
       native branch and the VS Code branch both call the helper, replacing two inline copies.
@@ -56,11 +56,17 @@ it.
 
 - [x] T016 `tests/integration/test_web_prefix_live.rs`, 3 `#[ignore]` tests against
       `iris-dev-iris`. The container is registered twice — once at the root as a control, once
-      under `/iad116-no-such-prefix` — and the prefixed one must come back
-      `reachable == false` with `http_status >= 400`. A prefix asserted only as a string proves
-      the `format!` call, not that IRIS was asked for a different path.
-      `iris_servers_probes_the_prefixed_url_not_the_root` covers the false-green facet: `auth ==
-  false` is what proves the probe asked for the prefixed path.
+      under `/iad116-no-such-prefix` — and the prefixed one must not complete an Atelier handshake.
+      A prefix asserted only as a string proves the `format!` call, not that IRIS was asked for a
+      different path. `iris_servers_probes_the_prefixed_url_not_the_root` covers the false-green
+      facet.
+- [x] T016a The first version of T016 asserted `reachable == false` and `http_status >= 400`. That
+      passed locally and failed on CI: Community 2026.2 answers 404 for a path it does not serve,
+      and the 2025.3 image CI runs answers 200 carrying an HTML error page. The portable signal is
+      that a path which is not Atelier cannot report an IRIS version. Added
+      `the_handshake_criterion_holds_on_both_iris_versions` — needs no IRIS, asserts the criterion
+      against both recorded payload shapes, so the next person to tighten it finds out here rather
+      than on a runner.
 - [x] T017 Verified the tests leave no residue — no `test-116` entries in the real
       `servers.json`, no matching keychain items.
 
@@ -84,7 +90,7 @@ it.
 - [x] T022 `specs/next-release-notes.md` — What's new entry crediting @isc-ndittber and naming
       #129, plus two Notable fixes entries for the listing and probe facets.
 - [x] T023 `cargo fmt --all -- --check` and `cargo clippy --features testing --all-targets --
-  -D warnings` clean; `.specify/gates/verify.sh` `failed=0 warnings=0` (needed `npm ci` in the
+-D warnings` clean; `.specify/gates/verify.sh` `failed=0 warnings=0` (needed `npm ci` in the
       worktree — the parity gate caught a global prettier older than the pin).
 
 ## Done criteria

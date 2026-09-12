@@ -2,8 +2,13 @@
 //!
 //! A prefix that is only ever asserted as a string proves the format call, not that IRIS is being
 //! asked for a different path. These register the same `iris-dev-iris` container twice — once at
-//! the root, once under a prefix it does not serve — and probe both. The prefixed one has to fail,
-//! and it has to fail because of the path.
+//! the root, once under a prefix it does not serve — and probe both. The prefixed one must not
+//! complete an Atelier handshake, and the root one must.
+//!
+//! The signal is the handshake, not the HTTP status. What a web server answers for a path it does
+//! not serve is version-dependent: Community 2026.2 returns 404, and the 2025.3 image CI runs
+//! returns a 200 carrying an HTML error page. Only one thing is true on both — a path that is not
+//! Atelier cannot report an IRIS version.
 //!
 //! Requires a live container. Run with:
 //!   IRIS_HOST=localhost IRIS_WEB_PORT=52780 IRIS_USERNAME=_SYSTEM IRIS_PASSWORD=SYS \
@@ -71,6 +76,44 @@ async fn add_and_probe(name: &str, prefix: Option<&str>) -> serde_json::Value {
     )
 }
 
+/// Did this probe complete an Atelier handshake? Atelier's root reports the IRIS version, so a
+/// version string means iad reached Atelier and parsed its answer. Every other outcome — a 404, a
+/// 200 carrying an error page, a connection error — leaves the field absent.
+fn atelier_version_reported(probe: &serde_json::Value) -> Option<&str> {
+    probe["iris_version"].as_str().filter(|v| !v.is_empty())
+}
+
+/// The criterion above against the payload shapes the two IRIS versions actually produce, so the
+/// three tests below keep meaning what they say on a runner this machine is not. Needs no IRIS: the
+/// first two are what a wrong path returns, the third is what Atelier returns.
+#[test]
+fn the_handshake_criterion_holds_on_both_iris_versions() {
+    // Community 2026.2 (local iris-dev-iris): 404 for a path it does not serve.
+    let not_found = serde_json::json!({
+        "name": "test-116-prefixed", "reachable": false, "nopws": false,
+        "web_available": false, "http_status": 404, "latency_ms": 3
+    });
+    // IRIS 2025.3 (the CI image): 200 with an HTML error page, so the JSON parse fails and no
+    // version comes back. Asserting `reachable == false` here is what broke on CI.
+    let html_error_page = serde_json::json!({
+        "name": "test-116-prefixed", "reachable": true, "nopws": false, "web_available": true,
+        "auth": true, "latency_ms": 2, "parse_error": "error decoding response body"
+    });
+    let atelier_root = serde_json::json!({
+        "name": "test-116-root", "reachable": true, "nopws": false, "web_available": true,
+        "auth": true, "atelier_version": 9, "latency_ms": 4,
+        "iris_version": "IRIS for UNIX (Ubuntu Server LTS for x86-64 Containers) 2026.2"
+    });
+
+    assert_eq!(atelier_version_reported(&not_found), None);
+    assert_eq!(atelier_version_reported(&html_error_page), None);
+    assert!(atelier_version_reported(&atelier_root).is_some());
+    assert!(
+        not_found["error"].is_null() && html_error_page["error"].is_null(),
+        "neither shape carries `error`, so the connection-error guard must not reject them"
+    );
+}
+
 /// The prefix-less control. Without this the failure below proves nothing — the container could be
 /// down, the credential wrong, anything.
 #[tokio::test]
@@ -85,6 +128,11 @@ async fn a_prefix_less_entry_still_reaches_atelier() {
         "the container must be reachable at the root for the prefixed case to mean anything: \
          {probe}"
     );
+    assert!(
+        atelier_version_reported(&probe).is_some(),
+        "the root probe must complete an Atelier handshake and report a version, or the prefixed \
+         case cannot tell a dropped prefix from an unrelated failure: {probe}"
+    );
 }
 
 /// The prefix reaches the request. `iris-dev-iris` serves Atelier at `/api/atelier/`, not at
@@ -98,15 +146,16 @@ async fn a_prefixed_entry_asks_iris_for_the_prefixed_path() {
     let probe = add_and_probe(NAME, Some("/iad116-no-such-prefix")).await;
     remove(NAME).await;
     assert_eq!(
-        probe["reachable"], false,
-        "a path IRIS does not serve must not report a successful Atelier handshake — if this is \
-         true the prefix was dropped and the probe hit the root: {probe}"
+        atelier_version_reported(&probe),
+        None,
+        "a path IRIS does not serve must not complete an Atelier handshake — a version here means \
+         the prefix was dropped and the probe hit the root: {probe}"
     );
-    let status = probe["http_status"].as_u64();
     assert!(
-        status.is_some_and(|s| s >= 400),
-        "the failure must come from IRIS answering the prefixed path, not from a connection \
-         error — expected an HTTP status >= 400, got: {probe}"
+        probe["error"].is_null(),
+        "the probe must have reached the web server and been answered on the prefixed path, not \
+         failed to connect at all — a connection error would make this test pass for the wrong \
+         reason: {probe}"
     );
 }
 
@@ -161,7 +210,9 @@ async fn iris_servers_probes_the_prefixed_url_not_the_root() {
         "the listing must report the prefix: {entry}"
     );
     assert_eq!(
-        entry["auth"], false,
-        "the probe must ask for the prefixed path, which this container does not serve: {entry}"
+        atelier_version_reported(&entry),
+        None,
+        "the probe must ask for the prefixed path, which this container does not serve — a version \
+         here means it probed the root instead: {entry}"
     );
 }
