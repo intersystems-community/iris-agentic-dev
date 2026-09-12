@@ -84,7 +84,7 @@ SC-002, SC-003, SC-013, SC-014.
 
 ### Phase gate
 
-- [ ] T022 [US1] Run one skill through CI on this branch: both arms non-zero, `scored` at full count, footer naming scorer model and tool surface. Then unset the credential in a scratch run and confirm exit 2 with nothing spent. Then restore the `schedule:` block in `skill-regression.yml`, paused 2026-09-09 because the nightly was spending ~$3.70 a night to print `+0% ✓`. **Blocks Phase 4.** The `AWS_BEARER_TOKEN_BEDROCK` secret is already in repo settings, so this needs no action outside the branch
+- [x] T022 [US1] Run one skill through CI on this branch: both arms non-zero, `scored` at full count, footer naming scorer model and tool surface. Then unset the credential in a scratch run and confirm exit 2 with nothing spent. Then restore the `schedule:` block in `skill-regression.yml`, paused 2026-09-09 because the nightly was spending ~$3.70 a night to print `+0% ✓`. **Blocks Phase 4.** The `AWS_BEARER_TOKEN_BEDROCK` secret is already in repo settings, so this needs no action outside the branch
 
 ---
 

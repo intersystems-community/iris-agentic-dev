@@ -6,20 +6,19 @@ name: Skill Regression
 # Sharded, the wall clock is the slowest skill (iris-ai-hub, ~29 min) plus setup.
 
 on:
-  # The nightly is paused as of 2026-09-09. It was spending ~$3.70 and ~2 hours of runner
-  # time a night to print 0% against 0% for six of nine skills and report success — run
-  # 34322181078 is the last one, and its objectscript-review leg shows `+0% ✓` with no
-  # warning. Nothing in that output separates "the scorer failed" from "the agent genuinely
-  # scored zero", which is the defect spec 118 removes. A green report nobody can read is
-  # worse than no report: it costs money and it certifies the gate as working.
+  # Paused 2026-09-09, restored 2026-09-12. It had been spending ~$3.70 and ~2 hours of
+  # runner time a night to print 0% against 0% for six of nine skills and report success —
+  # run 34322181078 was the last one, and its objectscript-review leg shows `+0% ✓` with no
+  # warning. Nothing in that output separated "the scorer failed" from "the agent genuinely
+  # scored zero", which is the defect 118 removes.
   #
-  # Restore this block at the end of 118 Phase 3 (T022), once a revoked credential exits 2
-  # before spending and one skill runs with non-zero arms. `workflow_dispatch` stays on, so
-  # the run is still available deliberately — including the FR-011 rebaseline in Phase 5.
-  #
-  # schedule:
-  #   # Nightly at 02:00 UTC — avoids overlap with daytime CI runs
-  #   - cron: "0 2 * * *"
+  # Restored on run 34704217675: preflight resolved the scorer (claude-sonnet-4-6 via
+  # AWS_BEARER_TOKEN_BEDROCK) and an 81-tool surface from the released binary, iris-connectivity
+  # measured 0% against 67% with 6 of 6 items scored, and a credential-less run exits 2 before
+  # spending anything.
+  schedule:
+    # Nightly at 02:00 UTC — avoids overlap with daytime CI runs
+    - cron: "0 2 * * *"
   workflow_dispatch:
     inputs:
       skill:
