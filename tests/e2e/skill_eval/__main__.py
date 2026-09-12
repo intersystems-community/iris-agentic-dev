@@ -16,7 +16,12 @@ from tests.e2e.skill_eval.evaluator import (
     compare_to_baseline,
     SkillResult,
 )
-from tests.e2e.skill_eval.baseline import load_baseline, save_baseline, compute_diff
+from tests.e2e.skill_eval.baseline import (
+    compute_diff,
+    format_diff_line,
+    load_baseline,
+    save_baseline,
+)
 from tests.e2e.skill_eval.cost_estimator import (
     estimate,
     format_dry_run,
@@ -283,11 +288,7 @@ def _merge_and_report(args) -> int:
         save_baseline(measured, _DEFAULT_BASELINE)
         print("\nBaseline updated. Changes:")
         for d in diff:
-            sign = "+" if (d["delta"] or 0) > 0 else ""
-            old = f"{d['old_lift']:.2f}" if d["old_lift"] is not None else "n/a"
-            new_skill = " (new)" if d["new_skill"] else ""
-            delta = f"{sign}{d['delta']:.2f}" if d["delta"] is not None else "n/a"
-            print(f"  {d['skill']}: {old} → {d['new_lift']:.2f} ({delta}){new_skill}")
+            print(format_diff_line(d))
         if not diff:
             print("  (no changes)")
 
@@ -523,12 +524,7 @@ def main():
         print("\nBaseline updated. Changes:")
         if diff:
             for d in diff:
-                sign = "+" if (d["delta"] or 0) > 0 else ""
-                new_skill = " (new)" if d["new_skill"] else ""
-                old = f"{d['old_lift']:.2f}" if d["old_lift"] is not None else "n/a"
-                print(
-                    f"  {d['skill']}: {old} → {d['new_lift']:.2f} ({sign}{d['delta']:.2f}){new_skill}"
-                )
+                print(format_diff_line(d))
         else:
             print("  (no changes)")
 

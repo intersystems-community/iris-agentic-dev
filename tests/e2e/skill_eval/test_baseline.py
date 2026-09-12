@@ -17,6 +17,7 @@ from tests.e2e.skill_eval.baseline import (
     comparability,
     compute_diff,
     coverage_census,
+    format_diff_line,
     load_baseline,
     load_ungated,
     save_baseline,
@@ -149,6 +150,54 @@ def test_compute_diff_sorted_by_abs_delta():
     assert diff[0]["skill"] == "a"  # bigger delta first
 
 
+def test_a_new_skill_diff_line_prints_without_a_delta():
+    """A new skill has no `delta` to print, and the printer must not crash on that.
+
+    It did: `--skill iris-connectivity --update-baseline` measured the skill, merged the file
+    correctly, then died on `f"{None:.2f}"` while printing the summary of what it had just
+    written. The write was right and the run still exited non-zero.
+    """
+    line = format_diff_line(
+        {
+            "skill": "iris-connectivity",
+            "old_lift": None,
+            "new_lift": 0.0,
+            "new_skill": True,
+            "delta": None,
+        }
+    )
+    assert "iris-connectivity" in line
+    assert "(new)" in line
+    assert "0.00" in line
+
+
+def test_a_changed_skill_diff_line_prints_its_signed_delta():
+    line = format_diff_line(
+        {
+            "skill": "a",
+            "old_lift": 0.29,
+            "new_lift": 0.10,
+            "new_skill": False,
+            "delta": -0.19,
+        }
+    )
+    assert "0.29" in line and "0.10" in line
+    assert "-0.19" in line
+
+
+def test_an_improvement_diff_line_is_signed_positive():
+    line = format_diff_line(
+        {
+            "skill": "a",
+            "old_lift": 0.10,
+            "new_lift": 0.29,
+            "new_skill": False,
+            "delta": 0.19,
+        }
+    )
+    assert "+0.19" in line
+
+
 # ── T023: merge-by-skill writes ──────────────────────────────────────────────
 
 
@@ -202,6 +251,25 @@ def test_the_written_file_declares_its_schema(tmp_path, tasks_dir):
     assert open(path).read().endswith("\n"), (
         "no trailing newline — every commit re-diffs it"
     )
+
+
+def test_non_ascii_text_survives_a_write_unescaped(tmp_path, tasks_dir):
+    """An untouched line must not churn in the diff because a write re-encoded it.
+
+    `json.dump` escapes non-ASCII by default, so the em dash in an `ungated_skills` reason came
+    back as `\\u2014` and seven entries the write never measured showed up in `git diff`. That
+    makes the merge guarantee unverifiable by looking at the diff, which is how anyone would
+    check it.
+    """
+    path = str(tmp_path / "baseline.json")
+    reason = "no post-repair measurement yet — rebaselined by Phase 5"
+    save_baseline([], path, ungated={"iris-ai-hub": reason})
+    text = open(path).read()
+    assert reason in text
+    assert "\\u" not in text
+
+    save_baseline([make_result("iris-connectivity", 0.67)], path)
+    assert reason in open(path).read()
 
 
 def test_an_entry_records_what_it_was_measured_under(tmp_path, tasks_dir):

@@ -116,7 +116,7 @@ entry changed. Point a skill at a baseline entry measured under a different task
 
 ### Phase gate
 
-- [ ] T032 [US2] Run `--skill iris-connectivity --update-baseline --yes`, then `git diff --stat tests/e2e/results/skill-baseline.json` — one entry changed. Then run a skill against a deliberately stale-provenance entry and confirm `not comparable` with the reason. **Blocks Phase 5.**
+- [x] T032 [US2] Run `--skill iris-connectivity --update-baseline --yes`, then `git diff --stat tests/e2e/results/skill-baseline.json` — one entry changed. Then run a skill against a deliberately stale-provenance entry and confirm `not comparable` with the reason. **Blocks Phase 5.**
 
 ---
 

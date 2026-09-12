@@ -158,7 +158,10 @@ def save_baseline(
     }
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w") as f:
-        json.dump(data, f, indent=2, sort_keys=True)
+        # `ensure_ascii=False`: the default escapes an em dash in a reason to a `\\u` sequence, so a
+        # write that measured one skill re-encoded every other line and the diff no longer
+        # shows what actually changed.
+        json.dump(data, f, indent=2, sort_keys=True, ensure_ascii=False)
         f.write("\n")
 
 
@@ -253,3 +256,16 @@ def compute_diff(old: dict, new: "list[SkillResult]") -> list[dict]:
         )
     diffs.sort(key=lambda d: abs(d["delta"] or 0), reverse=True)
     return diffs
+
+
+def format_diff_line(diff: dict) -> str:
+    """One line of the "Baseline updated" summary.
+
+    Lives here, and is the only formatter, because the two call sites in `__main__.py` each had
+    their own copy and only one of them guarded `delta is None`. A first measurement of a skill
+    has no delta, so the unguarded copy crashed on the run that was working correctly.
+    """
+    old = f"{diff['old_lift']:.2f}" if diff.get("old_lift") is not None else "n/a"
+    delta = diff.get("delta")
+    change = "new" if diff.get("new_skill") else f"{delta:+.2f}" if delta else "0.00"
+    return f"  {diff['skill']}: {old} → {diff['new_lift']:.2f} ({change})"
