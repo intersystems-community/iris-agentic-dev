@@ -265,6 +265,55 @@ Cursor and other VS Code forks work the same way; `check-sm-credential` falls ba
 
 ---
 
+## Skill eval: every skill scores zero
+
+Symptom: `python -m tests.e2e.skill_eval` finishes, the table shows `0.00` in both arms for
+every skill, and `--update-baseline` writes those zeros to
+`tests/e2e/results/skill-baseline.json`.
+
+It never meant the skills stopped working. It meant the scorer was never reached, and the
+old code counted an unreachable scorer as `score: 0` — a failing grade rather than no
+grade. Nine entries of fabricated zeros went into the committed baseline in August 2026
+that way.
+
+A scoring call that cannot be made now returns `scored: false` with no score at all, and
+a pass rate is computed over the items that were scored. When nothing was scored the rate
+is `None`, which prints as `—` and refuses to be compared to anything:
+
+```text
+skill                          mode      scored     base  skill   lift  Δ base  outcome
+objectscript-review            —         0/24          —      —      —       —  not comparable
+                               ↳ no scored items
+```
+
+The run also stops before it spends anything. `preflight` makes one small real scoring
+call, resolves the `iris-agentic-dev` binary, and counts the tools it advertises:
+
+```bash
+python -m tests.e2e.skill_eval --preflight-only
+# preflight ok — scorer claude-sonnet-4-6 via AWS_BEARER_TOKEN_BEDROCK,
+#   tools 1.4.0+fa0b694f8725 at /opt/homebrew/bin/iris-agentic-dev
+```
+
+Exit 2 means nothing was spent; exit 1 means a run happened and something about it failed.
+
+| Symptom                                                | Likely cause                                                            | Fix                                                                       |
+| ------------------------------------------------------ | ----------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `preflight: no scorer credential`                      | No Anthropic or Bedrock credential in the environment                   | Set `ANTHROPIC_API_KEY` or `AWS_BEARER_TOKEN_BEDROCK`                     |
+| `preflight: iris-agentic-dev not found`                | The binary is not on `PATH` and `IAD_BINARY` is unset                   | `cargo build` and set `IAD_BINARY=./target/debug/iris-agentic-dev`        |
+| `tool surface: none` in the footer                     | The agent ran with no MCP server, so nothing under test was in the loop | Same as above — the surface is read from the binary the run resolved      |
+| `not comparable: no scored items`                      | Every scoring call for that skill failed                                | Check the scorer credential; the pass rate is honestly absent, not zero   |
+| `not comparable: task_ids differs`                     | The baseline entry was measured on a different task set                 | Rebaseline the skill: `--skill <name> --update-baseline`                  |
+| `not comparable: no provenance recorded`               | A schema 1 baseline entry, which recorded no measurement conditions     | Rebaseline the skill                                                      |
+| `Shards disagree on the regression threshold`          | Two nightly shards ran with different `--regression-threshold`          | Dispatch the whole matrix with one threshold; half a table is not a table |
+| `WARNING: baseline entry for <skill> has no eval.yaml` | An entry outlived its eval config                                       | Delete the entry, or restore the config — the write keeps it either way   |
+
+Every skill with an `eval.yaml` must be either measured or excused: an entry in `skills`,
+or a reason in `ungated_skills` saying why it has none. A name in both is an error, and a
+name in neither fails `test_every_eval_config_is_gated_or_declared`.
+
+---
+
 ## Getting help
 
 Issues and pull requests: [GitHub Issues](https://github.com/intersystems-community/iris-agentic-dev/issues)

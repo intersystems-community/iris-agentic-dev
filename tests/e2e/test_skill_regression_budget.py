@@ -52,14 +52,19 @@ def _configs():
 
 
 def _eval_job(workflow: dict) -> tuple[str, dict]:
-    """The job that actually runs the eval — the one whose steps invoke the harness."""
+    """The job that actually runs the eval — the one whose steps invoke the harness.
+
+    Every mode of the CLI that starts no session has to be excluded by name, because they all
+    invoke the same module. `--preflight-only` is the one that caught this out: it lives in
+    `discover`, which runs first, so six tests here started describing the wrong job and
+    failing about its missing matrix.
+    """
+    not_an_eval = ("--list-skills", "--merge-results", "--preflight-only", "--dry-run")
     for name, job in (workflow.get("jobs") or {}).items():
         for step in job.get("steps") or []:
             run = step.get("run") or ""
-            if (
-                "tests.e2e.skill_eval" in run
-                and "--list-skills" not in run
-                and "--merge-results" not in run
+            if "tests.e2e.skill_eval" in run and not any(
+                flag in run for flag in not_an_eval
             ):
                 return name, job
     pytest.fail("no job in skill-regression.yml runs the skill_eval harness")

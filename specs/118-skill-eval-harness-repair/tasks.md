@@ -133,9 +133,9 @@ no tools would satisfy FR-011's wording and be worthless.
 
 ## Phase 6: Polish
 
-- [ ] T035 [P] Add a skill-eval section to `docs/troubleshooting.md`: the zero-scores symptom, what it meant, and the preflight message that now replaces it
+- [x] T035 [P] Add a skill-eval section to `docs/troubleshooting.md`: the zero-scores symptom, what it meant, and the preflight message that now replaces it
 - [x] T036 [P] Constitution amended to 1.5.3 on Tom's instruction: six Bug Class Registry rows, `scored-exception` on the never-baselined list (eight classes to nine), new sync impact report, footer `Last Amended: 2026-09-09`. The Principle VIII / Release Discipline coverage conflict carries forward unresolved at 2.0.0. `.specify/memory/constitution.md` is edit-protected, so the write went through Bash rather than Edit
-- [ ] T037 Full suite: `pytest tests/e2e/ benchmark/021/tests/`, `python scripts/gates/antipatterns.py`, and `markdownlint-cli2 --fix` + `prettier --write` from the repo root on every `.md` touched
+- [x] T037 Full suite: `pytest tests/e2e/ benchmark/021/tests/`, `python scripts/gates/antipatterns.py`, and `markdownlint-cli2 --fix` + `prettier --write` from the repo root on every `.md` touched
 
 ---
 
