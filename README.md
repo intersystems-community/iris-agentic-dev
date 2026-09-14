@@ -36,10 +36,20 @@ iris-agentic-dev mcp --no-skills
 One tool call, one subprocess, no server. Good for agents that run shell commands,
 CI scripts, and skill repos that need IRIS access without a persistent MCP process.
 
+Arguments go in `--args` (or `-a`) as a JSON object. The tool name is the only positional.
+
 ```bash
-iris-agentic-dev tool iris_query '{"sql":"SELECT TOP 5 ID FROM Sample.Person"}'
-iris-agentic-dev tool iris_compile '{"target":"MyApp.Foo.cls"}'
-iris-agentic-dev tool iris_execute '{"code":"Write ##class(%SYS.ProcessQuery).GetInfo()"}'
+iris-agentic-dev tool iris_query --args '{"sql":"SELECT TOP 5 ID FROM Sample.Person"}'
+iris-agentic-dev tool iris_compile --args '{"target":"MyApp.Foo.cls"}'
+iris-agentic-dev tool iris_execute --args '{"code":"Write ##class(%SYS.ProcessQuery).GetInfo()"}'
+```
+
+`tool --list` names every tool and `tool <name> --schema` prints its parameters, both without
+connecting to IRIS — that is the fastest way to find out what a tool wants in `--args`:
+
+```bash
+iris-agentic-dev tool --list
+iris-agentic-dev tool iris_query --schema
 ```
 
 → [Tool reference](docs/tools.md) |
@@ -117,6 +127,25 @@ setup needed.
 To verify the connection, ask Copilot: _"Call check_config and show me the result."_
 
 ![check_config result showing connected: true, auto-discovered connection, and IRIS version](docs/images/check-config-result.png)
+
+If VS Code has no IRIS connection yet, `objectscript.conn` in `settings.json` is the whole
+config. Either point it at a Server Manager entry by name:
+
+```json
+"objectscript.conn": { "active": true, "server": "my-iris", "ns": "USER" }
+```
+
+or give the host and port directly, where `port` is the web server port, not 1972:
+
+```json
+"objectscript.conn": {
+  "active": true,
+  "host": "localhost",
+  "port": 52773,
+  "ns": "USER",
+  "username": "_SYSTEM"
+}
+```
 
 If the
 [InterSystems Server Manager](https://marketplace.visualstudio.com/items?itemName=intersystems-community.servermanager)
@@ -542,13 +571,15 @@ iris-agentic-dev mcp --verbose 2>debug.log
 
 ```bash
 iris-agentic-dev mcp                              # Start the MCP server
-iris-agentic-dev tool <name> <json>              # Call a tool directly (no server)
-iris-agentic-dev compile MyApp.Foo.cls           # Compile from the terminal
-iris-agentic-dev skill install [names]           # Install skills
-iris-agentic-dev skill list                      # Check skill install status
-iris-agentic-dev init                            # Generate .iris-agentic-dev.toml
-iris-agentic-dev benchmark --skill <path>        # Run the skill benchmark harness
-iris-agentic-dev --version                       # Print version
+iris-agentic-dev tool <name> --args <json>        # Call a tool directly (no server)
+iris-agentic-dev tool --list                      # List every tool, no connection
+iris-agentic-dev tool <name> --schema             # Print one tool's parameters
+iris-agentic-dev compile MyApp.Foo.cls            # Compile from the terminal
+iris-agentic-dev skill install [names]            # Install skills
+iris-agentic-dev skill list                       # Check skill install status
+iris-agentic-dev init                             # Generate .iris-agentic-dev.toml
+iris-agentic-dev benchmark --skill <path>         # Run the skill benchmark harness
+iris-agentic-dev --version                        # Print version
 ```
 
 ---

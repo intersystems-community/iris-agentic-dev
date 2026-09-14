@@ -144,8 +144,8 @@ iris-agentic-dev compile MyApp.MyClass.cls --host myserver --namespace PROD
 # Query a different namespace
 iris-agentic-dev query --namespace %SYS 'SELECT Name FROM Security.Users'
 
-# Read a class definition
-iris-agentic-dev doc get %Dictionary.ClassDefinition --namespace %SYS
+# Read a class definition — connection flags go before `get`/`put`, which are their own subcommands
+iris-agentic-dev doc --namespace %SYS get %Dictionary.ClassDefinition
 
 # Upload a class
 iris-agentic-dev doc put MyApp.Foo --file MyApp.Foo.cls

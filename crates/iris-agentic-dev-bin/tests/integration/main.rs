@@ -18,6 +18,7 @@ mod binary_098_server_probe;
 mod binary_099_fresh_container;
 mod test_attribution_stdio;
 mod test_compile_live;
+mod test_doc_cli_examples;
 mod test_doc_live;
 mod test_exec_live;
 mod test_http_transport;
