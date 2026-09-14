@@ -16,8 +16,6 @@
 //!   cargo build && IAD_BINARY=./target/debug/iris-agentic-dev \
 //!   cargo test --features testing --test bin_integration doc_cli -- --include-ignored
 
-use std::process::Command;
-
 fn workspace_root() -> std::path::PathBuf {
     let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.pop(); // iris-agentic-dev-bin → crates
@@ -174,12 +172,11 @@ fn every_documented_invocation_parses() {
 
     let mut failures = Vec::new();
     for ex in &examples {
-        let out = Command::new(&bin)
+        // `clean_command` strips every behavior-changing variable, so the check means the same
+        // thing in the `test` job and the `e2e-tests` job, which sets nine of them at job level.
+        let out = iris_agentic_dev_core::testing::clean_command(&bin)
             .args(&ex.argv)
             .arg("--help")
-            .env_remove("IRIS_HOST")
-            .env_remove("IRIS_WEB_PORT")
-            .env_remove("IRIS_CONTAINER")
             .output()
             .expect("spawning the binary should succeed");
 
