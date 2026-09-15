@@ -26,7 +26,13 @@ Nothing staged.
 
 ## Notable fixes
 
-Nothing staged.
+### `iris_servers` reports the URL it actually calls
+
+Every entry now carries `base_url`, prefix included. `docs/tools.md` has said "every entry carries
+`base_url`, the URL iad actually calls" since 1.4.2 and step 5 of the 116 plan called for it, but the
+listing never emitted the key — two instances behind one gateway still came back as the same host and
+port with nothing to tell them apart. It is the same shape as the two CLI examples 1.4.2 fixed:
+documented behaviour that no test asked for.
 
 ## Breaking changes
 

@@ -8015,7 +8015,7 @@ Methods:
     // ── 072: server management tools ─────────────────────────────────────────
 
     #[tool(
-        description = "List all IRIS server instances registered in the connection pool. Returns an array of {name, host, port, namespace, username, source, reachable} objects, plus `web_prefix` for any instance served under a URL path prefix rather than at the web server's root. `source` values: iad-native (added via iris_add_server), vscode (from VS Code/Cursor Server Manager), fleet (from workspace TOML), env (from IRIS_HOST env var). Default: `reachable` is null (fast path). Pass `probe: true` to probe all servers in parallel (5 s timeout each) and include reachable, auth, latency_ms, error fields.",
+        description = "List all IRIS server instances registered in the connection pool. Returns an array of {name, host, port, base_url, namespace, username, source, reachable} objects, plus `web_prefix` for any instance served under a URL path prefix rather than at the web server's root. `base_url` is the URL iad actually calls, prefix included: two instances behind one gateway share a host and port, so it is the field that tells them apart. `source` values: iad-native (added via iris_add_server), vscode (from VS Code/Cursor Server Manager), fleet (from workspace TOML), env (from IRIS_HOST env var). Default: `reachable` is null (fast path). Pass `probe: true` to probe all servers in parallel (5 s timeout each) and include reachable, auth, latency_ms, error fields.",
         annotations(read_only_hint = true),
         output_schema = schema_for_output::<IrisServersResponse>()
     )]
@@ -8104,6 +8104,7 @@ Methods:
                         "name": m.name,
                         "host": m.host,
                         "port": m.port,
+                        "base_url": m.base_url,
                         "namespace": m.namespace,
                         "username": m.username,
                         "source": m.source,
@@ -8132,6 +8133,7 @@ Methods:
                         "name": m.name,
                         "host": m.host,
                         "port": m.port,
+                        "base_url": m.base_url,
                         "namespace": m.namespace,
                         "username": m.username,
                         "source": m.source,

@@ -119,6 +119,37 @@ fn a_prefix_less_entry_reports_no_prefix() {
     );
 }
 
+/// FR-004, the half that shipped unimplemented: `base_url` on every entry, prefix or not.
+///
+/// `web_prefix` tells two instances behind one gateway apart only when one of them has a prefix.
+/// `base_url` is the URL every call to that entry actually uses, which is what you compare against
+/// when a probe reports healthy and a real call lands somewhere else — the shape of #129. Step 5 of
+/// `specs/116-servers-json-web-prefix/plan.md` says entries carry it always, and the v1.4.2 notes
+/// said so too, but the listing never emitted the key and no test asked for it.
+#[test]
+#[ignore = "spawns the built binary; run with --include-ignored"]
+fn every_entry_reports_its_base_url() {
+    let Some(_bin) = require_iad_binary() else {
+        return;
+    };
+    let home = registry_home();
+    let answer = McpSession::start(&env_for(&home)).call("iris_servers", &serde_json::json!({}));
+
+    let prefixed = server_entry(&answer, "gw-prefixed");
+    assert_eq!(
+        prefixed["base_url"].as_str(),
+        Some("http://gateway.example.com:8080/hs20261"),
+        "a prefixed entry must report the resolved URL, prefix included: {prefixed}"
+    );
+
+    let plain = server_entry(&answer, "gw-plain");
+    assert_eq!(
+        plain["base_url"].as_str(),
+        Some("http://gateway.example.com:8080"),
+        "a prefix-less entry must still report its base_url: {plain}"
+    );
+}
+
 /// FR-001, FR-003, FR-008: the prefix survives the write, and re-registering the same name with a
 /// new prefix updates the entry instead of duplicating or dropping it.
 ///

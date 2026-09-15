@@ -85,6 +85,11 @@ pub struct ServerEntry {
     pub host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    /// The URL every call to this entry uses, `web_prefix` included. Host and port alone do not
+    /// identify an instance: two behind one gateway share both, and probing the pair reported a
+    /// prefixed instance healthy on the strength of the gateway root answering (issue #129).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -93,9 +98,9 @@ pub struct ServerEntry {
     /// served at the web server's root, which is most of them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub web_prefix: Option<String>,
-    /// Always `null` today — `iris_servers` never probes connectivity itself; call
-    /// `iris_test_server` for that. Modeled as `Option<bool>`, not a fixed null, since a future
-    /// change could populate it.
+    /// `null` on the default fast path. `probe: true` probes every entry and fills this in, along
+    /// with `auth`, `latency_ms`, `error`, `iris_version` and `atelier_version` — those five are not
+    /// modeled here yet.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reachable: Option<bool>,
 }
