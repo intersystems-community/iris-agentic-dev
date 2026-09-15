@@ -1633,6 +1633,30 @@ Each session keeps a live ObjectScript context between calls — variables set i
 
 Session tokens have the form `ws:{server}:{NAMESPACE}:{uuid}`.
 
+The token is a handle into a pool held in the memory of the process that opened the session, so it
+only resolves for the process that minted it. An MCP client gets that for free — one server process
+serves the whole conversation. On the CLI, `iris-agentic-dev tool` dispatches one call and exits, so
+the three session tools are refused there and belong in a `batch` script instead:
+
+```json
+[
+  { "tool": "iris_ws_open", "args": { "namespace": "USER" } },
+  {
+    "tool": "iris_ws_exec",
+    "args": { "session": "{{0.session}}", "code": "Set x=42" }
+  },
+  { "tool": "iris_ws_close", "args": { "session": "{{0.session}}" } }
+]
+```
+
+```bash
+iris-agentic-dev batch --file ws-session.json
+```
+
+`{{0.session}}` is step 0's `session` field, resolved at run time. Details and the failure it
+replaces:
+[SESSION_STALE after `iris_ws_open` in the CLI](troubleshooting.md#session_stale-after-iris_ws_open-in-the-cli).
+
 ### `iris_ws_open`
 
 Open a new WebSocket terminal session. Returns a `session` token to pass to subsequent
@@ -1668,8 +1692,10 @@ Through v1.4.1 it ran none of those, so a WebSocket session was a way around all
 
 ### `iris_ws_close`
 
-Close a WebSocket session and free its resources. Passing an already-closed or expired
-token returns `already_closed: true` rather than an error.
+Close a WebSocket session and free its resources. Returns `{closed: true}`. Closing is not
+idempotent: a token that is already closed, or that came from another process, returns
+`SESSION_STALE`, because by then there is no session to look up. Earlier text here promised
+`already_closed: true`, which the handler has never returned.
 
 | Parameter | Type   | Default | Notes                                   |
 | --------- | ------ | ------- | --------------------------------------- |

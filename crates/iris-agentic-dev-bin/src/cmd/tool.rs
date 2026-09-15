@@ -106,6 +106,38 @@ pub fn dispatch_map_keys() -> std::collections::HashSet<&'static str> {
     TOOL_NAMES.iter().copied().collect()
 }
 
+/// The tools whose state is a live socket held in this process's memory.
+///
+/// `WsSessionPool` stores the WebSocket connection itself, keyed by token, on one `IrisTools`
+/// instance. `tool` builds an instance, dispatches once, prints and exits, so the pool is gone
+/// before the token reaches a shell. `iris_ws_open` used to succeed here and return a token the
+/// next invocation answered with `SESSION_STALE` — a dead end that read like an expired session.
+/// `batch` keeps one instance alive across steps, which is the only shape that can work.
+pub const IN_PROCESS_SESSION_TOOLS: &[&str] = &["iris_ws_close", "iris_ws_exec", "iris_ws_open"];
+
+/// Why `tool <name>` refuses one of [`IN_PROCESS_SESSION_TOOLS`], and what to run instead.
+fn in_process_session_refusal(name: &str) -> String {
+    format!(
+        "`{name}` needs a WebSocket session, and a session is a live connection held in this \
+         process's memory. `tool` dispatches once and exits, so a token it prints is already dead \
+         by the time you can paste it into a second command.\n\
+         \n\
+         Run the whole sequence in one process with `iris-agentic-dev batch`, where a later step \
+         refers to an earlier step's response as {{{{<step>.<field>}}}}:\n\
+         \n\
+         \x20 echo '[{{\"tool\":\"iris_ws_open\",\"args\":{{}}}},\n\
+         \x20        {{\"tool\":\"iris_ws_exec\",\"args\":{{\"session\":\"{{{{0.session}}}}\",\
+         \"code\":\"Set x=1\"}}}},\n\
+         \x20        {{\"tool\":\"iris_ws_exec\",\"args\":{{\"session\":\"{{{{0.session}}}}\",\
+         \"code\":\"Write x\"}}}},\n\
+         \x20        {{\"tool\":\"iris_ws_close\",\"args\":{{\"session\":\"{{{{0.session}}}}\"}}}}]' \
+         | iris-agentic-dev batch\n\
+         \n\
+         For one statement that needs no session between calls, `iris-agentic-dev exec 'Write 1'` \
+         is simpler. See docs/tools.md, \"WebSocket sessions\"."
+    )
+}
+
 #[derive(Args)]
 pub struct ToolCommand {
     /// Exact MCP tool name (e.g. iris_info, iris_execute). Omit it with --list.
@@ -177,6 +209,28 @@ impl ToolCommand {
                 for t in TOOL_NAMES {
                     eprintln!("  {}", t);
                 }
+            }
+            std::process::exit(1);
+        }
+
+        // A session tool under `tool` can only ever fail, and used to fail two commands later with
+        // a message about an expired session. Refuse it here, before the connection resolves.
+        if IN_PROCESS_SESSION_TOOLS.contains(&name.as_str()) {
+            let refusal = in_process_session_refusal(&name);
+            if envelope {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "ok": false,
+                        "tool": name,
+                        "run_id": run_id,
+                        "elapsed_ms": 0,
+                        "result": null,
+                        "error": refusal
+                    })
+                );
+            } else {
+                eprintln!("error: {refusal}");
             }
             std::process::exit(1);
         }

@@ -1,4 +1,4 @@
-use iris_agentic_dev::cmd::tool::{dispatch_map_keys, TOOL_NAMES};
+use iris_agentic_dev::cmd::tool::{dispatch_map_keys, IN_PROCESS_SESSION_TOOLS, TOOL_NAMES};
 use iris_agentic_dev_core::tools::{IrisTools, Toolset};
 
 #[test]
@@ -77,5 +77,30 @@ async fn test_all_tool_names_dispatch_in_call_for_test() {
         undispatched.is_empty(),
         "tools in TOOL_NAMES with no dispatch arm in call_for_test(): {:?}",
         undispatched
+    );
+}
+
+/// Every name in the session-tool gate list has to be a real tool name.
+///
+/// The list is what `tool <name>` refuses, so a typo un-guards the tool it was meant to catch and
+/// the caller is back to a token that resolves nowhere — the failure fails open and looks like a
+/// permitted call. Checking against `TOOL_NAMES` catches the typo; checking the count catches a
+/// fourth session tool being added to the pool and not to the list.
+#[test]
+fn in_process_session_tools_are_real_tool_names() {
+    let unknown: Vec<&str> = IN_PROCESS_SESSION_TOOLS
+        .iter()
+        .copied()
+        .filter(|n| !TOOL_NAMES.contains(n))
+        .collect();
+    assert!(
+        unknown.is_empty(),
+        "gate list names tools this CLI does not have: {unknown:?}"
+    );
+    assert_eq!(
+        IN_PROCESS_SESSION_TOOLS,
+        &["iris_ws_close", "iris_ws_exec", "iris_ws_open"],
+        "the list is the three WebSocket session tools; a new tool holding per-process state \
+         belongs here too"
     );
 }

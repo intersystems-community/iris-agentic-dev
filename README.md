@@ -574,6 +574,7 @@ iris-agentic-dev mcp                              # Start the MCP server
 iris-agentic-dev tool <name> --args <json>        # Call a tool directly (no server)
 iris-agentic-dev tool --list                      # List every tool, no connection
 iris-agentic-dev tool <name> --schema             # Print one tool's parameters
+iris-agentic-dev batch --file steps.json          # Several tool calls in one process
 iris-agentic-dev compile MyApp.Foo.cls            # Compile from the terminal
 iris-agentic-dev skill install [names]            # Install skills
 iris-agentic-dev skill list                       # Check skill install status

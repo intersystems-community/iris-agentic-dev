@@ -25,6 +25,7 @@
 | `FILE_NOT_FOUND` from `iris_compile` or `compile`             | Local file path does not exist on disk                                 | Check the file path — the compile command requires the file to exist locally before uploading |
 | `UNKNOWN_PARAMETER`                                           | Call passed a parameter the tool does not declare                      | Use one of the names the error lists; see [Unknown parameters](#unknown-parameters)           |
 | `INVALID_ACTION`                                              | `action`/`mode`/`what` value outside the tool's enum                   | Read the enum out of the tool's `inputSchema`; see [Unknown parameters](#unknown-parameters)  |
+| `SESSION_STALE` on the CLI token `iris_ws_open` just printed  | Each `tool` call is its own process; the session died with the first   | Run open/exec/close as one [`batch` script](#session_stale-after-iris_ws_open-in-the-cli)     |
 
 ---
 
@@ -117,13 +118,14 @@ iris-agentic-dev --version               # Print version
 
 Run any IRIS operation directly from the terminal — no MCP client or AI session needed.
 
-| Subcommand | Example                                                                 | What it does                                                               |
-| ---------- | ----------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `exec`     | `iris-agentic-dev exec 'write $ZVersion,!'`                             | Execute ObjectScript inline, from `--file`, or from stdin (`-`)            |
-| `compile`  | `iris-agentic-dev compile MyApp.Foo.cls`                                | Compile one or more `.cls`/`.mac` files; prints `OK:` or `ERROR:` per file |
-| `query`    | `iris-agentic-dev query 'SELECT Name FROM %Dictionary.ClassDefinition'` | Execute SQL; prints TSV (header + rows) to stdout                          |
-| `doc`      | `iris-agentic-dev doc get MyApp.Foo`                                    | Read IRIS document UDL; `doc put MyApp.Foo --file f.cls` to write          |
-| `tool`     | `iris-agentic-dev tool iris_info --args '{"what":"version"}'`           | Call any MCP tool by name without an MCP client                            |
+| Subcommand | Example                                                                 | What it does                                                                |
+| ---------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `exec`     | `iris-agentic-dev exec 'write $ZVersion,!'`                             | Execute ObjectScript inline, from `--file`, or from stdin (`-`)             |
+| `compile`  | `iris-agentic-dev compile MyApp.Foo.cls`                                | Compile one or more `.cls`/`.mac` files; prints `OK:` or `ERROR:` per file  |
+| `query`    | `iris-agentic-dev query 'SELECT Name FROM %Dictionary.ClassDefinition'` | Execute SQL; prints TSV (header + rows) to stdout                           |
+| `doc`      | `iris-agentic-dev doc get MyApp.Foo`                                    | Read IRIS document UDL; `doc put MyApp.Foo --file f.cls` to write           |
+| `tool`     | `iris-agentic-dev tool iris_info --args '{"what":"version"}'`           | Call any MCP tool by name without an MCP client                             |
+| `batch`    | `iris-agentic-dev batch --file steps.json`                              | Run a list of tool calls in one process, so a session survives between them |
 
 All shortcuts accept: `--host`, `--web-port`, `--namespace`, `--username`, `--password`,
 `--container`. Env vars (`IRIS_HOST`, `IRIS_WEB_PORT`, etc.) are also honored.
@@ -152,6 +154,59 @@ iris-agentic-dev doc put MyApp.Foo --file MyApp.Foo.cls
 
 # Call any tool
 iris-agentic-dev tool check_config --args '{}'
+```
+
+---
+
+## `SESSION_STALE` after `iris_ws_open` in the CLI
+
+A WebSocket session is a live connection, and iad holds it in a pool in memory. The pool belongs to
+one process, and `iris-agentic-dev tool` dispatches a single call and exits — so it takes the
+session with it, and the token it printed refers to nothing:
+
+```bash
+iris-agentic-dev tool iris_ws_open --args '{"namespace":"USER"}'
+```
+
+Through 1.4.2 that succeeded and printed a token, and the next command answered
+`SESSION_STALE: Session token references an unknown server or expired session`. Nothing had
+expired. The session never reached the second process, and the message named a timeout that had not
+happened. The three session tools are refused under `tool` now, with a pointer to what follows.
+
+`batch` runs a list of tool calls in one process against one connection, so the pool survives from
+step to step. `{{0.session}}` reads the `session` field out of step 0's response:
+
+```json
+[
+  { "tool": "iris_ws_open", "args": { "namespace": "USER" } },
+  {
+    "tool": "iris_ws_exec",
+    "args": { "session": "{{0.session}}", "code": "Set x=42" }
+  },
+  {
+    "tool": "iris_ws_exec",
+    "args": { "session": "{{0.session}}", "code": "Write x" }
+  },
+  { "tool": "iris_ws_close", "args": { "session": "{{0.session}}" } }
+]
+```
+
+```bash
+iris-agentic-dev batch --file ws-session.json
+```
+
+Every step prints `[<index>] <tool>: <response>`, and a step that reports failure stops the batch
+and exits 1. Omit `--file` to read the script from stdin. A placeholder is
+`{{<step-index>.<field>}}` and has to be the entire argument value, so the referenced field arrives
+as whatever JSON type it really is rather than as a string.
+
+`iris_get_log` and `iris_doc`'s source-control checkout prompt keep their state in the same
+per-process way, so they need `batch` for the same reason.
+
+When nothing has to persist between calls, `exec` is the simpler tool:
+
+```bash
+iris-agentic-dev exec 'Set x=42 Write x'
 ```
 
 ---

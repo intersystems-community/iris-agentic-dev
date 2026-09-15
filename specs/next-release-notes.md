@@ -26,6 +26,39 @@ Nothing staged.
 
 ## Notable fixes
 
+### The CLI handed out WebSocket tokens nothing could use
+
+`iris-agentic-dev tool iris_ws_open` opened a session, printed a token, and exited. The token was a
+handle into a pool of live sockets held in that process's memory, so the next command answered
+`SESSION_STALE: Session token references an unknown server or expired session` — a timeout that had
+not happened, against a server that was fine. Nothing in README or `docs/` said otherwise, and
+nothing said what to do instead.
+
+`tool` refuses `iris_ws_open`, `iris_ws_exec` and `iris_ws_close` now, before it resolves a
+connection, and the refusal carries the `batch` script that works:
+
+```bash
+echo '[{"tool":"iris_ws_open","args":{}},
+       {"tool":"iris_ws_exec","args":{"session":"{{0.session}}","code":"Set x=1"}},
+       {"tool":"iris_ws_exec","args":{"session":"{{0.session}}","code":"Write x"}},
+       {"tool":"iris_ws_close","args":{"session":"{{0.session}}"}}]' | iris-agentic-dev batch
+```
+
+`batch` has been there since 1.3.0 and appeared in no documentation at all — `grep batch README.md
+docs/*.md` found nothing. It is in the README command list, the troubleshooting subcommand table,
+and a troubleshooting section of its own now, and `docs/tools.md` explains the process boundary
+where the session tools are documented. `iris_get_log` and `iris_doc`'s checkout prompt keep state
+the same per-process way and need `batch` for the same reason.
+
+`SESSION_STALE` itself is written for whoever is reading it: the CLI text names the process
+boundary and the fix, the MCP text names a closed session or a restarted server, since an MCP client
+has one process for the whole conversation and no CLI to run. Both call sites read one function, so
+the two cannot drift.
+
+`docs/tools.md` also promised that closing an already-closed session returns `already_closed: true`.
+The handler has never returned that — it returns `SESSION_STALE`, because by then there is no
+session to look up. The doc says so now.
+
 ### `iris_servers` reports the URL it actually calls
 
 Every entry now carries `base_url`, prefix included. `docs/tools.md` has said "every entry carries
@@ -36,4 +69,6 @@ documented behaviour that no test asked for.
 
 ## Breaking changes
 
-None staged.
+`iris-agentic-dev tool iris_ws_open` exits 1 instead of printing a session token. Any script that
+read the token out of it was already broken — the very next call it made returned `SESSION_STALE`.
+Under MCP the three tools are unchanged.

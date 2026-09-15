@@ -14,7 +14,9 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-use crate::iris::connection::{caller_mode, iris_http_client, user_agent, IrisConnection};
+use crate::iris::connection::{
+    caller_mode, iris_http_client, user_agent, CallerMode, IrisConnection,
+};
 
 // ── Error codes ───────────────────────────────────────────────────────────────
 
@@ -22,6 +24,38 @@ pub const SESSION_STALE: &str = "SESSION_STALE";
 pub const SESSION_WS_DISCONNECTED: &str = "SESSION_WS_DISCONNECTED";
 pub const SESSION_WS_UNAVAILABLE: &str = "SESSION_WS_UNAVAILABLE";
 pub const SESSION_TIMEOUT: &str = "SESSION_TIMEOUT";
+
+/// What to say when a token names no session in this pool.
+///
+/// The pool is a `HashMap` of live sockets owned by one `IrisTools`, so what "no session for this
+/// token" means depends entirely on who is asking. Under the CLI it usually means the token came
+/// from a different process and was never in this pool: `iris-agentic-dev tool iris_ws_open` opens
+/// a session, prints the token, and exits, taking the socket with it. The old wording —
+/// "references an unknown server or expired session" — named a timeout that had not happened and a
+/// server that was fine, so it sent people looking for the wrong thing. Under MCP one server
+/// process holds the pool for its whole life, and there the ordinary causes really are a closed
+/// session or a restart.
+pub fn stale_session_message(mode: CallerMode) -> String {
+    match mode {
+        CallerMode::Cli => format!(
+            "{SESSION_STALE}: no session for this token in this process. A WebSocket session is a \
+             live connection held in the memory of the process that opened it, so only a token \
+             minted earlier in this same process can resolve — one printed by a previous \
+             `iris-agentic-dev tool` call went away with that process. Open, exec and close in one \
+             process with `iris-agentic-dev batch`, where a later step refers to the token as \
+             {{{{0.session}}}}: \
+             [{{\"tool\":\"iris_ws_open\",\"args\":{{}}}}, \
+             {{\"tool\":\"iris_ws_exec\",\"args\":{{\"session\":\"{{{{0.session}}}}\",\"code\":\"Set \
+             x=1\"}}}}]. For one statement that needs no session, `iris-agentic-dev exec` is \
+             simpler."
+        ),
+        CallerMode::Mcp => format!(
+            "{SESSION_STALE}: no session for this token. It was closed, the IRIS connection dropped, \
+             or the server restarted — the pool holds live connections in memory and does not \
+             survive one. Call `iris_ws_open` for a fresh token."
+        ),
+    }
+}
 
 /// Timeout waiting for a WS frame from IRIS.
 const WS_FRAME_TIMEOUT_SECS: u64 = 30;
@@ -195,15 +229,9 @@ impl WsSessionPool {
         })?;
 
         let mut sessions = pool_ref.sessions.lock().await;
-        let inner = sessions.get_mut(token).ok_or_else(|| {
-            McpError::invalid_request(
-                format!(
-                    "{}: Session token references an unknown server or expired session",
-                    SESSION_STALE
-                ),
-                None,
-            )
-        })?;
+        let inner = sessions
+            .get_mut(token)
+            .ok_or_else(|| McpError::invalid_request(stale_session_message(caller_mode()), None))?;
 
         // Send the prompt/input frame.
         let prompt_msg = json!({
@@ -297,15 +325,9 @@ impl WsSessionPool {
         })?;
 
         let mut sessions = pool_ref.sessions.lock().await;
-        let mut inner = sessions.remove(token).ok_or_else(|| {
-            McpError::invalid_request(
-                format!(
-                    "{}: Session token references an unknown server or expired session",
-                    SESSION_STALE
-                ),
-                None,
-            )
-        })?;
+        let mut inner = sessions
+            .remove(token)
+            .ok_or_else(|| McpError::invalid_request(stale_session_message(caller_mode()), None))?;
 
         // Best-effort: send interrupt and close.
         let interrupt = json!({"type": "interrupt"});
@@ -452,6 +474,7 @@ async fn wait_for_type(stream: &mut WsStream, expected_type: &str) -> Result<Val
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::iris::connection::CallerMode;
 
     // T046: parse_token tests
 
@@ -615,5 +638,70 @@ mod tests {
             .block_on(WsSessionPool::close(&pool, &token))
             .unwrap_err();
         assert!(err.message.contains(SESSION_STALE), "got: {}", err.message);
+    }
+
+    // ── The SESSION_STALE text itself ─────────────────────────────────────────
+
+    /// Under the CLI nothing expired and no server was unknown. The pool holds the live socket in
+    /// this process's memory, so a token minted by a previous `iris-agentic-dev tool iris_ws_open`
+    /// was never in this pool at all — every one-shot invocation builds an empty one. The old
+    /// wording named a timeout that had not happened and sent people looking for it.
+    #[test]
+    fn the_cli_stale_message_names_the_process_boundary_and_the_command_that_works() {
+        let msg = stale_session_message(CallerMode::Cli);
+        assert!(msg.contains(SESSION_STALE), "must carry the code: {msg}");
+        assert!(
+            msg.contains("process"),
+            "must name the real cause, not a timeout: {msg}"
+        );
+        assert!(
+            msg.contains("iris-agentic-dev batch"),
+            "must name the one command that can hold a session: {msg}"
+        );
+        assert!(
+            msg.contains("{{0.session}}"),
+            "must show how a later step refers to the token: {msg}"
+        );
+        assert!(
+            !msg.contains("expired"),
+            "a token from another process did not expire: {msg}"
+        );
+    }
+
+    /// An MCP client has one long-lived server process and no CLI, so `batch` is not its fix. Its
+    /// causes are a closed session, a restarted server, or a token from somewhere else.
+    #[test]
+    fn the_mcp_stale_message_does_not_send_a_client_to_the_cli() {
+        let msg = stale_session_message(CallerMode::Mcp);
+        assert!(msg.contains(SESSION_STALE), "must carry the code: {msg}");
+        assert!(
+            !msg.contains("batch"),
+            "an MCP client cannot run a CLI subcommand: {msg}"
+        );
+        assert!(
+            msg.contains("iris_ws_open"),
+            "must say where a usable token comes from: {msg}"
+        );
+    }
+
+    /// Both call sites read the same function, so the two cannot drift apart the way the two
+    /// inline copies of the old string could have.
+    #[test]
+    fn exec_and_close_report_the_same_stale_text() {
+        let pool = Arc::new(WsSessionPool::new());
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let token = WsSessionPool::make_token("srv", "USER", "no-such-uuid");
+        let from_exec = rt
+            .block_on(WsSessionPool::exec(&pool, &token, "W 1"))
+            .unwrap_err();
+        let from_close = rt
+            .block_on(WsSessionPool::close(&pool, &token))
+            .unwrap_err();
+        assert_eq!(from_exec.message, from_close.message);
+        assert_eq!(
+            from_exec.message,
+            stale_session_message(caller_mode()),
+            "both sites must serve the mode-aware text"
+        );
     }
 }

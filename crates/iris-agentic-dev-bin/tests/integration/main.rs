@@ -26,3 +26,4 @@ mod test_mcp_binary_config;
 mod test_query_live;
 mod test_reporter_repro;
 mod test_tool_live;
+mod test_ws_cli_guard;
