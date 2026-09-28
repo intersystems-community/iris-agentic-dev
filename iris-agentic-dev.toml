@@ -23,8 +23,9 @@ skills = [
     "skills/skills/objectscript-sql-patterns",
     "skills/skills/objectscript-navigation",
     "skills/skills/objectscript-mac-routines",
-    # IRIS SQL
+    # IRIS SQL & BI
     "skills/skills/iris-sql",
+    "skills/skills/iris-mdx",
     # IRIS Vector & AI
     # iris-vector-graph and iris-vector-rag moved to their own repos (commit 1fb7a8c) —
     # do not re-add here, the paths 404 on install.

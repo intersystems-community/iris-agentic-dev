@@ -97,7 +97,7 @@ done
 
 ## Skill inventory
 
-All 34 skills below ship embedded in the binary — no download, no IRIS connection, no
+All 35 skills below ship embedded in the binary — no download, no IRIS connection, no
 filesystem lookup. This is the whole list. Agents read a short inventory as "these are
 the skills that exist" and reimplement from scratch rather than asking for one that is
 missing from the table, so any skill in the binary belongs here.
@@ -115,6 +115,7 @@ missing from the table, so any skill in the binary belongs here.
 | `iris-docs`                        | Fetches live IRIS class reference before implementing any API — eliminates hallucinated methods |             |
 | `iris-embedded-python`             | Running Python inside IRIS: the native API, calling Python from ObjectScript                    |             |
 | `iris-linux-docker`                | The UID 51773 bind-mount permission failure that crashes IRIS containers on Linux               |             |
+| `iris-mdx`                         | Writing and debugging MDX against IRIS BI cubes: hierarchy paths, `NON EMPTY`, `%FILTER`/`%OR`  |             |
 | `iris-objectscript-eval`           | Execute/compile/test loop over the MCP tools, with docker exec only as a fallback               |             |
 | `iris-pgwire`                      | Connecting to IRIS over the PostgreSQL wire protocol (psycopg3 and other PG clients)            |             |
 | `iris-product-features`            | What IRIS actually ships — the features and product boundaries models invent                    |             |
