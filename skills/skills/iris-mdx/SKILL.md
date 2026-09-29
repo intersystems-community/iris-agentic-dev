@@ -37,14 +37,17 @@ Before writing any IRIS MDX, check these. Every one produces silent wrong result
 
 ## 1. MDX vs SQL — When to Use Each
 
-| Use MDX when…                                | Use SQL when…                            |
-| -------------------------------------------- | ---------------------------------------- |
-| You need aggregated totals, averages, counts | You need individual rows / raw records   |
-| The data is modelled in a cube               | The data is only in source tables        |
-| You need time-series trends                  | You need JOINs not represented in a cube |
-| You need cross-dimensional slicing           | You need to write data (INSERT/UPDATE)   |
+| Use MDX when…                                                       | Use SQL when…                            |
+| ------------------------------------------------------------------- | ---------------------------------------- |
+| You need aggregated totals, averages, counts                        | You need individual rows / raw records   |
+| The data is modelled in a cube                                      | The data is only in source tables        |
+| You need time-series trends                                         | You need JOINs not represented in a cube |
+| You need cross-dimensional slicing                                  | You need to write data (INSERT/UPDATE)   |
+| Performance matters — MDX is 3–15× faster than SQL for aggregations |                                          |
 
 **Always check `%GetCubeList` first (§14)** — if an IRIS BI cube exists for the data, prefer MDX for aggregation questions.
+
+The examples use the Samples-BI cubes `HoleFoods` and `Patients`. Figures in their comments come from one Samples-BI build. Its data generator is unseeded, so every build gives different counts and totals; relations such as union = a + b − both and `%NOT` = total − member hold on every build.
 
 ---
 
@@ -55,12 +58,12 @@ MDX dimension references must use the **exact spec path** from the cube definiti
 ```mdx
 -- CORRECT: full spec path
 SELECT {MEASURES.[Amount Sold]} ON 0,
-NON EMPTY [Outlet].[H1].[Region].MEMBERS ON 1
+       NON EMPTY [Outlet].[H1].[Region].MEMBERS ON 1
 FROM HoleFoods
 
 -- WRONG: invented path — returns empty-member row with null, no error
 SELECT {MEASURES.[Amount Sold]} ON 0,
-NON EMPTY [Region].[Region].MEMBERS ON 1
+       NON EMPTY [Region].[Region].MEMBERS ON 1
 FROM HoleFoods
 ```
 
@@ -69,10 +72,10 @@ FROM HoleFoods
 **Shorthand is allowed** (but use full paths to avoid ambiguity):
 
 ```mdx
-[GenD].[H1].[Gender].Female -- full
-[GenD].[H1].Female -- omit level name
-[GenD].Female -- omit hierarchy and level
-GenD.Female -- omit brackets when name is alphanumeric
+[GenD].[H1].[Gender].Female   -- full
+[GenD].[H1].Female            -- omit level name
+[GenD].Female                 -- omit hierarchy and level
+GenD.Female                   -- omit brackets when name is alphanumeric
 ```
 
 Some examples in §8 and §12 use short forms for brevity. In generated queries, use the full path.
@@ -86,12 +89,12 @@ Without `NON EMPTY`, every member in the level is returned — including those w
 ```mdx
 -- WRONG: returns all 12 months even when filtered to a single year with sparse data
 SELECT {MEASURES.[Amount Sold]} ON 0,
-[DateOfSale].[Actual].[MonthSold].MEMBERS ON 1
+       [DateOfSale].[Actual].[MonthSold].MEMBERS ON 1
 FROM HoleFoods
 
 -- CORRECT: only months that have data
 SELECT {MEASURES.[Amount Sold]} ON 0,
-NON EMPTY [DateOfSale].[Actual].[MonthSold].MEMBERS ON 1
+       NON EMPTY [DateOfSale].[Actual].[MonthSold].MEMBERS ON 1
 FROM HoleFoods
 ```
 
@@ -106,12 +109,12 @@ FROM HoleFoods
 ```mdx
 -- These two queries produce identical results:
 SELECT {MEASURES.[Amount Sold]} ON 0,
-NON EMPTY [DateOfSale].[Actual].[MonthSold].MEMBERS ON 1
+       NON EMPTY [DateOfSale].[Actual].[MonthSold].MEMBERS ON 1
 FROM HoleFoods
 WHERE [DateOfSale].[Actual].[YearSold].&[2024]
 
 SELECT {MEASURES.[Amount Sold]} ON 0,
-NON EMPTY [DateOfSale].[Actual].[MonthSold].MEMBERS ON 1
+       NON EMPTY [DateOfSale].[Actual].[MonthSold].MEMBERS ON 1
 FROM HoleFoods
 %FILTER [DateOfSale].[Actual].[YearSold].&[2024]
 ```
@@ -123,7 +126,7 @@ Multiple `%FILTER` clauses chain as AND (across **different** dimensions):
 ```mdx
 -- Revenue for Asia region, Snack category only
 SELECT MEASURES.[Amount Sold] ON 0,
-NON EMPTY [Product].[P1].[Product Category].MEMBERS ON 1
+       NON EMPTY [Product].[P1].[Product Category].MEMBERS ON 1
 FROM HoleFoods
 %FILTER [Outlet].[H1].[Region].&[Asia]
 %FILTER [Product].[P1].[Product Category].&[Snack]
@@ -138,15 +141,15 @@ Two `%FILTER` on the same dimension AND together. Year=2023 AND Year=2024 simult
 ```mdx
 -- WRONG: AND logic → empty-member row, null values
 SELECT {MEASURES.[Amount Sold]} ON 0,
-NON EMPTY [Product].[P1].[Product Category].MEMBERS ON 1
+       NON EMPTY [Product].[P1].[Product Category].MEMBERS ON 1
 FROM HoleFoods
 %FILTER [DateOfSale].[Actual].[YearSold].&[2023]
 %FILTER [DateOfSale].[Actual].[YearSold].&[2024]
 
 -- CORRECT: both years as a set on the axis — side-by-side columns
 SELECT {MEASURES.[Amount Sold]} ON 0,
-NON EMPTY {[DateOfSale].[Actual].[YearSold].&[2023],
-[DateOfSale].[Actual].[YearSold].&[2024]} ON 1
+       NON EMPTY {[DateOfSale].[Actual].[YearSold].&[2023],
+                  [DateOfSale].[Actual].[YearSold].&[2024]} ON 1
 FROM HoleFoods
 ```
 
@@ -159,26 +162,26 @@ FROM HoleFoods
 On IRIS, `WHERE {a, b}` and `%FILTER %OR({a, b})` return the same count, with no double-counting. Use `%OR` anyway: it states the intent and composes with further `%FILTER` clauses.
 
 ```mdx
--- OR two members — a patient with both is counted once
+-- OR two members — a patient with both is counted once (119 = 78 + 46 - 5 with both)
 SELECT MEASURES.[%COUNT] ON 0
 FROM Patients
 %FILTER %OR({[DiagD].[H1].[Diagnoses].&[asthma],
-[DiagD].[H1].[Diagnoses].&[diabetes]})
+             [DiagD].[H1].[Diagnoses].&[diabetes]})
 
 -- AND of ORs — chain %FILTER with %OR inside each clause
 SELECT MEASURES.[%COUNT] ON 0
 FROM Patients
 %FILTER %OR({[ColorD].[H1].[Favorite Color].&[Orange],
-[ColorD].[H1].[Favorite Color].&[Purple]})
+             [ColorD].[H1].[Favorite Color].&[Purple]})
 %FILTER [GenD].[H1].[Gender].&[Female]
 -- Result: Female AND (Orange OR Purple)
 
 -- %OR on an axis — combines members into one row, labelled "asthma...diabetes"
 SELECT {MEASURES.[%COUNT], MEASURES.[Avg Age]} ON 0,
-NON EMPTY %OR({[DiagD].[H1].[Diagnoses].&[asthma],
-[DiagD].[H1].[Diagnoses].&[diabetes]}) ON 1
+       NON EMPTY %OR({[DiagD].[H1].[Diagnoses].&[asthma],
+                      [DiagD].[H1].[Diagnoses].&[diabetes]}) ON 1
 FROM Patients
--- Returns one row with the union's count and average age
+-- Returns one row: "asthma...diabetes", count=119, avg age=42.87
 ```
 
 ---
@@ -192,7 +195,7 @@ FROM Patients
 SELECT MEASURES.[%COUNT] ON 0
 FROM Patients
 %FILTER NONEMPTYCROSSJOIN([AllerD].[H1].[Allergies].&[mold],
-[ColorD].[H1].[Favorite Color].&[Orange])
+                          [ColorD].[H1].[Favorite Color].&[Orange])
 ```
 
 **Combine with `%OR` for "(A AND B) OR (C AND D)"** — not expressible with a plain tuple:
@@ -200,10 +203,10 @@ FROM Patients
 ```mdx
 SELECT FROM Patients
 %FILTER %OR({
-NONEMPTYCROSSJOIN([AllerD].[H1].[Allergies].&[mold],
-[ColorD].[H1].[Favorite Color].&[Orange]),
-NONEMPTYCROSSJOIN([AllerD].[H1].[Allergies].&[cat hair],
-[ColorD].[H1].[Favorite Color].&[Purple])
+  NONEMPTYCROSSJOIN([AllerD].[H1].[Allergies].&[mold],
+                    [ColorD].[H1].[Favorite Color].&[Orange]),
+  NONEMPTYCROSSJOIN([AllerD].[H1].[Allergies].&[cat hair],
+                    [ColorD].[H1].[Favorite Color].&[Purple])
 })
 ```
 
@@ -227,8 +230,8 @@ Member key syntax: `[Dim].[Hier].[Level].&[key]`
 [DateOfSale].[Actual].[YearSold].&[2024]
 
 -- Id-keyed level with a name property
-[DocD].[H1].[Doctor].&[12] -- CORRECT for "Jones"
-[DocD].[H1].[Doctor].&[Jones] -- WRONG — null, no error
+[DocD].[H1].[Doctor].&[12]              -- CORRECT for "Jones"
+[DocD].[H1].[Doctor].&[Jones]           -- WRONG — null, no error
 
 -- The null-keyed member (records with no value for this level):
 [Channel].[H1].[Channel Name].&[<null>] -- or shown as "No Channel" in results
@@ -238,7 +241,7 @@ Member key syntax: `[Dim].[Hier].[Level].&[key]`
 
 ```mdx
 SELECT [Channel].[H1].CURRENTMEMBER.PROPERTIES("KEY") ON 0,
-[Channel].[H1].[Channel Name].MEMBERS ON 1
+       [Channel].[H1].[Channel Name].MEMBERS ON 1
 FROM HoleFoods
 -- One row per member, with its key in the cell
 ```
@@ -257,7 +260,7 @@ docd.h1.doctor.&[42]
 
 ## 9. % Prefix — IRIS Extensions
 
-Any MDX keyword starting with `%` is an InterSystems extension.
+Any MDX keyword starting with `%` is an InterSystems extension. **`%`-prefixed features perform better** — implemented at engine level with optimised index access.
 
 | Extension                     | Use instead of         | Why                                                                  |
 | ----------------------------- | ---------------------- | -------------------------------------------------------------------- |
@@ -283,7 +286,7 @@ No comma between multiple `WITH` clauses:
 
 ```mdx
 WITH MEMBER MEASURES.[a] AS '...'
-MEMBER MEASURES.[b] AS '...' -- no comma before MEMBER
+     MEMBER MEASURES.[b] AS '...'    -- no comma before MEMBER
 SELECT ...
 ```
 
@@ -293,21 +296,21 @@ SELECT ...
 
 ```mdx
 WITH MEMBER MEASURES.[Pct] AS
-'100 \* MEASURES.[Amount Sold] / %MDX("SELECT MEASURES.[Amount Sold] ON 0 FROM HoleFoods")'
+    '100 * MEASURES.[Amount Sold] / %MDX("SELECT MEASURES.[Amount Sold] ON 0 FROM HoleFoods")'
 SELECT {MEASURES.[Amount Sold], MEASURES.[Pct]} ON 0,
-NON EMPTY [Outlet].[H1].[Region].MEMBERS ON 1
+       NON EMPTY [Outlet].[H1].[Region].MEMBERS ON 1
 FROM HoleFoods
--- One row per region: its amount and its percent of the total
+-- Asia=35.1%, Europe=22.3%, N. America=27.0%, S. America=15.7%
 ```
 
 ### Period-over-period with PrevMember
 
 ```mdx
 WITH MEMBER MEASURES.[PrevUnits] AS
-'([DateOfSale].[Actual].CurrentMember.PrevMember, MEASURES.[Units Sold])'
+    '([DateOfSale].[Actual].CurrentMember.PrevMember, MEASURES.[Units Sold])'
 SELECT {MEASURES.[Units Sold],
-%LABEL(MEASURES.[PrevUnits], "Units (Prev Month)", "")} ON 0,
-NON EMPTY [DateOfSale].[Actual].[MonthSold].MEMBERS ON 1
+        %LABEL(MEASURES.[PrevUnits], "Units (Prev Month)", "")} ON 0,
+       NON EMPTY [DateOfSale].[Actual].[MonthSold].MEMBERS ON 1
 FROM HoleFoods
 ```
 
@@ -318,14 +321,14 @@ FROM HoleFoods
 ```mdx
 -- Last 90 days rolled into one member
 WITH MEMBER CalcD.[Last90] AS
-'%OR([DateOfSale].[Actual].[DaySold].[NOW-90]:[DateOfSale].[Actual].[DaySold].[NOW])'
+    '%OR([DateOfSale].[Actual].[DaySold].[NOW-90]:[DateOfSale].[Actual].[DaySold].[NOW])'
 SELECT MEASURES.[Amount Sold] ON 0, CalcD.[Last90] ON 1
 FROM HoleFoods
 
 -- Year-to-date through today
 WITH MEMBER CalcD.[YTD] AS
-'%OR(PERIODSTODATE([DateOfSale].[Actual].[YearSold],
-[DateOfSale].[Actual].[DaySold].[NOW]))'
+    '%OR(PERIODSTODATE([DateOfSale].[Actual].[YearSold],
+                       [DateOfSale].[Actual].[DaySold].[NOW]))'
 SELECT MEASURES.[Amount Sold] ON 0, CalcD.[YTD] ON 1
 FROM HoleFoods
 ```
@@ -353,10 +356,10 @@ COUNT([DiagD].[H1].[Diagnoses].MEMBERS, EXCLUDEEMPTY)
 ```mdx
 -- Regions where total revenue > 2000 — equivalent to SQL HAVING
 SELECT MEASURES.[Amount Sold] ON 0,
-NON EMPTY FILTER([Outlet].[H1].[Region].MEMBERS,
-MEASURES.[Amount Sold] > 2000) ON 1
+       NON EMPTY FILTER([Outlet].[H1].[Region].MEMBERS,
+                        MEASURES.[Amount Sold] > 2000) ON 1
 FROM HoleFoods
--- Returns only the regions above 2000
+-- Returns: Asia, Europe, N. America (S. America at 1560 excluded)
 ```
 
 ### ORDER — preserve vs break hierarchy
@@ -393,10 +396,10 @@ SELECT [GenD].[H1].[Gender].MEMBERS ON ROWS FROM Patients
 ### NOW member — relative offsets
 
 ```mdx
-[DateOfSale].[Actual].[DaySold].[NOW] -- today
-[DateOfSale].[Actual].[DaySold].[NOW-30] -- 30 days ago
-[DateOfSale].[Actual].[YearSold].[NOW-1] -- last year
-[DateOfSale].[Actual].[DaySold].[NOW-4y3m2d] -- compound offset
+[DateOfSale].[Actual].[DaySold].[NOW]         -- today
+[DateOfSale].[Actual].[DaySold].[NOW-30]      -- 30 days ago
+[DateOfSale].[Actual].[YearSold].[NOW-1]      -- last year
+[DateOfSale].[Actual].[DaySold].[NOW-4y3m2d]  -- compound offset
 ```
 
 **Only works on timeline-based levels** (`YearSold`, `MonthSold`, `DaySold`). Does not work on date-part levels (`Quarter`, `Month` — fixed cycle members).
@@ -462,7 +465,7 @@ Step 3 — discover member keys (§8):
 
 ```mdx
 SELECT [Dim].[Hier].CURRENTMEMBER.PROPERTIES("KEY") ON 0,
-[Dim].[Hier].[Level].MEMBERS ON 1
+       [Dim].[Hier].[Level].MEMBERS ON 1
 FROM Cube
 ```
 
@@ -488,7 +491,7 @@ Check the status after both steps. An unknown cube fails at `%PrepareMDX`; an un
 
 ```mdx
 SELECT {MEASURES.[Amount Sold]} ON 0,
-NON EMPTY [DateOfSale].[Actual].[MonthSold].MEMBERS ON 1
+       NON EMPTY [DateOfSale].[Actual].[MonthSold].MEMBERS ON 1
 FROM HoleFoods
 %FILTER [DateOfSale].[Actual].[YearSold].&[2024]
 ```
@@ -498,8 +501,8 @@ FROM HoleFoods
 ```mdx
 -- Both years in a set on the axis — not two %FILTER clauses
 SELECT {MEASURES.[Amount Sold]} ON 0,
-NON EMPTY {[DateOfSale].[Actual].[YearSold].&[2023],
-[DateOfSale].[Actual].[YearSold].&[2024]} ON 1
+       NON EMPTY {[DateOfSale].[Actual].[YearSold].&[2023],
+                  [DateOfSale].[Actual].[YearSold].&[2024]} ON 1
 FROM HoleFoods
 ```
 
@@ -507,9 +510,9 @@ FROM HoleFoods
 
 ```mdx
 WITH MEMBER MEASURES.[Pct] AS
-'100 \* MEASURES.[Amount Sold] / %MDX("SELECT MEASURES.[Amount Sold] ON 0 FROM HoleFoods")'
+    '100 * MEASURES.[Amount Sold] / %MDX("SELECT MEASURES.[Amount Sold] ON 0 FROM HoleFoods")'
 SELECT {MEASURES.[Amount Sold], MEASURES.[Pct]} ON 0,
-NON EMPTY [Outlet].[H1].[Region].MEMBERS ON 1
+       NON EMPTY [Outlet].[H1].[Region].MEMBERS ON 1
 FROM HoleFoods
 ```
 
@@ -517,14 +520,14 @@ FROM HoleFoods
 
 ```mdx
 SELECT {MEASURES.[Amount Sold]} ON 0,
-TOPCOUNT([Product].[P1].[Product Name].MEMBERS, 5, MEASURES.[Amount Sold]) ON 1
+       TOPCOUNT([Product].[P1].[Product Name].MEMBERS, 5, MEASURES.[Amount Sold]) ON 1
 FROM HoleFoods
 ```
 
 ## EXAMPLE: %NOT Exclusion
 
 ```mdx
--- All patients except those with asthma
+-- All patients except those with asthma (1000 - 78 = 922)
 SELECT MEASURES.[%COUNT] ON 0
 FROM Patients
 %FILTER [DiagD].[H1].[Diagnoses].&[asthma].%NOT
