@@ -31,7 +31,8 @@ Before writing any IRIS MDX, check these. Every one produces silent wrong result
 - [ ] **Side-by-side comparison** — put both members in a set `{.&[2023], .&[2024]}` on the axis; two `%FILTER` on the same level ANDs them → null data
 - [ ] **Member keys are not always captions** — the level definition decides the key; a caption where the key is an id returns null, no error; discover with `CURRENTMEMBER.PROPERTIES("KEY")`
 - [ ] **`%COUNT` is the correct count measure** — never invent names like `Patient Count` or `Transaction Count`
-- [ ] **Dimensions belong to one cube** — another cube's dimension in `%FILTER` fails with "Invalid Member spec", but on an axis it returns no rows and no error
+- [ ] **Dimensions belong to one cube** — another cube's member key (`&[...]`) fails with "Invalid Member spec" on an axis, in `WHERE` and in `%FILTER`; another cube's `.MEMBERS` on an axis is dropped with no error, and the query returns the total
+- [ ] **`%MDX()` on IRIS 2026.2** — a query containing `%MDX` returns its value on the first run of that exact text and an empty result, with an OK status, on every run after (§10)
 
 ---
 
@@ -176,13 +177,15 @@ FROM Patients
 %FILTER [GenD].[H1].[Gender].&[Female]
 -- Result: Female AND (Orange OR Purple)
 
--- %OR on an axis — combines members into one row, labelled "asthma...diabetes"
+-- %OR on an axis — combines members into one row, labelled "asthma...diabetes" or "asthma+"
 SELECT {MEASURES.[%COUNT], MEASURES.[Avg Age]} ON 0,
        NON EMPTY %OR({[DiagD].[H1].[Diagnoses].&[asthma],
                       [DiagD].[H1].[Diagnoses].&[diabetes]}) ON 1
 FROM Patients
 -- Returns one row: "asthma...diabetes", count=119, avg age=42.87
 ```
+
+The row label is `first...last` when IRIS records a last member name for the group and `first+` when it does not, and which one you get depends on the member ids the cube build assigned. Code should not match on it.
 
 ---
 
@@ -220,7 +223,7 @@ Member key syntax: `[Dim].[Hier].[Level].&[key]`
 
 **The key is not always the display name.** The level definition decides it, not the type of the source column:
 
-- A level whose source is an id, with the caption from a separate name property, is keyed by the id. `&[12]` works; `&[Jones]` returns null, no error.
+- A level whose source is an id, with the caption from a separate name property, is keyed by the id. `&[12]` works; `&[Jones]` returns null, no error. HoleFoods `Channel Name` is one: its source is the stored value `1` or `2`, and a name property supplies "Retail" or "Online", so `&[2]` is Online and `&[Online]` returns null.
 - A level that maps codes to names with `rangeExpression` (for example `1:Retail;2:Online;`) is keyed by the mapped name. `&[Online]` works; `&[2]` returns null, no error.
 - A level whose source is the caption itself is keyed by the caption.
 
@@ -232,6 +235,8 @@ Member key syntax: `[Dim].[Hier].[Level].&[key]`
 -- Id-keyed level with a name property
 [DocD].[H1].[Doctor].&[12]              -- CORRECT for "Jones"
 [DocD].[H1].[Doctor].&[Jones]           -- WRONG — null, no error
+[Channel].[H1].[Channel Name].&[2]      -- CORRECT for "Online"
+[Channel].[H1].[Channel Name].&[Online] -- WRONG — null, no error
 
 -- The null-keyed member (records with no value for this level):
 [Channel].[H1].[Channel Name].&[<null>] -- or shown as "No Channel" in results
@@ -292,7 +297,11 @@ SELECT ...
 
 ### Percent-of-total with %MDX()
 
-`%MDX()` returns a scalar from a separate query, immune to the current cell context. On an axis by itself it returns the subquery's value; inside `WITH MEMBER` it combines with the cell's own measure, as below.
+`%MDX()` returns a scalar from a separate query, immune to the current cell context. Inside `WITH MEMBER` it combines with the cell's own measure, as below.
+
+**On IRIS 2026.2, every query containing `%MDX` breaks after its first run.** The first run of a query text returns the value; every later run of the same text returns no axes and no cells, and `%Execute` returns OK. The form does not matter: `%MDX` alone on an axis, in a set, or inside `WITH MEMBER`. The cause is the results cache (DP-443341); 2024.1 to 2026.1 rebuild the axes on every run, so by their source they are not affected. On 2026.2, check `%GetAxisCount()` after `%Execute` and treat 0 as a failure, or compute the total in a separate query.
+
+**A failing subquery shows `*`, not an error.** `%MDX("SELECT MEASURES.[NoSuchMeasure] ON 0 FROM HoleFoods")` returns `*` and an OK status, on 2024.1 and later. Run the subquery on its own first.
 
 ```mdx
 WITH MEMBER MEASURES.[Pct] AS
@@ -429,18 +438,20 @@ COUSIN([BirthD].[Q1 1943], [BirthD].1990)
 
 ## 13. Common Silent Failures
 
-| Situation                                                          | Result                                                             | How to diagnose                                          |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------ | -------------------------------------------------------- |
-| Wrong hierarchy path                                               | Empty-member row, null value, no error                             | Verify spec path with `%GetDimensionList` (§14)          |
-| Typo in dimension name                                             | Dimension silently ignored, unexpected totals                      | Compare result to a known count                          |
-| Wrong member key (caption where the level is keyed by id)          | Null / no data, no error                                           | Run `CURRENTMEMBER.PROPERTIES("KEY")` query first        |
-| Ambiguous member caption (duplicate name in a level)               | Returns first match, no error                                      | Use `&[key]` instead of the caption                      |
-| Two `%FILTER` on same level                                        | Empty-member row, null value, no error                             | Use set `{m1, m2}` on axis                               |
-| Cross-cube dimension reference in `%FILTER`                        | `Invalid Member spec` at `%PrepareMDX`                             | Each query targets one cube only                         |
-| Cross-cube dimension reference on an axis                          | No rows, no error                                                  | Each query targets one cube only                         |
-| Measures on two axes, including `MAX(set, measure)` beside members | `ERROR: Measures cannot exist on multiple axes`                    | Keep every measure on one axis                           |
-| Nonexistent measure                                                | `ERROR #5001: Measure not found`, at `%Execute`, not `%PrepareMDX` | Check measure names under DimNo 0 of `%GetDimensionList` |
-| Nonexistent cube                                                   | `ERROR #5001: Cannot find Subject Area`, at `%PrepareMDX`          | Check available cubes via `%GetCubeList`                 |
+| Situation                                                                           | Result                                                             | How to diagnose                                          |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------- |
+| Wrong hierarchy path                                                                | Empty-member row, null value, no error                             | Verify spec path with `%GetDimensionList` (§14)          |
+| Typo in dimension name                                                              | Dimension silently ignored, unexpected totals                      | Compare result to a known count                          |
+| Wrong member key (caption where the level is keyed by id)                           | Null / no data, no error                                           | Run `CURRENTMEMBER.PROPERTIES("KEY")` query first        |
+| Ambiguous member caption (duplicate name in a level)                                | Returns first match, no error                                      | Use `&[key]` instead of the caption                      |
+| Two `%FILTER` on same level                                                         | Empty-member row, null value, no error                             | Use set `{m1, m2}` on axis                               |
+| Member key from another cube, or one that does not exist                            | `Invalid Member spec` at `%PrepareMDX`, on an axis or in a filter  | Each query targets one cube only                         |
+| `.MEMBERS` of a dimension from another cube, or one that does not exist, on an axis | Axis dropped, cube total returned, no error                        | Each query targets one cube only                         |
+| Any query containing `%MDX`, second run on 2026.2                                   | No axes, no cells, OK status                                       | Check `%GetAxisCount()`; see §10                         |
+| `%MDX` subquery that fails                                                          | `*`, OK status                                                     | Run the subquery alone                                   |
+| Measures on two axes, including `MAX(set, measure)` beside members                  | `ERROR: Measures cannot exist on multiple axes`                    | Keep every measure on one axis                           |
+| Nonexistent measure                                                                 | `ERROR #5001: Measure not found`, at `%Execute`, not `%PrepareMDX` | Check measure names under DimNo 0 of `%GetDimensionList` |
+| Nonexistent cube                                                                    | `ERROR #5001: Cannot find Subject Area`, at `%PrepareMDX`          | Check available cubes via `%GetCubeList`                 |
 
 ---
 
