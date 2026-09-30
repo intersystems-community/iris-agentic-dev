@@ -314,7 +314,7 @@ SELECT {MEASURES.[Units Sold],
 FROM HoleFoods
 ```
 
-**Bug:** without `%LABEL`, the auto-generated header for a PrevMember measure shows the dimension name (`DateOfSale`) instead of the measure name. Always use `%LABEL` on PrevMember calculated measures.
+The column is headed with the calculated member's name (`PrevUnits`). Use `%LABEL` when you want a readable caption such as "Units (Prev Month)".
 
 ### YTD / rolling window
 
@@ -403,6 +403,8 @@ SELECT [GenD].[H1].[Gender].MEMBERS ON ROWS FROM Patients
 ```
 
 **Only works on timeline-based levels** (`YearSold`, `MonthSold`, `DaySold`). Does not work on date-part levels (`Quarter`, `Month` — fixed cycle members).
+
+**Compound offsets belong on the day level.** `[DaySold].[NOW-1y10m19d]` counts back years, months and days. On `MonthSold`, `[NOW-1y10m]` goes back one month, with no error; write the months as one number (`[NOW-22m]`).
 
 ### Timeline-based vs date-part levels
 
