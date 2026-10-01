@@ -209,8 +209,8 @@ async fn pr142_claims_on_samples_bi() {
         get("R7c")
     );
 
-    // R8: a Patients dimension in a HoleFoods query fails in %FILTER. On an axis it raises no
-    // error; what it returns is recorded in the evidence, not asserted.
+    // R8: a Patients member key in a HoleFoods query fails at prepare. A Patients dimension's
+    // .MEMBERS on an axis raises nothing and the axis is dropped (D2GMDX "Nonexistent Members").
     assert!(
         get("R8a").starts_with("cols=[Count] "),
         "R8a: {}",
