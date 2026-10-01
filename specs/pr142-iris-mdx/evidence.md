@@ -1,8 +1,8 @@
 # PR 142 `iris-mdx`: evidence per discrepancy
 
-Asaf Sinay wrote the `iris-mdx` skill in PR 142 from his work on the Samples-BI cubes. The 131 fixture tests disagreed with ten of its claims. This file takes each disagreement, runs Asaf's own query on Asaf's own cubes (HoleFoods, Patients), and traces the result into the DeepSee source and the product docs in Perforce.
+Asaf Sinay wrote the `iris-mdx` skill in PR 142 from his work on the Samples-BI cubes. Before this review I measured each of its claims on a small test cube, as part of iad spec 131 (iad numbers each piece of work as a spec; 131, "MDX cube facts", lives in `specs/131-mdx-cube-facts/` on iad's own `131-mdx-cube-facts` branch, which is not merged and is not part of this PR). Those tests disagreed with ten of the skill's claims. This file takes each disagreement, runs Asaf's own query on Asaf's own cubes (HoleFoods, Patients), and traces the result into the DeepSee source and the product docs in Perforce.
 
-Two of my earlier "false" calls were wrong. I had tested them only on the 8-row 131 fixture cube, which each test rebuilds, so every query there is a first run. On Samples-BI, R1 (`%MDX` on an axis) and R7 (Channel keys) hold.
+Two of my earlier "false" calls were wrong. I had tested them only on the spec-131 cube, 8 rows of made-up sales that each test rebuilds, so every query there is a first run. On Samples-BI, R1 (`%MDX` on an axis) and R7 (Channel keys) hold. That cube and its tests (`tests/fixtures/mdx131/`, `test_mdx_131_live.rs`) are on the spec-131 branch, not here. Everything on this branch runs on Samples-BI.
 
 ## How to reproduce
 
@@ -66,7 +66,7 @@ On the second run `%GetAxisCount()` is 0 and `%Print()` shows `*`, with a `%Stat
 
 **Docs:** `D2RMDX/D2RMDX.xml:2252-2290` says `%MDX` returns one value and puts no limit on where it can appear.
 
-**Verdict:** IRIS bug. Asaf saw a real failure, and anyone who runs a query twice on 2026.2 will see it. The skill's explanation, that `%MDX` fails when it sits directly on an axis, is wrong: the second run of any query containing `%MDX` is empty. The 131 test `mdx_function_on_an_axis_returns_its_value` passed only because the fixture cube is rebuilt for each test, so each query was a first run. That test measures the fixture, not this bug.
+**Verdict:** IRIS bug. Asaf saw a real failure, and anyone who runs a query twice on 2026.2 will see it. The skill's explanation, that `%MDX` fails when it sits directly on an axis, is wrong: the second run of any query containing `%MDX` is empty. The spec-131 test `mdx_function_on_an_axis_returns_its_value` (not on this branch) passed only because the fixture cube is rebuilt for each test, so each query was a first run. That test measures the fixture, not this bug.
 
 **Older branches** (from source; I ran only 2026.2):
 
@@ -185,7 +185,7 @@ Else { Set tName = tName _ $S((tName'="")&&(tCount>1):"+",1:"") }
 
 **Older branches:** Caché 2013.1 and earlier used `name+Others`. The `...` and `+` forms came in change 1537804 (2013-11-25) and have not changed.
 
-**Docs:** `D2RMDX/D2RMDX.xml:2481` still shows the pre-2014 `ant bites+Others` output.
+**Docs:** `D2RMDX/D2RMDX.xml:2483` still shows the pre-2014 `ant bites+Others` output.
 
 **Verdict:** both labels are real. The skill should say that the label depends on member order and build-time IDs, and should not present `asthma+` as the normal form.
 
@@ -205,7 +205,7 @@ Else { Set tName = tName _ $S((tName'="")&&(tCount>1):"+",1:"") }
 
 **Older branches:** the same Channel definition in //iris/2022.1.x `databases/samples/cls/HoleFoods/Cube.xml#1` and in GitHub `intersystems/Samples-BI` (one commit, 2020).
 
-**Verdict:** the example is right and my 131 edit that removed it was wrong. The rule behind it is not "integer-keyed dimensions": the key is the level's source value after any range expression, and an `isName` property makes the caption differ from it. Suggested wording: "`&[key]` uses the level's source value. When the level has an `isName` property the caption differs from the key; check with `.PROPERTIES("KEY")`. A wrong key returns an empty cell, not an error."
+**Verdict:** the example is right and my first edit, made during spec 131, removed it and was wrong. The rule behind it is not "integer-keyed dimensions": the key is the level's source value after any range expression, and an `isName` property makes the caption differ from it. Suggested wording: "`&[key]` uses the level's source value. When the level has an `isName` property the caption differs from the key; check with `.PROPERTIES("KEY")`. A wrong key returns an empty cell, not an error."
 
 ## R8: a dimension from another cube
 
@@ -275,7 +275,7 @@ On MonthSold, `[NOW-1y]` and `[NOW-2y]` give Aug-2026 and Jul-2026, and on YearS
 
 **Source:** `//iris/latest/databases/sys/cls/Api/Atelier/v2.xml#12` line 1365, `GetSASchemaDefinition`, marked Internal: "returns the textual definition of a Studio Assist Schema. Pass the url of the schema namespace". It reads `%Studio.SASchemaUtil` (`Studio/SASchemaUtil.xml#6`), which knows only XML namespace URLs.
 
-**iad history:** on `master`, which PR 142 is based on, the tool description says "what=sa_schema returns SQL Analytics schema" (`src/tools/mod.rs`, since a61cc41) and the `name` field says "Schema/cube name". iad also encoded the slashes, so the call returned 404 for every input, including a correct URL. Commit ecd61f3 on 131 fixes both; it is not on `master` yet.
+**iad history:** on `master`, which PR 142 is based on, the tool description says "what=sa_schema returns SQL Analytics schema" (`src/tools/mod.rs`, since a61cc41) and the `name` field says "Schema/cube name". iad also encoded the slashes, so the call returned 404 for every input, including a correct URL. Commit ecd61f3 on the spec-131 branch fixes both; it is not on `master` yet, so this branch still has the old description.
 
 **Verdict:** iad's fault. Asaf did what iad's schema told him to do. The documented ways to list cubes and levels are `POST /api/deepsee/v1/<ns>/Info/Cubes` and `Info/Filters/<cube>` (`D2CLIENT/D2CLIENT.xml`), and `%DeepSee.Utils` `%GetCubeList` / `%GetDimensionList` through `iris_execute`.
 

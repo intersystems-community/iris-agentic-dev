@@ -1,9 +1,10 @@
 //! PR 142: the `iris-mdx` claims that disagree with IRIS, run as the PR wrote them on the cubes
 //! the PR names (Samples-BI `HoleFoods` and `Patients`).
 //!
-//! The 131 tests measure each claim on an 8-row cube built for the purpose. Two claims that failed
-//! there hold on Samples-BI (R1a, R7), so each discrepancy is also checked here, on the author's
-//! cubes, with the author's queries. The cases live in `tests/fixtures/mdx142/IADRepro.MDX142.cls`,
+//! iad spec 131 ("MDX cube facts", on iad's own `131-mdx-cube-facts` branch, not part of this PR)
+//! first measured each claim on an 8-row cube built for the purpose. Two claims that failed there
+//! hold on Samples-BI (R1a, R7), so each discrepancy is checked here, on the author's cubes, with
+//! the author's queries. The cases live in `tests/fixtures/mdx142/IADRepro.MDX142.cls`,
 //! which anyone can import into a Samples-BI namespace and run with
 //! `Do ##class(IADRepro.MDX142).Run()`. This file loads it, asserts each outcome, and deletes it.
 //!
