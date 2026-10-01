@@ -323,7 +323,7 @@ SELECT {MEASURES.[Units Sold],
 FROM HoleFoods
 ```
 
-The column is headed with the calculated member's name (`PrevUnits`). Use `%LABEL` when you want a readable caption such as "Units (Prev Month)".
+The column is headed with the calculated member's name (`PrevUnits`). Use `%LABEL` when you want a readable caption such as "Units (Prev Month)". Written inline instead, as a tuple or set on the axis with no `WITH MEMBER`, the column is headed with the dimension name (`DateOfSale`); there `%LABEL` is needed.
 
 ### YTD / rolling window
 
@@ -386,6 +386,18 @@ Use `BDESC`/`BASC` for ranked lists. Use `DESC`/`ASC` when parent-child grouping
 ### Measures on one axis only
 
 Measures on two axes raise "Measures cannot exist on multiple axes". Appending `MAX(set, measure)` to the member set on rows, with a measure on columns, raises the same error, because the `MAX` names a measure.
+
+For a benchmark row under the members, leave the measure out of `MAX`. It takes the measure from the column:
+
+```mdx
+-- All diagnoses + a MAX row at the bottom
+SELECT MEASURES.[%COUNT] ON 0,
+       NON EMPTY {[DiagD].[H1].[Diagnoses].MEMBERS,
+                  MAX([DiagD].[H1].[Diagnoses].MEMBERS)} ON 1
+FROM Patients
+```
+
+`{MEASURES.[%COUNT], MAX(set, MEASURES.[%COUNT])} ON 0` with the members on rows also runs, but each row's MAX cell is that row's own count, not a benchmark.
 
 ### Axis skipping — ROWS without COLUMNS
 
