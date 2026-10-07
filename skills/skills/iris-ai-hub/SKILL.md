@@ -2,7 +2,7 @@
 name: iris-ai-hub
 tier: extra
 author: tdyar
-version: 0.2.0
+version: 0.2.1
 managed_by: iris-agentic-dev
 description: "IRIS AI Hub (%AI.* classes, EAP builds): where the upstream docs are and which file covers what, how to check them against the installed build, and the %AI.Agent / %AI.Tool / %AI.ToolSet / ConfigStore / Wallet / MCP server facts measured on 2026.3.0AI builds 139 and 154. Load when building or debugging AI Hub agents, tools, providers or MCP servers."
 source: >-
@@ -18,7 +18,7 @@ AI Hub (`%AI.*`) ships only in Early Access builds, and each build changes names
 
 - Repo: `https://github.com/intersystems-community/ai-hub-eap`, branch `master`.
 - Read a file raw: `https://raw.githubusercontent.com/intersystems-community/ai-hub-eap/master/<path>`.
-- The repo moves. Check its current state (latest commit, whether the file you want still exists) before relying on a file; the map below was recorded at `72749d6` (2026-09-09).
+- The repo moves. Check its current state (latest commit, whether the file you want still exists) before relying on a file; the map below was recorded at `084b250` (2026-10-06).
 - If GitHub is unreachable, skip the docs and work from the installed `%AI` classes alone (workflow step 2). Say that you did.
 
 ## Topic map
@@ -113,12 +113,8 @@ Each fact below has a live test, first run on build 139 and last run on Build 15
 
 Where the ai-hub-eap docs and 2026.3 disagree, trust these lines. Each one is a live test, last run on Build 154.
 
-- `Config_Store_Guide.md:154` says `Get("AI","LLM","","openai")` returns the object; on 2026.3 it is `Get("AI.LLM.openai", .config)`, which returns a `%Status`. Four arguments raise `<PARAMETER>`.
-- `Config_Store_Guide.md:175` says `Delete` also takes four parts; on 2026.3 it is `Delete("AI.LLM.openai")` only. Four arguments raise `<PARAMETER>` and the entry stays.
 - `ObjectScript_SDK_Guide.md:250` says `Parameter PROVIDERCONFIG = "MyConfigName"`; on 2026.3 it is `"@{config:MyConfigName}"` (or `"@{config:AI.LLM.MyConfigName}"`). A bare name, or `@{config.MyConfigName}` with a dot, fails `%Init()` with `PROVIDERCONFIG is invalid`.
-- `ObjectScript_SDK_Guide.md:713` says `%New()` is enough when the class names its provider; on 2026.3 it is `%New()` then `%Init()`. `Provider` stays empty until `%Init()` runs.
 - Upstream's own skill, `SKILL.md:148`, says `If ..Provider = "" && ..#MODELCONFIGNAME '= ""`; on 2026.3 it is always true, because ObjectScript reads left to right, so it replaces a provider passed to `%New()`. Write `If (..Provider = "") && (..#MODELCONFIGNAME '= "")`.
-- `MCP_Server_Guide.md:136` says to create the MCP server in the Management Portal; on 2026.3 it is also scriptable with `Security.Applications`, but only with `Type` 18. Type 16 is refused (no CSP bit), and Type 2 saves but serves no tools ("failed identity checking").
 - `ObjectScript_SDK_Advanced.md:364` says repeated child elements fill a policy's list property; on 2026.3 it is true for two or more, but a single child loads an empty list. A deny policy with one `<Blocked>` tool blocks nothing. Add a second item or set the list in code.
 
 ## Upstream's own skill

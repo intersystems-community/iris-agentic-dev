@@ -174,7 +174,7 @@ fn skill_frontmatter_names_both_sources() {
     let fm = frontmatter(&t);
     for want in [
         "name: iris-ai-hub",
-        "version: 0.2.0",
+        "version: 0.2.1",
         "managed_by: iris-agentic-dev",
     ] {
         assert!(
@@ -575,7 +575,7 @@ fn drafts_entries_are_complete() {
     let live = read("crates/iris-agentic-dev-core/tests/integration/test_aihub_139_live.rs");
     let mismatches: Vec<_> = entries.iter().filter(|(h, _)| h.starts_with('D')).collect();
     assert!(
-        mismatches.len() >= 7,
+        mismatches.len() >= 4,
         "want one D entry per reproduced mismatch, got {}",
         mismatches.len()
     );
