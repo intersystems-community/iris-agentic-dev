@@ -42,9 +42,9 @@ stripped one `^`, interpolated the rest into ObjectScript, and validated nothing
 - Q: Which string do the gates compare? → A: The canonical name: one leading `^` stripped, then
   validated. Gates [3] and [4], the audit scrub and the executor all read that one string, and nothing
   reads the raw input after it is canonicalized.
-- Q: What is a valid name? → A: After stripping one `^`, `^[%A-Za-z][A-Za-z0-9.]{0,127}$`. Anything
+- Q: What is a valid name? → A: After stripping one `^`, `^[%A-Za-z](?:[A-Za-z0-9.]{0,126}[A-Za-z0-9])?$` (no trailing dot: IRIS answers `<SYNTAX>` for `^A.`). Anything
   else is rejected with `INVALID_GLOBAL_NAME` before any gate or IRIS call: empty, a second `^`,
-  parentheses or quotes (an embedded subscript such as `oddDEF("x")`), spaces, `|` or `[` (an extended
+  parentheses or quotes (an embedded subscript such as `oddDEF("x")`), a trailing dot, spaces, `|` or `[` (an extended
   reference), `$`, `,`, `;`, control characters, non-ASCII, and anything over 128 characters.
 - Q: Which tools take a global name? → A: `iris_global` (`global_name`), `global_preview` and
   `global_kill` (`global`). The gate read only `global_name`/`globalName`, so the last two skipped
@@ -236,7 +236,7 @@ Expect an array of first-level subscripts.
 - **FR-015**: Every tool that takes a global name MUST reduce it to one canonical name (exactly one
   leading `^` stripped) before any gate runs, and gates [3] and [4], the audit scrub and the executor
   MUST all read that canonical name. A gate comparing the raw input is a defect.
-- **FR-016**: The canonical name MUST match `^[%A-Za-z][A-Za-z0-9.]{0,127}$`. Any other input MUST
+- **FR-016**: The canonical name MUST match `^[%A-Za-z](?:[A-Za-z0-9.]{0,126}[A-Za-z0-9])?$` (no trailing dot: IRIS answers `<SYNTAX>` for `^A.`). Any other input MUST
   return `INVALID_GLOBAL_NAME` before any gate or IRIS call, with the offending value and the rule
   in the message. The name is interpolated into generated ObjectScript, so validation is also the
   injection guard, as the subscript allowlist (FR-008) is for subscripts.

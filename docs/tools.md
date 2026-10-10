@@ -629,7 +629,7 @@ iris_global(action="set", global_name="^MyApp.Config", subscripts=["timeout"], v
 
 **Global names.** `MyApp.Config` and `^MyApp.Config` are the same global, and every gate sees them
 as the same name. After one optional `^`, a name is a letter or `%` followed by letters, digits,
-and dots, up to 128 characters. Anything else is `INVALID_GLOBAL_NAME`, before any gate or IRIS
+and dots, up to 128 characters, not ending in a dot. Anything else is `INVALID_GLOBAL_NAME`, before any gate or IRIS
 call: a subscript in the name (`MyApp("x")`), a second `^`, a space, an extended reference
 (`^|"%SYS"|ROUTINE`), `$`, or a non-ASCII character. Put subscripts in `subscripts` and a
 namespace in `namespace`. The same rules apply to `global_preview` and `global_kill`.
