@@ -51,6 +51,10 @@ fn canonical_name_strips_exactly_one_caret() {
         ("Ens.MessageHeaderD", "Ens.MessageHeaderD"),
         ("a", "a"),
         ("A1.b2", "A1.b2"),
+        // IRIS accepts these: a lone `%`, a doubled dot, a trailing digit after a dot.
+        ("%", "%"),
+        ("A..B", "A..B"),
+        ("A.1", "A.1"),
     ] {
         assert_eq!(canonical_global_name(raw).as_deref(), Ok(want), "{raw}");
     }
@@ -82,6 +86,11 @@ fn canonical_name_refuses_what_is_not_a_name() {
         "oddDEF\"",
         "oddDEF(\"x\")",
         "^oddDEF(\"x\")",
+        // IRIS answers `<SYNTAX>` for a name that ends in a dot, so the gate refuses it too.
+        "A.",
+        "^A1.",
+        "%.",
+        "Ab.Cd.",
         "ROUTINE ",
         " ROUTINE",
         "^ ROUTINE",

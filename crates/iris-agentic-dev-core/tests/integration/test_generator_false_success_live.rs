@@ -86,8 +86,11 @@ async fn live_failed_preview_mints_no_confirm_token() {
         "the name is refused before any IRIS call: {v}"
     );
     assert!(
-        v["error"].as_str().unwrap_or("").contains("IAD Bad Name"),
-        "the message must name the global that could not be read: {v}"
+        v["global_name"]
+            .as_str()
+            .unwrap_or("")
+            .contains("IAD Bad Name"),
+        "the message must name what was refused: {v}"
     );
     assert!(
         v["confirm_token"].is_null(),
