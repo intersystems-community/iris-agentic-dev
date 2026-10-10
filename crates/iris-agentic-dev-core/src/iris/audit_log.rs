@@ -31,7 +31,7 @@ pub fn scrub_params(params: serde_json::Value) -> serde_json::Value {
     for (key, val) in obj {
         let scrubbed = if CREDENTIAL_FIELDS.contains(&key.as_str()) {
             serde_json::Value::String("[REDACTED]".to_string())
-        } else if key == "global_name" {
+        } else if key == "global_name" || key == "globalName" || key == "global" {
             if let Some(name) = val.as_str() {
                 let normalized = name.strip_prefix('^').unwrap_or(name);
                 if crate::policy::patterns::matches_any(

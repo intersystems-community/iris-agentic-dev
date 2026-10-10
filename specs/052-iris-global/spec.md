@@ -2,7 +2,7 @@
 
 **Feature Branch**: `052-iris-global`
 **Created**: 2026-06-29
-**Status**: Implemented
+**Status**: Implemented; amended 2026-10-10 (FR-015 to FR-023, gate bypass fix)
 **Depends on**: 051 (PHI policy and env gates — merged to master)
 
 ## Overview
@@ -30,6 +30,51 @@ name pattern gate before any IRIS call is made.
 - Q: How should subscript values be sanitized before ObjectScript interpolation? → A: Allowlist — subscripts must match `^[a-zA-Z0-9 _.:\-]+$`; reject with `INVALID_SUBSCRIPT` error before any IRIS call. No escape-and-proceed fallback.
 - Q: How should subtree traversal be bounded beyond node count? → A: Count cap (`max_nodes` default 100, max 1000) plus 5-second wall-clock timeout; return `truncated: true` on either limit.
 - Q: How should IRIS-side execute errors be reported? → A: Reuse existing codes — HTTP 5xx → `IRIS_UNREACHABLE`; ObjectScript `CATCH` output → `IRIS_EXECUTE_ERROR` with `message` field. Consistent with `iris_execute` tool.
+
+### Session 2026-10-10 — gate bypass (a leading `^` skipped gates [3] and [4])
+
+Found while fact-checking the Part 2 article against a live container: `global_name="^ROUTINE"`
+wrote to a code-storage global that `global_name="ROUTINE"` refused. Reproduced read-only the same
+day, which also found two more ways past the same gates. All three have one cause: **the gate and
+the executor did not look at the same name.** The gate compared the string as typed; the executor
+stripped one `^`, interpolated the rest into ObjectScript, and validated nothing but the subscripts.
+
+- Q: Which string do the gates compare? → A: The canonical name: one leading `^` stripped, then
+  validated. Gates [3] and [4], the audit scrub and the executor all read that one string, and nothing
+  reads the raw input after it is canonicalized.
+- Q: What is a valid name? → A: After stripping one `^`, `^[%A-Za-z][A-Za-z0-9.]{0,127}$`. Anything
+  else is rejected with `INVALID_GLOBAL_NAME` before any gate or IRIS call: empty, a second `^`,
+  parentheses or quotes (an embedded subscript such as `oddDEF("x")`), spaces, `|` or `[` (an extended
+  reference), `$`, `,`, `;`, control characters, non-ASCII, and anything over 128 characters.
+- Q: Which tools take a global name? → A: `iris_global` (`global_name`), `global_preview` and
+  `global_kill` (`global`). The gate read only `global_name`/`globalName`, so the last two skipped
+  gates [3] and [4]: `global_preview` of `oddDEF` returned a real entry and `global_kill` takes the
+  same parameter. Gate [3] and [4] now read all three keys.
+- Q: Does case matter? → A: IRIS global names are case-sensitive and the gates match
+  case-insensitively, so `^routine` is refused by the `^ROUTINE` rule. That over-blocks a harmless
+  name and is kept; the other direction (a case variant slipping past) cannot happen.
+- Q: Cross-namespace access? → A: Through the `namespace` parameter only. An extended reference in the
+  name (`^|"%SYS"|ROUTINE`, `^["dir"]ROUTINE`) is rejected, not parsed.
+- Q: Operator patterns? → A: `globalBlocklist` and `data_policy_kill_allowlist` entries may be written
+  with or without `^`. The matcher strips one `^` from the pattern and from the name, so an entry
+  behaves the same either way.
+- Q: Is the blocklist itself complete? → A: No. Enumerating `^$GLOBAL` on 2026.2 in USER and %SYS finds
+  these code-storage globals that the list did not name: `rMAC`, `rMACSAVE`, `rINC`, `rINCSAVE`,
+  `rINDEXCLASS`, `rINDEXEXT`, `rINDEXSQL`, `oddDEP`, `oddEXTR`, `oddMAP`, `oddMETA`, `oddPROC`,
+  `oddPROJECT`, `oddPYTHON`, `oddStudioDocument`, `oddStudioMenu`, `oddTSQL`, `oddXML`. `^rMAC` is
+  routine source, and two comments in `code_edit_gate.rs` already said it was caught. They are added as
+  exact names, not as `^odd*` or `^r*` prefixes, because an over-broad prefix hides application
+  globals for good (the reason `^SYS*` was narrowed). A live test enumerates the instance and fails
+  when a new family appears.
+- Q: Do `global_preview` and `global_kill` run the policy gates at all? → A: No. Each tool handler calls
+  `dispatch_gate` itself with a hand-built params object, and these two never did, so reading the
+  `global` key in the gate (FR-018) was not enough: the call has to be made. Both handlers now call
+  it. `call_tool` still applies the write and destructive tier checks to `global_kill`; this adds
+  the environment template, the system blocklist and the PHI name gate.
+- Q: Should `mcpTemplate = "live"` block `global_kill`? → A: Yes. `iris_global` with `action=kill` is
+  Execute-category and blocked on `live` and `test`; `global_kill` is the same operation and was
+  categorized Admin, which those templates allow. The environment gate now treats `global_kill` as
+  Execute, as it does `iris_global` set and kill. `global_preview` stays a read.
 
 ---
 
@@ -122,7 +167,14 @@ Expect an array of first-level subscripts.
 ### Edge Cases
 
 - **Leading `^` optional**: `global_name = "MyApp"` and `global_name = "^MyApp"` are both
-  valid — strip leading `^` for Atelier calls, normalize internally.
+  valid and are the same global. Both are gated identically (FR-015).
+- **Names that are not names**: `ROUTINE("x")`, `^^ROUTINE`, `ROUTINE` (trailing space), `ROUTINE;`,
+  `^|"%SYS"|ROUTINE`, `$ROUTINE`, an empty string, and a 129-character name are all
+  `INVALID_GLOBAL_NAME`. They never reach a gate or IRIS.
+- **Case**: `^routine` is refused by the `^ROUTINE` rule (matching is case-insensitive; IRIS is
+  case-sensitive, so this over-blocks and never under-blocks).
+- **`global_preview` and `global_kill`**: the same name rules and the same two gates apply. A blocked
+  global gets no preview and no confirm token.
 - **Subscripts as array or dot-path**: Accept subscripts as a JSON array `["a", "b"]` — do
   not support dot-path strings (too ambiguous for numeric subscripts).
 - **Numeric subscripts**: Pass as strings in the array; IRIS coerces `"1"` to the numeric
@@ -162,8 +214,8 @@ Expect an array of first-level subscripts.
   Kill of a non-existent node is success.
 - **FR-006**: `list` returns an array of subscripts at the specified node level, up to
   `max_subscripts` (default 50, max 500).
-- **FR-007**: `global_name` MUST accept names with or without a leading `^`; strip `^`
-  internally before calling IRIS.
+- **FR-007**: `global_name` MUST accept names with or without a leading `^`; both forms are the
+  same global and MUST be treated identically by every gate (see FR-015).
 - **FR-008**: `subscripts` param is an optional JSON array of strings. Absent or empty
   means the root global node. Each subscript string MUST match `^[a-zA-Z0-9 _.:\-]+$`;
   any subscript failing this check MUST be rejected with error code `INVALID_SUBSCRIPT`
@@ -181,6 +233,30 @@ Expect an array of first-level subscripts.
   ObjectScript `CATCH` block triggered during the operation MUST return `IRIS_EXECUTE_ERROR`
   with a `message` field containing the IRIS error string (e.g., `<UNDEFINED>` or
   `<PROTECT>`). No new error codes are introduced for IRIS-side failures.
+- **FR-015**: Every tool that takes a global name MUST reduce it to one canonical name (exactly one
+  leading `^` stripped) before any gate runs, and gates [3] and [4], the audit scrub and the executor
+  MUST all read that canonical name. A gate comparing the raw input is a defect.
+- **FR-016**: The canonical name MUST match `^[%A-Za-z][A-Za-z0-9.]{0,127}$`. Any other input MUST
+  return `INVALID_GLOBAL_NAME` before any gate or IRIS call, with the offending value and the rule
+  in the message. The name is interpolated into generated ObjectScript, so validation is also the
+  injection guard, as the subscript allowlist (FR-008) is for subscripts.
+- **FR-017**: `matches_pattern` MUST strip one leading `^` from the name as well as from the pattern, so
+  `matches_pattern("^ROUTINE", "^ROUTINE")` and `matches_pattern("ROUTINE", "ROUTINE")` are both
+  true. Operator-authored `globalBlocklist` and `data_policy_kill_allowlist` entries behave the same
+  with or without `^`.
+- **FR-018**: `dispatch_gate` MUST read the global name from `global_name`, `globalName` and `global`,
+  so `global_preview` and `global_kill` pass through gates [3] and [4].
+- **FR-019**: Each handler MUST validate the name itself (defense in depth), so a caller that reaches
+  a handler without the gate still cannot interpolate an invalid name.
+- **FR-020**: The audit scrub MUST treat `global` like `global_name`: a PHI-pattern name is logged as
+  `[REDACTED-PHI]`.
+- **FR-021**: A blocked or invalid `global_preview` MUST NOT mint a confirm token.
+- **FR-022**: `SYSTEM_BLOCKLIST` MUST name every code-storage global family that a live instance holds,
+  as exact names. A live test enumerates `^$GLOBAL` in USER and %SYS and fails on any `^odd*` or
+  `^r<Upper>*` global that the list does not block in both spellings.
+- **FR-023**: `global_preview` and `global_kill` MUST call `dispatch_gate` before any IRIS call, and
+  the environment gate MUST treat `global_kill` as Execute-category, so `mcpTemplate = "live"` and
+  `"test"` refuse it exactly as they refuse `iris_global` with `action=kill`.
 
 ### Implementation Approach
 

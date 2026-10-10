@@ -269,12 +269,12 @@ fn error_json_includes_matched_pattern() {
 // ── System blocklist count (regression guard) ─────────────────────────────────
 
 #[test]
-fn system_blocklist_has_32_entries() {
+fn system_blocklist_has_52_entries() {
     use iris_agentic_dev_core::policy::patterns::SYSTEM_BLOCKLIST;
     assert_eq!(
         SYSTEM_BLOCKLIST.len(),
-        32,
-        "system blocklist must have exactly 32 entries"
+        52,
+        "system blocklist must have exactly 52 entries (32 from spec 051 + 20 from spec 052, FR-022)"
     );
 }
 

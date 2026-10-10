@@ -60,15 +60,14 @@ pub async fn global_preview_impl(
     params: GlobalPreviewParams,
     confirm_tokens: &tokio::sync::Mutex<std::collections::HashMap<String, ConfirmEntry>>,
 ) -> Result<CallToolResult, McpError> {
-    use crate::tools::global::{build_global_ref, normalize_global_name, validate_global_name};
+    use crate::tools::global::{build_global_ref, canonical_global_name};
 
-    let name = normalize_global_name(&params.global);
-    if let Err(e) = validate_global_name(&name) {
-        return err_json(
-            "INVALID_GLOBAL_NAME",
-            e["message"].as_str().unwrap_or("invalid global name"),
-        );
-    }
+    // Before any IRIS call and before a token exists (FR-019, FR-021). The name goes inside an
+    // ObjectScript string literal below, so an unvalidated one could end it.
+    let name = match canonical_global_name(&params.global) {
+        Ok(n) => n,
+        Err(e) => return crate::tools::err_result(e),
+    };
     let global_ref = build_global_ref(&name, &[]);
     let ns = params.iris.namespace.clone();
 
@@ -178,14 +177,12 @@ pub async fn global_kill_impl(
     params: GlobalKillParams,
     confirm_tokens: &tokio::sync::Mutex<std::collections::HashMap<String, ConfirmEntry>>,
 ) -> Result<CallToolResult, McpError> {
-    use crate::tools::global::{normalize_global_name, validate_global_name};
-    let name = normalize_global_name(&params.global);
-    if let Err(e) = validate_global_name(&name) {
-        return err_json(
-            "INVALID_GLOBAL_NAME",
-            e["message"].as_str().unwrap_or("invalid global name"),
-        );
-    }
+    use crate::tools::global::canonical_global_name;
+    // Validated before the token is looked at: `Kill ^{name}` is built from this string below.
+    let name = match canonical_global_name(&params.global) {
+        Ok(n) => n,
+        Err(e) => return crate::tools::err_result(e),
+    };
 
     // Token validation
     let entry = {

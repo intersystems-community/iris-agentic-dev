@@ -612,7 +612,7 @@ Read, write, kill, or list IRIS global nodes. Gated — see [Data safety gates](
 | Parameter        | Type     | Default | Notes                                                    |
 | ---------------- | -------- | ------- | -------------------------------------------------------- |
 | `action`         | string   | —       | **Required.** `"get"` \| `"set"` \| `"kill"` \| `"list"` |
-| `global_name`    | string   | —       | **Required.** With or without leading `^`                |
+| `global_name`    | string   | —       | **Required.** With or without one leading `^`; see below |
 | `subscripts`     | string[] | —       | Subscript path; values validated `[a-zA-Z0-9 _.:\-]+`    |
 | `value`          | string   | —       | Required for `action=set`                                |
 | `subtree`        | bool     | —       | `get` only: include all descendants                      |
@@ -626,6 +626,13 @@ iris_global(action="get", global_name="^MyApp.Config", subscripts=["timeout"])
 iris_global(action="list", global_name="^MyApp.Config")
 iris_global(action="set", global_name="^MyApp.Config", subscripts=["timeout"], value="30")
 ```
+
+**Global names.** `MyApp.Config` and `^MyApp.Config` are the same global, and every gate sees them
+as the same name. After one optional `^`, a name is a letter or `%` followed by letters, digits,
+and dots, up to 128 characters. Anything else is `INVALID_GLOBAL_NAME`, before any gate or IRIS
+call: a subscript in the name (`MyApp("x")`), a second `^`, a space, an extended reference
+(`^|"%SYS"|ROUTINE`), `$`, or a non-ASCII character. Put subscripts in `subscripts` and a
+namespace in `namespace`. The same rules apply to `global_preview` and `global_kill`.
 
 ---
 
@@ -1209,7 +1216,8 @@ schema tools, Mermaid diagrams, and `resolve_storage` all originate from his des
 
 Preview the top N subscripts of an IRIS global and mint a confirmation token for a
 subsequent `global_kill`. Returns up to 100 entries, the total subscript count, and a
-`confirm_token` that expires in 5 minutes.
+`confirm_token` that expires in 5 minutes. The system blocklist and the PHI name gate apply
+before anything is read; a refused preview returns no entries and no token.
 
 | Parameter | Type   | Default | Notes                                          |
 | --------- | ------ | ------- | ---------------------------------------------- |
@@ -1221,7 +1229,9 @@ subsequent `global_kill`. Returns up to 100 entries, the total subscript count, 
 
 Kill an IRIS global after confirming with a token from `global_preview`. The token
 validates the global name and server — a token issued for `^Foo` cannot be used to kill
-`^Bar`. Tokens expire after 5 minutes. Write-gated.
+`^Bar`. Tokens expire after 5 minutes. Write- and destructive-gated, and the system blocklist and PHI
+name gate apply. On a connection whose `mcpTemplate` is `live` or `test` it is refused, like
+`iris_global` with `action=kill`.
 
 | Parameter       | Type   | Default | Notes                                            |
 | --------------- | ------ | ------- | ------------------------------------------------ |
@@ -1977,7 +1987,10 @@ unless the connection sets `dataPolicy = "allow"`, with no per-call override. Er
 **3. System globals.** IRIS keeps compiled classes, routines, roles, users, and
 interoperability config in globals such as `^oddDEF`, `^ROUTINE`, `^%Dictionary*`,
 `^ROLE`, and `^Ens.Config*`. Writing to them can leave the instance unable to compile or
-start. This blocklist is hardcoded and cannot be switched off — `globalBlocklist` in your
+start. The list names the code-storage globals an instance holds, as exact names (`^rMAC` for
+routine source, `^rINC` for include source, and the `^odd*` class-dictionary globals), so an
+application global that merely starts the same way, such as `^oddments`, is not blocked. This
+blocklist is hardcoded and cannot be switched off — `globalBlocklist` in your
 config adds to it, never replaces it. The one exception is `dataPolicyKillAllowlist`,
 which exempts named patterns from this check on kill operations only. Error code:
 `SYSTEM_BLOCKLIST`.
@@ -2003,6 +2016,7 @@ comes back as-is, so `redact` is not a safe default for XML or custom message bo
 | `ENV_GATE_BLOCKED`                    | Tool not permitted by this connection's `mcpTemplate` — see [gates](#data-safety-gates)                        |
 | `DATA_POLICY_BLOCKED`                 | Bulk-PHI tool called without `dataPolicy = "allow"`                                                            |
 | `SYSTEM_BLOCKLIST`                    | Global is on the system blocklist — not bypassable                                                             |
+| `INVALID_GLOBAL_NAME`                 | `global_name` / `global` is not a global name — no subscripts, extended references, or spaces in the name      |
 | `PHI_GATE_BLOCKED`                    | Global name matches a PHI pattern — pass `acknowledgePhi: true`                                                |
 | `SCOPE_REQUIRED`                      | `iris_search` called without a document scope — pass a `documents` wildcard list                               |
 | `STALE_CONTENT`                       | `iris_doc` insert/delete_lines `expected` field didn't match stored content                                    |

@@ -46,6 +46,7 @@ mod test_fresh_container_setup_live;
 mod test_gate_enforcement_live;
 mod test_generator_device_live;
 mod test_generator_false_success_live;
+mod test_global_name_gates_052_live;
 mod test_handlers_live;
 mod test_hints_replay_129_live;
 mod test_injection_137_live;

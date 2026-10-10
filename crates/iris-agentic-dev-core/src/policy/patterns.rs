@@ -22,6 +22,31 @@ pub const SYSTEM_BLOCKLIST: &[&str] = &[
     "^oddMAC",
     "^oddPKG",
     "^oddCOM",
+    // Code-storage globals found by enumerating `^$GLOBAL` in USER and %SYS on 2026.2 that the list
+    // above did not name (spec 052, FR-022). Exact names, not `^odd*` / `^r*` prefixes: a prefix
+    // hides application globals for good, which is why `^SYS*` was narrowed below. `rMAC` is
+    // routine source and `rINC` include source; `rINT` and `rBAS` are the other routine-source
+    // globals and are named so they are covered where a build holds them.
+    "^oddDEP",
+    "^oddEXTR",
+    "^oddMAP",
+    "^oddMETA",
+    "^oddPROC",
+    "^oddPROJECT",
+    "^oddPYTHON",
+    "^oddStudioDocument",
+    "^oddStudioMenu",
+    "^oddTSQL",
+    "^oddXML",
+    "^rMAC",
+    "^rMACSAVE",
+    "^rINC",
+    "^rINCSAVE",
+    "^rINT",
+    "^rBAS",
+    "^rINDEXCLASS",
+    "^rINDEXEXT",
+    "^rINDEXSQL",
     "^ROLE",
     "^USER",
     "^Ens.Config*",
@@ -67,13 +92,18 @@ pub const PHI_NAME_PATTERNS: &[&str] = &[
 /// Returns `true` if `global_name` matches `pattern`.
 ///
 /// Pattern rules:
-/// - Leading `^` is stripped (IRIS global naming convention, not a regex anchor).
+/// - Leading `^` is stripped from the pattern and from `global_name` (IRIS global naming convention,
+///   not a regex anchor), so `^ROUTINE` and `ROUTINE` are the same global to every gate. Only one
+///   caret is stripped; `^^ROUTINE` is not a name and callers reject it first.
 /// - If pattern ends with `*`: prefix match against the stripped pattern.
 /// - Otherwise: exact match.
 /// - Matching is case-insensitive.
 pub fn matches_pattern(global_name: &str, pattern: &str) -> bool {
     let p = pattern.strip_prefix('^').unwrap_or(pattern);
-    let name_upper = global_name.to_uppercase();
+    let name_upper = global_name
+        .strip_prefix('^')
+        .unwrap_or(global_name)
+        .to_uppercase();
     if let Some(prefix) = p.strip_suffix('*') {
         name_upper.starts_with(&prefix.to_uppercase())
     } else {
