@@ -354,6 +354,12 @@ def test_container_identity_names_the_image_and_its_digest():
     number measured against the old one cannot be compared to a number measured against the new one
     unless the digest is written down."""
     identity = provenance.container_identity("iris-dev-iris")
+    if identity["image"] is None:
+        # `requires_iris` is a label, not a skip: `ci.yml` and the nightly filter on it, but a plain
+        # `pytest tests/e2e/skill_eval/` run has no filter. On a runner with no `iris-dev-iris` the
+        # function answers Nones by design (see its docstring), and this test used to fail on that
+        # for five nights running.
+        pytest.skip("no iris-dev-iris container to read an image from")
     assert identity["container"] == "iris-dev-iris"
     assert identity["image"] == "intersystemsdc/iris-community:2026.2"
     assert identity["image_id"].startswith("sha256:")

@@ -64,8 +64,13 @@ jobs:
         # refuses unless IAD_BILLABLE_SESSIONS=1, and the tests that spawn carry a `billable` marker
         # that skips them without it (tests/e2e/billing.py). Kept because skipping six files is
         # faster than collecting them, not because it is load-bearing.
+        #
+        # `-m "not requires_iris"` is the same filter ci.yml applies: this job has no IRIS container,
+        # so a test that needs one is not a failure here. Without it `test_provenance` went red on
+        # 2026-10-06 and the canary stayed red until it was found.
         run: |
           python -m pytest tests/e2e/skill_eval/ \
+            -m "not requires_iris" \
             --ignore=tests/e2e/skill_eval/test_integration.py \
             --ignore=tests/e2e/skill_eval/test_debug_events.py \
             --ignore=tests/e2e/skill_eval/test_debug_single.py \
