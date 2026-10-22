@@ -131,3 +131,30 @@ fn the_result_marker_is_removed() {
         "{\"status\":{\"errors\":[]},\"result\":{\"content\":[{\"result\":\"\\u0002[1,2\"}]}}";
     assert_eq!(query_output(200, body).unwrap(), "[1,2");
 }
+
+/// Once the generator's query is sent the code has run, or is running, so an error from then on is
+/// never retried and never re-sent through docker exec. Before the query, a transient failure
+/// still retries: nothing has run yet.
+#[test]
+fn an_error_after_the_code_ran_is_never_retried() {
+    use iris_agentic_dev_core::iris::connection::{
+        code_may_have_run, generator_retryable, CodeMayHaveRun,
+    };
+    let ran: anyhow::Error = CodeMayHaveRun("operation timed out".into()).into();
+    assert!(code_may_have_run(&ran));
+    assert!(
+        !generator_retryable(&ran),
+        "a timed-out run is still running"
+    );
+    assert_eq!(
+        ran.to_string(),
+        "operation timed out",
+        "the text is unchanged"
+    );
+    let before = anyhow::anyhow!("error sending request: connection refused");
+    assert!(!code_may_have_run(&before));
+    assert!(generator_retryable(&before));
+    assert!(!generator_retryable(&anyhow::anyhow!(
+        "PUT doc failed: HTTP 401"
+    )));
+}

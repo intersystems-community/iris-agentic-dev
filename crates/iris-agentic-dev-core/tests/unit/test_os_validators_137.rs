@@ -422,6 +422,33 @@ fn test_run_code_keeps_the_pattern_data() {
 
 const CRAFTED_QUOTE: &str = "X\" Kill ^IrisDevTest.S137 Set z=\"";
 
+/// iris_coverage put `test_path` into its RunTest literal unescaped; the 137 sweep checked its
+/// `classes` and `package` but not this (spec 140 triage, TEST_DIAG-21). A newline would also have
+/// started a new terminal line on the docker path.
+#[test]
+fn coverage_run_code_keeps_the_test_path_data() {
+    use iris_agentic_dev_core::tools::coverage::build_coverage_run_code;
+    let routines = ["Demo.A.1".to_string()];
+    let code = build_coverage_run_code(&routines, CRAFTED_QUOTE, "USER");
+    assert!(!code.contains("X\" Kill"), "{code}");
+    assert!(
+        code.contains("X\"\" Kill"),
+        "the quote must be doubled: {code}"
+    );
+    let code = build_coverage_run_code(&routines, "X\nKill ^IrisDevTest.S137", "USER");
+    assert!(
+        !code
+            .lines()
+            .any(|l| l.trim_start().starts_with("Kill ^IrisDevTest")),
+        "a newline must not start a statement: {code}"
+    );
+    let ok = build_coverage_run_code(&routines, "MyApp.Tests", "USER");
+    assert!(
+        ok.contains("RunTest(\"MyApp.Tests\",\"/noload/nodelete\")"),
+        "{ok}"
+    );
+}
+
 /// B2/B3: write- and destructive-tier tools whose splices reach past their own operation.
 #[test]
 fn write_tier_builders_keep_parameters_data() {

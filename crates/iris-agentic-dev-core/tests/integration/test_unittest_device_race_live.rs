@@ -4,41 +4,14 @@
 //! through `iris_execute` could come back as an empty success. Here a second IRIS process writes
 //! a unique console line 1.5 s into a 4 s test, every time.
 
-use iris_agentic_dev_core::testing::{answer_text, live_env, require_iad_binary, McpSession};
+use iris_agentic_dev_core::testing::{
+    answer_text, live_container as container, live_env, require_iad_binary, McpSession,
+};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
 const CLASS: &str = "IadRace.Slow";
 const SRC: &str = "Class IadRace.Slow Extends %UnitTest.TestCase\n{\n\nMethod TestSlow()\n{\n    Hang 4\n    Do $$$AssertEquals(1, 1, \"slow test ran\")\n}\n\n}\n";
-
-/// The container behind the live server. `IRIS_CONTAINER` when set; otherwise the container that
-/// publishes `IRIS_WEB_PORT`, because tests earlier in this binary change the process
-/// environment, and in the full CI order this test once found the variable gone.
-fn container() -> String {
-    if let Some(c) = std::env::var("IRIS_CONTAINER")
-        .ok()
-        .filter(|c| !c.trim().is_empty())
-    {
-        return c;
-    }
-    let port = std::env::var("IRIS_WEB_PORT").unwrap_or_else(|_| "52780".into());
-    let out = Command::new("docker")
-        .args([
-            "ps",
-            "--filter",
-            &format!("publish={port}"),
-            "--format",
-            "{{.Names}}",
-        ])
-        .output()
-        .expect("docker ps");
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .next()
-        .map(str::to_string)
-        .filter(|c| !c.is_empty())
-        .unwrap_or_else(|| panic!("no IRIS_CONTAINER and no container publishes port {port}"))
-}
 
 fn docker_sh(script: &str, stdin: &str) {
     let mut child = Command::new("docker")

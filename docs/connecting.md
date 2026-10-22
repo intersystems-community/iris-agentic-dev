@@ -306,9 +306,12 @@ iris-agentic-dev resolves the IRIS connection in this order — first match wins
 1. CLI flags (`--host`, `--web-port`, `--scheme`)
 2. `.iris-agentic-dev.toml` in the workspace root, the nearest one found walking up from the
    working directory
-3. Environment variables (`IRIS_HOST`, etc.)
+3. Environment variables (`IRIS_HOST`, etc.). A server named by `IRIS_HOST` is used even when it
+   does not answer, so calls fail against it rather than reach another server
 4. `~/.iris-agentic-dev.toml`, when the walk up reaches your home directory: a personal default,
-   so `IRIS_HOST` outranks its connection settings (its tool and gate settings still apply)
+   so `IRIS_HOST` outranks its connection settings (its tool and gate settings still apply). A
+   live reload follows the same rule, and `check_config` reports `connection_source: env_vars`
+   with the file still in `config_file`
 5. VS Code `settings.json` (`objectscript.conn` / `intersystems.servers`)
 6. VS Code Server Manager keychain (`intersystems.servers` + OS keychain credential)
 7. Running Docker containers (scored by workspace name similarity)

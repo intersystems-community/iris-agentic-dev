@@ -261,6 +261,8 @@ fn sentence_end(line: &str) -> Option<usize> {
 pub const ERR_NO_TESTS_FOUND: &str = "NO_TESTS_FOUND";
 pub const ERR_NAMESPACE_NOT_FOUND: &str = "NAMESPACE_NOT_FOUND";
 pub const ERR_TEST_EXECUTION_ERROR: &str = "TEST_EXECUTION_ERROR";
+/// The generator's query failed after the code ran (or while it runs); the code is not run again.
+pub const ERR_QUERY_FAILED_AFTER_RUN: &str = "QUERY_FAILED_AFTER_RUN";
 pub const ERR_SERVER_MANAGER_CREDENTIAL: &str = "SERVER_MANAGER_CREDENTIAL_ERROR";
 pub const ERR_SERVER_MANAGER_AMBIGUOUS: &str = "SERVER_MANAGER_AMBIGUOUS";
 pub const ERR_POLICY_GATE: &str = "POLICY_GATE";
@@ -2925,12 +2927,16 @@ impl IrisTools {
                 // Use ConfigFile source (and record the path) when the connection came from
                 // a .iris-agentic-dev.toml — so check_config can show config_file at startup,
                 // not just after the first hot-reload cycle (issue #82).
-                // Use EnvVars when IRIS_HOST is set but no toml file was found — env-var
-                // connections are pinned, not discovered, and check_config should say so.
-                let (source, file) = if config_path.is_some() {
+                // Use EnvVars when IRIS_HOST is set and no file chose the connection — env-var
+                // connections are pinned, not discovered, and check_config should say so. A home
+                // file that yielded to IRIS_HOST is still named: its tool lists apply.
+                let chosen = config_path
+                    .as_deref()
+                    .is_some_and(crate::iris::workspace_config::chooses);
+                let (source, file) = if chosen {
                     (ConnectionSource::ConfigFile, config_path)
-                } else if std::env::var("IRIS_HOST").is_ok() {
-                    (ConnectionSource::EnvVars, None)
+                } else if crate::iris::connection::host_from_env().is_some() {
+                    (ConnectionSource::EnvVars, config_path)
                 } else {
                     (ConnectionSource::AutoDiscovered, None)
                 };
@@ -3289,6 +3295,7 @@ impl IrisTools {
 
         // Parse the new config
         let cfg = crate::iris::workspace_config::load_workspace_config(config_file_str.as_deref());
+        let chosen = crate::iris::workspace_config::chooses(&config_path);
 
         let (conn_result, declared) = match cfg {
             None => {
@@ -3308,10 +3315,15 @@ impl IrisTools {
                     return;
                 }
                 let declared = write_gate::DeclaredGates::from_config(&cfg);
-                (
-                    crate::iris::workspace_config::workspace_config_to_connection(&cfg, "USER"),
-                    declared,
-                )
+                // The startup rule: a home file that yields to IRIS_HOST reloads its settings,
+                // not the connection, and discovery below returns the IRIS_HOST server.
+                let conn = if chosen {
+                    crate::iris::workspace_config::workspace_config_to_connection(&cfg, "USER")
+                } else {
+                    crate::iris::workspace_config::export_tool_lists(&cfg);
+                    None
+                };
+                (conn, declared)
             }
         };
 
@@ -3341,13 +3353,13 @@ impl IrisTools {
         let gates =
             write_gate::resolve_for_connection(declared, Some(&new_conn), &new_conn.namespace);
         let config_path_for_pool = config_path.clone();
-        let new_state = ConnectionState::from_iris(
-            new_conn,
-            ConnectionSource::ConfigFile,
-            Some(config_path),
-            gates,
-        )
-        .with_declared(declared);
+        let source = if chosen {
+            ConnectionSource::ConfigFile
+        } else {
+            ConnectionSource::EnvVars
+        };
+        let new_state = ConnectionState::from_iris(new_conn, source, Some(config_path), gates)
+            .with_declared(declared);
         let mut conn = self.connection.lock().unwrap();
         *conn = new_state;
         conn.config_parse_error = None;
@@ -4234,10 +4246,7 @@ impl IrisTools {
         // execute_via_generator redirects $IO to a temp file but RunTest also needs
         // to create directories under ^UnitTestRoot — which fails in that context.
         // When IRIS_CONTAINER is set, prefer docker exec (full filesystem + real terminal).
-        let has_container = std::env::var("IRIS_CONTAINER")
-            .ok()
-            .filter(|v| !v.is_empty())
-            .is_some();
+        let has_container = crate::iris::connection::container_from_env().is_some();
 
         let run_output = if has_container {
             // Docker exec: full filesystem access, captures terminal output from RunTest
@@ -4799,8 +4808,22 @@ impl IrisTools {
                 }
                 return json_result(resp);
             }
+            Ok(Err(e)) if crate::iris::connection::code_may_have_run(&e) => {
+                self.record_call("iris_execute", false);
+                return err_result(serde_json::json!({
+                    "success": false,
+                    "error_code": ERR_QUERY_FAILED_AFTER_RUN,
+                    "error": format!(
+                        "{e}. The code ran on IRIS, or is still running, so iad did not run it \
+                         again through docker exec."
+                    ),
+                    "namespace": namespace,
+                    "execution_path": "atelier",
+                }));
+            }
             Ok(Err(e)) => {
-                // HTTP path failed — keep the real cause; fall through to docker exec.
+                // HTTP path failed before the code ran — keep the real cause; fall through to
+                // docker exec.
                 e.to_string()
             }
         };

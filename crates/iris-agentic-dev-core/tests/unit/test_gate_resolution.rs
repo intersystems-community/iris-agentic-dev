@@ -436,3 +436,27 @@ fn the_rejection_names_the_documented_code() {
         "the logged message has to contain the code an operator searches for: {err}"
     );
 }
+
+/// IRIS stores `^%SYS("SystemMode")` as the Management Portal writes it: `LIVE`, `TEST`,
+/// `DEVELOPMENT`, `FAILOVER` (Config.Startup's SystemMode documentation). iad matched `Live`, so a
+/// real Live instance read as Unknown and USER fell to the namespace heuristic, writes on (spec 140
+/// triage, PLATFORM-22). A failover member is production too.
+#[test]
+fn system_mode_is_read_the_way_iris_stores_it() {
+    use iris_agentic_dev_core::iris::connection::parse_system_mode;
+    for raw in ["LIVE", "Live", " live ", "FAILOVER"] {
+        assert_eq!(parse_system_mode(raw), SystemMode::Live, "{raw:?}");
+    }
+    assert_eq!(parse_system_mode("DEVELOPMENT"), SystemMode::Development);
+    assert_eq!(parse_system_mode("TEST"), SystemMode::Test);
+    for raw in ["", "Staging", "LIVE-ish"] {
+        assert_eq!(parse_system_mode(raw), SystemMode::Unknown, "{raw:?}");
+    }
+    let r = resolve_gates(
+        &OperatorEnvGates::default(),
+        Some(&cfg("")),
+        parse_system_mode("LIVE"),
+        "USER",
+    );
+    assert!(!r.write_enabled, "a LIVE instance keeps writes off in USER");
+}

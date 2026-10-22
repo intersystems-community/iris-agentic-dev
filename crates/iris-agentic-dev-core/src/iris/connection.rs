@@ -209,11 +209,24 @@ pub fn iris_http_client(
 /// Detected at probe time via `^%SYS("SystemMode")` SQL query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SystemMode {
-    Live,        // "Live" — lock write tools
-    Development, // "Development" — allow write tools
-    Test,        // "Test" — allow write tools
+    Live,        // "LIVE" or "FAILOVER" — lock write tools
+    Development, // "DEVELOPMENT" — allow write tools
+    Test,        // "TEST" — allow write tools
     #[default]
     Unknown, // null/empty — apply namespace heuristic
+}
+
+/// Read `^%SYS("SystemMode")`. The Management Portal stores `LIVE`, `TEST`, `DEVELOPMENT` or
+/// `FAILOVER` (Config.Startup's SystemMode); this matched `Live` exactly, so a real Live instance
+/// read as Unknown and had its writes left to the namespace heuristic. A failover member is a
+/// production system too.
+pub fn parse_system_mode(raw: &str) -> SystemMode {
+    match raw.trim().to_ascii_uppercase().as_str() {
+        "LIVE" | "FAILOVER" => SystemMode::Live,
+        "DEVELOPMENT" => SystemMode::Development,
+        "TEST" => SystemMode::Test,
+        _ => SystemMode::Unknown,
+    }
 }
 
 /// Which version of the Atelier REST API to use.
@@ -317,6 +330,11 @@ pub fn container_from_env() -> Option<String> {
     non_blank(std::env::var("IRIS_CONTAINER").ok())
 }
 
+/// `IRIS_HOST`, unless it is unset or blank.
+pub fn host_from_env() -> Option<String> {
+    non_blank(std::env::var("IRIS_HOST").ok())
+}
+
 /// `v` when it holds something other than whitespace.
 pub fn non_blank(v: Option<String>) -> Option<String> {
     v.filter(|s| !s.trim().is_empty())
@@ -375,6 +393,53 @@ pub fn query_output(status: u16, body: &str) -> anyhow::Result<String> {
         serde_json::Value::Null => String::new(),
         other => other.to_string(),
     })
+}
+
+/// The generator's query was sent, so the code ran or is still running. The error keeps its text;
+/// a caller that sees it through [`code_may_have_run`] must neither retry nor run the code another
+/// way. 1.6.3 turned failed query answers into errors, and `iris_execute` then re-ran the code
+/// through docker exec, so a run whose output overflowed the string limit ran twice.
+#[derive(Debug)]
+pub struct CodeMayHaveRun(pub String);
+
+impl std::fmt::Display for CodeMayHaveRun {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for CodeMayHaveRun {}
+
+pub fn code_may_have_run(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<CodeMayHaveRun>().is_some()
+}
+
+/// May a failed generator attempt be tried again? Only on a transient network error or a 5xx
+/// before the code ran; 4xx are client errors (e.g. 401 auth). The extra patterns cover cold-start
+/// failures on the first call: DNS not warm, TLS handshake, connection reset, or a half-open pooled
+/// connection surfacing as EOF / broken pipe.
+pub fn generator_retryable(e: &anyhow::Error) -> bool {
+    if code_may_have_run(e) {
+        return false;
+    }
+    let msg = e.to_string();
+    let lower = msg.to_ascii_lowercase();
+    msg.contains("HTTP 5")
+        || [
+            "error sending request",
+            "connection refused",
+            "connection reset",
+            "connection closed",
+            "broken pipe",
+            "unexpected end of file",
+            "eof",
+            "dns",
+            "handshake",
+            "timed out",
+            "timeout",
+        ]
+        .iter()
+        .any(|p| lower.contains(p))
 }
 
 /// Did the run report a failure instead of the code's own output?
@@ -576,12 +641,7 @@ impl IrisConnection {
             }
             Err(_) => String::new(),
         };
-        match mode.as_str() {
-            "Live" => SystemMode::Live,
-            "Development" => SystemMode::Development,
-            "Test" => SystemMode::Test,
-            _ => SystemMode::Unknown,
-        }
+        parse_system_mode(&mode)
     }
 
     /// Execute ObjectScript code via the write-compile-query cycle (pure HTTP, no docker).
@@ -626,25 +686,7 @@ impl IrisConnection {
                     return Ok(output);
                 }
                 Err(e) => {
-                    let msg = e.to_string();
-                    let msg_lower = msg.to_ascii_lowercase();
-                    // Only retry on transient network errors or 5xx; 4xx are client errors
-                    // (e.g. 401 auth) and must NOT be retried. The extra patterns cover cold-start
-                    // failures on the first call: DNS not warm, TLS handshake, connection reset,
-                    // or a half-open pooled connection surfacing as EOF / broken pipe.
-                    let is_retryable = msg.contains("HTTP 5")
-                        || msg_lower.contains("error sending request")
-                        || msg_lower.contains("connection refused")
-                        || msg_lower.contains("connection reset")
-                        || msg_lower.contains("connection closed")
-                        || msg_lower.contains("broken pipe")
-                        || msg_lower.contains("unexpected end of file")
-                        || msg_lower.contains("eof")
-                        || msg_lower.contains("dns")
-                        || msg_lower.contains("handshake")
-                        || msg_lower.contains("timed out")
-                        || msg_lower.contains("timeout");
-                    if !is_retryable || attempt == delays.len() - 1 {
+                    if !generator_retryable(&e) || attempt == delays.len() - 1 {
                         return Err(e);
                     }
                     // Transient on cold-start (private web server still warming up) — debug only;
@@ -652,7 +694,7 @@ impl IrisConnection {
                     tracing::debug!(
                         "execute_via_generator attempt {} failed ({}), retrying in {:?}",
                         attempt + 1,
-                        msg,
+                        e,
                         delay
                     );
                     last_err = e;
@@ -763,11 +805,15 @@ impl IrisConnection {
             .send()
             .await;
         // The class is compiled by now, so a failed send must still remove it before returning.
+        // Past a connect failure the request may have reached IRIS, so the code may have run.
         let query_resp = match query_resp {
             Ok(r) => r,
             Err(e) => {
                 scratch.release(self, client).await;
-                return Err(e.into());
+                if e.is_connect() {
+                    return Err(e.into());
+                }
+                return Err(CodeMayHaveRun(e.to_string()).into());
             }
         };
         let status = query_resp.status().as_u16();
@@ -776,7 +822,7 @@ impl IrisConnection {
         // 4. Delete the temp class; a failure is logged, the output still returns
         scratch.release(self, client).await;
 
-        query_output(status, &body)
+        query_output(status, &body).map_err(|e| CodeMayHaveRun(e.to_string()).into())
     }
 
     /// Build the `.cls` source lines for the temp executor class.
@@ -2089,21 +2135,8 @@ mod additional_tests {
     // ── is_retryable_error classification logic ───────────────────────────────
 
     /// Helper to classify error messages as retryable or not.
-    /// Mirrors the classification in execute_via_generator (lines 284-295).
     fn classify_error_as_retryable(msg: &str) -> bool {
-        let msg_lower = msg.to_ascii_lowercase();
-        msg.contains("HTTP 5")
-            || msg_lower.contains("error sending request")
-            || msg_lower.contains("connection refused")
-            || msg_lower.contains("connection reset")
-            || msg_lower.contains("connection closed")
-            || msg_lower.contains("broken pipe")
-            || msg_lower.contains("unexpected end of file")
-            || msg_lower.contains("eof")
-            || msg_lower.contains("dns")
-            || msg_lower.contains("handshake")
-            || msg_lower.contains("timed out")
-            || msg_lower.contains("timeout")
+        super::generator_retryable(&anyhow::anyhow!("{msg}"))
     }
 
     #[test]

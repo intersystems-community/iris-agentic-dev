@@ -441,9 +441,10 @@ pub fn file_chooses_connection(
     !in_home
 }
 
-fn chooses(config_path: &std::path::Path) -> bool {
-    let iris_host_set =
-        crate::iris::connection::non_blank(std::env::var("IRIS_HOST").ok()).is_some();
+/// [`file_chooses_connection`] for this process: its home directory and its `IRIS_HOST`. Startup
+/// and the live reload both ask it, so an edit cannot move a session the file yielded.
+pub fn chooses(config_path: &std::path::Path) -> bool {
+    let iris_host_set = crate::iris::connection::host_from_env().is_some();
     file_chooses_connection(config_path, dirs::home_dir().as_deref(), iris_host_set)
 }
 

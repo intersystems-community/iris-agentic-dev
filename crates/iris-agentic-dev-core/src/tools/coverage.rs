@@ -104,7 +104,7 @@ pub fn build_coverage_run_code(routines: &[String], test_path: &str, namespace: 
         // monitor was started with no process list, which covers every process, the JOB's too.
         crate::tools::run_in_job(&format!(
             "##class(%UnitTest.Manager).RunTest(\"{}\",\"/noload/nodelete\")",
-            test_path
+            crate::objectscript::os_lit_inner(test_path)
         )),
         // Read coverage data BEFORE Stop() — Stop() clears the monitor data.
         r#" Write $C(10),"COVERAGE_DATA_START",$C(10)"#.to_string(),
@@ -342,6 +342,11 @@ async fn execute_coverage_code(
 ) -> Result<String, serde_json::Value> {
     match iris.execute_via_generator(code, ns, client).await {
         Ok(output) => Ok(output),
+        // The code ran over HTTP; running RunTest again through docker would repeat the tests.
+        Err(e) if crate::iris::connection::code_may_have_run(&e) => Err(err_json(
+            crate::tools::ERR_QUERY_FAILED_AFTER_RUN,
+            &e.to_string(),
+        )),
         Err(_) => {
             // HTTP path unavailable — try docker exec fallback
             iris.execute(code, ns)

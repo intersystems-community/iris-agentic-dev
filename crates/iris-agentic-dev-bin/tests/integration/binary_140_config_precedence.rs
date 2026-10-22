@@ -237,3 +237,65 @@ fn a_home_directory_toml_keeps_its_tool_list_when_it_yields() {
         "iris_query is disabled by the home file: {refused}"
     );
 }
+
+/// A yielding home file supplied the tool lists, not the connection, so `check_config` says the
+/// connection came from the environment and still names the file it read.
+#[test]
+#[ignore = "requires live IRIS (iris-dev-iris) and the built binary"]
+fn check_config_names_iris_host_when_the_home_file_yields() {
+    let Some(_bin) = require_iad_binary() else {
+        return;
+    };
+    let (h, p, u, w) = live();
+    let (home, project) = home_with_toml("source", &toml_for(NOWHERE, "1", &u, &w));
+    let mut env = env(&h, &p, &u, &w);
+    env.push(("HOME".into(), home.to_string_lossy().into_owned()));
+    let mut s = McpSession::start_in(Some(&project), &env);
+    let answer = s.call("check_config", &serde_json::json!({}));
+    let text = answer
+        .pointer("/result/content/0/text")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let v: serde_json::Value = serde_json::from_str(text).expect("check_config payload");
+    assert_eq!(v["connection_source"], "env_vars", "{v}");
+    assert!(
+        v["config_file"]
+            .as_str()
+            .is_some_and(|f| f.ends_with(".iris-agentic-dev.toml")),
+        "{v}"
+    );
+}
+
+/// The rule holds on a live reload too: editing a yielding home file mid-session reloads its
+/// settings and keeps the `IRIS_HOST` server. Before, the reload took the file's connection
+/// whatever its place, so the edit moved the session to the host the file named.
+#[test]
+#[ignore = "requires live IRIS (iris-dev-iris) and the built binary"]
+fn editing_a_yielding_home_file_mid_session_keeps_the_iris_host_server() {
+    let Some(_bin) = require_iad_binary() else {
+        return;
+    };
+    let (h, p, u, w) = live();
+    let toml = toml_for(NOWHERE, "1", &u, &w);
+    let (home, project) = home_with_toml("reload", &toml);
+    let mut env = env(&h, &p, &u, &w);
+    env.push(("HOME".into(), home.to_string_lossy().into_owned()));
+    let mut s = McpSession::start_in(Some(&project), &env);
+    let exec = |s: &mut McpSession| {
+        answer_text(&s.call(
+            "iris_execute",
+            &serde_json::json!({"code": "Write \"iad140:\",$ZVersion", "namespace": "USER"}),
+        ))
+    };
+    let before = exec(&mut s);
+    assert!(before.contains("iad140:"), "before the edit: {before}");
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    std::fs::write(
+        home.join(".iris-agentic-dev.toml"),
+        format!("{toml}# edited\n"),
+    )
+    .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let after = exec(&mut s);
+    assert!(after.contains("iad140:"), "after the edit: {after}");
+}

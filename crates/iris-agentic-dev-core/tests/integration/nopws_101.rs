@@ -123,6 +123,10 @@ async fn test_iris_execute_docker_exec_fallback() {
         return;
     };
 
+    // Since 1.6.3 a project `.iris-agentic-dev.toml` outranks IRIS_*, so the walk up from the
+    // crate directory would find the checkout's own file and connect over HTTP.
+    let empty_workspace = tempfile::TempDir::new().expect("temp workspace");
+
     let mut child = Command::new(&binary)
         // The MCP server is the `mcp` subcommand. Spawning the bare binary prints the usage
         // banner and exits, which these tests read as an empty stdout.
@@ -131,6 +135,8 @@ async fn test_iris_execute_docker_exec_fallback() {
         // iris_execute and iris_compile are write tools and refuse when the gate is off.
         .env("IRIS_WRITE_TOOLS_ENABLED", "1")
         .env_remove("IRIS_DESTRUCTIVE_TOOLS_ENABLED")
+        .env("OBJECTSCRIPT_WORKSPACE", empty_workspace.path())
+        .current_dir(empty_workspace.path())
         .envs(live_iris_env())
         .env("IRIS_WEB_PORT", "1") // closed port → forces docker exec fallback
         .env("IRIS_CONTAINER", &container)

@@ -4,6 +4,7 @@
 #![allow(clippy::await_holding_lock)]
 // No Docker, no network required.
 
+use iris_agentic_dev_core::iris::connection::DiscoverySource;
 use iris_agentic_dev_core::iris::discovery::{
     emit_unhealthy_message, score_container_name, DiscoveryResult, FailureMode, IrisDiscovery,
 };
@@ -1051,6 +1052,49 @@ async fn test_discover_iris_with_scheme_and_prefix() {
         matches!(result, IrisDiscovery::Found(_)),
         "discover_iris with both IRIS_SCHEME and IRIS_WEB_PREFIX should return Found"
     );
+}
+
+/// `IRIS_HOST` names a server, and a named server that does not answer is still the one used, as
+/// a `--host` flag is. 1.6.3 stopped clap filling `--host` from `IRIS_HOST`, and the env step then
+/// fell through on a failed probe to the `IRIS_CONTAINER` lookup and the localhost scan, so a
+/// session aimed at a stopped server quietly ran against a different one (nopws_101 caught it).
+#[tokio::test]
+#[ignore] // The probe of 127.0.0.2:1 can take a few seconds
+async fn a_named_server_that_does_not_answer_is_kept_not_replaced() {
+    let _guard = DISCOVERY_LOCK.lock().unwrap();
+    let keys = [
+        "IRIS_HOST",
+        "IRIS_WEB_PORT",
+        "IRIS_SCHEME",
+        "IRIS_WEB_PREFIX",
+        "IRIS_CONTAINER",
+    ];
+    let saved: Vec<_> = keys.iter().map(|k| (*k, std::env::var(k).ok())).collect();
+    std::env::set_var("IRIS_HOST", "127.0.0.2");
+    std::env::set_var("IRIS_WEB_PORT", "1");
+    for k in ["IRIS_SCHEME", "IRIS_WEB_PREFIX", "IRIS_CONTAINER"] {
+        std::env::remove_var(k);
+    }
+
+    let result = iris_agentic_dev_core::iris::discovery::discover_iris(None).await;
+
+    for (k, v) in saved {
+        match v {
+            Some(v) => std::env::set_var(k, v),
+            None => std::env::remove_var(k),
+        }
+    }
+    match result {
+        IrisDiscovery::Found(c) => {
+            assert_eq!(c.base_url, "http://127.0.0.2:1", "the named server is kept");
+            assert!(
+                matches!(c.source, DiscoverySource::EnvVar),
+                "{:?}",
+                c.source
+            );
+        }
+        _ => panic!("IRIS_HOST names a server; discovery must not drop it"),
+    }
 }
 
 /// Test IRIS_SCHEME with leading slashes gets trimmed (L161)
