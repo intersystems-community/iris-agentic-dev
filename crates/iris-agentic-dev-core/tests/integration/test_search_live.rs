@@ -31,6 +31,17 @@ async fn make_conn() -> Option<(IrisConnection, reqwest::Client)> {
     Some((conn, reqwest::Client::new()))
 }
 
+/// The class the scoped searches look in: two `Test*` methods, so `TestAlwaysPasses` and the regex
+/// `Test.*Passes` each have something to find. Put and compiled the same way every time.
+async fn seed_search_fixture(iris: &IrisConnection, client: &reqwest::Client) {
+    let code = " Set c=\"IadSearchFixture.UnitTestSuite\" If '##class(%Dictionary.CompiledClass).%ExistsId(c) {\n   Set d=##class(%Dictionary.ClassDefinition).%New() Set d.Name=c, d.Super=\"%UnitTest.TestCase\"\n   For n=\"TestAlwaysPasses\",\"TestAlwaysFails\" { Set m=##class(%Dictionary.MethodDefinition).%New() Set m.Name=n Do m.Implementation.WriteLine(\" Do $$$AssertEquals(1,\"_$Select(n[\"Passes\":1,1:2)_\")\") Do d.Methods.Insert(m) }\n   Set sc=d.%Save() Set:sc sc=$system.OBJ.Compile(c,\"ck-d\") Write:'sc $system.Status.GetErrorText(sc)\n }\n Write \"seeded\"";
+    let out = iris
+        .execute_via_generator(code, "USER", client)
+        .await
+        .expect("seed the search fixture");
+    assert!(out.contains("seeded"), "search fixture: {out}");
+}
+
 fn make_log_store() -> Arc<Mutex<log_store::LogStore>> {
     Arc::new(Mutex::new(log_store::LogStore::new(200, 60)))
 }
@@ -41,7 +52,8 @@ fn result_json(r: Result<rmcp::model::CallToolResult, rmcp::ErrorData>) -> serde
 }
 
 // ── T001: Basic search finds results ──────────────────────────────────────────
-// IrisDevRunTest.UnitTestSuite.cls is created by the CI setup step and exists
+// IadSearchFixture.UnitTestSuite is seeded by each test (`seed_search_fixture`). These used to search
+// IrisDevRunTest.UnitTestSuite, which only exists while another test happens to leave it compiled.
 // on the local dev container. TestAlwaysPasses is a known method in that class.
 
 #[tokio::test]
@@ -51,10 +63,11 @@ async fn test_search_basic_finds_results() {
         eprintln!("IRIS_HOST not set — skipping");
         return;
     };
+    seed_search_fixture(&iris, &client).await;
 
     let p: SearchParams = serde_json::from_value(serde_json::json!({
         "query": "TestAlwaysPasses",
-        "documents": ["IrisDevRunTest.*.cls"],
+        "documents": ["IadSearchFixture.*.cls"],
         "namespace": "USER"
     }))
     .unwrap();
@@ -78,10 +91,11 @@ async fn test_search_inline_bypasses_truncation() {
         eprintln!("IRIS_HOST not set — skipping");
         return;
     };
+    seed_search_fixture(&iris, &client).await;
 
     let p: SearchParams = serde_json::from_value(serde_json::json!({
         "query": "TestAlwaysPasses",
-        "documents": ["IrisDevRunTest.*.cls"],
+        "documents": ["IadSearchFixture.*.cls"],
         "namespace": "USER",
         "inline": true
     }))
@@ -106,10 +120,11 @@ async fn test_search_regex_flag() {
         eprintln!("IRIS_HOST not set — skipping");
         return;
     };
+    seed_search_fixture(&iris, &client).await;
 
     let p: SearchParams = serde_json::from_value(serde_json::json!({
         "query": "Test.*Passes",
-        "documents": ["IrisDevRunTest.*.cls"],
+        "documents": ["IadSearchFixture.*.cls"],
         "namespace": "USER",
         "regex": true
     }))
@@ -138,10 +153,11 @@ async fn test_search_case_sensitive() {
         eprintln!("IRIS_HOST not set — skipping");
         return;
     };
+    seed_search_fixture(&iris, &client).await;
 
     let p: SearchParams = serde_json::from_value(serde_json::json!({
         "query": "TestAlwaysPasses",
-        "documents": ["IrisDevRunTest.*.cls"],
+        "documents": ["IadSearchFixture.*.cls"],
         "namespace": "USER",
         "case_sensitive": true
     }))
@@ -167,10 +183,11 @@ async fn test_search_category_cls_filter() {
         eprintln!("IRIS_HOST not set — skipping");
         return;
     };
+    seed_search_fixture(&iris, &client).await;
 
     let p: SearchParams = serde_json::from_value(serde_json::json!({
         "query": "TestAlwaysPasses",
-        "documents": ["IrisDevRunTest.*.cls"],
+        "documents": ["IadSearchFixture.*.cls"],
         "namespace": "USER",
         "category": "CLS"
     }))
@@ -196,10 +213,11 @@ async fn test_search_no_results_for_nonexistent_term() {
         eprintln!("IRIS_HOST not set — skipping");
         return;
     };
+    seed_search_fixture(&iris, &client).await;
 
     let p: SearchParams = serde_json::from_value(serde_json::json!({
         "query": "XYZZY_NONEXISTENT_12345_COVERAGE_PROBE",
-        "documents": ["IrisDevRunTest.*.cls"],
+        "documents": ["IadSearchFixture.*.cls"],
         "namespace": "USER"
     }))
     .unwrap();
