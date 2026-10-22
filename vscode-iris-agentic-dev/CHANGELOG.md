@@ -5,9 +5,9 @@ This extension installs the iris-agentic-dev server, and each entry below is a s
 ## v1.6.4
 
 Upgrade if you run iad against IRIS on Windows, run code that moves the current device, or run
-Claude Code on the binary the VS Code extension downloaded.
-`iris_execute` and every tool built on it could answer `ERROR($DEVICE)` and call the output lost
-when it was not.
+Claude Code on a binary the VS Code extension or the plugin set up. `iris_execute` and every tool
+built on it could answer `ERROR($DEVICE)` and call the output lost when it was not, and Claude
+Code could keep running an old binary with nothing telling you.
 
 ### Notable fixes
 
@@ -40,7 +40,6 @@ when it was not.
   and you are not asked again until a newer binary arrives. Only entries whose command names one
   of the extension's own version directories count; anything else, including another editor's
   storage or a file with comments in it, is never touched.
-
 - **The Claude Code plugin says when its binary is out of date.** The plugin's skills and hooks
   update with the plugin, but the MCP server is whatever `iris-agentic-dev` is on PATH, so a user
   could run an old binary under newer skills and never know. A session-start hook now compares the
