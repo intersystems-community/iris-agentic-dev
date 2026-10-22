@@ -116,3 +116,18 @@ fn a_blank_container_name_is_no_container() {
     assert_eq!(non_blank(Some("  ".into())), None);
     assert_eq!(non_blank(Some("iris-e2e".into())), Some("iris-e2e".into()));
 }
+
+/// A status error that comes with a result is not a failure: the result is what the call produced.
+#[test]
+fn a_status_error_beside_a_result_returns_the_result() {
+    let body = r#"{"status":{"errors":[{"error":"ERROR #5035: General exception Name 'Parsing error'"}]},"result":{"content":[{"result":"dispatch"}]}}"#;
+    assert_eq!(query_output(200, body).unwrap(), "dispatch");
+}
+
+/// The generator's result carries a leading $Char(2) so Atelier returns it as text; it is removed.
+#[test]
+fn the_result_marker_is_removed() {
+    let body =
+        "{\"status\":{\"errors\":[]},\"result\":{\"content\":[{\"result\":\"\\u0002[1,2\"}]}}";
+    assert_eq!(query_output(200, body).unwrap(), "[1,2");
+}

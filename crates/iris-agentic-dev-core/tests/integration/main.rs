@@ -33,6 +33,7 @@ mod test_content_skills_130_live;
 mod test_coverage_live;
 mod test_delete_callback_oid_live;
 mod test_discovery_docker_live;
+mod test_dispatch_formal_spec_live;
 mod test_dispatch_gate_handlers;
 mod test_doc_live;
 mod test_doc_search_live;

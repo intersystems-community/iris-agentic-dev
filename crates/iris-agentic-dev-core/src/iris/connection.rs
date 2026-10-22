@@ -322,6 +322,9 @@ pub fn non_blank(v: Option<String>) -> Option<String> {
     v.filter(|s| !s.trim().is_empty())
 }
 
+/// What the generator class puts in front of its result; see `build_exec_class`.
+const RESULT_MARK: char = '\u{2}';
+
 /// The captured output from a generator's `/action/query` answer.
 ///
 /// A non-2xx status, a body that is not JSON, or errors in Atelier's `status` are errors. The old
@@ -342,9 +345,13 @@ pub fn query_output(status: u16, body: &str) -> anyhow::Result<String> {
              messages.log grows during a test. The answer began: {head}"
         )
     })?;
+    let result = &parsed["result"]["content"][0]["result"];
+    // An error in Atelier's status with no result means the query failed. With a result, the
+    // result is the answer: some calls report a status error alongside output they did produce
+    // (resolve_dynamic_dispatch gets ERROR #5035 "Parsing error" with a usable result).
     if let Some(errors) = parsed["status"]["errors"]
         .as_array()
-        .filter(|e| !e.is_empty())
+        .filter(|e| !e.is_empty() && result.is_null())
     {
         let text: Vec<String> = errors
             .iter()
@@ -360,8 +367,11 @@ pub fn query_output(status: u16, body: &str) -> anyhow::Result<String> {
             text.join("; ")
         );
     }
-    Ok(match &parsed["result"]["content"][0]["result"] {
-        serde_json::Value::String(s) => s.replace('\x01', "\n"),
+    Ok(match result {
+        serde_json::Value::String(s) => s
+            .strip_prefix(RESULT_MARK)
+            .unwrap_or(s)
+            .replace('\x01', "\n"),
         serde_json::Value::Null => String::new(),
         other => other.to_string(),
     })
@@ -837,7 +847,10 @@ impl IrisConnection {
             // case, and the exact comparison refused every call there from 1.3.2 on (#139).
             "  If $ZConvert(devio,\"L\")'=$ZConvert(tmpfile,\"L\") { Set out = \"ERROR($DEVICE): the called code left the current device set to \"\"\"_devio_\"\"\" instead of the capture file, so its output was written elsewhere and is lost. Snapshot and restore around the call: Set io=$IO / <call> / Use io\"_$Char(10) }"
                 .into(),
-            "  Quit out".into(),
+            // $Char(2) first, so Atelier never sees text that looks like JSON: it hands such a
+            // column back parsed, and fails with ERROR #5035 when the JSON is not valid (an output
+            // of `[1,2`). `query_output` strips it.
+            "  Quit $Char(2)_out".into(),
             "}".into(),
             "".into(),
             "}".into(),

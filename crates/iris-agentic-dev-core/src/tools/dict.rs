@@ -96,8 +96,6 @@ pub async fn handle_resolve_dynamic_dispatch(
     let method_esc = p.method_name.replace('"', "\"\"");
     let prefix_esc = prefix.replace('"', "\"\"");
 
-    // Build ObjectScript — use q=$CHAR(34) for embedded JSON quotes
-    let mut lines: Vec<String> = vec!["Set q=$CHAR(34)".into()];
     let mut sql = "SELECT m.parent, m.Origin, m.FormalSpec FROM %Dictionary.CompiledMethod m WHERE m.Name = ? AND m.Origin = m.parent".to_string();
     if has_prefix {
         sql.push_str(" AND m.parent %STARTSWITH ?");
@@ -106,7 +104,7 @@ pub async fn handle_resolve_dynamic_dispatch(
         " ORDER BY m.parent FETCH FIRST {} ROWS ONLY",
         limit
     ));
-    lines.push(format!(r#"Set sql="{}""#, sql));
+    let mut lines = vec![format!(r#"Set sql="{}""#, sql)];
     if has_prefix {
         lines.push(format!(
             r#"Set rs=##class(%SQL.Statement).%ExecDirect(,sql,"{}","{}")"#,
@@ -119,12 +117,13 @@ pub async fn handle_resolve_dynamic_dispatch(
         ));
     }
     lines.push(r#"If rs.%SQLCODE<0 { Write "ERROR:"_rs.%Message,! Quit }"#.into());
-    lines.push(r#"Set out="[",sep="""#.into());
+    // %ToJSON escapes the values. The rows used to be joined by hand, so a FormalSpec holding a
+    // quote (`pX:%String="a"`) made the output unparseable and the tool answered no candidates.
+    lines.push("Set out=[]".into());
     lines.push("While rs.%Next() {".into());
-    lines.push(r#"  Set out=out_sep_"{"_q_"class"_q_":"_q_rs.parent_q_","_q_"origin"_q_":"_q_rs.Origin_q_","_q_"formal_spec"_q_":"_q_rs.FormalSpec_q_"}""#.into());
-    lines.push(r#"  Set sep=",""#.into());
+    lines.push(r#"  Do out.%Push({"class":(rs.parent),"origin":(rs.Origin),"formal_spec":(rs.FormalSpec)})"#.into());
     lines.push("}".into());
-    lines.push(r#"Write out_"]",!"#.into());
+    lines.push("Write out.%ToJSON(),!".into());
     let code = lines.join("\n");
 
     let output = iris
