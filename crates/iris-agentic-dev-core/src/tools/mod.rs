@@ -1607,7 +1607,7 @@ pub fn write_open_hint(namespace: &str, document: &str) {
 pub fn validate_read_only_sql(sql: &str) -> Result<(), String> {
     const BLOCKED: &[&str] = &[
         "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "MERGE", "TRUNCATE", "EXEC",
-        "EXECUTE", "BULK", "LOAD", "KILL", "LOCK", "GRANT", "REVOKE", "CALL",
+        "EXECUTE", "BULK", "LOAD", "KILL", "LOCK", "GRANT", "REVOKE",
     ];
 
     // Step 1: strip /* ... */ block comments
@@ -4976,7 +4976,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Execute SQL against IRIS via Atelier REST. mode=\"read\" (default): SELECT only, destructive SQL blocked unless force=true. mode=\"explain\": returns the IRIS query plan for a SELECT (plan_text, query_hash), no rows. mode=\"count\": returns a row count for `table` or `query` without transferring rows. mode=\"write\": executes INSERT/UPDATE/DELETE/CALL/TRUNCATE (Execute-gated, blocked on mcpTemplate=live/test); UPDATE/DELETE are pre-checked against max_rows_affected (default 1000, max 10000) before executing. Skill: objectscript-sql-patterns for IRIS SQL quirks. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "Execute SQL against IRIS via Atelier REST. mode=\"read\" (default): SELECT and CALL; DML, DDL, GRANT and REVOKE are refused (force=true skips this when write tools are enabled, and then counts as a write). Read mode does not stop a stored procedure that has side effects, whether it is called with CALL or inside a SELECT: only the IRIS user's privileges do. mode=\"explain\": returns the IRIS query plan for a SELECT (plan_text, query_hash), no rows. mode=\"count\": returns a row count for `table` or `query` without transferring rows. mode=\"write\": executes INSERT/UPDATE/DELETE/CALL/TRUNCATE (Execute-gated, blocked on mcpTemplate=live/test); UPDATE/DELETE are pre-checked against max_rows_affected (default 1000, max 10000) before executing. Skill: objectscript-sql-patterns for IRIS SQL quirks. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         output_schema = output_schemas::oneof_output_schema::<IrisQueryResponse>()
     )]
     async fn iris_query(

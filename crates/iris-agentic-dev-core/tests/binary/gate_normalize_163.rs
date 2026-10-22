@@ -63,20 +63,16 @@ fn a_padded_kill_is_refused_by_the_destructive_gate() {
     }
 }
 
-/// GRANT, REVOKE and CALL are not reads. The read-only check refuses them before any IRIS call,
-/// and the refusal points at `mode="write"`, not at `force`.
+/// GRANT and REVOKE are not reads. The read-only check refuses them before any IRIS call, and the
+/// refusal points at `mode="write"`, not at `force`.
 #[test]
 #[ignore = "spawns the built binary; run with --include-ignored"]
-fn read_mode_refuses_grant_revoke_and_call() {
+fn read_mode_refuses_grant_and_revoke() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
     let mut s = session("false", "false");
-    for query in [
-        "GRANT %ALL TO UnknownUser",
-        "REVOKE SELECT ON X FROM Y",
-        "CALL Sample.Evil()",
-    ] {
+    for query in ["GRANT %ALL TO UnknownUser", "REVOKE SELECT ON X FROM Y"] {
         let answer = s.call("iris_query", &serde_json::json!({"query": query}));
         assert_eq!(error_code(&answer), "SQL_WRITE_BLOCKED", "{query}");
         let text = answer_text(&answer);

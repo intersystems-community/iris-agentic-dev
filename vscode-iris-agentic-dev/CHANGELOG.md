@@ -30,10 +30,11 @@ passing test as not found, `iris_execute` could report success with no output, a
   compared the name as typed and the tools stripped the caret, so `iris_global` refused `ROUTINE`
   and then read or wrote `^ROUTINE`. Every gate now reads the same name the tool uses. The
   blocklist also covers `^rMAC`, `^rINC` and 16 other code-storage globals it had missed.
-- **`iris_query` read mode refuses `GRANT`, `REVOKE` and `CALL`.** A stored procedure can run
-  ObjectScript, so `CALL` in read mode ran code with writes off; send it with `mode="write"`. A
-  read with `force: true` now counts as a write for the live and test templates, and the refusal
-  no longer suggests `force`.
+- **`iris_query` read mode refuses `GRANT` and `REVOKE`.** A read with `force: true` now counts as
+  a write for the live and test templates, and the refusal no longer suggests `force`. Read mode
+  still sends `CALL`, and the tool description and `docs/tools.md` now say what read mode does not
+  stop: a stored procedure with side effects, called with `CALL` or inside a `SELECT`. Only the IRIS
+  user's privileges stop that.
 - **A Live instance is read as Live.** IRIS stores `^%SYS("SystemMode")` as `LIVE`, `TEST`,
   `DEVELOPMENT` or `FAILOVER`. iad matched `Live`, so on every real Live instance it found no
   mode, fell back to the namespace name, and left writes on in `USER` and any namespace not named
@@ -77,10 +78,6 @@ passing test as not found, `iris_execute` could report success with no output, a
 - **`objectscript-unit-test`** says not to run `%UnitTest.Manager` through `iris_execute`, and why.
 
 ### Breaking changes
-
-- **`iris_query` sends `CALL` only with `mode="write"`**, which needs write tools enabled. Read mode
-  used to send it, as a deliberate trade-off (spec 033), and a procedure that writes or runs
-  ObjectScript then ran with writes off.
 
 - **`.iris-agentic-dev.toml` outranks `IRIS_*` at startup**, as `docs/connecting.md` has always
   said: a `--host` flag, then the workspace file, then the environment. Before, any `IRIS_HOST`

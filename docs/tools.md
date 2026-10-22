@@ -546,6 +546,13 @@ iris_query(query="UPDATE MyApp.Patient SET Status = 'Archived' WHERE ID = ?",
            parameters=["123"], mode="write")
 ```
 
+**What read mode refuses.** `mode="read"` refuses DML, DDL, `GRANT` and `REVOKE` before IRIS sees
+the query. It sends `SELECT` and `CALL`. A stored procedure that writes or runs ObjectScript still
+runs in read mode, whether it is called with `CALL` or inside a `SELECT` (`SELECT Pkg.Proc()`): no
+check on the query text can tell that call from `SELECT LENGTH(x)`. If read mode has to be safe,
+connect as an IRIS user without `EXECUTE` on such procedures. `force=true` skips the check only when write tools are enabled, and the
+live and test templates then treat the call as a write.
+
 **`server`** (optional): route this call to a named registered IRIS instance. If omitted,
 uses the default connection. Use `iris_servers` to list available instances.
 
