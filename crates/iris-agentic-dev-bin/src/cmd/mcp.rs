@@ -48,7 +48,10 @@ pub struct McpCommand {
     /// Bind address for HTTP transport (default: 127.0.0.1)
     #[arg(long, default_value = "127.0.0.1")]
     pub bind: String,
-    #[arg(long, env = "IRIS_HOST")]
+    // No `env = "IRIS_HOST"`: clap would fill this slot from the variable, so any `IRIS_HOST`
+    // made the connection explicit and outranked `.iris-agentic-dev.toml`. The documented order is
+    // flag, then the file, then `IRIS_*`; discovery reads `IRIS_HOST` itself after the file.
+    #[arg(long)]
     pub host: Option<String>,
     #[arg(long, env = "IRIS_WEB_PORT")]
     pub web_port: Option<u16>,
