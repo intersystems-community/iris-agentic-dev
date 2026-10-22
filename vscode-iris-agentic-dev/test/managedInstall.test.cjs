@@ -35,6 +35,13 @@ Module._resolveFilename = function (request, ...rest) {
 const vscodeStub = require("vscode");
 const whichStub = require("which");
 
+// Tier 3 now repoints MCP registrations under the home directory
+// (~/.claude.json, ~/.cursor/mcp.json, ...). Point HOME at an empty temp dir so
+// no test reads, let alone writes, the developer's real client configs.
+const FAKE_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "iad-home-"));
+process.env.HOME = FAKE_HOME;
+process.env.USERPROFILE = FAKE_HOME;
+
 // Build managedInstall.ts → .test-out/managedInstall.cjs before running tests
 // (done in package.json test script)
 const { resolveServerBinary } = require("../.test-out/managedInstall.cjs");
@@ -104,7 +111,12 @@ test("US1: version marker matches and binary exists → returns cached path with
   const ctx = makeContext(version, tmp);
   const result = await resolveServerBinary(ctx);
 
-  assert.equal(result, binaryPath);
+  // The caller gets the fixed-name copy, not the version directory: that is
+  // the path the Output channel shows, and so the one people paste into other
+  // clients' configs.
+  const { stableBinaryPath } = require("../.test-out/stablePath.cjs");
+  assert.equal(result, stableBinaryPath(tmp, process.platform));
+  assert.equal(fs.readFileSync(result, "utf8"), fs.readFileSync(binaryPath, "utf8"));
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -212,9 +224,12 @@ test("US3: download fails and stale binary exists → returns stale path", async
   const result = await resolveServerBinary(ctx);
 
   vscodeStub.window.withProgress = origWithProgress;
-  fs.rmSync(tmp, { recursive: true, force: true });
 
-  assert.equal(result, binaryPath);
+  // The stale binary is served through the fixed-name copy, like any other.
+  const { stableBinaryPath } = require("../.test-out/stablePath.cjs");
+  assert.equal(result, stableBinaryPath(tmp, process.platform));
+  assert.match(fs.readFileSync(result, "utf8"), /stale/);
+  fs.rmSync(tmp, { recursive: true, force: true });
 });
 
 test("US3: download fails and no cache → returns null", async () => {
@@ -375,5 +390,64 @@ test("tier 2: version check cannot hang on a binary that never exits", async () 
   } finally {
     whichStub.__reset();
     fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// --- every registration follows the newest binary ----------------------------
+//
+// A Windows user's ~/.claude.json named .../iris-agentic-dev-1.5.0/...exe,
+// written once when they registered the server. The extension went on to
+// download 1.6.0 and 1.6.3, and Claude Code kept launching 1.5.0.
+
+test("an update leaves every registration pointing at the newest binary", async () => {
+  const { getBinaryName } = require("../.test-out/platform.cjs");
+  const { stableBinaryPath } = require("../.test-out/stablePath.cjs");
+  const binaryName = getBinaryName(process.platform, process.arch);
+  if (!binaryName) return;
+
+  const storage = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
+  const seed = (v) => {
+    const dir = path.join(storage, `iris-agentic-dev-${v}`);
+    fs.mkdirSync(dir, { recursive: true });
+    const p = path.join(dir, binaryName);
+    fs.writeFileSync(p, `#!/bin/sh\necho "iris-agentic-dev ${v}"\n`, { mode: 0o755 });
+    return p;
+  };
+  const claudeJson = path.join(FAKE_HOME, ".claude.json");
+  try {
+    const pinned = seed("1.5.0");
+    seed("1.6.4");
+    fs.writeFileSync(path.join(storage, "iris-agentic-dev.version"), "1.6.4");
+    fs.writeFileSync(
+      claudeJson,
+      JSON.stringify(
+        {
+          mcpServers: {
+            "iris-agentic-dev": { command: pinned, args: ["mcp"] },
+            mine: { command: "/opt/iad/iris-agentic-dev", args: ["mcp"] },
+          },
+        },
+        null,
+        2
+      )
+    );
+
+    const stable = stableBinaryPath(storage, process.platform);
+    assert.equal(await resolveServerBinary(makeContext("1.6.4", storage)), stable);
+    let reg = JSON.parse(fs.readFileSync(claudeJson, "utf8"));
+    assert.equal(reg.mcpServers["iris-agentic-dev"].command, stable, "pinned entry repointed");
+    assert.equal(reg.mcpServers.mine.command, "/opt/iad/iris-agentic-dev", "user entry untouched");
+    assert.match(fs.readFileSync(stable, "utf8"), /1\.6\.4/);
+
+    // The next update changes the binary behind the path, not the path.
+    seed("1.6.5");
+    fs.writeFileSync(path.join(storage, "iris-agentic-dev.version"), "1.6.5");
+    assert.equal(await resolveServerBinary(makeContext("1.6.5", storage)), stable);
+    reg = JSON.parse(fs.readFileSync(claudeJson, "utf8"));
+    assert.equal(reg.mcpServers["iris-agentic-dev"].command, stable);
+    assert.match(fs.readFileSync(stable, "utf8"), /1\.6\.5/);
+  } finally {
+    fs.rmSync(claudeJson, { force: true });
+    fs.rmSync(storage, { recursive: true, force: true });
   }
 });

@@ -479,9 +479,12 @@ of `IRIS_*` variables works too if the client supports one.
 
 **Finding the binary.** Install it standalone (Homebrew, or the
 [latest release](https://github.com/intersystems-community/iris-agentic-dev/releases/latest))
-and use that path. If the extension already downloaded one, it is under the editor's
-extension storage in a version-named subdirectory —
-`<storage>/intersystems-community.iris-agentic-dev/iris-agentic-dev-<version>/iris-agentic-dev-<platform>`:
+and use that path. If the extension already downloaded one, use the fixed-name copy it keeps
+under the editor's extension storage —
+`<storage>/intersystems-community.iris-agentic-dev/bin/iris-agentic-dev` (`.exe` on Windows). The
+extension replaces that file on every update, so a client registered with it follows the extension.
+Do not register the version-named directory beside it (`iris-agentic-dev-<version>/`): the client
+keeps launching that version after the extension moves on.
 
 | Platform | `<storage>`                                             |
 | -------- | ------------------------------------------------------- |
@@ -490,9 +493,9 @@ extension storage in a version-named subdirectory —
 | Windows  | `%APPDATA%\Code\User\globalStorage`                     |
 
 Forks substitute their own directory for `Code` (`Cursor`, `Windsurf`, and so on). The
-platform suffix is `macos-arm64`, `macos-x86_64`, `linux-x86_64`, `linux-aarch64`, or
-`windows-x86_64.exe`. Setting `iris-agentic-dev.serverPath` in the editor's settings points
-the extension at a binary you manage instead, which also tells you where it is.
+extension's Output channel logs the full path when it starts. Setting
+`iris-agentic-dev.serverPath` in the editor's settings points the extension at a binary you manage
+instead, which also tells you where it is.
 
 **Verify before wiring anything.** The binary answers on its own, so a failure here is a
 connection problem, not a client-config problem:
