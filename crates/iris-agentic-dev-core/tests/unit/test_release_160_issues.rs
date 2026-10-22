@@ -12,14 +12,12 @@ fn capture_check_compares_against_the_device_iris_named() {
         "Write 1",
     );
     let code = lines.join("\n");
-    let use_at = lines
-        .iter()
-        .position(|l| l.trim() == "Use tmpfile")
-        .expect("Use tmpfile");
-    assert_eq!(
-        lines[use_at + 1].trim(),
-        "Set capdev = $IO",
-        "the capture device is recorded right after it is selected: {code}"
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.trim() == "Use tmpfile  Set capdev = $IO"),
+        "the capture device is recorded on the line that selects it, so user code keeps its \
+         Execute+N position: {code}"
     );
     assert!(code.contains("devio'=capdev"), "{code}");
     assert!(

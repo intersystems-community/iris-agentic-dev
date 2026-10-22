@@ -17,7 +17,23 @@ MCP server registered against it, and a query returning rows.
 command -v iris-agentic-dev && iris-agentic-dev --version
 ```
 
-Found: skip to step 3. Not found: step 2.
+Not found: step 2.
+
+Found: compare its version with the latest release. The plugin's skills and hooks update with the
+plugin, but the binary does not, so an older binary runs under newer skills that describe tools
+it may not have:
+
+```bash
+curl -fsSL https://api.github.com/repos/intersystems-community/iris-agentic-dev/releases/latest \
+  | sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p'
+```
+
+If the binary is older, tell the user and offer to upgrade it before going on. With Homebrew,
+`brew upgrade iris-agentic-dev`; otherwise repeat step 2, writing the new binary over the old one
+at the path `command -v iris-agentic-dev` printed. On Windows a running `.exe` cannot be
+overwritten: close Claude Code and any other client using it first, or rename the old file and put
+the new one in its place. Ask before upgrading; do not do it unprompted. If it is current, or the
+user declines, skip to step 3.
 
 ## 2. Install the binary
 

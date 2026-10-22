@@ -867,11 +867,11 @@ impl IrisConnection {
             "  Set savedIO = $IO".into(),
             "  Open tmpfile:(\"WNS\":/IOT=\"UTF8\"):5".into(),
             "  If '$TEST { Quit \"ERROR: output capture unavailable\" }".into(),
-            "  Use tmpfile".into(),
-            // The name IRIS gives the capture device, which is what `$IO` reports later. It is
-            // not always the string TempFilename returned: native Windows IRIS lower-cases it
-            // (#139) and IRIS rewrites paths such as `/tmp/./x`.
-            "  Set capdev = $IO".into(),
+            // `capdev` is the name IRIS gives the capture device, which is what `$IO` reports
+            // later. It is not always the string TempFilename returned: native Windows IRIS
+            // lower-cases it (#139) and IRIS rewrites paths such as `/tmp/./x`. Same line as the
+            // `Use`, so user code still starts at Execute+7 in IRIS error positions.
+            "  Use tmpfile  Set capdev = $IO".into(),
             "  Try {".into(),
         ];
         for line in code.lines() {
