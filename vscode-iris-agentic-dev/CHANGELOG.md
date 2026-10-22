@@ -4,7 +4,8 @@ This extension installs the iris-agentic-dev server, and each entry below is a s
 
 ## v1.6.4
 
-Upgrade if you run iad against IRIS on Windows, or run code that moves the current device.
+Upgrade if you run iad against IRIS on Windows, run code that moves the current device, or run
+Claude Code on the binary the VS Code extension downloaded.
 `iris_execute` and every tool built on it could answer `ERROR($DEVICE)` and call the output lost
 when it was not.
 
@@ -22,6 +23,23 @@ when it was not.
   what the code wrote before the move is in the capture file, and Atelier returns what it wrote
   after the move in its answer. iad now returns both, in order. A move to any other device, such as
   a file the code opened and left selected, is still an error.
+- **Claude Code now follows the binary the VS Code extension downloads.** The extension kept each
+  download in a version-named directory under its storage, `iris-agentic-dev-<version>/`, and
+  [connecting.md](https://github.com/intersystems-community/iris-agentic-dev/blob/master/docs/connecting.md) told you to register that path with other MCP clients. The
+  extension went on downloading new releases, but Claude Code, Cursor and the rest kept launching
+  the version they were first given: one Windows user had 1.5.0, 1.6.0 and 1.6.3 on disk and
+  Claude Code on 1.5.0. The extension now also keeps a copy at a fixed path,
+  `<storage>/bin/iris-agentic-dev` (`.exe` on Windows), and replaces it on every update. On
+  Windows, where a running `.exe` cannot be overwritten, the running copy is renamed aside and
+  deleted once it exits. If you registered a client with an old version directory, the next time
+  VS Code starts the extension it looks through `~/.claude.json`, a workspace `.mcp.json`, Claude
+  Desktop, Cursor, Windsurf and VS Code's `mcp.json`, writes nothing, and asks: "Found N
+  registration(s) pointing at an old iris-agentic-dev binary. Update them to the current one?"
+  **Update** rewrites the entries it found and tells you which clients to restart. **Show files**
+  lists them in the iris-agentic-dev Output channel first. **Not now** leaves every file as it was,
+  and you are not asked again until a newer binary arrives. Only entries whose command names one
+  of the extension's own version directories count; anything else, including another editor's
+  storage or a file with comments in it, is never touched.
 
 - **The Claude Code plugin says when its binary is out of date.** The plugin's skills and hooks
   update with the plugin, but the MCP server is whatever `iris-agentic-dev` is on PATH, so a user

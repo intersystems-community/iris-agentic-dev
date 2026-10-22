@@ -1,10 +1,18 @@
 import { execFile } from "child_process";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import which from "which";
 import { downloadBinary } from "./download";
 import { getBinaryName, getDownloadUrl, getServerVersion } from "./platform";
+import {
+  applyRegistrations,
+  installStableBinary,
+  PinnedEntry,
+  registrationFiles,
+  scanRegistrations,
+} from "./stablePath";
 
 // `iris-agentic-dev --version` prints "iris-agentic-dev 0.9.6".
 const VERSION_OUTPUT = /(\d+\.\d+\.\d+)/;
@@ -163,7 +171,7 @@ async function _resolve(
         await fs.promises.unlink(oldPath).catch(() => {});
       }
       log.info(`iris-agentic-dev: using cached binary v${version}: ${binaryPath}`);
-      return binaryPath;
+      return publish(context, binaryPath, storageDir, version, log);
     } catch {
       // Binary missing despite version marker — fall through to download
     }
@@ -218,7 +226,7 @@ async function _resolve(
     await fs.promises.mkdir(storageDir, { recursive: true });
     await fs.promises.writeFile(versionFile, version, "utf8");
     log.info(`iris-agentic-dev: installed v${version} at ${binaryPath}`);
-    return binaryPath;
+    return publish(context, binaryPath, storageDir, version, log);
   }
 
   // Download failed — fall back to stale cache if available
@@ -230,7 +238,7 @@ async function _resolve(
     log.warn(
       `iris-agentic-dev: falling back to stale binary v${cachedVersion}: ${binaryPath}`
     );
-    return binaryPath;
+    return publish(context, binaryPath, storageDir, version, log);
   } catch {
     log.error(
       `iris-agentic-dev: download failed and no cached binary available. ` +
@@ -239,4 +247,159 @@ async function _resolve(
     );
     return null;
   }
+}
+
+/**
+ * Copies the managed binary to its fixed-name path and returns the path to
+ * launch, falling back to the versioned path if the copy cannot be made. Then
+ * offers, without waiting for an answer, to repoint other clients still
+ * registered with a version directory.
+ */
+async function publish(
+  context: vscode.ExtensionContext,
+  binaryPath: string,
+  storageDir: string,
+  version: string,
+  log: vscode.LogOutputChannel
+): Promise<string> {
+  const stable = await installStableBinary(
+    binaryPath,
+    storageDir,
+    version,
+    process.platform
+  );
+  if (!stable) {
+    log.warn(
+      `iris-agentic-dev: could not update ${path.join(storageDir, "bin")} ` +
+        "(a running copy may be locked); will retry on next activation."
+    );
+    return binaryPath;
+  }
+  log.info(
+    `iris-agentic-dev: v${version} is at ${stable}. Register other MCP clients with this path; it does not change on update.`
+  );
+  void offerRegistrationUpdate(context, storageDir, stable, version, log);
+  return stable;
+}
+
+// globalState key: the server version for which the user answered Not now.
+const DECLINED_KEY = "iris-agentic-dev.registrationUpdateDeclined";
+const UPDATE = "Update";
+const SHOW_FILES = "Show files";
+const NOT_NOW = "Not now";
+
+// Activation and the MCP provider both resolve the binary; one question at a time.
+let offerInFlight: Promise<void> | undefined;
+
+/** The offer currently waiting on the user, if any. For tests. */
+export function registrationOffer(): Promise<void> {
+  return offerInFlight ?? Promise.resolve();
+}
+
+/**
+ * Claude Code, Cursor and other clients keep whatever path they were
+ * registered with, so one pinned to a version directory never sees an update.
+ * This finds such entries and asks before changing anything: Update rewrites
+ * exactly the entries found, Show files lists them, and Not now (or closing
+ * the notification) writes nothing and is not asked again until a newer
+ * binary arrives. It is the only path that writes another client's config.
+ */
+export function offerRegistrationUpdate(
+  context: vscode.ExtensionContext,
+  storageDir: string,
+  stable: string,
+  version: string,
+  log: vscode.LogOutputChannel
+): Promise<void> {
+  offerInFlight ??= askToRepoint(context, storageDir, stable, version, log)
+    .catch((err) =>
+      log.warn(`iris-agentic-dev: checking other MCP clients failed: ${err}`)
+    )
+    .finally(() => {
+      offerInFlight = undefined;
+    });
+  return offerInFlight;
+}
+
+async function askToRepoint(
+  context: vscode.ExtensionContext,
+  storageDir: string,
+  stable: string,
+  version: string,
+  log: vscode.LogOutputChannel
+): Promise<void> {
+  if (context.globalState.get<string>(DECLINED_KEY) === version) return;
+
+  const files = registrationFiles({
+    home: os.homedir(),
+    appData: process.env.APPDATA,
+    platform: process.platform,
+    // globalStorageUri is <User>/globalStorage/<publisher.extension>.
+    userDir: path.dirname(path.dirname(storageDir)),
+    workspaceDirs: (vscode.workspace.workspaceFolders ?? [])
+      .filter((f) => f.uri.scheme === "file")
+      .map((f) => f.uri.fsPath),
+  });
+  const found = await scanRegistrations(files, storageDir, process.platform);
+  const count = found.reduce((n, f) => n + f.entries.length, 0);
+  if (count === 0) return;
+
+  const question =
+    `Found ${count} registration(s) pointing at an old iris-agentic-dev binary. ` +
+    "Update them to the current one?";
+  function ask(): Thenable<string | undefined> {
+    return vscode.window.showInformationMessage(
+      question,
+      UPDATE,
+      SHOW_FILES,
+      NOT_NOW
+    );
+  }
+
+  let answer = await ask();
+  while (answer === SHOW_FILES) {
+    log.info(`iris-agentic-dev: registrations that would point at ${stable}:`);
+    for (const { file, entries } of found) {
+      for (const e of entries) {
+        log.info(`  ${file}: ${describePointer(e)} = ${e.value}`);
+      }
+    }
+    log.show(true);
+    answer = await ask();
+  }
+  if (answer !== UPDATE) {
+    await context.globalState.update(DECLINED_KEY, version);
+    return;
+  }
+
+  const moved = await applyRegistrations(found, stable);
+  for (const { file, rewritten } of moved) {
+    log.info(
+      `iris-agentic-dev: repointed ${rewritten} registration(s) in ${file} to ${stable}`
+    );
+  }
+  if (moved.length > 0) {
+    void vscode.window.showInformationMessage(
+      `iris-agentic-dev: ${moved.map((m) => m.file).join(", ")} now point(s) ` +
+        `at ${stable}. Restart those MCP clients (Claude Code, Cursor) to run v${version}.`
+    );
+  } else {
+    log.warn(
+      "iris-agentic-dev: no registration was changed; the files changed since " +
+        "they were checked. They will be checked again on next activation."
+    );
+  }
+}
+
+/** mcpServers.iad.args[1] */
+function describePointer({ pointer }: PinnedEntry): string {
+  let s = "";
+  for (const k of pointer) {
+    if (typeof k === "number") {
+      s += `[${k}]`;
+    } else {
+      s += s ? `.${k}` : k;
+    }
+  }
+  return s;
 }

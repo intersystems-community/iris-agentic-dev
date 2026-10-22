@@ -28,6 +28,7 @@ const stub = {
       info: (m) => logged.info.push(String(m)),
       warn: (m) => logged.warn.push(String(m)),
       error: (m) => logged.error.push(String(m)),
+      show: () => {},
     }),
     withProgress: async (_opts, task) => task({ report: () => {} }),
     showErrorMessage: async () => {},
