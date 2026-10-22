@@ -66,9 +66,11 @@ async fn create_restricted_user(conn: &IrisConnection) -> anyhow::Result<String>
     if !ok.trim().starts_with('1') {
         return Err(anyhow::anyhow!("failed to create role: {ok}"));
     }
-    // Create user with only the restricted role.
+    // Create user with only the restricted role. `Create` takes positional arguments (name,
+    // roles, password, full name, namespace, routine, expiry, change-password, enabled); a
+    // properties array as the third argument fails with <UNDEFINED>, so this always fell back.
     let create_user = format!(
-        "Set props(\"Enabled\")=1\nSet props(\"Password\")=\"{password}\"\nSet props(\"Roles\")=\"{role}\"\nSet tSC=##class(Security.Users).Create(\"{user}\",\"\",.props) Write $SYSTEM.Status.IsOK(tSC),!",
+        "Set tSC=##class(Security.Users).Create(\"{user}\",\"{role}\",\"{password}\",\"T042\",\"USER\",\"\",\"\",0,1) Write $SYSTEM.Status.IsOK(tSC),!",
         user = RESTRICTED_USER,
         role = RESTRICTED_ROLE,
         password = password

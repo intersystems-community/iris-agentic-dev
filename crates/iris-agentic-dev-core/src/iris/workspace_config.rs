@@ -2,7 +2,7 @@
 //!
 //! Priority order: CLI flags > .iris-agentic-dev.toml > env vars > auto-discovery.
 
-use crate::iris::connection::{DiscoverySource, IrisConnection};
+use crate::iris::connection::{host_from_env, DiscoverySource, IrisConnection};
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -441,6 +441,17 @@ pub fn file_chooses_connection(
     !in_home
 }
 
+/// May the operator's `IRIS_USERNAME`/`IRIS_PASSWORD` go to `host`, which a workspace file named?
+/// Only when it is this machine or the server `IRIS_HOST` already names.
+pub fn env_credentials_may_go_to(host: &str, named_host: Option<&str>) -> bool {
+    let host = host.trim().trim_start_matches('[').trim_end_matches(']');
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    loopback || named_host.is_some_and(|h| h.trim().eq_ignore_ascii_case(host))
+}
+
 /// [`file_chooses_connection`] for this process: its home directory and its `IRIS_HOST`. Startup
 /// and the live reload both ask it, so an edit cannot move a session the file yielded.
 pub fn chooses(config_path: &std::path::Path) -> bool {
@@ -832,38 +843,54 @@ pub fn workspace_config_to_connection(
             .clone()
             .or_else(|| std::env::var("IRIS_NAMESPACE").ok())
             .unwrap_or_else(|| namespace_default.to_string());
+        // The file came with the repository, so its host is the repository's choice: the
+        // operator's env credentials go only to this machine or to IRIS_HOST's server.
+        let env_ok = env_credentials_may_go_to(host, host_from_env().as_deref());
+        let from_env = |key: &str| std::env::var(key).ok().filter(|_| env_ok);
+        let withheld: Vec<&str> = [
+            ("IRIS_USERNAME", &cfg.username),
+            ("IRIS_PASSWORD", &cfg.password),
+        ]
+        .into_iter()
+        .filter(|(key, from_file)| {
+            !env_ok && from_file.is_none() && std::env::var(key).is_ok_and(|v| !v.is_empty())
+        })
+        .map(|(key, _)| key)
+        .collect();
         let username = cfg
             .username
             .clone()
-            .or_else(|| std::env::var("IRIS_USERNAME").ok())
+            .or_else(|| from_env("IRIS_USERNAME"))
             .unwrap_or_else(|| "_SYSTEM".to_string());
         let password = cfg
             .password
             .clone()
-            .or_else(|| std::env::var("IRIS_PASSWORD").ok())
+            .or_else(|| from_env("IRIS_PASSWORD"))
             .unwrap_or_else(|| "SYS".to_string());
         // If container is also specified alongside host, update IRIS_CONTAINER so docker
         // exec tools (iris_execute fallback, iris_test, etc.) target the right container.
         // Use DiscoverySource::Docker so check_config exposes the container name.
-        if let Some(ref container) = cfg.container {
-            std::env::set_var("IRIS_CONTAINER", container);
-            return Some(IrisConnection::new(
-                base_url,
-                namespace,
-                username,
-                password,
+        let source = match cfg.container {
+            Some(ref container) => {
+                std::env::set_var("IRIS_CONTAINER", container);
                 DiscoverySource::Docker {
                     container_name: container.clone(),
-                },
-            ));
+                }
+            }
+            None => DiscoverySource::EnvVar,
+        };
+        let mut conn = IrisConnection::new(base_url, namespace, username, password, source);
+        if !withheld.is_empty() {
+            let note = format!(
+                "{} not sent to {host}: .iris-agentic-dev.toml names that host, and the \
+                 environment's credentials go only to this machine or to IRIS_HOST's server. Put \
+                 username and password in the file, or set IRIS_HOST={host}.",
+                withheld.join(" and ")
+            );
+            tracing::warn!("{note}");
+            conn.credentials_withheld = Some(note);
         }
-        return Some(IrisConnection::new(
-            base_url,
-            namespace,
-            username,
-            password,
-            DiscoverySource::EnvVar,
-        ));
+        return Some(conn);
     }
 
     // container → inject into env so discover_iris() docker step picks it up

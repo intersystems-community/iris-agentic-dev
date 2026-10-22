@@ -299,3 +299,71 @@ fn editing_a_yielding_home_file_mid_session_keeps_the_iris_host_server() {
     let after = exec(&mut s);
     assert!(after.contains("iad140:"), "after the edit: {after}");
 }
+
+fn check_config_in(
+    project: &Path,
+    home: &Path,
+    toml: &str,
+    env: &[(&str, &str)],
+) -> serde_json::Value {
+    std::fs::create_dir_all(project).unwrap();
+    std::fs::create_dir_all(home).unwrap();
+    std::fs::write(project.join(".iris-agentic-dev.toml"), toml).unwrap();
+    let mut vars: Vec<(String, String)> = env
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    vars.push(("HOME".into(), home.to_string_lossy().into_owned()));
+    vars.push(("IRIS_CONTAINER".into(), String::new()));
+    let mut s = McpSession::start_in(Some(project), &vars);
+    let answer = s.call("check_config", &serde_json::json!({}));
+    let text = answer
+        .pointer("/result/content/0/text")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    serde_json::from_str(text).expect("check_config payload")
+}
+
+/// A repository's toml that names another host gets none of the operator's env credentials, and
+/// `check_config` says so. No IRIS is reached: the host does not exist.
+#[test]
+#[ignore = "requires the built binary"]
+fn a_workspace_file_naming_another_host_gets_no_env_credentials() {
+    let Some(_bin) = require_iad_binary() else {
+        return;
+    };
+    let root = std::env::temp_dir().join("iad-140-creds-away");
+    let v = check_config_in(
+        &root.join("project"),
+        &root.join("home"),
+        "host = \"iad-creds-140.invalid\"\nweb_port = 52773\n",
+        &[
+            ("IRIS_USERNAME", "opsuser"),
+            ("IRIS_PASSWORD", "OpsSecret140"),
+        ],
+    );
+    let note = v["credentials_withheld"].as_str().unwrap_or_default();
+    assert!(note.contains("IRIS_PASSWORD"), "{v}");
+    assert!(note.contains("iad-creds-140.invalid"), "{v}");
+    assert!(!v.to_string().contains("OpsSecret140"), "never echoed: {v}");
+}
+
+/// The same file naming this machine still takes the env credentials.
+#[test]
+#[ignore = "requires the built binary"]
+fn a_workspace_file_naming_localhost_keeps_the_env_credentials() {
+    let Some(_bin) = require_iad_binary() else {
+        return;
+    };
+    let root = std::env::temp_dir().join("iad-140-creds-local");
+    let v = check_config_in(
+        &root.join("project"),
+        &root.join("home"),
+        "host = \"localhost\"\nweb_port = 1\n",
+        &[
+            ("IRIS_USERNAME", "opsuser"),
+            ("IRIS_PASSWORD", "OpsSecret140"),
+        ],
+    );
+    assert!(v["credentials_withheld"].is_null(), "{v}");
+}

@@ -273,6 +273,9 @@ pub struct IrisConnection {
     /// When set, docker exec commands are prefixed with
     /// `ssh -o StrictHostKeyChecking=no <ssh_host>`.
     pub ssh_host: Option<String>,
+    /// Why the operator's `IRIS_USERNAME`/`IRIS_PASSWORD` were not sent to this server: a
+    /// workspace file named a host that is neither this machine nor `IRIS_HOST`'s server.
+    pub credentials_withheld: Option<String>,
 }
 
 /// T011: Manual Debug implementation — never prints the password.
@@ -289,6 +292,7 @@ impl fmt::Debug for IrisConnection {
             .field("port_superserver", &self.port_superserver)
             .field("system_mode", &self.system_mode)
             .field("ssh_host", &self.ssh_host)
+            .field("credentials_withheld", &self.credentials_withheld)
             .finish()
     }
 }
@@ -506,6 +510,7 @@ impl IrisConnection {
             port_superserver: None,
             system_mode: SystemMode::Unknown,
             ssh_host: None,
+            credentials_withheld: None,
         }
     }
 

@@ -5491,6 +5491,7 @@ impl IrisTools {
             "namespace": namespace,
             "container": container,
             "config_file": config_file,
+            "credentials_withheld": conn.iris.as_ref().and_then(|i| i.credentials_withheld.as_deref()),
             "config_loaded_at": config_loaded_at,
             "iris_version": iris_version,
             // All four gate fields come off the one `GateResolution` that `call_tool` enforces, so

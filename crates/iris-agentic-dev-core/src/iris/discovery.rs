@@ -36,6 +36,8 @@ pub enum FailureMode {
 }
 
 /// Return type of `discover_via_docker_named()`.
+// The connection is the variant almost every call returns, so boxing it buys nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum DiscoveryResult {
     /// Probe succeeded — connection ready.
@@ -47,6 +49,8 @@ pub enum DiscoveryResult {
 }
 
 /// Return type of `discover_iris()`. Replaces `Result<Option<IrisConnection>>`.
+// The connection is the variant almost every call returns, so boxing it buys nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum IrisDiscovery {
     /// Connection established.

@@ -313,9 +313,12 @@ iris-agentic-dev resolves the IRIS connection in this order — first match wins
    live reload follows the same rule, and `check_config` reports `connection_source: env_vars`
    with the file still in `config_file`
 5. VS Code `settings.json` (`objectscript.conn` / `intersystems.servers`)
-6. VS Code Server Manager keychain (`intersystems.servers` + OS keychain credential)
-7. Running Docker containers (scored by workspace name similarity)
-8. Localhost port scan (52773, 41773, 51773, 8080)
+
+A workspace `.iris-agentic-dev.toml` comes with the repository, so the host it names is the
+repository's choice. When the file names a host but no `username`/`password`, iad sends your
+`IRIS_USERNAME`/`IRIS_PASSWORD` only if that host is this machine (`localhost`, `127.0.0.1`, `::1`)
+or the host in `IRIS_HOST`. Otherwise it sends the defaults, and `check_config` reports
+`credentials_withheld` with what to do: put the credentials in the file, or set `IRIS_HOST`. 6. VS Code Server Manager keychain (`intersystems.servers` + OS keychain credential) 7. Running Docker containers (scored by workspace name similarity) 8. Localhost port scan (52773, 41773, 51773, 8080)
 
 ### Discovery that needs no connection
 
