@@ -220,8 +220,12 @@ jobs:
 
   sign-windows:
     runs-on: windows-latest
-    # Only sign on master and version tags — not on PRs (no secrets available there anyway)
-    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v')
+    # Only sign on master and version tags — not on PRs (no secrets available there anyway).
+    # Off until the repository variable SIGN_WINDOWS is "on". Every run from 2026-10-07 to
+    # 2026-10-21 failed at azure/login with "No subscriptions found": the signing identity has no
+    # role on the subscription yet. Set SIGN_WINDOWS=on (Settings > Variables) once IT has
+    # assigned it.
+    if: vars.SIGN_WINDOWS == 'on' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
     needs: windows-handshake
     # Non-blocking until IT completes role assignments on the Azure signing account
     continue-on-error: true
