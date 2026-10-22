@@ -5,7 +5,8 @@ This extension installs the iris-agentic-dev server, and each entry below is a s
 ## v1.6.3
 
 Upgrade if you run iad against a production instance, run tests through it, or use
-`iris_symbols_local`. iad treated a Live instance as unknown and left writes on in `USER`, and
+`iris_symbols_local`. iad treated a Live instance as unknown and left writes on in `USER`,
+`mode: " put"` got past the write gate, a cloned repository could collect your IRIS password, and
 `iris_coverage` ran ObjectScript passed in `test_path`. `iris_test` over HTTP could report a
 passing test as not found, `iris_execute` could report success with no output, and
 `iris_symbols_local` misread a third of real classes. One behaviour changes: a workspace
@@ -17,9 +18,22 @@ passing test as not found, `iris_execute` could report success with no output, a
   `.iris-agentic-dev.toml` that named a host and no credentials got your `IRIS_USERNAME` and
   `IRIS_PASSWORD`, wherever that host was. Now they go only to this machine or to the host in
   `IRIS_HOST`; for any other host, put the credentials in the file. `check_config` reports
-  `credentials_withheld` when this happens. With the precedence change below, a repository's
-  file would otherwise have won over `IRIS_HOST` too.
-
+  `credentials_withheld` when this happens. The same holds for `IRIS_SERVICE_USERNAME` and
+  `IRIS_SERVICE_PASSWORD`: a tool that runs as the service account refuses rather than run as you.
+  A `scheme` other than `http` or `https` makes the file's connection unusable, because one such as
+  `http://elsewhere/#` moved the URL past the host check. With the precedence change below, a
+  repository's file would otherwise have won over `IRIS_HOST` too.
+- **The write gate reads `mode` and `action` the way the tools do.** It compared them without
+  trimming, so `mode: " put"` passed as a read and `iris_doc` then wrote, with writes off.
+  `call_tool` now trims and lowercases both before any gate runs.
+- **A leading `^` no longer gets past the system blocklist or the PHI name gate.** The gates
+  compared the name as typed and the tools stripped the caret, so `iris_global` refused `ROUTINE`
+  and then read or wrote `^ROUTINE`. Every gate now reads the same name the tool uses. The
+  blocklist also covers `^rMAC`, `^rINC` and 16 other code-storage globals it had missed.
+- **`iris_query` read mode refuses `GRANT`, `REVOKE` and `CALL`.** A stored procedure can run
+  ObjectScript, so `CALL` in read mode ran code with writes off; send it with `mode="write"`. A
+  read with `force: true` now counts as a write for the live and test templates, and the refusal
+  no longer suggests `force`.
 - **A Live instance is read as Live.** IRIS stores `^%SYS("SystemMode")` as `LIVE`, `TEST`,
   `DEVELOPMENT` or `FAILOVER`. iad matched `Live`, so on every real Live instance it found no
   mode, fell back to the namespace name, and left writes on in `USER` and any namespace not named
@@ -63,6 +77,10 @@ passing test as not found, `iris_execute` could report success with no output, a
 - **`objectscript-unit-test`** says not to run `%UnitTest.Manager` through `iris_execute`, and why.
 
 ### Breaking changes
+
+- **`iris_query` sends `CALL` only with `mode="write"`**, which needs write tools enabled. Read mode
+  used to send it, as a deliberate trade-off (spec 033), and a procedure that writes or runs
+  ObjectScript then ran with writes off.
 
 - **`.iris-agentic-dev.toml` outranks `IRIS_*` at startup**, as `docs/connecting.md` has always
   said: a `--host` flag, then the workspace file, then the environment. Before, any `IRIS_HOST`
