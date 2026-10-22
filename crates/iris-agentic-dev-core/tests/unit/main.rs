@@ -120,6 +120,7 @@ mod test_sql_translate;
 mod test_sql_translate_131;
 mod test_structured_content;
 mod test_suppress_description;
+mod test_symbols_local_grammar;
 mod test_system_blocklist;
 mod test_telemetry_flush;
 mod test_telemetry_local_io;
