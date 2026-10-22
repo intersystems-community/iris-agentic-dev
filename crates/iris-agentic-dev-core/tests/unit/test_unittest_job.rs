@@ -11,7 +11,7 @@ use iris_agentic_dev_core::iris::connection::query_output;
 use iris_agentic_dev_core::tools::coverage::build_coverage_run_code;
 use iris_agentic_dev_core::tools::{build_test_run_code, run_in_job};
 
-fn runs_in_a_job(code: &str, call: &str) {
+fn assert_runs_in_a_job(code: &str, call: &str) {
     assert!(
         code.contains(&format!("Job {call}")),
         "the manager must run in a JOB: {code}"
@@ -32,18 +32,18 @@ fn runs_in_a_job(code: &str, call: &str) {
 #[test]
 fn every_iris_test_path_runs_the_manager_in_a_job() {
     let c = build_test_run_code("MyApp.Tests", "/verbose=1/nodelete/noload", "tok", false);
-    runs_in_a_job(&c, "##class(%UnitTest.Manager).RunTest(");
+    assert_runs_in_a_job(&c, "##class(%UnitTest.Manager).RunTest(");
     let c = build_test_run_code("MyApp/Tests", "/verbose=1/nodelete", "tok", false);
-    runs_in_a_job(&c, "##class(%UnitTest.Manager).RunTest(");
+    assert_runs_in_a_job(&c, "##class(%UnitTest.Manager).RunTest(");
     assert!(c.contains("^UnitTestRoot"), "the root is still set: {c}");
     let c = build_test_run_code("MyApp.ProdTest", "/verbose=1/nodelete/noload", "tok", true);
-    runs_in_a_job(&c, "##class(MyApp.ProdTest).Run(");
+    assert_runs_in_a_job(&c, "##class(MyApp.ProdTest).Run(");
 }
 
 #[test]
 fn iris_coverage_runs_the_manager_in_a_job() {
     let c = build_coverage_run_code(&["Demo.A.1".to_string()], "Demo", "USER");
-    runs_in_a_job(&c, "##class(%UnitTest.Manager).RunTest(");
+    assert_runs_in_a_job(&c, "##class(%UnitTest.Manager).RunTest(");
 }
 
 /// The same code runs through docker exec, where a terminal reads one line at a time, so the

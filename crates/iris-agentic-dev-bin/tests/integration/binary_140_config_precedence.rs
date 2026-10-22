@@ -5,9 +5,8 @@
 //! in a scratch directory whose toml names the live server and whose `IRIS_HOST` names a host
 //! that does not exist, or the other way round.
 
-use iris_agentic_dev_core::testing::{answer_text, require_iad_binary, McpSession};
+use iris_agentic_dev_core::testing::{answer_text, clean_command, require_iad_binary, McpSession};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 /// The live server, from the test environment.
 fn live() -> (String, String, String, String) {
@@ -85,7 +84,7 @@ fn the_workspace_file_outranks_iris_host_for_a_cli_command() {
     };
     let (h, p, u, w) = live();
     let dir = scratch("cli-file", Some(toml_for(&h, &p, &u, &w)));
-    let mut cmd = Command::new(&bin);
+    let mut cmd = clean_command(&bin);
     cmd.current_dir(&dir)
         .args(["exec", "Write \"iad140:\",$ZVersion"]);
     for (k, v) in env(NOWHERE, "1", &u, &w) {
@@ -123,7 +122,7 @@ fn a_host_flag_outranks_the_workspace_file() {
     };
     let (h, p, u, w) = live();
     let dir = scratch("flag", Some(toml_for(NOWHERE, "1", &u, &w)));
-    let mut cmd = Command::new(&bin);
+    let mut cmd = clean_command(&bin);
     cmd.current_dir(&dir).args([
         "exec",
         "--host",
