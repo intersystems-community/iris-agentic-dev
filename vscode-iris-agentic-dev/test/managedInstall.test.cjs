@@ -44,7 +44,11 @@ process.env.USERPROFILE = FAKE_HOME;
 
 // Build managedInstall.ts → .test-out/managedInstall.cjs before running tests
 // (done in package.json test script)
-const { resolveServerBinary } = require("../.test-out/managedInstall.cjs");
+const {
+  resolveServerBinary,
+  offerRegistrationUpdate,
+  registrationOffer,
+} = require("../.test-out/managedInstall.cjs");
 
 // ---------------------------------------------------------------------------
 // Helper: build a fake ExtensionContext pointing at a temp dir
@@ -62,6 +66,18 @@ function makeContext(version, tmpDir) {
       },
     },
     globalStorageUri: { fsPath: tmpDir },
+    globalState: makeMemento(),
+  };
+}
+
+/** An in-memory stand-in for ExtensionContext.globalState. */
+function makeMemento() {
+  const m = new Map();
+  return {
+    get: (k) => m.get(k),
+    update: async (k, v) => {
+      m.set(k, v);
+    },
   };
 }
 
@@ -393,61 +409,216 @@ test("tier 2: version check cannot hang on a binary that never exits", async () 
   }
 });
 
-// --- every registration follows the newest binary ----------------------------
+// --- other clients' registrations: found, then offered ----------------------
 //
 // A Windows user's ~/.claude.json named .../iris-agentic-dev-1.5.0/...exe,
 // written once when they registered the server. The extension went on to
-// download 1.6.0 and 1.6.3, and Claude Code kept launching 1.5.0.
+// download 1.6.0 and 1.6.3, and Claude Code kept launching 1.5.0. The
+// extension now finds such entries, and rewrites them only if the user says
+// Update. It never writes another client's config without that.
 
-test("an update leaves every registration pointing at the newest binary", async () => {
-  const { getBinaryName } = require("../.test-out/platform.cjs");
-  const { stableBinaryPath } = require("../.test-out/stablePath.cjs");
-  const binaryName = getBinaryName(process.platform, process.arch);
-  if (!binaryName) return;
+const { stableBinaryPath } = require("../.test-out/stablePath.cjs");
 
+/** Scripted answers for showInformationMessage; records every call. */
+function scriptPrompts(...answers) {
+  const calls = [];
+  const orig = vscodeStub.window.showInformationMessage;
+  vscodeStub.window.showInformationMessage = async (message, ...items) => {
+    calls.push({ message, items });
+    return items.length ? answers.shift() : undefined;
+  };
+  return { calls, restore: () => (vscodeStub.window.showInformationMessage = orig) };
+}
+
+/** Storage holding the given versions, and a ~/.claude.json pinned to the first. */
+function pinnedSetup(versions) {
   const storage = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
-  const seed = (v) => {
+  const paths = {};
+  for (const v of versions) {
     const dir = path.join(storage, `iris-agentic-dev-${v}`);
     fs.mkdirSync(dir, { recursive: true });
-    const p = path.join(dir, binaryName);
-    fs.writeFileSync(p, `#!/bin/sh\necho "iris-agentic-dev ${v}"\n`, { mode: 0o755 });
-    return p;
-  };
+    paths[v] = path.join(dir, "iris-agentic-dev-macos-arm64");
+    fs.writeFileSync(paths[v], `#!/bin/sh\necho "iris-agentic-dev ${v}"\n`, { mode: 0o755 });
+  }
   const claudeJson = path.join(FAKE_HOME, ".claude.json");
-  try {
-    const pinned = seed("1.5.0");
-    seed("1.6.4");
-    fs.writeFileSync(path.join(storage, "iris-agentic-dev.version"), "1.6.4");
-    fs.writeFileSync(
-      claudeJson,
-      JSON.stringify(
-        {
-          mcpServers: {
-            "iris-agentic-dev": { command: pinned, args: ["mcp"] },
-            mine: { command: "/opt/iad/iris-agentic-dev", args: ["mcp"] },
-          },
+  fs.writeFileSync(
+    claudeJson,
+    JSON.stringify(
+      {
+        mcpServers: {
+          "iris-agentic-dev": { command: paths[versions[0]], args: ["mcp"] },
+          mine: { command: "/opt/iad/iris-agentic-dev", args: ["mcp"] },
         },
-        null,
-        2
-      )
-    );
+      },
+      null,
+      2
+    ) + "\n"
+  );
+  const stable = stableBinaryPath(storage, process.platform);
+  return {
+    storage,
+    paths,
+    claudeJson,
+    stable,
+    read: () => JSON.parse(fs.readFileSync(claudeJson, "utf8")),
+    cleanup: () => {
+      fs.rmSync(claudeJson, { force: true });
+      fs.rmSync(storage, { recursive: true, force: true });
+    },
+  };
+}
 
-    const stable = stableBinaryPath(storage, process.platform);
-    assert.equal(await resolveServerBinary(makeContext("1.6.4", storage)), stable);
-    let reg = JSON.parse(fs.readFileSync(claudeJson, "utf8"));
-    assert.equal(reg.mcpServers["iris-agentic-dev"].command, stable, "pinned entry repointed");
-    assert.equal(reg.mcpServers.mine.command, "/opt/iad/iris-agentic-dev", "user entry untouched");
-    assert.match(fs.readFileSync(stable, "utf8"), /1\.6\.4/);
+const ASK = /^Found 1 registration\(s\) pointing at an old iris-agentic-dev binary\. Update them to the current one\?$/;
+const log = () => vscodeStub.window.createOutputChannel();
 
-    // The next update changes the binary behind the path, not the path.
-    seed("1.6.5");
-    fs.writeFileSync(path.join(storage, "iris-agentic-dev.version"), "1.6.5");
-    assert.equal(await resolveServerBinary(makeContext("1.6.5", storage)), stable);
-    reg = JSON.parse(fs.readFileSync(claudeJson, "utf8"));
-    assert.equal(reg.mcpServers["iris-agentic-dev"].command, stable);
-    assert.match(fs.readFileSync(stable, "utf8"), /1\.6\.5/);
+test("activation finds a pinned entry, asks, and writes nothing before the answer", async () => {
+  const { getBinaryName } = require("../.test-out/platform.cjs");
+  const binaryName = getBinaryName(process.platform, process.arch);
+  if (!binaryName) return;
+  const env = pinnedSetup(["1.5.0"]);
+  const dir = path.join(env.storage, "iris-agentic-dev-1.6.4");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, binaryName), "#!/bin/sh\necho 1.6.4\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(env.storage, "iris-agentic-dev.version"), "1.6.4");
+  const before = fs.readFileSync(env.claudeJson, "utf8");
+  const prompts = scriptPrompts(undefined);
+  try {
+    assert.equal(await resolveServerBinary(makeContext("1.6.4", env.storage)), env.stable);
+    await registrationOffer();
+    assert.equal(prompts.calls.length, 1);
+    assert.match(prompts.calls[0].message, ASK);
+    assert.deepEqual(prompts.calls[0].items, ["Update", "Show files", "Not now"]);
+    assert.equal(fs.readFileSync(env.claudeJson, "utf8"), before, "dismissed: nothing written");
   } finally {
-    fs.rmSync(claudeJson, { force: true });
-    fs.rmSync(storage, { recursive: true, force: true });
+    prompts.restore();
+    env.cleanup();
+  }
+});
+
+test("Update repoints the listed entry, leaves the user's own, and says to restart", async () => {
+  const env = pinnedSetup(["1.5.0", "1.6.4"]);
+  const prompts = scriptPrompts("Update");
+  try {
+    await offerRegistrationUpdate(makeContext("1.6.4", env.storage), env.storage, env.stable, "1.6.4", log());
+    const reg = env.read();
+    assert.equal(reg.mcpServers["iris-agentic-dev"].command, env.stable);
+    assert.equal(reg.mcpServers.mine.command, "/opt/iad/iris-agentic-dev");
+    assert.equal(prompts.calls.length, 2);
+    assert.match(prompts.calls[1].message, /Restart/);
+    assert.ok(prompts.calls[1].message.includes(env.claudeJson));
+  } finally {
+    prompts.restore();
+    env.cleanup();
+  }
+});
+
+test("Show files lists each file and entry and writes nothing", async () => {
+  const env = pinnedSetup(["1.5.0"]);
+  const before = fs.readFileSync(env.claudeJson, "utf8");
+  const prompts = scriptPrompts("Show files", "Not now");
+  vscodeStub.__resetLog();
+  try {
+    await offerRegistrationUpdate(makeContext("1.6.4", env.storage), env.storage, env.stable, "1.6.4", log());
+    const info = vscodeStub.__log.info.join("\n");
+    assert.ok(info.includes(env.claudeJson), info);
+    assert.ok(info.includes("mcpServers.iris-agentic-dev.command"), info);
+    assert.ok(info.includes(env.paths["1.5.0"]), info);
+    assert.equal(prompts.calls.length, 2, "the question is asked again after the list");
+    assert.equal(fs.readFileSync(env.claudeJson, "utf8"), before);
+  } finally {
+    prompts.restore();
+    env.cleanup();
+  }
+});
+
+test("Not now writes nothing and does not ask again for the same version", async () => {
+  const env = pinnedSetup(["1.5.0"]);
+  const before = fs.readFileSync(env.claudeJson, "utf8");
+  const ctx = makeContext("1.6.4", env.storage);
+  const prompts = scriptPrompts("Not now");
+  try {
+    await offerRegistrationUpdate(ctx, env.storage, env.stable, "1.6.4", log());
+    await offerRegistrationUpdate(ctx, env.storage, env.stable, "1.6.4", log());
+    assert.equal(prompts.calls.length, 1, "asked once for 1.6.4");
+    assert.equal(fs.readFileSync(env.claudeJson, "utf8"), before);
+  } finally {
+    prompts.restore();
+    env.cleanup();
+  }
+});
+
+test("dismissing the notification counts as Not now", async () => {
+  const env = pinnedSetup(["1.5.0"]);
+  const ctx = makeContext("1.6.4", env.storage);
+  const prompts = scriptPrompts(undefined);
+  try {
+    await offerRegistrationUpdate(ctx, env.storage, env.stable, "1.6.4", log());
+    await offerRegistrationUpdate(ctx, env.storage, env.stable, "1.6.4", log());
+    assert.equal(prompts.calls.length, 1);
+  } finally {
+    prompts.restore();
+    env.cleanup();
+  }
+});
+
+test("a newer binary asks again after Not now", async () => {
+  const env = pinnedSetup(["1.5.0"]);
+  const ctx = makeContext("1.6.4", env.storage);
+  const prompts = scriptPrompts("Not now", "Update");
+  try {
+    await offerRegistrationUpdate(ctx, env.storage, env.stable, "1.6.4", log());
+    await offerRegistrationUpdate(ctx, env.storage, env.stable, "1.6.5", log());
+    assert.equal(prompts.calls.filter((c) => ASK.test(c.message)).length, 2);
+    assert.equal(env.read().mcpServers["iris-agentic-dev"].command, env.stable);
+  } finally {
+    prompts.restore();
+    env.cleanup();
+  }
+});
+
+test("nothing pinned: no question, no write", async () => {
+  const env = pinnedSetup(["1.5.0"]);
+  fs.writeFileSync(env.claudeJson, '{"mcpServers":{"mine":{"command":"/opt/iad/iris-agentic-dev"}}}');
+  const prompts = scriptPrompts();
+  try {
+    await offerRegistrationUpdate(makeContext("1.6.4", env.storage), env.storage, env.stable, "1.6.4", log());
+    assert.equal(prompts.calls.length, 0);
+  } finally {
+    prompts.restore();
+    env.cleanup();
+  }
+});
+
+test("an accepted update leaves every registration on the newest binary", async () => {
+  const { getBinaryName } = require("../.test-out/platform.cjs");
+  const binaryName = getBinaryName(process.platform, process.arch);
+  if (!binaryName) return;
+  const env = pinnedSetup(["1.5.0"]);
+  const seed = (v) => {
+    const dir = path.join(env.storage, `iris-agentic-dev-${v}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, binaryName), `#!/bin/sh\necho "iris-agentic-dev ${v}"\n`, { mode: 0o755 });
+    fs.writeFileSync(path.join(env.storage, "iris-agentic-dev.version"), v);
+  };
+  const prompts = scriptPrompts("Update");
+  try {
+    seed("1.6.4");
+    assert.equal(await resolveServerBinary(makeContext("1.6.4", env.storage)), env.stable);
+    await registrationOffer();
+    assert.equal(env.read().mcpServers["iris-agentic-dev"].command, env.stable);
+    assert.match(fs.readFileSync(env.stable, "utf8"), /1\.6\.4/);
+
+    // The next update changes the binary behind the path, not the path, and
+    // there is nothing left to ask about.
+    const asked = prompts.calls.length;
+    seed("1.6.5");
+    assert.equal(await resolveServerBinary(makeContext("1.6.5", env.storage)), env.stable);
+    await registrationOffer();
+    assert.equal(prompts.calls.length, asked);
+    assert.equal(env.read().mcpServers["iris-agentic-dev"].command, env.stable);
+    assert.match(fs.readFileSync(env.stable, "utf8"), /1\.6\.5/);
+  } finally {
+    prompts.restore();
+    env.cleanup();
   }
 });

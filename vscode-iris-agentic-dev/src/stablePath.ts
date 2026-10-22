@@ -7,8 +7,9 @@ import * as path from "path";
 // registered by hand does not: Claude Code's ~/.claude.json, or Cursor's
 // mcp.json, keeps the path it was given, and kept launching 1.5.0 for a user
 // whose storage held 1.6.3. The fix is a version-free copy at
-// <storage>/bin/iris-agentic-dev(.exe), refreshed on every update, and a
-// one-time repoint of registrations that still name a version directory.
+// <storage>/bin/iris-agentic-dev(.exe), refreshed on every update. Clients
+// still registered with a version directory are found by a scan that writes
+// nothing, and repointed only after the user agrees.
 
 const STABLE_DIR = "bin";
 const STABLE_MARKER = "iris-agentic-dev.version";
@@ -111,67 +112,94 @@ export function isManagedVersionedPath(
   return parts.length === 2 && VERSION_DIR.test(parts[0]);
 }
 
-/** Rewrites managed paths in every `command` and `args` entry; returns the count. */
-function repoint(
+/** One `command` or `args` value naming a version directory, and where it is. */
+export interface PinnedEntry {
+  pointer: Array<string | number>;
+  value: string;
+}
+
+export interface PinnedFile {
+  file: string;
+  entries: PinnedEntry[];
+}
+
+function collect(
   node: unknown,
+  pointer: Array<string | number>,
   storageDir: string,
-  stable: string,
   platform: string,
-): number {
-  if (Array.isArray(node)) {
-    return node.reduce(
-      (n, v) => n + repoint(v, storageDir, stable, platform),
-      0,
+  out: PinnedEntry[],
+): void {
+  if (typeof node === "string") {
+    const last = pointer[pointer.length - 1];
+    const isLaunchValue =
+      last === "command" ||
+      (typeof last === "number" && pointer[pointer.length - 2] === "args");
+    if (isLaunchValue && isManagedVersionedPath(node, storageDir, platform)) {
+      out.push({ pointer, value: node });
+    }
+  } else if (Array.isArray(node)) {
+    node.forEach((v, i) =>
+      collect(v, [...pointer, i], storageDir, platform, out),
     );
+  } else if (node && typeof node === "object") {
+    for (const [k, v] of Object.entries(node)) {
+      collect(v, [...pointer, k], storageDir, platform, out);
+    }
   }
-  if (!node || typeof node !== "object") return 0;
-  const obj = node as Record<string, unknown>;
-  let n = 0;
-  if (
-    typeof obj.command === "string" &&
-    isManagedVersionedPath(obj.command, storageDir, platform)
-  ) {
-    obj.command = stable;
-    n++;
-  }
-  if (Array.isArray(obj.args)) {
-    obj.args = obj.args.map((a) => {
-      if (
-        typeof a === "string" &&
-        isManagedVersionedPath(a, storageDir, platform)
-      ) {
-        n++;
-        return stable;
-      }
-      return a;
-    });
-  }
-  for (const [k, v] of Object.entries(obj)) {
-    if (k !== "args") n += repoint(v, storageDir, stable, platform);
-  }
-  return n;
 }
 
 /**
- * Repoints MCP registrations that name one of this extension's version
- * directories to `stablePath`. A file is rewritten only when it held such an
- * entry; a missing file, or one that is not plain JSON (VS Code's mcp.json
- * allows comments), is skipped. The write goes through a temp file and a
- * rename, and is abandoned if the file changed while it was being read.
+ * Lists MCP registrations whose command or args name one of this extension's
+ * version directories. Reads only; never writes. A missing file, or one that
+ * is not plain JSON (VS Code's mcp.json allows comments), is not listed.
  */
-export async function migrateRegistrations(
+export async function scanRegistrations(
   files: string[],
   storageDir: string,
-  stablePath: string,
   platform: string,
+): Promise<PinnedFile[]> {
+  const found: PinnedFile[] = [];
+  for (const file of files) {
+    try {
+      const data = JSON.parse(await fs.promises.readFile(file, "utf8"));
+      const entries: PinnedEntry[] = [];
+      collect(data, [], storageDir, platform, entries);
+      if (entries.length > 0) found.push({ file, entries });
+    } catch {
+      // Missing, unreadable, or not JSON: not ours to touch.
+    }
+  }
+  return found;
+}
+
+/**
+ * Points exactly the entries `scanRegistrations` listed at `stablePath`. Call
+ * it only after the user agreed to the update. An entry whose value changed
+ * since the scan is skipped, and so is any entry that was not listed. The
+ * write goes through a temp file and a rename, keeps the file's mode, indent
+ * and line endings, and is abandoned if the file changed while being read.
+ */
+export async function applyRegistrations(
+  found: PinnedFile[],
+  stablePath: string,
 ): Promise<Array<{ file: string; rewritten: number }>> {
   const results: Array<{ file: string; rewritten: number }> = [];
-  for (const file of files) {
+  for (const { file, entries } of found) {
     try {
       const before = await fs.promises.stat(file);
       const text = await fs.promises.readFile(file, "utf8");
       const data = JSON.parse(text);
-      const rewritten = repoint(data, storageDir, stablePath, platform);
+      let rewritten = 0;
+      for (const { pointer, value } of entries) {
+        let parent: any = data;
+        for (const key of pointer.slice(0, -1)) parent = parent?.[key];
+        const last = pointer[pointer.length - 1];
+        if (parent && parent[last] === value) {
+          parent[last] = stablePath;
+          rewritten++;
+        }
+      }
       if (rewritten === 0) continue;
 
       const indent = /^([ \t]+)"/m.exec(text)?.[1] ?? 2;
@@ -193,7 +221,7 @@ export async function migrateRegistrations(
         await fs.promises.unlink(tmp).catch(() => {});
       }
     } catch {
-      // Missing, unreadable, or not JSON: not ours to touch.
+      // Unreadable or no longer JSON: leave it.
     }
   }
   return results;

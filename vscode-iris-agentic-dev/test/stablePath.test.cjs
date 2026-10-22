@@ -8,8 +8,9 @@
 // while globalStorage held 1.5.0, 1.6.0 and 1.6.3.
 //
 // The fix: a fixed-name copy at bin/iris-agentic-dev(.exe), refreshed on each
-// update, plus a one-time repoint of registrations pinned to a version
-// directory inside the extension's own storage. These tests cover both.
+// update. Registrations pinned to a version directory inside the extension's
+// own storage are found by a scan that writes nothing, and rewritten only when
+// the user says Update. These tests cover the copy, the scan and the rewrite.
 
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
@@ -21,7 +22,8 @@ const {
   installStableBinary,
   stableBinaryPath,
   isManagedVersionedPath,
-  migrateRegistrations,
+  scanRegistrations,
+  applyRegistrations,
   registrationFiles,
 } = require("../.test-out/stablePath.cjs");
 
@@ -213,74 +215,121 @@ test("paths the user chose are not managed", () => {
   }
 });
 
-// --- repointing registrations -----------------------------------------------
+// --- finding and repointing registrations -----------------------------------
 
-function claudeJson(storage, platform) {
-  const sep = platform === "win32" ? "\\" : "/";
-  const pinned = (v) =>
-    `${storage}${sep}iris-agentic-dev-${v}${sep}iris-agentic-dev-windows-x86_64.exe`;
+const WIN_STORAGE =
+  "C:\\Users\\doc\\AppData\\Roaming\\Code\\User\\globalStorage\\intersystems-community.iris-agentic-dev";
+const WIN_STABLE = `${WIN_STORAGE}\\bin\\iris-agentic-dev.exe`;
+const winPinned = (v) =>
+  `${WIN_STORAGE}\\iris-agentic-dev-${v}\\iris-agentic-dev-windows-x86_64.exe`;
+
+function claudeJson() {
   return {
     numStartups: 42,
     mcpServers: {
-      "iris-agentic-dev": { type: "stdio", command: pinned("1.5.0"), args: ["mcp"], env: {} },
+      "iris-agentic-dev": { type: "stdio", command: winPinned("1.5.0"), args: ["mcp"], env: {} },
       mine: { command: "C:\\tools\\iris-agentic-dev.exe", args: ["mcp"] },
     },
     projects: {
       "C:/work/docs": {
         mcpServers: {
-          iad: { command: "cmd", args: ["/c", pinned("1.6.0"), "mcp"] },
+          iad: { command: "cmd", args: ["/c", winPinned("1.6.0"), "mcp"] },
         },
       },
     },
   };
 }
 
-test("a pinned 1.5.0 entry inside globalStorage is repointed; the user's own is not", async () => {
+function writeClaudeJson(dir) {
+  const file = path.join(dir, ".claude.json");
+  fs.writeFileSync(file, JSON.stringify(claudeJson(), null, 2) + "\n");
+  return file;
+}
+
+test("the scan finds pinned entries and writes nothing", async () => {
   const dir = tmpdir();
   try {
-    const storage = "C:\\Users\\doc\\AppData\\Roaming\\Code\\User\\globalStorage\\intersystems-community.iris-agentic-dev";
-    const stable = `${storage}\\bin\\iris-agentic-dev.exe`;
-    const file = path.join(dir, ".claude.json");
-    fs.writeFileSync(file, JSON.stringify(claudeJson(storage, "win32"), null, 2) + "\n");
+    const file = writeClaudeJson(dir);
+    const text = fs.readFileSync(file, "utf8");
+    const mtime = fs.statSync(file).mtimeMs;
 
-    const results = await migrateRegistrations([file], storage, stable, "win32");
-    assert.deepEqual(results, [{ file, rewritten: 2 }]);
-
-    const after = JSON.parse(fs.readFileSync(file, "utf8"));
-    assert.equal(after.mcpServers["iris-agentic-dev"].command, stable);
-    assert.deepEqual(after.projects["C:/work/docs"].mcpServers.iad.args, ["/c", stable, "mcp"]);
-    assert.equal(after.mcpServers.mine.command, "C:\\tools\\iris-agentic-dev.exe");
-    assert.equal(after.numStartups, 42, "unrelated keys survive");
-    assert.ok(fs.readFileSync(file, "utf8").endsWith("}\n"), "trailing newline kept");
+    const found = await scanRegistrations([file], WIN_STORAGE, "win32");
+    assert.deepEqual(found, [
+      {
+        file,
+        entries: [
+          { pointer: ["mcpServers", "iris-agentic-dev", "command"], value: winPinned("1.5.0") },
+          { pointer: ["projects", "C:/work/docs", "mcpServers", "iad", "args", 1], value: winPinned("1.6.0") },
+        ],
+      },
+    ]);
+    assert.equal(fs.readFileSync(file, "utf8"), text);
+    assert.equal(fs.statSync(file).mtimeMs, mtime);
+    assert.deepEqual(fs.readdirSync(dir), [".claude.json"], "no temp files either");
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("a file with only user-authored entries is left byte-for-byte alone", async () => {
+test("Update rewrites exactly the listed entries and nothing else", async () => {
+  const dir = tmpdir();
+  try {
+    const file = writeClaudeJson(dir);
+    const found = await scanRegistrations([file], WIN_STORAGE, "win32");
+
+    // A pinned entry added after the user saw the list is not part of what
+    // they agreed to, so it stays as it is.
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    data.mcpServers.later = { command: winPinned("1.6.3") };
+    fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n");
+
+    const results = await applyRegistrations(found, WIN_STABLE);
+    assert.deepEqual(results, [{ file, rewritten: 2 }]);
+
+    const after = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.equal(after.mcpServers["iris-agentic-dev"].command, WIN_STABLE);
+    assert.deepEqual(after.projects["C:/work/docs"].mcpServers.iad.args, ["/c", WIN_STABLE, "mcp"]);
+    assert.equal(after.mcpServers.later.command, winPinned("1.6.3"), "not listed, not touched");
+    assert.equal(after.mcpServers.mine.command, "C:\\tools\\iris-agentic-dev.exe");
+    assert.equal(after.numStartups, 42, "unrelated keys survive");
+    assert.ok(fs.readFileSync(file, "utf8").endsWith("}\n"), "trailing newline kept");
+    assert.deepEqual(fs.readdirSync(dir), [".claude.json"], "temp file cleaned up");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("Update skips an entry the user changed after the scan", async () => {
+  const dir = tmpdir();
+  try {
+    const file = writeClaudeJson(dir);
+    const found = await scanRegistrations([file], WIN_STORAGE, "win32");
+    const data = JSON.parse(fs.readFileSync(file, "utf8"));
+    data.mcpServers["iris-agentic-dev"].command = "C:\\mine\\iad.exe";
+    fs.writeFileSync(file, JSON.stringify(data, null, 2) + "\n");
+
+    const results = await applyRegistrations(found, WIN_STABLE);
+    assert.deepEqual(results, [{ file, rewritten: 1 }]);
+    const after = JSON.parse(fs.readFileSync(file, "utf8"));
+    assert.equal(after.mcpServers["iris-agentic-dev"].command, "C:\\mine\\iad.exe");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a file with only user-authored entries is not listed", async () => {
   const dir = tmpdir();
   try {
     const storage = path.join(dir, "storage");
     const file = path.join(dir, "mcp.json");
-    const text = '{"mcpServers":{"iad":{"command":"/opt/iad/iris-agentic-dev","args":["mcp"]}}}';
-    fs.writeFileSync(file, text);
-    const before = fs.statSync(file).mtimeMs;
-
-    const results = await migrateRegistrations(
-      [file],
-      storage,
-      path.join(storage, "bin", "iris-agentic-dev"),
-      process.platform
-    );
-    assert.deepEqual(results, []);
-    assert.equal(fs.readFileSync(file, "utf8"), text);
-    assert.equal(fs.statSync(file).mtimeMs, before);
+    fs.writeFileSync(file, '{"mcpServers":{"iad":{"command":"/opt/iad/iris-agentic-dev","args":["mcp"]}}}');
+    assert.deepEqual(await scanRegistrations([file], storage, process.platform), []);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("missing files and files that are not plain JSON are skipped, never rewritten", async () => {
+test("missing files and files that are not plain JSON are not listed", async () => {
   const dir = tmpdir();
   try {
     const storage = path.join(dir, "storage");
@@ -288,17 +337,11 @@ test("missing files and files that are not plain JSON are skipped, never rewritt
     // VS Code's mcp.json allows comments; JSON.parse does not. Leave it alone
     // rather than risk writing back a file with the comments stripped.
     const jsonc = path.join(dir, "mcp.json");
-    const text = `{\n  // mine\n  "servers": {"iad": {"command": ${JSON.stringify(pinned)}}}\n}\n`;
-    fs.writeFileSync(jsonc, text);
-
-    const results = await migrateRegistrations(
-      [path.join(dir, "absent.json"), jsonc],
-      storage,
-      path.join(storage, "bin", "iris-agentic-dev"),
-      process.platform
+    fs.writeFileSync(jsonc, `{\n  // mine\n  "servers": {"iad": {"command": ${JSON.stringify(pinned)}}}\n}\n`);
+    assert.deepEqual(
+      await scanRegistrations([path.join(dir, "absent.json"), jsonc], storage, process.platform),
+      []
     );
-    assert.deepEqual(results, []);
-    assert.equal(fs.readFileSync(jsonc, "utf8"), text);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

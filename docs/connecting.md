@@ -484,7 +484,9 @@ under the editor's extension storage —
 `<storage>/intersystems-community.iris-agentic-dev/bin/iris-agentic-dev` (`.exe` on Windows). The
 extension replaces that file on every update, so a client registered with it follows the extension.
 Do not register the version-named directory beside it (`iris-agentic-dev-<version>/`): the client
-keeps launching that version after the extension moves on.
+keeps launching that version after the extension moves on. If a client is already registered that
+way, the extension offers to update it when it starts, and changes nothing unless you choose
+**Update**.
 
 | Platform | `<storage>`                                             |
 | -------- | ------------------------------------------------------- |
