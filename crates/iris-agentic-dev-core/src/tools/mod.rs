@@ -1607,7 +1607,7 @@ pub fn write_open_hint(namespace: &str, document: &str) {
 pub fn validate_read_only_sql(sql: &str) -> Result<(), String> {
     const BLOCKED: &[&str] = &[
         "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "MERGE", "TRUNCATE", "EXEC",
-        "EXECUTE", "BULK", "LOAD", "KILL", "LOCK",
+        "EXECUTE", "BULK", "LOAD", "KILL", "LOCK", "GRANT", "REVOKE", "CALL",
     ];
 
     // Step 1: strip /* ... */ block comments
@@ -3031,10 +3031,22 @@ impl IrisTools {
         &self,
     ) -> Result<(Arc<IrisConnection>, Arc<reqwest::Client>), McpError> {
         let iris = self.get_iris_reloaded().await?;
-        match iris.with_service_account() {
-            Some(svc) => Ok((Arc::new(svc), Arc::clone(&self.exec_client))),
-            None => Ok((iris, Arc::clone(&self.client))),
+        let Some(svc) = iris.with_service_account() else {
+            return Ok((iris, Arc::clone(&self.client)));
+        };
+        // The workspace file named a host the service account's credentials may not go to.
+        // Running as the primary identity instead would widen the call, so refuse it.
+        if let Some(note) = iris
+            .credentials_withheld
+            .as_deref()
+            .filter(|n| n.contains("IRIS_SERVICE_USERNAME"))
+        {
+            return Err(McpError::invalid_request(
+                format!("This tool runs as the service account, and {note}"),
+                None,
+            ));
         }
+        Ok((Arc::new(svc), Arc::clone(&self.exec_client)))
     }
 
     /// Resolve which IRIS connection to use for a tool call (072-multi-instance-pool).
@@ -4981,8 +4993,11 @@ impl IrisTools {
         // Policy gate (044 + 051): fires before role gate.
         let (sm_server_q, policy_q) = self.active_server_manager_policy();
         {
-            let params_json =
-                serde_json::json!({ "namespace": &p.namespace, "mode": mode, "query": p.query });
+            // `force` must reach the gates: dispatch_gate's SQL code-edit check and the env gate
+            // both treat a forced read as a write, and without it neither ever saw one.
+            let params_json = serde_json::json!({
+                "namespace": &p.namespace, "mode": mode, "query": p.query, "force": p.force,
+            });
             if let Err(gate) = crate::policy::gate::dispatch_gate(
                 "iris_query",
                 sm_server_q.as_deref().unwrap_or(""),
@@ -5120,7 +5135,7 @@ impl IrisTools {
                     let mut resp = serde_json::json!({
                         "success": false,
                         "error_code": "SQL_WRITE_BLOCKED",
-                        "error": format!("Destructive SQL keyword '{}' is not allowed. Use force: true to override.", kw),
+                        "error": format!("'{}' is not a read, so mode=\"read\" does not send it. Use mode=\"write\", which needs write tools enabled.", kw),
                         "blocked_keyword": kw,
                     });
                     if p.force && !self.write_tools_enabled() {
@@ -9611,7 +9626,7 @@ impl ServerHandler for IrisTools {
     /// `check_config` reported the gate as active.
     async fn call_tool(
         &self,
-        request: rmcp::model::CallToolRequestParams,
+        mut request: rmcp::model::CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::CallToolResponse, McpError> {
         let start = std::time::Instant::now();
@@ -9629,6 +9644,9 @@ impl ServerHandler for IrisTools {
                     // directions. `has_changed()` is an mtime stat, so this costs nothing when the
                     // file is untouched.
                     self.check_reload().await;
+                    if let Some(args) = request.arguments.as_mut() {
+                        write_gate::normalize_dispatch_args(args);
+                    }
                     let gates = self.connection.lock().unwrap().gates;
                     if let Some(refusal) =
                         write_gate::gate_check(&request.name, request.arguments.as_ref(), &gates)
@@ -11577,9 +11595,12 @@ impl IrisTools {
     pub async fn call_for_test(
         &self,
         tool: &str,
-        params: serde_json::Value,
+        mut params: serde_json::Value,
     ) -> Result<rmcp::model::CallToolResult, String> {
         use rmcp::handler::server::wrapper::Parameters;
+        if let Some(args) = params.as_object_mut() {
+            write_gate::normalize_dispatch_args(args);
+        }
         macro_rules! dispatch {
             ($name:expr, $ty:ty, $method:ident) => {
                 if tool == $name {

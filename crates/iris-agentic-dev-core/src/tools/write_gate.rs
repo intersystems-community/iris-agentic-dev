@@ -667,6 +667,18 @@ pub const CLASSIFICATION: &[ToolClass] = &[
     ),
 ];
 
+/// Put `mode` and `action` in the form the handlers read them, trimmed and `to_lowercase`d,
+/// before any gate looks at them. Every gate then reads the value the handler will act on: the
+/// write gate classified `mode: " put"` as read-only and `iris_doc` wrote, and the policy gates
+/// compare exactly (AVA scan, 2026-10-22).
+pub fn normalize_dispatch_args(args: &mut serde_json::Map<String, serde_json::Value>) {
+    for key in ["mode", "action"] {
+        if let Some(serde_json::Value::String(v)) = args.get_mut(key) {
+            *v = v.trim().to_lowercase();
+        }
+    }
+}
+
 /// Look up the class for a call.
 ///
 /// Returns `None` for a tool with no `CLASSIFICATION` entry. Callers must treat that as
@@ -680,16 +692,13 @@ pub fn classify(
     if !entry.actions.is_empty() {
         if let Some(args) = args {
             // `action` and `mode` are the two argument names the tools use for this; `iris_doc`
-            // accepts `action` as an alias for `mode`. Matched case-insensitively because the
-            // handlers lowercase before dispatching — a gate that compared exactly would let
-            // mode="PUT" through and then write.
+            // accepts `action` as an alias for `mode`. Read the way the handlers read it, trimmed
+            // and then `to_lowercase`d: an exact match let mode="PUT" through and then write, a
+            // case-only match let " put" through, and `to_lowercase` maps the Kelvin sign to `k`.
             for key in ["action", "mode"] {
                 if let Some(v) = args.get(key).and_then(|v| v.as_str()) {
-                    if let Some((_, class)) = entry
-                        .actions
-                        .iter()
-                        .find(|(a, _)| a.eq_ignore_ascii_case(v))
-                    {
+                    let v = v.trim().to_lowercase();
+                    if let Some((_, class)) = entry.actions.iter().find(|(a, _)| *a == v) {
                         return Some(*class);
                     }
                 }

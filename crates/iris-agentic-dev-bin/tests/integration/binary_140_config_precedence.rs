@@ -367,3 +367,56 @@ fn a_workspace_file_naming_localhost_keeps_the_env_credentials() {
     );
     assert!(v["credentials_withheld"].is_null(), "{v}");
 }
+
+/// A scheme that is not http or https could carry the URL to another host past the loopback
+/// check; such a file supplies no connection.
+#[test]
+#[ignore = "requires the built binary"]
+fn a_workspace_file_scheme_cannot_redirect_the_url() {
+    let Some(_bin) = require_iad_binary() else {
+        return;
+    };
+    let root = std::env::temp_dir().join("iad-140-scheme");
+    let v = check_config_in(
+        &root.join("project"),
+        &root.join("home"),
+        "host = \"localhost\"\nweb_port = 1\nscheme = \"http://iad-scheme-140.invalid/#\"\n",
+        &[("IRIS_PASSWORD", "OpsSecret140")],
+    );
+    assert!(!v.to_string().contains("iad-scheme-140.invalid"), "{v}");
+}
+
+/// The service account's env credentials follow the same rule. An exec tool refuses rather than
+/// run as the primary identity, which would be the wider one.
+#[test]
+#[ignore = "requires the built binary"]
+fn the_service_account_is_not_sent_to_a_file_named_host() {
+    let Some(_bin) = require_iad_binary() else {
+        return;
+    };
+    let root = std::env::temp_dir().join("iad-140-svc");
+    let project = root.join("project");
+    let home = root.join("home");
+    let toml = "host = \"iad-svc-140.invalid\"\nweb_port = 52773\n";
+    let env = [
+        ("IRIS_SERVICE_USERNAME", "svcuser"),
+        ("IRIS_SERVICE_PASSWORD", "SvcSecret140"),
+        ("IRIS_WRITE_TOOLS_ENABLED", "1"),
+    ];
+    let v = check_config_in(&project, &home, toml, &env);
+    let note = v["credentials_withheld"].as_str().unwrap_or_default();
+    assert!(note.contains("IRIS_SERVICE_PASSWORD"), "{v}");
+    let mut vars: Vec<(String, String)> = env
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    vars.push(("HOME".into(), home.to_string_lossy().into_owned()));
+    vars.push(("IRIS_CONTAINER".into(), String::new()));
+    let mut s = McpSession::start_in(Some(&project), &vars);
+    let text = answer_text(&s.call(
+        "iris_execute",
+        &serde_json::json!({"code": "Write 1", "namespace": "USER"}),
+    ));
+    assert!(text.contains("IRIS_SERVICE_USERNAME"), "{text}");
+    assert!(!text.contains("SvcSecret140"), "{text}");
+}

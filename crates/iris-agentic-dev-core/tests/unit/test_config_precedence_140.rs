@@ -68,3 +68,23 @@ fn env_credentials_go_only_to_loopback_or_the_iris_host_server() {
     assert!(!env_credentials_may_go_to("localhost.evil.example", None));
     assert!(!env_credentials_may_go_to("127.0.0.1.evil.example", None));
 }
+
+/// The loopback check reads `host`, so `scheme` must not be able to move the URL: with
+/// `scheme = "http://evil.example/#"` and `host = "localhost"` the URL went to evil.example.
+#[test]
+fn only_http_and_https_are_schemes() {
+    use iris_agentic_dev_core::iris::workspace_config::checked_scheme;
+    assert_eq!(checked_scheme("http").as_deref(), Some("http"));
+    assert_eq!(checked_scheme("HTTPS").as_deref(), Some("https"));
+    assert_eq!(checked_scheme("https://").as_deref(), Some("https"));
+    assert_eq!(checked_scheme("//https//").as_deref(), Some("https"));
+    for bad in [
+        "http://evil.example/#",
+        "ftp",
+        "javascript",
+        "http@x",
+        "https:x",
+    ] {
+        assert_eq!(checked_scheme(bad), None, "{bad}");
+    }
+}

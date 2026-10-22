@@ -233,12 +233,17 @@ fn test_killing_column_not_blocked() {
     assert!(validate_read_only_sql("SELECT KILLING FROM foo").is_ok());
 }
 
-// ── CALL excluded (not blocked) ───────────────────────────────────────────────
+// ── CALL is a write ───────────────────────────────────────────────────────────
 
+/// 033 left CALL out as an accepted risk: a procedure may write, but blocking CALL would break
+/// procedure queries. A procedure can be ObjectScript, though, so CALL in read mode ran code with
+/// the write gate off (AVA scan, 2026-10-22). It now goes through `mode="write"`.
 #[test]
-fn test_call_not_blocked() {
-    // CALL is intentionally excluded — see research.md
-    assert!(validate_read_only_sql("CALL MyStoredProc()").is_ok());
+fn test_call_is_blocked_in_read_mode() {
+    assert_eq!(
+        validate_read_only_sql("CALL MyStoredProc()"),
+        Err("CALL".to_string())
+    );
 }
 
 // ── SC-003: Representative SELECT queries — zero false positives ──────────────
@@ -349,4 +354,19 @@ fn validate_read_only_sql_mixed_quotes_before_select() {
         validate_read_only_sql("'INSERT_LITERAL' \"CREATE\" SELECT COUNT(*) FROM t"),
         Ok(())
     );
+}
+
+/// GRANT and REVOKE change privileges and CALL runs a stored procedure, which can be ObjectScript;
+/// none is a read. They passed the read-only check (AVA scan, 2026-10-22).
+#[test]
+fn grant_revoke_and_call_are_not_reads() {
+    for sql in [
+        "GRANT %ALL TO UnknownUser",
+        "revoke SELECT ON Sample.Person FROM X",
+        "CALL Sample.Evil()",
+        "  call   Sample.Evil()",
+    ] {
+        assert!(validate_read_only_sql(sql).is_err(), "{sql}");
+    }
+    assert!(validate_read_only_sql("SELECT Callback, Granted FROM T WHERE x = 'GRANT'").is_ok());
 }

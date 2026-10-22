@@ -52,11 +52,12 @@ pub fn check_env_gate(
     }
 
     // 057-sql-power: mode="write" is a DML operation → Execute. explain/count stay Query.
+    // `force=true` skips the read-only SQL check, so a forced read is Execute too.
     if tool_name == "iris_query" {
-        if let Some(mode) = params.get("mode").and_then(|v| v.as_str()) {
-            if mode == "write" {
-                category = ToolCategory::Execute;
-            }
+        let write = params.get("mode").and_then(|v| v.as_str()) == Some("write");
+        let forced = params.get("force").and_then(|v| v.as_bool()) == Some(true);
+        if write || forced {
+            category = ToolCategory::Execute;
         }
     }
 

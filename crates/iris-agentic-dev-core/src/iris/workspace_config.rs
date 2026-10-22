@@ -441,6 +441,18 @@ pub fn file_chooses_connection(
     !in_home
 }
 
+/// `http` or `https`, lowercased, from a configured scheme (surrounding `/` and a trailing `:` are
+/// tolerated); `None` for anything else, so a scheme cannot carry the URL to a host the loopback
+/// check never read.
+pub fn checked_scheme(raw: &str) -> Option<String> {
+    let s = raw
+        .trim()
+        .trim_matches('/')
+        .trim_end_matches(':')
+        .to_ascii_lowercase();
+    matches!(s.as_str(), "http" | "https").then_some(s)
+}
+
 /// May the operator's `IRIS_USERNAME`/`IRIS_PASSWORD` go to `host`, which a workspace file named?
 /// Only when it is this machine or the server `IRIS_HOST` already names.
 pub fn env_credentials_may_go_to(host: &str, named_host: Option<&str>) -> bool {
@@ -821,13 +833,26 @@ pub fn workspace_config_to_connection(
     // host + web_port → explicit HTTP/HTTPS connection (highest priority, no docker needed)
     if let Some(ref host) = cfg.host {
         let port = cfg.web_port.unwrap_or(52773);
-        let scheme = cfg
+        let raw_scheme = cfg
             .scheme
             .clone()
             .or_else(|| std::env::var("IRIS_SCHEME").ok())
-            .map(|s| s.trim_matches('/').to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "http".to_string());
+            .filter(|s| !s.trim_matches('/').is_empty());
+        let scheme = match raw_scheme {
+            None => "http".to_string(),
+            Some(raw) => match checked_scheme(&raw) {
+                Some(s) => s,
+                None => {
+                    // The loopback check below reads `host`; a scheme such as
+                    // `http://elsewhere/#` would carry the URL past it.
+                    tracing::error!(
+                        "scheme {raw:?} in .iris-agentic-dev.toml is not http or https; the file's \
+                         connection is not used"
+                    );
+                    return None;
+                }
+            },
+        };
         let prefix = cfg
             .web_prefix
             .clone()
@@ -850,6 +875,8 @@ pub fn workspace_config_to_connection(
         let withheld: Vec<&str> = [
             ("IRIS_USERNAME", &cfg.username),
             ("IRIS_PASSWORD", &cfg.password),
+            ("IRIS_SERVICE_USERNAME", &None),
+            ("IRIS_SERVICE_PASSWORD", &None),
         ]
         .into_iter()
         .filter(|(key, from_file)| {
