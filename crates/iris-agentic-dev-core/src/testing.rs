@@ -1409,6 +1409,32 @@ pub fn live_env() -> Vec<(String, String)> {
         .collect()
 }
 
+/// The container behind the live server: `IRIS_CONTAINER` when set, otherwise the container that
+/// publishes `IRIS_WEB_PORT`. Tests earlier in an aggregated binary change the process
+/// environment, and in the full CI order one test found `IRIS_CONTAINER` gone.
+pub fn live_container() -> String {
+    if let Some(c) = crate::iris::connection::container_from_env() {
+        return c;
+    }
+    let port = std::env::var("IRIS_WEB_PORT").unwrap_or_else(|_| "52780".into());
+    let out = std::process::Command::new("docker")
+        .args([
+            "ps",
+            "--filter",
+            &format!("publish={port}"),
+            "--format",
+            "{{.Names}}",
+        ])
+        .output()
+        .expect("docker ps");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .next()
+        .map(str::to_string)
+        .filter(|c| !c.is_empty())
+        .unwrap_or_else(|| panic!("no IRIS_CONTAINER and no container publishes port {port}"))
+}
+
 // ── 132 aihub-139: the licensed 2026.3.0AI.139 instance ──────────────────────
 //
 // A second live target next to iris-dev-iris. It is reached the same way, over Atelier, through the

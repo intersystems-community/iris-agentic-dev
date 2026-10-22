@@ -205,7 +205,7 @@ fn blank_comments_and_strings(content: &str) -> String {
 
 /// Gate: block UDL class source that uses compile-time code execution keywords.
 ///
-/// `CodeMode = objectgenerator` / `expression` / `call` cause IRIS to run arbitrary code
+/// `CodeMode = objectgenerator` / `generator` / `expression` / `call` cause IRIS to run arbitrary code
 /// at compile time, bypassing runtime privilege restrictions (e.g. a read-only service
 /// account). This gate fires on the **assembled document content** (not individual edits),
 /// so multi-call assembly tricks (split across insert_lines calls) are irrelevant — the
@@ -252,7 +252,8 @@ pub fn check_compile_time_code_mode(content: &str, doc_name: &str) -> Option<ser
         };
 
         // Check if the value is one of the dangerous modes.
-        const DANGEROUS_MODES: &[&str] = &["OBJECTGENERATOR", "EXPRESSION", "CALL"];
+        // GENERATOR is the older, non-object method generator; it runs at compile time too.
+        const DANGEROUS_MODES: &[&str] = &["OBJECTGENERATOR", "GENERATOR", "EXPRESSION", "CALL"];
         for mode in DANGEROUS_MODES {
             if trimmed.starts_with(mode) {
                 // Verify it's a whole token (followed by non-alphanumeric or EOF)

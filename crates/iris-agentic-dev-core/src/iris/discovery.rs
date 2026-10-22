@@ -7,9 +7,12 @@
 //! 4. Docker containers via bollard
 //! 5. VS Code settings.json objectscript.conn
 //!
-//! Each step fails silently and falls through to the next.
+//! Each step fails silently and falls through to the next, except step 2: a server named by
+//! `IRIS_HOST` is kept even when it does not answer.
 
-use crate::iris::connection::{iris_http_client, DiscoverySource, IrisConnection};
+use crate::iris::connection::{
+    container_from_env, host_from_env, iris_http_client, DiscoverySource, IrisConnection,
+};
 use std::time::Duration;
 
 /// The ports we scan on localhost for IRIS web servers.
@@ -33,6 +36,8 @@ pub enum FailureMode {
 }
 
 /// Return type of `discover_via_docker_named()`.
+// The connection is the variant almost every call returns, so boxing it buys nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum DiscoveryResult {
     /// Probe succeeded — connection ready.
@@ -44,6 +49,8 @@ pub enum DiscoveryResult {
 }
 
 /// Return type of `discover_iris()`. Replaces `Result<Option<IrisConnection>>`.
+// The connection is the variant almost every call returns, so boxing it buys nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum IrisDiscovery {
     /// Connection established.
@@ -75,7 +82,7 @@ pub async fn probe_atelier_with_client(
     if resp.status().as_u16() == 401 {
         // #21: iris-community containers started without IRIS_PASSWORD have OS auth only.
         // Basic auth is rejected. Only suggest Docker restart if a container is configured.
-        if std::env::var("IRIS_CONTAINER").is_ok() {
+        if container_from_env().is_some() {
             tracing::warn!(
                 "IRIS at {}:{} returned 401 — container may need IRIS_PASSWORD. \
                  Restart with: docker run -e IRIS_PASSWORD=SYS ...",
@@ -143,8 +150,10 @@ pub async fn discover_iris(explicit: Option<IrisConnection>) -> IrisDiscovery {
         return IrisDiscovery::Found(conn);
     }
 
-    // 2. Env vars
-    if let Ok(host) = std::env::var("IRIS_HOST") {
+    // 2. Env vars. A server named by `IRIS_HOST` is used whether or not it answers, as a
+    // `--host` flag is: falling through would hand the session to whatever the container lookup or
+    // the localhost scan finds next, which is a different server from the one asked for.
+    if let Some(host) = host_from_env() {
         let port = std::env::var("IRIS_WEB_PORT")
             .ok()
             .and_then(|p| p.parse::<u16>().ok())
@@ -162,30 +171,19 @@ pub async fn discover_iris(explicit: Option<IrisConnection>) -> IrisDiscovery {
             .map(|p| p.trim_matches('/').to_string())
             .filter(|p| !p.is_empty());
 
-        // When scheme or prefix is set, build base_url directly — probe_atelier
-        // hardcodes http:// and doesn't support prefixes.
-        if scheme != "http" || prefix.is_some() {
-            let base_url = match &prefix {
-                Some(p) => format!("{}://{}:{}/{}", scheme, host, port, p),
-                None => format!("{}://{}:{}", scheme, host, port),
-            };
-            let mut conn = IrisConnection::new(
-                base_url,
-                namespace,
-                username,
-                password,
-                DiscoverySource::EnvVar,
-            );
-            conn.probe().await;
-            return IrisDiscovery::Found(conn);
-        }
-
-        if let Some(mut conn) =
-            probe_atelier(&host, port, &username, &password, &namespace, 5000).await
-        {
-            conn.source = DiscoverySource::EnvVar;
-            return IrisDiscovery::Found(conn);
-        }
+        let base_url = match &prefix {
+            Some(p) => format!("{}://{}:{}/{}", scheme, host, port, p),
+            None => format!("{}://{}:{}", scheme, host, port),
+        };
+        let mut conn = IrisConnection::new(
+            base_url,
+            namespace,
+            username,
+            password,
+            DiscoverySource::EnvVar,
+        );
+        conn.probe().await;
+        return IrisDiscovery::Found(conn);
     }
 
     // 3. IRIS_CONTAINER: resolve the named container's web port via Docker.

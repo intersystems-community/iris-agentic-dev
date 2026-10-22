@@ -209,11 +209,24 @@ pub fn iris_http_client(
 /// Detected at probe time via `^%SYS("SystemMode")` SQL query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SystemMode {
-    Live,        // "Live" — lock write tools
-    Development, // "Development" — allow write tools
-    Test,        // "Test" — allow write tools
+    Live,        // "LIVE" or "FAILOVER" — lock write tools
+    Development, // "DEVELOPMENT" — allow write tools
+    Test,        // "TEST" — allow write tools
     #[default]
     Unknown, // null/empty — apply namespace heuristic
+}
+
+/// Read `^%SYS("SystemMode")`. The Management Portal stores `LIVE`, `TEST`, `DEVELOPMENT` or
+/// `FAILOVER` (Config.Startup's SystemMode); this matched `Live` exactly, so a real Live instance
+/// read as Unknown and had its writes left to the namespace heuristic. A failover member is a
+/// production system too.
+pub fn parse_system_mode(raw: &str) -> SystemMode {
+    match raw.trim().to_ascii_uppercase().as_str() {
+        "LIVE" | "FAILOVER" => SystemMode::Live,
+        "DEVELOPMENT" => SystemMode::Development,
+        "TEST" => SystemMode::Test,
+        _ => SystemMode::Unknown,
+    }
 }
 
 /// Which version of the Atelier REST API to use.
@@ -260,6 +273,9 @@ pub struct IrisConnection {
     /// When set, docker exec commands are prefixed with
     /// `ssh -o StrictHostKeyChecking=no <ssh_host>`.
     pub ssh_host: Option<String>,
+    /// Why the operator's `IRIS_USERNAME`/`IRIS_PASSWORD` were not sent to this server: a
+    /// workspace file named a host that is neither this machine nor `IRIS_HOST`'s server.
+    pub credentials_withheld: Option<String>,
 }
 
 /// T011: Manual Debug implementation — never prints the password.
@@ -276,6 +292,7 @@ impl fmt::Debug for IrisConnection {
             .field("port_superserver", &self.port_superserver)
             .field("system_mode", &self.system_mode)
             .field("ssh_host", &self.ssh_host)
+            .field("credentials_withheld", &self.credentials_withheld)
             .finish()
     }
 }
@@ -308,6 +325,125 @@ impl CompileResult {
     pub fn success(&self) -> bool {
         self.errors.is_empty()
     }
+}
+
+/// `IRIS_CONTAINER`, unless it is unset or blank. A blank value is a common way to switch the
+/// docker-exec path off; read as a name it sent `docker exec ''`, whose error hid the real reason
+/// a call failed.
+pub fn container_from_env() -> Option<String> {
+    non_blank(std::env::var("IRIS_CONTAINER").ok())
+}
+
+/// `IRIS_HOST`, unless it is unset or blank.
+pub fn host_from_env() -> Option<String> {
+    non_blank(std::env::var("IRIS_HOST").ok())
+}
+
+/// `v` when it holds something other than whitespace.
+pub fn non_blank(v: Option<String>) -> Option<String> {
+    v.filter(|s| !s.trim().is_empty())
+}
+
+/// What the generator class puts in front of its result; see `build_exec_class`.
+const RESULT_MARK: char = '\u{2}';
+
+/// The captured output from a generator's `/action/query` answer.
+///
+/// A non-2xx status, a body that is not JSON, or errors in Atelier's `status` are errors. The old
+/// code read any of them as `Ok("")`: `%UnitTest.Manager`, when `messages.log` grows mid-test,
+/// writes its own error text ahead of the HTTP headers, and the call came back as an empty
+/// success. Atelier does not always hand the column back as a JSON string: when the captured
+/// output parses as JSON on its own (an array, an object, a number, a bare `true`) IRIS emits it
+/// structurally, so it is re-serialized rather than read as empty.
+pub fn query_output(status: u16, body: &str) -> anyhow::Result<String> {
+    let head: String = body.chars().take(300).collect();
+    if !(200..300).contains(&status) {
+        anyhow::bail!("Atelier answered the generator query with HTTP {status}: {head}");
+    }
+    let parsed: serde_json::Value = serde_json::from_str(body).map_err(|_| {
+        anyhow::anyhow!(
+            "Atelier's answer to the generator query is not JSON, so the run's output is lost. \
+             Something wrote straight to the HTTP connection; %UnitTest.Manager does this when \
+             messages.log grows during a test. The answer began: {head}"
+        )
+    })?;
+    let result = &parsed["result"]["content"][0]["result"];
+    // An error in Atelier's status with no result means the query failed. With a result, the
+    // result is the answer: some calls report a status error alongside output they did produce
+    // (resolve_dynamic_dispatch gets ERROR #5035 "Parsing error" with a usable result).
+    if let Some(errors) = parsed["status"]["errors"]
+        .as_array()
+        .filter(|e| !e.is_empty() && result.is_null())
+    {
+        let text: Vec<String> = errors
+            .iter()
+            .map(|e| {
+                e["error"]
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| e.to_string())
+            })
+            .collect();
+        anyhow::bail!(
+            "Atelier reported the generator query failed: {}",
+            text.join("; ")
+        );
+    }
+    Ok(match result {
+        serde_json::Value::String(s) => s
+            .strip_prefix(RESULT_MARK)
+            .unwrap_or(s)
+            .replace('\x01', "\n"),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    })
+}
+
+/// The generator's query was sent, so the code ran or is still running. The error keeps its text;
+/// a caller that sees it through [`code_may_have_run`] must neither retry nor run the code another
+/// way. 1.6.3 turned failed query answers into errors, and `iris_execute` then re-ran the code
+/// through docker exec, so a run whose output overflowed the string limit ran twice.
+#[derive(Debug)]
+pub struct CodeMayHaveRun(pub String);
+
+impl std::fmt::Display for CodeMayHaveRun {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for CodeMayHaveRun {}
+
+pub fn code_may_have_run(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<CodeMayHaveRun>().is_some()
+}
+
+/// May a failed generator attempt be tried again? Only on a transient network error or a 5xx
+/// before the code ran; 4xx are client errors (e.g. 401 auth). The extra patterns cover cold-start
+/// failures on the first call: DNS not warm, TLS handshake, connection reset, or a half-open pooled
+/// connection surfacing as EOF / broken pipe.
+pub fn generator_retryable(e: &anyhow::Error) -> bool {
+    if code_may_have_run(e) {
+        return false;
+    }
+    let msg = e.to_string();
+    let lower = msg.to_ascii_lowercase();
+    msg.contains("HTTP 5")
+        || [
+            "error sending request",
+            "connection refused",
+            "connection reset",
+            "connection closed",
+            "broken pipe",
+            "unexpected end of file",
+            "eof",
+            "dns",
+            "handshake",
+            "timed out",
+            "timeout",
+        ]
+        .iter()
+        .any(|p| lower.contains(p))
 }
 
 /// Did the run report a failure instead of the code's own output?
@@ -374,6 +510,7 @@ impl IrisConnection {
             port_superserver: None,
             system_mode: SystemMode::Unknown,
             ssh_host: None,
+            credentials_withheld: None,
         }
     }
 
@@ -509,12 +646,7 @@ impl IrisConnection {
             }
             Err(_) => String::new(),
         };
-        match mode.as_str() {
-            "Live" => SystemMode::Live,
-            "Development" => SystemMode::Development,
-            "Test" => SystemMode::Test,
-            _ => SystemMode::Unknown,
-        }
+        parse_system_mode(&mode)
     }
 
     /// Execute ObjectScript code via the write-compile-query cycle (pure HTTP, no docker).
@@ -559,25 +691,7 @@ impl IrisConnection {
                     return Ok(output);
                 }
                 Err(e) => {
-                    let msg = e.to_string();
-                    let msg_lower = msg.to_ascii_lowercase();
-                    // Only retry on transient network errors or 5xx; 4xx are client errors
-                    // (e.g. 401 auth) and must NOT be retried. The extra patterns cover cold-start
-                    // failures on the first call: DNS not warm, TLS handshake, connection reset,
-                    // or a half-open pooled connection surfacing as EOF / broken pipe.
-                    let is_retryable = msg.contains("HTTP 5")
-                        || msg_lower.contains("error sending request")
-                        || msg_lower.contains("connection refused")
-                        || msg_lower.contains("connection reset")
-                        || msg_lower.contains("connection closed")
-                        || msg_lower.contains("broken pipe")
-                        || msg_lower.contains("unexpected end of file")
-                        || msg_lower.contains("eof")
-                        || msg_lower.contains("dns")
-                        || msg_lower.contains("handshake")
-                        || msg_lower.contains("timed out")
-                        || msg_lower.contains("timeout");
-                    if !is_retryable || attempt == delays.len() - 1 {
+                    if !generator_retryable(&e) || attempt == delays.len() - 1 {
                         return Err(e);
                     }
                     // Transient on cold-start (private web server still warming up) — debug only;
@@ -585,7 +699,7 @@ impl IrisConnection {
                     tracing::debug!(
                         "execute_via_generator attempt {} failed ({}), retrying in {:?}",
                         attempt + 1,
-                        msg,
+                        e,
                         delay
                     );
                     last_err = e;
@@ -696,28 +810,24 @@ impl IrisConnection {
             .send()
             .await;
         // The class is compiled by now, so a failed send must still remove it before returning.
+        // Past a connect failure the request may have reached IRIS, so the code may have run.
         let query_resp = match query_resp {
             Ok(r) => r,
             Err(e) => {
                 scratch.release(self, client).await;
-                return Err(e.into());
+                if e.is_connect() {
+                    return Err(e.into());
+                }
+                return Err(CodeMayHaveRun(e.to_string()).into());
             }
         };
-        let query_body: serde_json::Value = query_resp.json().await.unwrap_or_default();
-        // Atelier does not always hand the column back as a JSON string. When the captured output
-        // parses as JSON on its own — an array, an object, a number, a bare `true` — IRIS emits it
-        // structurally, so `as_str()` is None and the old `.unwrap_or("")` reported Ok("") for a
-        // call that had in fact produced its whole payload. Re-serialize those instead.
-        let output = match &query_body["result"]["content"][0]["result"] {
-            serde_json::Value::String(s) => s.replace('\x01', "\n"),
-            serde_json::Value::Null => String::new(),
-            other => other.to_string(),
-        };
+        let status = query_resp.status().as_u16();
+        let body = query_resp.text().await.unwrap_or_default();
 
         // 4. Delete the temp class; a failure is logged, the output still returns
         scratch.release(self, client).await;
 
-        Ok(output)
+        query_output(status, &body).map_err(|e| CodeMayHaveRun(e.to_string()).into())
     }
 
     /// Build the `.cls` source lines for the temp executor class.
@@ -788,7 +898,10 @@ impl IrisConnection {
             // case, and the exact comparison refused every call there from 1.3.2 on (#139).
             "  If $ZConvert(devio,\"L\")'=$ZConvert(tmpfile,\"L\") { Set out = \"ERROR($DEVICE): the called code left the current device set to \"\"\"_devio_\"\"\" instead of the capture file, so its output was written elsewhere and is lost. Snapshot and restore around the call: Set io=$IO / <call> / Use io\"_$Char(10) }"
                 .into(),
-            "  Quit out".into(),
+            // $Char(2) first, so Atelier never sees text that looks like JSON: it hands such a
+            // column back parsed, and fails with ERROR #5035 when the JSON is not valid (an output
+            // of `[1,2`). `query_output` strips it.
+            "  Quit $Char(2)_out".into(),
             "}".into(),
             "".into(),
             "}".into(),
@@ -836,8 +949,7 @@ impl IrisConnection {
     /// This method is preserved for environments without Atelier REST access.
     /// Reads IRIS_CONTAINER fresh on each call to pick up late env var changes.
     pub async fn execute(&self, code: &str, namespace: &str) -> anyhow::Result<String> {
-        let container =
-            std::env::var("IRIS_CONTAINER").map_err(|_| anyhow::anyhow!("DOCKER_REQUIRED"))?;
+        let container = container_from_env().ok_or_else(|| anyhow::anyhow!("DOCKER_REQUIRED"))?;
 
         use tokio::io::AsyncWriteExt;
 
@@ -890,8 +1002,7 @@ impl IrisConnection {
         namespace: &str,
         ssh_host: &str,
     ) -> anyhow::Result<String> {
-        let container =
-            std::env::var("IRIS_CONTAINER").map_err(|_| anyhow::anyhow!("DOCKER_REQUIRED"))?;
+        let container = container_from_env().ok_or_else(|| anyhow::anyhow!("DOCKER_REQUIRED"))?;
 
         use tokio::io::AsyncWriteExt;
 
@@ -2029,21 +2140,8 @@ mod additional_tests {
     // ── is_retryable_error classification logic ───────────────────────────────
 
     /// Helper to classify error messages as retryable or not.
-    /// Mirrors the classification in execute_via_generator (lines 284-295).
     fn classify_error_as_retryable(msg: &str) -> bool {
-        let msg_lower = msg.to_ascii_lowercase();
-        msg.contains("HTTP 5")
-            || msg_lower.contains("error sending request")
-            || msg_lower.contains("connection refused")
-            || msg_lower.contains("connection reset")
-            || msg_lower.contains("connection closed")
-            || msg_lower.contains("broken pipe")
-            || msg_lower.contains("unexpected end of file")
-            || msg_lower.contains("eof")
-            || msg_lower.contains("dns")
-            || msg_lower.contains("handshake")
-            || msg_lower.contains("timed out")
-            || msg_lower.contains("timeout")
+        super::generator_retryable(&anyhow::anyhow!("{msg}"))
     }
 
     #[test]

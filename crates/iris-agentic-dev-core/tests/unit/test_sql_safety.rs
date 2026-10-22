@@ -233,11 +233,14 @@ fn test_killing_column_not_blocked() {
     assert!(validate_read_only_sql("SELECT KILLING FROM foo").is_ok());
 }
 
-// ── CALL excluded (not blocked) ───────────────────────────────────────────────
+// ── CALL stays a read (033), with its limit stated ───────────────────────────
 
+/// 033 left CALL out: a procedure may write, but blocking CALL breaks reading through projected
+/// class queries, and `SELECT Pkg.Proc()` calls the same procedure as a function, which no
+/// lexical check can tell from `SELECT LENGTH(x)`. Re-decided 2026-10-22 (spec 140): kept, and
+/// the `iris_query` description says read mode does not stop a procedure with side effects.
 #[test]
 fn test_call_not_blocked() {
-    // CALL is intentionally excluded — see research.md
     assert!(validate_read_only_sql("CALL MyStoredProc()").is_ok());
 }
 
@@ -349,4 +352,17 @@ fn validate_read_only_sql_mixed_quotes_before_select() {
         validate_read_only_sql("'INSERT_LITERAL' \"CREATE\" SELECT COUNT(*) FROM t"),
         Ok(())
     );
+}
+
+/// GRANT and REVOKE change privileges; neither is a read. They passed the read-only check (security
+/// review, 2026-10-22).
+#[test]
+fn grant_and_revoke_are_not_reads() {
+    for sql in [
+        "GRANT %ALL TO UnknownUser",
+        "revoke SELECT ON Sample.Person FROM X",
+    ] {
+        assert!(validate_read_only_sql(sql).is_err(), "{sql}");
+    }
+    assert!(validate_read_only_sql("SELECT Callback, Granted FROM T WHERE x = 'GRANT'").is_ok());
 }

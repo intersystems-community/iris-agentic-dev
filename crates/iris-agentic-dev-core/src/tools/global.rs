@@ -44,8 +44,35 @@ pub fn validate_subscripts(subscripts: &[String]) -> Result<(), serde_json::Valu
 pub use crate::objectscript::validate_global_name;
 
 /// Strip a leading `^` from a global name. `^MyApp` → `MyApp`.
+///
+/// This only strips. It does not say the rest is a name; `canonical_global_name` does.
 pub fn normalize_global_name(name: &str) -> String {
     name.strip_prefix('^').unwrap_or(name).to_string()
+}
+
+/// The one name every gate, the audit scrub and the executor read (spec 052, FR-015, FR-016).
+///
+/// Strips exactly one leading `^`, then applies [`validate_global_name`], the 137 rule, and a
+/// 128-character bound. Anything else is `INVALID_GLOBAL_NAME`.
+///
+/// The name is interpolated into generated ObjectScript, so this is also the injection guard, the
+/// way `validate_subscripts` is for subscripts. Before it existed the gate compared the string as
+/// typed while the executor stripped a caret and built `^{name}`: `^ROUTINE` slipped past a rule
+/// that refused `ROUTINE`, `oddDEF("x")` slipped past an exact-match rule, and a name containing
+/// `"` ended the string literal `global_preview` builds.
+pub fn canonical_global_name(raw: &str) -> Result<String, serde_json::Value> {
+    let name = normalize_global_name(raw);
+    validate_global_name(&name)?;
+    if name.len() > 128 {
+        let shown: String = name.chars().take(80).collect();
+        return Err(serde_json::json!({
+            "success": false,
+            "error_code": "INVALID_GLOBAL_NAME",
+            "message": format!("'{shown}…' is not a valid global name: 128 characters at most."),
+            "global_name": shown,
+        }));
+    }
+    Ok(name)
 }
 
 // ---------------------------------------------------------------------------
@@ -334,10 +361,12 @@ pub async fn handle_iris_global(
         return e;
     }
 
-    let name = normalize_global_name(&params.global_name);
-    if let Err(e) = validate_global_name(&name) {
-        return e;
-    }
+    // The gate saw the canonical name; the handler checks it again so a caller that reaches this
+    // function without the gate still cannot interpolate an invalid one (FR-019).
+    let name = match canonical_global_name(&params.global_name) {
+        Ok(n) => n,
+        Err(e) => return e,
+    };
     let gref = build_global_ref(&name, &subs);
     let ns = params
         .namespace

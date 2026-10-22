@@ -304,12 +304,21 @@ format and role-gate behavior.
 iris-agentic-dev resolves the IRIS connection in this order — first match wins:
 
 1. CLI flags (`--host`, `--web-port`, `--scheme`)
-2. `.iris-agentic-dev.toml` in the workspace root
-3. Environment variables (`IRIS_HOST`, etc.)
-4. VS Code `settings.json` (`objectscript.conn` / `intersystems.servers`)
-5. VS Code Server Manager keychain (`intersystems.servers` + OS keychain credential)
-6. Running Docker containers (scored by workspace name similarity)
-7. Localhost port scan (52773, 41773, 51773, 8080)
+2. `.iris-agentic-dev.toml` in the workspace root, the nearest one found walking up from the
+   working directory
+3. Environment variables (`IRIS_HOST`, etc.). A server named by `IRIS_HOST` is used even when it
+   does not answer, so calls fail against it rather than reach another server
+4. `~/.iris-agentic-dev.toml`, when the walk up reaches your home directory: a personal default,
+   so `IRIS_HOST` outranks its connection settings (its tool and gate settings still apply). A
+   live reload follows the same rule, and `check_config` reports `connection_source: env_vars`
+   with the file still in `config_file`
+5. VS Code `settings.json` (`objectscript.conn` / `intersystems.servers`)
+
+A workspace `.iris-agentic-dev.toml` comes with the repository, so the host it names is the
+repository's choice. When the file names a host but no `username`/`password`, iad sends your
+`IRIS_USERNAME`/`IRIS_PASSWORD` only if that host is this machine (`localhost`, `127.0.0.1`, `::1`)
+or the host in `IRIS_HOST`. Otherwise it sends the defaults, and `check_config` reports
+`credentials_withheld` with what to do: put the credentials in the file, or set `IRIS_HOST`. 6. VS Code Server Manager keychain (`intersystems.servers` + OS keychain credential) 7. Running Docker containers (scored by workspace name similarity) 8. Localhost port scan (52773, 41773, 51773, 8080)
 
 ### Discovery that needs no connection
 

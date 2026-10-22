@@ -3361,6 +3361,9 @@ pub struct CheckConfigOk {
     /// Present only for a Docker-discovered connection.
     pub container: Option<String>,
     pub config_file: Option<String>,
+    /// Set when a workspace file named a host other than this machine or `IRIS_HOST`'s server, so
+    /// the environment's `IRIS_USERNAME`/`IRIS_PASSWORD` were not sent to it. Says what to do.
+    pub credentials_withheld: Option<String>,
     /// ISO 8601, e.g. `"2026-08-17T12:00:00Z"`.
     pub config_loaded_at: Option<String>,
     pub iris_version: Option<String>,

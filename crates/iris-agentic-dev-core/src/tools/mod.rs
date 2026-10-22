@@ -261,6 +261,8 @@ fn sentence_end(line: &str) -> Option<usize> {
 pub const ERR_NO_TESTS_FOUND: &str = "NO_TESTS_FOUND";
 pub const ERR_NAMESPACE_NOT_FOUND: &str = "NAMESPACE_NOT_FOUND";
 pub const ERR_TEST_EXECUTION_ERROR: &str = "TEST_EXECUTION_ERROR";
+/// The generator's query failed after the code ran (or while it runs); the code is not run again.
+pub const ERR_QUERY_FAILED_AFTER_RUN: &str = "QUERY_FAILED_AFTER_RUN";
 pub const ERR_SERVER_MANAGER_CREDENTIAL: &str = "SERVER_MANAGER_CREDENTIAL_ERROR";
 pub const ERR_SERVER_MANAGER_AMBIGUOUS: &str = "SERVER_MANAGER_AMBIGUOUS";
 pub const ERR_POLICY_GATE: &str = "POLICY_GATE";
@@ -1318,6 +1320,29 @@ pub fn map_status_int(status: i64, error_action: &str) -> &'static str {
     }
 }
 
+/// ObjectScript that runs `call` in a JOB whose principal device is a temp file, waits for it,
+/// and writes the file's lines to the current device.
+///
+/// `%UnitTest.Manager` checks `messages.log` after each test class and when it closes; if the file
+/// grew, it opens it, uses it, closes it, and never restores the caller's device, so `$IO` falls to
+/// `$PRINCIPAL`. In the CSP process that runs generator code, the principal is the gateway socket:
+/// the output was lost, or the manager's error text reached the HTTP connection ahead of the
+/// headers, and `iris_test` answered NO_TESTS_FOUND for a test that had passed. In the JOB the
+/// principal is the file, so whatever the manager does, the output lands there. Single-line
+/// statements with no braces, because docker exec feeds the same code to a terminal line by line.
+pub fn run_in_job(call: &str) -> String {
+    [
+        " Set iadJobOut=##class(%Library.File).TempFilename(\"txt\")".to_string(),
+        format!(" Job {call}:($NAMESPACE::iadJobOut:iadJobOut):10  Set iadJobOk=$TEST,iadJobPid=$ZCHILD"),
+        " If 'iadJobOk Write \"ERROR: iad could not start a background job to run the tests\",!".to_string(),
+        " If iadJobOk For iadJobI=1:1:864000 Quit:'$Data(^$JOB(iadJobPid))  Hang 0.1".to_string(),
+        " Set iadJobS=##class(%Stream.FileCharacter).%New(),iadJobS.TranslateTable=\"UTF8\"".to_string(),
+        " If iadJobOk,$System.Status.IsOK(iadJobS.LinkToFile(iadJobOut)) For  Quit:iadJobS.AtEnd  Write iadJobS.ReadLine(),!".to_string(),
+        " Kill iadJobS  Do ##class(%Library.File).Delete(iadJobOut)".to_string(),
+    ]
+    .join("\n")
+}
+
 /// Build the ObjectScript code to run a test class.
 /// `is_test_production=true` → uses `.Run()` (for %UnitTest.TestProduction subclasses).
 /// `is_test_production=false` → uses %UnitTest.Manager::RunTest() with `flags` and `token`.
@@ -1338,11 +1363,13 @@ pub fn build_test_run_code(
     );
 
     if is_test_production && is_class_pattern && validate_class_name(pattern).is_ok() {
-        format!(r#"do ##class({pattern}).Run()"#)
-    } else if is_class_pattern {
-        format!(
-            r#"do ##class(%UnitTest.Manager).RunTest("{pattern_lit}","{flags_lit}","{token_lit}")"#
-        )
+        return run_in_job(&format!("##class({pattern}).Run()"));
+    }
+    let run_test = run_in_job(&format!(
+        r#"##class(%UnitTest.Manager).RunTest("{pattern_lit}","{flags_lit}","{token_lit}")"#
+    ));
+    if is_class_pattern {
+        run_test
     } else {
         format!(
             r#"set utRoot="/tmp/httest/"
@@ -1350,7 +1377,7 @@ if '##class(%File).DirectoryExists(utRoot) {{ do ##class(%File).CreateDirectoryC
 set pkgDir=utRoot_"{pattern_lit}"_"/"
 if '##class(%File).DirectoryExists(pkgDir) {{ do ##class(%File).CreateDirectoryChain(pkgDir) }}
 set ^UnitTestRoot=utRoot
-do ##class(%UnitTest.Manager).RunTest("{pattern_lit}","{flags_lit}","{token_lit}")"#
+{run_test}"#
         )
     }
 }
@@ -1580,7 +1607,7 @@ pub fn write_open_hint(namespace: &str, document: &str) {
 pub fn validate_read_only_sql(sql: &str) -> Result<(), String> {
     const BLOCKED: &[&str] = &[
         "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "MERGE", "TRUNCATE", "EXEC",
-        "EXECUTE", "BULK", "LOAD", "KILL", "LOCK",
+        "EXECUTE", "BULK", "LOAD", "KILL", "LOCK", "GRANT", "REVOKE",
     ];
 
     // Step 1: strip /* ... */ block comments
@@ -2900,12 +2927,16 @@ impl IrisTools {
                 // Use ConfigFile source (and record the path) when the connection came from
                 // a .iris-agentic-dev.toml — so check_config can show config_file at startup,
                 // not just after the first hot-reload cycle (issue #82).
-                // Use EnvVars when IRIS_HOST is set but no toml file was found — env-var
-                // connections are pinned, not discovered, and check_config should say so.
-                let (source, file) = if config_path.is_some() {
+                // Use EnvVars when IRIS_HOST is set and no file chose the connection — env-var
+                // connections are pinned, not discovered, and check_config should say so. A home
+                // file that yielded to IRIS_HOST is still named: its tool lists apply.
+                let chosen = config_path
+                    .as_deref()
+                    .is_some_and(crate::iris::workspace_config::chooses);
+                let (source, file) = if chosen {
                     (ConnectionSource::ConfigFile, config_path)
-                } else if std::env::var("IRIS_HOST").is_ok() {
-                    (ConnectionSource::EnvVars, None)
+                } else if crate::iris::connection::host_from_env().is_some() {
+                    (ConnectionSource::EnvVars, config_path)
                 } else {
                     (ConnectionSource::AutoDiscovered, None)
                 };
@@ -3000,10 +3031,22 @@ impl IrisTools {
         &self,
     ) -> Result<(Arc<IrisConnection>, Arc<reqwest::Client>), McpError> {
         let iris = self.get_iris_reloaded().await?;
-        match iris.with_service_account() {
-            Some(svc) => Ok((Arc::new(svc), Arc::clone(&self.exec_client))),
-            None => Ok((iris, Arc::clone(&self.client))),
+        let Some(svc) = iris.with_service_account() else {
+            return Ok((iris, Arc::clone(&self.client)));
+        };
+        // The workspace file named a host the service account's credentials may not go to.
+        // Running as the primary identity instead would widen the call, so refuse it.
+        if let Some(note) = iris
+            .credentials_withheld
+            .as_deref()
+            .filter(|n| n.contains("IRIS_SERVICE_USERNAME"))
+        {
+            return Err(McpError::invalid_request(
+                format!("This tool runs as the service account, and {note}"),
+                None,
+            ));
         }
+        Ok((Arc::new(svc), Arc::clone(&self.exec_client)))
     }
 
     /// Resolve which IRIS connection to use for a tool call (072-multi-instance-pool).
@@ -3264,6 +3307,7 @@ impl IrisTools {
 
         // Parse the new config
         let cfg = crate::iris::workspace_config::load_workspace_config(config_file_str.as_deref());
+        let chosen = crate::iris::workspace_config::chooses(&config_path);
 
         let (conn_result, declared) = match cfg {
             None => {
@@ -3283,10 +3327,15 @@ impl IrisTools {
                     return;
                 }
                 let declared = write_gate::DeclaredGates::from_config(&cfg);
-                (
-                    crate::iris::workspace_config::workspace_config_to_connection(&cfg, "USER"),
-                    declared,
-                )
+                // The startup rule: a home file that yields to IRIS_HOST reloads its settings,
+                // not the connection, and discovery below returns the IRIS_HOST server.
+                let conn = if chosen {
+                    crate::iris::workspace_config::workspace_config_to_connection(&cfg, "USER")
+                } else {
+                    crate::iris::workspace_config::export_tool_lists(&cfg);
+                    None
+                };
+                (conn, declared)
             }
         };
 
@@ -3316,13 +3365,13 @@ impl IrisTools {
         let gates =
             write_gate::resolve_for_connection(declared, Some(&new_conn), &new_conn.namespace);
         let config_path_for_pool = config_path.clone();
-        let new_state = ConnectionState::from_iris(
-            new_conn,
-            ConnectionSource::ConfigFile,
-            Some(config_path),
-            gates,
-        )
-        .with_declared(declared);
+        let source = if chosen {
+            ConnectionSource::ConfigFile
+        } else {
+            ConnectionSource::EnvVars
+        };
+        let new_state = ConnectionState::from_iris(new_conn, source, Some(config_path), gates)
+            .with_declared(declared);
         let mut conn = self.connection.lock().unwrap();
         *conn = new_state;
         conn.config_parse_error = None;
@@ -4209,10 +4258,7 @@ impl IrisTools {
         // execute_via_generator redirects $IO to a temp file but RunTest also needs
         // to create directories under ^UnitTestRoot — which fails in that context.
         // When IRIS_CONTAINER is set, prefer docker exec (full filesystem + real terminal).
-        let has_container = std::env::var("IRIS_CONTAINER")
-            .ok()
-            .filter(|v| !v.is_empty())
-            .is_some();
+        let has_container = crate::iris::connection::container_from_env().is_some();
 
         let run_output = if has_container {
             // Docker exec: full filesystem access, captures terminal output from RunTest
@@ -4774,8 +4820,22 @@ impl IrisTools {
                 }
                 return json_result(resp);
             }
+            Ok(Err(e)) if crate::iris::connection::code_may_have_run(&e) => {
+                self.record_call("iris_execute", false);
+                return err_result(serde_json::json!({
+                    "success": false,
+                    "error_code": ERR_QUERY_FAILED_AFTER_RUN,
+                    "error": format!(
+                        "{e}. The code ran on IRIS, or is still running, so iad did not run it \
+                         again through docker exec."
+                    ),
+                    "namespace": namespace,
+                    "execution_path": "atelier",
+                }));
+            }
             Ok(Err(e)) => {
-                // HTTP path failed — keep the real cause; fall through to docker exec.
+                // HTTP path failed before the code ran — keep the real cause; fall through to
+                // docker exec.
                 e.to_string()
             }
         };
@@ -4916,7 +4976,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Execute SQL against IRIS via Atelier REST. mode=\"read\" (default): SELECT only, destructive SQL blocked unless force=true. mode=\"explain\": returns the IRIS query plan for a SELECT (plan_text, query_hash), no rows. mode=\"count\": returns a row count for `table` or `query` without transferring rows. mode=\"write\": executes INSERT/UPDATE/DELETE/CALL/TRUNCATE (Execute-gated, blocked on mcpTemplate=live/test); UPDATE/DELETE are pre-checked against max_rows_affected (default 1000, max 10000) before executing. Skill: objectscript-sql-patterns for IRIS SQL quirks. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "Execute SQL against IRIS via Atelier REST. mode=\"read\" (default): SELECT and CALL; DML, DDL, GRANT and REVOKE are refused (force=true skips this when write tools are enabled, and then counts as a write). Read mode does not stop a stored procedure that has side effects, whether it is called with CALL or inside a SELECT: only the IRIS user's privileges do. mode=\"explain\": returns the IRIS query plan for a SELECT (plan_text, query_hash), no rows. mode=\"count\": returns a row count for `table` or `query` without transferring rows. mode=\"write\": executes INSERT/UPDATE/DELETE/CALL/TRUNCATE (Execute-gated, blocked on mcpTemplate=live/test); UPDATE/DELETE are pre-checked against max_rows_affected (default 1000, max 10000) before executing. Skill: objectscript-sql-patterns for IRIS SQL quirks. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         output_schema = output_schemas::oneof_output_schema::<IrisQueryResponse>()
     )]
     async fn iris_query(
@@ -4933,8 +4993,11 @@ impl IrisTools {
         // Policy gate (044 + 051): fires before role gate.
         let (sm_server_q, policy_q) = self.active_server_manager_policy();
         {
-            let params_json =
-                serde_json::json!({ "namespace": &p.namespace, "mode": mode, "query": p.query });
+            // `force` must reach the gates: dispatch_gate's SQL code-edit check and the env gate
+            // both treat a forced read as a write, and without it neither ever saw one.
+            let params_json = serde_json::json!({
+                "namespace": &p.namespace, "mode": mode, "query": p.query, "force": p.force,
+            });
             if let Err(gate) = crate::policy::gate::dispatch_gate(
                 "iris_query",
                 sm_server_q.as_deref().unwrap_or(""),
@@ -5072,7 +5135,7 @@ impl IrisTools {
                     let mut resp = serde_json::json!({
                         "success": false,
                         "error_code": "SQL_WRITE_BLOCKED",
-                        "error": format!("Destructive SQL keyword '{}' is not allowed. Use force: true to override.", kw),
+                        "error": format!("'{}' is not a read, so mode=\"read\" does not send it. Use mode=\"write\", which needs write tools enabled.", kw),
                         "blocked_keyword": kw,
                     });
                     if p.force && !self.write_tools_enabled() {
@@ -5443,6 +5506,7 @@ impl IrisTools {
             "namespace": namespace,
             "container": container,
             "config_file": config_file,
+            "credentials_withheld": conn.iris.as_ref().and_then(|i| i.credentials_withheld.as_deref()),
             "config_loaded_at": config_loaded_at,
             "iris_version": iris_version,
             // All four gate fields come off the one `GateResolution` that `call_tool` enforces, so
@@ -8550,7 +8614,7 @@ Methods:
 
         // iris.cpf probe: when docker_only or nopws config, check WebServer= in cpf.
         let (nopws_detected, nopws_evidence) = if nopws {
-            let container = std::env::var("IRIS_CONTAINER").ok();
+            let container = crate::iris::connection::container_from_env();
             if let Some(ref cname) = container {
                 // Probe iris.cpf from inside the container to check WebServer=0
                 let cpf_paths = ["/usr/irissys/iris.cpf", "/usr/local/etc/irissys/iris.cpf"];
@@ -9562,7 +9626,7 @@ impl ServerHandler for IrisTools {
     /// `check_config` reported the gate as active.
     async fn call_tool(
         &self,
-        request: rmcp::model::CallToolRequestParams,
+        mut request: rmcp::model::CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<rmcp::model::CallToolResponse, McpError> {
         let start = std::time::Instant::now();
@@ -9580,6 +9644,9 @@ impl ServerHandler for IrisTools {
                     // directions. `has_changed()` is an mtime stat, so this costs nothing when the
                     // file is untouched.
                     self.check_reload().await;
+                    if let Some(args) = request.arguments.as_mut() {
+                        write_gate::normalize_dispatch_args(args);
+                    }
                     let gates = self.connection.lock().unwrap().gates;
                     if let Some(refusal) =
                         write_gate::gate_check(&request.name, request.arguments.as_ref(), &gates)
@@ -11528,9 +11595,12 @@ impl IrisTools {
     pub async fn call_for_test(
         &self,
         tool: &str,
-        params: serde_json::Value,
+        mut params: serde_json::Value,
     ) -> Result<rmcp::model::CallToolResult, String> {
         use rmcp::handler::server::wrapper::Parameters;
+        if let Some(args) = params.as_object_mut() {
+            write_gate::normalize_dispatch_args(args);
+        }
         macro_rules! dispatch {
             ($name:expr, $ty:ty, $method:ident) => {
                 if tool == $name {

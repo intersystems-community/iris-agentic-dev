@@ -2,7 +2,7 @@
 //!
 //! Priority order: CLI flags > .iris-agentic-dev.toml > env vars > auto-discovery.
 
-use crate::iris::connection::{DiscoverySource, IrisConnection};
+use crate::iris::connection::{host_from_env, DiscoverySource, IrisConnection};
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -421,6 +421,56 @@ pub fn load_workspace_config_with_path(
     }
 }
 
+/// Whether the `.iris-agentic-dev.toml` at `config_path` chooses the connection, given whether
+/// `IRIS_HOST` is set. A project's file does, over the environment (spec 140, iris-interop-dev
+/// #434). A file in the home directory is a personal default that the walk up from any project
+/// without its own file reaches, so it yields to `IRIS_HOST` and chooses only when that is unset.
+/// Its tool and gate settings apply either way.
+pub fn file_chooses_connection(
+    config_path: &std::path::Path,
+    home: Option<&std::path::Path>,
+    iris_host_set: bool,
+) -> bool {
+    if !iris_host_set {
+        return true;
+    }
+    // Canonical paths, so `/var/...` and `/private/var/...` (macOS), or a symlinked home, match.
+    let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let in_home =
+        matches!((config_path.parent(), home), (Some(dir), Some(h)) if canon(dir) == canon(h));
+    !in_home
+}
+
+/// `http` or `https`, lowercased, from a configured scheme (surrounding `/` and a trailing `:` are
+/// tolerated); `None` for anything else, so a scheme cannot carry the URL to a host the loopback
+/// check never read.
+pub fn checked_scheme(raw: &str) -> Option<String> {
+    let s = raw
+        .trim()
+        .trim_matches('/')
+        .trim_end_matches(':')
+        .to_ascii_lowercase();
+    matches!(s.as_str(), "http" | "https").then_some(s)
+}
+
+/// May the operator's `IRIS_USERNAME`/`IRIS_PASSWORD` go to `host`, which a workspace file named?
+/// Only when it is this machine or the server `IRIS_HOST` already names.
+pub fn env_credentials_may_go_to(host: &str, named_host: Option<&str>) -> bool {
+    let host = host.trim().trim_start_matches('[').trim_end_matches(']');
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
+    loopback || named_host.is_some_and(|h| h.trim().eq_ignore_ascii_case(host))
+}
+
+/// [`file_chooses_connection`] for this process: its home directory and its `IRIS_HOST`. Startup
+/// and the live reload both ask it, so an edit cannot move a session the file yielded.
+pub fn chooses(config_path: &std::path::Path) -> bool {
+    let iris_host_set = crate::iris::connection::host_from_env().is_some();
+    file_chooses_connection(config_path, dirs::home_dir().as_deref(), iris_host_set)
+}
+
 /// Like [`apply_workspace_config`] but also returns the path of the config file that was loaded
 /// and what it declared about the write/destructive gates, so callers can record both in
 /// `ConnectionState` at startup (not just after hot-reload).
@@ -442,7 +492,12 @@ pub fn apply_workspace_config_with_path(
             // even when a connection is already established via env vars or CLI flags.
             // explicit connection wins for connectivity; TOML wins for tool-list settings.
             let declared = crate::tools::write_gate::DeclaredGates::from_config(&cfg);
-            let conn_from_cfg = workspace_config_to_connection(&cfg, namespace);
+            let conn_from_cfg = if chooses(&path) {
+                workspace_config_to_connection(&cfg, namespace)
+            } else {
+                export_tool_lists(&cfg);
+                None
+            };
             let conn = explicit.or(conn_from_cfg);
             (conn, Some(path), declared)
         }
@@ -726,6 +781,19 @@ pub fn build_workspace_config_json(
     }
 }
 
+/// Export disabled_tools/enabled_tools to env so IrisTools::with_registry_and_toolset picks them
+/// up. Only set if the field is non-empty and the variable is not already set by the user. Runs
+/// for every loaded file, including a home-directory file that yields its connection to
+/// `IRIS_HOST` (`file_chooses_connection`).
+pub fn export_tool_lists(cfg: &WorkspaceConfig) {
+    if !cfg.disabled_tools.is_empty() && std::env::var("IRIS_DISABLED_TOOLS").is_err() {
+        std::env::set_var("IRIS_DISABLED_TOOLS", cfg.disabled_tools.join(","));
+    }
+    if !cfg.enabled_tools.is_empty() && std::env::var("IRIS_ENABLED_TOOLS").is_err() {
+        std::env::set_var("IRIS_ENABLED_TOOLS", cfg.enabled_tools.join(","));
+    }
+}
+
 /// Apply workspace config to set up the connection environment.
 ///
 /// If `host` is specified: returns `Some(IrisConnection)` that will be passed directly
@@ -740,14 +808,7 @@ pub fn workspace_config_to_connection(
     cfg: &WorkspaceConfig,
     namespace_default: &str,
 ) -> Option<IrisConnection> {
-    // Export disabled_tools/enabled_tools to env so IrisTools::with_registry_and_toolset
-    // picks them up. Only set if the field is non-empty and env var not already set by user.
-    if !cfg.disabled_tools.is_empty() && std::env::var("IRIS_DISABLED_TOOLS").is_err() {
-        std::env::set_var("IRIS_DISABLED_TOOLS", cfg.disabled_tools.join(","));
-    }
-    if !cfg.enabled_tools.is_empty() && std::env::var("IRIS_ENABLED_TOOLS").is_err() {
-        std::env::set_var("IRIS_ENABLED_TOOLS", cfg.enabled_tools.join(","));
-    }
+    export_tool_lists(cfg);
 
     // tls_verify is a connection setting, so the config wins over the environment — the opposite
     // of the two tool-list keys above. Clearing IRIS_INSECURE on the way past matters: the
@@ -772,13 +833,26 @@ pub fn workspace_config_to_connection(
     // host + web_port → explicit HTTP/HTTPS connection (highest priority, no docker needed)
     if let Some(ref host) = cfg.host {
         let port = cfg.web_port.unwrap_or(52773);
-        let scheme = cfg
+        let raw_scheme = cfg
             .scheme
             .clone()
             .or_else(|| std::env::var("IRIS_SCHEME").ok())
-            .map(|s| s.trim_matches('/').to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "http".to_string());
+            .filter(|s| !s.trim_matches('/').is_empty());
+        let scheme = match raw_scheme {
+            None => "http".to_string(),
+            Some(raw) => match checked_scheme(&raw) {
+                Some(s) => s,
+                None => {
+                    // The loopback check below reads `host`; a scheme such as
+                    // `http://elsewhere/#` would carry the URL past it.
+                    tracing::error!(
+                        "scheme {raw:?} in .iris-agentic-dev.toml is not http or https; the file's \
+                         connection is not used"
+                    );
+                    return None;
+                }
+            },
+        };
         let prefix = cfg
             .web_prefix
             .clone()
@@ -794,38 +868,56 @@ pub fn workspace_config_to_connection(
             .clone()
             .or_else(|| std::env::var("IRIS_NAMESPACE").ok())
             .unwrap_or_else(|| namespace_default.to_string());
+        // The file came with the repository, so its host is the repository's choice: the
+        // operator's env credentials go only to this machine or to IRIS_HOST's server.
+        let env_ok = env_credentials_may_go_to(host, host_from_env().as_deref());
+        let from_env = |key: &str| std::env::var(key).ok().filter(|_| env_ok);
+        let withheld: Vec<&str> = [
+            ("IRIS_USERNAME", &cfg.username),
+            ("IRIS_PASSWORD", &cfg.password),
+            ("IRIS_SERVICE_USERNAME", &None),
+            ("IRIS_SERVICE_PASSWORD", &None),
+        ]
+        .into_iter()
+        .filter(|(key, from_file)| {
+            !env_ok && from_file.is_none() && std::env::var(key).is_ok_and(|v| !v.is_empty())
+        })
+        .map(|(key, _)| key)
+        .collect();
         let username = cfg
             .username
             .clone()
-            .or_else(|| std::env::var("IRIS_USERNAME").ok())
+            .or_else(|| from_env("IRIS_USERNAME"))
             .unwrap_or_else(|| "_SYSTEM".to_string());
         let password = cfg
             .password
             .clone()
-            .or_else(|| std::env::var("IRIS_PASSWORD").ok())
+            .or_else(|| from_env("IRIS_PASSWORD"))
             .unwrap_or_else(|| "SYS".to_string());
         // If container is also specified alongside host, update IRIS_CONTAINER so docker
         // exec tools (iris_execute fallback, iris_test, etc.) target the right container.
         // Use DiscoverySource::Docker so check_config exposes the container name.
-        if let Some(ref container) = cfg.container {
-            std::env::set_var("IRIS_CONTAINER", container);
-            return Some(IrisConnection::new(
-                base_url,
-                namespace,
-                username,
-                password,
+        let source = match cfg.container {
+            Some(ref container) => {
+                std::env::set_var("IRIS_CONTAINER", container);
                 DiscoverySource::Docker {
                     container_name: container.clone(),
-                },
-            ));
+                }
+            }
+            None => DiscoverySource::EnvVar,
+        };
+        let mut conn = IrisConnection::new(base_url, namespace, username, password, source);
+        if !withheld.is_empty() {
+            let note = format!(
+                "{} not sent to {host}: .iris-agentic-dev.toml names that host, and the \
+                 environment's credentials go only to this machine or to IRIS_HOST's server. Put \
+                 username and password in the file, or set IRIS_HOST={host}.",
+                withheld.join(" and ")
+            );
+            tracing::warn!("{note}");
+            conn.credentials_withheld = Some(note);
         }
-        return Some(IrisConnection::new(
-            base_url,
-            namespace,
-            username,
-            password,
-            DiscoverySource::EnvVar,
-        ));
+        return Some(conn);
     }
 
     // container → inject into env so discover_iris() docker step picks it up
@@ -925,8 +1017,12 @@ pub fn apply_workspace_config(
     if explicit.is_some() {
         return explicit;
     }
-    let cfg = load_workspace_config(workspace_path)?;
-    explicit.or_else(|| workspace_config_to_connection(&cfg, namespace))
+    let (cfg, path) = load_workspace_config_with_path(workspace_path)?;
+    if !chooses(&path) {
+        export_tool_lists(&cfg);
+        return None;
+    }
+    workspace_config_to_connection(&cfg, namespace)
 }
 
 /// Generate starter `.iris-agentic-dev.toml` content with inline comments.

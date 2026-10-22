@@ -44,12 +44,20 @@ pub fn check_env_gate(
         }
     }
 
+    // `global_kill` is the same operation as `iris_global` with action=kill, so it is Execute here too.
+    // It is categorized Admin in the tool table, which the live and test templates allow, so
+    // `mcpTemplate = "live"` refused one spelling of a kill and not the other (spec 052, FR-023).
+    if tool_name == "global_kill" {
+        category = ToolCategory::Execute;
+    }
+
     // 057-sql-power: mode="write" is a DML operation → Execute. explain/count stay Query.
+    // `force=true` skips the read-only SQL check, so a forced read is Execute too.
     if tool_name == "iris_query" {
-        if let Some(mode) = params.get("mode").and_then(|v| v.as_str()) {
-            if mode == "write" {
-                category = ToolCategory::Execute;
-            }
+        let write = params.get("mode").and_then(|v| v.as_str()) == Some("write");
+        let forced = params.get("force").and_then(|v| v.as_bool()) == Some(true);
+        if write || forced {
+            category = ToolCategory::Execute;
         }
     }
 

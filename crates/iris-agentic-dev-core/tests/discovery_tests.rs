@@ -47,8 +47,8 @@ async fn probe_atelier_respects_timeout() {
 
 // ── discover_iris cascade ────────────────────────────────────────────────────
 
-/// When IRIS_HOST + IRIS_WEB_PORT env vars are set and valid, discover_iris
-/// should attempt to connect (and fail gracefully if not reachable).
+/// When IRIS_HOST + IRIS_WEB_PORT env vars are set, discover_iris uses that server even when it
+/// does not answer, as a `--host` flag is; it never panics.
 ///
 /// Requires isolated environment: no Docker IRIS running, no VS Code Server Manager
 /// configured. Ignored by default because CI and developer machines may have SM configured.
@@ -69,10 +69,10 @@ async fn discover_iris_reads_env_vars() {
     std::env::set_var("IRIS_PASSWORD", "testpass");
 
     let result = discover_iris(None).await;
-    // Env vars found but host unreachable — should return NotFound, not panic
+    // Env vars found but host unreachable: the named server is kept, not replaced by another
     assert!(
-        !matches!(result, IrisDiscovery::Found(_)),
-        "unreachable host should not return Found"
+        matches!(&result, IrisDiscovery::Found(c) if c.base_url == "http://nonexistent.invalid:52773"),
+        "an unreachable named host is still the connection"
     );
 
     // Clean up

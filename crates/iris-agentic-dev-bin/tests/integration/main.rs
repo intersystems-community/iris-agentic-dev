@@ -16,6 +16,7 @@ mod binary_095_add_server_plaintext;
 mod binary_096_terminal_compat;
 mod binary_098_server_probe;
 mod binary_099_fresh_container;
+mod binary_140_config_precedence;
 mod test_attribution_stdio;
 mod test_compile_live;
 mod test_csp_logout_132;

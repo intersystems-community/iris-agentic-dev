@@ -286,6 +286,57 @@ final test run and fmt/clippy pass.
 
 ---
 
+---
+
+## Phase 9: Canonical global name — gate bypass fix (amendment 2026-10-10, FR-015 to FR-021)
+
+Tests first in every step. The gate unit tests run each name bare and with `^`.
+
+- [X] T049 [P] Unit: `matches_pattern` with caret-prefixed names — `("^ROUTINE","^ROUTINE")`,
+      `("^PAPMI123","^PAPMI*")`, `("^MyAppData","^PAPMI*")` false, `("^^ROUTINE","^ROUTINE")` false —
+      in `tests/unit/test_policy_patterns.rs`
+- [X] T050 [P] Unit: `canonical_global_name` accepts and strips (`^A`, `A`, `%SYS`, `Ens.MessageHeader`,
+      128 chars) and rejects (the FR-016 table, one assertion per input) —
+      `tests/unit/test_iris_global_unit.rs`
+- [X] T051 [P] Unit: `check_system_blocklist` and `check_phi_name_gate`, each name bare and with `^`,
+      including an operator `globalBlocklist` entry written both ways and the kill allowlist —
+      `tests/unit/test_policy_gate.rs`, `test_data_policy_gate.rs`
+- [X] T052 [P] Unit: `dispatch_gate` reads `global`, `global_name` and `globalName`; `global_preview` /
+      `global_kill` params naming `oddDEF` or `PAPMIPatient` are refused; an invalid name returns
+      `INVALID_GLOBAL_NAME` before the blocklist gate — `tests/unit/test_dispatch_gate.rs`
+- [X] T053 [P] Unit: `scrub_params` redacts a PHI-pattern `global` and `^global` —
+      `tests/unit/test_policy_audit_config.rs`
+- [X] T054 Binary (no IRIS): spawn the binary, `tools/call` `iris_global`, `global_preview` and
+      `global_kill` with `oddDEF`, `^oddDEF`, `PAPMIPatient`, `^PAPMIPatient`, `oddDEF("x")` and check
+      the error codes and that no confirm token appears — `tests/binary/global_name_gates_052.rs`
+- [X] T055 Live `#[ignore]`, read actions only: the same names against `iris-dev-iris` return the gate
+      errors; a clean name (`^IadGate052.Probe`) still round-trips set, get, kill —
+      `tests/integration/test_global_name_gates_052_live.rs`
+- [X] T056 Implement `canonical_global_name` and `INVALID_GLOBAL_NAME` in `tools/global.rs`
+- [X] T057 Fix `matches_pattern` (FR-017) in `policy/patterns.rs`
+- [X] T058 `dispatch_gate`: read the three keys, canonicalize, pass the canonical name to gates [3]
+      and [4] (FR-015, FR-018) in `policy/gate.rs`
+- [X] T059 Handlers re-validate (FR-019); `global_preview` mints no token for a refused name (FR-021)
+      in `tools/global.rs`, `tools/admin_tools.rs`
+- [X] T060 `scrub_params` reads `global` (FR-020) in `iris/audit_log.rs`
+- [X] T061 `docs/tools.md`: `iris_global`, `global_preview`, `global_kill` name rules and
+      `INVALID_GLOBAL_NAME`; release note under the next patch release
+- [X] T063 [P] Unit: every code-storage global seen on 2026.2 (the FR-022 list) is blocked in both
+      spellings — `tests/unit/test_global_name_gates_052.rs`
+- [X] T064 Live `#[ignore]`: enumerate `^$GLOBAL` in USER and %SYS; every `^odd*` and `^r<Upper>*`
+      global is blocked in both spellings — `tests/integration/test_global_name_gates_052_live.rs`
+- [X] T065 Add the FR-022 names to `SYSTEM_BLOCKLIST` in `policy/patterns.rs`
+- [X] T066 [P] Unit: `dispatch_gate("global_kill", ...)` is `ENV_GATE_BLOCKED` on `live` and `test`, allowed
+      on `dev`; `global_preview` is allowed on all three — `tests/unit/test_global_name_gates_052.rs`
+- [X] T067 `global_preview` and `global_kill` handlers call `dispatch_gate` (audit entry blocked or
+      allowed); `env_gate` maps `global_kill` to Execute — `tools/mod.rs`, `policy/env_gate.rs`
+- [X] T062 Full suite, `cargo fmt --all -- --check`, `cargo clippy -- -D warnings`, and the live suite
+      against `iris-dev-iris` with `--test-threads=1`
+
+---
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies

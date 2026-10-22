@@ -272,7 +272,7 @@ fn extract_cls_members(
                     }
                 };
                 match member.kind() {
-                    "method" | "classmethod" => {
+                    "method" | "classmethod" | "clientmethod" => {
                         if let Some(sym) =
                             extract_method_symbol(member, source, class_name, rel_path)
                         {
@@ -392,42 +392,34 @@ fn extract_method_symbol(
     class_name: &str,
     rel_path: &str,
 ) -> Option<Symbol> {
+    // A method or class method wraps its header in `method_definition`; from grammar 1.9.21 a
+    // `clientmethod` (JavaScript) carries `method_name`, `arguments` and `return_type` itself.
     let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        if child.kind() == "method_definition" {
-            let mut c2 = child.walk();
-            let mut method_name = None;
-            let mut formal_spec_args: Vec<ArgSpec> = Vec::new();
-            for sub in child.children(&mut c2) {
-                if sub.kind() == "method_name" {
-                    let n = first_identifier_text(sub, source);
-                    if !n.is_empty() {
-                        method_name = Some(n);
-                    }
-                } else if sub.kind() == "arguments" {
-                    formal_spec_args = parse_arguments(sub, source);
-                }
+    let def = node
+        .children(&mut cursor)
+        .find(|c| c.kind() == "method_definition")
+        .or_else(|| (node.kind() == "clientmethod").then_some(node))?;
+    let mut method_name = None;
+    let mut formal_spec_args: Vec<ArgSpec> = Vec::new();
+    for sub in def.children(&mut cursor) {
+        if sub.kind() == "method_name" {
+            let n = first_identifier_text(sub, source);
+            if !n.is_empty() {
+                method_name = Some(n);
             }
-            if let Some(name) = method_name {
-                let line = child.start_position().row as u32 + 1;
-                let type_name = extract_typename(child, source);
-                let formal_spec = if formal_spec_args.is_empty() {
-                    None
-                } else {
-                    Some(formal_spec_args)
-                };
-                return Some(Symbol {
-                    name: format!("{}.{}", class_name, name),
-                    kind: "method".into(),
-                    file: rel_path.into(),
-                    line,
-                    formal_spec,
-                    type_name,
-                });
-            }
+        } else if sub.kind() == "arguments" {
+            formal_spec_args = parse_arguments(sub, source);
         }
     }
-    None
+    let name = method_name?;
+    Some(Symbol {
+        name: format!("{}.{}", class_name, name),
+        kind: "method".into(),
+        file: rel_path.into(),
+        line: def.start_position().row as u32 + 1,
+        formal_spec: (!formal_spec_args.is_empty()).then_some(formal_spec_args),
+        type_name: extract_typename(def, source),
+    })
 }
 
 fn extract_property_symbol(

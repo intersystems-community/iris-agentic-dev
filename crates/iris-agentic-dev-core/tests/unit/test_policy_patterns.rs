@@ -45,7 +45,8 @@ fn phi_patterns_cover_expected_names() {
 
 #[test]
 fn system_blocklist_count() {
-    assert_eq!(SYSTEM_BLOCKLIST.len(), 32);
+    // 32 from spec 051, plus 20 code-storage globals found on a live instance (spec 052, FR-022).
+    assert_eq!(SYSTEM_BLOCKLIST.len(), 52);
 }
 
 /// The blocklist has no bypass, so every false block is permanent. `^SYS*` used to swallow
@@ -95,5 +96,47 @@ fn first_match_owned_takes_a_configured_list() {
         first_match_owned("anything", &[]),
         None,
         "an empty per-connection list must not match everything"
+    );
+}
+
+// ── a leading `^` on the name (spec 052, FR-017) ─────────────────────────────────────────────
+//
+// The function's own doc says a leading `^` is stripped as a naming convention. It stripped it from
+// the pattern only, so `matches_pattern("^ROUTINE", "^ROUTINE")` compared "^ROUTINE" to "ROUTINE".
+
+#[test]
+fn a_caret_on_the_name_is_ignored_like_the_one_on_the_pattern() {
+    assert!(matches_pattern("^ROUTINE", "^ROUTINE"));
+    assert!(matches_pattern("ROUTINE", "^ROUTINE"));
+    assert!(matches_pattern("^ROUTINE", "ROUTINE"));
+    assert!(matches_pattern("^PAPMI123", "^PAPMI*"));
+    assert!(matches_pattern("^%SYS.Security", "^%SYS*"));
+    assert!(!matches_pattern("^MyAppData", "^PAPMI*"));
+    assert!(!matches_pattern("^MyAppData", "^ROUTINE"));
+}
+
+#[test]
+fn only_one_caret_is_stripped_from_the_name() {
+    // `^^ROUTINE` is not a name; callers reject it first. The matcher must not paper over it.
+    assert!(!matches_pattern("^^ROUTINE", "^ROUTINE"));
+}
+
+#[test]
+fn a_lone_caret_or_empty_name_matches_nothing() {
+    assert!(!matches_pattern("^", "^ROUTINE"));
+    assert!(!matches_pattern("", "^ROUTINE"));
+    assert!(!matches_any("^", SYSTEM_BLOCKLIST));
+    assert!(!matches_any("", PHI_NAME_PATTERNS));
+}
+
+#[test]
+fn the_list_helpers_see_the_caret_form_too() {
+    assert_eq!(first_match("^ROUTINE", SYSTEM_BLOCKLIST), Some("^ROUTINE"));
+    assert_eq!(first_match("^oddDEF", SYSTEM_BLOCKLIST), Some("^oddDEF"));
+    assert!(matches_any("^PAPMIPatient", PHI_NAME_PATTERNS));
+    let custom = vec!["Vault*".to_string()];
+    assert_eq!(
+        first_match_owned("^VaultKeys", &custom).as_deref(),
+        Some("Vault*")
     );
 }

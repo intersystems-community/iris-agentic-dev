@@ -86,8 +86,11 @@ async fn live_failed_preview_mints_no_confirm_token() {
         "the name is refused before any IRIS call: {v}"
     );
     assert!(
-        v["error"].as_str().unwrap_or("").contains("IAD Bad Name"),
-        "the message must name the global that could not be read: {v}"
+        v["global_name"]
+            .as_str()
+            .unwrap_or("")
+            .contains("IAD Bad Name"),
+        "the message must name what was refused: {v}"
     );
     assert!(
         v["confirm_token"].is_null(),
@@ -420,4 +423,28 @@ async fn live_json_shaped_output_is_not_swallowed() {
         .await
         .expect("generator call failed");
     assert_eq!(num.trim(), "42", "numeric output was swallowed: {num:?}");
+}
+
+/// Atelier hands a result column that looks like JSON back as JSON, so output that began with `[`
+/// or `{` and was not valid JSON failed with ERROR #5035 "Parsing error" and no result; before
+/// 1.6.3 that read as an empty success, which is how resolve_dynamic_dispatch returned no
+/// candidates when a FormalSpec held a quote. The generator now marks its result so Atelier
+/// always returns it as text, valid JSON or not.
+#[tokio::test]
+#[ignore]
+async fn output_that_looks_like_json_comes_back_as_written() {
+    let Some((c, client)) = make_conn() else {
+        panic!("IRIS_HOST unset; set IRIS_HOST=localhost IRIS_WEB_PORT=52780");
+    };
+    for (code, want) in [
+        (r#"Write "[1,2""#, "[1,2"),
+        (r#"Write "{""a"":1}""#, r#"{"a":1}"#),
+        (r#"Write "[ 1 , 2 ]""#, "[ 1 , 2 ]"),
+    ] {
+        let out = c
+            .execute_via_generator(code, "USER", &client)
+            .await
+            .unwrap_or_else(|e| panic!("{code}: {e}"));
+        assert_eq!(out.trim_end(), want, "{code}");
+    }
 }

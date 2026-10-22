@@ -34,11 +34,13 @@ use tokio::sync::watch;
 ///   See: https://github.com/intersystems-community/iris-agentic-dev/blob/master/skills/skills/iris-vscode-objectscript/SKILL.md
 ///
 /// CONNECTION DISCOVERY (in priority order)
-///   1. --host / IRIS_HOST env var
-///   2. .iris-agentic-dev.toml in workspace (walks up from cwd)
-///   3. IRIS_CONTAINER env var → Docker named container lookup
-///   4. Localhost port scan (52773, 41773, 51773, 8080)
-///   5. Auto-scan running Docker containers
+///   1. --host flag
+///   2. .iris-agentic-dev.toml in workspace (walks up from cwd); one in the home directory
+///      yields to IRIS_HOST
+///   3. IRIS_HOST env var (used even when that server does not answer)
+///   4. IRIS_CONTAINER env var → Docker named container lookup
+///   5. Localhost port scan (52773, 41773, 51773, 8080)
+///   6. Auto-scan running Docker containers
 #[derive(Args)]
 pub struct McpCommand {
     #[arg(long, default_value = "stdio")]
@@ -48,7 +50,10 @@ pub struct McpCommand {
     /// Bind address for HTTP transport (default: 127.0.0.1)
     #[arg(long, default_value = "127.0.0.1")]
     pub bind: String,
-    #[arg(long, env = "IRIS_HOST")]
+    // No `env = "IRIS_HOST"`: clap would fill this slot from the variable, so any `IRIS_HOST`
+    // made the connection explicit and outranked `.iris-agentic-dev.toml`. The documented order is
+    // flag, then the file, then `IRIS_*`; discovery reads `IRIS_HOST` itself after the file.
+    #[arg(long)]
     pub host: Option<String>,
     #[arg(long, env = "IRIS_WEB_PORT")]
     pub web_port: Option<u16>,

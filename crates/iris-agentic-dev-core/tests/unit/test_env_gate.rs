@@ -267,3 +267,17 @@ fn test_gate_latency_under_1ms() {
         "1000 dispatch_gate calls took {elapsed_ms}ms — must be < 1000ms (1ms avg per SC-005)"
     );
 }
+
+/// `mode="read"` with `force=true` skips the read-only SQL check, so it can send DML and
+/// `CREATE PROCEDURE ... LANGUAGE OBJECTSCRIPT`; the live and test templates must treat it as
+/// Execute, the same as `mode="write"` (security review, 2026-10-22).
+#[test]
+fn a_forced_read_query_is_execute_under_live_and_test() {
+    let forced = serde_json::json!({"mode": "read", "force": true, "query": "DELETE FROM X"});
+    for t in [McpTemplate::Live, McpTemplate::Test] {
+        let r = check_env_gate("iris_query", &t, "iris-prod", &forced).expect("blocked");
+        assert_eq!(r["blocked_category"], "execute");
+    }
+    let plain = serde_json::json!({"mode": "read", "query": "SELECT 1"});
+    assert!(check_env_gate("iris_query", &McpTemplate::Live, "iris-prod", &plain).is_none());
+}

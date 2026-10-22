@@ -106,6 +106,9 @@ Error responses follow existing pattern:
 - Gate wiring: mock `dispatch_gate()` returns `Err(...)` → handler returns gate error
 - Response building: test the JSON builders directly
 - Global name normalization: `^MyApp` and `MyApp` → same internal form
+- Gate parity (2026-10-10 amendment): every gate test runs each name in BOTH forms, bare and
+  caret-prefixed, and the table of names that are not names (FR-016). A gate test that passes only
+  bare names is incomplete — that gap is how the caret bypass shipped.
 - Subscript escaping: `"quoted"` in subscript → proper escape in ObjectScript
 
 ### Integration tests (#[ignore])
@@ -113,7 +116,9 @@ Error responses follow existing pattern:
 - Round-trip: set → get → kill on `IrisDevTest.Global` namespace
 - Subtree: write N nodes, `get` with `subtree:true`, verify count
 - PHI gate: `action=get`, `global_name="PAPMI"`, no `acknowledgePhi` → `PHI_GATE_BLOCKED`
-- System blocklist: `action=get`, `global_name="%SYS"` → `SYSTEM_BLOCKLIST`
+- System blocklist: `action=get`, `global_name="%SYS"` and `"^%SYS"` → `SYSTEM_BLOCKLIST`
+- Gate parity on the live tool: `oddDEF` and `^oddDEF` (get), `PAPMIPatient` and `^PAPMIPatient`, and
+  `global_preview` of both → refused. Read actions only, so a regression cannot write.
 - Kill allowlist: works if configured in `.iris-agentic-dev.toml`
 
 ## Toolset Registration
@@ -151,3 +156,13 @@ following must be updated in sync:
 5. **US3 (kill)**: Unit tests → implementation
 6. **US4 (list)**: Unit tests → implementation
 7. **Polish**: Integration tests, `check_config` inventory, AGENTS.md update
+
+## Amendment 2026-10-10: one canonical name (FR-015 to FR-021)
+
+One function, `canonical_global_name(raw) -> Result<String, Value>` in `tools/global.rs`, strips one
+`^` and validates (FR-016). `dispatch_gate` calls it on `global_name`, `globalName` and `global`
+before gates [3] and [4] and passes the result on; the three handlers call it again. `matches_pattern`
+strips one `^` from the name (FR-017) so it is correct for any other caller. `scrub_params` reads
+`global` too (FR-020). `global_preview` returns before minting a token when the name is refused
+(FR-021). No change to the gate order or the error codes of the existing gates; the new code is
+`INVALID_GLOBAL_NAME`.

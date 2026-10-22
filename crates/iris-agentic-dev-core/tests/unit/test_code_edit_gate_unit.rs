@@ -316,6 +316,22 @@ Method Hack() [ CodeMode = objectgenerator ]
     assert_eq!(r.unwrap()["error_code"], "COMPILE_TIME_EXEC_BLOCKED");
 }
 
+/// `CodeMode = generator` is the older, non-object method generator. It runs at compile time just
+/// like objectgenerator, and the gate did not match it (spec 140 triage, CODE-11).
+#[test]
+fn blocks_legacy_generator_mode() {
+    let cls = "Class My.Old {\nClassMethod Gen() [ CodeMode = generator ]\n{\n  Quit $$$OK\n}\n}";
+    let r = check_compile_time_code_mode(cls, "My.Old.cls").expect("refused");
+    assert_eq!(r["matched"], "CodeMode = generator");
+    let cls = "Class My.Old {\nClassMethod Gen() [CodeMode=GENERATOR, Final]\n{\n}\n}";
+    assert!(check_compile_time_code_mode(cls, "My.Old.cls").is_some());
+    let cls = "Class My.Old {\nClassMethod Gen() [ CodeMode = generatorX ]\n{\n}\n}";
+    assert!(
+        check_compile_time_code_mode(cls, "My.Old.cls").is_none(),
+        "whole token only"
+    );
+}
+
 #[test]
 fn blocks_expression_mode() {
     let cls = "Class My.Trick {\nMethod X() As %String [ CodeMode = expression ]\n{\n1+1\n}\n}";

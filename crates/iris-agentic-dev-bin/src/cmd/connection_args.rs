@@ -14,7 +14,10 @@ use iris_agentic_dev_core::iris::{
 #[derive(Args, Clone)]
 pub struct ConnectionArgs {
     /// IRIS web hostname (overrides discovery)
-    #[arg(long, env = "IRIS_HOST")]
+    // No `env = "IRIS_HOST"`: clap would fill this slot from the variable, so any `IRIS_HOST`
+    // made the connection explicit and outranked `.iris-agentic-dev.toml`. The documented order is
+    // flag, then the file, then `IRIS_*`; discovery reads `IRIS_HOST` itself after the file.
+    #[arg(long)]
     pub host: Option<String>,
 
     /// IRIS web port

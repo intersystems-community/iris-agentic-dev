@@ -199,6 +199,34 @@ fn action_matching_ignores_case_and_reads_both_argument_names() {
     }
 }
 
+/// The handlers trim and then `to_lowercase` the value, so the gate must read it the same way:
+/// `mode: " put"` classified as `iris_doc`'s read-only default and then wrote (security review, 2026-10-22), and `to_lowercase` maps the Kelvin sign (U+212A) to an ASCII `k`, which
+/// `eq_ignore_ascii_case` does not.
+#[test]
+fn action_matching_reads_the_value_the_way_the_handlers_do() {
+    for (tool, key, value, want) in [
+        ("iris_doc", "mode", " put", WriteClass::Write),
+        ("iris_doc", "mode", "put\n", WriteClass::Write),
+        ("iris_doc", "action", "\tdelete ", WriteClass::Write),
+        (
+            "iris_system_performance",
+            "action",
+            " start",
+            WriteClass::Write,
+        ),
+        (
+            "iris_global",
+            "action",
+            "\u{212A}ill",
+            WriteClass::Destructive,
+        ),
+    ] {
+        let a = args(serde_json::json!({ key: value }));
+        let got = classify(tool, Some(&a));
+        assert_eq!(got, Some(want), "{tool} {key}={value:?}");
+    }
+}
+
 /// An action the entry does not list falls back to the entry's default rather than to read-only.
 /// For `iris_lookup_manage`, whose write actions are the majority, the default is the write tier —
 /// so a typo'd or newly added action is gated instead of waved through.
@@ -321,4 +349,37 @@ fn postconditional_kill_detected() {
     assert!(contains_global_kill("Kill:1 ^Foo"));
     assert!(contains_global_kill("Kill:$D(tFlag) ^Foo(\"bar\")"));
     assert!(contains_global_kill("K:x=1 ^Foo"));
+}
+
+/// `classify` compares the normalized value exactly, so every listed action must already be in
+/// that form; one written `Kill` would never match and its call would take the tool's default.
+#[test]
+fn every_listed_action_is_trimmed_and_lowercase() {
+    use iris_agentic_dev_core::tools::write_gate::CLASSIFICATION;
+    for entry in CLASSIFICATION {
+        for (action, _) in entry.actions {
+            assert_eq!(
+                *action,
+                action.trim().to_lowercase(),
+                "{}: {action:?}",
+                entry.tool
+            );
+        }
+    }
+}
+
+/// `call_tool` normalizes `mode` and `action` once, before any gate, so the write gate, the
+/// policy gates (`env_gate` compares `action == "kill"`, `mode == "write"`) and the handler all
+/// read the same value.
+#[test]
+fn dispatch_args_are_normalized_before_any_gate() {
+    use iris_agentic_dev_core::tools::write_gate::normalize_dispatch_args;
+    let mut a = args(serde_json::json!({
+        "mode": " PUT\n", "action": "\u{212A}ill", "name": " Keep.Me ", "count": 3
+    }));
+    normalize_dispatch_args(&mut a);
+    assert_eq!(a["mode"], "put");
+    assert_eq!(a["action"], "kill");
+    assert_eq!(a["name"], " Keep.Me ", "other arguments are left alone");
+    assert_eq!(a["count"], 3);
 }

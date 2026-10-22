@@ -152,7 +152,12 @@ pub fn dispatch_gate(
         .iter()
         .find_map(|k| params.get(*k).and_then(|v| v.as_str()));
 
-    if let Some(gname) = global_name {
+    if let Some(raw_name) = global_name {
+        // One canonical name for both gates, the same one the executor builds its reference from
+        // (FR-015). A name that is not a name stops here, before it is compared with anything
+        // (FR-016): `oddDEF("x")` is not `oddDEF`, and an exact-match rule would never see it.
+        let gname_owned = crate::tools::global::canonical_global_name(raw_name)?;
+        let gname = gname_owned.as_str();
         let is_kill_op = params
             .get("action")
             .and_then(|v| v.as_str())

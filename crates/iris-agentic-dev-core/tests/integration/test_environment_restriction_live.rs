@@ -55,6 +55,20 @@ async fn run_os(conn: &IrisConnection, namespace: &str, code: &str) -> anyhow::R
     Ok(out.trim().to_string())
 }
 
+fn assert_not_a_local_gate(msg: &str) {
+    for code in [
+        "write_tools_disabled",
+        "policy_gate",
+        "code_edit_blocked",
+        "env_gate_blocked",
+    ] {
+        assert!(
+            !msg.contains(code),
+            "T042: refused by iad's own gate ({code}): {msg}"
+        );
+    }
+}
+
 async fn create_restricted_user(conn: &IrisConnection) -> anyhow::Result<String> {
     let password = "IadT042Pass!";
     // Create a minimal role (two-arg form is most portable across IRIS versions).
@@ -66,9 +80,11 @@ async fn create_restricted_user(conn: &IrisConnection) -> anyhow::Result<String>
     if !ok.trim().starts_with('1') {
         return Err(anyhow::anyhow!("failed to create role: {ok}"));
     }
-    // Create user with only the restricted role.
+    // Create user with only the restricted role. `Create` takes positional arguments (name,
+    // roles, password, full name, namespace, routine, expiry, change-password, enabled); a
+    // properties array as the third argument fails with <UNDEFINED>, so this always fell back.
     let create_user = format!(
-        "Set props(\"Enabled\")=1\nSet props(\"Password\")=\"{password}\"\nSet props(\"Roles\")=\"{role}\"\nSet tSC=##class(Security.Users).Create(\"{user}\",\"\",.props) Write $SYSTEM.Status.IsOK(tSC),!",
+        "Set tSC=##class(Security.Users).Create(\"{user}\",\"{role}\",\"{password}\",\"T042\",\"USER\",\"\",\"\",0,1) Write $SYSTEM.Status.IsOK(tSC),!",
         user = RESTRICTED_USER,
         role = RESTRICTED_ROLE,
         password = password
@@ -147,13 +163,19 @@ async fn iris_side_enforcement_on_restricted_credential() {
             match result {
                 Err(e) => {
                     let msg = e.to_string().to_lowercase();
+                    // The refusal is IRIS's, not one of iad's gates. Usually a 401. Right after a
+                    // long suite, community 2025.3 has answered a refused login with an empty 200
+                    // for a few minutes, which iad reports as an answer that is not JSON; that is
+                    // still IRIS refusing, and still not a success (measured 2026-10-22).
+                    assert_not_a_local_gate(&msg);
                     assert!(
                         msg.contains("401")
                             || msg.contains("403")
                             || msg.contains("unauthorized")
                             || msg.contains("access denied")
                             || msg.contains("privilege")
-                            || msg.contains("status"),
+                            || msg.contains("status")
+                            || msg.contains("not json"),
                         "T042: expected IRIS-side auth failure; got: {msg}"
                     );
                     eprintln!("T042 passed: IRIS rejected restricted credential ({msg})");
@@ -177,12 +199,14 @@ async fn iris_side_enforcement_on_restricted_credential() {
                     let msg = err.to_string().to_lowercase();
                     eprintln!("T042 fallback: IRIS rejected unknown credential: {msg}");
                     // The rejection must come from IRIS (HTTP 401), not a local gate.
+                    assert_not_a_local_gate(&msg);
                     assert!(
                         msg.contains("401")
                             || msg.contains("403")
                             || msg.contains("unauthorized")
                             || msg.contains("status")
-                            || msg.contains("error"),
+                            || msg.contains("error")
+                            || msg.contains("not json"),
                         "T042 fallback: must be IRIS HTTP rejection; got: {msg}"
                     );
                 }
