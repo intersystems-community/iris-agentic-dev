@@ -421,6 +421,32 @@ pub fn load_workspace_config_with_path(
     }
 }
 
+/// Whether the `.iris-agentic-dev.toml` at `config_path` chooses the connection, given whether
+/// `IRIS_HOST` is set. A project's file does, over the environment (spec 140, iris-interop-dev
+/// #434). A file in the home directory is a personal default that the walk up from any project
+/// without its own file reaches, so it yields to `IRIS_HOST` and chooses only when that is unset.
+/// Its tool and gate settings apply either way.
+pub fn file_chooses_connection(
+    config_path: &std::path::Path,
+    home: Option<&std::path::Path>,
+    iris_host_set: bool,
+) -> bool {
+    if !iris_host_set {
+        return true;
+    }
+    // Canonical paths, so `/var/...` and `/private/var/...` (macOS), or a symlinked home, match.
+    let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let in_home =
+        matches!((config_path.parent(), home), (Some(dir), Some(h)) if canon(dir) == canon(h));
+    !in_home
+}
+
+fn chooses(config_path: &std::path::Path) -> bool {
+    let iris_host_set =
+        crate::iris::connection::non_blank(std::env::var("IRIS_HOST").ok()).is_some();
+    file_chooses_connection(config_path, dirs::home_dir().as_deref(), iris_host_set)
+}
+
 /// Like [`apply_workspace_config`] but also returns the path of the config file that was loaded
 /// and what it declared about the write/destructive gates, so callers can record both in
 /// `ConnectionState` at startup (not just after hot-reload).
@@ -442,7 +468,12 @@ pub fn apply_workspace_config_with_path(
             // even when a connection is already established via env vars or CLI flags.
             // explicit connection wins for connectivity; TOML wins for tool-list settings.
             let declared = crate::tools::write_gate::DeclaredGates::from_config(&cfg);
-            let conn_from_cfg = workspace_config_to_connection(&cfg, namespace);
+            let conn_from_cfg = if chooses(&path) {
+                workspace_config_to_connection(&cfg, namespace)
+            } else {
+                export_tool_lists(&cfg);
+                None
+            };
             let conn = explicit.or(conn_from_cfg);
             (conn, Some(path), declared)
         }
@@ -726,6 +757,19 @@ pub fn build_workspace_config_json(
     }
 }
 
+/// Export disabled_tools/enabled_tools to env so IrisTools::with_registry_and_toolset picks them
+/// up. Only set if the field is non-empty and the variable is not already set by the user. Runs
+/// for every loaded file, including a home-directory file that yields its connection to
+/// `IRIS_HOST` (`file_chooses_connection`).
+pub fn export_tool_lists(cfg: &WorkspaceConfig) {
+    if !cfg.disabled_tools.is_empty() && std::env::var("IRIS_DISABLED_TOOLS").is_err() {
+        std::env::set_var("IRIS_DISABLED_TOOLS", cfg.disabled_tools.join(","));
+    }
+    if !cfg.enabled_tools.is_empty() && std::env::var("IRIS_ENABLED_TOOLS").is_err() {
+        std::env::set_var("IRIS_ENABLED_TOOLS", cfg.enabled_tools.join(","));
+    }
+}
+
 /// Apply workspace config to set up the connection environment.
 ///
 /// If `host` is specified: returns `Some(IrisConnection)` that will be passed directly
@@ -740,14 +784,7 @@ pub fn workspace_config_to_connection(
     cfg: &WorkspaceConfig,
     namespace_default: &str,
 ) -> Option<IrisConnection> {
-    // Export disabled_tools/enabled_tools to env so IrisTools::with_registry_and_toolset
-    // picks them up. Only set if the field is non-empty and env var not already set by user.
-    if !cfg.disabled_tools.is_empty() && std::env::var("IRIS_DISABLED_TOOLS").is_err() {
-        std::env::set_var("IRIS_DISABLED_TOOLS", cfg.disabled_tools.join(","));
-    }
-    if !cfg.enabled_tools.is_empty() && std::env::var("IRIS_ENABLED_TOOLS").is_err() {
-        std::env::set_var("IRIS_ENABLED_TOOLS", cfg.enabled_tools.join(","));
-    }
+    export_tool_lists(cfg);
 
     // tls_verify is a connection setting, so the config wins over the environment — the opposite
     // of the two tool-list keys above. Clearing IRIS_INSECURE on the way past matters: the
@@ -925,8 +962,12 @@ pub fn apply_workspace_config(
     if explicit.is_some() {
         return explicit;
     }
-    let cfg = load_workspace_config(workspace_path)?;
-    explicit.or_else(|| workspace_config_to_connection(&cfg, namespace))
+    let (cfg, path) = load_workspace_config_with_path(workspace_path)?;
+    if !chooses(&path) {
+        export_tool_lists(&cfg);
+        return None;
+    }
+    workspace_config_to_connection(&cfg, namespace)
 }
 
 /// Generate starter `.iris-agentic-dev.toml` content with inline comments.

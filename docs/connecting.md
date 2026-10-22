@@ -304,12 +304,15 @@ format and role-gate behavior.
 iris-agentic-dev resolves the IRIS connection in this order — first match wins:
 
 1. CLI flags (`--host`, `--web-port`, `--scheme`)
-2. `.iris-agentic-dev.toml` in the workspace root
+2. `.iris-agentic-dev.toml` in the workspace root, the nearest one found walking up from the
+   working directory
 3. Environment variables (`IRIS_HOST`, etc.)
-4. VS Code `settings.json` (`objectscript.conn` / `intersystems.servers`)
-5. VS Code Server Manager keychain (`intersystems.servers` + OS keychain credential)
-6. Running Docker containers (scored by workspace name similarity)
-7. Localhost port scan (52773, 41773, 51773, 8080)
+4. `~/.iris-agentic-dev.toml`, when the walk up reaches your home directory: a personal default,
+   so `IRIS_HOST` outranks its connection settings (its tool and gate settings still apply)
+5. VS Code `settings.json` (`objectscript.conn` / `intersystems.servers`)
+6. VS Code Server Manager keychain (`intersystems.servers` + OS keychain credential)
+7. Running Docker containers (scored by workspace name similarity)
+8. Localhost port scan (52773, 41773, 51773, 8080)
 
 ### Discovery that needs no connection
 
