@@ -51,12 +51,14 @@ fn canonical_name_strips_exactly_one_caret() {
         ("Ens.MessageHeaderD", "Ens.MessageHeaderD"),
         ("a", "a"),
         ("A1.b2", "A1.b2"),
-        // IRIS accepts these: a lone `%`, a doubled dot, a trailing digit after a dot.
-        ("%", "%"),
-        ("A..B", "A..B"),
         ("A.1", "A.1"),
     ] {
         assert_eq!(canonical_global_name(raw).as_deref(), Ok(want), "{raw}");
+    }
+    // IRIS accepts a lone `%` and a doubled dot, but the shared 137 rule refuses them; the gate and
+    // the executor read the same rule, so refusing is the safe way for them to disagree with IRIS.
+    for raw in ["%", "^%", "A..B"] {
+        assert!(canonical_global_name(raw).is_err(), "{raw}");
     }
 }
 
