@@ -100,10 +100,12 @@ pub fn build_coverage_run_code(routines: &[String], test_path: &str, namespace: 
         " Set sc=##class(%Monitor.System.LineByLine).Start(routines,\"\",\"\")".to_string(),
         r#" If $System.Status.IsError(sc)  Write "ERROR|MONITOR_IN_USE|"_$System.Status.GetErrorText(sc),$C(10)  Quit"#
             .to_string(),
-        format!(
-            " Do ##class(%UnitTest.Manager).RunTest(\"{}\",\"/noload/nodelete\")",
+        // In a JOB, so the manager cannot move this process's device (see `run_in_job`). The
+        // monitor was started with no process list, which covers every process, the JOB's too.
+        crate::tools::run_in_job(&format!(
+            "##class(%UnitTest.Manager).RunTest(\"{}\",\"/noload/nodelete\")",
             test_path
-        ),
+        )),
         // Read coverage data BEFORE Stop() — Stop() clears the monitor data.
         r#" Write $C(10),"COVERAGE_DATA_START",$C(10)"#.to_string(),
         " Set totalHit=0  Set totalExec=0".to_string(),

@@ -310,6 +310,63 @@ impl CompileResult {
     }
 }
 
+/// `IRIS_CONTAINER`, unless it is unset or blank. A blank value is a common way to switch the
+/// docker-exec path off; read as a name it sent `docker exec ''`, whose error hid the real reason
+/// a call failed.
+pub fn container_from_env() -> Option<String> {
+    non_blank(std::env::var("IRIS_CONTAINER").ok())
+}
+
+/// `v` when it holds something other than whitespace.
+pub fn non_blank(v: Option<String>) -> Option<String> {
+    v.filter(|s| !s.trim().is_empty())
+}
+
+/// The captured output from a generator's `/action/query` answer.
+///
+/// A non-2xx status, a body that is not JSON, or errors in Atelier's `status` are errors. The old
+/// code read any of them as `Ok("")`: `%UnitTest.Manager`, when `messages.log` grows mid-test,
+/// writes its own error text ahead of the HTTP headers, and the call came back as an empty
+/// success. Atelier does not always hand the column back as a JSON string: when the captured
+/// output parses as JSON on its own (an array, an object, a number, a bare `true`) IRIS emits it
+/// structurally, so it is re-serialized rather than read as empty.
+pub fn query_output(status: u16, body: &str) -> anyhow::Result<String> {
+    let head: String = body.chars().take(300).collect();
+    if !(200..300).contains(&status) {
+        anyhow::bail!("Atelier answered the generator query with HTTP {status}: {head}");
+    }
+    let parsed: serde_json::Value = serde_json::from_str(body).map_err(|_| {
+        anyhow::anyhow!(
+            "Atelier's answer to the generator query is not JSON, so the run's output is lost. \
+             Something wrote straight to the HTTP connection; %UnitTest.Manager does this when \
+             messages.log grows during a test. The answer began: {head}"
+        )
+    })?;
+    if let Some(errors) = parsed["status"]["errors"]
+        .as_array()
+        .filter(|e| !e.is_empty())
+    {
+        let text: Vec<String> = errors
+            .iter()
+            .map(|e| {
+                e["error"]
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| e.to_string())
+            })
+            .collect();
+        anyhow::bail!(
+            "Atelier reported the generator query failed: {}",
+            text.join("; ")
+        );
+    }
+    Ok(match &parsed["result"]["content"][0]["result"] {
+        serde_json::Value::String(s) => s.replace('\x01', "\n"),
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    })
+}
+
 /// Did the run report a failure instead of the code's own output?
 ///
 /// Four prefixes mean failure. [`IrisConnection::execute_via_generator`] itself emits
@@ -703,21 +760,13 @@ impl IrisConnection {
                 return Err(e.into());
             }
         };
-        let query_body: serde_json::Value = query_resp.json().await.unwrap_or_default();
-        // Atelier does not always hand the column back as a JSON string. When the captured output
-        // parses as JSON on its own — an array, an object, a number, a bare `true` — IRIS emits it
-        // structurally, so `as_str()` is None and the old `.unwrap_or("")` reported Ok("") for a
-        // call that had in fact produced its whole payload. Re-serialize those instead.
-        let output = match &query_body["result"]["content"][0]["result"] {
-            serde_json::Value::String(s) => s.replace('\x01', "\n"),
-            serde_json::Value::Null => String::new(),
-            other => other.to_string(),
-        };
+        let status = query_resp.status().as_u16();
+        let body = query_resp.text().await.unwrap_or_default();
 
         // 4. Delete the temp class; a failure is logged, the output still returns
         scratch.release(self, client).await;
 
-        Ok(output)
+        query_output(status, &body)
     }
 
     /// Build the `.cls` source lines for the temp executor class.
@@ -836,8 +885,7 @@ impl IrisConnection {
     /// This method is preserved for environments without Atelier REST access.
     /// Reads IRIS_CONTAINER fresh on each call to pick up late env var changes.
     pub async fn execute(&self, code: &str, namespace: &str) -> anyhow::Result<String> {
-        let container =
-            std::env::var("IRIS_CONTAINER").map_err(|_| anyhow::anyhow!("DOCKER_REQUIRED"))?;
+        let container = container_from_env().ok_or_else(|| anyhow::anyhow!("DOCKER_REQUIRED"))?;
 
         use tokio::io::AsyncWriteExt;
 
@@ -890,8 +938,7 @@ impl IrisConnection {
         namespace: &str,
         ssh_host: &str,
     ) -> anyhow::Result<String> {
-        let container =
-            std::env::var("IRIS_CONTAINER").map_err(|_| anyhow::anyhow!("DOCKER_REQUIRED"))?;
+        let container = container_from_env().ok_or_else(|| anyhow::anyhow!("DOCKER_REQUIRED"))?;
 
         use tokio::io::AsyncWriteExt;
 

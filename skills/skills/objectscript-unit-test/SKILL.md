@@ -69,6 +69,8 @@ The leading colon runs one class. Only methods whose names start with `Test` run
 
 Fix any compile errors, then confirm all generated tests pass before adding assertions.
 
+Run tests through `iris_test`, not by calling `%UnitTest.Manager` in `iris_execute`. The manager checks `messages.log` after each test class and when it closes; if the log grew, it opens it, reads it, closes it, and leaves `$IO` on `$PRINCIPAL`. Under `iris_execute` that loses the output, or corrupts the whole answer if it happens mid-test, and any process writing to `messages.log` sets it off. `iris_test` runs the manager in a background job, which it cannot harm. If you must call the manager yourself, do it in a `Job` and read `^UnitTest.Result` afterwards.
+
 ### Step 4 — Add Real Assertions
 
 The scaffold generates placeholder assertions. Replace them with meaningful expected values based on the method's documented behavior or known inputs/outputs.

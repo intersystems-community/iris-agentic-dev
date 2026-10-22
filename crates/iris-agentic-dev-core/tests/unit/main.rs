@@ -138,6 +138,7 @@ mod test_tools_fixes;
 mod test_tools_mod_unit;
 mod test_toolset;
 mod test_trace_export;
+mod test_unittest_job;
 mod test_user_agent;
 mod test_vscode_payload;
 mod test_workflow_yaml;

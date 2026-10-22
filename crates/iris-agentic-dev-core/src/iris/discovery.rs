@@ -9,7 +9,9 @@
 //!
 //! Each step fails silently and falls through to the next.
 
-use crate::iris::connection::{iris_http_client, DiscoverySource, IrisConnection};
+use crate::iris::connection::{
+    container_from_env, iris_http_client, DiscoverySource, IrisConnection,
+};
 use std::time::Duration;
 
 /// The ports we scan on localhost for IRIS web servers.
@@ -75,7 +77,7 @@ pub async fn probe_atelier_with_client(
     if resp.status().as_u16() == 401 {
         // #21: iris-community containers started without IRIS_PASSWORD have OS auth only.
         // Basic auth is rejected. Only suggest Docker restart if a container is configured.
-        if std::env::var("IRIS_CONTAINER").is_ok() {
+        if container_from_env().is_some() {
             tracing::warn!(
                 "IRIS at {}:{} returned 401 — container may need IRIS_PASSWORD. \
                  Restart with: docker run -e IRIS_PASSWORD=SYS ...",

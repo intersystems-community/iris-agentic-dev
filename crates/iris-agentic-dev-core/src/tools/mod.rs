@@ -1318,6 +1318,29 @@ pub fn map_status_int(status: i64, error_action: &str) -> &'static str {
     }
 }
 
+/// ObjectScript that runs `call` in a JOB whose principal device is a temp file, waits for it,
+/// and writes the file's lines to the current device.
+///
+/// `%UnitTest.Manager` checks `messages.log` after each test class and when it closes; if the file
+/// grew, it opens it, uses it, closes it, and never restores the caller's device, so `$IO` falls to
+/// `$PRINCIPAL`. In the CSP process that runs generator code, the principal is the gateway socket:
+/// the output was lost, or the manager's error text reached the HTTP connection ahead of the
+/// headers, and `iris_test` answered NO_TESTS_FOUND for a test that had passed. In the JOB the
+/// principal is the file, so whatever the manager does, the output lands there. Single-line
+/// statements with no braces, because docker exec feeds the same code to a terminal line by line.
+pub fn run_in_job(call: &str) -> String {
+    [
+        " Set iadJobOut=##class(%Library.File).TempFilename(\"txt\")".to_string(),
+        format!(" Job {call}:($NAMESPACE::iadJobOut:iadJobOut):10  Set iadJobOk=$TEST,iadJobPid=$ZCHILD"),
+        " If 'iadJobOk Write \"ERROR: iad could not start a background job to run the tests\",!".to_string(),
+        " If iadJobOk For iadJobI=1:1:864000 Quit:'$Data(^$JOB(iadJobPid))  Hang 0.1".to_string(),
+        " Set iadJobS=##class(%Stream.FileCharacter).%New(),iadJobS.TranslateTable=\"UTF8\"".to_string(),
+        " If iadJobOk,$System.Status.IsOK(iadJobS.LinkToFile(iadJobOut)) For  Quit:iadJobS.AtEnd  Write iadJobS.ReadLine(),!".to_string(),
+        " Kill iadJobS  Do ##class(%Library.File).Delete(iadJobOut)".to_string(),
+    ]
+    .join("\n")
+}
+
 /// Build the ObjectScript code to run a test class.
 /// `is_test_production=true` → uses `.Run()` (for %UnitTest.TestProduction subclasses).
 /// `is_test_production=false` → uses %UnitTest.Manager::RunTest() with `flags` and `token`.
@@ -1338,11 +1361,13 @@ pub fn build_test_run_code(
     );
 
     if is_test_production && is_class_pattern && validate_class_name(pattern).is_ok() {
-        format!(r#"do ##class({pattern}).Run()"#)
-    } else if is_class_pattern {
-        format!(
-            r#"do ##class(%UnitTest.Manager).RunTest("{pattern_lit}","{flags_lit}","{token_lit}")"#
-        )
+        return run_in_job(&format!("##class({pattern}).Run()"));
+    }
+    let run_test = run_in_job(&format!(
+        r#"##class(%UnitTest.Manager).RunTest("{pattern_lit}","{flags_lit}","{token_lit}")"#
+    ));
+    if is_class_pattern {
+        run_test
     } else {
         format!(
             r#"set utRoot="/tmp/httest/"
@@ -1350,7 +1375,7 @@ if '##class(%File).DirectoryExists(utRoot) {{ do ##class(%File).CreateDirectoryC
 set pkgDir=utRoot_"{pattern_lit}"_"/"
 if '##class(%File).DirectoryExists(pkgDir) {{ do ##class(%File).CreateDirectoryChain(pkgDir) }}
 set ^UnitTestRoot=utRoot
-do ##class(%UnitTest.Manager).RunTest("{pattern_lit}","{flags_lit}","{token_lit}")"#
+{run_test}"#
         )
     }
 }
@@ -8550,7 +8575,7 @@ Methods:
 
         // iris.cpf probe: when docker_only or nopws config, check WebServer= in cpf.
         let (nopws_detected, nopws_evidence) = if nopws {
-            let container = std::env::var("IRIS_CONTAINER").ok();
+            let container = crate::iris::connection::container_from_env();
             if let Some(ref cname) = container {
                 // Probe iris.cpf from inside the container to check WebServer=0
                 let cpf_paths = ["/usr/irissys/iris.cpf", "/usr/local/etc/irissys/iris.cpf"];

@@ -79,6 +79,7 @@ mod test_terminal_compat_096;
 mod test_todo_example_live;
 mod test_tool_fixes_132_live;
 mod test_trace_export_live;
+mod test_unittest_device_race_live;
 mod test_web_prefix_live;
 mod test_ws_e2e;
 mod test_ws_exec_gate_live;
