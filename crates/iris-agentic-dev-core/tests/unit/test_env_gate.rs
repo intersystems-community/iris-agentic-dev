@@ -270,7 +270,7 @@ fn test_gate_latency_under_1ms() {
 
 /// `mode="read"` with `force=true` skips the read-only SQL check, so it can send DML and
 /// `CREATE PROCEDURE ... LANGUAGE OBJECTSCRIPT`; the live and test templates must treat it as
-/// Execute, the same as `mode="write"` (AVA scan, 2026-10-22).
+/// Execute, the same as `mode="write"` (security review, 2026-10-22).
 #[test]
 fn a_forced_read_query_is_execute_under_live_and_test() {
     let forced = serde_json::json!({"mode": "read", "force": true, "query": "DELETE FROM X"});

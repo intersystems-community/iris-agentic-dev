@@ -354,8 +354,8 @@ fn validate_read_only_sql_mixed_quotes_before_select() {
     );
 }
 
-/// GRANT and REVOKE change privileges; neither is a read. They passed the read-only check (AVA
-/// scan, 2026-10-22).
+/// GRANT and REVOKE change privileges; neither is a read. They passed the read-only check (security
+/// review, 2026-10-22).
 #[test]
 fn grant_and_revoke_are_not_reads() {
     for sql in [

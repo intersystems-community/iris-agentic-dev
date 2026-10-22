@@ -1,4 +1,4 @@
-//! Layer 2 for the `mode`/`action` normalization in `call_tool` (AVA scan, 2026-10-22).
+//! Layer 2 for the `mode`/`action` normalization in `call_tool` (security review, 2026-10-22).
 //!
 //! The write gate matched `mode` against its listed actions without trimming, so `" put"` took
 //! `iris_doc`'s read-only default and the handler, which trims, wrote. No IRIS is needed: the gate

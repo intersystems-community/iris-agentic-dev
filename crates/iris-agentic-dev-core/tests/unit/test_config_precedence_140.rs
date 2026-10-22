@@ -44,7 +44,7 @@ fn a_home_reached_through_a_symlink_is_still_home() {
 /// A workspace file is checked in with the repository, so its `host` is the repository's choice.
 /// The operator's `IRIS_USERNAME`/`IRIS_PASSWORD` go to it only when it is this machine or the
 /// server `IRIS_HOST` already names. Otherwise a cloned repository could send the operator's
-/// password anywhere, and from 1.6.3 the file outranks `IRIS_HOST` (AVA scan, 2026-10-22).
+/// password anywhere, and from 1.6.3 the file outranks `IRIS_HOST` (security review, 2026-10-22).
 #[test]
 fn env_credentials_go_only_to_loopback_or_the_iris_host_server() {
     use iris_agentic_dev_core::iris::workspace_config::env_credentials_may_go_to;

@@ -670,7 +670,7 @@ pub const CLASSIFICATION: &[ToolClass] = &[
 /// Put `mode` and `action` in the form the handlers read them, trimmed and `to_lowercase`d,
 /// before any gate looks at them. Every gate then reads the value the handler will act on: the
 /// write gate classified `mode: " put"` as read-only and `iris_doc` wrote, and the policy gates
-/// compare exactly (AVA scan, 2026-10-22).
+/// compare exactly (security review, 2026-10-22).
 pub fn normalize_dispatch_args(args: &mut serde_json::Map<String, serde_json::Value>) {
     for key in ["mode", "action"] {
         if let Some(serde_json::Value::String(v)) = args.get_mut(key) {

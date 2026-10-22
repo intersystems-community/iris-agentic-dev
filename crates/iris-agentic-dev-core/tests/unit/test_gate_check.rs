@@ -200,8 +200,7 @@ fn action_matching_ignores_case_and_reads_both_argument_names() {
 }
 
 /// The handlers trim and then `to_lowercase` the value, so the gate must read it the same way:
-/// `mode: " put"` classified as `iris_doc`'s read-only default and then wrote (AVA scan,
-/// 2026-10-22), and `to_lowercase` maps the Kelvin sign (U+212A) to an ASCII `k`, which
+/// `mode: " put"` classified as `iris_doc`'s read-only default and then wrote (security review, 2026-10-22), and `to_lowercase` maps the Kelvin sign (U+212A) to an ASCII `k`, which
 /// `eq_ignore_ascii_case` does not.
 #[test]
 fn action_matching_reads_the_value_the_way_the_handlers_do() {
