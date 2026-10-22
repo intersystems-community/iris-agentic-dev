@@ -1,6 +1,33 @@
 # Changelog
 
-This extension installs the iris-agentic-dev server, and each entry below is a server release. Extension 0.4.39 installs server 1.6.3. Releases with no entry here have their notes on the [releases page](https://github.com/intersystems-community/iris-agentic-dev/releases).
+This extension installs the iris-agentic-dev server, and each entry below is a server release. Extension 0.4.40 installs server 1.6.4. Releases with no entry here have their notes on the [releases page](https://github.com/intersystems-community/iris-agentic-dev/releases).
+
+## v1.6.4
+
+Upgrade if you run iad against IRIS on Windows, or run code that moves the current device.
+`iris_execute` and every tool built on it could answer `ERROR($DEVICE)` and call the output lost
+when it was not.
+
+### Notable fixes
+
+- **The output capture check compares the device IRIS named.** iad sends output to a temp file
+  and afterwards checks that the current device is still that file. It compared `$IO` with the
+  string `TempFilename` returned, but `$IO` reports IRIS's own name for the file: lower-cased on
+  native Windows, and rewritten for a path such as `/tmp/./x`. 1.6.0 compared the two without
+  case, which covered only the first difference (#139). The check now records `$IO` right after
+  selecting the capture file and compares against that.
+- **Code that leaves the device at `$PRINCIPAL` keeps its output.** `Use 0`, `Use $PRINCIPAL`, or
+  closing the device the code was writing to all leave the current device at the process's
+  principal device. iad answered `ERROR($DEVICE)` and said the output was lost. It was not lost:
+  what the code wrote before the move is in the capture file, and Atelier returns what it wrote
+  after the move in its answer. iad now returns both, in order. A move to any other device, such as
+  a file the code opened and left selected, is still an error.
+
+### Breaking changes
+
+None.
+
+[v1.6.3...v1.6.4](https://github.com/intersystems-community/iris-agentic-dev/compare/v1.6.3...v1.6.4)
 
 ## v1.6.3
 
