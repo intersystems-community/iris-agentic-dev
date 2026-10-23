@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    # A release branch gets the full run before it is merged (docs/release-checklist.md).
+    branches: [master, main, "fix/**", "release/**"]
   pull_request:
 
 env:
@@ -262,7 +263,7 @@ jobs:
     runs-on: ubuntu-latest
     # A green run takes about 25 minutes; a hung live test once held the job for 1h50.
     timeout-minutes: 45
-    if: github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/fix/') || startsWith(github.ref, 'refs/heads/release/')
     # Three-version matrix — catches API compatibility regressions across IRIS generations.
     # NOTE: community image licenses expire ~150 days after image publish date. When an image
     # starts failing with "Community License expired", replace it with a newer published image.

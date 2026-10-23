@@ -7,7 +7,7 @@ on:
   push:
     # This repository's default branch is master, not main. Left as the
     # template's `main`, the push trigger would silently never fire.
-    branches: [master]
+    branches: [master, "fix/**", "release/**"]
 jobs:
   gates:
     runs-on: ubuntu-latest

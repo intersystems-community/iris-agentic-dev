@@ -16,39 +16,25 @@ node -e "const p=require('./vscode-iris-agentic-dev/package.json'); console.log(
 node -e "const p=require('./.claude-plugin/plugin.json'); console.log(p.version)"
 ```
 
-## 2. Tests
+## 2. Fast checks, locally
 
-- [ ] `cargo clippy --features testing --all-targets -- -D warnings` — zero warnings
-- [ ] `cargo fmt --all -- --check` — zero diffs
-- [ ] Full suite against a live `iris-dev-iris` container — all pass:
+- [ ] `cargo clippy --features testing --all-targets -- -D warnings`: zero warnings
+- [ ] `cargo fmt --all -- --check`: zero diffs
+- [ ] `RUST_TEST_THREADS=12 cargo test --features testing --test unit`, plus the `binary`,
+      `bin_unit` and `bin_integration` targets
+- [ ] The live tests for what this release changed, against `iris-dev-iris`, for example
+      `cargo test --features testing --test integration -- --include-ignored --test-threads=1 <name>`
+- [ ] `cargo audit`, the pinned prettier (`node_modules/.bin/prettier --check`), and
+      `python3 scripts/gates/antipatterns.py`
+- [ ] The full suite against `iris-dev-iris` only when the release touches tests CI skips (the
+      `--skip` list in `.github/workflows/ci.yml`: AI Hub, Samples-BI, the 2026.2 container):
 
 ```bash
 IRIS_HOST=localhost IRIS_WEB_PORT=52780 IRIS_USERNAME=_SYSTEM IRIS_PASSWORD=SYS \
   cargo test --features testing --no-fail-fast --test '*' -- --test-threads=1 --include-ignored
 ```
 
-All four env vars are required. Without them `admin_e2e_tests` and the `params_batch*` live tests
-assert `IRIS_HOST must be set` and fail, which reads as a regression and is not one. `--no-fail-fast`
-matters too: without it the first failing target aborts the run and you never see the rest.
-
-- [ ] Quality Gates, in a clean worktree so untracked local files do not count:
-      `git worktree add /tmp/gates HEAD && cd /tmp/gates && npm ci && bash .specify/gates/verify.sh --boundary ci`
-- [ ] The CI e2e job's command against a fresh `intersystemsdc/iris-community:2025.3` container, with
-      the job's env (`IRIS_NAMESPACE=USER`, `IRIS_CONTAINER`, both write tiers on) and its `--skip`
-      list copied from `.github/workflows/ci.yml`
-
-The last two exist because 1.5.0 went to `master` red on both. Quality Gates had run only on a PR
-that sat at `action_required`, and a global `core.hooksPath` skips the repo's pre-commit gate. The
-e2e job runs only on `master`, so live tests written against `iris-dev-iris` since August had never
-met a stock container: they named its `BENCHMARK` namespace, or needed `iad-aihub-iris`.
-
-## 3. Coverage gate (merged/subprocess mode)
-
-- [ ] `IRIS_HOST=localhost IRIS_WEB_PORT=52780 bash scripts/coverage.sh` — overall ≥ 88%
-- [ ] No per-file floor violated (`scripts/check-coverage-floors.sh` exits 0)
-- [ ] If a new `.rs` file was added, add its floor entry to `coverage-floors.toml`
-
-## 4. Docs and release notes
+## 3. Docs and release notes
 
 - [ ] Drain `specs/next-release-notes.md` into `docs/release-notes/vX.Y.Z.md`, then reset it to an
       empty staging state naming the release you just cut as the new baseline
@@ -69,6 +55,23 @@ at v1.0.0 through fourteen tags because nothing here told anyone to empty it. No
 
 Any measured figure in the notes (byte counts, tool counts, coverage percentages) has to be
 re-measured against the tree you are tagging, not copied forward from the spec that introduced it.
+
+## 4. CI on the release branch, before merging
+
+Push the release branch (`fix/X.Y.Z` or `release/X.Y.Z`). Pushes to `fix/**` and `release/**`
+run the same workflows master does: CI (test, the e2e matrix on a fresh community container,
+coverage floors, doc-lint, the extension, cross-compile, Docker smoke), Quality Gates and the
+dependency audit. Wait for all three to pass before merging.
+
+- [ ] CI green on the release branch, including `e2e-tests` and `coverage-floors`
+- [ ] Quality Gates green (prettier, markdownlint, shellcheck, spec, parity)
+- [ ] Dependency audit green
+- [ ] If a new `.rs` file was added, its floor entry is in `coverage-floors.toml`
+
+This replaced about two hours of local runs per release: the CI e2e command on a fresh 2025.3
+container, the full suite on `iris-dev-iris`, and coverage. They stood in for checks that ran
+only on master, after 1.5.0 and 1.6.0 went to master red. They were also incomplete: the rm guard
+stops a local Quality Gates run before shellcheck, and 1.6.4's first master push failed shellcheck.
 
 ## 5. Skill regression baseline
 
@@ -94,14 +97,13 @@ it failed on Δs smaller than eight task-pairs can resolve. The nightly now answ
 harness runs, whether the binary still advertises its tools, and whether `MCP-01`, `SKILL-01` and
 `FULL-01` still pass.
 
-## 6. CI pre-flight (before tagging)
+## 6. Merge and push master
 
-Push to `master`, wait for the non-release workflow to go green:
+Merge the release branch into master and push master. The same workflows run again on the merge
+commit; wait for them before tagging.
 
-- [ ] `build` job passes (Linux + macOS + Windows)
-- [ ] `test` job passes
-- [ ] `clippy` job passes
-- [ ] `skill-regression` job passes (or known-acceptable variance)
+- [ ] CI, Quality Gates and the dependency audit green on master
+- [ ] `skill-regression` (nightly) passing, or known-acceptable variance
 
 ## 7. Tag and release
 

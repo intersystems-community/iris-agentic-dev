@@ -93,6 +93,7 @@ mod test_policy_patterns;
 mod test_pool_reload_wording;
 mod test_probe_server_offline;
 mod test_release_160_issues;
+mod test_release_branch_ci;
 mod test_reload_pool;
 mod test_role_gate;
 mod test_role_gate_handlers;
