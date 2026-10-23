@@ -346,6 +346,9 @@ pub fn non_blank(v: Option<String>) -> Option<String> {
 
 /// What the generator class puts in front of its result; see `build_exec_class`.
 const RESULT_MARK: char = '\u{2}';
+/// After [`RESULT_MARK`]: the code left the device at `$PRINCIPAL`, and the rest of its output is
+/// in Atelier's `console` lines.
+const PRINCIPAL_MARK: char = '\u{3}';
 
 /// The captured output from a generator's `/action/query` answer.
 ///
@@ -390,10 +393,20 @@ pub fn query_output(status: u16, body: &str) -> anyhow::Result<String> {
         );
     }
     Ok(match result {
-        serde_json::Value::String(s) => s
-            .strip_prefix(RESULT_MARK)
-            .unwrap_or(s)
-            .replace('\x01', "\n"),
+        serde_json::Value::String(s) => {
+            let s = s.strip_prefix(RESULT_MARK).unwrap_or(s);
+            let at_principal = s.strip_prefix(PRINCIPAL_MARK);
+            let mut out = at_principal.unwrap_or(s).replace('\x01', "\n");
+            // The code moved the device to $PRINCIPAL; Atelier carries what it wrote after
+            // that in `console`, so the output is the capture followed by those lines.
+            if at_principal.is_some() {
+                for line in parsed["console"].as_array().into_iter().flatten() {
+                    out.push_str(line.as_str().unwrap_or_default());
+                    out.push('\n');
+                }
+            }
+            out
+        }
         serde_json::Value::Null => String::new(),
         other => other.to_string(),
     })
@@ -854,7 +867,11 @@ impl IrisConnection {
             "  Set savedIO = $IO".into(),
             "  Open tmpfile:(\"WNS\":/IOT=\"UTF8\"):5".into(),
             "  If '$TEST { Quit \"ERROR: output capture unavailable\" }".into(),
-            "  Use tmpfile".into(),
+            // `capdev` is the name IRIS gives the capture device, which is what `$IO` reports
+            // later. It is not always the string TempFilename returned: native Windows IRIS
+            // lower-cases it (#139) and IRIS rewrites paths such as `/tmp/./x`. Same line as the
+            // `Use`, so user code still starts at Execute+7 in IRIS error positions.
+            "  Use tmpfile  Set capdev = $IO".into(),
             "  Try {".into(),
         ];
         for line in code.lines() {
@@ -893,10 +910,11 @@ impl IrisConnection {
             "  If (out=\"\") && (ze'=\"\") && (ze'=\",\") { Set out = \"ERROR($ZERROR): \"_ze_$Char(10) }"
                 .into(),
             // Whatever we captured is partial when the device moved, so refuse the whole
-            // result rather than hand back a plausible-looking fragment. Compared without case:
-            // native Windows IRIS gives `$IO` back lower-cased while the temp-file name keeps its
-            // case, and the exact comparison refused every call there from 1.3.2 on (#139).
-            "  If $ZConvert(devio,\"L\")'=$ZConvert(tmpfile,\"L\") { Set out = \"ERROR($DEVICE): the called code left the current device set to \"\"\"_devio_\"\"\" instead of the capture file, so its output was written elsewhere and is lost. Snapshot and restore around the call: Set io=$IO / <call> / Use io\"_$Char(10) }"
+            // result rather than hand back a plausible-looking fragment. The exception is a move
+            // to $PRINCIPAL (`Use 0`, `Use $PRINCIPAL`, closing the current device): Atelier
+            // returns what was written after it in the answer's `console`, so `$Char(3)` tells
+            // `query_output` to append that and nothing is lost.
+            "  If devio'=capdev { If devio=$PRINCIPAL { Set out = $Char(3)_out } Else { Set out = \"ERROR($DEVICE): the called code left the current device set to \"\"\"_devio_\"\"\" instead of the capture file, so its output was written elsewhere and is lost. Snapshot and restore around the call: Set io=$IO / <call> / Use io\"_$Char(10) } }"
                 .into(),
             // $Char(2) first, so Atelier never sees text that looks like JSON: it hands such a
             // column back parsed, and fails with ERROR #5035 when the JSON is not valid (an output

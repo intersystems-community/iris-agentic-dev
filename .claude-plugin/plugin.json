@@ -1,7 +1,7 @@
 {
   "name": "iris-dev",
   "description": "MCP server and skills for InterSystems IRIS development — live IRIS interaction tools plus validated coding skills. Single binary, no Python required.",
-  "version": "1.6.3",
+  "version": "1.6.4",
   "author": {
     "name": "InterSystems Corporation"
   },
@@ -53,6 +53,16 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/compile-hook.sh"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/version-check.sh"
           }
         ]
       }

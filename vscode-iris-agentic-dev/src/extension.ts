@@ -304,6 +304,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
   setupOpenHintWatcher(context);
 
+  // Refresh the fixed-name binary and repoint pinned registrations in other
+  // MCP clients now, not on first MCP use: provideMcpServerDefinitions returns
+  // early without an objectscript.conn, and someone who installed the
+  // extension only to get the binary for Claude Code may never set one.
+  void resolveServerBinary(context);
+
   if (typeof vscode.lm?.registerMcpServerDefinitionProvider === 'function') {
     context.subscriptions.push(
       vscode.lm.registerMcpServerDefinitionProvider('iris-agentic-dev', provider)

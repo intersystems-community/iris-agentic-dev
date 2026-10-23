@@ -33,6 +33,7 @@ mod test_coverage_wave3;
 mod test_csp_session_132;
 mod test_data_policy_gate;
 mod test_description_tiers;
+mod test_device_capture_164;
 mod test_dict_unit;
 mod test_discovery_probe_unit;
 mod test_discovery_unit;

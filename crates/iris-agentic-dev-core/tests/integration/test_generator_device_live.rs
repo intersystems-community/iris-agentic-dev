@@ -92,6 +92,32 @@ async fn restored_device_returns_output_normally() {
     );
 }
 
+/// A move to `$PRINCIPAL` keeps everything: the lines written before it come from the capture
+/// file and the lines after it from Atelier's `console` (1.6.4; it used to be ERROR($DEVICE) and
+/// "the output is lost", reported by Doc team users on Windows).
+#[tokio::test]
+#[ignore]
+async fn a_move_to_principal_returns_the_whole_output() {
+    let Some((conn, client)) = make_conn() else {
+        return;
+    };
+    for mover in ["Use $PRINCIPAL", "Use 0"] {
+        let code = format!(" Write \"BEFORE-MOVE\",!\n {mover}\n Write \"AFTER-MOVE\",!\n");
+        let out = conn
+            .execute_via_generator(&code, "USER", &client)
+            .await
+            .expect("must execute");
+        assert!(!is_generator_error(&out), "{mover}: {out:?}");
+        let before = out
+            .find("BEFORE-MOVE")
+            .unwrap_or_else(|| panic!("{mover}: {out:?}"));
+        let after = out
+            .find("AFTER-MOVE")
+            .unwrap_or_else(|| panic!("{mover}: {out:?}"));
+        assert!(before < after, "{mover}: order kept: {out:?}");
+    }
+}
+
 /// The guard must not fire on ordinary code, which is the regression that would break every tool.
 #[tokio::test]
 #[ignore]

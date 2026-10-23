@@ -479,9 +479,14 @@ of `IRIS_*` variables works too if the client supports one.
 
 **Finding the binary.** Install it standalone (Homebrew, or the
 [latest release](https://github.com/intersystems-community/iris-agentic-dev/releases/latest))
-and use that path. If the extension already downloaded one, it is under the editor's
-extension storage in a version-named subdirectory —
-`<storage>/intersystems-community.iris-agentic-dev/iris-agentic-dev-<version>/iris-agentic-dev-<platform>`:
+and use that path. If the extension already downloaded one, use the fixed-name copy it keeps
+under the editor's extension storage —
+`<storage>/intersystems-community.vscode-iris-agentic-dev/bin/iris-agentic-dev` (`.exe` on Windows). The
+extension replaces that file on every update, so a client registered with it follows the extension.
+Do not register the version-named directory beside it (`iris-agentic-dev-<version>/`): the client
+keeps launching that version after the extension moves on. If a client is already registered that
+way, the extension offers to update it when it starts, and changes nothing unless you choose
+**Update**.
 
 | Platform | `<storage>`                                             |
 | -------- | ------------------------------------------------------- |
@@ -490,9 +495,9 @@ extension storage in a version-named subdirectory —
 | Windows  | `%APPDATA%\Code\User\globalStorage`                     |
 
 Forks substitute their own directory for `Code` (`Cursor`, `Windsurf`, and so on). The
-platform suffix is `macos-arm64`, `macos-x86_64`, `linux-x86_64`, `linux-aarch64`, or
-`windows-x86_64.exe`. Setting `iris-agentic-dev.serverPath` in the editor's settings points
-the extension at a binary you manage instead, which also tells you where it is.
+extension's Output channel logs the full path when it starts. Setting
+`iris-agentic-dev.serverPath` in the editor's settings points the extension at a binary you manage
+instead, which also tells you where it is.
 
 **Verify before wiring anything.** The binary answers on its own, so a failure here is a
 connection problem, not a client-config problem:
@@ -504,6 +509,36 @@ iris-agentic-dev tool check_config --args '{}'
 Then, once the client is configured, ask it: `Call check_config and show me the result.` If
 the tools do not appear at all, the client never launched the binary — check its MCP log for
 the command line it tried.
+
+### Claude Code on Windows: the plugin and the extension together
+
+The Claude Code plugin (`/plugin install iris-dev`) brings the core skills, the compile-on-save
+hooks and a server registration that runs `iris-agentic-dev mcp` by name. It does not install
+or update the binary; it runs whichever `iris-agentic-dev` is on PATH and, from 1.6.4, says at
+session start when that binary is older than the plugin. On a Mac, Homebrew keeps the binary
+current (`brew upgrade iris-agentic-dev`). On Windows there is no Homebrew, but the VS Code
+extension downloads every release and keeps the current one at a fixed path, so put that folder on
+PATH once and the plugin always runs what the extension last downloaded:
+
+1. Install the VS Code extension and open VS Code once, so it downloads the binary. Its Output
+   channel logs the path; with stock VS Code it is
+   `%APPDATA%\Code\User\globalStorage\intersystems-community.vscode-iris-agentic-dev\bin`.
+2. Add that folder to your user PATH. In PowerShell:
+
+   ```powershell
+   $dir = "$env:APPDATA\Code\User\globalStorage\intersystems-community.vscode-iris-agentic-dev\bin"
+   $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+   [Environment]::SetEnvironmentVariable('Path', "$user;$dir", 'User')
+   ```
+
+   Then open a new terminal and check `iris-agentic-dev --version`.
+
+3. Install the plugin in Claude Code: `/plugin marketplace add intersystems-community/iris-agentic-dev`,
+   then `/plugin install iris-dev`.
+4. Remove any `iris-agentic-dev` entry you added to `~/.claude.json` by hand, or Claude Code runs
+   two servers and lists every tool twice. The plugin's registration replaces it.
+5. Restart Claude Code. After that, an extension update brings a new binary to the same path, and
+   the next Claude Code session runs it.
 
 ---
 

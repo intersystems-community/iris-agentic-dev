@@ -1,9 +1,11 @@
 //! Open issues fixed for 1.6.0.
 
-/// #139: on native Windows IRIS `$IO` comes back lower-cased while the temp-file name keeps its
-/// case, so the exact comparison in the capture check failed every call since 1.3.2.
+/// #139: on native Windows IRIS `$IO` comes back as IRIS's canonical name for the capture file
+/// (lower-cased, and possibly rewritten in other ways) while `TempFilename` keeps the string it
+/// built. 1.6.0 compared the two without case; 1.6.4 records `$IO` right after `Use tmpfile` and
+/// compares against that, so no spelling of the path can trip the check.
 #[test]
-fn capture_check_compares_the_device_without_case() {
+fn capture_check_compares_against_the_device_iris_named() {
     let lines = iris_agentic_dev_core::iris::connection::IrisConnection::build_exec_class_for_test(
         "IrisDevTmp.X",
         "",
@@ -11,12 +13,16 @@ fn capture_check_compares_the_device_without_case() {
     );
     let code = lines.join("\n");
     assert!(
-        !code.contains("If devio'=tmpfile"),
-        "an exact $IO comparison fails on Windows: {code}"
+        lines
+            .iter()
+            .any(|l| l.trim() == "Use tmpfile  Set capdev = $IO"),
+        "the capture device is recorded on the line that selects it, so user code keeps its \
+         Execute+N position: {code}"
     );
+    assert!(code.contains("devio'=capdev"), "{code}");
     assert!(
-        code.contains(r#"$ZConvert(devio,"L")'=$ZConvert(tmpfile,"L")"#),
-        "the capture check must compare without case"
+        !code.contains("'=tmpfile") && !code.contains(r#"$ZConvert(tmpfile"#),
+        "the check must not compare against the TempFilename string: {code}"
     );
 }
 
