@@ -6,7 +6,7 @@ name: Dependency audit
 on:
   pull_request:
   push:
-    branches: [master]
+    branches: [master, "fix/**", "release/**"]
   schedule:
     - cron: "17 6 * * 1"
 

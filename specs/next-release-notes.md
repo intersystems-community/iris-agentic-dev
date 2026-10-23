@@ -5,7 +5,7 @@ staged for the release after it.
 
 I add an entry here as each user-facing change lands, so release notes are not
 reconstructed from `git log` at tag time. At release time this drains into
-`docs/release-notes/vX.Y.Z.md`, which is what `docs/release-checklist.md` step 4 gates on
+`docs/release-notes/vX.Y.Z.md`, which is what `docs/release-checklist.md` step 3 gates on
 and what becomes the GitHub release body via `gh release edit <tag> --notes`. The VS Code
 extension's `CHANGELOG.md` is built from those files (#136).
 
