@@ -21,8 +21,9 @@ BINARY_VERSION=$(iris-agentic-dev --version 2>/dev/null | sed -n 's/.*[^0-9.]\([
 
 # Is $1 older than $2? Compared field by field as numbers, so 1.10.0 is newer than 1.9.5.
 older() {
-    local IFS=.
-    local -a a=($1) b=($2)
+    local -a a b
+    IFS=. read -ra a <<<"$1"
+    IFS=. read -ra b <<<"$2"
     for i in 0 1 2; do
         local x=${a[i]:-0} y=${b[i]:-0}
         ((10#$x < 10#$y)) && return 0
