@@ -50,8 +50,18 @@ ask to be told directly if you operate it in a regulated environment.
 
 ## What is tested before a release
 
-- Every pull request runs `cargo fmt`, `cargo clippy` with warnings as errors, and the full Rust test suite
-  against a live IRIS container, including regression tests for each safety-gate bypass fixed so far.
+- Every pull request runs `cargo fmt`, `cargo clippy` with warnings as errors, and every Rust test target,
+  with no IRIS container. Tests that need live IRIS skip themselves in that run; the pure-logic tests,
+  including those for the safety gates, run in full.
+- Every push to master and to a `fix/**` or `release/**` branch also runs the `e2e-tests` job: the whole
+  suite with `--include-ignored` against a fresh IRIS Community 2025.3 container. That is where the live
+  regression tests for each safety-gate bypass fixed so far run. Pull requests do not run this job, so a
+  change reaches live IRIS in CI only after it is pushed to one of those branches. A release branch must
+  be green here before it is merged (`docs/release-checklist.md`).
+- `e2e-tests` skips a short list of live tests that need what a runner cannot have, such as an AI Hub early-access
+  image, an Enterprise image, a namespace with Samples-BI built, VS Code Server Manager credentials, or an
+  LLM API key. The AI Hub and Samples-BI tests are run by hand against a local instance before each
+  release; the others are not run in CI.
 - Every pull request, every push to master and a weekly schedule run `cargo audit` against the locked Rust
   dependencies and `npm audit` against the VS Code extension's production dependencies. A known
   vulnerability fails the job.
@@ -72,6 +82,21 @@ signature, and the Windows release binary is unsigned. A signing route for Windo
 part of the release. To avoid trusting a download, check it against `SHA256SUMS` from the same tagged release,
 or build from source: `cargo build --locked --release -p iris-agentic-dev`.
 See `docs/production-profile.md` for an install that pins a version and downloads nothing at run time.
+
+### Verifying a download
+
+Download the binary and `SHA256SUMS` from the same tagged release into one directory, then run:
+
+```sh
+shasum -a 256 -c --ignore-missing SHA256SUMS   # macOS
+sha256sum -c --ignore-missing SHA256SUMS       # Linux
+```
+
+Each prints `<file>: OK` for a match. On Windows, compare
+`(Get-FileHash .\iris-agentic-dev-windows-x86_64.exe).Hash` with the line for that file in `SHA256SUMS`.
+The direct-download commands in `README.md` run this check before installing.
+
+Releases will also carry signed build provenance; this section will say how to check it.
 
 ## Running it against real data
 
