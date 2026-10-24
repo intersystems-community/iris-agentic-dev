@@ -182,3 +182,117 @@ def test_trigger_excludes_vscode_tags(workflow):
     assert not any(fnmatch.fnmatch("vscode-v0.4.26", p) for p in patterns), (
         f"an extension-only tag still triggers a full binary release: {patterns}"
     )
+
+
+# ── What a release publishes must be signed, and only from master ───────────
+
+_PUBLISHING_JOBS = ("release", "publish-marketplace", "docker-publish", "update-homebrew-tap")
+
+
+def _needs(job: dict) -> list:
+    needs = job.get("needs") or []
+    return [needs] if isinstance(needs, str) else needs
+
+
+def _uses(job: dict, action: str) -> list:
+    return [s for s in job.get("steps", []) if str(s.get("uses", "")).startswith(action + "@")]
+
+
+def test_nothing_runs_before_the_tag_is_checked(workflow):
+    """A tag on an unreviewed branch must not build, let alone publish.
+
+    verify-tag refuses a tag whose commit is not on master. That only protects anything if every
+    job is downstream of it; a job with no `needs` starts the moment the tag is pushed.
+    """
+    jobs = workflow["jobs"]
+
+    def upstream(name, seen=None):
+        seen = set() if seen is None else seen
+        for dep in _needs(jobs[name]):
+            if dep not in seen:
+                seen.add(dep)
+                upstream(dep, seen)
+        return seen
+
+    for name in jobs:
+        if name == "verify-tag":
+            continue
+        assert "verify-tag" in upstream(name), (
+            f"'{name}' does not wait for verify-tag, directly or through another job"
+        )
+
+
+def test_tag_check_compares_against_master(workflow):
+    job = _job(workflow, "verify-tag")
+    script = "\n".join(str(s.get("run", "")) for s in job["steps"])
+    assert "merge-base --is-ancestor" in script and "origin/master" in script, (
+        "verify-tag no longer checks that the tagged commit is on master"
+    )
+    checkout = _uses(job, "actions/checkout")[0]
+    assert checkout.get("with", {}).get("fetch-depth") == 0, (
+        "verify-tag needs full history, or origin/master is missing and the ancestry check errors"
+    )
+
+
+def test_every_publishing_job_waits_for_approval(workflow):
+    """The release environment is where the approval rule and the publishing secrets live.
+
+    A publishing job without `environment: release` runs unapproved, and once the secrets move out
+    of the repository it also silently loses them: vsce skips with a warning, the tap push fails.
+    """
+    for name in _PUBLISHING_JOBS:
+        assert _job(workflow, name).get("environment") == "release", (
+            f"'{name}' publishes but does not run in the 'release' environment"
+        )
+
+
+def test_every_released_binary_has_build_provenance(workflow):
+    job = _job(workflow, "release")
+    attest = _uses(job, "actions/attest-build-provenance")
+    assert attest, "the release job no longer attests build provenance"
+    subjects = {line.strip() for line in attest[0]["with"]["subject-path"].splitlines() if line.strip()}
+    built = {e["artifact"] for e in _job(workflow, "build")["strategy"]["matrix"]["include"]}
+    missing = built - subjects
+    assert not missing, f"published without provenance: {sorted(missing)}"
+    perms = job.get("permissions", {})
+    assert perms.get("id-token") == "write" and perms.get("attestations") == "write", (
+        f"attesting needs id-token: write and attestations: write (has {perms})"
+    )
+
+
+def test_checksum_signature_is_published(workflow):
+    job = _job(workflow, "release")
+    script = "\n".join(str(s.get("run", "")) for s in job["steps"])
+    assert "cosign sign-blob" in script and "SHA256SUMS.sigstore.json" in script, (
+        "SHA256SUMS is no longer signed"
+    )
+    released = job["steps"][-1]["with"]["files"]
+    assert "SHA256SUMS.sigstore.json" in released, "the SHA256SUMS signature is not attached"
+
+
+def test_image_is_signed_by_digest(workflow):
+    """A tag can be moved after signing; a digest cannot."""
+    job = _job(workflow, "docker-publish")
+    sign = [s for s in job["steps"] if "cosign sign " in str(s.get("run", ""))]
+    assert sign, "the container image is no longer signed"
+    assert "@${DIGEST}" in sign[0]["run"] and "steps.push.outputs.digest" in str(sign[0].get("env")), (
+        "the image must be signed by the digest build-push-action reported, not by tag"
+    )
+    push = [s for s in job["steps"] if s.get("id") == "push"][0]["with"]
+    assert push.get("provenance") == "mode=max" and push.get("sbom") is True
+
+
+def test_release_restores_no_cache(workflow):
+    """A release builds only from what it compiled itself.
+
+    A cache entry is written by whatever earlier run had the same key; restoring one into the job
+    that produces shipped binaries makes them depend on that run.
+    """
+    for name, job in workflow["jobs"].items():
+        assert not _uses(job, "Swatinem/rust-cache"), f"'{name}' restores a Rust cache"
+        for step in _uses(job, "actions/setup-node"):
+            assert step.get("with", {}).get("package-manager-cache") is False, (
+                f"'{name}' runs setup-node with its npm cache on"
+            )
+        for step in _uses(job, "mlugg/setup-zig"):
+            assert step.get("with", {}).get("use-cache") is False, f"'{name}' restores a zig cache"

@@ -161,6 +161,7 @@ Constitution → Development Workflow → Issue Closure.
 - `docs/skills.md` — skill system
 - `docs/troubleshooting.md` — common issues
 - `docs/agent-attribution.md` — caller attribution, User-Agent marker, IRIS audit guide
+- `docs/verifying-releases.md` — checking release provenance and signatures (gh attestation, cosign)
 
 ## Active Technologies
 
