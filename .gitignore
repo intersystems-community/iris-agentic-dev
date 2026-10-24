@@ -110,3 +110,5 @@ __pycache__/
 .improve/validated.json
 *.cdx.json
 sbom.json
+# Scratch research output (drafts, provenance notes). Not published.
+outputs/
