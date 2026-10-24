@@ -69,18 +69,9 @@ tags:
 // This was true before 2026.1. It is FALSE for IRIS 2026.1+.
 ```
 
-Claude Desktop / opencode config for native IRIS MCP:
-
-```json
-{
-  "mcpServers": {
-    "iris": {
-      "command": "objectscript-mcp",
-      "env": { "IRIS_HOST": "localhost", "IRIS_PORT": "1972" }
-    }
-  }
-}
-```
+The native server runs inside IRIS, so there is no client-side package to install for it.
+Do not suggest `pip install` or an `objectscript-mcp` command for it: there is no published
+package by that name.
 
 ## Full-Text Search — iFind (NOT PostgreSQL FTS)
 
