@@ -1,0 +1,23 @@
+# Everything that runs on a user's machine or with this repository's credentials without a human
+# reading it first: the plugin and its hooks, the skills an agent follows as instructions, the
+# instructions agents read on entry, and the workflows that build and publish. A change to any of
+# these needs a maintainer's review, which takes effect once the master ruleset requires
+# code-owner review.
+#
+# There is one maintainer today. Add a second owner per path before relying on this for review
+# independence: CODEOWNERS cannot make an author approve their own change.
+
+/.github/            @isc-tdyar
+/.claude-plugin/     @isc-tdyar
+/scripts/            @isc-tdyar
+/skills/             @isc-tdyar
+/AGENTS.md           @isc-tdyar
+/CLAUDE.md           @isc-tdyar
+/SECURITY.md         @isc-tdyar
+/Dockerfile          @isc-tdyar
+/Formula/            @isc-tdyar
+/vscode-iris-agentic-dev/package.json       @isc-tdyar
+/vscode-iris-agentic-dev/package-lock.json  @isc-tdyar
+/Cargo.lock          @isc-tdyar
+/crates/iris-agentic-dev-core/src/policy/   @isc-tdyar
+/crates/iris-agentic-dev-core/src/tools/write_gate.rs  @isc-tdyar
