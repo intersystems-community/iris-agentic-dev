@@ -8,6 +8,10 @@ Run this before tagging any release. Each item is a gate — don't move on if it
 - [ ] Bump `"irisAgenticDev.serverVersion"` in `vscode-iris-agentic-dev/package.json`
 - [ ] Bump `"version"` (VS Code extension semver) in `vscode-iris-agentic-dev/package.json`
 - [ ] Bump `"version"` in `.claude-plugin/plugin.json`
+- [ ] Bump the pinned tag in the direct-download commands in `README.md`,
+      `docs/cursor-quickstart.md`, `skills/BENCHMARKING.md` and the `VERSION=` line in
+      `skills/iris-agentic-dev-setup/SKILL.md` (`install_docs_pin_the_workspace_version` in
+      `bin_unit` fails until they match)
 - [ ] Verify all four agree — `serverVersion` must match the workspace version and the tag
 
 ```bash

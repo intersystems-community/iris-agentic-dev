@@ -40,26 +40,40 @@ brew tap intersystems-community/tap
 brew install iris-agentic-dev
 ```
 
-### Mac direct download (Apple Silicon)
+### Direct download
+
+Download a specific release, check the binary against the release's
+`SHA256SUMS`, and install it only if the check passes. The commands fetch
+v1.6.4; change the tag in `base` for another release.
+
+Mac (Apple Silicon; on Intel use `iris-agentic-dev-macos-x86_64`):
 
 ```bash
-curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-macos-arm64 \
-  -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
+base=https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.6.4
+cd "$(mktemp -d)"
+curl -fsSLO $base/iris-agentic-dev-macos-arm64
+curl -fsSLO $base/SHA256SUMS
+shasum -a 256 -c --ignore-missing SHA256SUMS &&
+  install -m 0755 iris-agentic-dev-macos-arm64 /usr/local/bin/iris-agentic-dev
+```
+
+If you downloaded with a browser, clear the quarantine flag once the check has
+passed; the binary has only an ad-hoc signature, so Gatekeeper blocks it while
+the flag is set:
+
+```bash
 xattr -d com.apple.quarantine /usr/local/bin/iris-agentic-dev 2>/dev/null
 ```
 
-### Linux x86_64
+Linux (x86_64 shown; use `iris-agentic-dev-linux-aarch64` on arm64):
 
 ```bash
-curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-linux-x86_64 \
-  -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
-```
-
-### Linux arm64
-
-```bash
-curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-linux-aarch64 \
-  -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
+base=https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.6.4
+cd "$(mktemp -d)"
+curl -fsSLO $base/iris-agentic-dev-linux-x86_64
+curl -fsSLO $base/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS &&
+  install -m 0755 iris-agentic-dev-linux-x86_64 /usr/local/bin/iris-agentic-dev
 ```
 
 If `/usr/local/bin` is not writable, install under your home directory instead
@@ -68,9 +82,10 @@ at that absolute path.
 
 ### Windows
 
-Download `iris-agentic-dev-windows-x86_64.exe` from the
-[releases page](https://github.com/intersystems-community/iris-agentic-dev/releases/latest)
-and place it on your PATH.
+Download `iris-agentic-dev-windows-x86_64.exe` and `SHA256SUMS` from the
+[v1.6.4 release](https://github.com/intersystems-community/iris-agentic-dev/releases/tag/v1.6.4),
+check that `(Get-FileHash .\iris-agentic-dev-windows-x86_64.exe).Hash` matches
+the line for that file in `SHA256SUMS`, and place it on your PATH.
 
 Confirm:
 

@@ -85,24 +85,48 @@ pick up new skills. Files installed before the `managed_by` marker was introduce
 (or installed by other means) will be skipped as unrecognized; pass `--force` to
 overwrite them and stamp them so later upgrades pick them up.
 
-### Mac direct download (Apple Silicon)
+### Direct download
+
+Each release publishes a `SHA256SUMS` file next to the binaries. Download a
+specific version, check the binary against that file, and install it only if
+the check passes. The commands below fetch v1.6.4; change the tag in `base` for
+another release.
+
+Mac (Apple Silicon; on Intel use `iris-agentic-dev-macos-x86_64`):
 
 ```bash
-curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-macos-arm64 \
-  -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
+base=https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.6.4
+cd "$(mktemp -d)"
+curl -fsSLO $base/iris-agentic-dev-macos-arm64
+curl -fsSLO $base/SHA256SUMS
+shasum -a 256 -c --ignore-missing SHA256SUMS &&
+  install -m 0755 iris-agentic-dev-macos-arm64 /usr/local/bin/iris-agentic-dev
+```
+
+If you downloaded the file with a browser instead, clear the quarantine flag
+after the check passes. The binary has only an ad-hoc signature, so Gatekeeper
+blocks the first run while the flag is set:
+
+```bash
 xattr -d com.apple.quarantine /usr/local/bin/iris-agentic-dev 2>/dev/null
 ```
 
-### Linux x86_64
+Linux x86_64 (use `iris-agentic-dev-linux-aarch64` on arm64):
 
 ```bash
-curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-linux-x86_64 \
-  -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
+base=https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.6.4
+cd "$(mktemp -d)"
+curl -fsSLO $base/iris-agentic-dev-linux-x86_64
+curl -fsSLO $base/SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS &&
+  install -m 0755 iris-agentic-dev-linux-x86_64 /usr/local/bin/iris-agentic-dev
 ```
 
-**Windows**: Download `iris-agentic-dev-windows-x86_64.exe` from the
-[releases page](https://github.com/intersystems-community/iris-agentic-dev/releases/latest)
-and place it on your PATH.
+**Windows**: download `iris-agentic-dev-windows-x86_64.exe` and `SHA256SUMS` from the
+[v1.6.4 release](https://github.com/intersystems-community/iris-agentic-dev/releases/tag/v1.6.4),
+check that `(Get-FileHash .\iris-agentic-dev-windows-x86_64.exe).Hash` matches the
+line for that file in `SHA256SUMS` (the comparison is case-insensitive), and place
+it on your PATH.
 
 ---
 
