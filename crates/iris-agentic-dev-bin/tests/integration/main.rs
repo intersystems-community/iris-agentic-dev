@@ -27,6 +27,7 @@ mod binary_140_config_precedence;
 mod support_141;
 mod test_attribution_stdio;
 mod test_cli_gates_141;
+mod test_cli_strict_171;
 mod test_compile_flags_141;
 mod test_compile_live;
 mod test_csp_logout_132;

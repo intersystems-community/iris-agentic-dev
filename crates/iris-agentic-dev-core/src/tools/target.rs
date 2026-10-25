@@ -244,6 +244,23 @@ fn input_refusal(code: &str, message: String) -> Early {
 
 /// The body of the `READ_ONLY_STRICT` refusal. `from` names the file or launch setting that asked
 /// for strict read-only.
+/// The refusal a one-shot command gets under `read_only = "strict"`, or `None` when strict is off.
+///
+/// The CLI commands that compile a scratch class (`capability-matrix`, `benchmark`) do not go
+/// through the MCP server's pipeline, so they ask the same configuration the pipeline would: the
+/// operator file, the project file and `IAD_READ_ONLY`, read the way `for_cli` reads them. The body
+/// is the one the MCP server returns for a scratch-class tool, with its `refusal` object.
+pub fn cli_strict_refusal(tool: &str) -> Option<Value> {
+    let inputs = crate::iris::config_sources::LoadInputs::from_process(None, None);
+    let snapshot = crate::iris::config_sources::ConfigSnapshot::load(&inputs);
+    let from = snapshot.read_only_source()?;
+    Some(crate::policy::refusal::classify_refusal(
+        read_only_strict_body(tool, &from),
+        "default",
+        &[],
+    ))
+}
+
 fn read_only_strict_body(tool: &str, from: &str) -> Value {
     json!({
         "success": false,
