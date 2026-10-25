@@ -164,7 +164,7 @@ async fn fetch_text(url: &str, client: &Client) -> Result<String> {
     if !resp.status().is_success() {
         anyhow::bail!("HTTP {} fetching {}", resp.status(), url);
     }
-    Ok(resp.text().await?)
+    Ok(crate::iris::http::external_text(resp).await?)
 }
 
 fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {

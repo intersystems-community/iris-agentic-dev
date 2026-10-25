@@ -40,7 +40,9 @@ pub async fn fetch_document_source(
     let encoded = urlencoding::encode(document);
     let url = format!(
         "{}/api/atelier/v1/{}/doc/{}",
-        iris.base_url, namespace, encoded
+        iris.base_url,
+        urlencoding::encode(namespace),
+        encoded
     );
     let resp = client
         .get(&url)
@@ -78,7 +80,8 @@ pub async fn fetch_class_list(
 ) -> Result<Vec<String>, String> {
     let url = format!(
         "{}/api/atelier/v1/{}/docnames/CLS",
-        iris.base_url, namespace
+        iris.base_url,
+        urlencoding::encode(namespace)
     );
     let resp = client
         .get(&url)
@@ -113,20 +116,23 @@ pub struct CompareDocumentParams {
     pub namespace: String,
 }
 
+/// `clients` are the two servers' own clients (`server_a`'s, then `server_b`'s): each carries its
+/// server's certificate setting and its account's CSP session, so neither request borrows the other
+/// server's.
 pub async fn compare_document_impl(
     params: CompareDocumentParams,
-    client: &reqwest::Client,
+    clients: (&reqwest::Client, &reqwest::Client),
 ) -> Result<CallToolResult, McpError> {
     let source_a = fetch_document_source(
         &params.server_a,
-        client,
+        clients.0,
         &params.document,
         &params.namespace,
     )
     .await;
     let source_b = fetch_document_source(
         &params.server_b,
-        client,
+        clients.1,
         &params.document,
         &params.namespace,
     )
@@ -171,12 +177,13 @@ pub struct CompareNamespaceParams {
     pub server_b: Arc<IrisConnection>,
 }
 
+/// `clients` as for [`compare_document_impl`].
 pub async fn compare_namespace_impl(
     params: CompareNamespaceParams,
-    client: &reqwest::Client,
+    clients: (&reqwest::Client, &reqwest::Client),
 ) -> Result<CallToolResult, McpError> {
-    let list_a = fetch_class_list(&params.server_a, client, &params.namespace).await;
-    let list_b = fetch_class_list(&params.server_b, client, &params.namespace).await;
+    let list_a = fetch_class_list(&params.server_a, clients.0, &params.namespace).await;
+    let list_b = fetch_class_list(&params.server_b, clients.1, &params.namespace).await;
 
     let (list_a, list_b) = match (list_a, list_b) {
         (Err(e), _) => {
@@ -214,8 +221,8 @@ pub async fn compare_namespace_impl(
 
     // Fetch and compare common classes sequentially in chunks to avoid overload.
     for doc in &common[..cap] {
-        let a = fetch_document_source(&params.server_a, client, doc, &params.namespace).await;
-        let b = fetch_document_source(&params.server_b, client, doc, &params.namespace).await;
+        let a = fetch_document_source(&params.server_a, clients.0, doc, &params.namespace).await;
+        let b = fetch_document_source(&params.server_b, clients.1, doc, &params.namespace).await;
         match (a, b) {
             (Ok(sa), Ok(sb)) if sa == sb => {
                 same_count += 1;

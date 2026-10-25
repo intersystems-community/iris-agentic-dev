@@ -114,10 +114,10 @@ pub enum ClientKind {
     Raw,
     /// The logout that ends the shared CSP session at exit: in that session, timeout per request.
     Logout,
-    /// A probe of a host the agent named: validates always, no cookies, no redirects.
+    /// A probe of a host the agent named: validates always, no cookies.
     AdHoc,
     /// One credentialed request to a connection's own server (the service account's login probe):
-    /// that server's certificate setting, no cookies, no redirects, 10 s.
+    /// that server's certificate setting, no cookies, 10 s.
     OwnProbe,
 }
 
@@ -128,6 +128,10 @@ fn base_builder(verify: bool) -> reqwest::ClientBuilder {
         .user_agent(user_agent(caller_mode()))
         .danger_accept_invalid_certs(!verify)
         .tcp_keepalive(Duration::from_secs(20))
+        // No client follows a redirect: each one carries a credential or a session cookie, and a
+        // redirect from a server to another host or port would take them along (171 S10). The 3xx
+        // comes back as the answer, and the caller reports it.
+        .redirect(reqwest::redirect::Policy::none())
 }
 
 /// A client for `kind` that checks (or not) the certificate as `tls` says. Clients that join a
@@ -157,27 +161,55 @@ pub fn client_with_store(
         ClientKind::Logout => b.cookie_provider(store),
         ClientKind::AdHoc => base_builder(true)
             .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(10))
-            .redirect(reqwest::redirect::Policy::none()),
+            .timeout(Duration::from_secs(10)),
         ClientKind::OwnProbe => b
             .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(10))
-            .redirect(reqwest::redirect::Policy::none()),
+            .timeout(Duration::from_secs(10)),
     };
     Ok(b.build()?)
 }
 
-/// The tool-call client for a connection whose setting is `tls`, for callers that need a borrow
-/// (`IrisTools::http_client`). Two exist for the life of the process, one per answer.
-pub fn call_client_ref(tls: &TlsSetting) -> anyhow::Result<&'static reqwest::Client> {
-    static CHECKED: OnceLock<reqwest::Client> = OnceLock::new();
-    static UNCHECKED: OnceLock<reqwest::Client> = OnceLock::new();
-    let cell = if tls.verify { &CHECKED } else { &UNCHECKED };
-    if let Some(c) = cell.get() {
+/// A client for a host that is not IRIS (the docs site): it carries no credential of the
+/// operator's and no cookie store, follows at most three redirects and gives up after 30 s. Never
+/// use it for an IRIS server: those get the redirect-free clients above.
+pub fn external_client() -> anyhow::Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .user_agent(user_agent(caller_mode()))
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .build()?)
+}
+
+/// The tool-call client for the account `username` on the server at `base_url`, whose certificate
+/// setting is `tls`, for callers that need a borrow (`IrisTools::http_client`). One is built per
+/// (answer, server, account) the first time it is asked for and kept for the life of the process:
+/// the set is bounded by the servers and accounts the operator configured, and each holds that
+/// account's own CSP cookie store (171 S7).
+pub fn call_client_ref(
+    tls: &TlsSetting,
+    base_url: &str,
+    username: &str,
+) -> anyhow::Result<&'static reqwest::Client> {
+    static CLIENTS: OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, &'static reqwest::Client>>,
+    > = OnceLock::new();
+    let key = format!(
+        "{}|{}",
+        tls.verify,
+        super::csp_session::primary_identity_key(base_url, username)
+    );
+    let mut clients = CLIENTS.get_or_init(Default::default).lock().unwrap();
+    if let Some(c) = clients.get(&key) {
         return Ok(c);
     }
-    let client = client_for(tls, ClientKind::Call)?;
-    Ok(cell.get_or_init(|| client))
+    let client = client_with_store(
+        tls,
+        ClientKind::Call,
+        super::csp_session::store_for_primary(base_url, username),
+    )?;
+    let client: &'static reqwest::Client = Box::leak(Box::new(client));
+    clients.insert(key, client);
+    Ok(client)
 }
 
 // ── Identification ──────────────────────────────────────────────────────────────────────────
@@ -201,10 +233,7 @@ pub struct IdentifyClient(reqwest::Client);
 impl IdentifyClient {
     pub fn new(tls: &TlsSetting, timeout: Duration) -> anyhow::Result<Self> {
         Ok(IdentifyClient(
-            base_builder(tls.verify)
-                .timeout(timeout)
-                .redirect(reqwest::redirect::Policy::none())
-                .build()?,
+            base_builder(tls.verify).timeout(timeout).build()?,
         ))
     }
 
@@ -288,6 +317,10 @@ impl std::error::Error for ResponseTooLarge {}
 #[derive(Debug)]
 pub enum BodyError {
     TooLarge(ResponseTooLarge),
+    /// A body from a host that is not IRIS passed [`MAX_EXTERNAL_BODY_BYTES`].
+    ExternalTooLarge {
+        limit: usize,
+    },
     Transport(reqwest::Error),
     /// The body was read and is not the JSON asked for.
     Json(serde_json::Error),
@@ -297,6 +330,10 @@ impl std::fmt::Display for BodyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BodyError::TooLarge(e) => e.fmt(f),
+            BodyError::ExternalTooLarge { limit } => write!(
+                f,
+                "the response was larger than {limit} bytes, the most iad reads from a host that is not IRIS"
+            ),
             BodyError::Transport(e) => e.fmt(f),
             BodyError::Json(e) => e.fmt(f),
         }
@@ -322,24 +359,50 @@ fn note_oversize(e: &ResponseTooLarge) {
 
 /// The whole body, or [`BodyError::TooLarge`] as soon as it is known to pass the cap: from the
 /// declared length before a byte is read, or from the bytes read so far when there is none.
-pub async fn capped_bytes(mut resp: reqwest::Response) -> Result<Vec<u8>, BodyError> {
+pub async fn capped_bytes(resp: reqwest::Response) -> Result<Vec<u8>, BodyError> {
     let limit = max_response_bytes();
-    let too_large = || {
-        let e = ResponseTooLarge { limit };
-        note_oversize(&e);
-        BodyError::TooLarge(e)
-    };
+    read_up_to(resp, limit).await.map_err(|e| match e {
+        BodyError::ExternalTooLarge { limit } => {
+            let e = ResponseTooLarge { limit };
+            note_oversize(&e);
+            BodyError::TooLarge(e)
+        }
+        other => other,
+    })
+}
+
+/// The body up to `limit` bytes; [`BodyError::ExternalTooLarge`] (naming `limit`) beyond it.
+async fn read_up_to(mut resp: reqwest::Response, limit: usize) -> Result<Vec<u8>, BodyError> {
     if resp.content_length().is_some_and(|n| n > limit as u64) {
-        return Err(too_large());
+        return Err(BodyError::ExternalTooLarge { limit });
     }
     let mut body = Vec::new();
     while let Some(chunk) = resp.chunk().await.map_err(BodyError::Transport)? {
         if body.len() + chunk.len() > limit {
-            return Err(too_large());
+            return Err(BodyError::ExternalTooLarge { limit });
         }
         body.extend_from_slice(&chunk);
     }
     Ok(body)
+}
+
+/// The most bytes iad reads from one answer of a host that is not IRIS: an LLM API, GitHub, the
+/// docs site (171 S11). The answers are a JSON reply, a manifest or a skill file, all far below
+/// this; a host that sends more is broken or hostile, and the read would otherwise fill memory.
+pub const MAX_EXTERNAL_BODY_BYTES: usize = 8 * 1024 * 1024;
+
+/// [`reqwest::Response::text`] for a host that is not IRIS, with [`MAX_EXTERNAL_BODY_BYTES`].
+pub async fn external_text(resp: reqwest::Response) -> Result<String, BodyError> {
+    let bytes = read_up_to(resp, MAX_EXTERNAL_BODY_BYTES).await?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// [`reqwest::Response::json`] for a host that is not IRIS, with [`MAX_EXTERNAL_BODY_BYTES`].
+pub async fn external_json<T: serde::de::DeserializeOwned>(
+    resp: reqwest::Response,
+) -> Result<T, BodyError> {
+    let bytes = read_up_to(resp, MAX_EXTERNAL_BODY_BYTES).await?;
+    serde_json::from_slice(&bytes).map_err(BodyError::Json)
 }
 
 /// [`reqwest::Response::text`] with the cap. Invalid UTF-8 is replaced, as `text` does.

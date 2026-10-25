@@ -218,7 +218,7 @@ pub async fn resolve_github_version_async(
         );
     }
 
-    let tags: serde_json::Value = resp.json().await?;
+    let tags: serde_json::Value = crate::iris::http::external_json(resp).await?;
     let tag_array = tags
         .as_array()
         .ok_or_else(|| anyhow!("unexpected GitHub tags response"))?;

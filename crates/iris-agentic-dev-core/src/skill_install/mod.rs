@@ -408,7 +408,7 @@ async fn fetch_text(url: &str, client: &reqwest::Client) -> Result<String> {
     if !resp.status().is_success() {
         anyhow::bail!("HTTP {} fetching {}", resp.status(), url);
     }
-    Ok(resp.text().await?)
+    Ok(crate::iris::http::external_text(resp).await?)
 }
 
 #[derive(serde::Deserialize)]

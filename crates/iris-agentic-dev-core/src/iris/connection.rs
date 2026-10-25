@@ -704,9 +704,15 @@ impl IrisConnection {
         super::endpoint::Endpoint::from_base_url(&self.base_url)
     }
 
-    /// A client for `kind` that checks this server's certificate as its own setting says.
+    /// A client for `kind` that checks this server's certificate as its own setting says, and
+    /// whose CSP session is this connection's account's own: another account on the same host
+    /// never shares it (171 S7).
     pub fn client(&self, kind: super::http::ClientKind) -> anyhow::Result<reqwest::Client> {
-        super::http::client_for(&self.tls, kind)
+        super::http::client_with_store(
+            &self.tls,
+            kind,
+            super::csp_session::store_for_primary(&self.base_url, &self.username),
+        )
     }
 
     /// Returns true if write-capable calls are allowed against *this* connection, judged from the
@@ -1488,6 +1494,15 @@ impl IrisConnection {
         )
     }
 
+    /// The client the tools hold from startup: the connection's own (its certificate setting and
+    /// its account's CSP session), or, with none, the launch environment's [`Self::http_client`].
+    pub fn startup_client(conn: Option<&IrisConnection>) -> anyhow::Result<reqwest::Client> {
+        match conn {
+            Some(c) => c.client(super::http::ClientKind::Call),
+            None => Self::http_client(),
+        }
+    }
+
     /// A tool-call client for a connection whose certificate setting is `tls`, with the cookie jar
     /// of identity `key` (`csp_session::store_for_identity`). A service account's requests must not
     /// carry the primary's CSP cookie: IRIS reads the cookie before the `Authorization` header and
@@ -1774,6 +1789,7 @@ fn note_scratch_left(doc_name: &str, namespace: &str, why: &str) {
 /// its own thread with its own runtime and client, and the drop waits for it.
 struct ScratchGuard {
     url: String,
+    base_url: String,
     username: String,
     password: String,
     doc_name: String,
@@ -1789,6 +1805,7 @@ impl ScratchGuard {
                 namespace,
                 &format!("/doc/{}", urlencoding::encode(doc_name)),
             ),
+            base_url: conn.base_url.clone(),
             username: conn.username.clone(),
             password: conn.password.clone(),
             doc_name: doc_name.to_string(),
@@ -1821,6 +1838,7 @@ impl Drop for ScratchGuard {
             return;
         }
         let url = std::mem::take(&mut self.url);
+        let base_url = std::mem::take(&mut self.base_url);
         let user = std::mem::take(&mut self.username);
         let pass = std::mem::take(&mut self.password);
         let doc = std::mem::take(&mut self.doc_name);
@@ -1834,8 +1852,12 @@ impl Drop for ScratchGuard {
                 return;
             };
             rt.block_on(async move {
-                let Ok(client) = super::http::client_for(&tls, super::http::ClientKind::Call)
-                else {
+                // The account's own CSP store, so the delete joins its session and opens no new one.
+                let Ok(client) = super::http::client_with_store(
+                    &tls,
+                    super::http::ClientKind::Call,
+                    super::csp_session::store_for_primary(&base_url, &user),
+                ) else {
                     return;
                 };
                 let sent = client

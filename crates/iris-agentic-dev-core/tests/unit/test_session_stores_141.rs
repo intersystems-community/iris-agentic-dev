@@ -128,7 +128,7 @@ fn a_new_session_starts_its_own_call_history() {
 #[test]
 fn a_new_session_still_shares_what_is_the_servers_not_the_clients() {
     // One iad process is one operator's connections: the connection state, the pool, the HTTP
-    // clients, the config and the checkout cache describe the servers and the operator's account,
+    // clients and the config describe the servers and the operator's account,
     // not what one client asked. A session that rebuilt them would load its own pool (and open the
     // keychain again) and miss an `iris_reload_pool` made through another session.
     let proto = IrisTools::new(None).unwrap();
@@ -136,6 +136,5 @@ fn a_new_session_still_shares_what_is_the_servers_not_the_clients() {
     assert!(Arc::ptr_eq(&proto.connection, &s.connection));
     assert!(Arc::ptr_eq(&proto.pool, &s.pool));
     assert!(Arc::ptr_eq(&proto.client, &s.client));
-    assert!(Arc::ptr_eq(&proto.checkout_cache, &s.checkout_cache));
     assert!(Arc::ptr_eq(&proto.registry, &s.registry));
 }

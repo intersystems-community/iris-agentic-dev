@@ -1,14 +1,17 @@
-//! One CSP cookie store per process, and the logout that ends its sessions (132 B1).
+//! One CSP cookie store per identity, and the logout that ends their sessions (132 B1, 171 S7).
 //!
 //! Each `reqwest::Client` built with `.cookie_store(true)` gets a jar of its own, so the probe,
 //! `client` and `exec_client` each opened a CSP session on `/api/atelier`, and none was ever ended.
 //! A session holds its slot for the web app's timeout (3600 s by default): ten `iad exec` calls
 //! left twenty sessions on 139, and two ladder tasks ran its key into `<LICENSE LIMIT EXCEEDED>`.
 //!
-//! Every IRIS client now takes [`shared_cookie_store`], so a process holds one session per web
-//! application. The store keeps the path of each `CSPSESSIONID-*` cookie IRIS sets, and
-//! [`logout_blocking`] sends `?IRISLogout=end` to each one on the way out. IRIS ends the session
-//! named by the cookie and answers 401, so the reply is not checked.
+//! Every client of a connection takes the store of its (endpoint, user) ([`store_for_primary`]), so
+//! a process holds one session per web application and account, and two accounts on one host never
+//! share a cookie: IRIS reads `CSPSESSIONID` before `Authorization`, so a shared jar would run the
+//! second account's call in the first account's session. [`shared_cookie_store`] is left for a
+//! client that belongs to no connection. Each store keeps the path of each `CSPSESSIONID-*` cookie
+//! IRIS sets, and [`logout_blocking`] sends `?IRISLogout=end` to each one on the way out. IRIS ends
+//! the session named by the cookie and answers 401, so the reply is not checked.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -101,7 +104,7 @@ static SHARED: LazyLock<Arc<CspSessionStore>> = LazyLock::new(|| Arc::new(CspSes
 static IDENTITY_STORES: LazyLock<Mutex<std::collections::BTreeMap<String, Arc<CspSessionStore>>>> =
     LazyLock::new(Default::default);
 
-/// The store every client of the primary identity in this process shares.
+/// The store of a client that belongs to no connection (and so holds no account's session).
 pub fn shared_cookie_store() -> Arc<CspSessionStore> {
     SHARED.clone()
 }
@@ -148,6 +151,23 @@ pub fn store_for_identity(key: &str) -> Arc<CspSessionStore> {
         .entry(key.to_string())
         .or_default()
         .clone()
+}
+
+/// The registry key of the primary account `username` at `base_url`: scheme, host, port and prefix
+/// as the connection holds them, and the user without regard to case.
+pub fn primary_identity_key(base_url: &str, username: &str) -> String {
+    format!(
+        "primary|{}|{}",
+        base_url.trim_end_matches('/').to_ascii_lowercase(),
+        username.to_ascii_lowercase()
+    )
+}
+
+/// The store every client of the account `username` on the server at `base_url` shares (171 S7).
+/// Two accounts on one host get two stores, and a service account has a third, so no request
+/// carries a session another account opened.
+pub fn store_for_primary(base_url: &str, username: &str) -> Arc<CspSessionStore> {
+    store_for_identity(&primary_identity_key(base_url, username))
 }
 
 /// The `?IRISLogout=end` URL of every CSP session any registered store has seen.
