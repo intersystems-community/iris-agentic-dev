@@ -33,7 +33,7 @@ urlencoding = "2"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 dirs = "5"
-keyring = { version = "4", features = ["v1"] }
+keyring = { version = "4.2", features = ["v1"] }
 keyring-core = { version = "1" }
 tree-sitter = "0.26"
 tree-sitter-objectscript = "1.10"
@@ -48,8 +48,9 @@ similar = "2"
 
 # Platform keychain store crates — already in the dep tree via keyring v4.
 # Direct deps needed to call Store::new() in init_platform_keystore().
-# keyring v4.1.3's v1::Entry::new has a bug (compare_exchange check is inverted)
-# so it never calls set_credential_store() — we do it ourselves.
+# keyring v4.1.3's v1::Entry::new never called set_credential_store() (an inverted
+# compare_exchange check). v4.2.0 fixed that, and 4.1.3 is yanked, hence the floor. We still
+# register the store ourselves because all lookups go through keyring_core::Entry, not v1.
 
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-native-keyring-store = "1"
