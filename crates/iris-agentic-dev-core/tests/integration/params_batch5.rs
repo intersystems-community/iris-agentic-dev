@@ -462,7 +462,10 @@ fn search_table_filter_reaches_the_search_table_lookup() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
-    let mut mcp = McpSession::start(&live_env());
+    // A Search Table search reads indexed body fields, so it needs data reads allowed.
+    let mut env = live_env();
+    env.extend(iris_agentic_dev_core::testing::data_reads_allowed_env());
+    let mut mcp = McpSession::start(&env);
 
     let default_extent = interop(
         &mut mcp,

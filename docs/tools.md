@@ -1319,8 +1319,9 @@ than quietly widening the query to every severity.
 `search_table` takes `prop` (required), one of `value` or `value_like`, and optional
 `class` and `extent` (default `EnsLib.HL7.SearchTable`).
 
-A call that names `body_class`, `body_where` or `body_select` reads message bodies, so it is a
-bulk-data call: it is refused with `DATA_POLICY_BLOCKED` unless the target server's `dataPolicy`
+A call that names `body_class`, `body_where`, `body_select` or `search_table` reads message
+bodies (a Search Table search returns the indexed field's value, such as a patient identifier taken
+from an HL7 message), so it is a bulk-data call: it is refused with `DATA_POLICY_BLOCKED` unless the target server's `dataPolicy`
 is `allow` (`redact` does not admit it, because the rows are not HL7 text iad could redact).
 Without those arguments the tool lists headers, logs and queues under any policy.
 

@@ -26,6 +26,18 @@ fn body_reads() -> Vec<Value> {
         json!({"body_class": "Ens.StringContainer"}),
         json!({"what": "Messages", "body_class": "Ens.StringContainer"}),
         json!({"what": "logs", "body_class": "Ens.StringContainer"}),
+        // The Search Table returns the indexed body field itself (`PropValue`: an HL7 PID, a
+        // name), so a search is a body read in every shape the handler takes.
+        json!({"what": "messages", "search_table": {"prop": "P", "value": "v"}}),
+        json!({"what": "messages", "search_table": {"prop": "P", "value_like": "v%"}}),
+        json!({"what": "messages", "search_table": {"prop": "P", "value": "v", "class": "EnsLib.HL7.Message"}}),
+        json!({"what": "messages", "search_table": {"prop": "P", "value": "v", "extent": "EnsLib.XML.SearchTable"}}),
+        json!({"search_table": {"prop": "P", "value": "v"}}),
+        json!({"what": "logs", "search_table": {"prop": "P", "value": "v"}}),
+        // The handler ignores a filter it cannot read; the gate does not, so a malformed one is
+        // no way round it.
+        json!({"what": "messages", "search_table": "P"}),
+        json!({"what": "messages", "search_table": {}}),
     ]
 }
 
@@ -36,7 +48,7 @@ fn header_reads() -> Vec<Value> {
         json!({"what": "messages", "session_id": 1, "limit": 5}),
         json!({"what": "logs", "component": "x"}),
         json!({"what": "queues"}),
-        json!({"what": "messages", "search_table": {"prop": "P", "value": "v"}}),
+        json!({"what": "messages", "search_table": null}),
     ]
 }
 

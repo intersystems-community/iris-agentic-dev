@@ -149,7 +149,8 @@ _Avoid_: PHI policy
 A tool that returns stored message, stream or journal content. Under block it returns at most the
 content's metadata; under redact it returns the content with sensitive fields replaced, or is
 refused if it cannot redact; under allow it returns the content whole. `iris_interop_query` is one
-only for a call that names a message body (`body_class`, `body_where` or `body_select`).
+only for a call that names a message body (`body_class`, `body_where`, `body_select` or
+`search_table`).
 _Avoid_: bulk-PHI tool
 
 **SQL lexer**:
