@@ -57,19 +57,32 @@ fn current_journal_file(iris: &ThrowawayIris) -> String {
         .to_string()
 }
 
-/// How many lines of the journal file at `path` contain `needle`. `grep -a` reads the binary
+/// Write the journal buffer to disk by switching to a new file. A record is buffered for a while
+/// after it is written, so a read of the file straight after the call can miss it (seen once on a
+/// CI runner: the control literal was not there yet).
+fn flush_journal(iris: &ThrowawayIris) {
+    let out = iris.session(
+        "%SYS",
+        "Write \"SW:\",##class(%SYS.Journal.System).SwitchFile(),!",
+    );
+    assert!(out.contains("SW:1"), "the journal did not switch: {out}");
+}
+
+/// How many lines of the journal files in the directory of `path` contain `needle`. Every file
+/// is read, because the record can be in the one before a switch. `grep -a` reads the binary
 /// journal as text; exit status 1 from grep means no match and is a count of zero.
 fn journal_hits(path: &str, needle: &str) -> usize {
+    let dir = path.rsplit_once('/').map(|(d, _)| d).unwrap_or(path);
     let out = Command::new("docker")
         .args([
             "exec",
             THROWAWAY_IRIS_NAME,
-            "grep",
-            "-a",
+            "sh",
             "-c",
-            "-F",
+            "cat \"$1\"/[0-9]*.[0-9]* | grep -a -c -F -- \"$2\"",
+            "sh",
+            dir,
             needle,
-            path,
         ])
         .output()
         .expect("docker exec grep");
@@ -80,7 +93,7 @@ fn journal_hits(path: &str, needle: &str) -> usize {
             .expect("grep count"),
         Some(1) => 0,
         _ => panic!(
-            "grep failed on {path}: {}",
+            "grep failed in {dir}: {}",
             String::from_utf8_lossy(&out.stderr)
         ),
     }
@@ -125,6 +138,7 @@ async fn journal_search_term_never_reaches_the_journal() {
     assert_eq!(search["success"], true, "search failed: {search}");
 
     let journal = current_journal_file(&iris);
+    flush_journal(&iris);
     assert!(
         journal_hits(&journal, CONTROL) > 0,
         "the control literal is not in {journal}, so the file read proves nothing"
