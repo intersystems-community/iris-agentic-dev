@@ -552,44 +552,65 @@ impl ThrowawayIris {
             );
         }
         // A stale container from a killed run holds the fixed name and ports.
-        remove_throwaway_iris();
         let image =
             std::env::var("IAD_THROWAWAY_IMAGE").unwrap_or_else(|_| THROWAWAY_IRIS_IMAGE.into());
-        let run = std::process::Command::new("docker")
-            .args([
-                "run",
-                "-d",
-                "--name",
-                THROWAWAY_IRIS_NAME,
-                "-p",
-                &format!("127.0.0.1:{THROWAWAY_SUPERSERVER_PORT}:1972"),
-                "-p",
-                &format!("127.0.0.1:{THROWAWAY_WEB_PORT}:52773"),
-                // What the CI job's own IRIS container is started with; a GitHub runner's IRIS
-                // does not come up without them.
-                "--shm-size",
-                "1g",
-                "--ulimit",
-                "nofile=65536:65536",
-                &image,
-            ])
-            .output()
-            .expect("must run the docker CLI");
-        assert!(
-            run.status.success(),
-            "docker run {THROWAWAY_IRIS_NAME} failed: {}",
-            String::from_utf8_lossy(&run.stderr).trim()
-        );
+        // The 2026.2 image's own post-start hook sometimes fails and the container shuts itself
+        // down (one start in four on a GitHub runner, 2026-10-25). Start it again when its log
+        // says so; any other exit fails at once with the log, not after the wait's timeout.
+        const ATTEMPTS: u32 = 3;
+        let mut attempt = 0;
+        let iris = loop {
+            attempt += 1;
+            // A stale container from a killed run (or the failed attempt) holds the fixed name
+            // and ports.
+            remove_throwaway_iris();
+            let run = std::process::Command::new("docker")
+                .args([
+                    "run",
+                    "-d",
+                    "--name",
+                    THROWAWAY_IRIS_NAME,
+                    "-p",
+                    &format!("127.0.0.1:{THROWAWAY_SUPERSERVER_PORT}:1972"),
+                    "-p",
+                    &format!("127.0.0.1:{THROWAWAY_WEB_PORT}:52773"),
+                    // What the CI job's own IRIS container is started with.
+                    "--shm-size",
+                    "1g",
+                    "--ulimit",
+                    "nofile=65536:65536",
+                    &image,
+                ])
+                .output()
+                .expect("must run the docker CLI");
+            assert!(
+                run.status.success(),
+                "docker run {THROWAWAY_IRIS_NAME} failed: {}",
+                String::from_utf8_lossy(&run.stderr).trim()
+            );
 
-        // Owned from here on, so a panic in the wait below still runs `Drop` and removes it.
-        let iris = Self {
-            host: "127.0.0.1",
-            superserver_port: THROWAWAY_SUPERSERVER_PORT,
-            web_port: THROWAWAY_WEB_PORT,
-            username: "_SYSTEM",
-            password: "SYS",
+            // Owned from here on, so a panic in the wait below still runs `Drop` and removes it.
+            let iris = Self {
+                host: "127.0.0.1",
+                superserver_port: THROWAWAY_SUPERSERVER_PORT,
+                web_port: THROWAWAY_WEB_PORT,
+                username: "_SYSTEM",
+                password: "SYS",
+            };
+            match iris.wait_for_web_gateway(std::time::Duration::from_secs(300)) {
+                None => break iris,
+                Some(log) if attempt < ATTEMPTS && post_start_hook_failed(&log) => {
+                    eprintln!(
+                        "{THROWAWAY_IRIS_NAME}: the image's post-start hook failed (attempt \
+                         {attempt} of {ATTEMPTS}); starting it again"
+                    );
+                }
+                Some(log) => panic!(
+                    "{THROWAWAY_IRIS_NAME} exited before it answered (attempt {attempt} of \
+                     {ATTEMPTS}). Last lines of its log:\n{log}"
+                ),
+            }
         };
-        iris.wait_for_web_gateway(std::time::Duration::from_secs(300));
         iris.clear_password_change();
         Some(iris)
     }
@@ -665,9 +686,14 @@ impl ThrowawayIris {
             .then(|| line.trim_end().to_string())
     }
 
-    fn wait_for_web_gateway(&self, timeout: std::time::Duration) {
+    /// Wait until the web gateway answers any HTTP status: `None` when it does. `Some(log)`, the
+    /// tail of the container's log, when the container exits first.
+    fn wait_for_web_gateway(&self, timeout: std::time::Duration) -> Option<String> {
         let deadline = std::time::Instant::now() + timeout;
         while self.atelier_status().is_none() {
+            if !throwaway_iris_running() {
+                return Some(throwaway_iris_log_tail());
+            }
             assert!(
                 std::time::Instant::now() < deadline,
                 "{THROWAWAY_IRIS_NAME} did not answer GET /api/atelier/ on 127.0.0.1:{} within \
@@ -676,7 +702,55 @@ impl ThrowawayIris {
             );
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
+        // The gateway answers before the image's post-start hook has run, and a hook that fails
+        // shuts IRIS down after that. Ready means the hook said it finished. An image that logs
+        // no such line is taken as ready once this wait is over, if it is still running.
+        let settle = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        while std::time::Instant::now() < settle {
+            let log = throwaway_iris_log_tail();
+            if post_start_hook_failed(&log) || !throwaway_iris_running() {
+                return Some(log);
+            }
+            if log.contains(POST_START_DONE) {
+                return None;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+        (!throwaway_iris_running()).then(throwaway_iris_log_tail)
     }
+}
+
+/// What the image's entrypoint logs once its post-start hook has finished.
+const POST_START_DONE: &str = "...executed command /docker-entrypoint.sh iris-after-start";
+
+/// Whether the throwaway container's log shows the image's own post-start hook failing, after
+/// which IRIS shuts the container down. A known fault of `iris-community:2026.2` (`ci.yml` notes it
+/// for the job's own container): starting the container again is the remedy.
+pub fn post_start_hook_failed(log: &str) -> bool {
+    log.contains("Error executing post-startup command")
+        || log.contains("Cannot call an iris.package wrapper")
+}
+
+/// Whether the throwaway container is running now.
+fn throwaway_iris_running() -> bool {
+    std::process::Command::new("docker")
+        .args(["inspect", "-f", "{{.State.Running}}", THROWAWAY_IRIS_NAME])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "true")
+        .unwrap_or(false)
+}
+
+/// The last lines of the throwaway container's log, stdout and stderr together.
+fn throwaway_iris_log_tail() -> String {
+    std::process::Command::new("docker")
+        .args(["logs", "--tail", "40", THROWAWAY_IRIS_NAME])
+        .output()
+        .map(|o| {
+            let mut text = String::from_utf8_lossy(&o.stdout).into_owned();
+            text.push_str(&String::from_utf8_lossy(&o.stderr));
+            text
+        })
+        .unwrap_or_default()
 }
 
 impl Drop for ThrowawayIris {

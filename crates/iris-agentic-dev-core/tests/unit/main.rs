@@ -224,6 +224,7 @@ mod test_telemetry_types;
 mod test_template_roles_141;
 mod test_test_target_layout;
 mod test_testing_helpers;
+mod test_throwaway_start_141;
 mod test_tls_trust_127;
 mod test_tool_catalogue;
 mod test_tool_category_coverage;
