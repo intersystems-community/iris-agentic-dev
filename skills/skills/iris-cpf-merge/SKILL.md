@@ -3,8 +3,9 @@ name: iris-cpf-merge
 tier: extra
 description: >
   Use when configuring IRIS containers via CPF merge files (ISC_CPF_MERGE_FILE).
-  Covers CPFPreset patterns, the grongierisc template pattern for password
-  pre-configuration, ChangePassword=0 via Actions, and common CPF merge mistakes.
+  Covers CPFPreset patterns, the grongierisc template pattern, how to set a
+  password at first boot (and why a merge line cannot do it safely), and common
+  CPF merge mistakes.
   Load when: setting up IRIS Docker containers, debugging ChangePassword errors,
   or customizing IRIS startup configuration without docker exec.
 tags: [iris, cpf, docker, password, configuration, container, devtester]
@@ -18,9 +19,11 @@ tags: [iris, cpf, docker, password, configuration, container, devtester]
 
 ## HARD GATE
 
-- `ChangePassword=0` must be set for **both** `_SYSTEM` and `SuperUser` — only patching one leaves the default connection user broken
+- Set `ChangePassword=0` or `PasswordNeverExpires=1` only on an account whose password you have already replaced. On a fresh container the password is the published default `SYS`, and clearing its expiry makes `SYS` work, for good, for anyone who can reach the container.
+- A merge line cannot set a generated password. Set it with `-e IRIS_PASSWORD` or with step 4 of the `iris-agentic-dev-setup` skill (see "Setting the \_SYSTEM password" below).
 - CPF merge fires **before** IRIS opens the superserver — this is a feature, not a limitation
-- Do NOT rely on `unexpire_all_passwords()` via docker exec as the primary path — CPF merge is faster, more reliable, and works in restricted CI environments
+- Publish container ports on `127.0.0.1` only (`-p 127.0.0.1:<host>:<container>`), the same as every other setup path.
+- Ask before running a merge file against a container that already exists: it is someone's work, and the merge runs at first boot only.
 
 ---
 
@@ -34,12 +37,10 @@ CPFPreset.ENABLE_CALLIN
 # → [Actions]
 # → ModifyService:Name=%Service_CallIn,Enabled=1,AutheEnabled=48
 
-# Clear ChangePassword for _SYSTEM + SuperUser, enable CallIn
+# Clear the expiry on SuperUser and _SYSTEM, enable CallIn
 CPFPreset.SECURE_DEFAULTS
-# → [Actions]
-# → ModifyService:Name=%Service_CallIn,Enabled=1,AutheEnabled=48
-# → ModifyUser:Name=SuperUser,PasswordHash=<hash>,ChangePassword=0,PasswordNeverExpires=1
-# → ModifyUser:Name=_SYSTEM,ChangePassword=0,PasswordNeverExpires=1
+# Despite the name this keeps the default password: the account stays `SYS`, with no expiry.
+# Use it for CI containers that are never published or shared, and nowhere else.
 
 # Memory tuning for CI
 CPFPreset.CI_OPTIMIZED
@@ -60,17 +61,20 @@ From [iris-fhir-facade-and-repo-template](https://github.com/grongierisc/iris-fh
 CreateDatabase:Name=MYAPP_DATA,Directory=/dur/iris/mgr/MYAPP_DATA
 CreateNamespace:Name=MYAPP,Globals=MYAPP_DATA,Routines=MYAPP_DATA,Interop=1
 ModifyService:Name=%Service_CallIn,Enabled=1,AutheEnabled=48
-ModifyUser:Name=SuperUser,ChangePassword=0,PasswordNeverExpires=1
-ModifyUser:Name=_SYSTEM,ChangePassword=0,PasswordNeverExpires=1
 ```
 
 ```yaml
 # docker-compose.yml
 services:
   iris:
+    ports:
+      - "127.0.0.1:1972:1972"
+      - "127.0.0.1:52773:52773"
     environment:
       - ISC_CPF_MERGE_FILE=/irisdev/app/merge.cpf
       - ISC_DATA_DIRECTORY=/dur/iris
+      # Passed through from the shell that runs `docker compose up`; never a literal here.
+      - IRIS_PASSWORD
     volumes:
       - .:/irisdev/app
       - iris-data:/dur
@@ -90,25 +94,28 @@ CreateNamespace:Name=MYNS,Globals=MYNS_DATA,Routines=MYNS_DATA,Interop=1
 # Enable CallIn (required for DBAPI)
 ModifyService:Name=%Service_CallIn,Enabled=1,AutheEnabled=48
 
-# Clear password expiration
-ModifyUser:Name=_SYSTEM,ChangePassword=0,PasswordNeverExpires=1
-ModifyUser:Name=SuperUser,ChangePassword=0,PasswordNeverExpires=1
-
-# Custom user with known password hash
-ModifyUser:Name=myapp,PasswordHash=<hash>,ChangePassword=0,PasswordNeverExpires=1,Roles=%ALL
+# Give an application user only the roles it needs. %All is for an administrator.
+ModifyUser:Name=myapp,Roles=%Developer
 ```
 
 ---
 
-## Generating a PasswordHash
+## Setting the \_SYSTEM password
 
-```objectscript
-// In IRIS terminal:
-do ##class(Security.Users).GeneratePasswordHash("MyPassword", .hash, .salt)
-write hash, ",", salt  // copy this into CPF
+A merge file is the wrong place for a password you generated. Measured on `intersystemsdc/iris-community:2026.2`: `PasswordHash=` lines built from a generated password (PBKDF2 hashes, hex and base64, with and without the algorithm and work-factor fields) either were ignored or left `_SYSTEM` with a password nobody knew. `Security.Users` has no `GeneratePasswordHash` method, and the hash that `CPFPreset.SECURE_DEFAULTS` ships is the hash of `SYS`. Do not copy it.
+
+Two ways that do work, both measured on a fresh container:
+
+```bash
+# 1. The intersystemsdc images read IRIS_PASSWORD at first boot and set _SYSTEM's password.
+#    It then shows in `docker inspect` and in the run command, so prefer 2 for anything shared.
+docker run -d --name my-iris -p 127.0.0.1:1972:1972 -p 127.0.0.1:52773:52773 \
+  -e IRIS_PASSWORD="$IRIS_PASSWORD" intersystemsdc/iris-community:latest
 ```
 
-Or use the hash from `CPFPreset.SECURE_DEFAULTS` (`FBFE8593AEFA510C27FD184738D6E865A441DE98,u4ocm4qh`) which corresponds to password `SYS`.
+1. Generate a password on the host and send the change on `docker exec -i` stdin, as step 4 of the `iris-agentic-dev-setup` skill does. The password never reaches a command line or a file.
+
+Either way the merge file keeps to services, namespaces and databases, and every other predefined account stays expired.
 
 ---
 
@@ -120,12 +127,12 @@ from iris_devtester.config.presets import CPFPreset
 
 # Automatic (1.18.0+): start() injects SECURE_DEFAULTS automatically
 with IRISContainer.community() as iris:
-    conn = iris.get_connection()   # ChangePassword=0 already set by CPF
+    conn = iris.get_connection()   # expiry cleared by CPF, password still the default: CI only
 
 # Manual override: provide your own CPF content
 iris = (
     IRISContainer.community()
-    .with_cpf_merge(CPFPreset.SECURE_DEFAULTS + "\nModifyUser:Name=app,Roles=%ALL")
+    .with_cpf_merge(CPFPreset.SECURE_DEFAULTS + "\nCreateResource:Name=%DB_APP,Description=app")
 )
 
 # From file
@@ -146,11 +153,4 @@ conn = iris.connect(...)
 conn = iris.get_connection()
 ```
 
-```ini
-# WRONG: only patching SuperUser
-ModifyUser:Name=SuperUser,ChangePassword=0    # _SYSTEM still blocked!
-
-# RIGHT: patch both
-ModifyUser:Name=SuperUser,ChangePassword=0,PasswordNeverExpires=1
-ModifyUser:Name=_SYSTEM,ChangePassword=0,PasswordNeverExpires=1
-```
+Do not patch only `SuperUser` and call it done: with the default password, `_SYSTEM` stays blocked until it has its own new password, and that is a password change, not an expiry flag. Do not patch both accounts' expiry either. That is what `SECURE_DEFAULTS` does, and it leaves two `%All` accounts open with the published password.

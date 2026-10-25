@@ -12,7 +12,12 @@
 //! bake in the build machine's path and break in a shipped/relocated binary; we
 //! do not use them here. Second, an on-disk directory can still *override* the
 //! embedded copy (`IRIS_AGENTIC_DEV_SKILLS_DIR`, or a `skills/skills` next to
-//! the executable / in the workspace) so a checkout's edits win during dev.
+//! the executable) so a checkout's edits win during dev.
+//!
+//! A `skills/skills` in the working directory or `$OBJECTSCRIPT_WORKSPACE` is the project's own
+//! text, not the operator's, so it is read only when the operator opts in (`IAD_LOCAL_SKILLS=1`,
+//! or `local_skills = true` in the operator file; spec 141 FR-027). The embedded guardrail skills
+//! reach the agent under this server's name, and a repository could otherwise replace them.
 
 use std::path::{Path, PathBuf};
 
@@ -20,10 +25,15 @@ use std::path::{Path, PathBuf};
 /// they are looking at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkillSource {
-    /// Shipped with the binary (or overridden from a skills directory on disk).
+    /// Shipped with the binary, as embedded.
     Bundled,
     /// Synthesized at runtime and stored in the IRIS `^SKILLS` global.
     Synthesized,
+    /// An embedded skill whose body was replaced by a copy on disk. The copy keeps the embedded
+    /// tier, so no file can hide a bundled skill by marking it `internal`.
+    Override,
+    /// A skill found only on disk; it keeps its own tier.
+    Local,
 }
 
 impl SkillSource {
@@ -31,6 +41,8 @@ impl SkillSource {
         match self {
             SkillSource::Bundled => "bundled",
             SkillSource::Synthesized => "synthesized",
+            SkillSource::Override => "override",
+            SkillSource::Local => "local",
         }
     }
 }
@@ -91,14 +103,28 @@ impl BundledSkill {
         }
     }
 
+    /// `bundled` for an embedded copy, `override` for a disk copy of an embedded skill, `local` for
+    /// a disk skill with no embedded counterpart.
+    pub fn source(&self) -> SkillSource {
+        match &self.path {
+            None => SkillSource::Bundled,
+            Some(_) if embedded_content(&self.name).is_some() => SkillSource::Override,
+            Some(_) => SkillSource::Local,
+        }
+    }
+
     pub fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut v = serde_json::json!({
             "name": self.name,
             "description": self.description,
             "tags": self.tags,
             "tier": self.tier.map(|t| t.as_str()),
-            "source": SkillSource::Bundled.as_str(),
-        })
+            "source": self.source().as_str(),
+        });
+        if let Some(p) = &self.path {
+            v["path"] = serde_json::Value::String(p.to_string_lossy().into_owned());
+        }
+        v
     }
 }
 
@@ -188,45 +214,166 @@ fn embedded_content(name: &str) -> Option<&'static str> {
 
 // ── directory resolution ──────────────────────────────────────────────────────
 
-/// Candidate skills directories, most specific first. Every candidate is derived
-/// at *runtime* — from an env var, the running executable's own location, or the
-/// working directory — never from a build-time constant.
-pub fn skills_dir_candidates() -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut push = |p: PathBuf| {
-        if !out.contains(&p) {
-            out.push(p);
+/// Which kind of place a candidate directory is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DirKind {
+    /// `IRIS_AGENTIC_DEV_SKILLS_DIR`: launch settings, set by the operator.
+    Env,
+    /// Next to or above the running executable: it exists because the operator built or unpacked
+    /// the binary there.
+    Exe,
+    /// `$OBJECTSCRIPT_WORKSPACE/skills/skills` or `<cwd>/skills/skills`: the project's own text.
+    Workspace,
+}
+
+impl DirKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DirKind::Env => "env",
+            DirKind::Exe => "exe",
+            DirKind::Workspace => "workspace",
+        }
+    }
+}
+
+/// A directory that may hold `<name>/SKILL.md` files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillsDir {
+    pub path: PathBuf,
+    pub kind: DirKind,
+}
+
+/// Everything [`skills_dir_candidates_from`] reads, so a test passes it without touching the
+/// process environment or the working directory.
+#[derive(Debug, Clone, Default)]
+pub struct CandidateInputs {
+    /// `IRIS_AGENTIC_DEV_SKILLS_DIR`.
+    pub env_dir: Option<PathBuf>,
+    /// The running executable.
+    pub exe: Option<PathBuf>,
+    /// `OBJECTSCRIPT_WORKSPACE`.
+    pub workspace_env: Option<PathBuf>,
+    pub cwd: Option<PathBuf>,
+    /// The operator's opt-in to serve the two workspace candidates.
+    pub local_skills: bool,
+}
+
+/// Candidate skills directories, most specific first. Every candidate is derived at *runtime*
+/// from the inputs, never from a build-time constant. The workspace candidates are left out unless
+/// `local_skills` is set.
+pub fn skills_dir_candidates_from(inputs: &CandidateInputs) -> Vec<SkillsDir> {
+    let mut out: Vec<SkillsDir> = Vec::new();
+    let mut push = |path: PathBuf, kind: DirKind| {
+        if !out.iter().any(|d| d.path == path) {
+            out.push(SkillsDir { path, kind });
         }
     };
 
-    if let Ok(dir) = std::env::var("IRIS_AGENTIC_DEV_SKILLS_DIR") {
-        if !dir.is_empty() {
-            push(PathBuf::from(dir));
-        }
+    if let Some(dir) = inputs
+        .env_dir
+        .as_ref()
+        .filter(|d| !d.as_os_str().is_empty())
+    {
+        push(dir.clone(), DirKind::Env);
     }
 
     // Alongside / above the running executable: ./skills/skills, ../skills/skills,
     // covering both an installed layout and `target/debug/<bin>` in a checkout.
-    if let Ok(exe) = std::env::current_exe() {
+    if let Some(exe) = &inputs.exe {
         let mut anchor = exe.parent().map(|p| p.to_path_buf());
         for _ in 0..4 {
             let Some(dir) = anchor else { break };
-            push(dir.join("skills").join("skills"));
+            push(dir.join("skills").join("skills"), DirKind::Exe);
             anchor = dir.parent().map(|p| p.to_path_buf());
         }
     }
 
-    if let Ok(ws) = std::env::var("OBJECTSCRIPT_WORKSPACE") {
-        if !ws.is_empty() {
-            push(PathBuf::from(ws).join("skills").join("skills"));
+    if inputs.local_skills {
+        if let Some(ws) = inputs
+            .workspace_env
+            .as_ref()
+            .filter(|w| !w.as_os_str().is_empty())
+        {
+            push(ws.join("skills").join("skills"), DirKind::Workspace);
+        }
+        if let Some(cwd) = &inputs.cwd {
+            push(cwd.join("skills").join("skills"), DirKind::Workspace);
         }
     }
 
-    if let Ok(cwd) = std::env::current_dir() {
-        push(cwd.join("skills").join("skills"));
-    }
-
     out
+}
+
+/// The operator file's `local_skills`, read from `<home>/.iris-agentic-dev.toml`. A workspace file
+/// never counts, and a file that is missing or does not parse means no opt-in.
+pub fn operator_local_skills(home: Option<&Path>) -> bool {
+    let Some(home) = home else { return false };
+    let Ok(text) =
+        std::fs::read_to_string(home.join(crate::iris::config_sources::CONFIG_FILE_NAME))
+    else {
+        return false;
+    };
+    text.parse::<toml::Table>()
+        .map(|t| crate::iris::config_sources::operator_settings(&t).local_skills)
+        .unwrap_or(false)
+}
+
+/// [`operator_local_skills`] under the rule for the operator file (spec 141 FR-043): turning the
+/// opt-in off applies at once, turning it on waits for the next start. The first answer of the
+/// process is what the server started with.
+fn operator_opt_in_held_to_start(home: Option<&Path>) -> bool {
+    let now = operator_local_skills(home);
+    *STARTED_WITH.get_or_init(|| now) && now
+}
+
+static STARTED_WITH: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+/// Record the operator file's `local_skills` as the server started with it, before any edit.
+pub fn note_started_with_local_skills(opted_in: bool) {
+    STARTED_WITH.get_or_init(|| opted_in);
+}
+
+/// The inputs of this process: the environment, the running executable, the working directory and
+/// the operator's opt-in (`IAD_LOCAL_SKILLS`, or `local_skills` in the operator file).
+pub fn candidate_inputs_from_process() -> CandidateInputs {
+    let env_path = |name: &str| std::env::var_os(name).map(PathBuf::from);
+    let opt_in_env = std::env::var("IAD_LOCAL_SKILLS")
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false);
+    CandidateInputs {
+        env_dir: env_path("IRIS_AGENTIC_DEV_SKILLS_DIR"),
+        exe: std::env::current_exe().ok(),
+        workspace_env: env_path("OBJECTSCRIPT_WORKSPACE"),
+        cwd: std::env::current_dir().ok(),
+        local_skills: opt_in_env || operator_opt_in_held_to_start(dirs::home_dir().as_deref()),
+    }
+}
+
+/// The candidates for this process.
+pub fn skills_dir_candidates() -> Vec<SkillsDir> {
+    skills_dir_candidates_from(&candidate_inputs_from_process())
+}
+
+/// The non-empty workspace directory that was *not* read because the operator has not opted in.
+/// `check_config` reports it, with the key that would serve it.
+pub fn ignored_workspace_dir(inputs: &CandidateInputs) -> Option<PathBuf> {
+    if inputs.local_skills {
+        return None;
+    }
+    let would_serve = CandidateInputs {
+        local_skills: true,
+        ..inputs.clone()
+    };
+    skills_dir_candidates_from(&would_serve)
+        .into_iter()
+        .filter(|d| d.kind == DirKind::Workspace)
+        .find(|d| !load_from_dir(&d.path).is_empty())
+        .map(|d| d.path)
 }
 
 /// Read every `<dir>/*/SKILL.md`. Missing or unreadable directories yield an
@@ -255,22 +402,53 @@ pub fn load_from_dir(dir: &Path) -> Vec<BundledSkill> {
     out
 }
 
-/// The full bundled catalog: the embedded copy, with any same-named skill from
-/// the first readable on-disk candidate directory taking precedence.
+/// What `check_config.skills` reports: the directory whose skills replaced the embedded ones, which
+/// kind it is, whether the opt-in is on, and a workspace directory that was left unread.
+pub fn skills_report_from(inputs: &CandidateInputs) -> serde_json::Value {
+    let served = skills_dir_candidates_from(inputs)
+        .into_iter()
+        .find(|d| !load_from_dir(&d.path).is_empty());
+    serde_json::json!({
+        "override_dir": served.as_ref().map(|d| d.path.to_string_lossy().into_owned()),
+        "override_kind": served.as_ref().map(|d| d.kind.as_str()),
+        "local_skills": inputs.local_skills,
+        "ignored_dir": ignored_workspace_dir(inputs).map(|p| p.to_string_lossy().into_owned()),
+        "ignored_hint": ignored_workspace_dir(inputs).map(|_| {
+            "this directory was not read; the operator can turn on local skills to serve it"
+        }),
+    })
+}
+
+/// The full bundled catalog: the embedded copy, with any same-named skill from the first
+/// readable on-disk candidate directory taking precedence.
 pub fn load_bundled_skills() -> Vec<BundledSkill> {
+    load_bundled_skills_from(&skills_dir_candidates())
+}
+
+/// [`load_bundled_skills`] over an explicit candidate list.
+///
+/// A disk copy of an embedded skill keeps the embedded *tier*: the tier says who ships the skill and
+/// whether it is advertised, and the file being served is the thing that must not decide that.
+pub fn load_bundled_skills_from(candidates: &[SkillsDir]) -> Vec<BundledSkill> {
     let mut out: Vec<BundledSkill> = EMBEDDED_SKILLS
         .iter()
         .filter_map(|(dir, body)| parse_skill_md(body, dir))
         .collect();
 
-    for candidate in skills_dir_candidates() {
-        let from_disk = load_from_dir(&candidate);
+    for candidate in candidates {
+        let from_disk = load_from_dir(&candidate.path);
         if from_disk.is_empty() {
             continue;
         }
-        for s in from_disk {
+        for mut s in from_disk {
             match out.iter_mut().find(|e| e.name == s.name) {
-                Some(existing) => *existing = s,
+                // A copy identical to the embedded one replaces nothing, so it is not an `override`
+                // (a binary built in a checkout finds that checkout's own files).
+                Some(_) if s.content().as_deref() == embedded_content(&s.name) => {}
+                Some(existing) => {
+                    s.tier = existing.tier;
+                    *existing = s;
+                }
                 None => out.push(s),
             }
         }
@@ -491,6 +669,8 @@ pub struct MergedSkill {
     pub description: String,
     pub tags: Vec<String>,
     pub source: SkillSource,
+    /// The file served, for an `override` or `local` skill.
+    pub path: Option<PathBuf>,
     /// Bundled skills only; a `^SKILLS` entry has no tier.
     pub tier: Option<SkillTier>,
     /// A `^SKILLS` entry of the same name also exists (bundled copy wins).
@@ -507,6 +687,9 @@ impl MergedSkill {
         });
         if let Some(t) = self.tier {
             v["tier"] = serde_json::Value::from(t.as_str());
+        }
+        if let Some(p) = &self.path {
+            v["path"] = serde_json::Value::String(p.to_string_lossy().into_owned());
         }
         if self.also_synthesized {
             v["also_synthesized"] = serde_json::Value::Bool(true);
@@ -545,7 +728,8 @@ pub fn merge_sources(
             name: s.name.clone(),
             description: s.description.clone(),
             tags: s.tags.clone(),
-            source: SkillSource::Bundled,
+            source: s.source(),
+            path: s.path.clone(),
             tier: s.tier,
             also_synthesized: false,
         })
@@ -562,6 +746,7 @@ pub fn merge_sources(
                 description: synthesized_description(v),
                 tags: Vec::new(),
                 source: SkillSource::Synthesized,
+                path: None,
                 tier: None,
                 also_synthesized: false,
             }),
@@ -699,6 +884,7 @@ mod tests {
             description: "d".into(),
             tags: vec![],
             source: SkillSource::Bundled,
+            path: None,
             tier: None,
             also_synthesized: false,
         };

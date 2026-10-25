@@ -1,12 +1,13 @@
 //! Tool-call telemetry: in-memory ring buffer (authoritative for `agent_history`/
-//! `agent_stats`) plus a best-effort dual-sink durable write (IRIS global when
-//! connected, local JSONL file when not). See specs/059-tool-telemetry-benchmark/.
+//! `agent_stats`) plus a best-effort durable write: always the local JSONL file, and the IRIS
+//! global too when the operator opted in (spec 141 R5 C16). See specs/059-tool-telemetry-benchmark/.
 
 pub mod prune;
 pub mod redact;
 pub mod trace_export;
 
 use crate::iris::connection::IrisConnection;
+use crate::iris::workspace_config::ConnectionRole;
 use std::future::Future;
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -208,13 +209,16 @@ pub fn ago_secs(timestamp: &str) -> u64 {
 /// e.g. `$LISTBUILD("iris_compile",1,123,"2026-07-01T20:31:28Z")` (5th element omitted
 /// when `params` is `None`, to keep the common case's record small — verified live in
 /// research.md).
-fn encode_listbuild(record: &ToolCallRecord) -> String {
-    let tool = objectscript_string_literal(&record.tool);
+/// Strings go in through [`crate::objectscript::os_str_expr`]: the quote is doubled and a control
+/// character becomes a `$CHAR` splice, so a line break in a tool name or a parameter cannot end the
+/// line the record is spliced into (spec 141 T221).
+pub fn encode_listbuild(record: &ToolCallRecord) -> String {
+    let tool = crate::objectscript::os_str_expr(&record.tool);
     let success = if record.success { 1 } else { 0 };
-    let timestamp = objectscript_string_literal(&record.timestamp);
+    let timestamp = crate::objectscript::os_str_expr(&record.timestamp);
     match &record.params {
         Some(p) => {
-            let params_json = objectscript_string_literal(&p.to_string());
+            let params_json = crate::objectscript::os_str_expr(&p.to_string());
             format!(
                 "$LISTBUILD({tool},{success},{},{timestamp},{params_json})",
                 record.duration_ms
@@ -225,12 +229,6 @@ fn encode_listbuild(record: &ToolCallRecord) -> String {
             record.duration_ms
         ),
     }
-}
-
-/// Escape a Rust string as an ObjectScript double-quoted string literal (doubling
-/// embedded quotes — ObjectScript's only escape mechanism inside `"..."`).
-fn objectscript_string_literal(s: &str) -> String {
-    format!("\"{}\"", s.replace('"', "\"\""))
 }
 
 /// Decode a `$LISTTOSTRING(..., "|")`-piped line (see `read_durable`'s IRIS-side query)
@@ -266,65 +264,180 @@ fn jsonl_path(config_dir: &Path, session_id: Uuid) -> std::path::PathBuf {
         .join(format!("{session_id}.jsonl"))
 }
 
+/// Where the durable record is kept besides the local file (spec 141 R5 C16).
+///
+/// The local JSONL file is always written. `Iris` adds the `^IRISDEV("telemetry")` global, which
+/// costs a put, a compile, a query and a delete of a scratch class per call, so only the operator
+/// turns it on: `telemetry_sink = "iris"` in the operator file, or `IAD_TELEMETRY_SINK=iris` in the
+/// launch settings. A workspace file cannot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TelemetrySink {
+    #[default]
+    Local,
+    Iris,
+}
+
+impl TelemetrySink {
+    /// Parse a `telemetry_sink` value; `None` for anything but `local` and `iris`.
+    pub fn parse(v: &str) -> Option<Self> {
+        match v.trim().to_ascii_lowercase().as_str() {
+            "local" => Some(Self::Local),
+            "iris" => Some(Self::Iris),
+            _ => None,
+        }
+    }
+
+    /// The spelling `check_config` reports.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Iris => "iris",
+        }
+    }
+}
+
+/// The sink the operator chose: the operator file's `telemetry_sink`, or `IAD_TELEMETRY_SINK` in
+/// the launch environment (`env` is its value). A workspace file's key is set aside before it
+/// reaches `operator`, so it cannot be what this reads.
+pub fn sink_setting(
+    operator: &crate::iris::config_sources::OperatorSettings,
+    env: Option<&str>,
+) -> TelemetrySink {
+    if operator.telemetry_sink == TelemetrySink::Iris
+        || env.and_then(TelemetrySink::parse) == Some(TelemetrySink::Iris)
+    {
+        TelemetrySink::Iris
+    } else {
+        TelemetrySink::Local
+    }
+}
+
+/// What decides whether the IRIS sink may write to one server (spec 141 R5 C16, T208).
+///
+/// Every field describes the server the call acted on, not the default one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SinkGate {
+    /// The operator asked for the IRIS sink. Without it nothing else here matters.
+    pub sink: TelemetrySink,
+    /// That server's write gate is on.
+    pub writes_enabled: bool,
+    /// `read_only = "strict"`.
+    pub strict_read_only: bool,
+    /// The server is under source control, so a class compiled per call is a change-control
+    /// event per call (PLATFORM-25). iad has no per-namespace probe, and a probe would itself
+    /// compile a scratch class; it reads the operator's own marker: a `subject` role is a server
+    /// under change control, where iad already refuses source-control writes.
+    pub source_controlled: bool,
+}
+
+impl SinkGate {
+    pub fn for_server(
+        writes_enabled: bool,
+        strict_read_only: bool,
+        role: ConnectionRole,
+        sink: TelemetrySink,
+    ) -> Self {
+        Self {
+            sink,
+            writes_enabled,
+            strict_read_only,
+            source_controlled: role == ConnectionRole::Subject,
+        }
+    }
+}
+
+/// The connection the IRIS sink may use, or `None` for the local file alone.
+///
+/// The IRIS sink is a put, a compile, a query and a delete of a scratch class in `USER` on every
+/// call, so it runs only when the operator opted in, and then only where iad may write and nobody
+/// watches the write: not when the server's writes are off, not under strict read-only, and not on
+/// a server under source control. Everywhere else the record goes to the local file, which costs
+/// the server nothing.
+pub fn durable_sink(
+    iris: Option<Arc<IrisConnection>>,
+    gate: SinkGate,
+) -> Option<Arc<IrisConnection>> {
+    iris.filter(|_| {
+        gate.sink == TelemetrySink::Iris
+            && gate.writes_enabled
+            && !gate.strict_read_only
+            && !gate.source_controlled
+    })
+}
+
 /// Best-effort durable write. MUST NOT propagate errors to the caller (FR-014) — every
 /// failure path here is swallowed, logged at `tracing::debug`, and returns.
+///
+/// The record always goes to the local file. `iris` is the connection [`durable_sink`] allowed,
+/// and the record goes there as well.
 pub async fn write_durable(
     record: &ToolCallRecord,
     iris: Option<Arc<IrisConnection>>,
     client: &reqwest::Client,
     config_dir: &Path,
 ) {
-    match iris {
-        Some(iris) => {
-            let listbuild = encode_listbuild(record);
-            let code = format!(
-                // splice-ok: sid is a Uuid this process generated
-                "set seq=$INCREMENT(^IRISDEV(\"telemetry\",\"{sid}\"))\nset ^IRISDEV(\"telemetry\",\"{sid}\",seq)={lb}\n",
-                sid = record.session_id,
-                lb = listbuild
-            );
-            if let Err(e) = iris
-                .execute_via_generator_prefixed(&code, "USER", client, TELEMETRY_SCRATCH_PREFIX)
-                .await
-            {
-                tracing::debug!("telemetry durable write (IRIS) failed, dropping: {e}");
-            }
-        }
-        None => {
-            if let Err(e) = write_jsonl(record, config_dir) {
-                tracing::debug!("telemetry durable write (local file) failed, dropping: {e}");
-            }
-        }
+    if let Err(e) = write_jsonl(record, config_dir) {
+        tracing::debug!("telemetry durable write (local file) failed, dropping: {e}");
+    }
+    let Some(iris) = iris else { return };
+    let listbuild = encode_listbuild(record);
+    let code = format!(
+        // splice-ok: sid is a Uuid this process generated
+        "set seq=$INCREMENT(^IRISDEV(\"telemetry\",\"{sid}\"))\nset ^IRISDEV(\"telemetry\",\"{sid}\",seq)={lb}\n",
+        sid = record.session_id,
+        lb = listbuild
+    );
+    if let Err(e) = iris
+        .execute_via_generator_prefixed(&code, "USER", client, TELEMETRY_SCRATCH_PREFIX)
+        .await
+    {
+        tracing::debug!("telemetry durable write (IRIS) failed, dropping: {e}");
     }
 }
 
 fn write_jsonl(record: &ToolCallRecord, config_dir: &Path) -> anyhow::Result<()> {
-    let path = jsonl_path(config_dir, record.session_id);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let line = serde_json::to_string(record)?;
-    use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
-    writeln!(f, "{line}")?;
+    // Mode 600 in a 700 directory: the file holds tool names and, with `params`, call arguments.
+    crate::iris::private_file::append_private(&jsonl_path(config_dir, record.session_id), &line)?;
     Ok(())
 }
 
 /// Read back durable records for a session (or all known sessions when `session_id` is
-/// `None`) from whichever sink is active.
+/// `None`): the local file always, and the IRIS global too when [`durable_sink`] allowed `iris`.
+/// A call both sinks hold is returned once.
 pub async fn read_durable(
     session_id: Option<Uuid>,
     iris: Option<Arc<IrisConnection>>,
     client: &reqwest::Client,
     config_dir: &Path,
 ) -> Vec<ToolCallRecord> {
-    match iris {
+    let local = read_durable_local(session_id, config_dir);
+    let remote = match iris {
         Some(iris) => read_durable_iris(session_id, &iris, client).await,
-        None => read_durable_local(session_id, config_dir),
-    }
+        None => Vec::new(),
+    };
+    merge_records(local, remote)
+}
+
+/// The records of both sinks with each call once, local copies first.
+///
+/// With the IRIS sink on, every call is written to both, so the same call arrives twice. The
+/// IRIS sequence number is no key: it counts per server, and a failed write leaves a gap in one
+/// sink and not the other. A call is a session, a timestamp (nanoseconds) and a tool; the local
+/// copy wins because it also carries the eval identity the IRIS record drops.
+pub fn merge_records(local: Vec<ToolCallRecord>, iris: Vec<ToolCallRecord>) -> Vec<ToolCallRecord> {
+    let key = |r: &ToolCallRecord| {
+        (
+            r.session_id,
+            r.timestamp.clone(),
+            r.tool.clone(),
+            r.duration_ms,
+        )
+    };
+    let mut seen: std::collections::HashSet<_> = local.iter().map(key).collect();
+    let mut out = local;
+    out.extend(iris.into_iter().filter(|r| seen.insert(key(r))));
+    out
 }
 
 async fn read_durable_iris(
@@ -598,5 +711,176 @@ mod tests {
         assert_eq!(run_id.as_deref(), Some("gauntlet-test1234"));
         assert_eq!(task_id.as_deref(), Some("G06"));
         assert_eq!(condition.as_deref(), Some("claude_code/iad_mcp/opus"));
+    }
+
+    // ── 141 C16: the IRIS sink needs a server iad may write to ─────────────────────────────────
+
+    use crate::iris::connection::DiscoverySource;
+    use crate::iris::workspace_config::ConnectionRole;
+
+    /// A connection nothing answers on: a write that reaches it fails, and one that does not leaves
+    /// the record in the local file, which is what these tests read.
+    fn unroutable() -> Arc<IrisConnection> {
+        Arc::new(IrisConnection::new(
+            "http://127.0.0.1:1",
+            "USER",
+            "_SYSTEM",
+            "SYS",
+            DiscoverySource::ExplicitFlag,
+        ))
+    }
+
+    /// A gate for an operator who opted in to the IRIS sink: only the three server conditions vary.
+    fn gate(writes_enabled: bool, strict: bool, role: ConnectionRole) -> SinkGate {
+        SinkGate::for_server(writes_enabled, strict, role, TelemetrySink::Iris)
+    }
+
+    async fn written_locally(gate: SinkGate) -> Vec<ToolCallRecord> {
+        let dir = tempfile::tempdir().unwrap();
+        let sid = Uuid::new_v4();
+        let record = ToolCallRecord::now("iris_info", true, 3, sid);
+        let client = reqwest::Client::new();
+        write_durable(
+            &record,
+            durable_sink(Some(unroutable()), gate),
+            &client,
+            dir.path(),
+        )
+        .await;
+        read_durable_local(Some(sid), dir.path())
+    }
+
+    #[tokio::test]
+    async fn durable_write_goes_local_when_writes_are_off() {
+        let got = written_locally(gate(false, false, ConnectionRole::Workbench)).await;
+        assert_eq!(
+            got.len(),
+            1,
+            "with the default server's writes off the record must land in the local file"
+        );
+        assert_eq!(got[0].tool, "iris_info");
+    }
+
+    #[tokio::test]
+    async fn durable_write_goes_local_under_strict_read_only() {
+        let got = written_locally(gate(true, true, ConnectionRole::Workbench)).await;
+        assert_eq!(
+            got.len(),
+            1,
+            "strict read-only keeps telemetry off the server"
+        );
+    }
+
+    #[tokio::test]
+    async fn durable_write_goes_local_by_default_with_a_writable_connection() {
+        // Writes on, not strict, not a subject server, a connection present: the old default sent
+        // this to IRIS and compiled a class per call. Without the operator's opt-in it stays local.
+        let default = SinkGate::for_server(
+            true,
+            false,
+            ConnectionRole::Workbench,
+            TelemetrySink::default(),
+        );
+        assert_eq!(TelemetrySink::default(), TelemetrySink::Local);
+        assert!(durable_sink(Some(unroutable()), default).is_none());
+        let got = written_locally(default).await;
+        assert_eq!(got.len(), 1, "{got:?}");
+    }
+
+    #[tokio::test]
+    async fn the_opt_in_with_writes_on_writes_to_both_sinks() {
+        // The IRIS sink is unreachable here, so its write fails and is swallowed; the local record
+        // is the sign that the file is written first and regardless, and `is_some` the sign that
+        // the connection was handed to the IRIS write as well.
+        let open = gate(true, false, ConnectionRole::Workbench);
+        assert!(durable_sink(Some(unroutable()), open).is_some());
+        let got = written_locally(open).await;
+        assert_eq!(
+            got.len(),
+            1,
+            "the local file is written with the opt-in too"
+        );
+        assert!(durable_sink(None, open).is_none());
+    }
+
+    // ── 141 T208: a server under source control gets no telemetry write ────────────────────────
+
+    #[tokio::test]
+    async fn durable_write_goes_local_on_a_server_under_source_control() {
+        // A `subject` server is the one iad treats as under change control: its source-control
+        // writes are refused. One compile per call there is what PLATFORM-25 reports as a queue
+        // entry per call.
+        let got = written_locally(gate(true, false, ConnectionRole::Subject)).await;
+        assert_eq!(got.len(), 1, "the record must land in the local file");
+    }
+
+    #[test]
+    fn only_a_subject_role_reads_as_source_controlled() {
+        assert!(gate(true, false, ConnectionRole::Subject).source_controlled);
+        assert!(!gate(true, false, ConnectionRole::Workbench).source_controlled);
+    }
+
+    #[test]
+    fn each_condition_alone_closes_the_sink() {
+        let conn = || Some(unroutable());
+        for (label, g) in [
+            ("writes off", gate(false, false, ConnectionRole::Workbench)),
+            ("strict", gate(true, true, ConnectionRole::Workbench)),
+            ("source control", gate(true, false, ConnectionRole::Subject)),
+            (
+                "no opt-in",
+                SinkGate::for_server(true, false, ConnectionRole::Workbench, TelemetrySink::Local),
+            ),
+        ] {
+            assert!(durable_sink(conn(), g).is_none(), "{label}");
+        }
+    }
+
+    // ── 141 C16: reading both sinks ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn merge_keeps_one_copy_of_a_call_both_sinks_hold() {
+        let sid = Uuid::new_v4();
+        let both = ToolCallRecord::now("iris_info", true, 3, sid);
+        let only_local = ToolCallRecord::now("iris_query", true, 4, sid);
+        let only_iris = ToolCallRecord::now("iris_doc", false, 5, sid);
+        let mut local_copy = both.clone();
+        local_copy.eval_run_id = Some("r1".into());
+        let merged = merge_records(vec![local_copy, only_local], vec![both, only_iris]);
+        let tools: Vec<&str> = merged.iter().map(|r| r.tool.as_str()).collect();
+        assert_eq!(tools, vec!["iris_info", "iris_query", "iris_doc"]);
+        assert_eq!(
+            merged[0].eval_run_id.as_deref(),
+            Some("r1"),
+            "the local copy wins: it carries fields the IRIS record does not"
+        );
+    }
+
+    #[test]
+    fn merge_does_not_fold_two_calls_of_one_session_into_one() {
+        let sid = Uuid::new_v4();
+        let mut a = ToolCallRecord::now("iris_info", true, 3, sid);
+        let mut b = a.clone();
+        a.timestamp = "2026-10-24T10:00:00.000000001+00:00".into();
+        b.timestamp = "2026-10-24T10:00:00.000000002+00:00".into();
+        assert_eq!(merge_records(vec![a, b], Vec::new()).len(), 2);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_local_file_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let sid = Uuid::new_v4();
+        let record = ToolCallRecord::now("iris_info", true, 3, sid);
+        write_durable(&record, None, &reqwest::Client::new(), dir.path()).await;
+        let file = jsonl_path(dir.path(), sid);
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&file), 0o600, "the telemetry file");
+        assert_eq!(
+            mode(file.parent().unwrap()),
+            0o700,
+            "the telemetry directory"
+        );
     }
 }

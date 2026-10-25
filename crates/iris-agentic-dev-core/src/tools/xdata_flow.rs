@@ -64,6 +64,14 @@ pub struct Subtransform {
 
 // ── BPL parser ───────────────────────────────────────────────────────────────
 
+/// The report for a BPL that `parse_bpl` refused for nesting: `BPL_TOO_DEEP`, with the reason.
+/// `None` for any other parse failure, which the callers treat as no flow.
+pub fn bpl_refusal(err: &anyhow::Error) -> Option<serde_json::Value> {
+    let msg = err.to_string();
+    msg.starts_with("BPL_TOO_DEEP")
+        .then(|| serde_json::json!({"kind": "bpl", "error_code": "BPL_TOO_DEEP", "error": msg}))
+}
+
 /// Parses the content of a BPL `<process>` XML element.
 pub fn parse_bpl(xml: &str) -> Result<BplFlow> {
     let mut reader = Reader::from_str(xml);
@@ -81,6 +89,11 @@ pub fn parse_bpl(xml: &str) -> Result<BplFlow> {
     })
 }
 
+/// Deepest BPL nesting `parse_bpl` follows. Real flows are a few levels deep. Past this the
+/// recursion would overflow the stack, and an overflow aborts the MCP server, not just the call
+/// (spec 141 C7).
+const MAX_BPL_DEPTH: u32 = 128;
+
 /// Recursively collects BplStep entries from the current XML context.
 /// `depth` tracks nesting so we know when to stop.
 fn collect_bpl_steps(
@@ -90,6 +103,9 @@ fn collect_bpl_steps(
     dynamic: &mut bool,
     depth: u32,
 ) -> Result<()> {
+    if depth > MAX_BPL_DEPTH {
+        bail!("BPL_TOO_DEEP: BPL nesting exceeds {MAX_BPL_DEPTH}");
+    }
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {

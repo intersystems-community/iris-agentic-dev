@@ -9,13 +9,13 @@
 // - Error JSON shape: error_code, template, blocked_category, server_name, message, remediation
 
 use iris_agentic_dev_core::iris::workspace_config::McpTemplate;
-use iris_agentic_dev_core::policy::env_gate::check_env_gate;
+use iris_agentic_dev_core::testing::gated;
 
 // ── mcpTemplate=live ─────────────────────────────────────────────────────────
 
 #[test]
 fn live_blocks_iris_execute() {
-    let r = check_env_gate(
+    let r = gated::env(
         "iris_execute",
         &McpTemplate::Live,
         "iris-prod",
@@ -31,7 +31,7 @@ fn live_blocks_iris_execute() {
 
 #[test]
 fn live_blocks_iris_compile() {
-    let r = check_env_gate(
+    let r = gated::env(
         "iris_compile",
         &McpTemplate::Live,
         "iris-prod",
@@ -43,7 +43,7 @@ fn live_blocks_iris_compile() {
 
 #[test]
 fn live_blocks_iris_source_control() {
-    let r = check_env_gate(
+    let r = gated::env(
         "iris_source_control",
         &McpTemplate::Live,
         "iris-prod",
@@ -55,7 +55,7 @@ fn live_blocks_iris_source_control() {
 
 #[test]
 fn live_permits_iris_query() {
-    let r = check_env_gate(
+    let r = gated::env(
         "iris_query",
         &McpTemplate::Live,
         "iris-prod",
@@ -66,7 +66,7 @@ fn live_permits_iris_query() {
 
 #[test]
 fn live_permits_iris_search() {
-    let r = check_env_gate(
+    let r = gated::env(
         "iris_search",
         &McpTemplate::Live,
         "iris-prod",
@@ -77,7 +77,7 @@ fn live_permits_iris_search() {
 
 #[test]
 fn live_permits_docs_introspect() {
-    let r = check_env_gate(
+    let r = gated::env(
         "docs_introspect",
         &McpTemplate::Live,
         "iris-prod",
@@ -88,7 +88,7 @@ fn live_permits_docs_introspect() {
 
 #[test]
 fn live_permits_debug_capture_packet() {
-    let r = check_env_gate(
+    let r = gated::env(
         "debug_capture_packet",
         &McpTemplate::Live,
         "iris-prod",
@@ -99,7 +99,7 @@ fn live_permits_debug_capture_packet() {
 
 #[test]
 fn live_permits_skill_list() {
-    let r = check_env_gate(
+    let r = gated::env(
         "skill_list",
         &McpTemplate::Live,
         "iris-prod",
@@ -110,7 +110,7 @@ fn live_permits_skill_list() {
 
 #[test]
 fn live_permits_kb_recall() {
-    let r = check_env_gate(
+    let r = gated::env(
         "kb_recall",
         &McpTemplate::Live,
         "iris-prod",
@@ -123,7 +123,7 @@ fn live_permits_kb_recall() {
 
 #[test]
 fn test_blocks_iris_execute() {
-    let r = check_env_gate(
+    let r = gated::env(
         "iris_execute",
         &McpTemplate::Test,
         "iris-staging",
@@ -135,7 +135,7 @@ fn test_blocks_iris_execute() {
 
 #[test]
 fn test_blocks_iris_compile() {
-    let r = check_env_gate(
+    let r = gated::env(
         "iris_compile",
         &McpTemplate::Test,
         "iris-staging",
@@ -146,7 +146,7 @@ fn test_blocks_iris_compile() {
 
 #[test]
 fn test_permits_iris_source_control() {
-    let r = check_env_gate(
+    let r = gated::env(
         "iris_source_control",
         &McpTemplate::Test,
         "iris-staging",
@@ -157,7 +157,7 @@ fn test_permits_iris_source_control() {
 
 #[test]
 fn test_permits_iris_query() {
-    let r = check_env_gate(
+    let r = gated::env(
         "iris_query",
         &McpTemplate::Test,
         "iris-staging",
@@ -180,7 +180,7 @@ fn dev_permits_all_tools() {
         "skill_list",
         "kb_recall",
     ] {
-        let r = check_env_gate(tool, &McpTemplate::Dev, "local", &serde_json::Value::Null);
+        let r = gated::env(tool, &McpTemplate::Dev, "local", &serde_json::Value::Null);
         assert!(r.is_none(), "dev must permit {tool}");
     }
 }
@@ -189,7 +189,7 @@ fn dev_permits_all_tools() {
 
 #[test]
 fn unknown_tool_not_blocked_in_live() {
-    let r = check_env_gate(
+    let r = gated::env(
         "nonexistent_tool_xyz",
         &McpTemplate::Live,
         "iris-prod",
@@ -202,7 +202,7 @@ fn unknown_tool_not_blocked_in_live() {
 
 #[test]
 fn error_json_includes_all_required_fields() {
-    let r = check_env_gate(
+    let r = gated::env(
         "iris_execute",
         &McpTemplate::Live,
         "prod-server",
@@ -228,7 +228,7 @@ fn error_json_includes_all_required_fields() {
 
 #[test]
 fn error_json_server_name_matches_input() {
-    let r = check_env_gate(
+    let r = gated::env(
         "iris_compile",
         &McpTemplate::Live,
         "custom-server",
@@ -245,7 +245,7 @@ fn test_gate_latency_under_1ms() {
     use iris_agentic_dev_core::iris::workspace_config::{
         ConnectionPolicy, DataPolicy, McpTemplate,
     };
-    use iris_agentic_dev_core::policy::gate::dispatch_gate;
+    use iris_agentic_dev_core::testing::gated;
 
     let policy = ConnectionPolicy {
         server_name: "perf-server".to_string(),
@@ -259,7 +259,7 @@ fn test_gate_latency_under_1ms() {
     let params = serde_json::json!({});
     let start = std::time::Instant::now();
     for _ in 0..1000 {
-        let _ = dispatch_gate("iris_query", "perf-server", Some(&policy), &params);
+        let _ = gated::dispatch("iris_query", "perf-server", Some(&policy), &params);
     }
     let elapsed_ms = start.elapsed().as_millis();
     assert!(
@@ -275,9 +275,9 @@ fn test_gate_latency_under_1ms() {
 fn a_forced_read_query_is_execute_under_live_and_test() {
     let forced = serde_json::json!({"mode": "read", "force": true, "query": "DELETE FROM X"});
     for t in [McpTemplate::Live, McpTemplate::Test] {
-        let r = check_env_gate("iris_query", &t, "iris-prod", &forced).expect("blocked");
+        let r = gated::env("iris_query", &t, "iris-prod", &forced).expect("blocked");
         assert_eq!(r["blocked_category"], "execute");
     }
     let plain = serde_json::json!({"mode": "read", "query": "SELECT 1"});
-    assert!(check_env_gate("iris_query", &McpTemplate::Live, "iris-prod", &plain).is_none());
+    assert!(gated::env("iris_query", &McpTemplate::Live, "iris-prod", &plain).is_none());
 }

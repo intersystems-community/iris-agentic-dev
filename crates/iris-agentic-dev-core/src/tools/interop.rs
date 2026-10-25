@@ -1,4 +1,4 @@
-use crate::iris::connection::{is_generator_error, IrisConnection};
+use crate::iris::connection::{is_generator_error, GeneratorCall, IrisConnection, Secret};
 use crate::objectscript::{os_str_expr, os_stream_write_stmts};
 use rmcp::{model::*, ErrorData as McpError};
 use schemars::JsonSchema;
@@ -177,7 +177,9 @@ pub async fn interop_production_status_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let code = r#"Set sc=##class(Ens.Director).GetProductionStatus(.n,.s) If $System.Status.IsError(sc) { Write "ERROR:"_$System.Status.GetErrorText(sc) } Else { Write n_":"_s }"#;
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     match iris
         .execute_via_generator(code, &params.namespace, &client)
         .await
@@ -277,7 +279,9 @@ pub async fn interop_production_start_impl(
     };
     let prod = params.production.as_deref().unwrap_or("");
     let code = build_production_start_code(prod);
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     match iris
         .execute_via_generator(&code, &params.namespace, &client)
         .await
@@ -310,7 +314,9 @@ pub async fn interop_production_stop_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let code = build_production_stop_code(params.timeout, params.force);
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     match iris
         .execute_via_generator(&code, &params.namespace, &client)
         .await
@@ -343,7 +349,9 @@ pub async fn interop_production_update_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let code = build_production_update_code(params.timeout, params.force);
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     match iris
         .execute_via_generator(&code, &params.namespace, &client)
         .await
@@ -376,7 +384,9 @@ pub async fn interop_production_needs_update_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let code = r#"Write ##class(Ens.Director).ProductionNeedsUpdate()"#;
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     match iris
         .execute_via_generator(code, &params.namespace, &client)
         .await
@@ -404,7 +414,9 @@ pub async fn interop_production_recover_impl(
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
     let code = build_production_recover_code();
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     match iris
         .execute_via_generator(&code, &params.namespace, &client)
         .await
@@ -482,7 +494,9 @@ pub async fn interop_logs_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     let (conditions, unknown_log_types) = log_type_conditions(&params.log_type);
     let type_filter = if conditions.is_empty() {
         String::new()
@@ -529,7 +543,9 @@ pub async fn interop_queues_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     match iris
         .query(
             "SELECT * FROM Ens.Queue_Enumerate()",
@@ -587,10 +603,17 @@ pub fn header_filters(params: &MessageSearchParams, pfx: &str) -> Vec<String> {
     filters
 }
 
-/// `body_where` is spliced into a SELECT as a WHERE fragment, so it is held to the rules `iris_query`
-/// applies to a whole statement: no `;`, no comment that could hide the rest of the query, and none
-/// of the write keywords `validate_read_only_sql` refuses (137).
+/// Words that start another query or clause. `body_where` is one condition: a subquery, a set
+/// operation or an `INTO` is a way to read or write something else.
+const BODY_WHERE_QUERY_WORDS: &[&str] = &["UNION", "INTERSECT", "EXCEPT", "SELECT", "INTO"];
+
+/// `body_where` is spliced into a SELECT as one parenthesised condition. It is read the way IRIS
+/// reads it (`sql_lex`) and held to this: no comment, no `;`, parentheses balanced and never
+/// closed early, no word that starts another query (`UNION`, `SELECT`, ...) and none of the write
+/// keywords `iris_query` refuses. Only text outside a literal or a delimited identifier counts, so
+/// `Name = 'a;b -- c'` is an ordinary condition.
 pub fn check_body_where(w: &str) -> Result<(), serde_json::Value> {
+    use crate::sql_lex::{self, Kind};
     let refuse = |why: String| {
         serde_json::json!({
             "success": false,
@@ -599,14 +622,48 @@ pub fn check_body_where(w: &str) -> Result<(), serde_json::Value> {
             "body_where": w,
         })
     };
-    if w.contains(';') {
-        return Err(refuse("contains ';'".to_string()));
+    let tokens = sql_lex::lex(w);
+    if sql_lex::is_unterminated(&tokens) {
+        return Err(refuse(
+            "has a quote or comment that is never closed".to_string(),
+        ));
     }
-    if w.contains("--") || w.contains("/*") {
+    if tokens.iter().any(|t| t.is_comment()) {
         return Err(refuse("contains a comment".to_string()));
     }
-    crate::tools::validate_read_only_sql(&format!("SELECT 1 WHERE {w}"))
-        .map_err(|k| refuse(format!("contains {k}, which a read-only query may not")))
+    let code: Vec<&sql_lex::Token> = sql_lex::code(&tokens).collect();
+    if code.is_empty() {
+        return Err(refuse("is empty".to_string()));
+    }
+    let mut depth = 0usize;
+    for t in &code {
+        if t.is_punct(';') {
+            return Err(refuse("contains ';'".to_string()));
+        }
+        if t.is_punct('(') {
+            depth += 1;
+        } else if t.is_punct(')') {
+            depth = depth
+                .checked_sub(1)
+                .ok_or_else(|| refuse("closes a parenthesis it did not open".to_string()))?;
+        }
+        if t.kind == Kind::Word {
+            if let Some(k) = BODY_WHERE_QUERY_WORDS.iter().find(|k| t.is_word(k)) {
+                return Err(refuse(format!(
+                    "contains {k}, and body_where is one condition, not a query"
+                )));
+            }
+        }
+    }
+    if depth != 0 {
+        return Err(refuse("has a parenthesis that is never closed".to_string()));
+    }
+    if let Some(k) = crate::tools::first_write_keyword(&code) {
+        return Err(refuse(format!(
+            "contains {k}, which a read-only query may not"
+        )));
+    }
+    Ok(())
 }
 
 pub fn is_sql_identifier(s: &str) -> bool {
@@ -681,12 +738,9 @@ async fn resolve_sql_table(
     client: &reqwest::Client,
     class: &str,
 ) -> Result<Option<String>, String> {
-    let sql = format!(
-        "SELECT SqlSchemaName, SqlTableName FROM %Dictionary.CompiledClass WHERE Name = '{}'",
-        class.replace('\'', "''")
-    );
+    let sql = "SELECT SqlSchemaName, SqlTableName FROM %Dictionary.CompiledClass WHERE Name = ?";
     let resp = iris
-        .query(&sql, vec![], ns, client)
+        .query(sql, vec![serde_json::json!(class)], ns, client)
         .await
         .map_err(|e| e.to_string())?;
     let row = &resp["result"]["content"][0];
@@ -738,7 +792,9 @@ pub async fn interop_message_search_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     let ns = params
         .namespace
         .as_deref()
@@ -1022,7 +1078,8 @@ pub async fn interop_production_item_impl(
     };
     let item = os_str_expr(&params.item);
     let ns = &params.namespace;
-    let client = IrisConnection::http_client()
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
         .map_err(|_| McpError::invalid_request("IRIS_UNREACHABLE", None))?;
 
     match params.action.as_str() {
@@ -1226,7 +1283,8 @@ pub async fn interop_credential_list_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client()
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
         .map_err(|_| McpError::invalid_request("IRIS_UNREACHABLE", None))?;
     match iris
         .query(
@@ -1278,27 +1336,25 @@ pub async fn interop_credential_manage_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client()
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
         .map_err(|_| McpError::invalid_request("IRIS_UNREACHABLE", None))?;
     let id = os_str_expr(&params.id);
     let ns = &params.namespace;
 
     match params.action.as_str() {
         "create" => {
-            let username = match &params.username {
-                Some(u) => os_str_expr(u),
-                None => return err_json("INVALID_PARAMS", "create requires username"),
+            let Some(username) = params.username.as_deref() else {
+                return err_json("INVALID_PARAMS", "create requires username");
             };
-            let password = match &params.password {
-                Some(p) => os_str_expr(p),
-                None => return err_json("INVALID_PARAMS", "create requires password"),
+            let Some(password) = params.password.as_deref() else {
+                return err_json("INVALID_PARAMS", "create requires password");
             };
-            let code = format!(
-                r#"Set tSC=##class(Ens.Config.Credentials).SetCredential({},{},{},0)
-If $System.Status.IsError(tSC) {{ Write "ERROR:CREDENTIAL_EXISTS:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#,
-                id, username, password
-            );
-            match iris.execute_via_generator(&code, ns, &client).await {
+            let call = credential_set_call(&params.id, Some(username), Some(password), false);
+            match iris
+                .execute_via_generator_with_args(&call, ns, &client)
+                .await
+            {
                 Ok(out) => {
                     let out = out.trim();
                     if out == "OK" {
@@ -1323,26 +1379,16 @@ If $System.Status.IsError(tSC) {{ Write "ERROR:CREDENTIAL_EXISTS:"_$System.Statu
         }
         "update" => {
             // Read current values then overwrite with provided ones
-            let username_expr = match &params.username {
-                Some(u) => os_str_expr(u),
-                None => format!(
-                    "##class(Ens.Config.Credentials).GetValue({},\"Username\")",
-                    id
-                ),
-            };
-            let password_expr = match &params.password {
-                Some(p) => os_str_expr(p),
-                None => format!(
-                    "##class(Ens.Config.Credentials).GetValue({},\"Password\")",
-                    id
-                ),
-            };
-            let code = format!(
-                r#"Set tSC=##class(Ens.Config.Credentials).SetCredential({},{},{},1)
-If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#,
-                id, username_expr, password_expr
+            let call = credential_set_call(
+                &params.id,
+                params.username.as_deref(),
+                params.password.as_deref(),
+                true,
             );
-            match iris.execute_via_generator(&code, ns, &client).await {
+            match iris
+                .execute_via_generator_with_args(&call, ns, &client)
+                .await
+            {
                 Ok(out) => {
                     let out = out.trim();
                     if out == "OK" {
@@ -1430,7 +1476,8 @@ pub async fn interop_lookup_manage_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client()
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
         .map_err(|_| McpError::invalid_request("IRIS_UNREACHABLE", None))?;
     let ns = &params.namespace;
 
@@ -1472,9 +1519,8 @@ pub async fn interop_lookup_manage_impl(
             };
             let code = format!(
                 r#"If '$DATA(^Ens.LookupTable({table})) {{ Write "ERROR:TABLE_NOT_FOUND:Table not found: "_{table} Quit }}
-Set tVal=$GET(^Ens.LookupTable({table},{key}))
-If tVal="" {{ Write "ERROR:KEY_NOT_FOUND:Key not found: "_{key} Quit }}
-Write tVal"#
+If '$DATA(^Ens.LookupTable({table},{key})) {{ Write "ERROR:KEY_NOT_FOUND:Key not found: "_{key} Quit }}
+Write $GET(^Ens.LookupTable({table},{key}))"#
             );
             match iris.execute_via_generator(&code, ns, &client).await {
                 Ok(out) => {
@@ -1548,6 +1594,7 @@ If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.Ge
             };
             let code = format!(
                 r#"If '$DATA(^Ens.LookupTable({table})) {{ Write "ERROR:TABLE_NOT_FOUND:Table not found: "_{table} Quit }}
+If '$DATA(^Ens.LookupTable({table},{key})) {{ Write "ERROR:KEY_NOT_FOUND:Key not found: "_{key} Quit }}
 Set tSC=##class(Ens.Util.LookupTable).%RemoveValue({table},{key})
 If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#
             );
@@ -1560,6 +1607,8 @@ If $System.Status.IsError(tSC) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.Ge
                         )
                     } else if let Some(msg) = out.strip_prefix("ERROR:TABLE_NOT_FOUND:") {
                         err_json("TABLE_NOT_FOUND", msg)
+                    } else if let Some(msg) = out.strip_prefix("ERROR:KEY_NOT_FOUND:") {
+                        err_json("KEY_NOT_FOUND", msg)
                     } else {
                         err_json("INTEROP_ERROR", out)
                     }
@@ -1646,7 +1695,8 @@ pub async fn interop_lookup_transfer_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client()
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
         .map_err(|_| McpError::invalid_request("IRIS_UNREACHABLE", None))?;
     let ns = &params.namespace;
     let table = os_str_expr(&params.table);
@@ -1743,7 +1793,8 @@ pub async fn interop_autostart_get_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client()
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
         .map_err(|_| McpError::invalid_request("IRIS_UNREACHABLE", None))?;
     // Read ^Ens.AutoStart directly — GetAutoStart() does not exist
     let code = r#"Write $GET(^Ens.AutoStart)"#;
@@ -1780,7 +1831,8 @@ pub async fn interop_autostart_set_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client()
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
         .map_err(|_| McpError::invalid_request("IRIS_UNREACHABLE", None))?;
     let ns = &params.namespace;
     let enabled = params.enabled.unwrap_or(true);
@@ -1891,7 +1943,7 @@ pub struct ProductionDiffParams {
 /// `"HL7v2"` for MSH|-prefixed content, `"JSON"`/`"XML"` for {/[ and < prefixes,
 /// `"text"` for everything else that is valid UTF-8 (caller handles binary separately).
 pub fn detect_content_type(body: &str) -> &'static str {
-    let trimmed = body.trim_start();
+    let trimmed = body.trim_start_matches(is_segment_padding);
     if trimmed.starts_with("MSH|") {
         "HL7v2"
     } else if trimmed.starts_with('{') || trimmed.starts_with('[') {
@@ -1917,41 +1969,305 @@ pub fn truncate_body(body: &str, max_bytes: usize) -> (String, bool, usize) {
     (body[..end].to_string(), true, original_len)
 }
 
-/// Replace standard HL7 v2 PHI field positions (PID-3, PID-5, PID-7, PID-8, PID-11,
-/// PID-18, MSH-3) with `[REDACTED]`. Non-HL7 content (no `MSH|` segment) is returned
-/// unchanged. Segments are `\r`- or `\n`-delimited; fields are `|`-delimited.
+/// Bytes that may sit in front of a segment name without being part of it: whitespace, the MLLP
+/// start block (`\x0b`, already whitespace) and the MLLP end block (`\x1c`).
+fn is_segment_padding(c: char) -> bool {
+    c.is_whitespace() || c == '\x0b' || c == '\x1c'
+}
+
+/// What [`redact_hl7v2`] replaces with `[REDACTED]`: HL7 v2.5 fields that identify a person or
+/// give a way to reach them, by segment. The number is the `|`-separated element after the segment
+/// name, so PID-5 is `5`. MSH is the one exception: its field 1 is the separator itself and is not
+/// an element, so MSH-3 is element `2`.
+///
+/// This is a list of fields, not de-identification: a name typed into a free-text field (NTE, OBX,
+/// PV1 and the rest) or any segment not listed here comes back as stored. An empty field stays
+/// empty.
+const MASKED_FIELDS: &[(&str, &[usize])] = &[
+    ("MSH", &[2]), // MSH-3 Sending Application
+    (
+        "PID",
+        &[
+            2,  // PID-2 Patient ID (legacy; often holds the MRN)
+            3,  // PID-3 Patient Identifier List
+            4,  // PID-4 Alternate Patient ID
+            5,  // PID-5 Patient Name
+            6,  // PID-6 Mother's Maiden Name
+            7,  // PID-7 Date/Time of Birth
+            8,  // PID-8 Administrative Sex
+            9,  // PID-9 Patient Alias
+            11, // PID-11 Patient Address
+            12, // PID-12 County Code
+            13, // PID-13 Phone Number - Home
+            14, // PID-14 Phone Number - Business
+            18, // PID-18 Patient Account Number
+            19, // PID-19 SSN Number
+            20, // PID-20 Driver's License Number
+        ],
+    ),
+    (
+        "NK1",
+        &[
+            2,  // NK1-2 Name
+            4,  // NK1-4 Address
+            5,  // NK1-5 Phone Number
+            6,  // NK1-6 Business Phone Number
+            12, // NK1-12 Next of Kin Employee Number
+            16, // NK1-16 Date/Time of Birth
+            30, // NK1-30 Contact Person's Name
+            31, // NK1-31 Contact Person's Telephone Number
+            32, // NK1-32 Contact Person's Address
+            33, // NK1-33 Next of Kin/Associated Party's Identifiers
+            37, // NK1-37 Contact Person Social Security Number
+        ],
+    ),
+    (
+        "GT1",
+        &[
+            2,  // GT1-2 Guarantor Number
+            3,  // GT1-3 Guarantor Name
+            4,  // GT1-4 Guarantor Spouse Name
+            5,  // GT1-5 Guarantor Address
+            6,  // GT1-6 Guarantor Phone Number - Home
+            7,  // GT1-7 Guarantor Phone Number - Business
+            8,  // GT1-8 Guarantor Date/Time of Birth
+            12, // GT1-12 Guarantor SSN
+            16, // GT1-16 Guarantor Employer Name
+            17, // GT1-17 Guarantor Employer Address
+            18, // GT1-18 Guarantor Employer Phone Number
+            19, // GT1-19 Guarantor Employee ID Number
+            29, // GT1-29 Guarantor Employer ID Number
+        ],
+    ),
+    (
+        "IN1",
+        &[
+            10, // IN1-10 Insured's Group Employee ID
+            16, // IN1-16 Name of Insured
+            18, // IN1-18 Insured's Date of Birth
+            19, // IN1-19 Insured's Address
+            36, // IN1-36 Policy Number
+            43, // IN1-43 Insured's Administrative Sex
+            44, // IN1-44 Insured's Employer's Address
+            49, // IN1-49 Insured's ID Number
+        ],
+    ),
+    (
+        "IN2",
+        &[
+            1, // IN2-1 Insured's Employee ID
+            2, // IN2-2 Insured's Social Security Number
+        ],
+    ),
+];
+
+/// `line` with its segment's [`MASKED_FIELDS`] replaced. The segment name is read after dropping
+/// the padding in front of it ([`is_segment_padding`]) and any blanks behind it, and the padding
+/// stays in the output as found. A line that is not a listed segment is returned as it came.
+fn redact_segment(line: &str) -> String {
+    let mut fields: Vec<&str> = line.split('|').collect();
+    let name = fields[0].trim_start_matches(is_segment_padding).trim_end();
+    let Some((_, masked)) = MASKED_FIELDS.iter().find(|(segment, _)| *segment == name) else {
+        return line.to_string();
+    };
+    for &idx in *masked {
+        // An empty field holds nothing to hide; `[REDACTED]` there would claim a value was.
+        if fields.get(idx).is_some_and(|f| !f.is_empty()) {
+            fields[idx] = "[REDACTED]";
+        }
+    }
+    fields.join("|")
+}
+
+/// Replace the identifying fields of the standard HL7 v2 segments listed in [`MASKED_FIELDS`]
+/// (PID, NK1, GT1, IN1, IN2 and MSH-3) with `[REDACTED]`. That masks those fields; it does not
+/// de-identify the message. Non-HL7 content (no `MSH|` segment) is returned unchanged: callers
+/// that must not return such content use [`redact_hl7v2_only`]. Segments end at `\r\n`, `\r` or
+/// `\n`, whichever each one has, and also at a stray `\x0b` or `\x1c`, which a parser would not
+/// honour but a reader would see as a new segment; every separator is kept as found. Fields are
+/// `|`-delimited.
 pub fn redact_hl7v2(body: &str) -> String {
     if detect_content_type(body) != "HL7v2" {
         return body.to_string();
     }
-    let line_ending = if body.contains("\r\n") {
-        "\r\n"
-    } else if body.contains('\r') {
-        "\r"
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(end) = rest.find(['\r', '\n', '\x0b', '\x1c']) {
+        out.push_str(&redact_segment(&rest[..end]));
+        let sep = if rest[end..].starts_with("\r\n") {
+            2
+        } else {
+            1
+        };
+        out.push_str(&rest[end..end + sep]);
+        rest = &rest[end + sep..];
+    }
+    out.push_str(&redact_segment(rest));
+    out
+}
+
+/// [`redact_hl7v2`] for a caller that must not return what it cannot redact: `None` for anything
+/// that is not HL7 v2, where `redact_hl7v2` would hand the text back as it came (spec 141 R5 C22).
+pub fn redact_hl7v2_only(body: &str) -> Option<String> {
+    (detect_content_type(body) == "HL7v2").then(|| redact_hl7v2(body))
+}
+
+/// Why a body was not returned.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BodyRefusal {
+    /// The effective policy is `block`.
+    Blocked,
+    /// The effective policy is `redact` and the content is not HL7 v2, the one thing iad can redact.
+    NotRedactable,
+}
+
+/// What a body may be shown as under `policy`: as it is under `allow`, redacted under `redact`, and
+/// a refusal under `block` or for content `redact` cannot handle.
+pub fn apply_body_policy(
+    policy: &crate::iris::workspace_config::DataPolicy,
+    body: &str,
+) -> Result<String, BodyRefusal> {
+    use crate::iris::workspace_config::DataPolicy;
+    match policy {
+        DataPolicy::Allow => Ok(body.to_string()),
+        DataPolicy::Redact => redact_hl7v2_only(body).ok_or(BodyRefusal::NotRedactable),
+        DataPolicy::Block => Err(BodyRefusal::Blocked),
+    }
+}
+
+/// The policy `iris_message_body` applies: the stricter of the server's and the caller's `dataPolicy`
+/// (spec 141 R5 C20). The caller's value is a closed set, read trimmed and case-insensitively; any
+/// other value is `INVALID_PARAMS`. An omitted value means the server's own policy, so a server set
+/// to `redact` answers a call that names no policy. `Err` carries the response body.
+pub fn resolve_body_policy(
+    server: &crate::iris::workspace_config::DataPolicy,
+    caller: Option<&str>,
+    acknowledge_phi: bool,
+) -> Result<crate::iris::workspace_config::DataPolicy, serde_json::Value> {
+    use crate::iris::workspace_config::DataPolicy;
+    let rank = |p: &DataPolicy| match p {
+        DataPolicy::Allow => 0,
+        DataPolicy::Redact => 1,
+        DataPolicy::Block => 2,
+    };
+    let caller = match caller.map(|c| c.trim().to_ascii_lowercase()).as_deref() {
+        None => server.clone(),
+        Some("block") => DataPolicy::Block,
+        Some("redact") => DataPolicy::Redact,
+        Some("allow") => DataPolicy::Allow,
+        Some(other) => {
+            return Err(serde_json::json!({
+                "success": false,
+                "error_code": "INVALID_PARAMS",
+                "error": format!(
+                    "dataPolicy {other:?} is not one of block, redact, allow. It can only narrow \
+                     the server's policy."
+                ),
+            }))
+        }
+    };
+    let effective = if rank(&caller) >= rank(server) {
+        caller
     } else {
-        "\n"
+        server.clone()
     };
-    let redact_fields = |line: &str, segment: &str, field_indices: &[usize]| -> String {
-        let mut fields: Vec<&str> = line.split('|').collect();
-        if fields.first().copied() != Some(segment) {
-            return line.to_string();
-        }
-        for &idx in field_indices {
-            if idx < fields.len() {
-                fields[idx] = "[REDACTED]";
-            }
-        }
-        fields.join("|")
-    };
-    body.split(line_ending)
-        .map(|line| {
-            // MSH-1 is the implicit field-separator char (not a split element), so
-            // fields[1] = MSH-2 (encoding chars) and fields[2] = MSH-3 (sending app).
-            let redacted = redact_fields(line, "MSH", &[2]);
-            redact_fields(&redacted, "PID", &[3, 5, 7, 8, 11, 18])
+    match effective {
+        DataPolicy::Block => Err(serde_json::json!({
+            "success": false,
+            "error_code": "PHI_POLICY_BLOCKED",
+            "error": "iris_message_body is blocked when dataPolicy=block — message bodies may \
+                      contain PHI. The server's dataPolicy decides; a dataPolicy argument can only \
+                      narrow it.",
+        })),
+        DataPolicy::Allow if !acknowledge_phi => Err(serde_json::json!({
+            "success": false,
+            "error_code": "PHI_ACK_REQUIRED",
+            "error": "dataPolicy=allow requires acknowledgePhi=true for iris_message_body.",
+        })),
+        other => Ok(other),
+    }
+}
+
+/// What `stream_inspect` knows about a stream.
+pub struct StreamFacts<'a> {
+    pub oid: &'a str,
+    /// The class the read went through. Not a claim about the data: character and binary streams
+    /// share storage, so which class opens an id says nothing about what is in it.
+    pub class: &'a str,
+    /// The whole stream's size, however much of it `content` holds.
+    pub size: i64,
+    /// What was read: at most `max_chars` characters from the start.
+    pub content: &'a str,
+    /// `content` is a prefix; the stream is longer.
+    pub truncated: bool,
+    /// The cap this read used.
+    pub max_chars: usize,
+}
+
+/// Lines in `content`: `\r\n`, `\r` and `\n` each end one, and a separator at the very end adds none.
+pub fn count_lines(content: &str) -> usize {
+    let mut n = 0;
+    let mut rest = content;
+    while let Some(end) = rest.find(['\r', '\n']) {
+        n += 1;
+        let sep = if rest[end..].starts_with("\r\n") {
+            2
+        } else {
+            1
+        };
+        rest = &rest[end + sep..];
+    }
+    n + usize::from(!rest.is_empty())
+}
+
+/// The answer `stream_inspect` gives under `policy` (spec 141 FR-030c). Content comes back as it is
+/// under `allow` and redacted under `redact`. A stream that is refused (`block`, or content `redact`
+/// cannot handle) is answered with its class, size and line count and nothing of its content.
+pub fn stream_inspect_outcome(
+    policy: &crate::iris::workspace_config::DataPolicy,
+    f: &StreamFacts<'_>,
+) -> Result<serde_json::Value, serde_json::Value> {
+    use crate::iris::workspace_config::DataPolicy;
+    let line_count = count_lines(f.content);
+    let metadata = |code: &str, message: String| {
+        serde_json::json!({
+            "success": false,
+            "error_code": code,
+            "data_policy_blocked": true,
+            "tool_name": "stream_inspect",
+            "message": message,
+            "oid": f.oid,
+            "class": f.class,
+            "size": f.size,
+            "line_count": line_count,
+            "content_withheld": true,
         })
-        .collect::<Vec<_>>()
-        .join(line_ending)
+    };
+    match apply_body_policy(policy, f.content) {
+        Ok(content) => Ok(serde_json::json!({
+            "success": true,
+            "oid": f.oid,
+            "class": f.class,
+            "size": f.size,
+            "line_count": line_count,
+            "content": content,
+            "truncated": f.truncated,
+            "max_chars": f.max_chars,
+            "redacted": *policy == DataPolicy::Redact,
+        })),
+        Err(BodyRefusal::Blocked) => Err(metadata(
+            "DATA_POLICY_BLOCKED",
+            "stream_inspect returns metadata only when dataPolicy is block for this server: a \
+             stream may hold PHI."
+                .to_string(),
+        )),
+        Err(BodyRefusal::NotRedactable) => Err(metadata(
+            "BODY_NOT_REDACTABLE",
+            "dataPolicy is redact for this server and iad can redact only HL7 v2 content, so this \
+             stream's content is withheld. Set dataPolicy = \"allow\" for the server to read it."
+                .to_string(),
+        )),
+    }
 }
 
 pub async fn handle_iris_message_body(
@@ -1991,7 +2307,8 @@ pub async fn handle_iris_message_body(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client()
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
         .map_err(|_| McpError::invalid_request("IRIS_UNREACHABLE", None))?;
 
     let code = format!(
@@ -2064,8 +2381,22 @@ If body.%IsA("Ens.StreamContainer") {{
             let actual_size = read_len.max(body_content.len());
             let content_type = detect_content_type(&truncated_body);
 
+            // Forced redaction: HL7 v2 is redacted and anything else is refused, not returned as
+            // `redact_hl7v2` would hand it back (spec 141 R5 C22).
             let final_body = if data_policy == "redact" {
-                redact_hl7v2(&truncated_body)
+                match redact_hl7v2_only(&truncated_body) {
+                    Some(redacted) => redacted,
+                    None => {
+                        return err_json(
+                            "BODY_NOT_REDACTABLE",
+                            &format!(
+                                "dataPolicy is redact and iad can redact only HL7 v2 content; this \
+                                 body is {content_type}, so it is withheld. Set dataPolicy = \
+                                 \"allow\" for the server to read it."
+                            ),
+                        );
+                    }
+                }
             } else {
                 truncated_body
             };
@@ -2321,7 +2652,8 @@ pub async fn handle_iris_business_rule_info(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client()
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
         .map_err(|_| McpError::invalid_request("IRIS_UNREACHABLE", None))?;
 
     // Ens.Rule.RuleSet is the rule-set persistent class (EnsLib.Rules.Definition does
@@ -2501,7 +2833,8 @@ pub async fn handle_iris_production_diff(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client()
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
         .map_err(|_| McpError::invalid_request("IRIS_UNREACHABLE", None))?;
     let ns = &params.namespace;
 
@@ -2522,17 +2855,7 @@ pub async fn handle_iris_production_diff(
     };
 
     let doc_name = format!("{prod_name}.cls");
-    let username = iris.username.clone();
-    let password = iris.password.clone();
-    let scm_code = format!(
-        r#"Set sc=##class(%Studio.SourceControl.Interface).SourceControlCreate("{user_lit}","{pass_lit}",.created,.flags,.outuser)
-Set isInSC=0
-Set sc=##class(%Studio.SourceControl.Interface).GetStatus("{doc_lit}",.isInSC,.editable,.isCheckedOut,.owner)
-If $System.Status.IsError(sc)||('isInSC) {{ Write "NO_SCM" }} Else {{ Write "IN_SCM" }}"#,
-        user_lit = crate::objectscript::os_lit_inner(&username),
-        pass_lit = crate::objectscript::os_lit_inner(&password),
-        doc_lit = crate::objectscript::os_lit_inner(&doc_name),
-    );
+    let scm_code = production_scm_probe_code(&doc_name);
     match iris.execute_via_generator(&scm_code, ns, &client).await {
         Ok(out) if out.trim() == "NO_SCM" => {
             return err_json(
@@ -2561,28 +2884,27 @@ If $System.Status.IsError(sc)||('isInSC) {{ Write "NO_SCM" }} Else {{ Write "IN_
     }
 
     // Current in-memory item set via SQL.
-    let sql = format!(
-        "SELECT Name, ClassName, Category, Enabled FROM Ens_Config.Item \
-         WHERE Production->Name = '{}'",
-        prod_name.replace('\'', "''")
-    );
-    let current_items: Vec<(String, String, bool)> =
-        match iris.query(&sql, vec![], ns, &client).await {
-            Ok(resp) => resp["result"]["content"]
-                .as_array()
-                .cloned()
-                .unwrap_or_default()
-                .iter()
-                .map(|r| {
-                    (
-                        r["Name"].as_str().unwrap_or("").to_string(),
-                        r["ClassName"].as_str().unwrap_or("").to_string(),
-                        r["Enabled"].as_bool().unwrap_or(false),
-                    )
-                })
-                .collect(),
-            Err(e) => return err_json("IRIS_UNREACHABLE", &e.to_string()),
-        };
+    let sql = "SELECT Name, ClassName, Category, Enabled FROM Ens_Config.Item \
+         WHERE Production->Name = ?";
+    let current_items: Vec<(String, String, bool)> = match iris
+        .query(sql, vec![serde_json::json!(prod_name)], ns, &client)
+        .await
+    {
+        Ok(resp) => resp["result"]["content"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|r| {
+                (
+                    r["Name"].as_str().unwrap_or("").to_string(),
+                    r["ClassName"].as_str().unwrap_or("").to_string(),
+                    r["Enabled"].as_bool().unwrap_or(false),
+                )
+            })
+            .collect(),
+        Err(e) => return err_json("IRIS_UNREACHABLE", &e.to_string()),
+    };
 
     // Committed source via Atelier REST GET /doc/<name> — parse
     // <Item Name=... ClassName=... Enabled=.../> entries out of the UDL source.
@@ -2594,7 +2916,7 @@ If $System.Status.IsError(sc)||('isInSC) {{ Write "NO_SCM" }} Else {{ Write "IN_
         .await
     {
         Ok(resp) if resp.status().is_success() => {
-            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
             let source = crate::tools::doc::doc_content_to_string(&body);
             parse_production_items_from_source(&source)
         }
@@ -2661,6 +2983,55 @@ fn extract_xml_attr(line: &str, attr: &str) -> Option<String> {
     let start = line.find(&needle)? + needle.len();
     let end = line[start..].find('"')? + start;
     Some(line[start..end].to_string())
+}
+
+/// `NO_SCM` when source control does not manage `doc_name`, `IN_SCM` when it does. The session is
+/// created as `$USERNAME` with an empty password (FR-020).
+#[doc(hidden)]
+pub fn production_scm_probe_code(doc_name: &str) -> String {
+    let create = crate::tools::scm::SCM_CREATE_CALL;
+    format!(
+        r#"{create}
+Set isInSC=0
+Set sc=##class(%Studio.SourceControl.Interface).GetStatus("{doc_lit}",.isInSC,.editable,.isCheckedOut,.owner)
+If $System.Status.IsError(sc)||('isInSC) {{ Write "NO_SCM" }} Else {{ Write "IN_SCM" }}"#,
+        doc_lit = crate::objectscript::os_lit_inner(doc_name),
+    )
+}
+
+/// `Ens.Config.Credentials.SetCredential` for `iris_credential_manage`. The password is not in the
+/// code: it is `tIadArgs.%Get(0)`, handed over in `X-IAD-Args`. With no password given on an
+/// update, the stored one is read back and kept. A create answers `ERROR:CREDENTIAL_EXISTS:` and
+/// an update `ERROR:INTEROP_ERROR:` on a bad status.
+#[doc(hidden)]
+pub fn credential_set_call(
+    id: &str,
+    username: Option<&str>,
+    password: Option<&str>,
+    overwrite: bool,
+) -> GeneratorCall {
+    let id = os_str_expr(id);
+    let username_expr = match username {
+        Some(u) => os_str_expr(u),
+        None => format!("##class(Ens.Config.Credentials).GetValue({id},\"Username\")"),
+    };
+    let (password_expr, args) = match password {
+        Some(p) => ("tIadArgs.%Get(0)".to_string(), vec![Secret::new(p)]),
+        None => (
+            format!("##class(Ens.Config.Credentials).GetValue({id},\"Password\")"),
+            Vec::new(),
+        ),
+    };
+    let (flag, code_name) = if overwrite {
+        (1, "INTEROP_ERROR")
+    } else {
+        (0, "CREDENTIAL_EXISTS")
+    };
+    let code = format!(
+        r#"Set tSC=##class(Ens.Config.Credentials).SetCredential({id},{username_expr},{password_expr},{flag})
+If $System.Status.IsError(tSC) {{ Write "ERROR:{code_name}:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#
+    );
+    GeneratorCall { code, args }
 }
 
 #[cfg(test)]
@@ -3685,8 +4056,8 @@ mod tests {
     #[test]
     fn credential_password_escaping() {
         // SQL-style '' doubling here would silently corrupt the stored password
-        assert_eq!(os_str_expr("pass'word!@#$%"), "\"pass'word!@#$%\"");
-        assert_eq!(os_str_expr(r#"pa"ss"#), r#""pa""ss""#);
+        assert_eq!(os_str_expr("quote'd!@#$%"), "\"quote'd!@#$%\"");
+        assert_eq!(os_str_expr(r#"qu"ote"#), r#""qu""ote""#);
     }
 
     #[test]

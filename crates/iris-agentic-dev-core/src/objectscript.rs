@@ -73,6 +73,54 @@ pub fn os_lit_inner(s: &str) -> String {
     format!("\"_{}_\"", os_str_expr(s))
 }
 
+// ── Statements built from caller text ───────────────────────────────────────
+//
+// Each takes free text (a namespace, class, routine or skill name an agent sent) and splices it as
+// `os_str_expr(..)`, unquoted, so a quote or a line break in the text stays inside one expression.
+
+/// `EnableNamespace` for `ns` (iris_compile `force_writable`).
+pub fn enable_namespace_code(ns: &str) -> String {
+    format!(
+        "do ##class(%Library.EnsembleMgr).EnableNamespace({},1)",
+        os_str_expr(ns)
+    )
+}
+
+/// Writes `1` or `0`: whether `ns` is a namespace (iris_test's pre-check).
+pub fn namespace_exists_code(ns: &str) -> String {
+    format!("write ##class(%SYS.Namespace).Exists({})", os_str_expr(ns))
+}
+
+/// Maps a routine and offset back to its class line (iris_debug).
+pub fn source_line_code(routine: &str, offset: impl std::fmt::Display) -> String {
+    format!(
+        "Write ##class(%Studio.Debugger).SourceLine({},{})",
+        os_str_expr(routine),
+        offset
+    )
+}
+
+/// Reads the registry entry for skill `name`.
+pub fn skill_get_code(name: &str) -> String {
+    format!("Write $Get(^SKILLS({}))", os_str_expr(name))
+}
+
+/// Deletes the registry entry for skill `name` and writes `OK`.
+pub fn skill_forget_code(name: &str) -> String {
+    format!("Kill ^SKILLS({}) Write \"OK\"", os_str_expr(name))
+}
+
+/// Exports `<class_name>.<ext>` (`ext` is `bpl` or `dtl`) to a stream and writes the XML.
+pub fn export_class_xml_code(class_name: &str, ext: &str) -> String {
+    let item = os_str_expr(&format!("{class_name}.{ext}"));
+    format!(
+        "Set stream = ##class(%Stream.GlobalCharacter).%New() \
+         Do $system.OBJ.ExportToStream({item},stream,,\"c\") \
+         Do stream.Rewind() \
+         Write stream.Read(1000000)"
+    )
+}
+
 // ── Names spliced into code ─────────────────────────────────────────────────
 //
 // A name lands in generated code bare (`^<global>`, `##class(<class>)`) or inside a literal. Free text

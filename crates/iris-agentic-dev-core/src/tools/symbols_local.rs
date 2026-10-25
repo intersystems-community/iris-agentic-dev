@@ -51,6 +51,56 @@ pub struct ParseWarning {
 pub struct SymbolsLocalResult {
     pub symbols: Vec<Symbol>,
     pub parse_warnings: Vec<ParseWarning>,
+    /// Why the crawl stopped before it had seen everything: `file_budget`, `depth_budget` or
+    /// `time_budget` (spec 141 T216). `None` when it saw it all. Stopping at `limit` is not this.
+    pub truncated: Option<&'static str>,
+}
+
+/// What one crawl may spend. A crawl of a project is far inside these; a crawl that is not
+/// (a link farm, a mounted volume under the project, a deep generated tree) stops and says so.
+#[derive(Debug, Clone, Copy)]
+pub struct ScanBudget {
+    /// Directory entries looked at, of any kind.
+    pub max_entries: usize,
+    /// Directory levels below the starting directory.
+    pub max_depth: usize,
+    pub max_time: std::time::Duration,
+}
+
+impl Default for ScanBudget {
+    fn default() -> Self {
+        ScanBudget {
+            max_entries: 200_000,
+            max_depth: 32,
+            max_time: std::time::Duration::from_secs(10),
+        }
+    }
+}
+
+struct ScanState {
+    budget: ScanBudget,
+    started: std::time::Instant,
+    entries: usize,
+    truncated: Option<&'static str>,
+}
+
+impl ScanState {
+    /// Account for one entry. `false` when the crawl must stop.
+    fn admit(&mut self) -> bool {
+        if self.truncated == Some("file_budget") || self.truncated == Some("time_budget") {
+            return false;
+        }
+        self.entries += 1;
+        if self.entries > self.budget.max_entries {
+            self.truncated = Some("file_budget");
+            return false;
+        }
+        if self.started.elapsed() >= self.budget.max_time {
+            self.truncated = Some("time_budget");
+            return false;
+        }
+        true
+    }
 }
 
 // ── Glob matching ────────────────────────────────────────────────────────────
@@ -840,6 +890,22 @@ pub fn scan_workspace_with_kinds(
     limit: usize,
     kinds: Option<&[String]>,
 ) -> SymbolsLocalResult {
+    scan_workspace_budgeted(workspace, query, limit, kinds, ScanBudget::default())
+}
+
+pub fn scan_workspace_budgeted(
+    workspace: &Path,
+    query: &str,
+    limit: usize,
+    kinds: Option<&[String]>,
+    budget: ScanBudget,
+) -> SymbolsLocalResult {
+    let mut state = ScanState {
+        budget,
+        started: std::time::Instant::now(),
+        entries: 0,
+        truncated: None,
+    };
     let mut symbols = Vec::new();
     let mut warnings = Vec::new();
     // class_name → list of file paths that define it (for duplicate detection)
@@ -848,11 +914,13 @@ pub fn scan_workspace_with_kinds(
     scan_dir(
         workspace,
         workspace,
+        0,
         query,
         limit,
         &mut symbols,
         &mut warnings,
         &mut class_files,
+        &mut state,
     );
 
     // Apply kinds filter.
@@ -878,6 +946,7 @@ pub fn scan_workspace_with_kinds(
     SymbolsLocalResult {
         symbols,
         parse_warnings: warnings,
+        truncated: state.truncated,
     }
 }
 
@@ -885,11 +954,13 @@ pub fn scan_workspace_with_kinds(
 fn scan_dir(
     workspace: &Path,
     dir: &Path,
+    depth: usize,
     query: &str,
     limit: usize,
     symbols: &mut Vec<Symbol>,
     warnings: &mut Vec<ParseWarning>,
     class_files: &mut HashMap<String, Vec<String>>,
+    state: &mut ScanState,
 ) {
     if symbols.len() >= limit {
         return;
@@ -908,20 +979,29 @@ fn scan_dir(
         if symbols.len() >= limit {
             return;
         }
+        if !state.admit() {
+            return;
+        }
 
         if path.is_symlink() {
             continue; // no symlink follow
         }
 
         if path.is_dir() {
+            if depth >= state.budget.max_depth {
+                state.truncated.get_or_insert("depth_budget");
+                continue;
+            }
             scan_dir(
                 workspace,
                 &path,
+                depth + 1,
                 query,
                 limit,
                 symbols,
                 warnings,
                 class_files,
+                state,
             );
             continue;
         }

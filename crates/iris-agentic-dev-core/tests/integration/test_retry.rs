@@ -1,6 +1,7 @@
 // Integration tests for execute_via_generator retry behaviour using wiremock.
 // These tests require no live IRIS — they use a mock HTTP server.
 
+use iris_agentic_dev_core::testing::EnvGuard;
 use wiremock::matchers::{method, path_regex};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -121,9 +122,10 @@ fn test_no_retry_on_404() {
 
 #[test]
 fn test_compile_uses_http_when_no_container() {
+    let mut env_guard = EnvGuard::new();
     rt().block_on(async {
         // Explicitly remove IRIS_CONTAINER so docker path is unavailable
-        std::env::remove_var("IRIS_CONTAINER");
+        env_guard.unset("IRIS_CONTAINER");
 
         let mock_server = MockServer::start().await;
 

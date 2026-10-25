@@ -7,6 +7,13 @@
 //!
 //! Add a file here and add its `mod` line below, or it will not run.
 
+// Runs before `main`, so before any test thread: no test in this binary reaches the developer's
+// real keychain or home directory. See `testing::isolate_process`.
+#[ctor::ctor]
+fn isolate_the_test_process() {
+    iris_agentic_dev_core::testing::isolate_process();
+}
+
 mod cli_discovery;
 mod coding_pack_129;
 mod gate_normalize_163;
@@ -28,6 +35,22 @@ mod schema_batch7;
 mod schema_census;
 mod schema_task_coverage;
 mod servers_json_web_prefix;
+mod support_mcp_141;
 mod suppress_description;
+mod test_audit_mode_binary_141;
+mod test_clean_cwd_141;
+mod test_config_source_141;
+mod test_creds_binary_141;
+mod test_generate_class_141;
+mod test_identity_binary_141;
+mod test_install_lock_binary_141;
+mod test_operator_latch_141;
+mod test_read_only_strict_141;
+mod test_scm_opt_ins_141;
+mod test_server_probe_141;
+mod test_skill_override_141;
+mod test_target_gates_141;
+mod test_telemetry_sink_binary_141;
+mod test_trust_binary_141;
 mod tls_trust_127;
 mod ws_exec_gate;

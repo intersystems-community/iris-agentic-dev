@@ -34,3 +34,25 @@ export function getDownloadUrl(version: string, platform: string, arch: string):
   if (!name) return null;
   return `${GITHUB_BASE}/v${version}/${name}`;
 }
+
+// The SHA-256 the extension trusts for a release asset. Nothing in the
+// download is trusted on its own: the release workflow builds the binaries,
+// then stamps their hashes into package.json before the VSIX is packaged, so
+// the hashes travel inside the extension package, not from the GitHub
+// release the binary is fetched from. A checkout that was not
+// stamped has no pins, and so installs nothing.
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+export function getAssetSha256(
+  packageJSON: { irisAgenticDev?: { assetSha256?: Record<string, unknown> } },
+  binaryName: string
+): string | null {
+  const table = packageJSON.irisAgenticDev?.assetSha256;
+  if (!table || typeof table !== "object") return null;
+  const value = Object.prototype.hasOwnProperty.call(table, binaryName)
+    ? table[binaryName]
+    : undefined;
+  if (typeof value !== "string") return null;
+  const hex = value.toLowerCase();
+  return SHA256_HEX.test(hex) ? hex : null;
+}

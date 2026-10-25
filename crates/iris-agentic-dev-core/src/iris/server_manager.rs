@@ -36,6 +36,20 @@ pub struct ServerManagerProfile {
     pub password_deprecated: Option<String>,
 }
 
+impl ServerManagerProfile {
+    /// Where this profile's web server is. A scheme that is not `http` or `https` is an error.
+    pub fn endpoint(
+        &self,
+    ) -> Result<crate::iris::endpoint::Endpoint, crate::iris::endpoint::InvalidEndpoint> {
+        crate::iris::endpoint::Endpoint::parse(
+            Some(&self.scheme),
+            &self.host,
+            self.port,
+            self.path_prefix.as_deref(),
+        )
+    }
+}
+
 /// Error types for Server Manager credential resolution and server selection.
 #[derive(Debug)]
 pub enum SmCredentialError {
@@ -256,7 +270,9 @@ pub fn select_server(
 /// On headless Linux hosts (Remote SSH, CI, Docker without a running keychain daemon)
 /// the store init may fail gracefully — the function never panics.
 ///
-/// Tests bypass this by calling `keyring_core::set_default_store` directly with a mock store.
+/// Tests bypass this by calling `keyring_core::set_default_store` directly with a mock store, and
+/// a test process never gets here: `IAD_NO_KEYCHAIN` is set for it on load (spec 141 T183), so this
+/// does nothing there.
 ///
 /// Background: `keyring` v4.1.3's `v1::Entry::new` has a bug — the `AtomicBool` guard
 /// that is supposed to call `set_credential_store()` on the first invocation uses
@@ -264,6 +280,10 @@ pub fn select_server(
 /// returns `Ok(false)` on first success). We work around it by calling the platform
 /// store constructors directly.
 pub fn init_platform_keystore() {
+    abort_if_keystore_forbidden();
+    if keychain_disabled() {
+        return;
+    }
     #[cfg(target_os = "macos")]
     {
         match apple_native_keyring_store::keychain::Store::new() {
@@ -310,32 +330,138 @@ pub fn init_platform_keystore() {
 /// the OS store varies but the service name string is always `"intersystems-server-credentials"`.
 const SM_KEYCHAIN_SERVICE: &str = "intersystems-server-credentials";
 
-/// Store a credential in the OS keychain using the Server Manager key format.
+/// Keychain service iad keeps its own secrets under. The Server Manager's service
+/// (`intersystems-server-credentials`) is read, never written: iad cannot change or delete what
+/// the operator's VS Code holds (spec 141, FR-023).
+pub const IAD_KEYCHAIN_SERVICE: &str = "iris-agentic-dev";
+
+/// The keychain account for `name`'s password at `endpoint`:
+/// `<name>/<username-lowercase>@<base url>`. The endpoint is part of the account, so a password
+/// stored for one server cannot be found for another.
+pub fn iad_account(
+    name: &str,
+    username: &str,
+    endpoint: &crate::iris::endpoint::Endpoint,
+) -> String {
+    format!("{name}/{}@{}", username.to_lowercase(), endpoint.base_url())
+}
+
+/// Debug builds only: with `IAD_TEST_KEYSTORE_ABORT` set, reaching keystore initialisation ends the
+/// process at once with exit code [`KEYSTORE_ABORT_EXIT`] and a message naming the call.
 ///
-/// Uses service `SM_KEYCHAIN_SERVICE` = `"intersystems-server-credentials"` and
-/// account `"credentialProvider:<server-name>/<username-lowercase>"`.
+/// A path that must not open the keychain (listing tools, `--help`, `--version`) is pinned with
+/// this. On a developer's Mac the real keychain answers with an approval dialog that nobody sees,
+/// so the failure a test would otherwise observe is a hang; here it is a fast, legible exit. A
+/// release build never reads the variable.
+fn abort_if_keystore_forbidden() {
+    if cfg!(debug_assertions)
+        && std::env::var("IAD_TEST_KEYSTORE_ABORT").is_ok_and(|v| !v.is_empty() && v != "0")
+    {
+        eprintln!("{KEYSTORE_ABORT_MESSAGE}");
+        std::process::exit(KEYSTORE_ABORT_EXIT);
+    }
+}
+
+/// The exit code of a process that reached keystore initialisation under `IAD_TEST_KEYSTORE_ABORT`.
+pub const KEYSTORE_ABORT_EXIT: i32 = 97;
+
+/// What such a process prints first.
+pub const KEYSTORE_ABORT_MESSAGE: &str =
+    "KEYSTORE-INIT-REACHED: this path must not open the OS keychain (IAD_TEST_KEYSTORE_ABORT)";
+
+#[cfg(any(test, feature = "testing"))]
+thread_local! {
+    static SECRET_READS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Testing hook: record that a keychain secret is about to be read, as `<service>/<account>`.
+#[cfg(any(test, feature = "testing"))]
+fn note_secret_read(service: &str, account: &str) {
+    SECRET_READS.with(|r| r.borrow_mut().push(format!("{service}/{account}")));
+}
+
+#[cfg(not(any(test, feature = "testing")))]
+fn note_secret_read(_service: &str, _account: &str) {}
+
+/// Testing hook: the keychain items this thread has read since the last call, as
+/// `<service>/<account>`, and forget them. A lazy-load test calls it before and after the step
+/// under test (spec 141 T189); the log is per thread, so parallel tests do not see each other's.
+#[cfg(any(test, feature = "testing"))]
+pub fn take_secret_reads() -> Vec<String> {
+    SECRET_READS.with(|r| std::mem::take(&mut *r.borrow_mut()))
+}
+
+/// Whether `IAD_NO_KEYCHAIN` tells iad to leave the OS keychain alone.
+fn keychain_disabled() -> bool {
+    std::env::var("IAD_NO_KEYCHAIN").is_ok_and(|v| !v.is_empty() && v != "0")
+}
+
+/// Initialise the OS keychain once per process. Does nothing when `IAD_NO_KEYCHAIN` is set, and
+/// when a default store is already in place (a test's in-memory store, for one).
+pub fn ensure_keystore() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        abort_if_keystore_forbidden();
+        if keychain_disabled() || keyring_core::get_default_store().is_some() {
+            return;
+        }
+        init_platform_keystore();
+    });
+}
+
+fn iad_entry(
+    name: &str,
+    username: &str,
+    endpoint: &crate::iris::endpoint::Endpoint,
+) -> Result<keyring_core::Entry, SmCredentialError> {
+    ensure_keystore();
+    keyring_core::Entry::new(IAD_KEYCHAIN_SERVICE, &iad_account(name, username, endpoint))
+        .map_err(|e: keyring_core::Error| map_keychain_error(name, e))
+}
+
+/// Store iad's own password for `name` at `endpoint` in the OS keychain.
+///
+/// The one place iad stores a secret. `username` is part of the account, so a second account on the
+/// same server (a service account) is a second item: call this with that account's name.
 ///
 /// # Errors
-/// Returns `SmCredentialError::KeychainError` on any failure.
-pub fn store_credential(
-    server_name: &str,
+/// `KeychainUnavailable` when there is no keychain here; `KeychainError` on any other failure.
+pub fn store_iad_credential(
+    name: &str,
     username: &str,
+    endpoint: &crate::iris::endpoint::Endpoint,
     password: &str,
 ) -> Result<(), SmCredentialError> {
-    let account = format!(
-        "credentialProvider:{}/{}",
-        server_name,
-        username.to_lowercase()
-    );
-
-    let entry = keyring_core::Entry::new(SM_KEYCHAIN_SERVICE, &account)
-        .map_err(|e: keyring_core::Error| map_keychain_error(server_name, e))?;
-
-    entry
+    iad_entry(name, username, endpoint)?
         .set_password(password)
-        .map_err(|e: keyring_core::Error| map_keychain_error(server_name, e))?;
+        .map_err(|e: keyring_core::Error| map_keychain_error(name, e))
+}
 
-    Ok(())
+/// iad's own password for `name` at `endpoint`.
+pub fn resolve_iad_credential(
+    name: &str,
+    username: &str,
+    endpoint: &crate::iris::endpoint::Endpoint,
+) -> Result<String, SmCredentialError> {
+    note_secret_read(IAD_KEYCHAIN_SERVICE, &iad_account(name, username, endpoint));
+    match iad_entry(name, username, endpoint)?.get_password() {
+        Ok(pw) => Ok(pw),
+        Err(keyring_core::Error::NoEntry) => Err(SmCredentialError::CredentialNotFound {
+            server_name: name.to_string(),
+        }),
+        Err(e) => Err(map_keychain_error(name, e)),
+    }
+}
+
+/// Delete iad's own item for `name` at `endpoint`. Never touches the Server Manager's.
+pub fn delete_iad_credential(
+    name: &str,
+    username: &str,
+    endpoint: &crate::iris::endpoint::Endpoint,
+) -> Result<(), SmCredentialError> {
+    iad_entry(name, username, endpoint)?
+        .delete_credential()
+        .map_err(|e: keyring_core::Error| map_keychain_error(name, e))
 }
 
 fn map_keychain_error(server_name: &str, e: keyring_core::Error) -> SmCredentialError {
@@ -355,7 +481,8 @@ fn map_keychain_error(server_name: &str, e: keyring_core::Error) -> SmCredential
     }
 }
 
-/// Resolve a Server Manager credential from the OS keychain.
+/// Read a Server Manager credential from the OS keychain. Private: callers go through
+/// [`sm_secret_for`], which checks the endpoint first.
 ///
 /// Uses service `SM_KEYCHAIN_SERVICE` = `"intersystems-server-credentials"` and
 /// account `"credentialProvider:<server-name>/<username-lowercase>"`.
@@ -365,12 +492,14 @@ fn map_keychain_error(server_name: &str, e: keyring_core::Error) -> SmCredential
 /// # Errors
 /// Returns `SmCredentialError` on any failure — callers must surface this immediately
 /// and NOT fall through to other discovery sources.
-pub fn resolve_credential(server_name: &str, username: &str) -> Result<String, SmCredentialError> {
+fn read_sm_secret(server_name: &str, username: &str) -> Result<String, SmCredentialError> {
+    ensure_keystore();
     let account = format!(
         "credentialProvider:{}/{}",
         server_name,
         username.to_lowercase()
     );
+    note_secret_read(SM_KEYCHAIN_SERVICE, &account);
 
     // Use keyring_core::Entry directly so mock store injection works in tests.
     let entry = keyring_core::Entry::new(SM_KEYCHAIN_SERVICE, &account).map_err(
@@ -420,6 +549,92 @@ pub fn resolve_credential(server_name: &str, username: &str) -> Result<String, S
 
     #[cfg(not(target_os = "windows"))]
     wcm_result
+}
+
+// ── The one reader of Server Manager secrets ─────────────────────────────────
+
+/// Why a Server Manager secret was not handed over.
+#[derive(Debug)]
+pub enum SmSecretError {
+    /// The user-level settings hold no profile of that name.
+    NoProfile { name: String },
+    /// The profile exists and points somewhere else than the endpoint asking for its secret.
+    Withheld { profile: String, reason: String },
+    /// The keychain had no usable entry.
+    Credential(SmCredentialError),
+}
+
+/// The Server Manager settings files iad reads: VS Code's and Cursor's user-level settings.
+pub fn sm_settings_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(p) = sm_settings_path() {
+        paths.push(p);
+    }
+    if let Some(home) = dirs::home_dir() {
+        #[cfg(target_os = "macos")]
+        paths.push(home.join("Library/Application Support/Cursor/User/settings.json"));
+        #[cfg(not(target_os = "macos"))]
+        paths.push(home.join(".config/Cursor/User/settings.json"));
+    }
+    paths
+}
+
+/// Every profile in the user-level Server Manager settings.
+pub fn user_profiles() -> Vec<ServerManagerProfile> {
+    sm_settings_paths()
+        .iter()
+        .flat_map(|p| parse_sm_settings(p))
+        .collect()
+}
+
+/// The Server Manager secret for profile `name`, for a connection to `endpoint`.
+///
+/// The only function that reads the Server Manager's keychain service. A secret belongs to the
+/// profile's own endpoint (scheme, host, port, prefix): an entry, a `.vscode` file or a pool
+/// member of the same name aimed anywhere else is refused, because the name is all they share
+/// (spec 141, FR-023).
+pub fn sm_secret_for_in(
+    profiles: &[ServerManagerProfile],
+    name: &str,
+    username: &str,
+    endpoint: &crate::iris::endpoint::Endpoint,
+) -> Result<String, SmSecretError> {
+    let profile =
+        profiles
+            .iter()
+            .find(|p| p.name == name)
+            .ok_or_else(|| SmSecretError::NoProfile {
+                name: name.to_string(),
+            })?;
+    let own = profile.endpoint().map_err(|e| SmSecretError::Withheld {
+        profile: name.to_string(),
+        reason: format!("the profile's own address is not usable: {e}"),
+    })?;
+    if !own.same_server(endpoint) {
+        return Err(SmSecretError::Withheld {
+            profile: name.to_string(),
+            reason: format!(
+                "Server Manager profile {name} is {own}; this connection is {endpoint}"
+            ),
+        });
+    }
+    read_sm_secret(name, username).map_err(SmSecretError::Credential)
+}
+
+/// [`sm_secret_for_in`] against the user-level Server Manager settings.
+pub fn sm_secret_for(
+    name: &str,
+    username: &str,
+    endpoint: &crate::iris::endpoint::Endpoint,
+) -> Result<String, SmSecretError> {
+    sm_secret_for_in(&user_profiles(), name, username, endpoint)
+}
+
+/// A 1.6.x `servers.json` entry kept its password under the Server Manager's service, because iad
+/// wrote there. For an entry that matches no profile, read that item once so an upgrade does not
+/// lose it. The caller copies it to iad's own account; this never deletes it.
+pub fn legacy_iad_secret(name: &str, username: &str) -> Option<String> {
+    read_sm_secret(name, username).ok()
 }
 
 // ── Windows vscdb credential fallback ────────────────────────────────────────
@@ -681,38 +896,40 @@ pub fn build_server_manager_config_json(
 
 // ── Policy gate ───────────────────────────────────────────────────────────────
 
-/// Check whether a tool call is blocked by a per-connection policy.
+/// Check whether a tool call is blocked by a per-connection policy: every category the pipeline
+/// worked out has to be in `allow`.
 ///
-/// Returns `Some(error_json)` when blocked, `None` when permitted.
-/// Pure function — no I/O, no side effects.
-/// Called before the role-gate in handler wiring.
-pub fn policy_gate(
+/// Returns `Some(error_json)` when blocked, `None` when permitted. Pure function.
+pub fn policy_gate_for(
     tool_name: &str,
     server_name: &str,
-    policy: Option<&crate::iris::workspace_config::ConnectionPolicy>,
+    policy: &crate::iris::workspace_config::ConnectionPolicy,
+    categories: &[crate::iris::workspace_config::ToolCategory],
 ) -> Option<serde_json::Value> {
-    let policy = policy?;
     let allow = policy.allow.as_ref()?; // None = all permitted
+    let category = categories.iter().find(|c| !allow.contains(c))?;
 
-    let category = tool_to_category(tool_name)?;
-    if allow.contains(&category) {
-        return None; // permitted
-    }
-
+    let message = format!(
+        "Tool '{}' is blocked by per-connection policy for server '{}'. \
+         Category '{}' is not in the allowed list: [{}].",
+        tool_name,
+        server_name,
+        category.as_str(),
+        allow
+            .iter()
+            .map(|c| c.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     Some(serde_json::json!({
+        "success": false,
         "error_code": "POLICY_GATE",
+        "error": message,
         "policy_gate": true,
         "server_name": server_name,
         "blocked_category": category.as_str(),
         "allowed_categories": allow.iter().map(|c| c.as_str()).collect::<Vec<_>>(),
-        "message": format!(
-            "Tool '{}' is blocked by per-connection policy for server '{}'. \
-             Category '{}' is not in the allowed list: [{}].",
-            tool_name,
-            server_name,
-            category.as_str(),
-            allow.iter().map(|c| c.as_str()).collect::<Vec<_>>().join(", ")
-        ),
+        "message": message,
     }))
 }
 
@@ -804,7 +1021,7 @@ fn tool_to_category(tool_name: &str) -> Option<crate::iris::workspace_config::To
         // three matter most. iris_ws_exec runs arbitrary ObjectScript over a WebSocket
         // terminal (same risk as iris_execute, different transport); iris_test runs
         // %UnitTest suites; iris_coverage's mode=run does too (start→RunTest→stop→report)
-        // even though its other modes (check/start/stop/report) are inert on their own.
+        // though check, start and stop only drive the line monitor, which is still instance state.
         "iris_ws_exec" | "iris_test" | "iris_coverage" => ToolCategory::Execute,
 
         // Compiles/introduces new class code.
@@ -820,7 +1037,9 @@ fn tool_to_category(tool_name: &str) -> Option<crate::iris::workspace_config::To
         "global_kill" | "iris_add_server" | "iris_remove_server" | "iris_import_servers"
         | "iris_namespace_create" | "iris_credential_manage" | "iris_lookup_manage"
         | "iris_lookup_transfer" | "iris_production" | "iris_production_item"
-        | "iris_select_container" | "iris_start_sandbox" | "iris_ws_open" | "iris_ws_close" => {
+        | "iris_select_container" | "iris_start_sandbox" | "iris_ws_open" | "iris_ws_close"
+        // Activates servers the registry writers declared (spec 141 T219).
+        | "iris_reload_pool" => {
             ToolCategory::Admin
         }
 
@@ -829,7 +1048,7 @@ fn tool_to_category(tool_name: &str) -> Option<crate::iris::workspace_config::To
         "capability_matrix" | "compare_document" | "compare_namespace" | "global_preview"
         | "hl7_schema_inspect" | "hl7_schema_list" | "iris_credential_list"
         | "iris_database_list" | "iris_database_stats" | "iris_get_log" | "iris_interop_query"
-        | "iris_list_containers" | "iris_mirror_status" | "iris_namespace_list" | "iris_reload_pool"
+        | "iris_list_containers" | "iris_mirror_status" | "iris_namespace_list"
         | "iris_servers"
         | "iris_system_performance" | "iris_test_server" | "journal_search" | "mermaid_class"
         | "mermaid_production" | "my_access" | "query_audit_log" | "resolve_storage"
@@ -915,25 +1134,19 @@ mod tests {
     #[test]
     #[ignore]
     fn store_resolve_credential_roundtrip() {
-        init_platform_keystore();
+        ensure_keystore();
+        let endpoint = crate::iris::endpoint::Endpoint::parse(None, "localhost", 52773, None)
+            .expect("endpoint");
 
-        if store_credential("test-072-server", "_system", "test-pw-072").is_err() {
+        if store_iad_credential("test-072-server", "_system", &endpoint, "test-pw-072").is_err() {
             eprintln!("store_resolve_credential_roundtrip: no keychain available, skipping");
             return;
         }
 
-        let resolved = resolve_credential("test-072-server", "_system")
-            .expect("resolve_credential should find the stored credential");
-
+        let resolved = resolve_iad_credential("test-072-server", "_system", &endpoint)
+            .expect("resolve_iad_credential should find the stored credential");
         assert_eq!(resolved, "test-pw-072");
 
-        // Clean up: delete the entry from the keychain.
-        let entry = keyring_core::Entry::new(
-            SM_KEYCHAIN_SERVICE,
-            "credentialProvider:test-072-server/_system",
-        )
-        .expect("keyring_core::Entry::new should succeed for cleanup");
-        // keyring-core uses delete_credential().
-        let _ = entry.delete_credential();
+        let _ = delete_iad_credential("test-072-server", "_system", &endpoint);
     }
 }

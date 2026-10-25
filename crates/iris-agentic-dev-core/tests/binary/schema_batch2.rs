@@ -17,6 +17,7 @@ const BATCH2: &[ParamContract] = &[
     ParamContract {
         tool: "iris_namespace_create",
         params: &[
+            ("confirm", "boolean"),
             ("name", "string"),
             ("db_path", "string"),
             ("server", "string"),

@@ -40,14 +40,19 @@ fn the_resolved_binary_sits_under_the_workspace_target_directory() {
         p.file_name().and_then(|n| n.to_str()),
         Some("iris-agentic-dev")
     );
+    // Whichever build exists: debug, the coverage build, or release. The path must sit under the
+    // workspace `target/` and name a file that is there, so the test holds in a checkout with only
+    // a release build (the old exact-path check failed there, T175).
+    let target = root.join("target");
     assert!(
-        p == root.join("target").join("debug").join("iris-agentic-dev")
-            || p == root
-                .join("target")
-                .join("llvm-cov-target")
-                .join("debug")
-                .join("iris-agentic-dev"),
-        "must be one of the two workspace debug builds, got {}",
+        p.starts_with(&target),
+        "must be under the workspace target directory {}, got {}",
+        target.display(),
+        p.display()
+    );
+    assert!(
+        p.is_file(),
+        "the resolved binary does not exist: {} (build it first)",
         p.display()
     );
 }
@@ -179,11 +184,11 @@ fn invocation() -> ToolInvocation {
 }
 
 /// `/bin/echo` prints whatever it is handed, so this asserts the argv the wrapper builds:
-/// `tool <name> --args <json>`, in that order.
+/// `tool <name> --toolset merged --args <json>`, in that order.
 #[test]
 fn stdout_comes_back_and_the_argv_is_tool_name_args() {
     let out = run_tool_subprocess(Path::new("/bin/echo"), &invocation(), &[]);
-    assert_eq!(out.trim(), "tool iris_symbols --args {}");
+    assert_eq!(out.trim(), "tool iris_symbols --toolset merged --args {}");
 }
 
 /// A stub that ignores its argv and prints its environment. `env`/`printenv` cannot be used

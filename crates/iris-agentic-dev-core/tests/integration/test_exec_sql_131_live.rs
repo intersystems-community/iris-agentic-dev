@@ -31,7 +31,7 @@ fn http_exec(code: &str) -> serde_json::Value {
 
 /// `iris_execute` through a `docker_only` connection, which never touches Atelier.
 fn docker_exec(code: &str) -> Option<serde_json::Value> {
-    let container = std::env::var("IRIS_CONTAINER").unwrap_or_else(|_| "iris-dev-iris".into());
+    let container = iris_agentic_dev_core::testing::LiveTarget::from_env().container;
     let bin = iad_binary_path();
     assert!(bin.exists(), "no binary at {}", bin.display());
     let dir = tempfile::tempdir().expect("tempdir");

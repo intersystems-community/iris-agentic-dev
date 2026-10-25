@@ -21,6 +21,7 @@ const BATCH4: &[ParamContract] = &[
     ParamContract {
         tool: "iris_system_performance",
         params: &[
+            ("confirm", "boolean"),
             ("server", "string"),
             ("mode", "string"),
             ("run_id", "string"),

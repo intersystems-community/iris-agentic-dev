@@ -126,6 +126,59 @@ fn inject_managed_by(content: &str) -> String {
     format!("---\n{}\n---\n{}", MARKER, content)
 }
 
+/// A skill name becomes a file or directory name. One with a path separator, a `..` or a control
+/// character would land somewhere else.
+fn valid_skill_name(name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || name == ".."
+        || name.contains(['/', '\\'])
+        || name.chars().any(char::is_control)
+    {
+        return Err(format!(
+            "refusing skill name {name:?}: not a plain file name"
+        ));
+    }
+    Ok(())
+}
+
+/// A Copilot target sits inside the repository, at `<repo>/.github/instructions/<name>`. If a
+/// directory on the way is a symlink the repository committed, the file would be created outside
+/// it, so the target's real parent must still be under the real repository directory (FR-026).
+fn stays_in_repository(target: &InstallTarget) -> Result<(), String> {
+    if target.agent != AgentKind::Copilot {
+        return Ok(());
+    }
+    let path = &target.target_path;
+    let repo = path
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .ok_or_else(|| format!("{} is not under a repository", path.display()))?;
+    let real_repo = repo.canonicalize().map_err(|e| e.to_string())?;
+    // The deepest part of the parent that exists now: what a later `create_dir_all` builds on.
+    let mut existing = path.parent();
+    while let Some(dir) = existing {
+        if dir.exists() {
+            break;
+        }
+        existing = dir.parent();
+    }
+    let real_parent = existing
+        .ok_or_else(|| format!("{} has no parent", path.display()))?
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    if real_parent.starts_with(&real_repo) {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} resolves to {}, outside the repository {}; not writing there",
+            path.display(),
+            real_parent.display(),
+            real_repo.display()
+        ))
+    }
+}
+
 fn write_skill_file(
     target: &InstallTarget,
     skill_name: &str,
@@ -133,6 +186,10 @@ fn write_skill_file(
     dry_run: bool,
 ) -> InstallOutcome {
     let path = &target.target_path;
+
+    if let Err(e) = valid_skill_name(skill_name) {
+        return InstallOutcome::Failed(e);
+    }
 
     let already_exists = path.exists();
 
@@ -153,13 +210,16 @@ fn write_skill_file(
         _ => inject_managed_by(content),
     };
 
+    if let Err(e) = stays_in_repository(target) {
+        return InstallOutcome::Failed(e);
+    }
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
             return InstallOutcome::Failed(e.to_string());
         }
     }
 
-    match std::fs::write(path, final_content) {
+    match crate::iris::private_file::write_atomic(path, final_content.as_bytes(), 0o644) {
         Ok(()) => {
             if already_exists {
                 InstallOutcome::Updated

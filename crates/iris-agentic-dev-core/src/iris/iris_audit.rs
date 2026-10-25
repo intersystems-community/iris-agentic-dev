@@ -37,7 +37,11 @@ pub fn build_event_data(
         crate::iris::connection::CallerMode::Cli => "cli",
     };
     let mut data = format!("tool={tool_name} mode={mode_str} ua={ua}");
-    if let Some((name, version)) = &mcp_peer {
+    // The same cleaned name and version the User-Agent carries (spec 141 T221).
+    if let Some((name, version)) = mcp_peer
+        .as_ref()
+        .and_then(crate::iris::connection::clean_peer)
+    {
         data.push_str(&format!(" client={name}/{version}"));
     }
     data

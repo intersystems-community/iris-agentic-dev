@@ -12,14 +12,9 @@ use iris_agentic_dev_core::iris::workspace_config::{
     load_workspace_config, load_workspace_config_with_path, workspace_config_to_connection,
     WorkspaceConfig,
 };
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use iris_agentic_dev_core::testing::EnvGuard;
 
 /// Serializes the tests that read or write process environment, and restores what it found.
-struct EnvGuard {
-    _lock: MutexGuard<'static, ()>,
-    saved: Vec<(&'static str, Option<String>)>,
-}
-
 const GUARDED: &[&str] = &[
     "OBJECTSCRIPT_WORKSPACE",
     "IRIS_CONTAINER",
@@ -28,33 +23,14 @@ const GUARDED: &[&str] = &[
     "IRIS_PASSWORD",
 ];
 
-impl EnvGuard {
-    fn new() -> Self {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        let lock = LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let saved = GUARDED
-            .iter()
-            .map(|k| (*k, std::env::var(k).ok()))
-            .collect();
-        for k in GUARDED {
-            std::env::remove_var(k);
-        }
-        EnvGuard { _lock: lock, saved }
+/// Takes the shared guard and clears the variables these tests are about, so a value the shell
+/// exported cannot change the result; everything is put back on drop.
+fn guarded() -> EnvGuard {
+    let mut g = EnvGuard::new();
+    for k in GUARDED {
+        g.unset(k);
     }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (k, v) in &self.saved {
-            match v {
-                Some(val) => std::env::set_var(k, val),
-                None => std::env::remove_var(k),
-            }
-        }
-    }
+    g
 }
 
 fn parse(toml_text: &str) -> WorkspaceConfig {
@@ -68,8 +44,8 @@ fn parse(toml_text: &str) -> WorkspaceConfig {
 /// the terminal block-syntax guard fires before any HTTP call.
 #[test]
 fn docker_only_without_container_routes_to_the_docker_exec_sentinel() {
-    let _g = EnvGuard::new();
-    std::env::set_var("IRIS_CONTAINER", "iris-dev-iris");
+    let mut env_guard = guarded();
+    env_guard.set("IRIS_CONTAINER", "iris-dev-iris");
 
     let cfg = parse("docker_only = true\n");
     let conn = workspace_config_to_connection(&cfg, "USER").expect("must return a connection");
@@ -86,8 +62,8 @@ fn docker_only_without_container_routes_to_the_docker_exec_sentinel() {
 
 #[test]
 fn nopws_without_container_takes_the_same_path() {
-    let _g = EnvGuard::new();
-    std::env::set_var("IRIS_CONTAINER", "irishealth-ai");
+    let mut env_guard = guarded();
+    env_guard.set("IRIS_CONTAINER", "irishealth-ai");
 
     let cfg = parse("nopws = true\n");
     let conn = workspace_config_to_connection(&cfg, "USER").expect("must return a connection");
@@ -104,7 +80,7 @@ fn nopws_without_container_takes_the_same_path() {
 /// `IRIS_CONTAINER` at call time, and returning `None` here is what sent the caller to Atelier.
 #[test]
 fn docker_only_with_no_container_anywhere_still_returns_a_connection() {
-    let _g = EnvGuard::new();
+    let mut _env_guard = guarded();
 
     let cfg = parse("docker_only = true\n");
     let conn = workspace_config_to_connection(&cfg, "USER").expect("must return a connection");
@@ -118,9 +94,9 @@ fn docker_only_with_no_container_anywhere_still_returns_a_connection() {
 
 #[test]
 fn docker_only_reads_credentials_and_namespace_from_the_config_first() {
-    let _g = EnvGuard::new();
-    std::env::set_var("IRIS_NAMESPACE", "FROMENV");
-    std::env::set_var("IRIS_USERNAME", "fromenv");
+    let mut env_guard = guarded();
+    env_guard.set("IRIS_NAMESPACE", "FROMENV");
+    env_guard.set("IRIS_USERNAME", "fromenv");
 
     let cfg = parse(
         r#"
@@ -145,10 +121,10 @@ ssh_host = "docker-host.example"
 
 #[test]
 fn docker_only_falls_back_to_environment_when_the_config_is_silent() {
-    let _g = EnvGuard::new();
-    std::env::set_var("IRIS_NAMESPACE", "FROMENV");
-    std::env::set_var("IRIS_USERNAME", "fromenv");
-    std::env::set_var("IRIS_PASSWORD", "envpw");
+    let mut env_guard = guarded();
+    env_guard.set("IRIS_NAMESPACE", "FROMENV");
+    env_guard.set("IRIS_USERNAME", "fromenv");
+    env_guard.set("IRIS_PASSWORD", "envpw");
 
     let cfg = parse("docker_only = true\n");
     let conn = workspace_config_to_connection(&cfg, "USER").expect("must return a connection");
@@ -161,7 +137,7 @@ fn docker_only_falls_back_to_environment_when_the_config_is_silent() {
 /// Neither host nor container nor a docker flag: nothing to build a connection from.
 #[test]
 fn an_empty_config_returns_no_connection() {
-    let _g = EnvGuard::new();
+    let mut _env_guard = guarded();
     let cfg = parse("");
     assert!(workspace_config_to_connection(&cfg, "USER").is_none());
 }
@@ -170,7 +146,7 @@ fn an_empty_config_returns_no_connection() {
 
 #[test]
 fn a_missing_config_file_is_not_an_error() {
-    let _g = EnvGuard::new();
+    let mut _env_guard = guarded();
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().to_str().expect("utf-8 path");
 
@@ -180,7 +156,7 @@ fn a_missing_config_file_is_not_an_error() {
 
 #[test]
 fn the_legacy_file_name_still_loads() {
-    let _g = EnvGuard::new();
+    let mut _env_guard = guarded();
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
         dir.path().join(".iris-dev.toml"),
@@ -199,7 +175,7 @@ fn the_legacy_file_name_still_loads() {
 
 #[test]
 fn the_current_file_name_wins_over_the_legacy_one() {
-    let _g = EnvGuard::new();
+    let mut _env_guard = guarded();
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
         dir.path().join(".iris-agentic-dev.toml"),
@@ -222,7 +198,7 @@ fn the_current_file_name_wins_over_the_legacy_one() {
 /// either — the warning in the log is the only signal, so the return has to be `None`.
 #[test]
 fn a_malformed_config_warns_and_returns_none() {
-    let _g = EnvGuard::new();
+    let mut _env_guard = guarded();
     let dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
         dir.path().join(".iris-agentic-dev.toml"),
@@ -237,7 +213,7 @@ fn a_malformed_config_warns_and_returns_none() {
 
 #[test]
 fn objectscript_workspace_outranks_the_argument() {
-    let _g = EnvGuard::new();
+    let mut env_guard = guarded();
     let env_dir = tempfile::tempdir().expect("tempdir");
     let arg_dir = tempfile::tempdir().expect("tempdir");
     std::fs::write(
@@ -250,7 +226,7 @@ fn objectscript_workspace_outranks_the_argument() {
         "container = \"from-arg\"\n",
     )
     .expect("write arg config");
-    std::env::set_var("OBJECTSCRIPT_WORKSPACE", env_dir.path());
+    env_guard.set("OBJECTSCRIPT_WORKSPACE", env_dir.path());
 
     let cfg = load_workspace_config(arg_dir.path().to_str()).expect("config must load");
     assert_eq!(cfg.container.as_deref(), Some("from-env"));

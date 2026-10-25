@@ -20,26 +20,29 @@ Works against any IRIS instance with the web server running. No Python, no MCP s
 
 ## Step 1 — Fetch the class source
 
+Use the CLI. It reads the connection from `.iris-agentic-dev.toml` or the `IRIS_*` variables, so
+no password goes on a command line:
+
+```bash
+iris-agentic-dev tool iris_doc --args '{"mode":"get","name":"MyPackage.MyClass.cls"}'
+```
+
+The answer's `content` is the class source, one string per line. Add `"namespace":"APP"` for a
+namespace other than `IRIS_NAMESPACE`.
+
+If the CLI is not installed, call Atelier directly. `curl -K -` reads the credential from stdin, so
+it stays out of the process list; set `IRIS_PASSWORD` first and keep `IRIS_SCHEME` at `https` for
+an HTTPS endpoint:
+
 ```bash
 CLASS="${1:-MyPackage.MyClass}"
-HOST="${IRIS_HOST:-localhost}"
-PORT="${IRIS_WEB_PORT:-52773}"
-USER="${IRIS_USERNAME:-_SYSTEM}"
-PASS="${IRIS_PASSWORD:-SYS}"
-NS="${IRIS_NAMESPACE:-USER}"
-PREFIX="${IRIS_WEB_PREFIX:-}"
-BASE_URL="http://${HOST}:${PORT}${PREFIX:+/${PREFIX}}/api/atelier/v1"
-
-curl -s \
-  -u "${USER}:${PASS}" \
-  "${BASE_URL}/${NS}/doc/${CLASS}.cls" \
+printf 'user = "%s:%s"\n' "${IRIS_USERNAME:-_SYSTEM}" "$IRIS_PASSWORD" \
+  | curl -s -K - \
+    "${IRIS_SCHEME:-http}://${IRIS_HOST:-localhost}:${IRIS_WEB_PORT:-52773}${IRIS_WEB_PREFIX:+/${IRIS_WEB_PREFIX}}/api/atelier/v1/${IRIS_NAMESPACE:-USER}/doc/${CLASS}.cls" \
   | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
-result = data.get('result', {})
-content = result.get('content', [])
-# content is a list of lines
-print('\n'.join(content))
+print('\n'.join(data.get('result', {}).get('content', [])))
 "
 ```
 
@@ -106,9 +109,7 @@ Methods:
 ```bash
 for cls in MyPackage.ClassA MyPackage.ClassB Ens.BusinessOperation; do
   echo "=== $cls ==="
-  curl -s -u "${IRIS_USERNAME:-_SYSTEM}:${IRIS_PASSWORD:-SYS}" \
-    "${BASE_URL}/${NS}/doc/${cls}.cls" \
-    | python3 -c "import json,sys; d=json.load(sys.stdin); print('\n'.join(d.get('result',{}).get('content',[])))"
+  iris-agentic-dev tool iris_doc --args "{\"mode\":\"get\",\"name\":\"${cls}.cls\"}"
   echo ""
 done
 ```

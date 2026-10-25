@@ -23,6 +23,10 @@ pub struct WsOpenParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WsExecParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     /// Session token returned by `iris_ws_open`.
     pub session: String,
     /// ObjectScript code to execute in the terminal session.

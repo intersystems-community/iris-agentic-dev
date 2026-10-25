@@ -9,21 +9,23 @@ use iris_agentic_dev_core::tools::coverage::{
 // ── build_routine_name ────────────────────────────────────────────────────────
 
 #[test]
-fn routine_name_appends_dot_one() {
-    assert_eq!(build_routine_name("MyApp.MyClass"), "MyApp.MyClass.1");
+fn routine_name_selects_every_routine_of_the_class() {
+    // `.*` and not `.1`: a class compiles to `.0` and `.1` at least, and a class with no methods has
+    // no `.1`. The dot keeps the pattern off `MyApp.MyClassOther`.
+    assert_eq!(build_routine_name("MyApp.MyClass"), "MyApp.MyClass.*");
 }
 
 #[test]
 fn routine_name_deep_package() {
     assert_eq!(
         build_routine_name("MyApp.Deep.Sub.Class"),
-        "MyApp.Deep.Sub.Class.1"
+        "MyApp.Deep.Sub.Class.*"
     );
 }
 
 #[test]
 fn routine_name_single_segment() {
-    assert_eq!(build_routine_name("Foo"), "Foo.1");
+    assert_eq!(build_routine_name("Foo"), "Foo.*");
 }
 
 // ── strip_routine_suffix ──────────────────────────────────────────────────────
@@ -68,6 +70,8 @@ fn run_code_contains_routine_names() {
     );
     assert!(code.contains("MyApp.ClassA.1"), "missing ClassA: {code}");
     assert!(code.contains("MyApp.ClassB.1"), "missing ClassB: {code}");
+    // The routines are read from the monitor, whatever the patterns matched.
+    assert!(code.contains("GetRoutineName"), "{code}");
 }
 
 #[test]

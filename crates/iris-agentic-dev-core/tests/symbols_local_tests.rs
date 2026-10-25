@@ -1,4 +1,5 @@
 #![allow(clippy::all)]
+use iris_agentic_dev_core::testing::EnvGuard;
 use iris_agentic_dev_core::tools::symbols_local::*;
 use std::path::PathBuf;
 
@@ -581,11 +582,12 @@ fn sc003_parse_500_lines_under_100ms() {
 
 #[test]
 fn sc005_no_iris_contact() {
+    let mut env_guard = EnvGuard::new();
     // scan_workspace is pure filesystem — it never calls HTTP.
     // Verified by the fact that it completes without IRIS_HOST set.
     // (This test succeeds in any environment including pure CI with no IRIS.)
-    std::env::remove_var("IRIS_HOST");
-    std::env::remove_var("IRIS_CONTAINER");
+    env_guard.unset("IRIS_HOST");
+    env_guard.unset("IRIS_CONTAINER");
 
     let result = scan_workspace(&fixtures_dir(), "MyApp.Foo", 10);
     // If it completes and returns symbols, no IRIS contact was made.

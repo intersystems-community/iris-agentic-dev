@@ -54,8 +54,7 @@ pub async fn fetch_document_source(
             resp.status()
         ));
     }
-    let body: serde_json::Value = resp
-        .json()
+    let body: serde_json::Value = crate::iris::http::capped_json::<serde_json::Value>(resp)
         .await
         .map_err(|e| format!("JSON parse error: {e}"))?;
     // Atelier v1 doc response: { "result": { "content": ["line1", "line2", ...] } }
@@ -90,8 +89,7 @@ pub async fn fetch_class_list(
     if !resp.status().is_success() {
         return Err(format!("Server returned {} for class list", resp.status()));
     }
-    let body: serde_json::Value = resp
-        .json()
+    let body: serde_json::Value = crate::iris::http::capped_json::<serde_json::Value>(resp)
         .await
         .map_err(|e| format!("JSON parse error: {e}"))?;
     // Atelier v1 docnames: { "result": { "content": [{ "name": "Foo.Bar.cls" }, ...] } }

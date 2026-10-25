@@ -127,6 +127,205 @@ pub fn require_iad_binary() -> Option<PathBuf> {
     );
 }
 
+/// Serialises every test that installs a keychain store with `keyring_core::set_default_store`: the
+/// store is process-wide, and the unit target runs its tests in parallel.
+pub static KEYSTORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// The one lock behind every [`EnvGuard`] in a test process.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+thread_local! {
+    /// How many guards this thread holds, and the lock they share. The first guard takes the lock
+    /// and the last one releases it, so a test (or a helper it calls) can build guards inside
+    /// guards without deadlocking on its own thread.
+    static ENV_HELD: std::cell::RefCell<(usize, Option<std::sync::MutexGuard<'static, ()>>)> =
+        const { std::cell::RefCell::new((0, None)) };
+}
+
+/// Changes process environment variables for the length of one test and puts every one back when
+/// dropped, on a panic too (spec 141 T186).
+///
+/// Process environment is shared by every test thread and by every later test in the binary, so a
+/// bare `set_var` that is never undone, or one undone only on the success path, changes what an
+/// unrelated test sees. `crates/*/tests/` may change the environment only through this type; a
+/// scan in `test_env_restore_guard_141` fails on a raw call.
+///
+/// - A guard holds one process-wide lock for its whole life, so two tests that change the
+///   environment never overlap. Guards on one thread nest freely. The lock is released after the
+///   variables are restored.
+/// - The first change to a key records what it was (a value or unset); the drop puts that back, so
+///   setting a key five times still restores the original.
+/// - `EnvGuard` is not `Send`: it belongs to the thread that took the lock.
+/// - A reader that only has to see a stable environment (it loads a config from a directory it
+///   built) takes [`EnvGuard::clean`], which also unsets every behavior variable, so a variable the
+///   developer exported cannot change the result either.
+///
+/// ```ignore
+/// let mut env = EnvGuard::new();
+/// env.set("IRIS_CONTAINER", "x").unset("OBJECTSCRIPT_WORKSPACE");
+/// ```
+pub struct EnvGuard {
+    saved: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
+    _same_thread: std::marker::PhantomData<*const ()>,
+}
+
+impl EnvGuard {
+    /// A guard that has changed nothing yet. Takes the shared lock.
+    pub fn new() -> Self {
+        ENV_HELD.with(|h| {
+            let mut h = h.borrow_mut();
+            if h.0 == 0 {
+                h.1 = Some(ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner()));
+            }
+            h.0 += 1;
+        });
+        EnvGuard {
+            saved: Vec::new(),
+            _same_thread: std::marker::PhantomData,
+        }
+    }
+
+    /// A guard with every variable in [`BEHAVIOR_ENV_VARS`] unset: the environment a spawned
+    /// `clean_command` child starts from, for an in-process test that must not depend on the shell
+    /// that launched it. `IAD_NO_KEYCHAIN` stays as [`isolate_process`] set it, as it does for a
+    /// `clean_command` child.
+    pub fn clean() -> Self {
+        let mut g = Self::new();
+        for var in BEHAVIOR_ENV_VARS
+            .iter()
+            .filter(|v| **v != "IAD_NO_KEYCHAIN")
+        {
+            g.unset(var);
+        }
+        g
+    }
+
+    /// A guard that has set `key` to `value`: `let _c = EnvGuard::with("IRIS_CONTAINER", "x");`.
+    pub fn with(key: impl AsRef<std::ffi::OsStr>, value: impl AsRef<std::ffi::OsStr>) -> Self {
+        let mut g = Self::new();
+        g.set(key, value);
+        g
+    }
+
+    /// A guard that has removed `key`: a test that means "no container" says so instead of
+    /// trusting that no earlier test left one set.
+    pub fn without(key: impl AsRef<std::ffi::OsStr>) -> Self {
+        let mut g = Self::new();
+        g.unset(key);
+        g
+    }
+
+    fn remember(&mut self, key: &std::ffi::OsStr) {
+        if !self.saved.iter().any(|(k, _)| k == key) {
+            self.saved.push((key.to_os_string(), std::env::var_os(key)));
+        }
+    }
+
+    /// Set `key` to `value` until this guard is dropped.
+    pub fn set(
+        &mut self,
+        key: impl AsRef<std::ffi::OsStr>,
+        value: impl AsRef<std::ffi::OsStr>,
+    ) -> &mut Self {
+        self.remember(key.as_ref());
+        std::env::set_var(key.as_ref(), value.as_ref());
+        self
+    }
+
+    /// Remove `key` until this guard is dropped.
+    pub fn unset(&mut self, key: impl AsRef<std::ffi::OsStr>) -> &mut Self {
+        self.remember(key.as_ref());
+        std::env::remove_var(key.as_ref());
+        self
+    }
+}
+
+impl Default for EnvGuard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        for (key, old) in self.saved.drain(..).rev() {
+            match old {
+                Some(v) => std::env::set_var(&key, v),
+                None => std::env::remove_var(&key),
+            }
+        }
+        ENV_HELD.with(|h| {
+            let mut h = h.borrow_mut();
+            h.0 -= 1;
+            if h.0 == 0 {
+                h.1 = None;
+            }
+        });
+    }
+}
+
+static REAL_HOME: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+
+/// Point this test process away from the developer's real keychain and real home directory.
+///
+/// Every test target calls this from a `#[ctor::ctor]` function in its `main.rs`, so it runs before
+/// `main` and before any test thread exists. Without it a test that reaches `ensure_keystore`
+/// opens the OS keychain, and a macOS approval dialog on the developer's screen blocks the whole
+/// run for as long as nobody clicks it (a unit run hung 34 minutes that way). A test that reads
+/// `servers.json`, the operator file or the audit log would also read the developer's own.
+///
+/// What it does:
+///
+/// - `HOME` and `USERPROFILE` (and `XDG_CONFIG_HOME`, `APPDATA`) become a new empty directory, so
+///   `native_config_path`, the operator file and every other path under the home are empty ones.
+///   `DOCKER_CONFIG`, `CARGO_HOME` and `RUSTUP_HOME` are pinned to their real locations first,
+///   because the docker CLI, cargo and rustup find their own state through `HOME`.
+/// - `IAD_NO_KEYCHAIN=1`, which makes `init_platform_keystore` and `ensure_keystore` do nothing. A
+///   test that wants a keychain installs `keyring_core::mock::Store` under [`KEYSTORE_LOCK`]; one
+///   that needs the real keychain is behind the `real-keychain-tests` feature and runs with
+///   `IAD_TEST_REAL_KEYCHAIN=1`, the only way back.
+///
+/// Production code is untouched: nothing in `src/` calls this, and a release build never reads
+/// either variable differently. Safe to call more than once; only the first call acts. A spawned
+/// child gets its own home from [`clean_command`], so this does not leak into children that mean to
+/// be clean.
+pub fn isolate_process() {
+    REAL_HOME.get_or_init(|| {
+        let real = dirs::home_dir();
+        for (var, rel) in [
+            ("DOCKER_CONFIG", ".docker"),
+            ("CARGO_HOME", ".cargo"),
+            ("RUSTUP_HOME", ".rustup"),
+        ] {
+            if let (None, Some(home)) = (std::env::var_os(var), real.as_ref()) {
+                let dir = home.join(rel);
+                if dir.is_dir() {
+                    std::env::set_var(var, dir);
+                }
+            }
+        }
+        let home = fresh_dir("iad-test-process-home");
+        std::env::set_var("HOME", &home);
+        std::env::set_var("USERPROFILE", &home);
+        std::env::set_var("XDG_CONFIG_HOME", home.join(".config"));
+        std::env::set_var("APPDATA", home.join("AppData").join("Roaming"));
+        let real_keychain =
+            std::env::var("IAD_TEST_REAL_KEYCHAIN").is_ok_and(|v| !v.is_empty() && v != "0");
+        if !real_keychain {
+            std::env::set_var("IAD_NO_KEYCHAIN", "1");
+        }
+        real
+    });
+}
+
+/// The developer's real home directory, as it was before [`isolate_process`] replaced `HOME`.
+///
+/// For the rare test that has to read something from it on purpose (a fixture only the developer's
+/// machine holds). `None` when no home could be found, or when `isolate_process` has not run.
+pub fn real_home() -> Option<&'static Path> {
+    REAL_HOME.get().and_then(|h| h.as_deref())
+}
+
 /// Every process-environment variable that changes what the server does.
 ///
 /// Kept as one list so a spawn helper can clear all of them in a single call. `std::env::var` in
@@ -153,6 +352,7 @@ pub const BEHAVIOR_ENV_VARS: &[&str] = &[
     "IRIS_ALLOW_PROD",
     "IRIS_ADMIN_TOOLS",
     "IRIS_SCM_ALLOW_CHECKIN",
+    "IRIS_SCM_ALLOW_DISCONNECT",
     // tool surface
     "IRIS_ENABLED_TOOLS",
     "IRIS_DISABLED_TOOLS",
@@ -163,6 +363,13 @@ pub const BEHAVIOR_ENV_VARS: &[&str] = &[
     // skills
     "OBJECTSCRIPT_LEARNING",
     "IRIS_AGENTIC_DEV_SKILLS_DIR",
+    // operator opt-in to serve skills from the working directory (spec 141 FR-027)
+    "IAD_LOCAL_SKILLS",
+    // operator opt-in to run as the container's OS user when the service-account login cannot
+    // work (spec 141 FR-008)
+    "IAD_EXEC_AS_OS_USER",
+    // the most bytes read from one IRIS response (spec 141 T221)
+    "IAD_MAX_RESPONSE_BYTES",
     "OBJECTSCRIPT_SKILLMCP_NAMESPACE",
     // config discovery
     "OBJECTSCRIPT_WORKSPACE",
@@ -190,10 +397,30 @@ pub const BEHAVIOR_ENV_VARS: &[&str] = &[
     "GITHUB_API_BASE_URL",
     // hints
     "IAD_CODING_PACK",
+    // MCP HTTP transport bearer token, operator-only (spec 141 FR-025)
+    "IAD_HTTP_TOKEN",
+    // local audit log keeps full payloads, operator-only (spec 141 FR-028)
+    "IAD_AUDIT_PAYLOADS",
+    // the IRIS telemetry sink, operator-only (spec 141 R5 C16)
+    "IAD_TELEMETRY_SINK",
+    // compile-time gate switch (spec 141 FR-018)
+    "IAD_COMPILE_TIME_GATE",
+    // strict read-only: the scratch-class tools stay off (spec 141 R5 C15)
+    "IAD_READ_ONLY",
     // eval envelope identity
     "GAUNTLET_RUN_ID",
     "GAUNTLET_TASK_ID",
     "GAUNTLET_CONDITION",
+    // do not use the OS keychain: passwords go to servers.json (owner-only), bound to their endpoint
+    "IAD_NO_KEYCHAIN",
+    // a test run keeps the real keychain: the only way back from `isolate_process`
+    "IAD_TEST_REAL_KEYCHAIN",
+    // debug builds only: reaching keystore initialisation ends the process (spec 141 T187 tests)
+    "IAD_TEST_KEYSTORE_ABORT",
+    // debug builds only: the localhost ports the discovery scan visits (spec 141 FR-024 tests)
+    "IAD_TEST_SCAN_PORTS",
+    // 141 throwaway container image (the helper reads it in the test process, so a child never needs it)
+    "IAD_THROWAWAY_IMAGE",
 ];
 
 /// A `Command` for the binary with every behavior-changing variable removed.
@@ -204,14 +431,70 @@ pub const BEHAVIOR_ENV_VARS: &[&str] = &[
 /// Start from nothing and add back only what the test is about; then the test's meaning is written
 /// down in the test.
 ///
-/// `PATH`, `HOME` and the profiler's `LLVM_PROFILE_FILE` are left alone — the child needs them to
-/// run at all, and `HOME` isolation is a per-test decision.
+/// `HOME` and `USERPROFILE` point at a fresh empty directory, so the developer's operator file
+/// (`~/.iris-agentic-dev.toml`) never reaches the child. `PATH` and the profiler's
+/// `LLVM_PROFILE_FILE` are left alone — the child needs them to run at all. The working directory
+/// is another fresh empty directory, so no project file is found by the walk up from the test's own
+/// cwd; a caller that needs a project directory calls `current_dir` afterwards.
 pub fn clean_command(bin: &Path) -> std::process::Command {
     let mut cmd = std::process::Command::new(bin);
     for var in BEHAVIOR_ENV_VARS {
         cmd.env_remove(var);
     }
+    let home = fresh_home_dir();
+    cmd.env("HOME", &home).env("USERPROFILE", &home);
+    // A spawned server never opens the developer's real keychain; a test that needs a password
+    // stored goes through servers.json, which is what the no-keychain host does.
+    cmd.env("IAD_NO_KEYCHAIN", "1");
+    // A spawn inherits the test's cwd, and the configuration walk goes up from it: a checkout
+    // under another checkout (a worktree) finds the outer `.iris-agentic-dev.toml`, which outranks
+    // `IRIS_*`. A fresh empty directory finds nothing. A test that needs a project directory sets
+    // one with `current_dir` after this.
+    cmd.current_dir(fresh_dir("iad-test-cwd"));
     cmd
+}
+
+/// A new empty directory for one child's `HOME`.
+fn fresh_home_dir() -> PathBuf {
+    fresh_dir("iad-test-home")
+}
+
+/// A new empty directory named `<prefix>-<pid>-<n>-<nanos>` in the temp dir.
+///
+/// Never removed. The `Command` returned by `clean_command` does not own it, and a spawn can
+/// outlive the value that built it, so deleting it on drop would pull `HOME` or the cwd out from
+/// under a running child. Each directory is empty, so the cost is one inode per spawn in the temp
+/// dir.
+fn fresh_dir(prefix: &str) -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let dir = std::env::temp_dir().join(format!("{prefix}-{}-{n}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("must create the child's empty directory");
+    dir
+}
+
+/// `HOME` and `USERPROFILE` set to a new directory whose operator file lets data tools read
+/// (`dataPolicy = "allow"` for the default server and for `_env`, the `IRIS_HOST` connection).
+///
+/// Since spec 141 the bulk-PHI gate answers before a handler reads its arguments, so a live test
+/// that means to observe how a data tool handles its parameters has to take the gate out of the
+/// way. Add these on top of [`live_env`].
+pub fn data_reads_allowed_env() -> Vec<(String, String)> {
+    let home = fresh_home_dir();
+    std::fs::write(
+        home.join(".iris-agentic-dev.toml"),
+        "[policy.default]\ndataPolicy = \"allow\"\n\n[policy._env]\ndataPolicy = \"allow\"\n",
+    )
+    .expect("must write the operator file");
+    let home = home.to_string_lossy().to_string();
+    vec![
+        ("HOME".to_string(), home.clone()),
+        ("USERPROFILE".to_string(), home),
+    ]
 }
 
 /// `clean_command` plus the `mcp` subcommand.
@@ -223,6 +506,208 @@ pub fn clean_mcp_command(bin: &Path) -> std::process::Command {
     let mut cmd = clean_command(bin);
     cmd.arg("mcp");
     cmd
+}
+
+// ── 141 security-hardening: throwaway IRIS container ──────────────────────────
+
+/// The one container the 141 live tests may start. The name and ports are fixed: a test that dies
+/// before its drop leaves the container behind, and the next `start` removes it by this name.
+/// A random name would leave a new orphan on every crash.
+pub const THROWAWAY_IRIS_NAME: &str = "iad-throwaway-141";
+/// Pinned, not `latest`: the local `:latest` (2026.1 build 234) shuts itself down about 10 s after
+/// start, so a test that passes on it passes by luck. `IAD_THROWAWAY_IMAGE` overrides it.
+const THROWAWAY_IRIS_IMAGE: &str = "intersystemsdc/iris-community:2026.2";
+const THROWAWAY_SUPERSERVER_PORT: u16 = 39780;
+const THROWAWAY_WEB_PORT: u16 = 39781;
+
+/// A running throwaway IRIS. Dropping it removes the container, whether the test passed or not.
+///
+/// Credentials are the image default (`_SYSTEM`/`SYS`). The container holds no data worth keeping,
+/// so there is nothing to protect with a generated password.
+pub struct ThrowawayIris {
+    pub host: &'static str,
+    pub superserver_port: u16,
+    pub web_port: u16,
+    pub username: &'static str,
+    pub password: &'static str,
+}
+
+impl ThrowawayIris {
+    /// Start the container and wait until its web gateway answers any HTTP status.
+    ///
+    /// Missing Docker panics, because a live test that cannot reach IRIS has verified nothing.
+    /// `IAD_ALLOW_SKIP=1` returns `None` instead and says why on stderr, as `require_iad_binary`
+    /// does.
+    pub fn start() -> Option<Self> {
+        if !docker_daemon_up() {
+            if std::env::var("IAD_ALLOW_SKIP").is_ok() {
+                eprintln!(
+                    "SKIP (IAD_ALLOW_SKIP set): Docker is not running, no {THROWAWAY_IRIS_NAME}"
+                );
+                return None;
+            }
+            panic!(
+                "Docker is not running, so the throwaway IRIS {THROWAWAY_IRIS_NAME} cannot start.\n\
+                 Start Docker, or opt into skipping deliberately: IAD_ALLOW_SKIP=1"
+            );
+        }
+        // A stale container from a killed run holds the fixed name and ports.
+        remove_throwaway_iris();
+        let image =
+            std::env::var("IAD_THROWAWAY_IMAGE").unwrap_or_else(|_| THROWAWAY_IRIS_IMAGE.into());
+        let run = std::process::Command::new("docker")
+            .args([
+                "run",
+                "-d",
+                "--name",
+                THROWAWAY_IRIS_NAME,
+                "-p",
+                &format!("127.0.0.1:{THROWAWAY_SUPERSERVER_PORT}:1972"),
+                "-p",
+                &format!("127.0.0.1:{THROWAWAY_WEB_PORT}:52773"),
+                &image,
+            ])
+            .output()
+            .expect("must run the docker CLI");
+        assert!(
+            run.status.success(),
+            "docker run {THROWAWAY_IRIS_NAME} failed: {}",
+            String::from_utf8_lossy(&run.stderr).trim()
+        );
+
+        // Owned from here on, so a panic in the wait below still runs `Drop` and removes it.
+        let iris = Self {
+            host: "127.0.0.1",
+            superserver_port: THROWAWAY_SUPERSERVER_PORT,
+            web_port: THROWAWAY_WEB_PORT,
+            username: "_SYSTEM",
+            password: "SYS",
+        };
+        iris.wait_for_web_gateway(std::time::Duration::from_secs(300));
+        iris.clear_password_change();
+        Some(iris)
+    }
+
+    /// Clear `_SYSTEM`'s change-password flag. A fresh image answers every authenticated request
+    /// with 401 until it is cleared, which a 401 from `GET /api/atelier/` cannot tell from a
+    /// gateway that is up. Retried, because `iris session` refuses for a few seconds after the
+    /// gateway starts to answer.
+    fn clear_password_change(&self) {
+        let code = "Set p(\"ChangePassword\")=0\n\
+                    Write \"CLEARED:\",##class(Security.Users).Modify(\"_SYSTEM\",.p),!";
+        for _ in 0..30 {
+            if self.session("%SYS", code).contains("CLEARED:1") {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+        panic!("could not clear the change-password flag on {THROWAWAY_IRIS_NAME}");
+    }
+
+    /// Run ObjectScript in `ns` through `iris session` in the container and return what it
+    /// printed. For test setup and for reading what no HTTP API exposes (`%SYS.Audit`, globals).
+    ///
+    /// The terminal runs each input line on its own, so a loop body split across lines is not a
+    /// loop body: write one `For`/`While` per line.
+    pub fn session(&self, ns: &str, code: &str) -> String {
+        use std::io::Write;
+        let mut child = std::process::Command::new("docker")
+            .args([
+                "exec",
+                "-i",
+                THROWAWAY_IRIS_NAME,
+                "iris",
+                "session",
+                "IRIS",
+                "-U",
+                ns,
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("must run the docker CLI");
+        let _ = child
+            .stdin
+            .take()
+            .expect("piped stdin")
+            .write_all(format!("{code}\nhalt\n").as_bytes());
+        let out = child.wait_with_output().expect("docker exec must finish");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    /// The status line of the answer to `GET /api/atelier/`, or `None` if no HTTP answer comes.
+    ///
+    /// Any status counts. A 401 means the gateway is up and the credentials are not on this
+    /// request, which is all the wait needs.
+    pub fn atelier_status(&self) -> Option<String> {
+        use std::io::{BufRead, BufReader, Write};
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], self.web_port));
+        let mut stream =
+            std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(3)).ok()?;
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .ok()?;
+        stream
+            .write_all(b"GET /api/atelier/ HTTP/1.0\r\nHost: 127.0.0.1\r\n\r\n")
+            .ok()?;
+        let mut line = String::new();
+        BufReader::new(stream).read_line(&mut line).ok()?;
+        // Docker's port proxy accepts the TCP connect before the gateway is up, then closes it
+        // with no answer. That is not a status line.
+        line.starts_with("HTTP/")
+            .then(|| line.trim_end().to_string())
+    }
+
+    fn wait_for_web_gateway(&self, timeout: std::time::Duration) {
+        let deadline = std::time::Instant::now() + timeout;
+        while self.atelier_status().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{THROWAWAY_IRIS_NAME} did not answer GET /api/atelier/ on 127.0.0.1:{} within \
+                 {timeout:?}; check `docker logs {THROWAWAY_IRIS_NAME}`",
+                self.web_port
+            );
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        }
+    }
+}
+
+impl Drop for ThrowawayIris {
+    fn drop(&mut self) {
+        remove_throwaway_iris();
+    }
+}
+
+/// Whether a container named `THROWAWAY_IRIS_NAME` exists, running or stopped.
+pub fn throwaway_iris_present() -> bool {
+    std::process::Command::new("docker")
+        .args([
+            "ps",
+            "-a",
+            "--filter",
+            &format!("name=^{THROWAWAY_IRIS_NAME}$"),
+            "--format",
+            "{{.Names}}",
+        ])
+        .output()
+        .map(|out| String::from_utf8_lossy(&out.stdout).trim() == THROWAWAY_IRIS_NAME)
+        .unwrap_or(false)
+}
+
+fn docker_daemon_up() -> bool {
+    std::process::Command::new("docker")
+        .args(["version", "--format", "{{.Server.Version}}"])
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+/// `docker rm -f` by name. An absent container is not an error here: it is the state we want.
+fn remove_throwaway_iris() {
+    let _ = std::process::Command::new("docker")
+        .args(["rm", "-f", THROWAWAY_IRIS_NAME])
+        .output();
 }
 
 // ── 113 typed-tool-schemas: parameter-contract test support ───────────────────
@@ -428,9 +913,22 @@ pub fn handler_uses_field(tool: &str, field: &str) -> bool {
         regex::escape(field)
     ))
     .expect("field names are plain identifiers");
+    // A typed handler reads the struct field, which is the snake_case of a camelCase wire name
+    // (`acknowledgePhi` is `.acknowledge_phi`).
+    let snake: String = field
+        .chars()
+        .flat_map(|c| {
+            if c.is_ascii_uppercase() {
+                vec!['_', c.to_ascii_lowercase()]
+            } else {
+                vec![c]
+            }
+        })
+        .collect();
     reads_key.is_match(body)
         || body.contains(&format!(".{field}"))
         || body.contains(&format!("{field}:"))
+        || body.contains(&format!(".{snake}"))
 }
 
 /// Split a comma-separated argument or pattern list at top level, ignoring commas nested inside
@@ -874,7 +1372,7 @@ const NOT_A_BRANCH: &[&str] = &[
     // applies, so it compares the parameter against `"kill"` without being its dispatcher. Following
     // it made the gate's two literals the whole advertised set for `iris_global` and
     // `iris_source_control`, both of which gate before they dispatch.
-    "dispatch_gate",
+    "dispatch_gate_for",
     "err_json",
     "err_result",
     "expect",
@@ -1333,6 +1831,39 @@ impl McpSession {
         self.read_answer(id, tool)
     }
 
+    /// The names `tools/list` advertises, every page.
+    pub fn list_tools(&mut self) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            self.next_id += 1;
+            let id = self.next_id;
+            let params = match &cursor {
+                Some(c) => serde_json::json!({"cursor": c}),
+                None => serde_json::json!({}),
+            };
+            {
+                let stdin = self.child.stdin.as_mut().expect("piped stdin");
+                let req = serde_json::json!({
+                    "jsonrpc": "2.0", "id": id, "method": "tools/list", "params": params
+                });
+                writeln!(stdin, "{req}").expect("must write tools/list");
+            }
+            let answer = self.read_answer(id, "tools/list");
+            names.extend(
+                answer["result"]["tools"]
+                    .as_array()
+                    .expect("tools/list returns a tools array")
+                    .iter()
+                    .filter_map(|t| t["name"].as_str().map(str::to_string)),
+            );
+            cursor = answer["result"]["nextCursor"].as_str().map(str::to_string);
+            if cursor.is_none() {
+                return names;
+            }
+        }
+    }
+
     fn read_answer(&mut self, id: u64, what: &str) -> serde_json::Value {
         let mut line = String::new();
         loop {
@@ -1413,10 +1944,13 @@ pub fn live_env() -> Vec<(String, String)> {
 /// publishes `IRIS_WEB_PORT`. Tests earlier in an aggregated binary change the process
 /// environment, and in the full CI order one test found `IRIS_CONTAINER` gone.
 pub fn live_container() -> String {
-    if let Some(c) = crate::iris::connection::container_from_env() {
-        return c;
-    }
-    let port = std::env::var("IRIS_WEB_PORT").unwrap_or_else(|_| "52780".into());
+    let target = LiveTarget::from_env();
+    target.assert_running();
+    target.container
+}
+
+/// The container that publishes host port `port`, if any.
+fn container_publishing(port: &str) -> Option<String> {
     let out = std::process::Command::new("docker")
         .args([
             "ps",
@@ -1426,13 +1960,110 @@ pub fn live_container() -> String {
             "{{.Names}}",
         ])
         .output()
-        .expect("docker ps");
+        .ok()?;
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .next()
         .map(str::to_string)
         .filter(|c| !c.is_empty())
-        .unwrap_or_else(|| panic!("no IRIS_CONTAINER and no container publishes port {port}"))
+}
+
+/// The one IRIS server a live test talks to, for the `docker exec` setup and the HTTP calls alike.
+///
+/// A live test that builds its fixture with `docker exec` into one container and then calls a tool
+/// over HTTP at the server `IRIS_HOST` names tests nothing when the two are different instances:
+/// the fixture is not where the call looks. Both legs read this struct, which is the launch
+/// environment the CI e2e job sets and the local default (`iris-dev-iris` on web port 52780):
+///
+/// - `IRIS_CONTAINER`, else the container publishing `IRIS_WEB_PORT`, else `iris-dev-iris`;
+/// - `IRIS_HOST` (`localhost`), `IRIS_WEB_PORT` (`52780`), `IRIS_USERNAME` (`_SYSTEM`),
+///   `IRIS_PASSWORD` (`SYS`), `IRIS_NAMESPACE` (`USER`).
+///
+/// Read at call time: an `EnvGuard` in an earlier test has been restored by the time a later one
+/// builds its target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LiveTarget {
+    pub container: String,
+    pub host: String,
+    pub web_port: u16,
+    pub username: String,
+    pub password: String,
+    pub namespace: String,
+}
+
+impl LiveTarget {
+    pub fn from_env() -> Self {
+        let var = |k: &str, default: &str| {
+            std::env::var(k)
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| default.to_string())
+        };
+        let port_text = var("IRIS_WEB_PORT", "52780");
+        let web_port = port_text
+            .parse::<u16>()
+            .unwrap_or_else(|_| panic!("IRIS_WEB_PORT is not a port: {port_text:?}"));
+        let container = crate::iris::connection::container_from_env()
+            .or_else(|| container_publishing(&port_text))
+            .unwrap_or_else(|| "iris-dev-iris".to_string());
+        Self {
+            container,
+            host: var("IRIS_HOST", "localhost"),
+            web_port,
+            username: var("IRIS_USERNAME", "_SYSTEM"),
+            password: var("IRIS_PASSWORD", "SYS"),
+            namespace: var("IRIS_NAMESPACE", "USER"),
+        }
+    }
+
+    /// `http://host:port`, no trailing slash.
+    pub fn base_url(&self) -> String {
+        format!("http://{}:{}", self.host, self.web_port)
+    }
+
+    /// Panics unless the container is up. A live test against no server has verified nothing.
+    pub fn assert_running(&self) {
+        let up = std::process::Command::new("docker")
+            .args(["inspect", "-f", "{{.State.Running}}", &self.container])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim() == "true")
+            .unwrap_or(false);
+        assert!(
+            up,
+            "the live container {} is not running (set IRIS_CONTAINER to the one that serves \
+             IRIS_HOST:IRIS_WEB_PORT)",
+            self.container
+        );
+    }
+
+    /// Run ObjectScript in `ns` through `iris session` in the container, the way a terminal would,
+    /// and return what it printed. The terminal runs each input line on its own.
+    pub fn session(&self, ns: &str, code: &str) -> String {
+        use std::io::Write;
+        let mut child = std::process::Command::new("docker")
+            .args([
+                "exec",
+                "-i",
+                &self.container,
+                "iris",
+                "session",
+                "IRIS",
+                "-U",
+                ns,
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("must run the docker CLI");
+        let _ = child
+            .stdin
+            .take()
+            .expect("piped stdin")
+            .write_all(format!("{code}\nhalt\n").as_bytes());
+        let out = child.wait_with_output().expect("docker exec must finish");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
 }
 
 // ── 132 aihub-139: the licensed 2026.3.0AI.139 instance ──────────────────────
@@ -1700,19 +2331,56 @@ fn assert_advertised_type(tool: &str, name: &str, expected_type: &str, prop: &se
     );
 }
 
+/// Parameters the per-call gate pipeline reads on the handler's behalf.
+///
+/// `server` is read by `dispatch_gated`, which resolves the target before the handler runs, so a
+/// handler that takes its connection from `target_conn()` never names it.
+pub const PIPELINE_READ_PARAMS: &[&str] = &["confirm", "server"];
+
+/// Everything the pipeline reads for `tool`: [`PIPELINE_READ_PARAMS`] and the argument or arguments
+/// its classification row takes the target server from. A handler reaches the target through the
+/// accessors and never names them.
+pub fn pipeline_read_params(tool: &str) -> Vec<&'static str> {
+    use crate::tools::write_gate::{TargetSource, CLASSIFICATION};
+    let mut out: Vec<&'static str> = PIPELINE_READ_PARAMS.to_vec();
+    if let Some(row) = CLASSIFICATION.iter().find(|r| r.tool == tool) {
+        match row.target {
+            TargetSource::Arg(a) | TargetSource::ArgOrPending(a) | TargetSource::Name(a) => {
+                out.push(a)
+            }
+            TargetSource::Args(list) => out.extend(list.iter().copied()),
+            TargetSource::Session | TargetSource::Default => {}
+        }
+    }
+    out
+}
+
 /// Assert, by scanning the handler source, that each contract matches what the handlers read.
 ///
 /// The other half of FR-003 and the half that needs no binary: a parameter declared but never read
 /// is the `max_chars` bug, and it passes every schema assertion there is.
 pub fn assert_source_contracts(contracts: &[ParamContract]) {
     for contract in contracts {
+        // The per-call gate pipeline reads these for every write and destructive tool (spec 141:
+        // the role gate's acknowledgement), so a handler that never names them still honours them.
+        let mut reads = read_keys(contract.tool);
+        let by_pipeline = pipeline_read_params(contract.tool);
+        for key in &by_pipeline {
+            if contract.params.iter().any(|(name, _)| name == key) {
+                reads.insert((*key).to_string());
+            }
+        }
         assert_eq!(
-            read_keys(contract.tool),
+            reads,
             contract.names(),
             "`{}`'s handler reads a different parameter set than its contract states (FR-003)",
             contract.tool
         );
-        for (name, _) in contract.params {
+        for (name, _) in contract
+            .params
+            .iter()
+            .filter(|(name, _)| !by_pipeline.contains(name))
+        {
             assert!(
                 handler_uses_field(contract.tool, name),
                 "`{}` declares `{name}` but its handler body never reads it — that is the \
@@ -1921,5 +2589,67 @@ Write "OK|"_tHdrs_"|"_tLogs_"|"_tSession,!"#,
         session_id,
         messages,
         log_entries,
+    }
+}
+
+// ─── gate checks without a pipeline ─────────────────────────────────────────
+
+/// The three policy gates called on their own, for unit tests that pin one gate's decision.
+///
+/// The server runs these through `dispatch_gated`, which resolves the policy and the categories
+/// once. A test that has only a policy and a params object resolves the categories the same way
+/// the pipeline does and calls the `*_for` function the pipeline calls.
+pub mod gated {
+    use crate::iris::workspace_config::{ConnectionPolicy, McpTemplate, ToolCategory};
+    use crate::policy::gate::GateResult;
+    use crate::tools::write_gate::{classify, effective_category, WriteClass};
+
+    fn categories(tool: &str, params: Option<&serde_json::Value>) -> Vec<ToolCategory> {
+        let args = params.and_then(|p| p.as_object());
+        let class = classify(tool, args).unwrap_or(WriteClass::Write);
+        effective_category(tool, args, class)
+    }
+
+    /// `dispatch_gate_for` with the policy defaulted when absent: no policy is not the same as no
+    /// policy wanted, so the strict field defaults apply.
+    pub fn dispatch(
+        tool: &str,
+        server: &str,
+        policy: Option<&ConnectionPolicy>,
+        params: &serde_json::Value,
+    ) -> GateResult {
+        let default_policy = ConnectionPolicy::default();
+        crate::policy::gate::dispatch_gate_for(
+            tool,
+            server,
+            policy.unwrap_or(&default_policy),
+            &categories(tool, Some(params)),
+            params,
+        )
+    }
+
+    /// `check_env_gate_for` over the categories `params` raises.
+    pub fn env(
+        tool: &str,
+        template: &McpTemplate,
+        server: &str,
+        params: &serde_json::Value,
+    ) -> Option<serde_json::Value> {
+        crate::policy::env_gate::check_env_gate_for(
+            tool,
+            template,
+            server,
+            &categories(tool, Some(params)),
+        )
+    }
+
+    /// `policy_gate_for` over the tool's own categories (no arguments, so no action raises one);
+    /// `None` policy means nothing to enforce.
+    pub fn policy(
+        tool: &str,
+        server: &str,
+        policy: Option<&ConnectionPolicy>,
+    ) -> Option<serde_json::Value> {
+        crate::iris::server_manager::policy_gate_for(tool, server, policy?, &categories(tool, None))
     }
 }

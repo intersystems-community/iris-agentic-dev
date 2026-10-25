@@ -92,9 +92,9 @@ pub async fn handle_resolve_dynamic_dispatch(
             return crate::tools::err_result(e);
         }
     }
-    // Both are validated names with no quote in them; doubling is a second guard.
-    let method_esc = p.method_name.replace('"', "\"\"");
-    let prefix_esc = prefix.replace('"', "\"\"");
+    // Both are validated names with no quote in them; os_str_expr is a second guard.
+    let method_expr = crate::objectscript::os_str_expr(&p.method_name);
+    let prefix_expr = crate::objectscript::os_str_expr(prefix);
 
     let mut sql = "SELECT m.parent, m.Origin, m.FormalSpec FROM %Dictionary.CompiledMethod m WHERE m.Name = ? AND m.Origin = m.parent".to_string();
     if has_prefix {
@@ -104,16 +104,17 @@ pub async fn handle_resolve_dynamic_dispatch(
         " ORDER BY m.parent FETCH FIRST {} ROWS ONLY",
         limit
     ));
-    let mut lines = vec![format!(r#"Set sql="{}""#, sql)];
+    let mut lines = vec![format!(
+        "Set sql={}",
+        crate::objectscript::os_str_expr(&sql)
+    )];
     if has_prefix {
         lines.push(format!(
-            r#"Set rs=##class(%SQL.Statement).%ExecDirect(,sql,"{}","{}")"#,
-            method_esc, prefix_esc
+            "Set rs=##class(%SQL.Statement).%ExecDirect(,sql,{method_expr},{prefix_expr})"
         ));
     } else {
         lines.push(format!(
-            r#"Set rs=##class(%SQL.Statement).%ExecDirect(,sql,"{}")"#,
-            method_esc
+            "Set rs=##class(%SQL.Statement).%ExecDirect(,sql,{method_expr})"
         ));
     }
     lines.push(r#"If rs.%SQLCODE<0 { Write "ERROR:"_rs.%Message,! Quit }"#.into());
@@ -304,14 +305,7 @@ async fn detect_bpl_dtl_routing(
 
     let xdata_block = if is_bpl { "BPL" } else { "DTL" };
     let ext = if is_bpl { "bpl" } else { "dtl" };
-    let export_item = format!("{}.{}", crate::objectscript::os_lit_inner(class_name), ext);
-    let export_code = format!(
-        "Set stream = ##class(%Stream.GlobalCharacter).%New() \
-         Do $system.OBJ.ExportToStream(\"{}\",stream,,\"c\") \
-         Do stream.Rewind() \
-         Write stream.Read(1000000)",
-        export_item
-    );
+    let export_code = crate::objectscript::export_class_xml_code(class_name, ext);
     let class_xml = iris
         .execute_via_generator(&export_code, namespace, client)
         .await
@@ -319,7 +313,10 @@ async fn detect_bpl_dtl_routing(
     let xdata_content = xdata_flow::extract_xdata_content(&class_xml, xdata_block)?;
 
     if is_bpl {
-        let flow = xdata_flow::parse_bpl(&xdata_content).ok()?;
+        let flow = match xdata_flow::parse_bpl(&xdata_content) {
+            Ok(flow) => flow,
+            Err(e) => return xdata_flow::bpl_refusal(&e),
+        };
         let routes: Vec<serde_json::Value> = flow
             .steps
             .iter()
@@ -384,11 +381,6 @@ pub struct FindSubclassImplementationsParams {
     pub server: Option<String>,
 }
 
-/// Escape a value for embedding in an ObjectScript string literal (`"` doubles).
-fn cos_str(s: &str) -> String {
-    s.replace('"', "\"\"")
-}
-
 /// One generator call that expands the hierarchy and reports the implementations.
 ///
 /// The previous version issued one `SELECT ... WHERE Super LIKE '%base%'` per class discovered,
@@ -403,7 +395,7 @@ fn cos_str(s: &str) -> String {
 fn build_find_impls_code(base_classes: &[String], method_name: &str, limit: usize) -> String {
     let mut lines: Vec<String> = base_classes
         .iter()
-        .map(|c| format!(r#"Set bases("{}")="""#, cos_str(c)))
+        .map(|c| format!("Set bases({})=\"\"", crate::objectscript::os_str_expr(c)))
         .collect();
     lines.extend([
         "Set ok=1".to_string(),
@@ -422,8 +414,8 @@ fn build_find_impls_code(base_classes: &[String], method_name: &str, limit: usiz
         r#"    Set tKid="" For { Set tKid=$ORDER(kids(tCur,tKid)) Quit:tKid=""  If '$DATA(family(tKid)) { Set family(tKid)="",todo(tKid)="" } }"#.to_string(),
         "  }".to_string(),
         format!(
-            r#"  Set rsm=##class(%SQL.Statement).%ExecDirect(,"SELECT parent,FormalSpec FROM %Dictionary.CompiledMethod WHERE Name = ? AND Origin = parent ORDER BY parent","{}")"#,
-            cos_str(method_name)
+            r#"  Set rsm=##class(%SQL.Statement).%ExecDirect(,"SELECT parent,FormalSpec FROM %Dictionary.CompiledMethod WHERE Name = ? AND Origin = parent ORDER BY parent",{})"#,
+            crate::objectscript::os_str_expr(method_name)
         ),
         r#"  If rsm.%SQLCODE<0 { Write "ERROR: method scan: "_rsm.%Message,! Set ok=0 }"#.to_string(),
         "  If ok {".to_string(),
@@ -729,6 +721,22 @@ mod tests {
         assert!(code.contains(r#"Set bases("My""Base")="""#), "{code}");
         assert!(code.contains(r#""My""Method""#), "{code}");
         assert!(!code.contains("\\\""), "no backslash escaping: {code}");
+    }
+
+    #[test]
+    fn test_find_impls_code_keeps_a_hostile_name_on_one_line() {
+        // `base_classes` and `method_name` come straight from the agent. A newline must not start a
+        // source line of the generated method, and a quote must not close the literal.
+        let hostile = "A\"\nKill ^IadSentinel141\nSet x=\"";
+        let benign = build_find_impls_code(&["A".to_string()], "OnRequest", 3);
+        let code = build_find_impls_code(&[hostile.to_string()], hostile, 3);
+        assert_eq!(code.lines().count(), benign.lines().count(), "{code}");
+        assert!(
+            code.lines()
+                .all(|l| !l.trim_start().starts_with("Kill ^Iad")),
+            "{code}"
+        );
+        assert!(code.contains("$CHAR(10)"), "{code}");
     }
 
     // ── ok_json / err_json output shape ──────────────────────────────────────

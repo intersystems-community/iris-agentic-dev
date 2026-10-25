@@ -18,6 +18,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IrisSystemPerformanceParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     /// `start` (begin a profile run), `status` (poll one), `last_runid` (the most recent),
     /// `list_profiles`, `add_profile`, `delete_profile`, `list_runs` (completed runs, newest
     /// first), or `report` (locate the HTML a completed run wrote).
@@ -65,10 +69,9 @@ pub struct IrisMirrorStatusParams {
 
 /// Parameters of `journal_search`.
 ///
-/// `start`, `end` and `global_pattern` are declared as the handler reads them, which is all this
-/// feature changes. They do not currently filter: the generated scan compares timestamps with
-/// ObjectScript's numeric `<`, and it skips records with `Continue`, which never advances the
-/// cursor. See `specs/113-typed-tool-schemas/parameter-audit.md`.
+/// `start`, `end` and `global_pattern` filter a bounded walk over the current journal file
+/// (`observability::journal_entries_impl`): at most 200,000 records and 20 seconds, then the
+/// answer says `truncated`.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JournalSearchParams {

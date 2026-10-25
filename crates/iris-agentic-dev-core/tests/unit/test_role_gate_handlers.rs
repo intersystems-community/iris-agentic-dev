@@ -4,10 +4,11 @@
 //
 // Strategy: construct IrisTools with no IRIS connection, patch config_file to point at a
 // temp dir containing a fleet .iris-agentic-dev.toml that declares a subject instance,
-// then call instance_role() directly (white-box). The actual handler integration is
+// then resolve the role with `target::resolve_role` (white-box). The actual handler integration is
 // validated by checking compile(), execute(), etc. return role_gate JSON when disconnected.
 
 use iris_agentic_dev_core::iris::workspace_config::ConnectionRole;
+use iris_agentic_dev_core::tools::target::resolve_role;
 use iris_agentic_dev_core::tools::IrisTools;
 use std::io::Write;
 
@@ -17,9 +18,20 @@ fn write_fleet_toml(dir: &tempfile::TempDir, contents: &str) {
     f.write_all(contents.as_bytes()).unwrap();
 }
 
+/// The role and `[instance.*]` key `resolve_role` gives the active connection, in the namespace
+/// that connection is in.
+fn role_of(tools: &IrisTools) -> (ConnectionRole, String) {
+    let conn = tools.connection.lock().unwrap().iris.clone();
+    let namespace = conn
+        .as_ref()
+        .map(|c| c.namespace.clone())
+        .unwrap_or_default();
+    resolve_role(&tools.snapshot(), conn.as_deref(), &namespace)
+}
+
 /// Build an IrisTools instance pointing at a fleet config in `dir`.
 /// The config_file on ConnectionState is set to `dir/.iris-agentic-dev.toml`
-/// so instance_role() picks it up.
+/// so the snapshot picks it up.
 fn make_tools_with_fleet(dir: &tempfile::TempDir) -> IrisTools {
     let tools = IrisTools::new(None).expect("IrisTools::new");
     {
@@ -29,15 +41,15 @@ fn make_tools_with_fleet(dir: &tempfile::TempDir) -> IrisTools {
     tools
 }
 
-// ── instance_role() unit tests (white-box) ────────────────────────────────────
+// ── resolve_role unit tests (white-box) ────────────────────────────────────
 
 #[test]
 fn test_instance_role_no_fleet_config_returns_workspace() {
     let dir = tempfile::TempDir::new().unwrap();
     // No .iris-agentic-dev.toml at all
     let tools = make_tools_with_fleet(&dir);
-    let (role, name) = tools.instance_role();
-    assert_eq!(role, ConnectionRole::Workspace, "no config → Workspace");
+    let (role, name) = role_of(&tools);
+    assert_eq!(role, ConnectionRole::Workbench, "no config → Workspace");
     assert!(name.is_empty());
 }
 
@@ -46,10 +58,10 @@ fn test_instance_role_develop_mode_returns_workspace() {
     let dir = tempfile::TempDir::new().unwrap();
     write_fleet_toml(&dir, "container = \"myapp-iris\"\n");
     let tools = make_tools_with_fleet(&dir);
-    let (role, _) = tools.instance_role();
+    let (role, _) = role_of(&tools);
     assert_eq!(
         role,
-        ConnectionRole::Workspace,
+        ConnectionRole::Workbench,
         "develop mode must always return Workspace"
     );
 }
@@ -68,10 +80,10 @@ role = "subject"
     );
     // No active IrisConnection → no match → default Workspace
     let tools = make_tools_with_fleet(&dir);
-    let (role, _) = tools.instance_role();
+    let (role, _) = role_of(&tools);
     assert_eq!(
         role,
-        ConnectionRole::Workspace,
+        ConnectionRole::Workbench,
         "no matching connection → Workspace"
     );
 }
@@ -111,7 +123,7 @@ role = "subject"
         )));
     }
 
-    let (role, name) = tools.instance_role();
+    let (role, name) = role_of(&tools);
     assert_eq!(role, ConnectionRole::Subject, "prod-iris → Subject");
     assert_eq!(name, "prod", "instance name should be 'prod'");
 }
@@ -150,10 +162,10 @@ role = "subject"
         )));
     }
 
-    let (role, name) = tools.instance_role();
+    let (role, name) = role_of(&tools);
     assert_eq!(
         role,
-        ConnectionRole::Workspace,
+        ConnectionRole::Workbench,
         "myapp-iris is a Workspace instance"
     );
     assert_eq!(name, "local");
@@ -188,7 +200,7 @@ role = "subject"
         )));
     }
 
-    let (role, name) = tools.instance_role();
+    let (role, name) = role_of(&tools);
     assert_eq!(role, ConnectionRole::Subject, "host match → Subject");
     assert_eq!(name, "remote");
 }
@@ -226,10 +238,10 @@ role = "subject"
         )));
     }
 
-    let (role, _) = tools.instance_role();
+    let (role, _) = role_of(&tools);
     assert_eq!(
         role,
-        ConnectionRole::Workspace,
+        ConnectionRole::Workbench,
         "'my-iris-dev' must not match fleet host 'iris' — substring match is too broad"
     );
 }
@@ -268,7 +280,7 @@ role = "subject"
         )));
     }
 
-    let (role, name) = tools.instance_role();
+    let (role, name) = role_of(&tools);
     assert_eq!(role, ConnectionRole::Subject, "preprod → Subject");
     assert_eq!(
         name, "preprod",
@@ -282,8 +294,8 @@ role = "subject"
 
 #[test]
 fn test_policy_gate_fires_before_role_gate() {
-    use iris_agentic_dev_core::iris::server_manager::policy_gate;
     use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, ToolCategory};
+    use iris_agentic_dev_core::testing::gated;
 
     // Set up a policy that only allows "query" — blocks "compile"
     let policy = ConnectionPolicy {
@@ -297,7 +309,7 @@ fn test_policy_gate_fires_before_role_gate() {
     };
 
     // Policy gate on "iris_compile" should fire
-    let gate = policy_gate("iris_compile", "prod-server", Some(&policy));
+    let gate = gated::policy("iris_compile", "prod-server", Some(&policy));
     assert!(gate.is_some(), "policy gate must fire for blocked category");
     let gate_json = gate.unwrap();
     assert_eq!(gate_json["error_code"], "POLICY_GATE");
@@ -317,7 +329,7 @@ fn test_policy_gate_fires_before_role_gate() {
     );
 
     // Allowed category passes policy gate (role gate is then the only barrier)
-    let pass = policy_gate("iris_query", "prod-server", Some(&policy));
+    let pass = gated::policy("iris_query", "prod-server", Some(&policy));
     assert!(
         pass.is_none(),
         "query is allowed by policy — gate returns None"
@@ -357,10 +369,10 @@ fn test_develop_mode_flat_config_no_gate() {
         "container = \"loanapp-iris\"\nnamespace = \"LOANAPP\"\n",
     );
     let tools = make_tools_with_fleet(&dir);
-    let (role, _) = tools.instance_role();
+    let (role, _) = role_of(&tools);
     assert_eq!(
         role,
-        ConnectionRole::Workspace,
+        ConnectionRole::Workbench,
         "flat develop config must not gate anything"
     );
 }
@@ -406,10 +418,10 @@ role = "subject"
         )));
     }
 
-    let (role, name) = tools.instance_role();
+    let (role, name) = role_of(&tools);
     assert_eq!(
         role,
-        ConnectionRole::Workspace,
+        ConnectionRole::Workbench,
         "active namespace CHANNELS should match dev (workspace), not prod (subject)"
     );
     assert_eq!(name, "dev");
@@ -452,7 +464,7 @@ role = "subject"
         )));
     }
 
-    let (role, name) = tools.instance_role();
+    let (role, name) = role_of(&tools);
     assert_eq!(
         role,
         ConnectionRole::Subject,
@@ -491,7 +503,7 @@ role = "subject"
         )));
     }
 
-    let (role, name) = tools.instance_role();
+    let (role, name) = role_of(&tools);
     assert_eq!(
         role,
         ConnectionRole::Subject,
@@ -538,10 +550,10 @@ role = "subject"
         )));
     }
 
-    let (role, name) = tools.instance_role();
+    let (role, name) = role_of(&tools);
     assert_eq!(
         role,
-        ConnectionRole::Workspace,
+        ConnectionRole::Workbench,
         "namespace comparison must be case-insensitive"
     );
     assert_eq!(name, "dev");

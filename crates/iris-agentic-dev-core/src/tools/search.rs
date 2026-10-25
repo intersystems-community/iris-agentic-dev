@@ -1,6 +1,6 @@
 //! iris_search — full-text search via Atelier REST v2 with sync→async fallback.
 
-use crate::iris::connection::{iris_http_client, IrisConnection};
+use crate::iris::connection::IrisConnection;
 use crate::tools::log_store;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -160,22 +160,20 @@ pub async fn handle_iris_search(
         .and_then(|v| v.parse::<u64>().ok())
         .filter(|&v| v > 0)
         .unwrap_or(30);
-    let sync_client = iris_http_client(
-        Some(std::time::Duration::from_secs(sync_timeout_secs)),
-        true,
-        false,
-    )
-    .unwrap_or_else(|_| client.clone());
+    let sync_client = iris
+        .client(crate::iris::http::ClientKind::Search)
+        .unwrap_or_else(|_| client.clone());
 
     let sync_result = sync_client
         .get(&sync_url)
+        .timeout(std::time::Duration::from_secs(sync_timeout_secs))
         .basic_auth(&iris.username, Some(&iris.password))
         .send()
         .await;
 
     match sync_result {
         Ok(resp) if resp.status().is_success() => {
-            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
             // If we got a workId, it's async — fall through to polling
             if body["result"]["workId"].is_null() {
                 return parse_search_results(body, shape, &log_store);
@@ -206,7 +204,7 @@ pub async fn handle_iris_search(
                     rmcp::ErrorData::internal_error(format!("Search request failed: {e}"), None)
                 })?;
 
-            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
             if let Some(work_id) = body["result"]["workId"].as_str() {
                 poll_async_search(iris, client, work_id, namespace, shape, &log_store).await
             } else {
@@ -250,7 +248,7 @@ async fn poll_async_search(
 
         match resp {
             Ok(r) if r.status().is_success() => {
-                let body: serde_json::Value = r.json().await.unwrap_or_default();
+                let body: serde_json::Value = crate::iris::http::json_or_default(r).await;
                 if body["result"]["workId"].is_null() {
                     return parse_search_results(body, shape, log_store);
                 }

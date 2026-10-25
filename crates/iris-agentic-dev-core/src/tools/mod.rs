@@ -21,7 +21,13 @@ pub(crate) fn add_source_hint(resp: &mut serde_json::Value, source: Option<&str>
 
 /// Remediation hint appended to DOCKER_REQUIRED error strings.
 /// Guides native IRIS users (no Docker) toward the HTTP/Atelier REST path.
-const DOCKER_REQUIRED_HINT: &str = " Ensure HTTP/Atelier REST is reachable: verify \
+/// The value of an environment variable, or the empty string. For fields a response repeats from the
+/// operator's environment.
+fn non_blank_env_value(name: &str) -> String {
+    std::env::var(name).unwrap_or_default()
+}
+
+pub(crate) const DOCKER_REQUIRED_HINT: &str = " Ensure HTTP/Atelier REST is reachable: verify \
     http://<host>:<port>/api/atelier and set host/web_port in .iris-agentic-dev.toml.";
 
 /// `CARGO_PKG_VERSION` plus a `+<git-describe>` build-metadata suffix (see
@@ -95,9 +101,11 @@ pub mod dict;
 pub mod doc;
 pub mod doc_search;
 pub mod error_hints;
+pub mod exec;
 pub mod execute_session;
-pub mod gate_macro;
+pub mod generate_class;
 pub mod global;
+pub mod host_fs;
 pub mod info;
 pub mod interop;
 pub mod log_store;
@@ -111,14 +119,16 @@ pub mod search;
 pub mod server_tools;
 pub mod skills_tools;
 pub mod storage_guard;
+pub mod stored_check;
+pub mod superclass_check;
 pub mod symbols_local;
+pub mod target;
 pub mod write_gate;
 pub mod ws_tools;
 pub mod xdata_flow;
 
 pub use doc::{DocMode, IrisDocParams};
 pub use scm::{ScmAction, ScmParams};
-// tool_gate is a macro_export, no need to re-export it here
 
 /// Controls which tools are registered at startup.
 /// Read from `IRIS_TOOLSET` env var or `--toolset` CLI flag.
@@ -284,6 +294,9 @@ pub struct ConnectionState {
     pub iris: Option<Arc<IrisConnection>>,
     pub source: ConnectionSource,
     pub config_file: Option<std::path::PathBuf>,
+    /// A configuration file that was read and names neither a host nor a container. It chose no
+    /// connection, so it is not `config_file`; `check_config` says so (T194).
+    pub config_file_no_target: Option<std::path::PathBuf>,
     pub loaded_at: std::time::SystemTime,
     /// Both gates plus the input that decided each, resolved once by the caller (085 FR-012).
     /// Replaced wholesale on reload — never mutated in place, which is what makes a config edit
@@ -304,6 +317,7 @@ impl ConnectionState {
             iris: None,
             source,
             config_file: None,
+            config_file_no_target: None,
             loaded_at: std::time::SystemTime::now(),
             gates,
             declared: write_gate::DeclaredGates::default(),
@@ -321,11 +335,18 @@ impl ConnectionState {
             iris: Some(Arc::new(iris)),
             source,
             config_file,
+            config_file_no_target: None,
             loaded_at: std::time::SystemTime::now(),
             gates,
             declared: write_gate::DeclaredGates::default(),
             config_parse_error: None,
         }
+    }
+
+    /// Record the file that was read and chose nothing (T194).
+    pub fn with_no_target_file(mut self, file: Option<std::path::PathBuf>) -> Self {
+        self.config_file_no_target = file;
+        self
     }
 
     /// Attach the config-file declaration to a state built by either constructor.
@@ -335,32 +356,82 @@ impl ConnectionState {
     }
 }
 
+/// Tools that do not talk to IRIS, or exist to repair the connection, so they still answer when the
+/// configuration is broken.
+const CONFIG_TOLERANT_TOOLS: &[&str] = &[
+    "check_config",
+    "skill",
+    "skill_list",
+    "skill_search",
+    "skill_describe",
+    "skill_community",
+    "skill_community_list",
+    "skill_forget",
+    "kb",
+    "kb_index",
+    "kb_recall",
+    "iris_doc_search",
+    "iris_symbols_local",
+    "iris_servers",
+    "iris_add_server",
+    "iris_remove_server",
+    "iris_reload_pool",
+    "iris_import_servers",
+];
+
+/// The snapshot every config question is answered from, with the inputs that rebuild it.
+#[derive(Default)]
+struct ConfigHolder {
+    snapshot: Option<Arc<crate::iris::config_sources::ConfigSnapshot>>,
+    inputs: Option<crate::iris::config_sources::LoadInputs>,
+    /// Held edits already announced on stderr, so each setting is said once (FR-043).
+    held_announced: std::collections::BTreeSet<String>,
+}
+
 /// Tracks the `.iris-agentic-dev.toml` path and last-seen mtime for lazy hot-reload.
 /// Always created (even when the file does not yet exist) so we detect new files appearing.
+///
+/// It also watches the operator file, which holds the trust entries: an edit there can make a
+/// workspace file trusted, or end that trust, without the workspace file changing. The path it
+/// reports to the agent (`config_path`) is never the operator file.
 pub struct ConfigWatcher {
+    /// The workspace-layer file, or an empty path when there is none to watch.
     pub config_path: std::path::PathBuf,
     /// None when the file did not exist at last check.
     pub last_mtime: Option<std::time::SystemTime>,
+    operator_path: Option<std::path::PathBuf>,
+    operator_mtime: Option<std::time::SystemTime>,
+}
+
+fn mtime_of(p: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(p).and_then(|m| m.modified()).ok()
 }
 
 impl ConfigWatcher {
     /// Always returns Some — watcher is active even before the file exists.
     pub fn new(config_path: std::path::PathBuf) -> Option<Self> {
-        let last_mtime = std::fs::metadata(&config_path)
-            .and_then(|m| m.modified())
-            .ok();
+        let last_mtime = mtime_of(&config_path);
         Some(Self {
             config_path,
             last_mtime,
+            operator_path: None,
+            operator_mtime: None,
         })
+    }
+
+    /// A watcher for what a snapshot loaded: its workspace-layer path (or none) and the operator
+    /// file.
+    pub fn for_snapshot(snap: &crate::iris::config_sources::ConfigSnapshot) -> Option<Self> {
+        let mut w = Self::new(snap.config_watch_path().unwrap_or_default())?;
+        w.operator_mtime = snap.operator_path.as_deref().and_then(mtime_of);
+        w.operator_path = snap.operator_path.clone();
+        Some(w)
     }
 
     /// Returns true (and updates stored mtime) if the file has been created, modified,
     /// or has appeared for the first time since last check.
     pub fn has_changed(&mut self) -> bool {
-        let current_mtime = std::fs::metadata(&self.config_path)
-            .and_then(|m| m.modified())
-            .ok();
+        let current_mtime = mtime_of(&self.config_path);
         match (self.last_mtime, current_mtime) {
             // File newly appeared
             (None, Some(mtime)) => {
@@ -379,6 +450,22 @@ impl ConfigWatcher {
             }
             _ => false,
         }
+    }
+
+    /// The same for the operator file; a deletion counts as a change, because the trust entries
+    /// went with it.
+    pub fn operator_changed(&mut self) -> bool {
+        let Some(path) = &self.operator_path else {
+            return false;
+        };
+        let current = mtime_of(path);
+        let changed = match (self.operator_mtime, current) {
+            (None, None) => false,
+            (Some(old), Some(new)) => new > old,
+            _ => true,
+        };
+        self.operator_mtime = current;
+        changed
     }
 }
 
@@ -636,9 +723,9 @@ fn translate_dml(sql: &str, rs_var: &str, sqlcode_var: &str) -> String {
         format!(", {}", params.join(", "))
     };
     format!(
-        "set {} = ##class(%SQL.Statement).%ExecDirect(, \"{}\"{}), {} = {}.%SQLCODE{}, %ROWCOUNT = {}.%ROWCOUNT",
+        "set {} = ##class(%SQL.Statement).%ExecDirect(, {}{}), {} = {}.%SQLCODE{}, %ROWCOUNT = {}.%ROWCOUNT",
         rs_var,
-        prepared_sql.replace('"', "\"\""),
+        crate::objectscript::os_str_expr(&prepared_sql),
         exec_args,
         sqlcode_var,
         rs_var,
@@ -861,6 +948,10 @@ pub struct CompileParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TestParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     pub pattern: String,
     /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
     #[serde(default)]
@@ -927,6 +1018,10 @@ pub struct DebugMapParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GenerateClassParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     pub description: String,
     #[serde(default)]
     pub overwrite: bool,
@@ -940,6 +1035,10 @@ pub struct GenerateClassParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GenerateTestParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     pub class_name: String,
     /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
     #[serde(default)]
@@ -1088,6 +1187,10 @@ pub struct SourceMapParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IrisExecuteMethodParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     /// Class name e.g. "%Library.Integer" or "MyApp.Utils"
     pub class: String,
     /// Method name e.g. "IsValid" or "FormatDate"
@@ -1107,6 +1210,10 @@ pub struct IrisExecuteMethodParams {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IrisProductionParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     /// Action to perform: status, start, stop, update, check, recover, get_autostart, set_autostart.
     #[schemars(extend("enum" = [
         "status",
@@ -1158,6 +1265,10 @@ fn default_production_timeout() -> u32 {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExecuteParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     pub code: String,
     /// IRIS namespace. Defaults to the connection namespace (IRIS_NAMESPACE).
     #[serde(default)]
@@ -1248,6 +1359,89 @@ pub struct StartSandboxParams {
 fn default_flags() -> String {
     "cuk".to_string()
 }
+
+/// The compile flags `iris_compile` passes on: compile, display, keep source, update only. Every
+/// other letter either adds classes to the set compiled (`b` subclasses, `r` predecessors, `y`
+/// related classes, `p` and `h` the percent and hidden ones) or does something else to them
+/// (`e` deletes the extent).
+const COMPILE_FLAG_LETTERS: &str = "cdku";
+
+/// The compile qualifiers `iris_compile` passes on, by full name. IRIS reads a qualifier name in
+/// any case and accepts an unambiguous abbreviation (`/sub` is `/subclasses`), so a list of the
+/// qualifiers that widen the set would miss spellings; this is the list of the ones that do not. A
+/// `no` in front of one of the display qualifiers negates it.
+const COMPILE_QUALIFIERS: &[&str] = &[
+    "checkuptodate",
+    "display",
+    "displayerror",
+    "displaylog",
+    "keepsource",
+    "quiet",
+    "silent",
+    "verbose",
+];
+
+/// What `iris_compile flags` and `compile --flags` may carry (spec 141 C1, T206).
+///
+/// The characters are letters, digits and `/ - = : , .` only (C1): a quote, a space or a newline
+/// is refused before it reaches `$SYSTEM.OBJ.Compile` or the Atelier query. Beyond the characters,
+/// the flags are [`COMPILE_FLAG_LETTERS`] and the qualifiers are [`COMPILE_QUALIFIERS`]. The
+/// stored-source check reads the target and what it includes; a flag or qualifier that makes IRIS
+/// compile other classes lets a stored class run its compile-time code unread (T206).
+pub fn compile_flags_problem(flags: &str) -> Option<String> {
+    let ok = flags
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || "/-=:,.".contains(c));
+    if !ok {
+        return Some(format!(
+            "flags {flags:?} has characters outside the compile qualifier set (letters, digits, / - = : , .)"
+        ));
+    }
+    let (letters, qualifiers) = match flags.split_once('/') {
+        Some((letters, rest)) => (letters, Some(rest)),
+        None => (flags, None),
+    };
+    if let Some(c) = letters
+        .chars()
+        .find(|c| *c != '-' && !COMPILE_FLAG_LETTERS.contains(c.to_ascii_lowercase()))
+    {
+        return Some(format!(
+            "flags {flags:?}: the compile flag {c:?} is not allowed. It can compile classes the \
+             target-only check never read, or change more than the compile. The allowed flags are \
+             {}, with - to turn one off",
+            COMPILE_FLAG_LETTERS
+                .chars()
+                .map(String::from)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    for token in qualifiers.into_iter().flat_map(|q| q.split('/')) {
+        let name = token.split('=').next().unwrap_or("").to_ascii_lowercase();
+        let known = |n: &str| COMPILE_QUALIFIERS.contains(&n);
+        if !(known(&name) || name.strip_prefix("no").is_some_and(known)) {
+            return Some(format!(
+                "flags {flags:?}: the compile qualifier /{name} is not allowed. Qualifiers such as \
+                 /subclasses, /predecessorclasses, /relatedclasses and /expand compile classes the \
+                 target-only check never read. The allowed qualifiers are {}",
+                COMPILE_QUALIFIERS
+                    .iter()
+                    .map(|q| format!("/{q}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    None
+}
+/// Does an `iris_compile` target name a file on this host rather than a document on the server?
+/// A path separator says so, and so does a `.cls` name that exists here.
+fn is_local_compile_target(target: &str) -> bool {
+    target.contains('/')
+        || target.contains('\\')
+        || (target.ends_with(".cls") && std::path::Path::new(target).exists())
+}
+
 /// Resolve the effective namespace for a tool call: use `param` if non-empty, else
 /// `connection_ns` (the configured namespace of the connection the call actually uses —
 /// pool member or default). Callers with no connection in scope pass "USER" as
@@ -1343,6 +1537,66 @@ pub fn run_in_job(call: &str) -> String {
     .join("\n")
 }
 
+/// The `RunTest` flags: a compiled class pattern is looked up in the database (`/noload`).
+/// `iris_test` and `iris_coverage` run the same pattern with the same flags (spec 141 R5 C17).
+pub fn test_run_flags() -> &'static str {
+    "/verbose=1/nodelete/noload"
+}
+
+/// Why a test run found nothing to run, when the reason is `^UnitTestRoot`: `RunTest` looks for its
+/// suites in the directory that global names, and an instance that never set it (a fresh container)
+/// falls back to a path under the manager directory that is not a directory. `%UnitTest.Manager`
+/// says so in a `Finding directories: ERROR #5007` line and then reports a failed `(root)` suite,
+/// which reads like a test failure. iad makes a root for each run (`with_run_root`), so this means
+/// that step failed, and the text says what to check. `None` when `output` has no such line.
+pub fn unit_test_root_problem(output: &str) -> Option<String> {
+    let line = output
+        .lines()
+        .find(|l| l.contains("Finding directories: ERROR #5007"))?;
+    let dir = line
+        .split_once("Directory name '")
+        .and_then(|(_, rest)| rest.split_once("' is invalid"))
+        .map(|(dir, _)| dir)?;
+    Some(format!(
+        "RunTest looked for its tests in {dir}, which is not a directory, so no test ran. iad makes a root of its own for each run under the instance's <mgr>/Temp; this answer means it could not (the account may lack write access to that directory or to ^UnitTestRoot in this namespace). Check that <mgr>/Temp is writable by the IRIS process and that the account can set ^UnitTestRoot."
+    ))
+}
+
+/// The `docker` arguments that read `WebServer=` from `cpf` inside `container`, or the reason the
+/// name is refused. The name is checked like every other `docker exec` path's, and `--` ends the
+/// options, so a configured name that docker would read as an option never reaches it (T221).
+pub fn cpf_probe_args(container: &str, cpf: &str) -> Result<Vec<String>, String> {
+    crate::iris::connection::validate_container_name(container)?;
+    Ok(vec![
+        "exec".into(),
+        "--".into(),
+        container.into(),
+        "sh".into(),
+        "-c".into(),
+        format!("grep -i 'WebServer' {cpf} 2>/dev/null || true"),
+    ])
+}
+
+/// Why `pattern` cannot be a test pattern, or `None` when it can (spec 141 T218).
+///
+/// A pattern names compiled classes (`MyApp.Tests`, `MyApp.*`). It used to double as a directory
+/// that iad made under a fixed `/tmp/httest/` on the IRIS host, spliced in unchecked, which is
+/// writable by any local user and took `..`. iad no longer makes a directory, so a pattern with a
+/// path separator or a `..` has no meaning, and it is refused rather than passed to `RunTest`.
+pub fn test_pattern_problem(pattern: &str) -> Option<String> {
+    let bad = pattern.is_empty()
+        || pattern.contains("..")
+        || pattern.contains(['/', '\\'])
+        || pattern.chars().any(char::is_control);
+    bad.then(|| {
+        format!(
+            "pattern {pattern:?} is not a test pattern. Give compiled test classes as a class or \
+             package pattern such as 'MyApp.Tests' or 'MyApp.*'; an empty value, '..' and path \
+             separators are not accepted."
+        )
+    })
+}
+
 /// Build the ObjectScript code to run a test class.
 /// `is_test_production=true` → uses `.Run()` (for %UnitTest.TestProduction subclasses).
 /// `is_test_production=false` → uses %UnitTest.Manager::RunTest() with `flags` and `token`.
@@ -1353,7 +1607,6 @@ pub fn build_test_run_code(
     is_test_production: bool,
 ) -> String {
     use crate::objectscript::{os_lit_inner, validate_class_name};
-    let is_class_pattern = !pattern.contains('/') && !pattern.contains('\\');
     // The pattern goes inside literals below, so it is escaped for them; `.Run()` splices it bare
     // as a class name, so that path needs a valid one (137).
     let (pattern_lit, flags_lit, token_lit) = (
@@ -1362,24 +1615,35 @@ pub fn build_test_run_code(
         os_lit_inner(token),
     );
 
-    if is_test_production && is_class_pattern && validate_class_name(pattern).is_ok() {
-        return run_in_job(&format!("##class({pattern}).Run()"));
-    }
-    let run_test = run_in_job(&format!(
-        r#"##class(%UnitTest.Manager).RunTest("{pattern_lit}","{flags_lit}","{token_lit}")"#
-    ));
-    if is_class_pattern {
-        run_test
+    let run = if is_test_production && validate_class_name(pattern).is_ok() {
+        run_in_job(&format!("##class({pattern}).Run()"))
     } else {
+        run_in_job(&format!(
+            r#"##class(%UnitTest.Manager).RunTest("{pattern_lit}","{flags_lit}","{token_lit}")"#
+        ))
+    };
+    with_run_root(&pattern_lit, &run)
+}
+
+/// `run` with a usable `^UnitTestRoot` (spec 141 T218). `RunTest` reads its suites from the
+/// directory that global names, and with none (a fresh instance) it answers `ERROR #5007` and runs
+/// nothing, not even a `%UnitTest.TestProduction`. 1.6.4 pointed the global at a fixed `/tmp/httest/`
+/// that any local user could write. A root the instance already has is used as it is, so tests
+/// staged under it still run. Only when there is none, or it names no directory, does the run get a
+/// fresh one under the instance's own `<mgr>/Temp`, with the pattern's directory in it (`A.B` is
+/// `A/B/`); after the job the previous value (or none) is put back and the directory removed.
+/// `pattern_lit` is already escaped for a string literal and holds no `..` or path separator
+/// (`test_pattern_problem`).
+fn with_run_root(pattern_lit: &str, run: &str) -> String {
+    [
+        " Set iadRootWas=$Get(^UnitTestRoot),iadRootHad=$Data(^UnitTestRoot)#2,iadRootOwn=0".to_string(),
         format!(
-            r#"set utRoot="/tmp/httest/"
-if '##class(%File).DirectoryExists(utRoot) {{ do ##class(%File).CreateDirectoryChain(utRoot) }}
-set pkgDir=utRoot_"{pattern_lit}"_"/"
-if '##class(%File).DirectoryExists(pkgDir) {{ do ##class(%File).CreateDirectoryChain(pkgDir) }}
-set ^UnitTestRoot=utRoot
-{run_test}"#
-        )
-    }
+            " If (iadRootWas=\"\")||'##class(%File).DirectoryExists(iadRootWas) {{ Set iadRoot=##class(%File).NormalizeDirectory($System.Util.ManagerDirectory()_\"Temp/iad-\"_$System.Util.CreateGUID()),iadRootOwn=1 Do ##class(%File).CreateDirectoryChain(iadRoot_$Translate($Piece(\"{pattern_lit}\",\"*\"),\".\",\"/\")) Set ^UnitTestRoot=iadRoot }}"
+        ),
+        run.to_string(),
+        " If iadRootOwn { If iadRootHad { Set ^UnitTestRoot=iadRootWas } Else { Kill ^UnitTestRoot } Do ##class(%File).RemoveDirectoryTree(iadRoot) }".to_string(),
+    ]
+    .join("\n")
 }
 
 /// ObjectScript snippet to probe whether a class extends %UnitTest.TestProduction.
@@ -1390,6 +1654,29 @@ pub fn build_superclass_probe(class_name: &str) -> String {
         r#"set oref=##class(%Dictionary.ClassDefinition).%OpenId("{cls_lit}")
 if $isobject(oref) {{ write $select($find(oref.Super,"%UnitTest.TestProduction"):1,1:0) }} else {{ write 0 }}"#,
     )
+}
+
+/// Does `pattern` name a single compiled `%UnitTest.TestProduction` subclass? A wildcard or a
+/// directory never does. `iris_test`'s auto detection, for tools that run a test pattern without a
+/// `test_type` argument (spec 141 R5 C17).
+pub async fn detect_test_production(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    namespace: &str,
+    pattern: &str,
+) -> bool {
+    let is_single_class = !pattern.contains('*');
+    if !is_single_class {
+        return false;
+    }
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        iris.execute_via_generator(&build_superclass_probe(pattern), namespace, client),
+    )
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    .is_some_and(|s| s.trim().starts_with('1'))
 }
 
 /// Build the compact (inline) TestRun JSON from SQL rows.
@@ -1517,6 +1804,14 @@ pub fn telemetry_config_dir() -> std::path::PathBuf {
         .unwrap_or_else(std::env::temp_dir)
         .join(".iris-agentic-dev")
 }
+/// A refusal from [`IrisTools::exec_context`]. A server that is not connected stays the protocol
+/// error it has always been; the rest are tool errors that name the identity or the route.
+fn exec_refused(e: exec::ExecError) -> Result<CallToolResult, McpError> {
+    if e.code == "IRIS_UNREACHABLE" {
+        return Err(iris_unreachable());
+    }
+    err_result(e.to_json())
+}
 fn ok_json(v: serde_json::Value) -> Result<CallToolResult, McpError> {
     Ok(CallToolResult::structured(v))
 }
@@ -1542,6 +1837,29 @@ fn json_result(v: serde_json::Value) -> Result<CallToolResult, McpError> {
 }
 fn err_json(code: &str, msg: &str) -> Result<CallToolResult, McpError> {
     err_result(serde_json::json!({"success": false, "error_code": code, "error": msg}))
+}
+
+/// `result` with `warnings` added to its body: the scratch classes the call could not remove. A
+/// result with no object body is returned as it is.
+pub fn with_warnings(result: CallToolResult, warnings: Vec<String>) -> CallToolResult {
+    if warnings.is_empty() {
+        return result;
+    }
+    let Some(serde_json::Value::Object(mut body)) = result.structured_content.clone() else {
+        return result;
+    };
+    let mut all = match body.remove("warnings") {
+        Some(serde_json::Value::Array(existing)) => existing,
+        _ => Vec::new(),
+    };
+    all.extend(warnings.into_iter().map(serde_json::Value::String));
+    body.insert("warnings".into(), serde_json::Value::Array(all));
+    let body = serde_json::Value::Object(body);
+    if result.is_error == Some(true) {
+        CallToolResult::structured_error(body)
+    } else {
+        CallToolResult::structured(body)
+    }
 }
 
 /// `SQL_ERROR` with a `hint` and `hint_ref` when the message matches a rule in `error_hints`
@@ -1593,156 +1911,88 @@ pub fn write_open_hint(namespace: &str, document: &str) {
 
 // ── SQL safety gate ───────────────────────────────────────────────────────────
 
+/// SQL keywords a read-only statement may not contain outside a literal, an identifier or a
+/// comment.
+const WRITE_KEYWORDS: &[&str] = &[
+    "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "MERGE", "TRUNCATE", "EXEC",
+    "EXECUTE", "BULK", "LOAD", "KILL", "LOCK", "GRANT", "REVOKE",
+];
+
+/// The first of [`WRITE_KEYWORDS`] among `code`, upper-case.
+pub(crate) fn first_write_keyword(code: &[&crate::sql_lex::Token]) -> Option<&'static str> {
+    code.iter()
+        .find_map(|t| WRITE_KEYWORDS.iter().copied().find(|kw| t.is_word(kw)))
+}
+
 /// Validates that a SQL string is read-only before forwarding to IRIS.
 ///
-/// Processing pipeline:
-/// 1. Strip `/* ... */` block comments
-/// 2. Strip `-- ...` line comments
-/// 3. Return `Err("EMPTY")` if result is whitespace-only
-/// 4. Walk remaining chars tracking quote depth; skip `'...'` and `"..."` content
-/// 5. Check each unquoted word token against the blocked keyword list (case-insensitive, word-boundary)
-/// 6. Check for `SELECT ... INTO <non-paren>` pattern (DDL via SELECT INTO)
+/// The statement is read by `sql_lex`, which follows IRIS: comments and the contents of literals
+/// and delimited identifiers are never keywords. Each check below takes the statement's code
+/// tokens, so a further rule is one more function in the chain.
+///
+/// 1. `Err("EMPTY")` when nothing but white space and comments remains.
+/// 2. A word from [`WRITE_KEYWORDS`] is refused, case-insensitively.
+/// 3. `SELECT ... INTO <non-paren>` (DDL via SELECT INTO) is refused.
+/// 4. The statement must start with `SELECT`, `WITH` or `EXPLAIN`, and be the only one.
 ///
 /// Returns `Ok(())` if safe, `Err(keyword)` with the offending keyword if blocked.
 pub fn validate_read_only_sql(sql: &str) -> Result<(), String> {
-    const BLOCKED: &[&str] = &[
-        "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "MERGE", "TRUNCATE", "EXEC",
-        "EXECUTE", "BULK", "LOAD", "KILL", "LOCK", "GRANT", "REVOKE",
-    ];
-
-    // Step 1: strip /* ... */ block comments
-    let mut cleaned = String::with_capacity(sql.len());
-    let bytes = sql.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                i += 1;
-            }
-            i += 2; // skip */
-            cleaned.push(' '); // preserve word boundary
-        } else {
-            cleaned.push(bytes[i] as char);
-            i += 1;
-        }
-    }
-
-    // Step 2: strip -- line comments
-    let mut no_line_comments = String::with_capacity(cleaned.len());
-    for line in cleaned.lines() {
-        if let Some(pos) = line.find("--") {
-            no_line_comments.push_str(&line[..pos]);
-        } else {
-            no_line_comments.push_str(line);
-        }
-        no_line_comments.push(' ');
-    }
-    let cleaned = no_line_comments;
-
-    // Step 3: empty check
-    if cleaned.trim().is_empty() {
+    let tokens = crate::sql_lex::lex(sql);
+    let code: Vec<&crate::sql_lex::Token> = crate::sql_lex::code(&tokens).collect();
+    if code.is_empty() {
         return Err("EMPTY".to_string());
     }
+    if let Some(kw) = first_write_keyword(&code) {
+        return Err(kw.to_string());
+    }
+    reject_select_into(&code)?;
+    require_read_statement(&code)
+}
 
-    // Steps 4+5: walk chars, skip quoted content, check word tokens
-    let chars: Vec<char> = cleaned.chars().collect();
-    let n = chars.len();
-    let upper = cleaned.to_uppercase();
-    let upper_chars: Vec<char> = upper.chars().collect();
+/// Read mode runs one statement that starts with `SELECT`, `WITH` or `EXPLAIN` (IRIS's EXPLAIN
+/// plans a statement and runs nothing). Anything else (`CALL`, `TUNE TABLE`, `BUILD INDEX`,
+/// `PURGE`, `SET OPTION`, `FREEZE PLANS`, DML, DDL) is a statement for `mode="write"`, and a
+/// second statement after a `;` is refused whatever it is. Only the first token decides, and it is
+/// the first one outside comments. Spec 141 T213.
+fn require_read_statement(code: &[&crate::sql_lex::Token]) -> Result<(), String> {
+    const READ_STATEMENTS: &[&str] = &["SELECT", "WITH", "EXPLAIN"];
+    let first = code[0];
+    if !READ_STATEMENTS.iter().any(|kw| first.is_word(kw)) {
+        return Err(if first.kind == crate::sql_lex::Kind::Word {
+            first.text.to_uppercase()
+        } else {
+            first.text.clone()
+        });
+    }
+    let trailing_only = code
+        .iter()
+        .position(|t| t.is_punct(';'))
+        .is_none_or(|at| code[at..].iter().all(|t| t.is_punct(';')));
+    if trailing_only {
+        Ok(())
+    } else {
+        Err("STATEMENT LIST".to_string())
+    }
+}
 
-    let mut idx = 0;
-    while idx < n {
-        let c = chars[idx];
-        // Skip single-quoted string literals
-        if c == '\'' {
-            idx += 1;
-            while idx < n && chars[idx] != '\'' {
-                if chars[idx] == '\\' {
-                    idx += 1;
-                }
-                idx += 1;
-            }
-            idx += 1; // closing quote
+/// `INTO` followed by anything but `(` is `SELECT ... INTO` a table or variable, which creates
+/// one. `INTO (` is a subquery's own clause and is allowed.
+fn reject_select_into(code: &[&crate::sql_lex::Token]) -> Result<(), String> {
+    for (i, token) in code.iter().enumerate() {
+        if !token.is_word("INTO") {
             continue;
         }
-        // Skip double-quoted identifiers
-        if c == '"' {
-            idx += 1;
-            while idx < n && chars[idx] != '"' {
-                idx += 1;
-            }
-            idx += 1;
-            continue;
+        if code.get(i + 1).is_some_and(|next| !next.is_punct('(')) {
+            return Err("SELECT INTO".to_string());
         }
-        // Check for keyword match at this position
-        for kw in BLOCKED {
-            let kw_len = kw.len();
-            if idx + kw_len > n {
-                continue;
-            }
-            // Compare against uppercased chars
-            let matches = upper_chars[idx..idx + kw_len]
-                .iter()
-                .zip(kw.chars())
-                .all(|(a, b)| *a == b);
-            if !matches {
-                continue;
-            }
-            // Word boundary: character before must be non-alphanumeric/non-underscore (or start)
-            let before_ok = idx == 0 || {
-                let bc = chars[idx - 1];
-                !bc.is_alphanumeric() && bc != '_'
-            };
-            // Word boundary: character after must be non-alphanumeric/non-underscore (or end)
-            let after_ok = idx + kw_len >= n || {
-                let ac = chars[idx + kw_len];
-                !ac.is_alphanumeric() && ac != '_'
-            };
-            if before_ok && after_ok {
-                return Err(kw.to_string());
-            }
-        }
-        idx += 1;
     }
-
-    // Step 6: check for SELECT ... INTO <identifier> (not INTO subquery)
-    // Find "INTO" token not followed by '('
-    let upper_str = upper.as_str();
-    let mut search_start = 0;
-    while let Some(pos) = upper_str[search_start..].find("INTO") {
-        let abs_pos = search_start + pos;
-        // Word boundary check
-        let before_ok = abs_pos == 0 || {
-            let bc = upper_chars[abs_pos - 1];
-            !bc.is_alphanumeric() && bc != '_'
-        };
-        let after_ok = abs_pos + 4 >= n || {
-            let ac = upper_chars[abs_pos + 4];
-            !ac.is_alphanumeric() && ac != '_'
-        };
-        if before_ok && after_ok {
-            // Check what follows INTO (skip whitespace)
-            let mut after = abs_pos + 4;
-            while after < n && chars[after].is_whitespace() {
-                after += 1;
-            }
-            // If followed by '(' it's INTO a subquery — allowed
-            // If followed by anything else (identifier, #, @, etc.) — DDL, block it
-            if after < n && chars[after] != '(' {
-                return Err("SELECT INTO".to_string());
-            }
-        }
-        search_start = abs_pos + 1;
-    }
-
     Ok(())
 }
 
 /// Validates that a SQL string is acceptable DML for `iris_query` `mode="write"`.
 ///
-/// Mirrors `validate_read_only_sql`'s comment-stripping and quote-skipping pipeline, but
-/// with the opposite polarity: DDL (CREATE/DROP/ALTER/GRANT/REVOKE) and SELECT are blocked;
+/// Reads the statement with `sql_lex`, like `validate_read_only_sql`, with the opposite polarity:
+/// DDL (CREATE/DROP/ALTER/GRANT/REVOKE) and SELECT are blocked;
 /// DML (INSERT/UPDATE/DELETE/CALL/TRUNCATE) is allowed. Classification is based on the
 /// statement's leading keyword only — an inner SELECT subquery (e.g.
 /// `INSERT INTO t SELECT * FROM src`) does not affect the outer statement's classification.
@@ -1753,89 +2003,23 @@ pub fn validate_dml_sql(sql: &str) -> Result<(), String> {
     const DDL: &[&str] = &["CREATE", "DROP", "ALTER", "GRANT", "REVOKE"];
     const DML: &[&str] = &["INSERT", "UPDATE", "DELETE", "CALL", "TRUNCATE"];
 
-    // Step 1: strip /* ... */ block comments (identical to validate_read_only_sql).
-    let mut cleaned = String::with_capacity(sql.len());
-    let bytes = sql.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if i + 1 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                i += 1;
-            }
-            i += 2;
-            cleaned.push(' ');
-        } else {
-            cleaned.push(bytes[i] as char);
-            i += 1;
-        }
-    }
-
-    // Step 2: strip -- line comments.
-    let mut no_line_comments = String::with_capacity(cleaned.len());
-    for line in cleaned.lines() {
-        if let Some(pos) = line.find("--") {
-            no_line_comments.push_str(&line[..pos]);
-        } else {
-            no_line_comments.push_str(line);
-        }
-        no_line_comments.push(' ');
-    }
-    let cleaned = no_line_comments;
-
-    // Step 3: empty check.
-    if cleaned.trim().is_empty() {
+    let tokens = crate::sql_lex::lex(sql);
+    let code: Vec<&crate::sql_lex::Token> = crate::sql_lex::code(&tokens).collect();
+    if code.is_empty() {
         return Err("EMPTY".to_string());
     }
-
-    // Step 4: find the first unquoted word token.
-    let chars: Vec<char> = cleaned.chars().collect();
-    let n = chars.len();
-    let mut idx = 0;
-    let mut first_word = String::new();
-    while idx < n {
-        let c = chars[idx];
-        if c == '\'' {
-            idx += 1;
-            while idx < n && chars[idx] != '\'' {
-                if chars[idx] == '\\' {
-                    idx += 1;
-                }
-                idx += 1;
-            }
-            idx += 1;
-            continue;
-        }
-        if c == '"' {
-            idx += 1;
-            while idx < n && chars[idx] != '"' {
-                idx += 1;
-            }
-            idx += 1;
-            continue;
-        }
-        if c.is_whitespace() {
-            idx += 1;
-            continue;
-        }
-        if c.is_alphanumeric() || c == '_' {
-            while idx < n && (chars[idx].is_alphanumeric() || chars[idx] == '_') {
-                first_word.push(chars[idx]);
-                idx += 1;
-            }
-            break;
-        }
-        idx += 1;
+    let first = code
+        .iter()
+        .find(|t| t.kind == crate::sql_lex::Kind::Word)
+        .map(|t| t.text.to_uppercase())
+        .unwrap_or_default();
+    if DDL.contains(&first.as_str()) {
+        return Err(first);
     }
-
-    let upper_word = first_word.to_uppercase();
-    if DDL.contains(&upper_word.as_str()) {
-        return Err(upper_word);
-    }
-    if upper_word == "SELECT" {
+    if first == "SELECT" {
         return Err("SELECT_IN_WRITE".to_string());
     }
-    if DML.contains(&upper_word.as_str()) {
+    if DML.contains(&first.as_str()) {
         return Ok(());
     }
     Err("UNKNOWN_STATEMENT".to_string())
@@ -1963,7 +2147,7 @@ async fn iris_query_explain(
         );
     }
 
-    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
     if let Some(errors) = body["status"]["errors"].as_array() {
         if !errors.is_empty() {
             let msg = errors[0]["error"].as_str().unwrap_or("SQL error");
@@ -2031,7 +2215,7 @@ async fn iris_query_count(
         );
     }
 
-    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
     if let Some(errors) = body["status"]["errors"].as_array() {
         if !errors.is_empty() {
             let msg = errors[0]["error"].as_str().unwrap_or("SQL error");
@@ -2090,16 +2274,9 @@ async fn iris_query_write(
     }
 
     let max_rows_affected = clamp_max_rows_affected(p.max_rows_affected);
-    let upper_first_word = p
-        .query
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_uppercase();
-    let needs_precheck = upper_first_word == "UPDATE" || upper_first_word == "DELETE";
 
     let mut rows_check_skipped = false;
-    if needs_precheck {
+    if needs_rows_precheck(&p.query) {
         match build_rows_precheck_query(&p.query) {
             Some(count_sql) => {
                 let code = format!(
@@ -2174,54 +2351,118 @@ Write "OK:"_rs.%ROWCOUNT"#,
     }
 }
 
+/// Statement modifiers IRIS accepts between `UPDATE`/`DELETE` and the table (`DELETE %NOLOCK FROM t`).
+const DML_MODIFIERS: &[&str] = &[
+    "NOCHECK",
+    "NOFPLAN",
+    "NOINDEX",
+    "NOLOCK",
+    "NOTRIGGER",
+    "NOUNIQCHECK",
+    "PROFILE",
+    "PROFILE_ALL",
+    "STARTTABLE",
+];
+
+/// The leading `UPDATE` or `DELETE` of a DML statement, and where its operands start in `code`.
+/// Comments and white space before it do not matter: IRIS skips them.
+fn dml_head<'a>(
+    code: &[(usize, &'a crate::sql_lex::Token)],
+) -> Option<(&'a crate::sql_lex::Token, usize)> {
+    let (_, verb) = *code.first()?;
+    if !(verb.is_word("UPDATE") || verb.is_word("DELETE")) {
+        return None;
+    }
+    let mut at = 1;
+    while code.get(at).is_some_and(|(_, t)| t.is_punct('%'))
+        && code
+            .get(at + 1)
+            .is_some_and(|(_, t)| DML_MODIFIERS.iter().any(|m| t.is_word(m)))
+    {
+        at += 2;
+    }
+    Some((verb, at))
+}
+
+/// True when `dml` is an `UPDATE` or `DELETE`, which `iris_query` `mode="write"` counts before it
+/// runs. Read from the statement's own tokens, so a leading comment or space does not hide it.
+pub fn needs_rows_precheck(dml: &str) -> bool {
+    let tokens = crate::sql_lex::lex(dml);
+    let code: Vec<(usize, &crate::sql_lex::Token)> = tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.is_code())
+        .collect();
+    dml_head(&code).is_some()
+}
+
 /// Extracts a `SELECT COUNT(*) FROM <table> [WHERE <clause>]` pre-check query from an
 /// UPDATE or DELETE statement, for the `mode="write"` rows-affected limit guard.
 /// Returns `None` for statement shapes it cannot confidently parse (multi-table UPDATE,
 /// missing table name) — callers must skip the pre-check and set `rows_check_skipped: true`
 /// rather than treating this as an error.
+///
+/// The target is the name after `UPDATE`, or after `DELETE FROM`; the clause is the text after the
+/// first `WHERE` that is outside parentheses, a literal and a comment.
 pub fn build_rows_precheck_query(dml: &str) -> Option<String> {
-    let upper = dml.to_uppercase();
-    let trimmed = dml.trim();
-
-    if let Some(rest) = upper.strip_prefix("UPDATE") {
-        let table_start = dml.len() - rest.len();
-        let after_update = trimmed[table_start..].trim_start();
-        let table = after_update.split_whitespace().next()?;
-        let where_clause = extract_where_clause(dml);
-        return Some(match where_clause {
+    let tokens = crate::sql_lex::lex(dml);
+    let code: Vec<(usize, &crate::sql_lex::Token)> = tokens
+        .iter()
+        .enumerate()
+        .filter(|(_, t)| t.is_code())
+        .collect();
+    let (verb, mut at) = dml_head(&code)?;
+    if verb.is_word("DELETE") {
+        if !code.get(at)?.1.is_word("FROM") {
+            return None;
+        }
+        at += 1;
+    }
+    let (table, after) = sql_table_name(&code, at)?;
+    let mut depth = 0usize;
+    let where_at = code[after..].iter().find_map(|(i, t)| {
+        if t.is_punct('(') {
+            depth += 1;
+        } else if t.is_punct(')') {
+            depth = depth.saturating_sub(1);
+        }
+        (depth == 0 && t.is_word("WHERE")).then_some(*i)
+    });
+    let clause = where_at.map(|i| crate::sql_lex::text(&tokens[i + 1..]));
+    Some(
+        match clause.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
             Some(w) => format!("SELECT COUNT(*) FROM {table} WHERE {w}"),
             None => format!("SELECT COUNT(*) FROM {table}"),
-        });
-    }
-    if upper.starts_with("DELETE") {
-        // DELETE FROM <table> [WHERE ...] — find "FROM" then take the next token as table.
-        let from_pos = upper.find("FROM")?;
-        let after_from = trimmed[from_pos + 4..].trim_start();
-        let table = after_from.split_whitespace().next()?;
-        let where_clause = extract_where_clause(dml);
-        return Some(match where_clause {
-            Some(w) => format!("SELECT COUNT(*) FROM {table} WHERE {w}"),
-            None => format!("SELECT COUNT(*) FROM {table}"),
-        });
-    }
-    None
+        },
+    )
 }
 
-/// Extracts the text after the top-level `WHERE` keyword in a DML statement, if present.
-fn extract_where_clause(dml: &str) -> Option<String> {
-    let upper = dml.to_uppercase();
-    let pos = upper.find("WHERE")?;
-    // Word boundary check to avoid matching inside identifiers.
-    let before_ok = pos == 0 || !upper.as_bytes()[pos - 1].is_ascii_alphanumeric();
-    if !before_ok {
-        return None;
-    }
-    let after = &dml[pos + 5..];
-    let clause = after.trim();
-    if clause.is_empty() {
-        None
-    } else {
-        Some(clause.to_string())
+/// A table name at `code[at..]`: `name`, `%name` or a delimited identifier, joined by dots. Returns
+/// the name as written and the index after it.
+fn sql_table_name(
+    code: &[(usize, &crate::sql_lex::Token)],
+    mut at: usize,
+) -> Option<(String, usize)> {
+    use crate::sql_lex::Kind;
+    let mut name = String::new();
+    loop {
+        let (_, first) = code.get(at)?;
+        if first.is_punct('%') {
+            name.push('%');
+            at += 1;
+        }
+        let (_, part) = code.get(at)?;
+        if !matches!(part.kind, Kind::Word | Kind::QuotedIdent) || !part.closed {
+            return None;
+        }
+        name.push_str(&part.text);
+        at += 1;
+        if code.get(at).is_some_and(|(_, t)| t.is_punct('.')) {
+            name.push('.');
+            at += 1;
+        } else {
+            return Some((name, at));
+        }
     }
 }
 
@@ -2467,16 +2708,17 @@ pub struct IrisTools {
     pub connection: Arc<std::sync::Mutex<ConnectionState>>,
     /// Lazy config file watcher for hot-reload. None when no .iris-agentic-dev.toml exists.
     pub config_watcher: Arc<std::sync::Mutex<Option<ConfigWatcher>>>,
+    /// The configuration of the last good load and the inputs that produced it (R4a D1). Empty
+    /// until `set_config`; readers fall back to loading from the process.
+    config: Arc<std::sync::RwLock<ConfigHolder>>,
     pub registry: Arc<crate::skills::SkillRegistry>,
     /// Shared HTTP client — created once, reused across all tool calls.
     pub client: Arc<reqwest::Client>,
-    /// Dedicated HTTP client for privileged arbitrary-execution tools running under the
-    /// restricted service account (`IRIS_SERVICE_USERNAME`). Its cookie jar is isolated from
-    /// `client`'s so a CSP session established under the primary (user) identity can never be
-    /// replayed on service-account requests — IRIS honors an existing CSP session cookie over
-    /// request basic-auth, which would otherwise silently run these calls under the primary
-    /// user's %Development-capable identity and reopen the SCM-lock bypass.
-    pub exec_client: Arc<reqwest::Client>,
+    /// One HTTP client per service identity (`server|user`), each with a cookie jar of its own so a
+    /// CSP session opened as the primary is never replayed on a service-account request: IRIS
+    /// honours an existing session cookie over the request's basic auth, which would run the code
+    /// as the primary (spec 141, R2).
+    pub(crate) identity_clients: Arc<std::sync::Mutex<HashMap<String, Arc<reqwest::Client>>>>,
     /// Ring buffer of recent tool calls for skill_propose pattern mining.
     pub history: Arc<std::sync::Mutex<VecDeque<ToolCallEntry>>>,
     /// Pending elicitation state for SCM dialogs.
@@ -2491,6 +2733,10 @@ pub struct IrisTools {
     /// Multi-instance connection pool (072-multi-instance-pool).
     /// Wrapped in RwLock<Arc<...>> so iris_reload_pool can atomically swap the inner
     /// Arc from &self without requiring exclusive access to IrisTools.
+    ///
+    /// Built on first use, not at construction (spec 141 T187): loading reads every member's
+    /// password, which opens the OS keychain. Until then it holds `ConnectionPool::unloaded`; read
+    /// it through [`IrisTools::pool_ref`], which loads it.
     pub pool: Arc<std::sync::RwLock<Arc<crate::iris::connection_pool::ConnectionPool>>>,
     /// WebSocket terminal session pool (072-b).
     pub ws_pool: Arc<crate::iris::ws_session::WsSessionPool>,
@@ -2518,13 +2764,16 @@ pub struct IrisTools {
     /// client was served on `tools/list`. It is also why this is a field and not a global cache —
     /// the router is pruned per `Toolset`, and a process can hold instances of more than one.
     accepted_params: BTreeMap<String, param_check::AcceptedParams>,
+    /// Refuse a name `tool_router` does not list for this toolset. On for the CLI, so it accepts
+    /// exactly what `tools/list` advertises (spec 141, R1 C1); off for the tests, which call
+    /// handlers by name whatever toolset they built.
+    strict_toolset: bool,
 }
 
 #[tool_router]
 impl IrisTools {
     pub fn new(iris: Option<IrisConnection>) -> anyhow::Result<Self> {
         let client = Arc::new(IrisConnection::http_client()?);
-        let exec_client = Arc::new(IrisConnection::http_client()?);
         // No config file on this path, so the gate resolves from the operator's environment and
         // the connection's own SystemMode/namespace.
         let declared = write_gate::DeclaredGates::default();
@@ -2551,9 +2800,10 @@ impl IrisTools {
         Ok(Self {
             connection: Arc::new(std::sync::Mutex::new(conn_state)),
             config_watcher: Arc::new(std::sync::Mutex::new(None)),
+            config: Arc::new(std::sync::RwLock::new(ConfigHolder::default())),
             registry: Arc::new(crate::skills::SkillRegistry::new()),
             client,
-            exec_client,
+            identity_clients: Default::default(),
             history: Arc::new(std::sync::Mutex::new(VecDeque::with_capacity(50))),
             elicitation_store: Arc::new(ElicitationStore::new()),
             checkout_cache: Arc::new(crate::elicitation::CheckoutCache::new()),
@@ -2563,7 +2813,7 @@ impl IrisTools {
             metadata_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             // T018: no with_connection constructor found — pool field added to all existing constructors
             pool: Arc::new(std::sync::RwLock::new(Arc::new(
-                crate::iris::connection_pool::load_pool(None),
+                crate::iris::connection_pool::ConnectionPool::unloaded(None),
             ))),
             ws_pool: Arc::new(crate::iris::ws_session::WsSessionPool::new()),
             confirm_tokens: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
@@ -2573,8 +2823,66 @@ impl IrisTools {
             iris_audit_counter: crate::iris::iris_audit::AuditEmitCounter::new(),
             tool_router: router,
             accepted_params,
+            strict_toolset: false,
         })
     }
+    /// The tools one MCP session gets in HTTP transport mode (spec 141 T220).
+    ///
+    /// The transport builds a session's tools by copying a prototype, and a plain `clone` shares
+    /// every `Arc` field. What a client asked for and what came back is that client's: the log
+    /// store (`iris_get_log` with no id lists all of it), the pending SCM dialogs (resumed by id)
+    /// and the call history (`agent_history`, `agent_info`). Those three start empty here, with the
+    /// log store's limits kept.
+    ///
+    /// Everything else stays shared, because one iad process is one operator's account on one set of
+    /// servers and none of it holds a client's results: the connection state and the pool (a reload
+    /// through one session must reach the others, and a second pool would open the keychain again),
+    /// the HTTP clients and their CSP sessions, the configuration, the skill registry, the
+    /// metadata cache (class definitions the account can read anyway), the checkout cache (a fact
+    /// about documents on the server, not about a client), the WebSocket terminal pool and the
+    /// confirmation tokens (both addressed by an unguessable id the creating client holds).
+    pub fn for_new_session(&self) -> Self {
+        let mut session = self.clone();
+        let (max_entries, ttl_minutes) = self
+            .log_store
+            .lock()
+            .map(|s| (s.max_entries, s.ttl_minutes))
+            .unwrap_or((50, 60));
+        session.log_store = Arc::new(std::sync::Mutex::new(log_store::LogStore::new(
+            max_entries,
+            ttl_minutes,
+        )));
+        session.elicitation_store = Arc::new(ElicitationStore::new());
+        session.history = Arc::new(std::sync::Mutex::new(VecDeque::with_capacity(50)));
+        session
+    }
+
+    /// The CLI's constructor (spec 141, R1 C1): the configuration, gates and pool the MCP server
+    /// loads, read once and with no watcher, and only the tools `tools/list` advertises for
+    /// `toolset`. `workspace` is `--workspace` when it was given.
+    pub fn for_cli(
+        iris: Option<IrisConnection>,
+        toolset: Toolset,
+        workspace: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let inputs = crate::iris::config_sources::LoadInputs::from_process(workspace, None);
+        let snapshot = crate::iris::config_sources::ConfigSnapshot::load(&inputs);
+        let declared = snapshot.declared_gates();
+        let config_path = snapshot.workspace_layer.as_ref().map(|f| f.path.clone());
+        let mut tools = Self::with_registry_and_toolset(
+            iris,
+            crate::skills::SkillRegistry::new(),
+            toolset,
+            None,
+            config_path,
+            false,
+            declared,
+        )?;
+        tools.set_config(inputs, snapshot);
+        tools.strict_toolset = true;
+        Ok(tools)
+    }
+
     /// Convenience constructor for tests — same as `new` but with explicit toolset.
     pub fn new_with_toolset(
         iris: Option<IrisConnection>,
@@ -2624,6 +2932,10 @@ impl IrisTools {
     /// the CLI arm silently keeps the prose the run is measuring without.
     fn listed_tools(&self) -> Vec<rmcp::model::Tool> {
         let mut tools = self.tool_router.list_all();
+        // Strict read-only hides the tools it refuses (R5 C15), so a client never offers one.
+        if self.snapshot().read_only_strict() {
+            tools.retain(|t| !write_gate::is_scratch(t.name.as_ref()));
+        }
         let suppressed = std::env::var("IRIS_SUPPRESS_TOOL_DESCRIPTION")
             .map(|v| parse_suppressed_descriptions(&v))
             .unwrap_or_default();
@@ -2762,7 +3074,6 @@ impl IrisTools {
         // Clone config_path for load_pool before it may be moved into conn_state (072).
         let pool_config_path = config_path.clone();
         let client = Arc::new(IrisConnection::http_client()?);
-        let exec_client = Arc::new(IrisConnection::http_client()?);
         let mut router = Self::tool_router();
 
         // Remove tools from MCP tool list based on toolset (T017–T019, T033, FR-004–011).
@@ -2930,23 +3241,50 @@ impl IrisTools {
                 // Use EnvVars when IRIS_HOST is set and no file chose the connection — env-var
                 // connections are pinned, not discovered, and check_config should say so. A home
                 // file that yielded to IRIS_HOST is still named: its tool lists apply.
-                let chosen = config_path
-                    .as_deref()
-                    .is_some_and(crate::iris::workspace_config::chooses);
+                // An operator file yields to IRIS_HOST; every other file chooses (spec 140). A file
+                // names the connection only when it names a host or a container (T194): one that
+                // holds only a namespace or a port chose nothing, and is reported as such.
+                let (chosen, no_target) = match config_path.as_deref() {
+                    Some(p) if !crate::iris::workspace_config::file_names_a_target(p) => {
+                        (false, config_path.clone())
+                    }
+                    Some(p) => (
+                        crate::iris::workspace_config::file_chooses_connection(
+                            if crate::iris::config_sources::is_operator_file(p) {
+                                crate::iris::config_sources::FileKind::Operator
+                            } else {
+                                crate::iris::config_sources::FileKind::Workspace
+                            },
+                            crate::iris::connection::host_from_env().is_some(),
+                        ),
+                        None,
+                    ),
+                    None => (false, None),
+                };
                 let (source, file) = if chosen {
                     (ConnectionSource::ConfigFile, config_path)
                 } else if crate::iris::connection::host_from_env().is_some() {
-                    (ConnectionSource::EnvVars, config_path)
+                    (
+                        ConnectionSource::EnvVars,
+                        config_path.filter(|_| no_target.is_none()),
+                    )
                 } else {
                     (ConnectionSource::AutoDiscovered, None)
                 };
-                ConnectionState::from_iris(c, source, file, gates).with_declared(declared)
+                ConnectionState::from_iris(c, source, file, gates)
+                    .with_declared(declared)
+                    .with_no_target_file(no_target)
             }
             None => {
                 let gates = write_gate::resolve_for_connection(declared, None, "USER");
                 let mut state = ConnectionState::new_disconnected(ConnectionSource::EnvVars, gates)
                     .with_declared(declared);
-                state.config_file = config_path;
+                match config_path {
+                    Some(p) if !crate::iris::workspace_config::file_names_a_target(&p) => {
+                        state.config_file_no_target = Some(p)
+                    }
+                    other => state.config_file = other,
+                }
                 state
             }
         };
@@ -2963,9 +3301,10 @@ impl IrisTools {
         Ok(Self {
             connection: Arc::new(std::sync::Mutex::new(conn_state)),
             config_watcher: Arc::new(std::sync::Mutex::new(config_watcher)),
+            config: Arc::new(std::sync::RwLock::new(ConfigHolder::default())),
             registry: Arc::new(registry),
             client,
-            exec_client,
+            identity_clients: Default::default(),
             history: Arc::new(std::sync::Mutex::new(VecDeque::with_capacity(50))),
             elicitation_store: Arc::new(ElicitationStore::new()),
             checkout_cache: Arc::new(crate::elicitation::CheckoutCache::new()),
@@ -2974,7 +3313,7 @@ impl IrisTools {
             ))),
             metadata_cache: Arc::new(std::sync::Mutex::new(HashMap::new())),
             pool: Arc::new(std::sync::RwLock::new(Arc::new(
-                crate::iris::connection_pool::load_pool(pool_config_path.as_deref()),
+                crate::iris::connection_pool::ConnectionPool::unloaded(pool_config_path),
             ))),
             ws_pool: Arc::new(crate::iris::ws_session::WsSessionPool::new()),
             confirm_tokens: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
@@ -2984,256 +3323,186 @@ impl IrisTools {
             iris_audit_counter: crate::iris::iris_audit::AuditEmitCounter::new(),
             accepted_params: param_check::accepted_parameters(&router.list_all()),
             tool_router: router,
+            strict_toolset: false,
         })
     }
 
-    /// Cheap read-only snapshot of the connection pool.
+    /// Snapshot of the connection pool, loaded on first use.
     /// Read-locks the RwLock and clones the inner Arc — callers get an owned Arc
     /// that stays valid even if iris_reload_pool swaps the pool concurrently.
-    fn pool_ref(&self) -> Arc<crate::iris::connection_pool::ConnectionPool> {
-        self.pool.read().unwrap().clone()
-    }
-
-    /// Returns the active IRIS connection, or IRIS_UNREACHABLE if not connected.
-    fn get_iris(&self) -> Result<Arc<IrisConnection>, McpError> {
-        self.connection
-            .lock()
+    ///
+    /// The first call after construction (or after a config reload) builds the pool, which reads
+    /// every member's password and so may open the OS keychain. Code that needs only the default
+    /// connection must not call this.
+    pub fn pool_ref(&self) -> Arc<crate::iris::connection_pool::ConnectionPool> {
+        let current = self.pool.read().unwrap().clone();
+        let Some(config_file) = current.pending_load().map(|p| p.config_file.clone()) else {
+            return current;
+        };
+        let mut slot = self.pool.write().unwrap();
+        // Another caller may have loaded it while this one waited for the write lock.
+        if slot.pending_load().is_none() {
+            return slot.clone();
+        }
+        // A server that has loaded its configuration builds the pool from what it holds, not from
+        // the files again (FR-043).
+        let held_fleet = self
+            .config
+            .read()
             .unwrap()
-            .iris
-            .clone()
-            .ok_or_else(iris_unreachable)
-    }
-
-    /// Check for config file changes then return the active connection.
-    /// Use this in tool handlers instead of get_iris() to enable hot-reload (034).
-    async fn get_iris_reloaded(&self) -> Result<Arc<IrisConnection>, McpError> {
-        self.check_reload().await;
-        self.get_iris()
-    }
-
-    /// Return the connection AND the HTTP client to use for privileged arbitrary-execution tools
-    /// (`iris_execute`, `iris_query` mode="write", `iris_global` set/kill, `iris_execute_method`).
-    ///
-    /// When `IRIS_SERVICE_USERNAME` is configured, these tools run under that restricted
-    /// least-privilege identity (which must lack `%Development`) so they cannot edit class or
-    /// routine code even via ObjectScript indirection — closing the SCM-lock bypass. In that case
-    /// the returned client is `exec_client`, whose cookie jar is isolated from the primary
-    /// `client`. Pairing the identity with its own cookie jar is required for correctness, not
-    /// just hygiene: IRIS honors an existing CSP session cookie over the request's basic-auth, so
-    /// reusing the primary client (which carries the user's CSP session from doc/scm/compile
-    /// calls) would run these privileged tools under the user's %Development-capable identity
-    /// regardless of the basic-auth header — silently defeating the service-account routing.
-    ///
-    /// When no service account is set, both identity and client fall back to the primary
-    /// connection (unchanged behaviour). SCM / compile / doc tools deliberately keep using
-    /// `get_iris_reloaded()` so checkouts and audit stay attributed to the real user.
-    async fn get_iris_for_exec_with_client(
-        &self,
-    ) -> Result<(Arc<IrisConnection>, Arc<reqwest::Client>), McpError> {
-        let iris = self.get_iris_reloaded().await?;
-        let Some(svc) = iris.with_service_account() else {
-            return Ok((iris, Arc::clone(&self.client)));
-        };
-        // The workspace file named a host the service account's credentials may not go to.
-        // Running as the primary identity instead would widen the call, so refuse it.
-        if let Some(note) = iris
-            .credentials_withheld
-            .as_deref()
-            .filter(|n| n.contains("IRIS_SERVICE_USERNAME"))
-        {
-            return Err(McpError::invalid_request(
-                format!("This tool runs as the service account, and {note}"),
-                None,
-            ));
-        }
-        Ok((Arc::new(svc), Arc::clone(&self.exec_client)))
-    }
-
-    /// Resolve which IRIS connection to use for a tool call (072-multi-instance-pool).
-    ///
-    /// - `None`  → hot-reload the default connection (preserves existing behaviour)
-    /// - `Some(n)` → look up named server `n` in the pool
-    pub async fn resolve_server(
-        &self,
-        name: Option<&str>,
-    ) -> Result<Arc<IrisConnection>, McpError> {
-        match name {
-            None => self.get_iris_reloaded().await,
-            Some(n) => self.pool_ref().get(Some(n)),
-        }
-    }
-
-    /// Returns the active write_tools_enabled flag from connection state.
-    fn write_tools_enabled(&self) -> bool {
-        self.connection.lock().unwrap().gates.write_enabled
-    }
-
-    /// Returns the `ConnectionRole` and instance name for the currently-active connection.
-    ///
-    /// In operate mode (`mode = "operate"` in `.iris-agentic-dev.toml`), matches the active
-    /// `IrisConnection` against declared `[instance.*]` blocks by container name or host.
-    /// Returns `(Workspace, "")` when no fleet config is present, mode is not "operate",
-    /// or no instance block matches — i.e., the default / dev-mode case is always permitted.
-    pub fn instance_role(&self) -> (crate::iris::workspace_config::ConnectionRole, String) {
-        use crate::iris::connection::DiscoverySource;
-        use crate::iris::workspace_config::{load_fleet_config, ConnectionRole};
-
-        let (workspace_path, iris_arc) = {
-            // Prefer config_watcher path (set at startup from OBJECTSCRIPT_WORKSPACE / --workspace).
-            // Fall back to config_file on ConnectionState (set only after a hot-reload cycle).
-            let watcher_ws = {
-                let w = self.config_watcher.lock().unwrap();
-                w.as_ref()
-                    .and_then(|w| w.config_path.parent())
-                    .and_then(|p| p.to_str())
-                    .map(|s| s.to_string())
-            };
-            let conn = self.connection.lock().unwrap();
-            let ws = watcher_ws.or_else(|| {
-                conn.config_file
-                    .as_ref()
-                    .and_then(|p| p.parent())
-                    .and_then(|p| p.to_str())
-                    .map(|s| s.to_string())
-            });
-            (ws, conn.iris.clone())
-        };
-
-        let Some(fleet) = load_fleet_config(workspace_path.as_deref()) else {
-            return (ConnectionRole::Workspace, String::new());
-        };
-        if fleet.mode.as_deref() != Some("operate") {
-            return (ConnectionRole::Workspace, String::new());
-        }
-        let Some(iris) = iris_arc else {
-            return (ConnectionRole::Workspace, String::new());
-        };
-
-        // Active container name from DiscoverySource or IRIS_CONTAINER env var fallback.
-        let active_container = match &iris.source {
-            DiscoverySource::Docker { container_name } => Some(container_name.clone()),
-            _ => std::env::var("IRIS_CONTAINER")
-                .ok()
-                .filter(|s| !s.is_empty()),
-        };
-
-        let active_ns = iris.namespace.to_uppercase();
-
-        // Two-pass match to handle shared-gateway fleets (#114):
-        //   Pass 1: host (or container) AND namespace — most specific.
-        //   Pass 2: host (or container) only, ignoring namespace — fallback for
-        //           instances that omit namespace in their config.
-        // This prevents a subject-role entry on the same host from shadowing a
-        // workspace-role entry that also declares the active namespace.
-        for pass in 0..2u8 {
-            for (name, inst) in &fleet.instance {
-                let host_matches = if let Some(ref ic) = inst.container {
-                    active_container.as_deref() == Some(ic.as_str())
-                } else {
-                    inst.host
-                        .as_deref()
-                        .map(|h| {
-                            let needle = format!("://{h}:");
-                            iris.base_url.contains(&needle)
-                        })
-                        .unwrap_or(false)
-                };
-                if !host_matches {
-                    continue;
-                }
-                let ns_matches = inst
-                    .namespace
-                    .as_deref()
-                    .map(|ns| ns.to_uppercase() == active_ns)
-                    .unwrap_or(false);
-                let matches = if pass == 0 {
-                    // Pass 1: require namespace declared AND matching.
-                    ns_matches && inst.namespace.is_some()
-                } else {
-                    // Pass 2: accept any host match regardless of namespace.
-                    true
-                };
-                if matches {
-                    return (inst.role.clone(), name.clone());
-                }
-            }
-        }
-        (ConnectionRole::Workspace, String::new())
-    }
-
-    /// Returns the active Server Manager server name (if the connection came from SM) and
-    /// the `ConnectionPolicy` for that server (if one is configured in `.iris-agentic-dev.toml`).
-    /// Returns `(None, None)` for all other connection sources.
-    fn active_server_manager_policy(
-        &self,
-    ) -> (
-        Option<String>,
-        Option<crate::iris::workspace_config::ConnectionPolicy>,
-    ) {
-        use crate::iris::connection::DiscoverySource;
-        use crate::iris::workspace_config::load_fleet_config;
-
-        let (workspace_path, iris_arc) = {
-            let watcher_ws = {
-                let w = self.config_watcher.lock().unwrap();
-                w.as_ref()
-                    .and_then(|w| w.config_path.parent())
-                    .and_then(|p| p.to_str())
-                    .map(|s| s.to_string())
-            };
-            let conn = self.connection.lock().unwrap();
-            let ws = watcher_ws.or_else(|| {
-                conn.config_file
-                    .as_ref()
-                    .and_then(|p| p.parent())
-                    .and_then(|p| p.to_str())
-                    .map(|s| s.to_string())
-            });
-            (ws, conn.iris.clone())
-        };
-
-        let iris = match iris_arc {
-            Some(i) => i,
-            None => return (None, None),
-        };
-
-        let fleet = load_fleet_config(workspace_path.as_deref());
-
-        // For ServerManager connections, look up by the registered server name.
-        // For all other sources (EnvVar, Docker), fall back to the "default" policy key
-        // — a catchall that lets single-server flat configs use `[policy.default]`.
-        let server_name = match &iris.source {
-            DiscoverySource::ServerManager { server_name } => server_name.clone(),
-            _ => {
-                let policy = fleet
-                    .as_ref()
-                    .and_then(|fc| fc.policies.get("default"))
-                    .cloned();
-                return (Some("default".to_string()), policy);
-            }
-        };
-
-        let policy = fleet
+            .snapshot
             .as_ref()
-            .and_then(|fc| fc.policies.get(&server_name))
-            .cloned();
-
-        (Some(server_name), policy)
+            .map(|s| s.fleet.clone());
+        let loaded = Arc::new(match held_fleet {
+            Some(fleet) => crate::iris::connection_pool::load_pool_with_fleet(fleet),
+            None => crate::iris::connection_pool::load_pool(config_file.as_deref()),
+        });
+        *slot = loaded.clone();
+        loaded
     }
 
-    /// Returns the active connection as Option<Arc>, for interop helpers that take Option<&IrisConnection>.
-    fn iris_arc(&self) -> Option<Arc<IrisConnection>> {
-        self.connection.lock().unwrap().iris.clone()
+    /// Install the configuration the server started with. Reloads rebuild it from `inputs`.
+    pub fn set_config(
+        &self,
+        inputs: crate::iris::config_sources::LoadInputs,
+        snapshot: crate::iris::config_sources::ConfigSnapshot,
+    ) {
+        let mut h = self.config.write().unwrap();
+        h.snapshot = Some(Arc::new(snapshot));
+        h.inputs = Some(inputs);
     }
 
-    /// Check if `.iris-agentic-dev.toml` has changed since last load; if so, reload and re-probe.
+    /// A gate refusal as the client sees it: the gate's own body plus `refusal {kind, server,
+    /// lift, set_aside}` (FR-039), sent as an error result. Every gate leaves through here, so a
+    /// refusal is `isError` whatever gate raised it.
+    pub(crate) fn refuse(&self, gate: serde_json::Value) -> Result<CallToolResult, McpError> {
+        // The server the call was resolved to: the one the body names, else the primary.
+        let t = self.target()?;
+        let named = ["server_name", "instance"]
+            .iter()
+            .find_map(|k| gate.get(*k).and_then(|v| v.as_str()));
+        let server = t
+            .servers()
+            .find(|s| Some(s.key.as_str()) == named)
+            .unwrap_or(&t.primary);
+        self.refusal_on(server, gate)
+    }
+
+    /// A handler's answer with `refusal` added when its `error_code` is a refusal that has none.
+    fn classify_answer(&self, result: CallToolResult) -> CallToolResult {
+        let refusal_without_object = result.structured_content.as_ref().is_some_and(|b| {
+            b["error_code"]
+                .as_str()
+                .is_some_and(|c| crate::policy::refusal::REFUSAL_CODES.contains(&c))
+                && b.get("refusal").is_none()
+        });
+        if !refusal_without_object {
+            return result;
+        }
+        let body = result.structured_content.clone().unwrap_or_default();
+        self.refuse(body).unwrap_or(result)
+    }
+
+    /// `CONFIG_INVALID` when the configuration did not parse, for a tool that talks to IRIS.
+    /// A broken file is an error, not a missing one: the gates are closed and the connection is
+    /// not built, so every IRIS tool says why (R5 C11).
+    fn config_invalid(&self, tool: &str) -> Option<Result<CallToolResult, McpError>> {
+        if CONFIG_TOLERANT_TOOLS.contains(&tool) {
+            return None;
+        }
+        let snap = self.snapshot();
+        let e = snap.errors.first()?;
+        Some(err_result(serde_json::json!({
+            "success": false,
+            "error_code": "CONFIG_INVALID",
+            "error": format!("{} does not parse: {}", e.path.display(), e.message),
+            "file": e.path.to_string_lossy(),
+            "line": e.line,
+            "column": e.column,
+            "remediation": "Fix the file; iad reads it again on the next call. Until then every \
+                            tool that talks to IRIS is refused and the write gates are closed.",
+        })))
+    }
+
+    /// The project directory host paths are confined to and the directory a relative path is
+    /// taken from (spec 141 T212; `tools/host_fs.rs`).
+    fn host_path_context(&self) -> (Option<std::path::PathBuf>, std::path::PathBuf) {
+        (
+            self.snapshot().project_root.clone(),
+            std::env::current_dir().unwrap_or_default(),
+        )
+    }
+
+    /// The directory `kb index` reads, confined to the project (T216). `requested` of `None`, empty
+    /// or `.` means the project directory. The `Err` is the answer to send.
+    fn kb_index_scope(
+        &self,
+        tool: &str,
+        requested: Option<&str>,
+    ) -> Result<skills_tools::KbIndexScope, Result<CallToolResult, McpError>> {
+        let (root, cwd) = self.host_path_context();
+        let requested = requested.filter(|r| !r.is_empty() && *r != ".");
+        let found = match (requested, root.as_deref()) {
+            (None, Some(r)) => Ok(r.to_path_buf()),
+            (None, None) => Err(host_fs::PathRefusal::NoRoot),
+            (Some(r), root) => host_fs::confine_dir(root, &cwd, r),
+        };
+        match found {
+            Ok(dir) => Ok(skills_tools::KbIndexScope {
+                dir,
+                root: root.unwrap_or_default(),
+            }),
+            Err(host_fs::PathRefusal::NotFound) => Err(err_json(
+                "WORKSPACE_NOT_FOUND",
+                &format!("{} is not a directory", requested.unwrap_or(".")),
+            )),
+            Err(why) => Err(self.refuse(host_fs::refusal_body(
+                tool,
+                requested.unwrap_or("."),
+                &why,
+                &[],
+            ))),
+        }
+    }
+
+    /// The configuration every gate reads. Before `set_config` (tests that build `IrisTools`
+    /// directly) it is loaded from the process on each call, from the directory the watcher names.
+    pub fn snapshot(&self) -> Arc<crate::iris::config_sources::ConfigSnapshot> {
+        if let Some(s) = self.config.read().unwrap().snapshot.clone() {
+            return s;
+        }
+        let watcher_ws = {
+            let w = self.config_watcher.lock().unwrap();
+            w.as_ref()
+                .and_then(|w| w.config_path.parent())
+                .and_then(|p| p.to_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+        };
+        let ws = watcher_ws.or_else(|| {
+            self.connection
+                .lock()
+                .unwrap()
+                .config_file
+                .as_ref()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.to_str())
+                .map(|s| s.to_string())
+        });
+        Arc::new(crate::iris::config_sources::ConfigSnapshot::load(
+            &crate::iris::config_sources::LoadInputs::from_process(ws.as_deref(), None),
+        ))
+    }
+
+    /// Check if the operator file or the workspace file has changed since last load; if so,
+    /// rebuild the snapshot and, when the connection came from a file that changed, re-probe.
     /// Called at the start of every tool handler for lazy hot-reload (034).
     /// Completely silent — no error returned to caller on reload failure.
     async fn check_reload(&self) {
-        // Check if watcher says config changed.
+        // Check if the watcher says either file changed.
         // Also treat the file as "changed" on first call when it exists but wasn't loaded at
         // startup (e.g. CWD was "/" when the server launched — issue #104).
-        let (changed, deleted) = {
+        let (changed, deleted, operator_changed) = {
             let mut w = self.config_watcher.lock().unwrap();
             if let Some(ref mut watcher) = *w {
                 // If startup fell back to auto-discovery with NO active connection, and the
@@ -3258,19 +3527,94 @@ impl IrisTools {
                 // file coming back is still detected — so the deletion has to be read off the
                 // watcher before that call consumes the state (085 edge case 2).
                 let deleted = watcher.last_mtime.is_some() && !file_exists;
-                (watcher.has_changed(), deleted)
+                let changed = watcher.has_changed();
+                (changed, deleted, watcher.operator_changed())
             } else {
-                (false, false)
+                (false, false, false)
             }
         };
-        if deleted {
-            // Only the declaration is gone, not the connection, so keep the live connection and
-            // re-resolve the gate from an empty declaration: operator env, then the inference
-            // tiers, then the documented default — exactly what a fresh start with no config file
-            // would decide. Leaving the old value in place would let a declaration outlive the
-            // file that made it, which is the same stale-gate defect as the env-var latch.
+        if !(changed || deleted || operator_changed) {
+            return;
+        }
+
+        use crate::iris::config_sources::{ConfigSnapshot, FileKind, LoadInputs};
+        let mut inputs = self
+            .config
+            .read()
+            .unwrap()
+            .inputs
+            .clone()
+            .unwrap_or_else(|| {
+                let dir = {
+                    let w = self.config_watcher.lock().unwrap();
+                    w.as_ref()
+                        .and_then(|w| w.config_path.parent())
+                        .and_then(|p| p.to_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                };
+                LoadInputs::from_process(dir.as_deref(), None)
+            });
+        // The operator file as the server runs on it: an edit since then applies only where it
+        // tightens (FR-043). Without a loaded snapshot there is nothing to hold against.
+        inputs.operator_baseline = self.config.read().unwrap().snapshot.as_ref().map(|s| {
+            s.operator_file
+                .as_ref()
+                .map(|f| f.table.clone())
+                .unwrap_or_default()
+        });
+        let new_snap = ConfigSnapshot::load(&inputs);
+
+        // A rebuild that fails keeps the last good snapshot and says why (R4a D1). So does a
+        // contradictory gate declaration: the only safe answer mid-session is the last known-good
+        // gate plus the reason, never a widened one.
+        let had_good = self
+            .config
+            .read()
+            .unwrap()
+            .snapshot
+            .as_ref()
+            .is_some_and(|s| !s.is_invalid());
+        let problem = new_snap.errors.first().map(|e| e.display()).or_else(|| {
+            new_snap
+                .gate_error()
+                .map(|e| format!("{}: {}", e.code(), e))
+        });
+        if let (Some(problem), true) = (&problem, had_good) {
+            self.connection.lock().unwrap().config_parse_error = Some(problem.clone());
+            return;
+        }
+        let snap = Arc::new(new_snap);
+        {
+            let mut h = self.config.write().unwrap();
+            h.snapshot = Some(snap.clone());
+            // The baseline belongs to one reload: the next one reads it from the snapshot.
+            inputs.operator_baseline = None;
+            h.inputs = Some(inputs);
+            // Plain `eprintln!`, not tracing: `RUST_LOG` can silence tracing, and the operator
+            // should learn that an edit did not take effect without knowing that.
+            for held in &snap.held {
+                if h.held_announced
+                    .insert(format!("{}={}", held.id, held.setting))
+                {
+                    eprintln!("{}", held.stderr_line(snap.operator_path.as_deref()));
+                }
+            }
+        }
+        // What was learned about the pool's members under the old files is not carried over.
+        self.pool_ref().clear_modes();
+        let declared = snap.declared_gates();
+
+        let connection_kind = snap.connection_config.as_ref().map(|(_, _, k)| *k);
+        let reconnect = snap.connection_config.is_some()
+            && (changed || (operator_changed && connection_kind == Some(FileKind::Operator)));
+
+        // Only the declaration moved, or the file is gone or unusable: keep the live connection and
+        // re-resolve the gate from what the files declare now — exactly what a fresh start would
+        // decide. Leaving the old value in place would let a declaration outlive the file that made
+        // it, which is the same stale-gate defect as the env-var latch.
+        if !reconnect {
             let mut conn = self.connection.lock().unwrap();
-            let declared = write_gate::DeclaredGates::default();
             let ns = conn
                 .iris
                 .as_ref()
@@ -3278,73 +3622,36 @@ impl IrisTools {
                 .unwrap_or_default();
             conn.gates = write_gate::resolve_for_connection(declared, conn.iris.as_deref(), &ns);
             conn.declared = declared;
-            conn.config_parse_error = None;
+            conn.config_parse_error = problem;
             tracing::info!(
-                "iris-agentic-dev: .iris-agentic-dev.toml removed — gate re-resolved without it \
+                "iris-agentic-dev: configuration reloaded — gate re-resolved \
                  (write_tools_enabled={}, source={})",
                 conn.gates.write_enabled,
                 conn.gates.write_source.as_str()
             );
             return;
         }
-        if !changed {
-            return;
-        }
 
-        // Config file changed — reload and re-probe
-        let config_path = {
-            let w = self.config_watcher.lock().unwrap();
-            w.as_ref().map(|w| w.config_path.clone())
-        };
-        let Some(config_path) = config_path else {
+        let Some((cfg, config_path, _)) = snap.connection_config.clone() else {
             return;
         };
-
-        let config_file_str = config_path
-            .parent()
-            .and_then(|p| p.to_str())
-            .map(|s| s.to_string());
-
-        // Parse the new config
-        let cfg = crate::iris::workspace_config::load_workspace_config(config_file_str.as_deref());
-        let chosen = crate::iris::workspace_config::chooses(&config_path);
-
-        let (conn_result, declared) = match cfg {
-            None => {
-                // File parse error or missing — set error in state, keep old connection
-                let mut conn = self.connection.lock().unwrap();
-                conn.config_parse_error =
-                    Some("Config file changed but could not be parsed".to_string());
-                return;
-            }
-            Some(cfg) => {
-                // A contradictory declaration is refused with exit 2 at startup. Mid-session the
-                // only safe answer is the last known-good gate plus the reason — never a widened
-                // one, which is what the old code did by returning before its env export.
-                if let Err(e) = write_gate::validate_gate_config(&cfg) {
-                    let mut conn = self.connection.lock().unwrap();
-                    conn.config_parse_error = Some(format!("{}: {}", e.code(), e));
-                    return;
-                }
-                let declared = write_gate::DeclaredGates::from_config(&cfg);
-                // The startup rule: a home file that yields to IRIS_HOST reloads its settings,
-                // not the connection, and discovery below returns the IRIS_HOST server.
-                let conn = if chosen {
-                    crate::iris::workspace_config::workspace_config_to_connection(&cfg, "USER")
-                } else {
-                    crate::iris::workspace_config::export_tool_lists(&cfg);
-                    None
-                };
-                (conn, declared)
-            }
+        // The startup rule: the operator file yields its connection to IRIS_HOST; its settings
+        // still reload, and discovery below returns the IRIS_HOST server.
+        let chosen = snap.file_chooses_connection();
+        let conn_result = if chosen {
+            crate::iris::workspace_config::workspace_config_to_connection(&cfg, "USER")
+        } else {
+            crate::iris::workspace_config::export_tool_lists(&cfg);
+            None
         };
 
         // Probe the new connection
         let mut new_conn = match conn_result {
             Some(c) => c,
             None => {
-                // container= config — let discovery find it via IRIS_CONTAINER env
-                match crate::iris::discovery::discover_iris(None).await {
+                // container= config — discovery finds it from the file's hints, not the environment
+                let hints = crate::iris::workspace_config::container_discovery_hints(&cfg);
+                match crate::iris::discovery::discover_iris_with(None, &hints).await {
                     crate::iris::discovery::IrisDiscovery::Found(c) => c,
                     _ => {
                         let mut conn = self.connection.lock().unwrap();
@@ -3370,32 +3677,57 @@ impl IrisTools {
         } else {
             ConnectionSource::EnvVars
         };
-        let new_state = ConnectionState::from_iris(new_conn, source, Some(config_path), gates)
-            .with_declared(declared);
+        // A file that names no server is not where the connection came from (T194).
+        let no_target = snap
+            .file_naming_no_target()
+            .map(std::path::Path::to_path_buf);
+        let named = no_target.is_none().then_some(config_path);
+        let new_state = ConnectionState::from_iris(new_conn, source, named, gates)
+            .with_declared(declared)
+            .with_no_target_file(no_target);
         let mut conn = self.connection.lock().unwrap();
         *conn = new_state;
         conn.config_parse_error = None;
         tracing::info!("iris-agentic-dev: hot-reloaded connection from .iris-agentic-dev.toml");
         drop(conn);
 
-        // 093 US2: also reload the pool on config change. Use same swap pattern as
-        // iris_reload_pool. Fail-safe: parse errors return early above, so we only
-        // reach here when the config parsed successfully.
-        // Pass config_path so Source 3 (fleet instances) is loaded from the right TOML.
-        let new_pool = Arc::new(crate::iris::connection_pool::load_pool(Some(
-            &config_path_for_pool,
-        )));
-        let count = new_pool.names().len();
-        *self.pool.write().unwrap() = new_pool;
+        // 093 US2: also reload the pool on config change. Same swap as iris_reload_pool, except
+        // the new pool is built when a member is first needed (T187): a reload on the first tool
+        // call must not read every member's password, and so open the keychain, for a call that
+        // names no server. Pass config_path so Source 3 (fleet instances) is loaded from the right
+        // TOML. Fail-safe: parse errors return early above, so we only reach here when the config
+        // parsed successfully.
+        *self.pool.write().unwrap() = Arc::new(
+            crate::iris::connection_pool::ConnectionPool::unloaded(Some(config_path_for_pool)),
+        );
         tracing::info!(
-            "iris-agentic-dev: background pool reload triggered by config change — {} server(s) loaded",
-            count
+            "iris-agentic-dev: pool reload triggered by config change — loads on first use"
         );
     }
+    /// The client for the call in scope: the target server's own certificate setting decides
+    /// whether its certificate is checked. Outside a call, the client built at startup.
     fn http_client(&self) -> &reqwest::Client {
-        &self.client
+        let tls = self
+            .target()
+            .ok()
+            .and_then(|t| t.primary.conn.as_ref().map(|c| c.tls));
+        match tls {
+            Some(tls) => crate::iris::http::call_client_ref(&tls).unwrap_or(&self.client),
+            None => &self.client,
+        }
     }
     fn record_call(&self, tool: &str, success: bool) {
+        self.record(tool, success, true);
+    }
+
+    /// [`Self::record_call`] for a call the pipeline refused before any handler ran. The durable
+    /// record goes to the local file, never to IRIS: a write gate that says no must not be followed
+    /// by a write into the server it protects, or by a request to one that cannot be reached.
+    pub(crate) fn record_refused(&self, tool: &str) {
+        self.record(tool, false, false);
+    }
+
+    fn record(&self, tool: &str, success: bool, to_iris: bool) {
         let duration_ms = CALL_START
             .try_with(|start| start.elapsed().as_millis() as u64)
             .unwrap_or(0);
@@ -3410,8 +3742,14 @@ impl IrisTools {
             }
             h.push_back(record.clone());
         }
-        // Best-effort durable side write — never blocks or fails the caller (FR-014).
-        let iris = self.connection.lock().unwrap().iris.clone();
+        // Best-effort durable side write — never blocks or fails the caller (FR-014). The IRIS
+        // sink runs only on the server the call acted on, and only where iad may write and nobody
+        // watches the write (R5 C16, T208), and never for a refused call.
+        let iris = if to_iris {
+            self.durable_sink_connection()
+        } else {
+            None
+        };
         let client = Arc::clone(&self.client);
         let config_dir = telemetry_config_dir();
         // Counted, so an exiting CLI process can wait for it (130 round 4).
@@ -3420,13 +3758,56 @@ impl IrisTools {
         });
     }
 
-    /// Write an audit log entry for a policy-gated tool call.
-    /// No-op when the current connection has no active policy block.
+    /// The sink the operator chose: the operator file's `telemetry_sink` or `IAD_TELEMETRY_SINK`.
+    /// A workspace file's key is set aside before it reaches the snapshot's operator settings.
+    fn telemetry_sink(&self) -> crate::telemetry::TelemetrySink {
+        crate::telemetry::sink_setting(
+            &self.snapshot().operator,
+            std::env::var("IAD_TELEMETRY_SINK").ok().as_deref(),
+        )
+    }
+
+    /// The connection of the server the call in scope acted on when the telemetry IRIS sink may
+    /// use it, else `None` and the record goes to the local file alone. The sink is off unless the
+    /// operator opted in. Outside a call (no resolved target) it is the default connection, judged
+    /// by the default server's own gates.
+    fn durable_sink_connection(&self) -> Option<Arc<IrisConnection>> {
+        // The snapshot is read before the connection lock because it takes it too.
+        let strict = self.snapshot().read_only_strict();
+        let sink = self.telemetry_sink();
+        if let Ok(target) = self.target() {
+            let server = &target.primary;
+            return crate::telemetry::durable_sink(
+                server.conn.clone(),
+                crate::telemetry::SinkGate::for_server(
+                    server.gates.write_enabled,
+                    strict,
+                    server.role,
+                    sink,
+                ),
+            );
+        }
+        let c = self.connection.lock().unwrap();
+        crate::telemetry::durable_sink(
+            c.iris.clone(),
+            crate::telemetry::SinkGate::for_server(
+                c.gates.write_enabled,
+                strict,
+                crate::iris::workspace_config::ConnectionRole::Workbench,
+                sink,
+            ),
+        )
+    }
+
+    /// Write an audit log entry for a policy-gated tool call, on the connection of the server the
+    /// call acts on, which is not always the default one (spec 141, R1 D8.9). No-op when that
+    /// connection has no active policy block.
     #[allow(clippy::too_many_arguments)]
-    fn write_audit_entry(
+    pub(crate) fn write_audit_entry_on(
         &self,
         tool: &str,
         server_name: &str,
+        conn: Option<Arc<IrisConnection>>,
         policy: Option<&crate::iris::workspace_config::ConnectionPolicy>,
         status: &str,
         gate: Option<&str>,
@@ -3448,12 +3829,10 @@ impl IrisTools {
             let peer = mcp_peer();
             let event_data = build_event_data(&tool_name, mode, peer);
             let os_code = build_audit_os(&event_data, "iris-agentic-dev tool call");
-            let conn = self.connection.lock().ok().and_then(|c| c.iris.clone());
             let counter = self.iris_audit_counter.clone();
-            if let Some(iris_conn) = conn {
+            if let Some(iris_conn) = conn.clone() {
                 tokio::task::spawn(async move {
-                    let client = match crate::iris::connection::iris_http_client(None, true, false)
-                    {
+                    let client = match iris_conn.client(crate::iris::http::ClientKind::Raw) {
                         Ok(c) => c,
                         Err(e) => {
                             tracing::warn!("iris_audit: failed to build HTTP client: {e}");
@@ -3487,13 +3866,8 @@ impl IrisTools {
         let Some(path) = AuditLog::default_path() else {
             return;
         };
-        let namespace = self
-            .connection
-            .lock()
-            .ok()
-            .and_then(|c| c.iris.clone())
-            .map(|i| i.namespace.clone())
-            .unwrap_or_default();
+        let keep_payloads = self.audit_payloads_enabled();
+        let namespace = conn.map(|i| i.namespace.clone()).unwrap_or_default();
         let entry = AuditLogEntry {
             ts: chrono::Utc::now().to_rfc3339(),
             tool: tool.to_string(),
@@ -3504,141 +3878,59 @@ impl IrisTools {
             allowed_categories,
             params,
         };
-        let log = AuditLog::new(path);
+        let log = AuditLog::new(path).with_payloads(keep_payloads);
         let _ = log.write(&entry);
     }
 
-    /// Runs the shared policy gate for a tool that has no gate of its own, audits a refusal and
-    /// returns it. `None` means the call may proceed.
-    fn policy_refusal(
-        &self,
-        tool_name: &str,
-        params_json: serde_json::Value,
-    ) -> Option<Result<CallToolResult, McpError>> {
-        let (sm_server, policy) = self.active_server_manager_policy();
-        let server = sm_server.as_deref().unwrap_or("");
-        let gate =
-            crate::policy::gate::dispatch_gate(tool_name, server, policy.as_ref(), &params_json)
-                .err()?;
-        self.write_audit_entry(
-            tool_name,
-            server,
-            policy.as_ref(),
-            "blocked",
-            Some("policy"),
-            None,
-            params_json,
-        );
-        self.record_call(tool_name, false);
-        Some(err_result(gate))
+    /// Does the local audit log keep payload text? Only the operator file's `audit_payloads` or
+    /// `IAD_AUDIT_PAYLOADS` say so; a workspace file's is set aside before it gets here.
+    fn audit_payloads_enabled(&self) -> bool {
+        // Before the connection lock: `snapshot()` takes it too.
+        let snap = self.snapshot();
+        crate::iris::audit_log::payloads_enabled(
+            &snap.operator,
+            std::env::var("IAD_AUDIT_PAYLOADS").ok().as_deref(),
+        )
     }
 
-    /// The gate sequence every arbitrary-execution tool runs before it sends a line to IRIS.
+    /// The content check of the tools that run the agent's code: a literal `Kill ^<global>` needs
+    /// the destructive tier (spec 087). The gates themselves (tier, policy, role, audit) ran in the
+    /// pipeline against the target server (spec 141, R1); this reads that server's resolution.
     ///
-    /// Returns `Some(refusal)` when the call is blocked, `None` when it may proceed. The refusal is
-    /// the error body to hand to `err_result`.
-    ///
-    /// One function rather than a copy per handler, because the copy is what went wrong: `iris_execute`
-    /// carried this sequence inline and `iris_ws_exec` — the same capability over a WebSocket
-    /// terminal — carried none of it, so `Do $system.OBJ.Delete(…)` was refused on one tool and run
-    /// on the other (#137). Both call this now, and a third arbitrary-execution tool has one thing to
-    /// call rather than eighty lines to remember to copy.
-    ///
-    /// Order matters and matches the original: `dispatch_gate` (code-edit, env template, PHI,
-    /// blocklist), then the server-manager policy gate, then the audit entry, then the role gate,
-    /// then the literal `Kill ^<global>` destructive check. Every refusal is audited as `blocked`
-    /// before it returns; a permitted call is audited as `allowed`.
-    fn arbitrary_exec_gate(
-        &self,
-        tool_name: &str,
-        params_json: serde_json::Value,
-        code: &str,
-        confirmed: bool,
-    ) -> Option<serde_json::Value> {
-        let (sm_server, policy) = self.active_server_manager_policy();
-        let server = sm_server.as_deref().unwrap_or("");
-
-        if let Err(gate) =
-            crate::policy::gate::dispatch_gate(tool_name, server, policy.as_ref(), &params_json)
-        {
-            self.write_audit_entry(
-                tool_name,
-                server,
-                policy.as_ref(),
-                "blocked",
-                Some("policy"),
-                None,
-                params_json,
-            );
-            return Some(gate);
+    /// Only the obvious literal form is detected. Indirect kills (variables, `Xecute`, class
+    /// dispatch, `&sql`) are not, and the message says so; IRIS privileges and the environment
+    /// template are the controls for those.
+    fn exec_content_gate(&self, tool_name: &str, code: &str) -> Option<serde_json::Value> {
+        if !crate::tools::write_gate::contains_global_kill(code) {
+            return None;
         }
-        if let Some(gate) =
-            crate::iris::server_manager::policy_gate(tool_name, server, policy.as_ref())
-        {
-            let allowed = gate["allowed_categories"].as_array().map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            });
-            self.write_audit_entry(
-                tool_name,
-                server,
-                policy.as_ref(),
-                "blocked",
-                Some("policy"),
-                allowed,
-                params_json,
-            );
-            return Some(gate);
-        }
-        self.write_audit_entry(
-            tool_name,
-            server,
-            policy.as_ref(),
-            "allowed",
-            None,
-            None,
-            params_json,
-        );
-
-        let (role, instance_name) = self.instance_role();
-        if let Some(gate) = crate::iris::workspace_config::check_role_gate(
-            &role,
-            tool_name,
-            confirmed,
-            &instance_name,
-            false,
-        ) {
-            return Some(gate);
-        }
-
-        // Spec 087: content-sensitive destructive gate. These tools are write-gated via
-        // CLASSIFICATION (so write_tools_enabled=false is already refused by call_tool dispatch),
-        // but the destructive tier is not detectable statically for the general case. This check
-        // catches the obvious literal form — `Kill ^<global>` — before any IRIS call.
-        // Indirect vectors (Kill @var, Xecute, ##class dispatch, &sql) are not detected here;
-        // the error message says so explicitly so callers cannot mistake this for a full block.
-        if crate::tools::write_gate::contains_global_kill(code) {
-            let gates = self.connection.lock().unwrap().gates;
-            if !gates.destructive_enabled {
+        let target = match self.target() {
+            Ok(t) => t,
+            Err(e) => {
                 return Some(serde_json::json!({
                     "success": false,
-                    "error_code": crate::tools::write_gate::ERR_DESTRUCTIVE_GATE,
-                    "error": format!(
-                        "{tool_name} contains a Kill ^<global> expression and the destructive \
-                         tier is disabled (source: {}). Set destructive_tools_enabled = true in \
-                         .iris-agentic-dev.toml to allow destructive operations. Note: this check \
-                         applies to literal Kill ^ patterns in the code string only. Indirect kill \
-                         operations (via variables, Xecute, or class methods) are not detected \
-                         here — IRIS-side credentials and the mcpTemplate env gate are the \
-                         appropriate controls for those.",
-                        gates.destructive_source.as_str()
-                    ),
-                }));
+                    "error_code": target::ERR_TARGET_NOT_RESOLVED,
+                    "error": e.message.to_string(),
+                }))
             }
+        };
+        let gates = target.primary.gates;
+        if gates.destructive_enabled {
+            return None;
         }
-
-        None
+        Some(serde_json::json!({
+            "success": false,
+            "error_code": crate::tools::write_gate::ERR_DESTRUCTIVE_GATE,
+            "error": format!(
+                "{tool_name} contains a Kill ^<global> expression and the destructive \
+                 tier is disabled (source: {}). Note: this check \
+                 applies to literal Kill ^ patterns in the code string only. Indirect kill \
+                 operations (via variables, Xecute, or class methods) are not detected \
+                 here — IRIS-side credentials and the mcpTemplate env gate are the \
+                 appropriate controls for those.",
+                gates.destructive_source.as_str()
+            ),
+        }))
     }
 
     #[tool(
@@ -3649,67 +3941,40 @@ impl IrisTools {
         &self,
         Parameters(p): Parameters<CompileParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.resolve_server(p.server.as_deref()).await?;
-        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace).to_string();
-        let (sm_server, policy) = self.active_server_manager_policy();
-        let params_json = serde_json::json!({ "target": p.target, "namespace": namespace });
-        if let Err(gate) = crate::policy::gate::dispatch_gate(
-            "iris_compile",
-            sm_server.as_deref().unwrap_or(""),
-            policy.as_ref(),
-            &params_json,
-        ) {
-            self.write_audit_entry(
-                "iris_compile",
-                sm_server.as_deref().unwrap_or(""),
-                policy.as_ref(),
-                "blocked",
-                Some("policy"),
-                None,
-                params_json,
-            );
-            return err_result(gate);
+        if let Some(msg) = compile_flags_problem(&p.flags) {
+            return err_json("INVALID_PARAMS", &msg);
         }
-        if let Some(gate) = crate::iris::server_manager::policy_gate(
-            "iris_compile",
-            sm_server.as_deref().unwrap_or(""),
-            policy.as_ref(),
-        ) {
-            let allowed = gate["allowed_categories"].as_array().map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                    .collect()
-            });
-            self.write_audit_entry(
-                "iris_compile",
-                sm_server.as_deref().unwrap_or(""),
-                policy.as_ref(),
-                "blocked",
-                Some("policy"),
-                allowed,
-                params_json,
-            );
-            return err_result(gate);
-        }
-        self.write_audit_entry(
-            "iris_compile",
-            sm_server.as_deref().unwrap_or(""),
-            policy.as_ref(),
-            "allowed",
-            None,
-            None,
-            params_json,
-        );
-        let (role, instance_name) = self.instance_role();
-        if let Some(gate) = crate::iris::workspace_config::check_role_gate(
-            &role,
-            "iris_compile",
-            p.confirm,
-            &instance_name,
-            false,
-        ) {
-            return err_result(gate);
-        }
+        // A local file is judged before any request and before it is read (T212).
+        let local_file = if is_local_compile_target(&p.target) {
+            let (root, cwd) = self.host_path_context();
+            match host_fs::confine_file(
+                root.as_deref(),
+                &cwd,
+                &p.target,
+                host_fs::COMPILE_EXTENSIONS,
+            ) {
+                Ok(canonical) => Some(canonical),
+                Err(host_fs::PathRefusal::NotFound) => {
+                    return err_json(
+                        "FILE_NOT_FOUND",
+                        &format!("Local file not found: {}", p.target),
+                    )
+                }
+                Err(why) => {
+                    return self.refuse(host_fs::refusal_body(
+                        "iris_compile",
+                        &p.target,
+                        &why,
+                        host_fs::COMPILE_EXTENSIONS,
+                    ))
+                }
+            }
+        } else {
+            None
+        };
+        let iris = self.target_conn()?;
+        let namespace = self.target_ns(p.namespace.as_deref())?;
+        let gate = crate::tools::target::compile_gate()?;
         tracing::info!(namespace = %namespace, target = %p.target, "iris_compile");
 
         // Capability gate: if atelier_rest is unavailable (docker_only or NoPWS build),
@@ -3725,30 +3990,73 @@ impl IrisTools {
             let ssh_host_compile = iris.ssh_host.clone();
 
             if docker_only || no_pws {
+                // `$SYSTEM.OBJ.Compile` takes class names only: `X.cls` is ERROR #5351 and a routine
+                // is not accepted at all. `CompileList` takes documents with their extension.
                 let code = format!(
-                    "do $SYSTEM.OBJ.Compile(\"{}\",\"{}\")",
-                    crate::objectscript::os_lit_inner(&p.target),
+                    "do $SYSTEM.OBJ.CompileList(\"{}\",\"{}\")",
+                    crate::objectscript::os_lit_inner(&stored_check::compile_list_arg(&p.target)),
                     crate::objectscript::os_lit_inner(&p.flags),
                 );
                 let exec_path = nopws::execution_path_docker(ssh_host_compile.as_deref());
-                let result = if let Some(ref ssh_host) = ssh_host_compile {
-                    iris.execute_ssh(&code, &namespace, ssh_host).await
+                // The same stored-source check as the HTTP path (FR-015). A failure of the exec
+                // channel itself is carried into the arms below, which report it as the compile
+                // would have; nothing is compiled.
+                let checked = if gate.on {
+                    let ssh = ssh_host_compile.as_deref();
+                    match stored_check::expand_exec_target(&iris, ssh, &namespace, &p.target).await
+                    {
+                        Err(outcome) => outcome,
+                        Ok(docs) => {
+                            // The stored source first, then the superclasses IRIS would also
+                            // compile (FR-015a).
+                            match stored_check::check_exec_docs(
+                                &iris,
+                                ssh,
+                                &namespace,
+                                docs.clone(),
+                            )
+                            .await
+                            {
+                                stored_check::Outcome::Clear => {
+                                    superclass_check::check_exec(&iris, ssh, &namespace, &docs)
+                                        .await
+                                }
+                                other => other,
+                            }
+                        }
+                    }
                 } else {
-                    iris.execute(&code, &namespace).await
+                    stored_check::Outcome::Clear
+                };
+                let result = match checked {
+                    stored_check::Outcome::Refused(err) => {
+                        self.record_call("iris_compile", false);
+                        return err_result(err);
+                    }
+                    stored_check::Outcome::Transport(msg) => Err(anyhow::anyhow!(msg)),
+                    stored_check::Outcome::Clear => {
+                        if let Some(ref ssh_host) = ssh_host_compile {
+                            iris.execute_ssh(&code, &namespace, ssh_host).await
+                        } else {
+                            iris.execute(&code, &namespace).await
+                        }
+                    }
                 };
                 self.record_call("iris_compile", result.is_ok());
                 return match result {
                     Ok(output) => {
                         let trimmed = output.trim().to_string();
                         let success = !trimmed.contains("ERROR");
-                        ok_json(serde_json::json!({
+                        let mut resp = serde_json::json!({
                             "success": success,
                             "target": p.target,
                             "namespace": namespace,
                             "method": "docker_exec",
                             "execution_path": exec_path,
                             "output": trimmed,
-                        }))
+                        });
+                        gate.note_if_off(&mut resp);
+                        ok_json(resp)
                     }
                     Err(e) => {
                         let msg = e.to_string();
@@ -3783,19 +4091,8 @@ impl IrisTools {
 
         let client = self.http_client();
 
-        // Local file path support: if target looks like a file path (contains / or \,
-        // or ends with .cls/.mac/.inc and exists on disk), upload via Atelier PUT first.
-        let is_local_path = p.target.contains('/')
-            || p.target.contains('\\')
-            || (p.target.ends_with(".cls") && std::path::Path::new(&p.target).exists());
-        if is_local_path {
-            let path = std::path::Path::new(&p.target);
-            if !path.exists() {
-                return err_json(
-                    "FILE_NOT_FOUND",
-                    &format!("Local file not found: {}", p.target),
-                );
-            }
+        // Local file path support: a file inside the project is uploaded via Atelier PUT first.
+        if let Some(path) = local_file.as_deref() {
             {
                 let content = match std::fs::read_to_string(path) {
                     Ok(c) => c,
@@ -3806,23 +4103,42 @@ impl IrisTools {
                         )
                     }
                 };
-                // Derive document name from Class declaration or from file name
+                // Derive document name from Class declaration or from file name. A routine or
+                // include keeps its file name: a `.mac` is not a class even when a line in it
+                // starts with the word "class".
+                let file_name = std::path::Path::new(&p.target)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("Unknown.cls")
+                    .to_string();
+                let is_routine_file = {
+                    let lower = file_name.to_lowercase();
+                    lower.ends_with(".mac") || lower.ends_with(".inc") || lower.ends_with(".int")
+                };
                 let doc_name = content
                     .lines()
                     .find(|l| l.trim_start().to_lowercase().starts_with("class "))
                     .and_then(|l| l.split_whitespace().nth(1))
                     .map(|cls| format!("{}.cls", cls))
-                    .unwrap_or_else(|| {
-                        path.file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("Unknown.cls")
-                            .to_string()
-                    });
-                // Compile-time code execution gate
-                if let Some(err) =
-                    crate::policy::code_edit_gate::check_compile_time_code_mode(&content, &doc_name)
-                {
-                    return ok_json(err);
+                    .filter(|_| !is_routine_file)
+                    .unwrap_or(file_name);
+                // Compile-time code execution gate, on the file and on every include it names
+                // that is already stored. A refusal is an error result.
+                if gate.on {
+                    if let Some(err) = stored_check::check_http(
+                        &iris,
+                        client,
+                        &namespace,
+                        vec![stored_check::Seed::Content {
+                            doc: doc_name.clone(),
+                            content: content.clone(),
+                        }],
+                    )
+                    .await
+                    {
+                        self.record_call("iris_compile", false);
+                        return err_result(err);
+                    }
                 }
                 // Upload via Atelier PUT
                 let put_url = iris.versioned_ns_url(
@@ -3846,12 +4162,30 @@ impl IrisTools {
                 // Check PUT response body for Atelier-level errors (200 OK with status.errors
                 // can occur on some IRIS builds when the upload fails internally, e.g. build 110
                 // SetTextFromString NULL namespace bug).
-                let put_body: serde_json::Value = put_resp.json().await.unwrap_or_default();
+                let put_body: serde_json::Value =
+                    crate::iris::http::json_or_default(put_resp).await;
                 if let Some(errs) = put_body["status"]["errors"].as_array() {
                     if !errs.is_empty() {
                         let msg = errs[0]["error"].as_str().unwrap_or("Upload failed");
                         self.record_call("iris_compile", false);
                         return err_json("UPLOAD_FAILED", msg);
+                    }
+                }
+                // The upload put the class in the dictionary, so its `Extends` is now readable
+                // there. A superclass IRIS would compile with it is refused (FR-015a); the class
+                // stays stored, and nothing is compiled.
+                if gate.on {
+                    if let stored_check::Outcome::Refused(mut err) = superclass_check::check_http(
+                        &iris,
+                        client,
+                        &namespace,
+                        std::slice::from_ref(&doc_name),
+                    )
+                    .await
+                    {
+                        err["uploaded"] = serde_json::Value::Bool(true);
+                        self.record_call("iris_compile", false);
+                        return err_result(err);
                     }
                 }
                 // Compile via shared compile_document helper
@@ -3900,40 +4234,22 @@ impl IrisTools {
                         &[cr.errors.as_slice(), cr.console.as_slice()].concat(),
                     );
                 }
+                gate.note_if_off(&mut resp);
                 return ok_json(resp);
             }
         }
 
-        // Expand wildcards: resolve "MyApp.*.cls" to a list of matching class names.
-        // Bug 8: use namespace (not iris.namespace) and the correct /docnames/CLS endpoint.
-        let targets: Vec<String> = if p.target.contains('*') {
-            let list_url = iris.versioned_ns_url(&namespace, "/docnames/CLS");
-            match client
-                .get(&list_url)
-                .basic_auth(&iris.username, Some(&iris.password))
-                .send()
-                .await
-            {
-                Ok(resp) if resp.status().is_success() => {
-                    let body: serde_json::Value = resp.json().await.unwrap_or_default();
-                    let pattern = p.target.replace('.', "\\.").replace('*', ".*");
-                    let re = regex::Regex::new(&format!("(?i)^{}$", pattern))
-                        .unwrap_or_else(|_| regex::Regex::new(".*").unwrap());
-                    // /docnames/ returns an array of ({name, cat, ts, ...}), not strings.
-                    body["result"]["content"]
-                        .as_array()
-                        .unwrap_or(&vec![])
-                        .iter()
-                        .filter_map(|d| d["name"].as_str())
-                        .filter(|n| re.is_match(n))
-                        .map(|n| n.to_string())
-                        .collect()
+        // Expand wildcards: resolve "MyApp.*.cls" to a list of matching class names. A listing that
+        // fails is a refusal, not a fall back to the literal pattern: IRIS would expand it itself,
+        // and the members would never be read.
+        let targets: Vec<String> =
+            match stored_check::expand_http(&iris, client, &namespace, &p.target).await {
+                Ok(list) => list,
+                Err(reason) => {
+                    self.record_call("iris_compile", false);
+                    return err_result(stored_check::unreadable_listing(&p.target, &reason));
                 }
-                _ => vec![p.target.clone()],
-            }
-        } else {
-            vec![p.target.clone()]
-        };
+            };
 
         if targets.is_empty() {
             return err_json(
@@ -3944,10 +4260,7 @@ impl IrisTools {
 
         // force_writable: attempt to enable namespace via docker exec if available
         if p.force_writable {
-            let code = format!(
-                "do ##class(%Library.EnsembleMgr).EnableNamespace(\"{}\",1)",
-                namespace
-            );
+            let code = crate::objectscript::enable_namespace_code(&namespace);
             let _ = iris.execute(&code, &namespace).await;
         }
 
@@ -3963,18 +4276,39 @@ impl IrisTools {
         // Correct check: append .cls only when no known extension is already present.
         let targets_with_ext: Vec<String> = targets
             .iter()
-            .map(|t| {
-                if !t.ends_with(".cls")
-                    && !t.ends_with(".mac")
-                    && !t.ends_with(".inc")
-                    && !t.ends_with(".int")
-                {
-                    format!("{}.cls", t)
-                } else {
-                    t.clone()
-                }
-            })
+            .map(|t| stored_check::doc_name_for(t))
             .collect();
+
+        // A document already on the server was not necessarily written through `iris_doc`:
+        // another tool, SCM, a routine written to `^rMAC`, or a class stored before the gate
+        // existed. Check the stored source of each target, and of every include it names, before
+        // IRIS compiles it (FR-015). A target that does not exist is left to the compile, which
+        // reports it; one that cannot be read is refused.
+        if gate.on {
+            if let Some(err) = stored_check::check_http(
+                &iris,
+                client,
+                &namespace,
+                targets_with_ext
+                    .iter()
+                    .cloned()
+                    .map(stored_check::Seed::Stored)
+                    .collect(),
+            )
+            .await
+            {
+                self.record_call("iris_compile", false);
+                return err_result(err);
+            }
+            // IRIS also compiles the target's out-of-date superclasses, which the check above did
+            // not read (FR-015a).
+            if let stored_check::Outcome::Refused(err) =
+                superclass_check::check_http(&iris, client, &namespace, &targets_with_ext).await
+            {
+                self.record_call("iris_compile", false);
+                return err_result(err);
+            }
+        }
 
         let resp = client
             .post(&compile_url)
@@ -3991,8 +4325,7 @@ impl IrisTools {
             return err_json_with_url("IRIS_UNREACHABLE", &format!("HTTP {}", status), &url_str);
         }
 
-        let body: serde_json::Value = resp
-            .json()
+        let body: serde_json::Value = crate::iris::http::capped_json::<serde_json::Value>(resp)
             .await
             .map_err(|e| McpError::internal_error(format!("JSON parse error: {e}"), None))?;
 
@@ -4106,6 +4439,7 @@ impl IrisTools {
                 .collect();
             add_compile_hint(&mut resp, &lines);
         }
+        gate.note_if_off(&mut resp);
 
         // Progressive disclosure (027): truncate errors array when count exceeds threshold.
         // Threshold counts distinct error+warning entries (not raw console lines).
@@ -4131,29 +4465,45 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Run %UnitTest.Manager or %UnitTest.TestProduction tests on IRIS and return structured pass/fail results. Uses pure-HTTP execution via Atelier REST — works with or without IRIS_CONTAINER. Pass a class name pattern like 'MyApp.Tests' or 'ISC.sql.TestFoo' to run already-compiled test classes (uses /noload automatically). Pass a directory path like 'MyApp/Tests' to load from disk. Returns suite-level summary inline plus log_id for per-test-case detail via iris_get_log. `test_type` (optional): 'auto' (default) auto-detects %UnitTest.TestProduction subclasses and calls .Run(); 'testcase' forces RunTest(); 'testproduction' forces .Run(). Skill: objectscript-unit-test for test scaffolding; objectscript-tdd for the full loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "Run %UnitTest.Manager or %UnitTest.TestProduction tests on IRIS and return structured pass/fail results. Uses pure-HTTP execution via Atelier REST — works with or without IRIS_CONTAINER. Pass a class name pattern like 'MyApp.Tests' or 'ISC.sql.TestFoo' to run already-compiled test classes (uses /noload automatically). A pattern with a path separator or '..' is refused. Returns suite-level summary inline plus log_id for per-test-case detail via iris_get_log. `test_type` (optional): 'auto' (default) auto-detects %UnitTest.TestProduction subclasses and calls .Run(); 'testcase' forces RunTest(); 'testproduction' forces .Run(). Skill: objectscript-unit-test for test scaffolding; objectscript-tdd for the full loop. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         output_schema = output_schemas::oneof_output_schema::<IrisTestResponse>()
     )]
     async fn iris_test(
         &self,
         Parameters(p): Parameters<TestParams>,
     ) -> Result<CallToolResult, McpError> {
+        if let Some(msg) = test_pattern_problem(&p.pattern) {
+            return err_json("INVALID_PARAMS", &msg);
+        }
         let timeout = std::time::Duration::from_secs(p.timeout);
 
         // HTTP path only — docker exec path removed (#46: /noload/run assumed pre-loaded
         // classes which never existed in a fresh iris session, causing false "no test classes"
         // errors; HTTP path with /verbose=1 is reliable and works with or without docker).
         let path_label = "http";
-        let iris = self.resolve_server(p.server.as_deref()).await?;
-        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace).to_string();
+        // The agent's tests run as the service account; the namespace check, the superclass probe
+        // and the monitor's report and stop are iad's own code and run as the connection's user.
+        let cx = match self.exec_context() {
+            Ok(cx) => cx,
+            Err(e) => {
+                self.record_call("iris_test", false);
+                return exec_refused(e);
+            }
+        };
+        let primary = match self.primary_exec_context() {
+            Ok(cx) => cx,
+            Err(e) => {
+                self.record_call("iris_test", false);
+                return exec_refused(e);
+            }
+        };
+        let iris = self.target_conn()?;
+        let namespace = self.target_ns(p.namespace.as_deref())?;
         tracing::info!(namespace = %namespace, pattern = %p.pattern, "iris_test");
         let client = self.http_client();
 
         // US3: namespace existence check before running tests.
-        let ns_check_code = format!(
-            "write ##class(%SYS.Namespace).Exists(\"{}\")",
-            crate::objectscript::os_lit_inner(&namespace)
-        );
+        let ns_check_code = crate::objectscript::namespace_exists_code(&namespace);
         let ns_exists = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             iris.execute_via_generator(&ns_check_code, "USER", client),
@@ -4179,42 +4529,15 @@ impl IrisTools {
         // Escaped where it is spliced, in build_test_run_code and build_superclass_probe (137).
         let safe_pattern = p.pattern.clone();
 
-        // Detect whether the pattern is a compiled class name or a filesystem directory path.
-        // Class names contain dots and no path separators: "ISC.sql.Tests", "MyApp.Tests.*"
-        // Directory paths contain / or \ : "MyApp/Tests", "/tmp/tests/MyApp"
-        // When the pattern is a class name, pass /noload so RunTest looks in the compiled
-        // database rather than scanning the filesystem under ^UnitTestRoot.
-        let is_class_pattern = !safe_pattern.contains('/') && !safe_pattern.contains('\\');
-        let flags = if is_class_pattern {
-            "/verbose=1/nodelete/noload"
-        } else {
-            "/verbose=1/nodelete"
-        };
+        // A compiled class pattern is looked up in the database (`/noload`), a directory is
+        // scanned; `iris_coverage` takes both from the same two functions (spec 141 R5 C17).
+        let flags = test_run_flags();
 
-        // Detect whether this is a %UnitTest.TestProduction subclass.
-        // Auto-detect when test_type=="auto" or None + single class pattern (no wildcards, no path).
-        let is_single_class = is_class_pattern && !safe_pattern.contains('*');
-        let force_type = p.test_type.as_deref().unwrap_or("auto");
-        let is_test_production = match force_type {
+        // Auto-detect a `%UnitTest.TestProduction` subclass unless the caller says which it is.
+        let is_test_production = match p.test_type.as_deref().unwrap_or("auto") {
             "testproduction" => true,
             "testcase" => false,
-            _ => {
-                // auto: probe superclass only for single compiled class names
-                if is_single_class {
-                    let probe = build_superclass_probe(&safe_pattern);
-                    tokio::time::timeout(
-                        std::time::Duration::from_secs(10),
-                        iris.execute_via_generator(&probe, &namespace, client),
-                    )
-                    .await
-                    .ok()
-                    .and_then(|r| r.ok())
-                    .map(|s| s.trim().starts_with('1'))
-                    .unwrap_or(false)
-                } else {
-                    false
-                }
-            }
+            _ => detect_test_production(&iris, client, &namespace, &safe_pattern).await,
         };
 
         // Run tests via execute_via_generator (HTTP path).
@@ -4244,10 +4567,11 @@ impl IrisTools {
                 target_pct: None,
                 namespace: Some(namespace.clone()),
                 cobertura_path: None,
+                confirm: false,
             };
             // Ignore start errors — if monitor fails, coverage will return zeros/error
             // but the test run itself should still proceed.
-            let _ = coverage::handle_iris_coverage(&iris, client, &start_params).await;
+            let _ = coverage::handle_iris_coverage(&cx, &start_params).await;
         }
 
         // Try HTTP (execute_via_generator) first. Fall back to docker exec if:
@@ -4258,67 +4582,35 @@ impl IrisTools {
         // execute_via_generator redirects $IO to a temp file but RunTest also needs
         // to create directories under ^UnitTestRoot — which fails in that context.
         // When IRIS_CONTAINER is set, prefer docker exec (full filesystem + real terminal).
-        let has_container = crate::iris::connection::container_from_env().is_some();
-
-        let run_output = if has_container {
-            // Docker exec: full filesystem access, captures terminal output from RunTest
-            match tokio::time::timeout(timeout, iris.execute(&run_code, &namespace)).await {
-                Err(_) => {
-                    self.record_call("iris_test", false);
-                    return err_result(serde_json::json!({
-                        "success": false,
-                        "error_code": "TIMEOUT",
-                        "error": format!("Test run timed out after {}s", p.timeout),
-                    }));
-                }
-                Ok(Err(_)) => {
-                    // Docker exec unavailable — fall through to HTTP
-                    match tokio::time::timeout(
-                        timeout,
-                        iris.execute_via_generator(&run_code, &namespace, client),
-                    )
-                    .await
-                    {
-                        Ok(Ok(out)) => out,
-                        _ => {
-                            self.record_call("iris_test", false);
-                            return err_result(serde_json::json!({
-                                "success": false,
-                                "error_code": "DOCKER_REQUIRED",
-                                "error": format!("iris_test: IRIS_CONTAINER set but docker exec failed and HTTP fallback also failed.{DOCKER_REQUIRED_HINT}"),
-                            }));
-                        }
-                    }
-                }
-                Ok(Ok(out)) => out,
-            }
+        let opts = exec::RunOpts::with_terminal(timeout, "IrisDevRun");
+        let ran = if cx.route.container().is_some() {
+            // Docker exec: full filesystem access, captures terminal output from RunTest.
+            cx.run_docker_first(&run_code, &namespace, &opts).await
         } else {
-            // HTTP path: works for remote IRIS without docker
-            match tokio::time::timeout(
-                timeout,
-                iris.execute_via_generator(&run_code, &namespace, client),
+            // HTTP path: works for remote IRIS without docker.
+            cx.run(
+                &run_code,
+                &namespace,
+                &exec::RunOpts::http_only(timeout, "IrisDevRun"),
             )
             .await
-            {
-                Err(_) => {
-                    self.record_call("iris_test", false);
-                    return err_result(serde_json::json!({
-                        "success": false,
-                        "error_code": "TIMEOUT",
-                        "error": format!("Test run timed out after {}s", p.timeout),
-                    }));
+        };
+        let outcome = match ran {
+            Ok(o) => o,
+            Err(e) => {
+                self.record_call("iris_test", false);
+                let mut body = e.to_json();
+                if e.code == "TIMEOUT" {
+                    body["error"] =
+                        serde_json::json!(format!("Test run timed out after {}s", p.timeout));
+                } else if !exec::is_identity_failure(&e.code) && e.code != "DOCKER_REQUIRED" {
+                    body["error_code"] = serde_json::json!(ERR_TEST_EXECUTION_ERROR);
                 }
-                Ok(Err(e)) => {
-                    self.record_call("iris_test", false);
-                    return err_result(serde_json::json!({
-                        "success": false,
-                        "error_code": ERR_TEST_EXECUTION_ERROR,
-                        "error": e.to_string(),
-                    }));
-                }
-                Ok(Ok(out)) => out,
+                return err_result(body);
             }
         };
+        let run_identity = outcome.identity.to_json();
+        let run_output = outcome.output;
         // Parse RunTest stdout to build structured results.
         // IRIS RunTest output format (per-method lines):
         //   "    ClassName begins ..."        ← class scope
@@ -4442,7 +4734,9 @@ impl IrisTools {
         if total == 0 || test_cases.is_empty() {
             self.record_call("iris_test", false);
             // Produce an actionable hint based on the pattern shape.
-            let hint = if p.pattern.ends_with(".cls") || p.pattern.contains('*') {
+            let hint = if let Some(problem) = unit_test_root_problem(&run_output) {
+                problem
+            } else if p.pattern.ends_with(".cls") || p.pattern.contains('*') {
                 format!(
                     "iris_test requires a bare package name (e.g. \"App.Tests\"), not a \
                      class name or wildcard. Try: \"{}\"",
@@ -4528,8 +4822,9 @@ impl IrisTools {
                 target_pct: p.coverage_target_pct,
                 namespace: Some(namespace.clone()),
                 cobertura_path: None,
+                confirm: false,
             };
-            let cov = coverage::handle_iris_coverage(&iris, client, &report_params).await;
+            let cov = coverage::handle_iris_coverage(&primary, &report_params).await;
             // Stop the monitor now that data is collected.
             let stop_params = coverage::IrisCoverageParams {
                 mode: "stop".to_string(),
@@ -4540,8 +4835,9 @@ impl IrisTools {
                 target_pct: None,
                 namespace: Some(namespace.clone()),
                 cobertura_path: None,
+                confirm: false,
             };
-            let _ = coverage::handle_iris_coverage(&iris, client, &stop_params).await;
+            let _ = coverage::handle_iris_coverage(&primary, &stop_params).await;
             Some(cov)
         } else {
             None
@@ -4560,6 +4856,7 @@ impl IrisTools {
             "pattern": p.pattern,
             "namespace": namespace,
             "test_suites": test_suites,
+            "identity": run_identity,
         });
         if let Some(cov) = coverage_result {
             resp["coverage"] = cov;
@@ -4575,32 +4872,20 @@ impl IrisTools {
         &self,
         Parameters(p): Parameters<ExecuteParams>,
     ) -> Result<CallToolResult, McpError> {
-        // Route arbitrary execution through the restricted service account when configured, so it
-        // runs under a least-privilege IRIS identity that cannot edit code (see get_iris_for_exec).
-        // The paired client carries the matching (isolated) cookie jar — see
-        // get_iris_for_exec_with_client for why sharing the primary client would defeat routing.
-        let (iris, exec_client) = if let Some(ref s) = p.server {
-            (
-                self.pool_ref().get(Some(s.as_str()))?,
-                Arc::clone(&self.client),
-            )
-        } else {
-            self.get_iris_for_exec_with_client().await?
+        // The target, its identity and its route come from the pipeline (spec 141, R2). This
+        // handler never picks a connection, a client or a container.
+        let cx = match self.exec_context() {
+            Ok(cx) => cx,
+            Err(e) => {
+                self.record_call("iris_execute", false);
+                return exec_refused(e);
+            }
         };
-        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace).to_string();
-        // Diagnostic: the identity this connection will authenticate as, and whether a service
-        // account is configured in the env at this instant. Surfaced in the response so account
-        // routing is directly observable per call instead of inferred.
-        let auth_user = iris.username.clone();
-        let svc_env = std::env::var("IRIS_SERVICE_USERNAME").unwrap_or_default();
-        let params_json = serde_json::json!({ "namespace": &namespace, "code": p.code });
-        if let Some(refusal) =
-            self.arbitrary_exec_gate("iris_execute", params_json, &p.code, p.confirmed)
-        {
+        let namespace = self.target_ns(p.namespace.as_deref())?;
+        if let Some(refusal) = self.exec_content_gate("iris_execute", &p.code) {
             return err_result(refusal);
         }
         tracing::info!(namespace = %namespace, translate_sql = p.translate_sql, use_session = p.use_session, "iris_execute");
-        let client = exec_client.as_ref();
         let timeout = std::time::Duration::from_secs(p.timeout);
 
         // Session preamble: validate token early so we can return SESSION_INVALID before
@@ -4646,299 +4931,95 @@ impl IrisTools {
         };
         let http_code = wrap(&p.code);
         let terminal_code = wrap(terminal_base);
-        let code_to_run: &str = &terminal_code;
 
-        // NoPWS early-branch: when docker_only or NoPWS build detected, skip Atelier REST
-        // and route through docker exec immediately — same pattern as iris_compile (lines ~3245).
-        {
-            let docker_only = iris.base_url == "http://127.0.0.1:1"
-                || iris.base_url.starts_with("http://127.0.0.1:1/");
-            let no_pws = iris
-                .version
-                .as_deref()
-                .map(|v| v.contains("2026.2.0AI"))
-                .unwrap_or(false);
-            let ssh_host_opt = iris.ssh_host.clone();
-
-            if nopws::nopws_is_active(docker_only, no_pws) {
-                // Block syntax check: terminal mode does not support `{}`.
-                if crate::tools::write_gate::contains_terminal_block_syntax(code_to_run) {
-                    self.record_call("iris_execute", false);
-                    return err_result(serde_json::json!({
-                        "success": false,
-                        "error_code": crate::tools::write_gate::ERR_TERMINAL_SYNTAX_UNSUPPORTED,
-                        "error": "Code contains block-syntax (`{...}`) that is not supported in terminal (docker exec) mode. Rewrite in classic form (If cond Write x) or use iris_doc + iris_compile to write a .mac routine.",
-                    }));
-                }
-
-                let exec_path = nopws::execution_path_docker(ssh_host_opt.as_deref());
-                let result = if let Some(ref ssh_host) = ssh_host_opt {
-                    iris.execute_ssh(code_to_run, &namespace, ssh_host).await
-                } else {
-                    iris.execute(code_to_run, &namespace).await
-                };
-                return match result {
-                    Err(e) => {
-                        self.record_call("iris_execute", false);
-                        let msg = e.to_string();
-                        if msg == "DOCKER_REQUIRED" {
-                            err_result(serde_json::json!({
-                                "success": false,
-                                "error_code": nopws::NOPWS_NO_CONTAINER,
-                                "error": "docker_only or nopws=true requires a container name. \
-                                          Set IRIS_CONTAINER env var or add container = \"<name>\" \
-                                          to .iris-agentic-dev.toml.",
-                            }))
-                        } else if let Some(ref ssh_host) = ssh_host_opt {
-                            err_result(serde_json::json!({
-                                "success": false,
-                                "error_code": "SSH_EXEC_FAILED",
-                                "error": format!(
-                                    "ssh {ssh_host} docker exec failed: {msg}. \
-                                     Verify SSH connectivity and that Docker is running on the remote host."
-                                ),
-                                "execution_path": exec_path,
-                            }))
-                        } else if let Some(detail) = msg.strip_prefix(&format!(
-                            "{}: ",
-                            crate::iris::connection::ERR_CONTAINER_UNREACHABLE
-                        )) {
-                            // Nothing ran, so EXECUTION_FAILED sends the agent looking at its
-                            // ObjectScript. Name the container instead — the HTTP-fallback path
-                            // below already does, and a docker_only caller deserves the same answer.
-                            err_result(serde_json::json!({
-                                "success": false,
-                                "error_code": crate::iris::connection::ERR_CONTAINER_UNREACHABLE,
-                                "error": detail,
-                                "execution_path": exec_path,
-                            }))
-                        } else {
-                            err_result(serde_json::json!({
-                                "success": false,
-                                "error_code": "EXECUTION_FAILED",
-                                "error": msg,
-                                "execution_path": exec_path,
-                            }))
-                        }
-                    }
-                    Ok(output) => {
-                        let trimmed = output.trim();
-                        let is_runtime_error = crate::iris::connection::is_generator_error(trimmed);
-                        self.record_call("iris_execute", !is_runtime_error);
-                        let mut resp = serde_json::json!({
-                            "success": !is_runtime_error,
-                            "output": trimmed,
-                            "namespace": namespace,
-                            "method": "docker",
-                            "execution_path": exec_path,
-                        });
-                        if is_runtime_error {
-                            resp["error_code"] =
-                                serde_json::Value::String("IRIS_RUNTIME_ERROR".into());
-                            if let Some(hint) = error_hints::runtime_error_hint(trimmed, &namespace)
-                            {
-                                hint.apply(&mut resp);
-                            }
-                        }
-                        if let Some(ref tr) = translation {
-                            if tr.found {
-                                resp["sql_translated"] = serde_json::Value::Bool(true);
-                                resp["translated_code"] =
-                                    serde_json::Value::String(tr.translated_code.clone());
-                            }
-                        }
-                        json_result(resp)
-                    }
-                };
-            }
-        }
-
-        // Try pure-HTTP execution first (write-compile-query via CodeMode=objectgenerator).
-        let gen_result = tokio::time::timeout(
-            timeout,
-            iris.execute_via_generator(&http_code, &namespace, client),
-        )
-        .await;
-
-        // The HTTP path is primary. On success we return here; on failure we keep the real cause
-        // so a subsequent docker-fallback failure can report it instead of a misleading
-        // "DOCKER_REQUIRED".
-        let http_err: String = match gen_result {
-            Err(_) => {
+        let mut opts = exec::RunOpts::with_terminal(timeout, "IrisDevRun");
+        opts.terminal_code = Some(&terminal_code);
+        opts.check_block_syntax = true;
+        let outcome = match cx.run(&http_code, &namespace, &opts).await {
+            Ok(o) => o,
+            Err(e) => {
                 self.record_call("iris_execute", false);
-                return err_result(serde_json::json!({
-                    "success": false,
-                    "error_code": "TIMEOUT",
-                    "error": format!("execution timed out after {}s", p.timeout),
-                }));
-            }
-            Ok(Ok(output)) => {
-                // Parse session sentinel lines before trimming/error-checking.
-                let (session_visible, session_token, session_error) = if p.use_session {
-                    execute_session::parse_session_output(&output)
-                } else {
-                    (output.clone(), None, None)
-                };
-
-                // Session fatal errors (invalid token, restore failure, serialize failure)
-                // take priority over normal output processing.
-                if let Some((err_code, detail)) = session_error {
-                    self.record_call("iris_execute", false);
-                    return err_result(serde_json::json!({
-                        "success": false,
-                        "error_code": err_code,
-                        "error": detail,
-                        "namespace": namespace,
-                        "method": "http",
-                        "execution_path": "atelier",
-                        "auth_user": auth_user,
-                        "service_account_env": svc_env,
-                    }));
+                let mut body = e.to_json();
+                if e.code == ERR_QUERY_FAILED_AFTER_RUN {
+                    body["namespace"] = serde_json::json!(namespace);
                 }
-
-                let trimmed = session_visible.trim();
-                // Catch ObjectScript runtime errors written by the Catch block or $ZERROR check.
-                let is_runtime_error = crate::iris::connection::is_generator_error(trimmed);
-                self.record_call("iris_execute", !is_runtime_error);
-                let mut resp = serde_json::json!({
-                    "success": !is_runtime_error,
-                    "output": trimmed,
-                    "namespace": namespace,
-                    "method": "http",
-                    "execution_path": "atelier",
-                    "auth_user": auth_user,
-                    "service_account_env": svc_env,
-                });
-                if is_runtime_error {
-                    resp["error_code"] = serde_json::Value::String("IRIS_RUNTIME_ERROR".into());
-                    if let Some(hint) = error_hints::runtime_error_hint(trimmed, &namespace) {
-                        hint.apply(&mut resp);
-                    }
-                }
-                if let Some(tok) = session_token {
-                    resp["session_state"] = serde_json::Value::String(tok);
-                }
-                return json_result(resp);
-            }
-            Ok(Err(e)) if crate::iris::connection::code_may_have_run(&e) => {
-                self.record_call("iris_execute", false);
-                return err_result(serde_json::json!({
-                    "success": false,
-                    "error_code": ERR_QUERY_FAILED_AFTER_RUN,
-                    "error": format!(
-                        "{e}. The code ran on IRIS, or is still running, so iad did not run it \
-                         again through docker exec."
-                    ),
-                    "namespace": namespace,
-                    "execution_path": "atelier",
-                }));
-            }
-            Ok(Err(e)) => {
-                // HTTP path failed before the code ran — keep the real cause; fall through to
-                // docker exec.
-                e.to_string()
+                return err_result(body);
             }
         };
 
-        // Spec 096: pre-submission guard — block syntax is not supported in IRIS terminal mode.
-        // The docker exec path pipes code into `iris session` stdin (line-by-line interpreter).
-        // Block syntax (`{}`) causes a raw `<SYNTAX>` error there. Detect it here, before the
-        // round-trip, and return an actionable error so the agent knows to rewrite or use .mac.
-        if crate::tools::write_gate::contains_terminal_block_syntax(code_to_run) {
+        let on_atelier = outcome.identity.path == exec::ExecPath::Atelier;
+        // Parse session sentinel lines before trimming/error-checking.
+        let (visible, session_token, session_error) = if p.use_session && on_atelier {
+            execute_session::parse_session_output(&outcome.output)
+        } else {
+            (outcome.output.clone(), None, None)
+        };
+        let identity = outcome.identity.to_json();
+        let (method, path) = if on_atelier {
+            ("http", "atelier")
+        } else {
+            ("docker", outcome.identity.path.as_str())
+        };
+
+        // Session fatal errors (invalid token, restore failure, serialize failure) take priority
+        // over normal output processing.
+        if let Some((err_code, detail)) = session_error {
             self.record_call("iris_execute", false);
             return err_result(serde_json::json!({
                 "success": false,
-                "error_code": crate::tools::write_gate::ERR_TERMINAL_SYNTAX_UNSUPPORTED,
-                "error": "Code contains block-syntax (`{...}`) that is not supported in terminal (docker exec) mode. Rewrite in classic form (If cond Write x) or use iris_doc + iris_compile to write a .mac routine.",
+                "error_code": err_code,
+                "error": detail,
+                "namespace": namespace,
+                "method": method,
+                "execution_path": path,
+                "auth_user": outcome.identity.user,
+                "service_account_env": non_blank_env_value("IRIS_SERVICE_USERNAME"),
+                "identity": identity,
             }));
         }
 
-        // Fallback: docker exec (requires IRIS_CONTAINER env var).
-        let docker_result =
-            tokio::time::timeout(timeout, iris.execute(code_to_run, &namespace)).await;
-        match docker_result {
-            Err(_) => {
-                self.record_call("iris_execute", false);
-                err_result(serde_json::json!({
-                    "success": false,
-                    "error_code": "TIMEOUT",
-                    "error": format!("execution timed out after {}s", p.timeout),
-                }))
-            }
-            Ok(Err(e)) => {
-                let msg = e.to_string();
-                self.record_call("iris_execute", false);
-                if msg == "DOCKER_REQUIRED" {
-                    // Docker is not the real problem — HTTP is the primary path and it failed.
-                    // Surface that cause instead of blaming a missing container.
-                    err_result(serde_json::json!({
-                        "success": false,
-                        "error_code": "HTTP_EXECUTION_FAILED",
-                        "error": format!(
-                            "iris_execute: HTTP/Atelier execution failed ({http_err}). \
-                             No docker fallback available (IRIS_CONTAINER not set). \
-                             Verify the Atelier REST endpoint is reachable and the credentials \
-                             have %Service_Object:USE.{DOCKER_REQUIRED_HINT}"
-                        ),
-                        "http_error": http_err,
-                    }))
-                } else if let Some(detail) = msg.strip_prefix(&format!(
-                    "{}: ",
-                    crate::iris::connection::ERR_CONTAINER_UNREACHABLE
-                )) {
-                    // The exec never reached IRIS. Report which path failed rather than dropping
-                    // execution_path — an agent that asked for docker_only wants to know the
-                    // docker leg is what broke, not just that "execution failed".
-                    err_result(serde_json::json!({
-                        "success": false,
-                        "error_code": crate::iris::connection::ERR_CONTAINER_UNREACHABLE,
-                        "error": detail,
-                        "execution_path": "docker_exec_local",
-                        "http_error": http_err,
-                    }))
-                } else {
-                    err_result(serde_json::json!({
-                        "success": false,
-                        "error_code": "EXECUTION_FAILED",
-                        "error": msg,
-                    }))
-                }
-            }
-            Ok(Ok(output)) => {
-                let trimmed = output.trim();
-                let is_runtime_error = crate::iris::connection::is_generator_error(trimmed);
-                self.record_call("iris_execute", !is_runtime_error);
-                let mut resp = serde_json::json!({
-                    "success": !is_runtime_error,
-                    "output": trimmed,
-                    "namespace": namespace,
-                    "method": "docker",
-                    "execution_path": "docker_exec_local",
-                });
-                if is_runtime_error {
-                    resp["error_code"] = serde_json::Value::String("IRIS_RUNTIME_ERROR".into());
-                    if let Some(hint) = error_hints::runtime_error_hint(trimmed, &namespace) {
-                        hint.apply(&mut resp);
-                    }
-                }
-                if let Some(ref tr) = translation {
-                    if tr.found {
-                        resp["sql_translated"] = serde_json::Value::Bool(true);
-                        resp["translated_code"] =
-                            serde_json::Value::String(tr.translated_code.clone());
-                        if !tr.warnings.is_empty() {
-                            resp["translation_warning"] = serde_json::Value::Array(
-                                tr.warnings
-                                    .iter()
-                                    .map(|w| serde_json::Value::String(w.clone()))
-                                    .collect(),
-                            );
-                        }
-                    }
-                }
-                json_result(resp)
+        let trimmed = visible.trim();
+        // Catch ObjectScript runtime errors written by the Catch block or $ZERROR check.
+        let is_runtime_error = crate::iris::connection::is_generator_error(trimmed);
+        self.record_call("iris_execute", !is_runtime_error);
+        let mut resp = serde_json::json!({
+            "success": !is_runtime_error,
+            "output": trimmed,
+            "namespace": namespace,
+            "method": method,
+            "execution_path": path,
+            "identity": identity,
+        });
+        if on_atelier {
+            // Deprecated in 1.7.0, removed in 1.8.0: `identity` names the user that ran.
+            resp["auth_user"] = serde_json::json!(outcome.identity.user);
+            resp["service_account_env"] =
+                serde_json::json!(non_blank_env_value("IRIS_SERVICE_USERNAME"));
+        }
+        if is_runtime_error {
+            resp["error_code"] = serde_json::Value::String("IRIS_RUNTIME_ERROR".into());
+            if let Some(hint) = error_hints::runtime_error_hint(trimmed, &namespace) {
+                hint.apply(&mut resp);
             }
         }
+        if let Some(tok) = session_token {
+            resp["session_state"] = serde_json::Value::String(tok);
+        }
+        if !on_atelier {
+            if let Some(tr) = translation.as_ref().filter(|tr| tr.found) {
+                resp["sql_translated"] = serde_json::Value::Bool(true);
+                resp["translated_code"] = serde_json::Value::String(tr.translated_code.clone());
+                if !tr.warnings.is_empty() {
+                    resp["translation_warning"] = serde_json::Value::Array(
+                        tr.warnings
+                            .iter()
+                            .map(|w| serde_json::Value::String(w.clone()))
+                            .collect(),
+                    );
+                }
+            }
+        }
+        json_result(resp)
     }
 
     #[tool(
@@ -4948,7 +5029,7 @@ impl IrisTools {
         &self,
         Parameters(p): Parameters<IrisDocParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.resolve_server(p.server.as_deref()).await?;
+        let iris = self.target_conn()?;
         // FR-010: NoPWS guard — iris_doc requires Atelier REST.
         if nopws::nopws_is_active(
             iris.base_url == "http://127.0.0.1:1"
@@ -4960,7 +5041,7 @@ impl IrisTools {
         ) {
             return err_result(nopws::nopws_atelier_required_error());
         }
-        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
+        let namespace = self.target_ns(p.namespace.as_deref())?;
         tracing::info!(namespace = %namespace, "iris_doc");
         let client = self.http_client();
         let result = doc::handle_iris_doc(
@@ -4976,7 +5057,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Execute SQL against IRIS via Atelier REST. mode=\"read\" (default): SELECT and CALL; DML, DDL, GRANT and REVOKE are refused (force=true skips this when write tools are enabled, and then counts as a write). Read mode does not stop a stored procedure that has side effects, whether it is called with CALL or inside a SELECT: only the IRIS user's privileges do. mode=\"explain\": returns the IRIS query plan for a SELECT (plan_text, query_hash), no rows. mode=\"count\": returns a row count for `table` or `query` without transferring rows. mode=\"write\": executes INSERT/UPDATE/DELETE/CALL/TRUNCATE (Execute-gated, blocked on mcpTemplate=live/test); UPDATE/DELETE are pre-checked against max_rows_affected (default 1000, max 10000) before executing. Skill: objectscript-sql-patterns for IRIS SQL quirks. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "Execute SQL against IRIS via Atelier REST. mode=\"read\" (default): one SELECT, WITH or EXPLAIN statement; everything else (CALL, TUNE TABLE, BUILD INDEX, DML, DDL, GRANT, REVOKE) and a second statement after `;` are refused (force=true skips this when write tools are enabled, and then counts as a write). Read mode does not stop a stored procedure that has side effects when it is called inside a SELECT: only the IRIS user's privileges do. mode=\"explain\": returns the IRIS query plan for a SELECT (plan_text, query_hash), no rows. mode=\"count\": returns a row count for `table` or `query` without transferring rows. mode=\"write\": executes INSERT/UPDATE/DELETE/CALL/TRUNCATE (Execute-gated, blocked on mcpTemplate=live/test); UPDATE/DELETE are pre-checked against max_rows_affected (default 1000, max 10000) before executing. Skill: objectscript-sql-patterns for IRIS SQL quirks. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         output_schema = output_schemas::oneof_output_schema::<IrisQueryResponse>()
     )]
     async fn iris_query(
@@ -4990,94 +5071,12 @@ impl IrisTools {
         let requested_ns = p.namespace.as_deref().unwrap_or("(connection default)");
         tracing::info!(namespace = %requested_ns, force = p.force, mode, "iris_query");
 
-        // Policy gate (044 + 051): fires before role gate.
-        let (sm_server_q, policy_q) = self.active_server_manager_policy();
-        {
-            // `force` must reach the gates: dispatch_gate's SQL code-edit check and the env gate
-            // both treat a forced read as a write, and without it neither ever saw one.
-            let params_json = serde_json::json!({
-                "namespace": &p.namespace, "mode": mode, "query": p.query, "force": p.force,
-            });
-            if let Err(gate) = crate::policy::gate::dispatch_gate(
-                "iris_query",
-                sm_server_q.as_deref().unwrap_or(""),
-                policy_q.as_ref(),
-                &params_json,
-            ) {
-                self.write_audit_entry(
-                    "iris_query",
-                    sm_server_q.as_deref().unwrap_or(""),
-                    policy_q.as_ref(),
-                    "blocked",
-                    Some("policy"),
-                    None,
-                    params_json,
-                );
-                return err_result(gate);
-            }
-            if let Some(gate) = crate::iris::server_manager::policy_gate(
-                "iris_query",
-                sm_server_q.as_deref().unwrap_or(""),
-                policy_q.as_ref(),
-            ) {
-                let allowed = gate["allowed_categories"].as_array().map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect()
-                });
-                self.write_audit_entry(
-                    "iris_query",
-                    sm_server_q.as_deref().unwrap_or(""),
-                    policy_q.as_ref(),
-                    "blocked",
-                    Some("policy"),
-                    allowed,
-                    params_json,
-                );
-                return err_result(gate);
-            }
-            self.write_audit_entry(
-                "iris_query",
-                sm_server_q.as_deref().unwrap_or(""),
-                policy_q.as_ref(),
-                "allowed",
-                None,
-                None,
-                params_json,
-            );
-        }
-
-        // Role gate: SELECT is always permitted on subject; write SQL requires confirm.
-        {
-            let (role, instance_name) = self.instance_role();
-            let first_word = p
-                .query
-                .split_whitespace()
-                .next()
-                .unwrap_or("")
-                .to_uppercase();
-            let tool_name = if first_word == "SELECT" || first_word == "WITH" {
-                "iris_query:SELECT"
-            } else {
-                "iris_query:INSERT"
-            };
-            if let Some(gate) = crate::iris::workspace_config::check_role_gate(
-                &role,
-                tool_name,
-                p.confirm,
-                &instance_name,
-                false,
-            ) {
-                return err_result(gate);
-            }
-        }
-
         match mode {
             "explain" => {
-                let iris = self.resolve_server(p.server.as_deref()).await?;
-                let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
+                let iris = self.target_conn()?;
+                let namespace = self.target_ns(p.namespace.as_deref())?;
                 let client = self.http_client();
-                let result = iris_query_explain(&iris, client, &p, namespace).await;
+                let result = iris_query_explain(&iris, client, &p, &namespace).await;
                 self.record_call(
                     "iris_query",
                     result.as_ref().map(is_success).unwrap_or(false),
@@ -5085,10 +5084,10 @@ impl IrisTools {
                 return result;
             }
             "count" => {
-                let iris = self.resolve_server(p.server.as_deref()).await?;
-                let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
+                let iris = self.target_conn()?;
+                let namespace = self.target_ns(p.namespace.as_deref())?;
                 let client = self.http_client();
-                let result = iris_query_count(&iris, client, &p, namespace).await;
+                let result = iris_query_count(&iris, client, &p, &namespace).await;
                 self.record_call(
                     "iris_query",
                     result.as_ref().map(is_success).unwrap_or(false),
@@ -5096,30 +5095,29 @@ impl IrisTools {
                 return result;
             }
             "write" => {
-                // DML runs under the restricted service account when configured (least-privilege).
-                // Use the paired client so the service-account identity isn't overridden by the
-                // primary user's CSP session cookie (see get_iris_for_exec_with_client).
-                let (iris, exec_client) = if let Some(ref s) = p.server {
-                    (
-                        self.pool_ref().get(Some(s.as_str()))?,
-                        Arc::clone(&self.client),
-                    )
-                } else {
-                    self.get_iris_for_exec_with_client().await?
+                // DML runs under the restricted service account when configured (least-privilege),
+                // on the server the call names and with that identity's own cookie jar.
+                let cx = match self.exec_context() {
+                    Ok(cx) => cx,
+                    Err(e) => {
+                        self.record_call("iris_query", false);
+                        return exec_refused(e);
+                    }
                 };
-                let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-                let result = iris_query_write(&iris, exec_client.as_ref(), &p, namespace).await;
+                let namespace = self.target_ns(p.namespace.as_deref())?;
+                let result = iris_query_write(&cx.conn, cx.client.as_ref(), &p, &namespace).await;
                 self.record_call(
                     "iris_query",
                     result.as_ref().map(is_success).unwrap_or(false),
                 );
-                return result;
+                return exec::attach_identity(result, &cx.helper_report());
             }
             _ => {}
         }
 
         // SQL safety gate — validate before any network call
-        let skip_validation = p.force && self.write_tools_enabled();
+        let target_writes = self.target()?.primary.gates.write_enabled;
+        let skip_validation = p.force && target_writes;
         if !skip_validation {
             match validate_read_only_sql(&p.query) {
                 Err(ref kw) if kw == "EMPTY" => {
@@ -5135,10 +5133,10 @@ impl IrisTools {
                     let mut resp = serde_json::json!({
                         "success": false,
                         "error_code": "SQL_WRITE_BLOCKED",
-                        "error": format!("'{}' is not a read, so mode=\"read\" does not send it. Use mode=\"write\", which needs write tools enabled.", kw),
+                        "error": format!("'{}' is not a read, so mode=\"read\" does not send it: read mode runs one SELECT, WITH or EXPLAIN. Use mode=\"write\" for INSERT, UPDATE, DELETE, CALL and TRUNCATE; it needs write tools enabled.", kw),
                         "blocked_keyword": kw,
                     });
-                    if p.force && !self.write_tools_enabled() {
+                    if p.force && !target_writes {
                         resp["force_ignored"] = serde_json::Value::Bool(true);
                     }
                     return err_result(resp);
@@ -5147,9 +5145,24 @@ impl IrisTools {
             }
         }
 
-        let iris = self.resolve_server(p.server.as_deref()).await?;
-        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace).to_string();
-        let client = self.http_client();
+        // A forced query sends SQL the read-only check would have refused, so it runs as the
+        // service account like a write does; an ordinary read stays on the connection's own user.
+        let forced = if skip_validation {
+            match self.exec_context() {
+                Ok(cx) => Some(cx),
+                Err(e) => {
+                    self.record_call("iris_query", false);
+                    return exec_refused(e);
+                }
+            }
+        } else {
+            None
+        };
+        let (iris, client) = match &forced {
+            Some(cx) => (cx.conn.clone(), cx.client.as_ref()),
+            None => (self.target_conn()?, self.http_client()),
+        };
+        let namespace = self.target_ns(p.namespace.as_deref())?;
         let query_url = iris.versioned_ns_url(&namespace, "/action/query");
         let resp = client
             .post(&query_url)
@@ -5167,7 +5180,7 @@ impl IrisTools {
             );
         }
 
-        let body: serde_json::Value = resp.json().await.unwrap_or_default();
+        let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
 
         if let Some(errors) = body["status"]["errors"].as_array() {
             if !errors.is_empty() {
@@ -5183,9 +5196,11 @@ impl IrisTools {
             .unwrap_or_default();
         let count = rows.len();
         self.record_call("iris_query", true);
-        ok_json(
-            serde_json::json!({"success": true, "rows": rows, "count": count, "namespace": namespace}),
-        )
+        let mut out = serde_json::json!({"success": true, "rows": rows, "count": count, "namespace": namespace});
+        if let Some(cx) = &forced {
+            out["identity"] = cx.helper_report().to_json();
+        }
+        ok_json(out)
     }
 
     #[tool(
@@ -5224,7 +5239,7 @@ impl IrisTools {
         );
         // Add active_connection info so agents can detect workspace_config mismatches
         // without a separate iris_info call.
-        let iris_arc = self.iris_arc();
+        let iris_arc = self.target_conn_opt()?;
         let active_connection_json = match &iris_arc {
             None => serde_json::Value::Null,
             Some(conn) => {
@@ -5393,7 +5408,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active, (4) confirm which build of this MCP server is actually running (server_version) when multiple installs/forks may be registered. To switch connection mid-session without restart: call check_config first to get config_watch_path, then write a .iris-agentic-dev.toml to that exact path, then call any tool — the reload fires automatically. Fields: server_version, connected, connection_source (http|docker|disconnected), host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled, write_tools_source, destructive_tools_enabled, destructive_tools_source, tls_verify, capabilities. The two *_source fields say what decided each gate (operator_env|config_file|legacy_allow_prod|inferred_system_mode|inferred_namespace|inferred_default|fail_closed), so a gate you did not ask for is one field lookup rather than a guess. Skill: iris-agentic-dev.",
+        description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active, (4) confirm which build of this MCP server is actually running (server_version) when multiple installs/forks may be registered. To switch connection mid-session without restart: call check_config first to get config_watch_path (null when there is no project directory to watch), then write a .iris-agentic-dev.toml to that exact path, then call any tool — the reload fires automatically. A project file cannot raise the write or destructive gate, turn on data reads or loosen a policy until the operator runs `iris-agentic-dev trust` on it in a terminal and restarts iad; a change to the operator's own configuration that loosens a setting waits for the next start, and one that tightens applies at once; check_config lists what it set aside or held (set_aside), where each policy part came from (effective_policy, config_sources) and the compile-time gate (compile_time_gate). Fields: server_version, connected, connection_source (config_file|env_vars|iris_select_container|auto_discovered), host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled, write_tools_source, destructive_tools_enabled, destructive_tools_source, tls_verify, capabilities. The two *_source fields say what decided each gate (read_only_strict|operator_env|config_file|legacy_allow_prod|inferred_system_mode|inferred_namespace|inferred_default|fail_closed), so a gate you did not ask for is one field lookup rather than a guess. Skill: iris-agentic-dev.",
         annotations(read_only_hint = true),
         output_schema = schema_for_output::<CheckConfigOk>()    )]
     async fn check_config(
@@ -5401,6 +5416,10 @@ impl IrisTools {
         Parameters(_p): Parameters<crate::tools::NoParams>,
     ) -> Result<CallToolResult, McpError> {
         self.check_reload().await;
+        // Before the connection lock: `snapshot()` takes it too.
+        let snap = self.snapshot();
+        // Awaited before the lock is taken: a std mutex guard cannot be held across it.
+        let http_login = self.service_login_probe().await;
         let conn = self.connection.lock().unwrap();
 
         let (host, port, namespace, container, iris_version) = match &conn.iris {
@@ -5445,6 +5464,19 @@ impl IrisTools {
             .map(|s| serde_json::Value::String(s.to_string()))
             .unwrap_or(serde_json::Value::Null);
 
+        let config_file_no_target = conn
+            .config_file_no_target
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned());
+        // Said once, in words: the connection came from somewhere else, and why this file was not it.
+        let config_file_warning = config_file_no_target.as_ref().map(|p| {
+            format!(
+                "{p} names neither a host nor a container, so it chose no connection; \
+                 connection_source says what did. Its other settings (tool lists, gates, policy) \
+                 still apply."
+            )
+        });
+
         let config_loaded_at = conn
             .loaded_at
             .duration_since(std::time::UNIX_EPOCH)
@@ -5465,6 +5497,7 @@ impl IrisTools {
         let config_watcher_path = {
             let w = self.config_watcher.lock().unwrap();
             w.as_ref()
+                .filter(|w| !w.config_path.as_os_str().is_empty())
                 .map(|w| w.config_path.to_string_lossy().to_string())
                 .map(serde_json::Value::String)
                 .unwrap_or(serde_json::Value::Null)
@@ -5497,6 +5530,23 @@ impl IrisTools {
             derive_capabilities(ver_str, docker_only, web_port, web_prefix.as_deref())
         };
 
+        let default_tls = conn
+            .iris
+            .as_ref()
+            .map(|i| i.tls)
+            .unwrap_or_else(crate::iris::http::TlsSetting::from_launch_env);
+        let tls_report = {
+            let one = |t: &crate::iris::http::TlsSetting| serde_json::json!({"tls_verify": t.verify, "source": t.source.as_str()});
+            let pool = self.pool_ref();
+            let mut servers = serde_json::Map::new();
+            for name in pool.names() {
+                if let Ok(c) = pool.peek(Some(name)) {
+                    servers.insert(name.to_string(), one(&c.tls));
+                }
+            }
+            serde_json::json!({"default": one(&default_tls), "servers": servers})
+        };
+
         let mut response = serde_json::json!({
             "server_version": SERVER_VERSION,
             "connected": conn.iris.is_some(),
@@ -5506,6 +5556,8 @@ impl IrisTools {
             "namespace": namespace,
             "container": container,
             "config_file": config_file,
+            "config_file_named_no_target": config_file_no_target,
+            "config_file_warning": config_file_warning,
             "credentials_withheld": conn.iris.as_ref().and_then(|i| i.credentials_withheld.as_deref()),
             "config_loaded_at": config_loaded_at,
             "iris_version": iris_version,
@@ -5518,9 +5570,31 @@ impl IrisTools {
             "destructive_tools_enabled": conn.gates.destructive_enabled,
             "destructive_tools_source": conn.gates.destructive_source.as_str(),
             "config_watch_path": config_watcher_path,
-            // Read through the same resolver every IRIS-bound client uses, so the report cannot
-            // claim validation the requests do not do (#127).
-            "tls_verify": !crate::iris::connection::tls_insecure_from_env(),
+            // The default connection's own setting, the one its requests use (#127). With no
+            // connection, the setting the launch settings would give one. Every pool member's is
+            // under `tls`.
+            "tls_verify": default_tls.verify,
+            "tls": tls_report,
+            "discovery": serde_json::json!({
+                "skipped": crate::iris::discovery::skipped_listeners()
+                    .iter()
+                    .map(|s| serde_json::json!({"port": s.port, "reason": s.reason}))
+                    .collect::<Vec<_>>(),
+            }),
+            // Strict read-only (R5 C15): the scratch-class tools are off and unlisted.
+            "read_only": if snap.read_only_strict() { "strict" } else { "off" },
+            "read_only_from": snap.read_only_source(),
+            // R5 C16: records always go to the local file; `iris` adds the IRIS global, on the
+            // server a call acts on when that server's writes are on.
+            "telemetry_sink": crate::telemetry::sink_setting(
+                &snap.operator,
+                std::env::var("IAD_TELEMETRY_SINK").ok().as_deref(),
+            )
+            .as_str(),
+            "scm_opt_ins": {
+                "checkin": scm::ScmOptIn::CheckIn.enabled(),
+                "disconnect": scm::ScmOptIn::Disconnect.enabled(),
+            },
             "objectscript_workspace": objectscript_workspace,
             "capabilities": capabilities,
         });
@@ -5546,7 +5620,11 @@ impl IrisTools {
         let ws_env = std::env::var("OBJECTSCRIPT_WORKSPACE")
             .ok()
             .filter(|s| !s.is_empty());
-        if conn.config_file.is_none() && !is_explicit && conn.iris.is_some() {
+        if conn.config_file.is_none()
+            && conn.config_file_no_target.is_none()
+            && !is_explicit
+            && conn.iris.is_some()
+        {
             if let Some(ref ws) = ws_env {
                 // OBJECTSCRIPT_WORKSPACE is set but no config file was found there.
                 // Connection is via fallback discovery — remind the user to create a
@@ -5569,8 +5647,8 @@ impl IrisTools {
         // Server Manager section (044-servermanager-discovery)
         {
             use crate::iris::server_manager::{
-                build_server_manager_config_json, parse_sm_settings, resolve_credential,
-                sm_settings_path, CredentialStatus, ServerManagerCredentialEntry,
+                build_server_manager_config_json, parse_sm_settings, sm_secret_for_in,
+                sm_settings_path, CredentialStatus, ServerManagerCredentialEntry, SmSecretError,
             };
 
             let sm_section = if let Some(path) = sm_settings_path() {
@@ -5587,26 +5665,24 @@ impl IrisTools {
                         },
                         None => None,
                     };
-                    let fleet = conn
-                        .config_file
-                        .as_deref()
-                        .and_then(|p| p.parent())
-                        .and_then(|dir| dir.to_str())
-                        .and_then(|dir_str| {
-                            crate::iris::workspace_config::load_fleet_config(Some(dir_str))
-                        });
+                    // From the snapshot the gates read, not from the files again (FR-043).
+                    let fleet = Some(&snap.fleet);
                     let cred_entries: Vec<ServerManagerCredentialEntry> = profiles
                         .iter()
                         .map(|p| {
-                            let status = match resolve_credential(&p.name, &p.username) {
-                                Ok(_) => CredentialStatus::RESOLVED.to_string(),
-                                Err(crate::iris::server_manager::SmCredentialError::CredentialNotFound { .. }) => {
-                                    CredentialStatus::NOT_CONFIGURED.to_string()
-                                }
-                                Err(crate::iris::server_manager::SmCredentialError::KeychainUnavailable { .. }) => {
-                                    CredentialStatus::KEYCHAIN_UNAVAILABLE.to_string()
-                                }
+                            // The profile's own endpoint: its secret is asked for there and nowhere else.
+                            let status = match p.endpoint() {
                                 Err(_) => CredentialStatus::ERROR.to_string(),
+                                Ok(ep) => match sm_secret_for_in(&profiles, &p.name, &p.username, &ep) {
+                                    Ok(_) => CredentialStatus::RESOLVED.to_string(),
+                                    Err(SmSecretError::Credential(
+                                        crate::iris::server_manager::SmCredentialError::CredentialNotFound { .. },
+                                    )) => CredentialStatus::NOT_CONFIGURED.to_string(),
+                                    Err(SmSecretError::Credential(
+                                        crate::iris::server_manager::SmCredentialError::KeychainUnavailable { .. },
+                                    )) => CredentialStatus::KEYCHAIN_UNAVAILABLE.to_string(),
+                                    Err(_) => CredentialStatus::ERROR.to_string(),
+                                },
                             };
                             let policy: Option<crate::iris::workspace_config::ConnectionPolicy> =
                                 fleet
@@ -5631,6 +5707,184 @@ impl IrisTools {
             };
             response["server_manager"] = sm_section;
         }
+
+        // Spec 141 (R4a D5, D8, D9): where each setting came from, and what was set aside. Read
+        // off the same snapshot the gates read, so the report cannot drift from enforcement.
+        {
+            let system_mode = conn.iris.as_ref().map(|i| i.system_mode);
+            let namespace = conn
+                .iris
+                .as_ref()
+                .map(|i| i.namespace.clone())
+                .unwrap_or_default();
+            // The default server is judged on this connection: an untrusted file's template is
+            // compared with the one its system mode implies.
+            let default_policy = snap.effective_policy_for(
+                "default",
+                system_mode
+                    .map(|m| crate::policy::effective::implied_template(m, true, &namespace).0),
+            );
+            let mut policies = serde_json::Map::new();
+            for (name, listed) in &snap.policies {
+                let p = if name == "default" {
+                    &default_policy
+                } else {
+                    listed
+                };
+                let mut entry = p.to_json();
+                let is_default = name == "default";
+                if p.mcp_template.value.is_none() {
+                    // No file declared a template: the system mode chose one. A member's is what
+                    // the last probe of it answered, or unknown.
+                    let mode = if is_default {
+                        system_mode.unwrap_or_default()
+                    } else {
+                        self.pool_ref().cached_system_mode(name).unwrap_or_default()
+                    };
+                    let (t, _) =
+                        crate::policy::effective::implied_template(mode, is_default, &namespace);
+                    entry["mcpTemplate"]["value"] = serde_json::json!(match t {
+                        crate::iris::workspace_config::McpTemplate::Dev => "dev",
+                        crate::iris::workspace_config::McpTemplate::Test => "test",
+                        crate::iris::workspace_config::McpTemplate::Live => "live",
+                    });
+                    entry["mcpTemplate"]["detail"] =
+                        serde_json::json!(format!("SystemMode {mode:?}"));
+                }
+                // Where a gate's value came from, as `check_config` names the sources.
+                let from =
+                    |g: write_gate::GateSource, file_from: crate::policy::effective::PartSource| {
+                        match g {
+                            write_gate::GateSource::ReadOnlyStrict => "read_only_strict",
+                            write_gate::GateSource::OperatorEnv
+                            | write_gate::GateSource::LegacyAllowProd => "launch",
+                            write_gate::GateSource::OperatorFile => "operator_file",
+                            write_gate::GateSource::ConfigFile
+                            | write_gate::GateSource::PolicyDeclaration => file_from.as_str(),
+                            write_gate::GateSource::InferredSystemMode
+                            | write_gate::GateSource::InferredNamespace
+                            | write_gate::GateSource::UnprobedMember => "system_mode",
+                            write_gate::GateSource::InferredDefault
+                            | write_gate::GateSource::FailClosed => "strict_default",
+                        }
+                    };
+                if is_default {
+                    // The default server's gates are the ones `call_tool` enforces.
+                    entry["writeTools"]["value"] = serde_json::json!(conn.gates.write_enabled);
+                    entry["writeTools"]["from"] =
+                        serde_json::json!(from(conn.gates.write_source, p.write_tools.from));
+                    entry["destructiveTools"]["value"] =
+                        serde_json::json!(conn.gates.destructive_enabled);
+                    entry["destructiveTools"]["from"] = serde_json::json!(from(
+                        conn.gates.destructive_source,
+                        p.destructive_tools.from
+                    ));
+                } else {
+                    // A pool member's own gates (R1 D6), from what is known without a request:
+                    // `check_config` makes none, so a member nobody has written to yet reads as
+                    // unprobed and write-closed, which is what its first write would find.
+                    let mode = self.pool_ref().cached_system_mode(name);
+                    let decl = write_gate::MemberDeclaration {
+                        top_level: snap.declared_gates(),
+                        write_tools: p.write_tools.value,
+                        destructive_tools: p.destructive_tools.value,
+                    };
+                    let g = write_gate::resolve_member(
+                        write_gate::operator_env_gates(),
+                        &decl,
+                        mode.unwrap_or_default(),
+                        &namespace,
+                    );
+                    entry["writeTools"]["value"] = serde_json::json!(g.write_enabled);
+                    entry["writeTools"]["from"] =
+                        serde_json::json!(from(g.write_source, p.write_tools.from));
+                    entry["destructiveTools"]["value"] = serde_json::json!(g.destructive_enabled);
+                    entry["destructiveTools"]["from"] =
+                        serde_json::json!(from(g.destructive_source, p.destructive_tools.from));
+                    if g.write_source == write_gate::GateSource::UnprobedMember {
+                        entry["writeTools"]["detail"] = serde_json::json!(
+                            "this server's SystemMode has not been read (it is read on the first \
+                             write); until it is Development or Test, or [policy.<name>] \
+                             writeTools is true, writes are refused"
+                        );
+                    }
+                }
+                policies.insert(name.clone(), entry);
+            }
+            response["effective_policy"] = serde_json::Value::Object(policies);
+            response["config_sources"] = snap.sources_json();
+            response["skills"] = crate::skills::bundled::skills_report_from(
+                &crate::skills::bundled::candidate_inputs_from_process(),
+            );
+            if let Some(path) = crate::iris::audit_log::AuditLog::default_path() {
+                // `snap` is already in hand: `snapshot()` would take the connection lock held here.
+                let keep = crate::iris::audit_log::payloads_enabled(
+                    &snap.operator,
+                    std::env::var("IAD_AUDIT_PAYLOADS").ok().as_deref(),
+                );
+                response["audit"] = crate::iris::audit_log::mode_report(keep, &path);
+            }
+            let cg = default_policy.compile_gate.clone();
+            response["compile_time_gate"] = serde_json::json!({
+                "enabled": cg.value,
+                "from": cg.from.as_str(),
+                "file": cg.file.as_ref().map(|f| f.to_string_lossy().into_owned()),
+                "set_aside": cg.set_aside,
+            });
+            let mut set_aside = snap.set_aside_for("default", &default_policy);
+            // Credentials held back while the pool loaded (a Server Manager secret for an entry
+            // that no longer points at its profile, a stored password for another endpoint), and
+            // the default connection's `.vscode` named server (spec 141, FR-042).
+            set_aside.extend(self.pool_ref().withheld_credentials().iter().cloned());
+            // A `.vscode` connection discovery did not build for want of a password.
+            set_aside.extend(crate::iris::discovery::discovery_set_aside());
+            if let Some(iris) = conn.iris.as_ref() {
+                if matches!(
+                    iris.source,
+                    crate::iris::connection::DiscoverySource::VsCodeSettings
+                ) {
+                    if let Some(reason) = iris.credentials_withheld.as_ref() {
+                        set_aside.push(crate::iris::config_sources::SetAsideItem {
+                            id: "default:server_manager".to_string(),
+                            part: None,
+                            kind: crate::iris::config_sources::SetAsideKind::CredentialWithheld,
+                            setting: "Server Manager keychain secret".to_string(),
+                            server: Some("default".to_string()),
+                            file: None,
+                            reason: reason.clone(),
+                            lift: "make the endpoints match, or give the entry its own password"
+                                .to_string(),
+                        });
+                    }
+                }
+            }
+            response["set_aside"] =
+                serde_json::Value::Array(set_aside.iter().map(|i| i.to_json()).collect());
+            let mut errors: Vec<String> = snap.config_errors.clone();
+            errors.extend(snap.gate_error().map(|e| format!("{e}")));
+            errors.extend(snap.errors.iter().map(|e| e.display()));
+            response["config_errors"] = serde_json::json!(errors);
+            if let Some(e) = snap.errors.first() {
+                response["config_parse_error"] = serde_json::json!(e.display());
+            }
+            // 1.7.x keeps the string alias; its value is the reason text of the default server's
+            // withheld credentials.
+            if response["credentials_withheld"].is_null() {
+                let alias: Vec<&str> = set_aside
+                    .iter()
+                    .filter(|i| {
+                        i.kind == crate::iris::config_sources::SetAsideKind::CredentialWithheld
+                            && i.server.as_deref() == Some("default")
+                    })
+                    .map(|i| i.reason.as_str())
+                    .collect();
+                if !alias.is_empty() {
+                    response["credentials_withheld"] = serde_json::json!(alias.join(" "));
+                }
+            }
+        }
+
+        response["identity"] = self.identity_report_json(&snap, conn.iris.clone(), http_login);
 
         ok_json(response)
     }
@@ -5723,7 +5977,7 @@ impl IrisTools {
         &self,
         Parameters(p): Parameters<SymbolsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.resolve_server(p.server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         let client = self.http_client();
         let (sql, params) = translate_symbols_query(p.limit, &p.query);
@@ -5752,21 +6006,38 @@ impl IrisTools {
         }
         let limit = p.limit.clamp(1, 500);
 
-        // Resolve workspace path: param → OBJECTSCRIPT_WORKSPACE env → cwd
-        let workspace = if let Some(ref ws) = p.workspace_path {
-            std::path::PathBuf::from(ws)
-        } else if let Ok(ws) = std::env::var("OBJECTSCRIPT_WORKSPACE") {
-            std::path::PathBuf::from(ws)
-        } else {
-            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+        // The workspace is the project directory or a directory inside it (T216).
+        let (root, cwd) = self.host_path_context();
+        let workspace = match p.workspace_path.as_deref().filter(|w| !w.is_empty()) {
+            None => match root.clone() {
+                Some(r) => r,
+                None => {
+                    return self.refuse(host_fs::refusal_body(
+                        "iris_symbols_local",
+                        ".",
+                        &host_fs::PathRefusal::NoRoot,
+                        &[],
+                    ))
+                }
+            },
+            Some(requested) => match host_fs::confine_dir(root.as_deref(), &cwd, requested) {
+                Ok(dir) => dir,
+                Err(host_fs::PathRefusal::NotFound) => {
+                    return err_json(
+                        "WORKSPACE_NOT_FOUND",
+                        &format!("{requested} does not exist"),
+                    )
+                }
+                Err(why) => {
+                    return self.refuse(host_fs::refusal_body(
+                        "iris_symbols_local",
+                        requested,
+                        &why,
+                        &[],
+                    ))
+                }
+            },
         };
-
-        if !workspace.exists() {
-            return err_json(
-                "WORKSPACE_NOT_FOUND",
-                &format!("{} does not exist", workspace.display()),
-            );
-        }
 
         let result = symbols_local::scan_workspace_with_kinds(
             &workspace,
@@ -5793,6 +6064,8 @@ impl IrisTools {
             "count": count,
             "query_hint": "Supports: plain text (exact), 'Pkg.*' (package prefix), '*Suffix' (suffix), 'Pkg.*.Name' (glob)",
             "parse_warnings": warnings_json,
+            "truncated": result.truncated.is_some(),
+            "truncated_reason": result.truncated,
         }))
     }
 
@@ -5805,7 +6078,7 @@ impl IrisTools {
         &self,
         Parameters(p): Parameters<IntrospectParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.resolve_server(p.server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         let client = self.http_client();
         // Bug 15: use parameterized queries instead of manual string escaping.
@@ -5869,14 +6142,10 @@ impl IrisTools {
                 p.offset = o;
             }
         }
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         let client = self.http_client();
-        let code = format!(
-            "Write ##class(%Studio.Debugger).SourceLine(\"{}\",{})",
-            crate::objectscript::os_lit_inner(&p.routine),
-            p.offset
-        );
+        let code = crate::objectscript::source_line_code(&p.routine, p.offset);
         match iris.execute_via_generator(&code, namespace, client).await {
             Ok(raw) => {
                 let (cls_name, cls_line) = parse_source_line(raw.trim());
@@ -5897,7 +6166,7 @@ impl IrisTools {
         &self,
         Parameters(_p): Parameters<CapturePacketParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.target_conn()?;
         let namespace = resolve_namespace(_p.namespace.as_deref(), &iris.namespace);
         let client = self.http_client();
         match iris.query("SELECT TOP 20 ErrorCode,ErrorText,TimeStamp FROM %SYSTEM.Error ORDER BY TimeStamp DESC", vec![], namespace, client).await {
@@ -5923,7 +6192,7 @@ impl IrisTools {
         &self,
         Parameters(p): Parameters<ErrorLogsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         let client = self.http_client();
         // FR-012: cap max_entries to prevent runaway queries.
@@ -5970,7 +6239,7 @@ impl IrisTools {
         &self,
         Parameters(p): Parameters<SourceMapParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         let client = self.http_client();
         let cls_name = p.cls_name.trim_end_matches(".cls");
@@ -5992,7 +6261,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Generate an ObjectScript class from a natural language description. Requires IRIS_GENERATE_CLASS_MODEL + OPENAI_API_KEY env vars. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "Generate an ObjectScript class from a natural language description, store it and compile it (the compile-time gate, stored-include and superclass checks of iris_doc put with compile apply; a refusal is an error result). Requires IRIS_GENERATE_CLASS_MODEL + OPENAI_API_KEY env vars. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         output_schema = output_schemas::oneof_output_schema::<IrisGenerateClassResponse>()
     )]
     async fn iris_generate_class(
@@ -6019,62 +6288,77 @@ impl IrisTools {
                 data: None,
             })?;
 
-        if !validate_cls_syntax(&class_text) {
+        // The text is stored under the name it declares, so a text with no usable name has nowhere
+        // to go.
+        let Some(class_name) =
+            extract_class_name(&class_text).filter(|_| validate_cls_syntax(&class_text))
+        else {
             return err_result(
                 serde_json::json!({"success": false, "error_code": "INVALID_OUTPUT", "raw_llm_output": class_text}),
             );
-        }
-        let class_name =
-            extract_class_name(&class_text).unwrap_or_else(|| "Generated.Class".to_string());
+        };
 
-        if let Some(iris) = self.iris_arc().as_deref() {
-            let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-            let _client = self.http_client();
-            let code = format!(
-                "Set sc=$SYSTEM.OBJ.Compile(\"{}\",\"ck-d\") Write $System.Status.IsOK(sc)",
-                class_name
-            );
-            let compile_ok = iris
-                .execute(&code, namespace)
-                .await
-                .map(|o| o.trim() == "1")
-                .unwrap_or(false);
-
-            if !compile_ok {
-                let retry_prompt = RETRY_TEMPLATE.replace("{errors}", "compilation failed");
-                if let Ok(fixed) = llm
-                    .complete(
-                        GENERATE_CLASS_SYSTEM,
-                        &format!(
-                            "{}
-
-Original: {}",
-                            retry_prompt, class_text
-                        ),
-                    )
-                    .await
-                {
-                    let fixed_name = extract_class_name(&fixed).unwrap_or(class_name.clone());
-                    let code2 = format!(
-                        "Set sc=$SYSTEM.OBJ.Compile(\"{}\",\"ck-d\") Write $System.Status.IsOK(sc)",
-                        fixed_name
-                    );
-                    let ok2 = iris
-                        .execute(&code2, namespace)
-                        .await
-                        .map(|o| o.trim() == "1")
-                        .unwrap_or(false);
-                    return ok_json(
-                        serde_json::json!({"success": true, "class_name": fixed_name, "class_text": fixed, "compiled": ok2, "retried": true}),
-                    );
-                }
-            }
+        let Some(iris) = self.target_conn_opt()? else {
             return ok_json(
-                serde_json::json!({"success": true, "class_name": class_name, "class_text": class_text, "compiled": compile_ok, "retried": false}),
+                serde_json::json!({"success": true, "class_name": class_name, "class_text": class_text, "compiled": false, "retried": false, "note": "No IRIS connection — could not compile"}),
             );
+        };
+        // Storing the text is an Atelier PUT, the same as `iris_doc`.
+        if nopws::atelier_unavailable(&iris) {
+            return err_result(nopws::nopws_atelier_required_error());
         }
+        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
+        let client = self.http_client();
+        let store = |name: String, text: String| {
+            let iris = iris.clone();
+            async move {
+                generate_class::store_and_compile(
+                    &iris,
+                    client,
+                    &name,
+                    &text,
+                    namespace,
+                    &self.elicitation_store,
+                    &self.checkout_cache,
+                )
+                .await
+            }
+        };
+
+        let errors = match store(class_name.clone(), class_text.clone()).await? {
+            generate_class::Stored::Stopped(result) => return Ok(result),
+            generate_class::Stored::Compiled => {
+                return ok_json(
+                    serde_json::json!({"success": true, "class_name": class_name, "class_text": class_text, "compiled": true, "retried": false, "compile_errors": []}),
+                )
+            }
+            generate_class::Stored::CompileErrors(errors) => errors,
+        };
+
+        // One retry: the model sees the errors IRIS returned. Its new text goes through the same
+        // store, so it meets every check the first text met.
+        let retry_prompt = RETRY_TEMPLATE.replace("{errors}", &errors.join("\n"));
+        let fixed = llm
+            .complete(
+                GENERATE_CLASS_SYSTEM,
+                &format!("{retry_prompt}\n\nOriginal: {class_text}"),
+            )
+            .await
+            .ok()
+            .filter(|t| validate_cls_syntax(t));
+        let Some((fixed, fixed_name)) = fixed.and_then(|t| extract_class_name(&t).map(|n| (t, n)))
+        else {
+            return ok_json(
+                serde_json::json!({"success": true, "class_name": class_name, "class_text": class_text, "compiled": false, "retried": false, "compile_errors": errors}),
+            );
+        };
+        let (compiled, errors) = match store(fixed_name.clone(), fixed.clone()).await? {
+            generate_class::Stored::Stopped(result) => return Ok(result),
+            generate_class::Stored::Compiled => (true, Vec::new()),
+            generate_class::Stored::CompileErrors(errors) => (false, errors),
+        };
         ok_json(
-            serde_json::json!({"success": true, "class_name": class_name, "class_text": class_text, "compiled": false, "retried": false, "note": "No IRIS connection — could not compile"}),
+            serde_json::json!({"success": true, "class_name": fixed_name, "class_text": fixed, "compiled": compiled, "retried": true, "compile_errors": errors}),
         )
     }
 
@@ -6096,7 +6380,7 @@ Original: {}",
             )
         })?;
 
-        let introspection_context = if let Some(iris) = self.iris_arc().as_deref() {
+        let introspection_context = if let Some(iris) = self.target_conn_opt()?.as_deref() {
             let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
             let client = self.http_client();
             // FR-001/C1: use parameterized query to prevent SQL injection via class_name.
@@ -6154,24 +6438,26 @@ Methods:
     /// Read every `^SKILLS` entry. Returns `(entries, searched)` — `searched` is
     /// false when there is no IRIS connection or the global could not be read, so
     /// callers can say "I did not look there" instead of implying "nothing there".
-    async fn synthesized_skills(&self) -> (Vec<serde_json::Value>, bool) {
-        let Some(iris) = self.iris_arc() else {
-            return (Vec::new(), false);
+    async fn synthesized_skills(&self) -> Result<(Vec<serde_json::Value>, bool), McpError> {
+        let Some(iris) = self.target_conn_opt()? else {
+            return Ok((Vec::new(), false));
         };
         // Build a JSON array of {name, description, body} objects via %DynamicArray so
         // skill names and descriptions are properly escaped — raw string concatenation
         // produced invalid JSON the moment any entry existed (#119).
         let code = r#"Set arr=##class(%DynamicArray).%New() Set key="" For { Set key=$Order(^SKILLS(key)) Quit:key=""  Set val=$Get(^SKILLS(key)) Set obj=##class(%DynamicObject).%New() Do obj.%Set("name",key) Do obj.%Set("description",$Piece(val,"|",1)) Do obj.%Set("body",$Piece(val,"|",2)) Do arr.%Push(obj) } Write arr.%ToJSON()"#;
-        match iris
-            .execute(code, &crate::tools::skills_tools::skills_namespace())
-            .await
-        {
-            Ok(output) => match serde_json::from_str::<Vec<serde_json::Value>>(output.trim()) {
-                Ok(entries) => (entries, true),
+        Ok(
+            match iris
+                .execute(code, &crate::tools::skills_tools::skills_namespace())
+                .await
+            {
+                Ok(output) => match serde_json::from_str::<Vec<serde_json::Value>>(output.trim()) {
+                    Ok(entries) => (entries, true),
+                    Err(_) => (Vec::new(), false),
+                },
                 Err(_) => (Vec::new(), false),
             },
-            Err(_) => (Vec::new(), false),
-        }
+        )
     }
 
     #[tool(
@@ -6184,7 +6470,7 @@ Methods:
 
         // Internal-tier skills stay reachable through skill_describe but are not advertised.
         let bundled_skills = bundled::advertised(&bundled::load_bundled_skills());
-        let (synth, synth_searched) = self.synthesized_skills().await;
+        let (synth, synth_searched) = self.synthesized_skills().await?;
         let merged = bundled::merge_sources(&bundled_skills, &synth);
         let skills: Vec<serde_json::Value> = merged.iter().map(|m| m.to_json()).collect();
 
@@ -6214,13 +6500,10 @@ Methods:
             return ok_json(serde_json::json!({"success": true, "skill": skill}));
         }
 
-        let (synth, synth_searched) = self.synthesized_skills().await;
+        let (synth, synth_searched) = self.synthesized_skills().await?;
         if synth_searched {
-            let code = format!(
-                "Write $Get(^SKILLS(\"{}\"))",
-                crate::objectscript::os_lit_inner(&p.name)
-            );
-            if let Some(iris) = self.iris_arc() {
+            let code = crate::objectscript::skill_get_code(&p.name);
+            if let Some(iris) = self.target_conn_opt()? {
                 if let Ok(output) = iris
                     .execute(&code, &crate::tools::skills_tools::skills_namespace())
                     .await
@@ -6263,7 +6546,7 @@ Methods:
         use crate::skills::bundled;
 
         let bundled_skills = bundled::advertised(&bundled::load_bundled_skills());
-        let (synth, synth_searched) = self.synthesized_skills().await;
+        let (synth, synth_searched) = self.synthesized_skills().await?;
 
         let terms = bundled::query_terms(&p.query);
         let mut scored: Vec<(serde_json::Value, u32)> = Vec::new();
@@ -6341,11 +6624,8 @@ Methods:
         &self,
         Parameters(p): Parameters<SkillNameParams>,
     ) -> Result<CallToolResult, McpError> {
-        if let Some(iris) = self.iris_arc().as_deref() {
-            let code = format!(
-                "Kill ^SKILLS(\"{}\") Write \"OK\"",
-                crate::objectscript::os_lit_inner(&p.name)
-            );
+        if let Some(iris) = self.target_conn_opt()?.as_deref() {
+            let code = crate::objectscript::skill_forget_code(&p.name);
             match iris
                 .execute(&code, &crate::tools::skills_tools::skills_namespace())
                 .await
@@ -6477,7 +6757,11 @@ Methods:
         &self,
         Parameters(p): Parameters<KbIndexParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let scope = match self.kb_index_scope("kb_index", p.workspace_path.as_deref()) {
+            Ok(s) => s,
+            Err(refused) => return refused,
+        };
+        let iris = self.target_conn()?;
         skills_tools::handle_kb(
             &iris,
             self.http_client(),
@@ -6487,6 +6771,7 @@ Methods:
                 query: None,
                 top_k: 0,
             },
+            |_: Option<&str>| Ok(scope),
         )
         .await
     }
@@ -6585,7 +6870,7 @@ Methods:
     }
 
     #[tool(
-        description = "Query the durable telemetry record (beyond the current process's in-memory agent_history) by tool name, session id, and/or time range. Reads from the IRIS-global durable sink when connected, or the local JSONL file sink when not.",
+        description = "Query the durable telemetry record (beyond the current process's in-memory agent_history) by tool name, session id, and/or time range. Reads the local JSONL file, which holds this machine's records. When the operator turned on the IRIS sink (`telemetry_sink = \"iris\"` or IAD_TELEMETRY_SINK=iris) it reads the IRIS global too, on the server the call targets where that server's writes are on, read-only mode is not strict and its role is not `subject`, and returns a call both hold once. `check_config.telemetry_sink` says which is set.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<TelemetryQueryResponse>()
     )]
@@ -6599,7 +6884,7 @@ Methods:
             None => None,
         };
         let limit = p.limit.min(5000);
-        let iris = self.connection.lock().unwrap().iris.clone();
+        let iris = self.durable_sink_connection();
         let config_dir = telemetry_config_dir();
         let records =
             crate::telemetry::read_durable(session_id, iris, self.http_client(), &config_dir).await;
@@ -6641,7 +6926,7 @@ Methods:
             Some(Err(_)) => return err_json("INVALID_PARAMS", "session_id must be a valid UUID"),
             None => None,
         };
-        let iris = self.connection.lock().unwrap().iris.clone();
+        let iris = self.durable_sink_connection();
         let config_dir = telemetry_config_dir();
         let records =
             crate::telemetry::read_durable(session_id, iris, self.http_client(), &config_dir).await;
@@ -6685,7 +6970,7 @@ Methods:
         &self,
         Parameters(p): Parameters<search::SearchParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.resolve_server(p.server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result =
             search::handle_iris_search(&iris, self.http_client(), p, Arc::clone(&self.log_store))
                 .await;
@@ -6708,7 +6993,7 @@ Methods:
                 serde_json::json!({"success": false, "error_code": "INVALID_PARAMS", "error": msg}),
             );
         }
-        let iris = self.resolve_server(p.server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result =
             info::handle_iris_info(&iris, self.http_client(), p, Arc::clone(&self.log_store)).await;
         self.record_call("iris_info", result.is_ok());
@@ -6724,7 +7009,7 @@ Methods:
         &self,
         Parameters(p): Parameters<info::TableInfoParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.resolve_server(p.server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result = info::handle_iris_table_info(&iris, self.http_client(), p).await;
         self.record_call("iris_table_info", result.is_ok());
         result
@@ -6739,7 +7024,7 @@ Methods:
         &self,
         Parameters(p): Parameters<dict::ResolveDynamicDispatchParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.resolve_server(p.server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result = dict::handle_resolve_dynamic_dispatch(
             &iris,
             self.http_client(),
@@ -6760,7 +7045,7 @@ Methods:
         &self,
         Parameters(p): Parameters<dict::ExtractMessageMapParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.resolve_server(p.server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result = dict::handle_extract_message_map_routing(
             &iris,
             self.http_client(),
@@ -6781,7 +7066,7 @@ Methods:
         &self,
         Parameters(p): Parameters<dict::FindSubclassImplementationsParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.resolve_server(p.server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result = dict::handle_find_subclass_implementations(
             &iris,
             self.http_client(),
@@ -6802,7 +7087,7 @@ Methods:
         &self,
         Parameters(p): Parameters<info::MacroParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.resolve_server(p.server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result = info::handle_iris_macro(&iris, self.http_client(), p).await;
         self.record_call("iris_macro", result.is_ok());
         result
@@ -6816,7 +7101,7 @@ Methods:
         &self,
         Parameters(p): Parameters<info::DebugParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.resolve_server(p.server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result = info::handle_iris_debug(&iris, self.http_client(), p).await;
         self.record_call("iris_debug", result.is_ok());
         result
@@ -6830,7 +7115,7 @@ Methods:
         &self,
         Parameters(p): Parameters<info::GenerateParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.resolve_server(p.server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result = info::handle_iris_generate(&iris, self.http_client(), p).await;
         self.record_call("iris_generate", result.is_ok());
         result
@@ -6844,7 +7129,7 @@ Methods:
         &self,
         Parameters(p): Parameters<skills_tools::SkillParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.target_conn()?;
         let result = skills_tools::handle_skill(&iris, self.http_client(), p, &self.history).await;
         self.record_call("skill", result.is_ok());
         result
@@ -6858,7 +7143,7 @@ Methods:
         &self,
         Parameters(p): Parameters<skills_tools::SkillCommunityParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.target_conn()?;
         let result =
             skills_tools::handle_skill_community(&iris, self.http_client(), p, &self.registry)
                 .await;
@@ -6874,8 +7159,10 @@ Methods:
         &self,
         Parameters(p): Parameters<skills_tools::KbParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
-        let result = skills_tools::handle_kb(&iris, self.http_client(), p).await;
+        let iris = self.target_conn()?;
+        // The scope is resolved only by the action that reads the host, inside `handle_kb`.
+        let scope = |path: Option<&str>| self.kb_index_scope("kb", path);
+        let result = skills_tools::handle_kb(&iris, self.http_client(), p, scope).await;
         self.record_call("kb", result.is_ok());
         result
     }
@@ -6889,7 +7176,7 @@ Methods:
         &self,
         Parameters(p): Parameters<skills_tools::AgentInfoParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.get_iris_reloaded().await?;
+        let iris = self.target_conn()?;
         let result =
             skills_tools::handle_agent_info(&iris, self.http_client(), p, &self.history).await;
         self.record_call("agent_info", result.is_ok());
@@ -6904,7 +7191,7 @@ Methods:
         &self,
         Parameters(p): Parameters<ScmParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.resolve_server(p.server.as_deref()).await?;
+        let iris = self.target_conn()?;
         // FR-010: NoPWS guard — iris_source_control requires Atelier REST.
         if nopws::nopws_is_active(
             iris.base_url == "http://127.0.0.1:1"
@@ -6915,76 +7202,6 @@ Methods:
                 .unwrap_or(false),
         ) {
             return err_result(nopws::nopws_atelier_required_error());
-        }
-        let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        // Policy gate (044 + 051): check before role gate.
-        let (sm_server_sc, policy_sc) = self.active_server_manager_policy();
-        {
-            let params_json = serde_json::json!({ "action": p.action, "namespace": namespace });
-            if let Err(gate) = crate::policy::gate::dispatch_gate(
-                "iris_source_control",
-                sm_server_sc.as_deref().unwrap_or(""),
-                policy_sc.as_ref(),
-                &params_json,
-            ) {
-                self.write_audit_entry(
-                    "iris_source_control",
-                    sm_server_sc.as_deref().unwrap_or(""),
-                    policy_sc.as_ref(),
-                    "blocked",
-                    Some("policy"),
-                    None,
-                    params_json,
-                );
-                return err_result(gate);
-            }
-            if let Some(gate) = crate::iris::server_manager::policy_gate(
-                "iris_source_control",
-                sm_server_sc.as_deref().unwrap_or(""),
-                policy_sc.as_ref(),
-            ) {
-                let allowed = gate["allowed_categories"].as_array().map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                        .collect()
-                });
-                self.write_audit_entry(
-                    "iris_source_control",
-                    sm_server_sc.as_deref().unwrap_or(""),
-                    policy_sc.as_ref(),
-                    "blocked",
-                    Some("policy"),
-                    allowed,
-                    params_json,
-                );
-                return err_result(gate);
-            }
-            self.write_audit_entry(
-                "iris_source_control",
-                sm_server_sc.as_deref().unwrap_or(""),
-                policy_sc.as_ref(),
-                "allowed",
-                None,
-                None,
-                params_json,
-            );
-        }
-        // Role gate: write actions (checkout, execute) are hard-blocked on subject instances.
-        // Read actions (status, menu) are always permitted.
-        {
-            let (role, instance_name) = self.instance_role();
-            let is_write = matches!(p.action.as_str(), "checkout" | "execute");
-            if is_write {
-                if let Some(gate) = crate::iris::workspace_config::check_role_gate(
-                    &role,
-                    "iris_source_control:commit",
-                    p.confirm,
-                    &instance_name,
-                    true,
-                ) {
-                    return err_result(gate);
-                }
-            }
         }
         let result = scm::handle_iris_source_control(
             &iris,
@@ -7009,78 +7226,54 @@ Methods:
         Parameters(p): Parameters<global::IrisGlobalParams>,
     ) -> Result<CallToolResult, McpError> {
         // Mutating actions (set/kill) run under the restricted service account when configured;
-        // read-only actions (get/list) stay on the primary connection.
+        // read-only actions (get/list) stay on the target's own connection. The gates ran in the
+        // pipeline, on the server the call names (spec 141, R1).
         let is_write = matches!(p.action.as_str(), "set" | "kill");
-        // Pair the identity with its matching cookie jar: write actions run under the service
-        // account via exec_client (isolated CSP session), reads stay on the primary connection.
-        let (iris, exec_client) = if is_write {
-            if let Some(ref s) = p.server {
-                (
-                    self.pool_ref().get(Some(s.as_str()))?,
-                    Arc::clone(&self.client),
-                )
-            } else {
-                self.get_iris_for_exec_with_client().await?
+        let cx = if is_write {
+            match self.exec_context() {
+                Ok(cx) => Some(cx),
+                Err(e) => {
+                    self.record_call("iris_global", false);
+                    return exec_refused(e);
+                }
             }
         } else {
-            (
-                self.resolve_server(p.server.as_deref()).await?,
-                Arc::clone(&self.client),
-            )
+            None
         };
-        let (sm_server, policy) = self.active_server_manager_policy();
-        let params_json = serde_json::json!({
-            "action": p.action,
-            "global_name": p.global_name,
-            "subscripts": p.subscripts,
-            "acknowledgePhi": p.acknowledge_phi.unwrap_or(false),
-        });
-        let gate = crate::policy::gate::dispatch_gate(
-            "iris_global",
-            sm_server.as_deref().unwrap_or(""),
-            policy.as_ref(),
-            &params_json,
-        );
-        if let Err(ref gate_err) = gate {
-            self.write_audit_entry(
-                "iris_global",
-                sm_server.as_deref().unwrap_or(""),
-                policy.as_ref(),
-                "blocked",
-                Some("policy"),
-                None,
-                params_json.clone(),
-            );
-            return err_result(gate_err.clone());
+        let (iris, client) = match &cx {
+            Some(cx) => (cx.conn.clone(), cx.client.clone()),
+            None => (self.target_conn()?, Arc::clone(&self.client)),
+        };
+        let mut result = global::handle_iris_global(&iris, client.as_ref(), &p, Ok(())).await;
+        if let Some(cx) = &cx {
+            result["identity"] = cx.helper_report().to_json();
         }
-        let result = global::handle_iris_global(&iris, exec_client.as_ref(), &p, gate).await;
-        self.write_audit_entry(
-            "iris_global",
-            sm_server.as_deref().unwrap_or(""),
-            policy.as_ref(),
-            if result["success"].as_bool().unwrap_or(false) {
-                "ok"
-            } else {
-                "error"
-            },
-            None,
-            None,
-            params_json,
-        );
         json_result(result)
     }
 
     // ── 064: iris_coverage ────────────────────────────────────────────────────
 
     #[tool(
-        description = "Measure ObjectScript line coverage using %Monitor.System.LineByLine. mode=run: start monitoring + run compiled test suite + stop + return per-class and total coverage in one call (use this for most tasks). mode=check: verify the monitor is available by doing a dry Start() — if BBSIZ_NOT_CONFIGURED is returned, increase gmheap to 256+ in Management Portal > System Administration > Configuration > Additional Settings > Advanced Memory, then restart IRIS. mode=start/stop/report: manual multi-step control. Provide either classes=['MyApp.MyClass',...] or package='MyApp' (auto-discovers concrete classes). test_path must be a compiled class pattern (e.g. 'MyApp.Tests') — /noload always used. Returns {total_pct, hits, total, classes:[{class,routine,hit,total,pct}], meets_target, target_pct}. Error codes: BBSIZ_NOT_CONFIGURED (gmheap too small), MONITOR_IN_USE, MISSING_PARAM. Skill: objectscript-coverage (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "Measure ObjectScript line coverage using %Monitor.System.LineByLine. mode=run: start monitoring + run compiled test suite + stop + return per-class and total coverage in one call (use this for most tasks). mode=check: verify the monitor is available by doing a dry Start() — if BBSIZ_NOT_CONFIGURED is returned, increase gmheap to 256+ in Management Portal > System Administration > Configuration > Additional Settings > Advanced Memory, then restart IRIS. mode=start/stop/report: manual multi-step control. Every mode except report is a write (check starts and stops the monitor), so the write gate applies. Provide either classes=['MyApp.MyClass',...] or package='MyApp' (auto-discovers concrete classes). test_path must be a compiled class pattern (e.g. 'MyApp.Tests') — /noload always used. Returns {total_pct, hits, total, classes:[{class,routine,routines,hit,total,pct}], meets_target, target_pct}; every routine a class compiled to is counted, and a class with 0 of 0 lines has pct null (and null total_pct, meets_target), which is not 0%. If a line of the run throws, the monitor is still stopped and the result is partial with run_error. A line monitor that is already running (another session's) is refused with MONITOR_IN_USE and left alone; mode=stop stops it. Error codes: BBSIZ_NOT_CONFIGURED (gmheap too small), MONITOR_IN_USE, COVERAGE_ROUTINE_UNKNOWN (a class with no compiled routine), MONITOR_NOT_RUNNING (report), MISSING_PARAM. Skill: objectscript-coverage (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         output_schema = output_schemas::oneof_output_schema::<IrisCoverageResponse>()    )]
     async fn iris_coverage(
         &self,
         Parameters(p): Parameters<coverage::IrisCoverageParams>,
     ) -> Result<CallToolResult, McpError> {
-        let iris = self.resolve_server(p.server.as_deref()).await?;
-        let result = coverage::handle_iris_coverage(&iris, &self.client, &p).await;
+        // `run` and `start` execute the agent's test path, so they run as the service account;
+        // `stop`, `report` and `check` run only iad's own code and stay on the connection's user.
+        // The pipeline resolved which (R2 section 1f).
+        let cx = match self.exec_context() {
+            Ok(cx) => cx,
+            Err(e) => {
+                self.record_call("iris_coverage", false);
+                return exec_refused(e);
+            }
+        };
+        let mut result = coverage::handle_iris_coverage(&cx, &p).await;
+        if cx.expected.is_some() {
+            result["identity"] = cx.helper_report().to_json();
+        }
         json_result(result)
     }
 
@@ -7114,44 +7307,19 @@ Methods:
         &self,
         Parameters(p): Parameters<IrisExecuteMethodParams>,
     ) -> Result<CallToolResult, McpError> {
-        // Invoking an arbitrary ClassMethod by name is the $classmethod indirection vector — route
-        // it through the restricted service account when configured (least-privilege). The paired
-        // client carries the matching cookie jar (see get_iris_for_exec_with_client).
-        let (iris, exec_client) = if let Some(ref s) = p.server {
-            (
-                self.pool_ref().get(Some(s.as_str()))?,
-                Arc::clone(&self.client),
-            )
-        } else {
-            self.get_iris_for_exec_with_client().await?
+        // Invoking an arbitrary ClassMethod by name is the $classmethod indirection vector, so it
+        // runs as the service account when one is set (least privilege). The gates ran in the
+        // pipeline, on the server the call names (spec 141, R1).
+        let cx = match self.exec_context() {
+            Ok(cx) => cx,
+            Err(e) => {
+                self.record_call("iris_execute_method", false);
+                return exec_refused(e);
+            }
         };
-        let (sm_server, policy) = self.active_server_manager_policy();
-        let params_json = serde_json::json!({
-            "class": p.class,
-            "method": p.method,
-            "args": p.args,
-        });
-        let gate = crate::policy::gate::dispatch_gate(
-            "iris_execute_method",
-            sm_server.as_deref().unwrap_or(""),
-            policy.as_ref(),
-            &params_json,
-        );
-        if let Err(ref gate_err) = gate {
-            self.write_audit_entry(
-                "iris_execute_method",
-                sm_server.as_deref().unwrap_or(""),
-                policy.as_ref(),
-                "blocked",
-                Some("policy"),
-                None,
-                params_json.clone(),
-            );
-            return err_result(gate_err.clone());
-        }
-        let result = doc::handle_iris_execute_method(&iris, exec_client.as_ref(), &p).await;
+        let result = doc::handle_iris_execute_method(&cx.conn, cx.client.as_ref(), &p).await;
         self.record_call("iris_execute_method", result.is_ok());
-        result
+        exec::attach_identity(result, &cx.helper_report())
     }
 
     // ── Merged tools (T029–T032, registered only when IRIS_TOOLSET=merged) ─────
@@ -7167,11 +7335,8 @@ Methods:
         Parameters(p): Parameters<IrisProductionParams>,
     ) -> Result<CallToolResult, McpError> {
         let action = p.action.as_str();
-        let _iris_arc_hold: Option<Arc<IrisConnection>> = match p.server.as_deref() {
-            Some(s) => Some(self.pool_ref().get(Some(s))?),
-            None => self.iris_arc(),
-        };
-        let iris_opt = _iris_arc_hold.as_deref();
+        let target_hold = self.target_conn_opt()?;
+        let iris_opt = target_hold.as_deref();
         let conn_ns = iris_opt.map(|i| i.namespace.as_str()).unwrap_or("USER");
         let ns_param = p.namespace.as_deref();
         let result = match action {
@@ -7280,12 +7445,8 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let what = p.get("what").and_then(|v| v.as_str()).unwrap_or("logs");
-        let _iris_arc_hold: Option<Arc<IrisConnection>> =
-            match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool_ref().get(Some(s))?),
-                None => self.iris_arc(),
-            };
-        let iris_opt = _iris_arc_hold.as_deref();
+        let target_hold = self.target_conn_opt()?;
+        let iris_opt = target_hold.as_deref();
         #[allow(unused_variables)]
         let result = match what {
             "logs" => {
@@ -7449,18 +7610,14 @@ Methods:
                     .collect()
             })
             .unwrap_or_default();
-        let _iris_arc_hold: Option<Arc<IrisConnection>> =
-            match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool_ref().get(Some(s))?),
-                None => self.iris_arc(),
-            };
-        let conn_ns = _iris_arc_hold
+        let target_hold = self.target_conn_opt()?;
+        let conn_ns = target_hold
             .as_deref()
             .map(|i| i.namespace.as_str())
             .unwrap_or("USER");
         let namespace = resolve_namespace(requested_ns.as_deref(), conn_ns).to_string();
         let result = interop::interop_production_item_impl(
-            _iris_arc_hold.as_deref(),
+            target_hold.as_deref(),
             interop::ProductionItemParams {
                 action,
                 item,
@@ -7476,7 +7633,7 @@ Methods:
     // ─── 056-interop-depth ───
 
     #[tool(
-        description = "Read an Ensemble/Interoperability message body by message ID. Handles plain-text and stream-backed bodies (Ens.StreamContainer, %Stream.Object). PHI-gated: dataPolicy=block returns PHI_POLICY_BLOCKED; dataPolicy=allow requires acknowledgePhi=true; dataPolicy=redact scrubs HL7 v2 PID/MSH fields. max_bytes default 65536, clamped to 1048576. Skill: ensemble-production (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "Read an Ensemble/Interoperability message body by message ID. Handles plain-text and stream-backed bodies (Ens.StreamContainer, %Stream.Object). PHI-gated by the stricter of the server's dataPolicy and the dataPolicy argument (block|redact|allow; an omitted argument means the server's own policy; any other value is INVALID_PARAMS): block returns PHI_POLICY_BLOCKED; allow requires acknowledgePhi=true; redact returns HL7 v2 with the identifying fields of PID, NK1, GT1, IN1, IN2 and MSH-3 (names, ids, birth dates, addresses, phones, SSNs) replaced by [REDACTED], which is a field mask and not de-identification: other segments and free text (PV1, OBX, NTE) come back as stored. It refuses other content with BODY_NOT_REDACTABLE. max_bytes default 65536, clamped to 1048576. Skill: ensemble-production (merged toolset only). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         annotations(read_only_hint = true),
         // Batch 6 correction: the wrapper's dispatch_gate short-circuit wasn't accounted for
         // when this schema was first declared — see IrisMessageBodyResponse's doc comment.
@@ -7486,63 +7643,54 @@ Methods:
         &self,
         Parameters(params): Parameters<params::batch5::IrisMessageBodyParams>,
     ) -> Result<CallToolResult, McpError> {
-        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
-        let message_id = p
-            .get("message_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
+        let message_id = params.message_id.clone().unwrap_or_default();
         if message_id.is_empty() {
             return err_json("INVALID_PARAMS", "message_id is required");
         }
-        let _iris_arc_hold: Option<Arc<IrisConnection>> =
-            match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool_ref().get(Some(s))?),
-                None => self.iris_arc(),
-            };
-        let conn_ns = _iris_arc_hold
-            .as_deref()
-            .map(|i| i.namespace.as_str())
-            .unwrap_or("USER");
-        let namespace =
-            resolve_namespace(p.get("namespace").and_then(|v| v.as_str()), conn_ns).to_string();
-        let max_bytes = p
-            .get("max_bytes")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as u32)
-            .unwrap_or(65536);
-        let acknowledge_phi = p
-            .get("acknowledgePhi")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        let data_policy = p
-            .get("dataPolicy")
-            .and_then(|v| v.as_str())
-            .unwrap_or("block")
-            .to_string();
-        let (sm_server, policy) = self.active_server_manager_policy();
-        let params_json = serde_json::json!({ "namespace": &namespace });
-        if let Err(gate) = crate::policy::gate::dispatch_gate(
-            "iris_message_body",
-            sm_server.as_deref().unwrap_or(""),
-            policy.as_ref(),
-            &params_json,
+        let target = self.target()?;
+        let namespace = self.target_ns(params.namespace.as_deref())?;
+        let max_bytes = params.max_bytes.unwrap_or(65536);
+        let acknowledge_phi = params.acknowledge_phi.unwrap_or(false);
+        // The stricter of the target server's `dataPolicy` and the caller's: the caller can only
+        // narrow (spec 141 R5 C20).
+        let server_policy = target
+            .primary
+            .policy
+            .data_policy
+            .clone()
+            .unwrap_or_default();
+        let policy = match interop::resolve_body_policy(
+            &server_policy,
+            params.data_policy.as_deref(),
+            acknowledge_phi,
         ) {
-            return err_result(gate);
-        }
+            Ok(p) => p,
+            Err(body) => {
+                self.record_call("iris_message_body", false);
+                return if body["error_code"] == "INVALID_PARAMS" {
+                    err_result(body)
+                } else {
+                    self.refuse(body)
+                };
+            }
+        };
+        let data_policy = match policy {
+            crate::iris::workspace_config::DataPolicy::Allow => "allow",
+            _ => "redact",
+        };
         let result = interop::handle_iris_message_body(
-            _iris_arc_hold.as_deref(),
+            target.primary.conn.as_deref(),
             &interop::MessageBodyParams {
                 message_id,
                 namespace,
                 max_bytes,
                 acknowledge_phi,
             },
-            &data_policy,
+            data_policy,
         )
         .await;
         self.record_call("iris_message_body", result.is_ok());
-        result
+        result.map(|r| self.classify_answer(r))
     }
 
     #[tool(
@@ -7564,29 +7712,15 @@ Methods:
             .get("rule_name")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let _iris_arc_hold: Option<Arc<IrisConnection>> =
-            match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool_ref().get(Some(s))?),
-                None => self.iris_arc(),
-            };
-        let conn_ns = _iris_arc_hold
+        let target_hold = self.target_conn_opt()?;
+        let conn_ns = target_hold
             .as_deref()
             .map(|i| i.namespace.as_str())
             .unwrap_or("USER");
         let namespace =
             resolve_namespace(p.get("namespace").and_then(|v| v.as_str()), conn_ns).to_string();
-        let (sm_server, policy) = self.active_server_manager_policy();
-        let params_json = serde_json::json!({ "namespace": &namespace });
-        if let Err(gate) = crate::policy::gate::dispatch_gate(
-            "iris_business_rule_info",
-            sm_server.as_deref().unwrap_or(""),
-            policy.as_ref(),
-            &params_json,
-        ) {
-            return err_result(gate);
-        }
         let result = interop::handle_iris_business_rule_info(
-            _iris_arc_hold.as_deref(),
+            target_hold.as_deref(),
             &interop::BusinessRuleInfoParams {
                 action,
                 rule_name,
@@ -7612,29 +7746,15 @@ Methods:
             .get("production")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let _iris_arc_hold: Option<Arc<IrisConnection>> =
-            match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool_ref().get(Some(s))?),
-                None => self.iris_arc(),
-            };
-        let conn_ns = _iris_arc_hold
+        let target_hold = self.target_conn_opt()?;
+        let conn_ns = target_hold
             .as_deref()
             .map(|i| i.namespace.as_str())
             .unwrap_or("USER");
         let namespace =
             resolve_namespace(p.get("namespace").and_then(|v| v.as_str()), conn_ns).to_string();
-        let (sm_server, policy) = self.active_server_manager_policy();
-        let params_json = serde_json::json!({ "namespace": &namespace });
-        if let Err(gate) = crate::policy::gate::dispatch_gate(
-            "iris_production_diff",
-            sm_server.as_deref().unwrap_or(""),
-            policy.as_ref(),
-            &params_json,
-        ) {
-            return err_result(gate);
-        }
         let result = interop::handle_iris_production_diff(
-            _iris_arc_hold.as_deref(),
+            target_hold.as_deref(),
             &interop::ProductionDiffParams {
                 production,
                 namespace,
@@ -7657,7 +7777,7 @@ Methods:
         Parameters(params): Parameters<params::batch6::IrisCredentialListParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
-        let iris_arc = self.iris_arc();
+        let iris_arc = self.target_conn_opt()?;
         let conn_ns = iris_arc
             .as_deref()
             .map(|i| i.namespace.as_str())
@@ -7683,7 +7803,7 @@ Methods:
         Parameters(params): Parameters<params::batch6::IrisCredentialManageParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
-        let iris_arc = self.iris_arc();
+        let iris_arc = self.target_conn_opt()?;
         let conn_ns = iris_arc
             .as_deref()
             .map(|i| i.namespace.as_str())
@@ -7730,7 +7850,7 @@ Methods:
         Parameters(params): Parameters<params::batch6::IrisLookupManageParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
-        let iris_arc = self.iris_arc();
+        let iris_arc = self.target_conn_opt()?;
         let conn_ns = iris_arc
             .as_deref()
             .map(|i| i.namespace.as_str())
@@ -7762,7 +7882,7 @@ Methods:
     }
 
     #[tool(
-        description = "Export or import an Ensemble lookup table as XML. action: export|import. table: table name. xml: XML string (required for import). namespace: optional. export always available; import write-gated. Skill: ensemble-production.",
+        description = "Export or import an Ensemble lookup table as XML. action: export|import. table: table name. xml: XML string (required for import). namespace: optional. export always available; import replaces the whole table, so import is destructive-tier. Skill: ensemble-production.",
         output_schema = output_schemas::oneof_output_schema::<IrisLookupTransferResponse>()
     )]
     async fn iris_lookup_transfer(
@@ -7770,7 +7890,7 @@ Methods:
         Parameters(params): Parameters<params::batch6::IrisLookupTransferParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
-        let iris_arc = self.iris_arc();
+        let iris_arc = self.target_conn_opt()?;
         let conn_ns = iris_arc
             .as_deref()
             .map(|i| i.namespace.as_str())
@@ -7837,34 +7957,12 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let action = p.get("action").and_then(|v| v.as_str()).unwrap_or("");
-        let _iris_arc_hold: Option<Arc<IrisConnection>> =
-            match p.get("server").and_then(|v| v.as_str()) {
-                Some(s) => Some(self.pool_ref().get(Some(s))?),
-                None => self.iris_arc(),
-            };
-        // `iris_admin` reached none of gates [1]–[4]: the policy gates are applied per handler and
-        // this one never called them. `action="journal_search"` is bulk-PHI and got its effective
-        // policy from the caller's own `dataPolicy` parameter, so the caller authorized itself.
-        // The action goes into the gate params because gate [2] matches on it as well as on the
-        // tool name.
-        let (sm_server, policy) = self.active_server_manager_policy();
-        if let Err(gate) = crate::policy::gate::dispatch_gate(
-            "iris_admin",
-            sm_server.as_deref().unwrap_or(""),
-            policy.as_ref(),
-            &serde_json::json!({ "action": action }),
-        ) {
-            return err_result(gate);
-        }
+        let target_hold = self.target_conn_opt()?;
         // `view_processes` and `journal_search` used to read this out of the caller's parameters,
         // which let a caller hand itself `dataPolicy: "allow"`. It is configuration, so it comes
-        // from `[policy.<server>]` and defaults to the strict value when unset.
-        let effective_data_policy = match policy.as_ref().and_then(|pol| pol.data_policy.as_ref()) {
-            Some(crate::iris::workspace_config::DataPolicy::Allow) => "allow",
-            Some(crate::iris::workspace_config::DataPolicy::Redact) => "redact",
-            _ => "block",
-        };
-        let iris_opt = _iris_arc_hold.as_deref();
+        // from the target's policy, which defaults to the strict value when unset.
+        let effective_data_policy = self.target()?.primary.data_policy_name();
+        let iris_opt = target_hold.as_deref();
         let result = match action {
             "list_namespaces" => admin::admin_list_namespaces_impl(iris_opt).await,
             "list_databases" => admin::admin_list_databases_impl(iris_opt).await,
@@ -8002,12 +8100,19 @@ Methods:
                 let global_pattern = p.get("global_pattern").and_then(|v| v.as_str());
                 let time_range = p.get("time_range");
                 let max_records = p.get("max_records").and_then(|v| v.as_u64());
+                let global_blocklist = self.target()?.primary.policy.global_blocklist.clone();
+                let acknowledge_phi = p
+                    .get("acknowledgePhi")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 observability::journal_search_impl(
                     iris_opt,
                     data_policy,
                     global_pattern,
                     time_range,
                     max_records,
+                    &global_blocklist,
+                    acknowledge_phi,
                 )
                 .await
             }
@@ -8236,6 +8341,7 @@ Methods:
             namespace: String,
             username: String,
             password: String,
+            tls: crate::iris::http::TlsSetting,
             source: String,
             has_plaintext: bool,
         }
@@ -8255,7 +8361,14 @@ Methods:
                 } else {
                     false
                 };
-                match pool.get(Some(name)) {
+                // A listing reads no secret (T189); only a probe logs in, so only a probe asks
+                // the pool for the member with its password.
+                let member = if do_probe {
+                    pool.get(Some(name))
+                } else {
+                    pool.peek(Some(name))
+                };
+                match member {
                     Ok(conn) => {
                         let (host, port) = parse_host_port(&conn.base_url);
                         Some(ServerMeta {
@@ -8267,6 +8380,7 @@ Methods:
                             namespace: conn.namespace.clone(),
                             username: conn.username.clone(),
                             password: conn.password.clone(),
+                            tls: conn.tls,
                             source: source.to_string(),
                             has_plaintext,
                         })
@@ -8278,16 +8392,20 @@ Methods:
 
         let entries: Vec<serde_json::Value> = if do_probe {
             // Fan out probe_server calls in parallel.
-            let futures: Vec<_> = metas
-                .iter()
-                .map(|m| {
-                    let base_url = m.base_url.clone();
-                    let ns = m.namespace.clone();
-                    let user = m.username.clone();
-                    let pass = m.password.clone();
-                    async move { server_tools::probe_base_url(&base_url, &ns, &user, &pass).await }
-                })
-                .collect();
+            let futures: Vec<_> =
+                metas
+                    .iter()
+                    .map(|m| {
+                        let base_url = m.base_url.clone();
+                        let ns = m.namespace.clone();
+                        let user = m.username.clone();
+                        let pass = m.password.clone();
+                        let tls = m.tls;
+                        async move {
+                            server_tools::probe_base_url(&base_url, &tls, &ns, &user, &pass).await
+                        }
+                    })
+                    .collect();
             let probe_results = join_all(futures).await;
             metas
                 .into_iter()
@@ -8354,8 +8472,8 @@ Methods:
         &self,
         Parameters(p): Parameters<server_tools::AddServerParams>,
     ) -> Result<CallToolResult, McpError> {
-        use crate::iris::server_manager;
-        use crate::iris::servers_config::{self, ServerEntry};
+        use crate::iris::servers_config::{self, KeychainOutcome, NewServer};
+        use crate::iris::{endpoint::Endpoint, server_manager};
 
         // Validate name is non-empty.
         if p.name.trim().is_empty() {
@@ -8376,23 +8494,147 @@ Methods:
             }
         }
 
-        // Load, merge, save. Re-registering a name keeps any plaintext credential already on the
-        // entry, so correcting a prefix does not silently drop the password on a keychain-less host.
+        // The service account's name is spliced into a terminal line (R2): refuse one that could not
+        // be, before anything is written.
+        let service_username = p
+            .service_username
+            .as_deref()
+            .map(str::trim)
+            .filter(|u| !u.is_empty());
+        if let Some(u) = service_username {
+            if let Err(message) = exec::validate_service_username(u) {
+                return err_result(serde_json::json!({
+                    "error_code": exec::ERR_SERVICE_ACCOUNT_INVALID,
+                    "message": message
+                }));
+            }
+        }
+        let container = p
+            .container
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty());
+
+        // A name the Server Manager already uses would be read as that profile (and be handed its
+        // password): refuse it, a fixed rule (spec 141, FR-023).
+        if servers_config::name_conflicts(&p.name, &server_manager::user_profiles()) {
+            return err_result(serde_json::json!({
+                "error_code": "NAME_CONFLICT",
+                "message": format!(
+                    "'{}' is the name of a Server Manager profile. Pick another name, or use \
+                     iris_import_servers to link the profile.",
+                    p.name
+                )
+            }));
+        }
+
+        let endpoint = match Endpoint::parse(
+            p.scheme.as_deref(),
+            &p.host,
+            p.port,
+            p.web_prefix.as_deref(),
+        ) {
+            Ok(e) => e,
+            Err(e) => {
+                return err_result(serde_json::json!({
+                    "error_code": "INVALID_PARAMS",
+                    "message": e.to_string()
+                }))
+            }
+        };
+
+        // Decide the credential first, then save once. Keychain first: a failed write leaves the
+        // file as it was (R4b D11).
         let mut cfg = servers_config::load_native_config();
-        let existing_password = cfg.servers.get(&p.name).and_then(|e| e.password.clone());
-        cfg.servers.insert(
-            p.name.clone(),
-            ServerEntry {
-                host: p.host.clone(),
-                port: p.port,
-                namespace: p.namespace.clone(),
-                username: p.username.clone(),
-                description: p.description.clone(),
-                scheme: p.scheme.clone(),
-                web_prefix: p.web_prefix.clone(),
-                password: existing_password,
-            },
+        let old = cfg.servers.get(&p.name).cloned();
+        let password = Some(p.password.clone()).filter(|pw| !pw.is_empty());
+        let mut keychain_note: Option<String> = None;
+        let keychain = match password.as_deref() {
+            None => KeychainOutcome::NotTried,
+            Some(pw) => {
+                match server_manager::store_iad_credential(&p.name, &p.username, &endpoint, pw) {
+                    Ok(()) => KeychainOutcome::Stored,
+                    // Not only "there is no keychain": a host whose default keychain cannot be
+                    // opened (a locked login keychain over SSH, a `HOME` with none) is no
+                    // keychain either.
+                    Err(e) => {
+                        keychain_note = Some(e.to_string());
+                        KeychainOutcome::Unavailable
+                    }
+                }
+            }
+        };
+        let new = NewServer {
+            host: p.host.clone(),
+            port: p.port,
+            namespace: p.namespace.clone(),
+            username: p.username.clone(),
+            description: p.description.clone(),
+            scheme: p.scheme.clone(),
+            web_prefix: p.web_prefix.clone(),
+            tls_verify: None,
+            password,
+        };
+        let mut merge = match servers_config::merge_server(old.as_ref(), &new, keychain) {
+            Ok(m) => m,
+            Err(e) => {
+                return err_result(serde_json::json!({
+                    "error_code": "INVALID_PARAMS",
+                    "message": e.to_string()
+                }))
+            }
+        };
+        let mut password_cleared = merge.password_cleared;
+        if let (Some(stale), Some(old)) = (&merge.stale_keychain, &old) {
+            // The old endpoint's password must not outlive the move.
+            password_cleared |=
+                server_manager::delete_iad_credential(&p.name, &old.username, stale).is_ok();
+        }
+        servers_config::carry_service_account(
+            &mut merge,
+            old.as_ref(),
+            service_username,
+            container,
         );
+        // A service account the entry no longer has (moved, renamed or dropped) leaves no keychain
+        // item behind.
+        if let Some(old) = &old {
+            if let (Some(old_user), Ok(old_endpoint)) = (
+                old.service_username.as_deref(),
+                servers_config::entry_endpoint(old),
+            ) {
+                if merge.moved || service_username != Some(old_user) {
+                    let _ = server_manager::delete_iad_credential(&p.name, old_user, &old_endpoint);
+                }
+            }
+        }
+        // The service account's password follows the primary's rule: the keychain first, and only
+        // a host with no keychain keeps it in servers.json, bound to this endpoint.
+        let mut service_plaintext_written = false;
+        let mut service_store = if merge.entry.service_password.is_some() {
+            "file"
+        } else {
+            "none"
+        };
+        if let (Some(user), Some(pw)) = (
+            service_username,
+            p.service_password.as_deref().filter(|pw| !pw.is_empty()),
+        ) {
+            match server_manager::store_iad_credential(&p.name, user, &endpoint, pw) {
+                Ok(()) => {
+                    merge.entry.service_password = None;
+                    service_store = "keychain";
+                }
+                Err(e) => {
+                    keychain_note.get_or_insert_with(|| e.to_string());
+                    merge.entry.service_password = Some(pw.to_string());
+                    merge.entry.password_endpoint = Some(endpoint.base_url());
+                    service_store = "file";
+                    service_plaintext_written = true;
+                }
+            }
+        }
+        cfg.servers.insert(p.name.clone(), merge.entry);
         if let Err(e) = servers_config::save_native_config(&cfg) {
             return err_result(serde_json::json!({
                 "error_code": "SAVE_FAILED",
@@ -8400,50 +8642,36 @@ Methods:
             }));
         }
 
-        // Store credential in OS keychain.
-        if let Err(e) = server_manager::store_credential(&p.name, &p.username, &p.password) {
-            let is_unavailable = matches!(
-                e,
-                crate::iris::server_manager::SmCredentialError::KeychainUnavailable { .. }
-            );
-            if is_unavailable && !p.password.is_empty() {
-                // Keychain not available (headless MCP, Remote SSH). Fall back to writing
-                // the credential into the ServerEntry in servers.json. Not ideal, but the
-                // server is immediately usable after pool reload without manual config edits.
-                let mut cfg = servers_config::load_native_config();
-                if let Some(entry) = cfg.servers.get_mut(&p.name) {
-                    entry.password = Some(p.password.clone());
-                }
-                if let Err(e2) = servers_config::save_native_config(&cfg) {
-                    return err_result(serde_json::json!({
-                        "error_code": "SAVE_FAILED",
-                        "message": format!("Failed to save plaintext credential to servers.json: {e2}")
-                    }));
-                }
-                return ok_json(serde_json::json!({
-                    "added": true,
-                    "name": p.name,
-                    "stored_plaintext": true,
-                    "warning": "Credential stored in plaintext in servers.json — use VS Code Server Manager for production credentials.",
-                    "note": "Call iris_reload_pool to make this server routable via the `server` param."
-                }));
-            }
-            return err_result(serde_json::json!({
-                "error_code": "KEYCHAIN_FAILED",
-                "keychain_unavailable": is_unavailable,
-                "message": format!("Server added to config but keychain storage failed: {e}. You can reconnect via iris_import_servers after authenticating in VS Code Server Manager.")
-            }));
-        }
-
-        ok_json(serde_json::json!({
+        let mut response = serde_json::json!({
             "added": true,
             "name": p.name,
+            "credential_store": merge.credential_store,
             "note": "Call iris_reload_pool to make this server routable via the `server` param."
-        }))
+        });
+        if password_cleared {
+            response["password_cleared"] = serde_json::json!(true);
+        }
+        if let Some(user) = service_username {
+            response["service_username"] = serde_json::json!(user);
+            response["service_credential_store"] = serde_json::json!(service_store);
+        }
+        if keychain == KeychainOutcome::Unavailable || service_plaintext_written {
+            // No keychain here (headless MCP, Remote SSH): a password is in servers.json, which
+            // is owner-only and bound to this endpoint.
+            response["stored_plaintext"] = serde_json::json!(true);
+            response["warning"] = serde_json::json!(format!(
+                "No usable OS keychain here{}: the password is in servers.json (owner-only, used only for this endpoint).",
+                keychain_note
+                    .as_deref()
+                    .map(|n| format!(" ({n})"))
+                    .unwrap_or_default()
+            ));
+        }
+        ok_json(response)
     }
 
     #[tool(
-        description = "Remove a server from the iad-native configuration. Destructive tier: requires IRIS_DESTRUCTIVE_TOOLS_ENABLED=1. Only servers with source=iad-native can be removed (vscode, fleet, and env sources are read-only). Also removes the OS keychain entry. Call `iris_reload_pool` afterwards to drop it from the running pool. Returns {removed: true, name, note}. Error codes: REMOVE_NOT_ALLOWED (source is not iad-native), SERVER_NOT_FOUND (not in pool).",
+        description = "Remove a server from the iad-native configuration. Destructive tier: requires IRIS_DESTRUCTIVE_TOOLS_ENABLED=1. Only servers with source=iad-native can be removed (vscode, fleet, and env sources are read-only). Also removes iad's own OS keychain item for the entry (never the Server Manager's). Call `iris_reload_pool` afterwards to drop it from the running pool. Returns {removed: true, name, note}. Error codes: REMOVE_NOT_ALLOWED (source is not iad-native), SERVER_NOT_FOUND (not in pool).",
         annotations(destructive_hint = true),
         output_schema = output_schemas::oneof_output_schema::<IrisRemoveServerResponse>()
     )]
@@ -8476,7 +8704,7 @@ Methods:
                 "message": format!("Server '{}' not found in iad-native config.", p.name)
             }));
         }
-        cfg.servers.remove(&p.name);
+        let removed = cfg.servers.remove(&p.name).unwrap_or_default();
         // Clear default if it was pointing to the removed server.
         if cfg.default.as_deref() == Some(&p.name) {
             cfg.default = None;
@@ -8488,15 +8716,18 @@ Methods:
             }));
         }
 
-        // Best-effort keychain removal — ignore errors (entry may not exist on all platforms).
-        let username = self
-            .pool_ref()
-            .get(Some(&p.name))
-            .map(|c| c.username.clone())
-            .unwrap_or_default();
-        let account = format!("credentialProvider:{}/{}", p.name, username.to_lowercase());
-        if let Ok(entry) = keyring_core::Entry::new("intersystems-server-credentials", &account) {
-            let _ = entry.delete_credential();
+        // Best-effort removal of iad's own keychain item for this entry's endpoint. The Server
+        // Manager's items are the operator's VS Code's, and are never touched.
+        if let Ok(endpoint) = servers_config::entry_endpoint(&removed) {
+            let _ = crate::iris::server_manager::delete_iad_credential(
+                &p.name,
+                &removed.username,
+                &endpoint,
+            );
+            if let Some(user) = removed.service_username.as_deref() {
+                let _ =
+                    crate::iris::server_manager::delete_iad_credential(&p.name, user, &endpoint);
+            }
         }
 
         ok_json(serde_json::json!({
@@ -8507,8 +8738,7 @@ Methods:
     }
 
     #[tool(
-        description = "Hot-reload the IRIS connection pool from disk without restarting iad. Re-reads the workspace TOML config and the iad-native servers list, then atomically replaces the in-memory pool. Servers added or removed in the config file are available immediately. Returns {success, servers_loaded, servers, note} on success, or {success: false, error_code, error, note} if the config file cannot be parsed (the existing pool is preserved on parse errors). Error codes: TOML_PARSE_ERROR.",
-        annotations(read_only_hint = true)
+        description = "Hot-reload the IRIS connection pool from disk without restarting iad. Re-reads the workspace TOML config and the iad-native servers list, then atomically replaces the in-memory pool. Servers added or removed in the config file are available immediately. Returns {success, servers_loaded, servers, note} on success, or {success: false, error_code, error, note} if the config file cannot be parsed (the existing pool is preserved on parse errors). Error codes: TOML_PARSE_ERROR. A write: it makes every server declared since startup routable, so it needs the write gate open."
     )]
     async fn iris_reload_pool(&self, _: Parameters<NoParams>) -> Result<CallToolResult, McpError> {
         use crate::iris::{connection_pool, workspace_config};
@@ -8550,7 +8780,9 @@ Methods:
             }
         }
 
-        let new_pool = Arc::new(connection_pool::load_pool(None));
+        let new_pool = Arc::new(connection_pool::load_pool_with_fleet(
+            self.snapshot().fleet.clone(),
+        ));
         let names: Vec<String> = new_pool.names().iter().map(|s| s.to_string()).collect();
         let count = names.len();
         *self.pool.write().unwrap() = new_pool;
@@ -8573,6 +8805,9 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         // ── 098: ad-hoc probe path ────────────────────────────────────────────
         if let Some(ref host) = p.host {
+            if let Some(msg) = server_tools::probe_host_problem(host) {
+                return err_json("INVALID_PARAMS", &msg);
+            }
             let port = p.web_port.unwrap_or(52773);
             let username = p.username.as_deref().unwrap_or("_SYSTEM");
             let password = p.password.as_deref().unwrap_or("");
@@ -8599,7 +8834,7 @@ Methods:
             }
         };
 
-        let conn = self.pool_ref().get(Some(&name))?;
+        let conn = self.target_pool_member(&name)?;
 
         // NoPWS detection: check if this connection is using the sentinel URL.
         let is_sentinel = conn.base_url == "http://127.0.0.1:1"
@@ -8614,21 +8849,19 @@ Methods:
 
         // iris.cpf probe: when docker_only or nopws config, check WebServer= in cpf.
         let (nopws_detected, nopws_evidence) = if nopws {
-            let container = crate::iris::connection::container_from_env();
+            let container = conn.default_container();
             if let Some(ref cname) = container {
                 // Probe iris.cpf from inside the container to check WebServer=0
                 let cpf_paths = ["/usr/irissys/iris.cpf", "/usr/local/etc/irissys/iris.cpf"];
                 let mut found_webserver_zero = false;
                 let mut evidence = String::new();
                 for cpf in &cpf_paths {
+                    let Ok(args) = cpf_probe_args(cname, cpf) else {
+                        evidence = format!("container name {cname:?} is not a container name");
+                        break;
+                    };
                     let out = tokio::process::Command::new("docker")
-                        .args([
-                            "exec",
-                            cname,
-                            "sh",
-                            "-c",
-                            &format!("grep -i 'WebServer' {cpf} 2>/dev/null || true"),
-                        ])
+                        .args(&args)
                         .output()
                         .await;
                     if let Ok(out) = out {
@@ -8705,7 +8938,7 @@ Methods:
                     }));
                 }
                 let auth = status != reqwest::StatusCode::UNAUTHORIZED;
-                match resp.json::<serde_json::Value>().await {
+                match crate::iris::http::capped_json::<serde_json::Value>(resp).await {
                     Err(e) => ok_json(serde_json::json!({
                         "name": name,
                         "reachable": true,
@@ -8745,16 +8978,7 @@ Methods:
         use crate::iris::servers_config::{self, ServerEntry};
 
         // Collect all VS Code / Cursor SM profiles.
-        let mut sm_paths: Vec<std::path::PathBuf> = Vec::new();
-        if let Some(p) = server_manager::sm_settings_path() {
-            sm_paths.push(p);
-        }
-        if let Some(home) = dirs::home_dir() {
-            #[cfg(target_os = "macos")]
-            sm_paths.push(home.join("Library/Application Support/Cursor/User/settings.json"));
-            #[cfg(not(target_os = "macos"))]
-            sm_paths.push(home.join(".config/Cursor/User/settings.json"));
-        }
+        let sm_paths = server_manager::sm_settings_paths();
 
         let mut all_profiles: Vec<crate::iris::server_manager::ServerManagerProfile> = Vec::new();
         for path in &sm_paths {
@@ -8780,9 +9004,11 @@ Methods:
                 continue;
             }
 
-            // Try to resolve password from keychain.
-            let has_keychain =
-                server_manager::resolve_credential(&profile.name, &profile.username).is_ok();
+            // Is there a password for it in the Server Manager's keychain? Asked with the profile's
+            // own endpoint, which is the only one its secret goes to.
+            let has_keychain = profile.endpoint().is_ok_and(|ep| {
+                server_manager::sm_secret_for(&profile.name, &profile.username, &ep).is_ok()
+            });
             if !has_keychain {
                 no_keychain.push(profile.name.clone());
             }
@@ -8801,7 +9027,10 @@ Methods:
                     // Carried over, or the import turns a working VS Code profile into an entry
                     // pointing at the gateway root (#129).
                     web_prefix: profile.path_prefix.clone(),
-                    password: None,
+                    // The password stays in the Server Manager's keychain, and is read only while
+                    // this entry's endpoint equals the profile's.
+                    credential: Some("server-manager".to_string()),
+                    ..Default::default()
                 },
             );
             imported += 1;
@@ -8841,31 +9070,71 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         use crate::iris::ws_session::{WsSessionPool, SESSION_WS_UNAVAILABLE};
 
-        let conn = self.resolve_server(p.server.as_deref()).await?;
+        // The target the pipeline resolved. The session records it, and `iris_ws_exec` and
+        // `iris_ws_close` are judged on that record, never on the server name in the token text.
+        // The terminal logs in with the identity's own credentials, so a service account opens its
+        // own session and a server with no account is refused (spec 141, R2).
+        let target = self.target()?;
+        let cx = match self.exec_context() {
+            Ok(cx) => cx,
+            Err(e) => return exec_refused(e),
+        };
+        let conn = cx.conn.clone();
 
         // Version gate: require V7 or V8.
         if !conn.atelier_version.supports_ws_terminal() {
-            return err_json(
-                SESSION_WS_UNAVAILABLE,
-                "IRIS Atelier API v7 required for WebSocket terminal (IRIS 2023.2+)",
-            );
+            let mut identity = cx.helper_report();
+            identity.path = exec::ExecPath::WsTerminal;
+            return err_result(serde_json::json!({
+                "success": false,
+                "error_code": SESSION_WS_UNAVAILABLE,
+                "error": "IRIS Atelier API v7 required for WebSocket terminal (IRIS 2023.2+)",
+                "identity": identity.to_json(),
+            }));
         }
 
-        let server_name = p
-            .server
-            .as_deref()
-            .unwrap_or_else(|| conn.base_url.as_str());
+        let server_name = target.primary.key.as_str();
         let namespace = p
             .namespace
             .as_deref()
             .unwrap_or_else(|| conn.namespace.as_str());
 
-        let token = WsSessionPool::open(&self.ws_pool, &conn, server_name, namespace).await?;
+        let token = match WsSessionPool::open_as(
+            &self.ws_pool,
+            &conn,
+            server_name,
+            namespace,
+            cx.expected.as_deref(),
+        )
+        .await
+        {
+            Ok(t) => t,
+            Err(e) => {
+                // The error names the identity it tried, never the primary's user name.
+                let mut body = serde_json::json!({
+                    "success": false,
+                    "error_code": e.message.split(':').next().unwrap_or("SESSION_WS_DISCONNECTED"),
+                    "error": e.message.to_string(),
+                });
+                body["identity"] = cx.helper_report().to_json();
+                body["identity"]["path"] = serde_json::json!("ws_terminal");
+                return err_result(body);
+            }
+        };
+        self.ws_pool
+            .record_target(&token, (!target.primary.is_default).then_some(server_name));
+        let mut identity = cx.helper_report();
+        identity.path = exec::ExecPath::WsTerminal;
+        identity.verified = self.ws_pool.identity_verified(&token);
+        if let Some(u) = self.ws_pool.identity_of(&token) {
+            identity.user = u;
+        }
 
         ok_json(serde_json::json!({
             "session": token,
             "server": server_name,
             "namespace": namespace,
+            "identity": identity.to_json(),
         }))
     }
 
@@ -8880,32 +9149,40 @@ Methods:
         use crate::iris::ws_session::WsSessionPool;
 
         // #137: the same gates `iris_execute` runs, and for the same reason — this tool takes
-        // arbitrary ObjectScript. It ran none of them until now, so a WebSocket session was a way
-        // around the code-edit hard-block, the env template, the PHI gates and the destructive tier
-        // all at once. The check is here rather than after `exec` so a refused call sends nothing to
-        // IRIS and leaves the session's variables alone.
-        //
-        // The namespace comes out of the session token, which is where it was decided —
-        // `iris_ws_exec` takes no namespace parameter — so the audit entry names the namespace the
-        // code would have run in.
-        let session_namespace = WsSessionPool::parse_token(&p.session)
-            .map(|(_, ns, _)| ns.to_string())
-            .unwrap_or_default();
-        let params_json = serde_json::json!({
-            "namespace": session_namespace,
-            "code": p.code,
-        });
-        if let Some(refusal) =
-            self.arbitrary_exec_gate("iris_ws_exec", params_json, &p.code, p.confirmed)
-        {
+        // arbitrary ObjectScript. The pipeline ran them on the server the session was opened
+        // against; the literal `Kill ^` check reads that server's destructive tier. The check is
+        // here rather than after `exec` so a refused call sends nothing to IRIS and leaves the
+        // session's variables alone.
+        if let Some(refusal) = self.exec_content_gate("iris_ws_exec", &p.code) {
             return err_result(refusal);
+        }
+        let cx = match self.exec_context() {
+            Ok(cx) => cx,
+            Err(e) => return exec_refused(e),
+        };
+        // A session keeps the login it opened with. If the identity this call would run as is not
+        // that one (the operator set, changed or removed the service account since), refuse and
+        // close it.
+        let current = cx.expected.as_deref().unwrap_or(cx.conn.username.as_str());
+        if let Err(msg) = self.ws_pool.check_identity(&p.session, current) {
+            let _ = WsSessionPool::close(&self.ws_pool, &p.session).await;
+            return err_result(serde_json::json!({
+                "success": false,
+                "error_code": exec::ERR_SESSION_IDENTITY_CHANGED,
+                "error": msg,
+            }));
         }
 
         let output = WsSessionPool::exec(&self.ws_pool, &p.session, &p.code).await?;
+        let mut identity = cx.helper_report();
+        identity.path = exec::ExecPath::WsTerminal;
+        identity.verified = self.ws_pool.identity_verified(&p.session);
+        identity.user = current.to_string();
 
         ok_json(serde_json::json!({
             "output": output,
             "session": p.session,
+            "identity": identity.to_json(),
         }))
     }
 
@@ -8943,23 +9220,12 @@ Methods:
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let server_a_name = p
-            .get("server_a")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let server_b_name = p
-            .get("server_b")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
         let requested_ns = p
             .get("namespace")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
 
-        let server_a = self.pool_ref().get(Some(&server_a_name))?;
-        let server_b = self.pool_ref().get(Some(&server_b_name))?;
+        let (server_a, server_b) = self.target_pair()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &server_a.namespace).to_string();
 
         let result = comparison_tools::compare_document_impl(
@@ -8990,19 +9256,8 @@ Methods:
             .get("namespace")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let server_a_name = p
-            .get("server_a")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let server_b_name = p
-            .get("server_b")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
 
-        let server_a = self.pool_ref().get(Some(&server_a_name))?;
-        let server_b = self.pool_ref().get(Some(&server_b_name))?;
+        let (server_a, server_b) = self.target_pair()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &server_a.namespace).to_string();
 
         let result = comparison_tools::compare_namespace_impl(
@@ -9041,16 +9296,9 @@ Methods:
             .map(|s| s.to_string());
         let count = p.get("count").and_then(|v| v.as_u64()).unwrap_or(20) as u32;
 
-        // The preview reads the global, and its token is what global_kill accepts, so it answers
-        // to the same blocklist and PHI gates as iris_global (137).
-        if let Some(refusal) = self.policy_refusal(
-            "global_preview",
-            serde_json::json!({"action": "get", "global": global}),
-        ) {
-            return refusal;
-        }
-
-        let iris = self.resolve_server(server.as_deref()).await?;
+        // The preview reads the global, and its token is what global_kill accepts, so the pipeline
+        // judges it by the same blocklist and PHI gates as iris_global (137).
+        let iris = self.target_conn()?;
 
         let result = admin_tools::global_preview_impl(
             admin_tools::GlobalPreviewParams {
@@ -9092,28 +9340,29 @@ Methods:
             .unwrap_or("")
             .to_string();
 
-        if let Some(refusal) = self.policy_refusal(
-            "global_kill",
-            serde_json::json!({"action": "kill", "global": global}),
-        ) {
-            return refusal;
-        }
-
-        let iris = self.resolve_server(server.as_deref()).await?;
+        // The policy gate ran in the pipeline, on the server the call names (spec 141, R1). The
+        // kill runs as the service account when one is set.
+        let cx = match self.exec_context() {
+            Ok(cx) => cx,
+            Err(e) => {
+                self.record_call("global_kill", false);
+                return exec_refused(e);
+            }
+        };
 
         let result = admin_tools::global_kill_impl(
             admin_tools::GlobalKillParams {
                 global,
                 server,
                 confirm_token,
-                iris,
-                client: Arc::clone(&self.client),
+                iris: cx.conn.clone(),
+                client: cx.client.clone(),
             },
             &self.confirm_tokens,
         )
         .await;
         self.record_call("global_kill", result.is_ok());
-        result
+        exec::attach_identity(result, &cx.helper_report())
     }
 
     // ── 072-c: Namespace/database admin ───────────────────────────────────────
@@ -9125,14 +9374,9 @@ Methods:
     )]
     async fn iris_namespace_list(
         &self,
-        Parameters(params): Parameters<params::batch2::IrisNamespaceListParams>,
+        Parameters(_): Parameters<params::batch2::IrisNamespaceListParams>,
     ) -> Result<CallToolResult, McpError> {
-        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let iris = self.resolve_server(server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result = admin_tools::iris_namespace_list_impl(&iris, &self.client).await;
         self.record_call("iris_namespace_list", result.is_ok());
         result
@@ -9145,14 +9389,9 @@ Methods:
     )]
     async fn iris_database_list(
         &self,
-        Parameters(params): Parameters<params::batch2::IrisDatabaseListParams>,
+        Parameters(_): Parameters<params::batch2::IrisDatabaseListParams>,
     ) -> Result<CallToolResult, McpError> {
-        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let iris = self.resolve_server(server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result = admin_tools::iris_database_list_impl(&iris, &self.client).await;
         self.record_call("iris_database_list", result.is_ok());
         result
@@ -9167,10 +9406,6 @@ Methods:
         Parameters(params): Parameters<params::batch4::IrisSystemPerformanceParams>,
     ) -> Result<CallToolResult, McpError> {
         let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
         let mode = p
             .get("mode")
             .and_then(|v| v.as_str())
@@ -9190,7 +9425,7 @@ Methods:
             .map(|s| s.to_string());
         let interval_seconds = p.get("interval_seconds").and_then(|v| v.as_i64());
         let sample_count = p.get("sample_count").and_then(|v| v.as_i64());
-        let iris = self.resolve_server(server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result = admin_tools::iris_system_performance_impl(
             &iris,
             &self.client,
@@ -9215,14 +9450,9 @@ Methods:
     )]
     async fn iris_mirror_status(
         &self,
-        Parameters(params): Parameters<params::batch4::IrisMirrorStatusParams>,
+        Parameters(_): Parameters<params::batch4::IrisMirrorStatusParams>,
     ) -> Result<CallToolResult, McpError> {
-        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let iris = self.resolve_server(server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result = admin_tools::iris_mirror_status_impl(&iris, &self.client).await;
         self.record_call("iris_mirror_status", result.is_ok());
         result
@@ -9247,11 +9477,7 @@ Methods:
             .get("db_path")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let iris = self.resolve_server(server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result =
             admin_tools::iris_namespace_create_impl(&iris, &self.client, &name, db_path.as_deref())
                 .await;
@@ -9270,11 +9496,7 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let db = p.get("db").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let iris = self.resolve_server(server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result =
             admin_tools::iris_database_stats_impl(&iris, &self.client, db.as_deref()).await;
         self.record_call("iris_database_stats", result.is_ok());
@@ -9284,7 +9506,7 @@ Methods:
     // ── 072-c: Observability tools ────────────────────────────────────────────
 
     #[tool(
-        description = "Search the IRIS journal for SetKill records. start/end: optional ISO timestamp filters. global_pattern: optional substring filter on GlobalReference. max_entries: default 100, max 500. server: optional registered instance name. Returns {entries: [{timestamp, type, job_id, global}]}. Skill: iris-agentic-dev.",
+        description = "Search the IRIS journal for SetKill records. start/end: optional ISO timestamp filters. global_pattern: optional substring filter on GlobalReference. max_entries: default 100, max 500. server: optional registered instance name. Reads at most 200,000 records or 20 s from the start of the current journal file, then returns truncated:true with truncated_reason and scanned. Returns {entries: [{timestamp, type, job_id, global}], returned, truncated, truncated_reason, scanned}. Skill: iris-agentic-dev.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<JournalSearchResponse>()
     )]
@@ -9303,20 +9525,11 @@ Methods:
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         let max_entries = p.get("max_entries").and_then(|v| v.as_u64()).unwrap_or(100) as u32;
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let iris = self.resolve_server(server.as_deref()).await?;
-        // Journal records carry global values, so the bulk-PHI gate that refuses the iris_admin
-        // route refuses this one too (137). After the server lookup, so a wrong server name is
-        // still reported as that.
-        if let Some(refusal) = self.policy_refusal("journal_search", p.clone()) {
-            return refusal;
-        }
-        let result = admin_tools::journal_search_impl(
+        // Journal records carry global values, so the pipeline's bulk-PHI gate refuses this route
+        // as it refuses iris_admin's (137).
+        let iris = self.target_conn()?;
+        let result = observability::journal_entries_impl(
             &iris,
-            &self.client,
             start.as_deref(),
             end.as_deref(),
             global_pattern.as_deref(),
@@ -9351,11 +9564,7 @@ Methods:
             .map(|s| s.to_string());
         let end = p.get("end").and_then(|v| v.as_str()).map(|s| s.to_string());
         let limit = p.get("limit").and_then(|v| v.as_u64()).unwrap_or(100) as u32;
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let iris = self.resolve_server(server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result = admin_tools::query_audit_log_impl(
             &iris,
             &self.client,
@@ -9371,7 +9580,7 @@ Methods:
     }
 
     #[tool(
-        description = "Inspect the content of an IRIS stream object by OID. oid: the stream OID (integer string). namespace: optional namespace (defaults to the connection namespace, IRIS_NAMESPACE). server: optional registered instance name. Returns {content, type: 'text'|'binary', size, oid}. Skill: iris-agentic-dev.",
+        description = "Inspect the content of an IRIS stream object by OID. oid: the stream OID (integer string). namespace: optional namespace (defaults to the connection namespace, IRIS_NAMESPACE). server: optional registered instance name. max_chars: most characters to return from the start (default 20000, at most 1000000). Returns {content, class, size, truncated, max_chars, line_count, oid}: size is the whole stream, truncated says content is a prefix, class is the class the read went through and says nothing about what the stream holds. An id that holds no stream is STREAM_NOT_FOUND. The server's dataPolicy decides what comes back: allow returns the content, redact returns HL7 v2 with the identifying fields of PID, NK1, GT1, IN1, IN2 and MSH-3 replaced by [REDACTED] (redacted: true means that mask ran, not that the content is de-identified: other segments and free text come back as stored) and refuses other content (BODY_NOT_REDACTABLE), block refuses the content (DATA_POLICY_BLOCKED). A refused stream still answers with class, size and line_count. Skill: iris-agentic-dev.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<StreamInspectResponse>()    )]
     async fn stream_inspect(
@@ -9384,19 +9593,37 @@ Methods:
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let max_chars = p
+            .get("max_chars")
+            .and_then(|v| v.as_u64())
+            .map(|n| u32::try_from(n).unwrap_or(u32::MAX));
         let requested_ns = p
             .get("namespace")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let iris = self.resolve_server(server.as_deref()).await?;
-        let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
-        let result = admin_tools::stream_inspect_impl(&iris, &self.client, &oid, &namespace).await;
+        let iris = self.target_conn()?;
+        let namespace = self.target_ns(requested_ns.as_deref())?;
+        // The target server's policy decides what comes back (FR-030c).
+        let policy = self
+            .target()?
+            .primary
+            .policy
+            .data_policy
+            .clone()
+            .unwrap_or_default();
+        let result = admin_tools::stream_inspect_impl(
+            &iris,
+            &self.client,
+            &oid,
+            max_chars,
+            &namespace,
+            &policy,
+        )
+        .await;
         self.record_call("stream_inspect", result.is_ok());
-        result
+        // A withheld stream is a refusal: give it the `refusal` object on every tail, not only the
+        // MCP one.
+        result.map(|r| self.classify_answer(r))
     }
 
     // ── 072-c: Security tools ──────────────────────────────────────────────────
@@ -9408,14 +9635,9 @@ Methods:
     )]
     async fn my_access(
         &self,
-        Parameters(params): Parameters<params::batch4::MyAccessParams>,
+        Parameters(_): Parameters<params::batch4::MyAccessParams>,
     ) -> Result<CallToolResult, McpError> {
-        let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let iris = self.resolve_server(server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result = admin_tools::my_access_impl(&iris, &self.client).await;
         self.record_call("my_access", result.is_ok());
         result
@@ -9435,11 +9657,7 @@ Methods:
             .get("user")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let iris = self.resolve_server(server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let result =
             admin_tools::capability_matrix_impl(&iris, &self.client, user.as_deref()).await;
         self.record_call("capability_matrix", result.is_ok());
@@ -9462,11 +9680,7 @@ Methods:
             .get("namespace")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let iris = self.resolve_server(server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
         let result = admin_tools::hl7_schema_list_impl(&iris, &self.client, &namespace).await;
         self.record_call("hl7_schema_list", result.is_ok());
@@ -9496,11 +9710,7 @@ Methods:
             .get("namespace")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let iris = self.resolve_server(server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
         let result = admin_tools::hl7_schema_inspect_impl(
             &iris,
@@ -9536,11 +9746,7 @@ Methods:
             .get("namespace")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let iris = self.resolve_server(server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
         let result =
             admin_tools::mermaid_class_impl(&iris, &self.client, &class, depth, &namespace).await;
@@ -9567,11 +9773,7 @@ Methods:
             .get("namespace")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let iris = self.resolve_server(server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
         let result =
             admin_tools::mermaid_production_impl(&iris, &self.client, &production, &namespace)
@@ -9599,11 +9801,7 @@ Methods:
             .get("namespace")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
-        let server = p
-            .get("server")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let iris = self.resolve_server(server.as_deref()).await?;
+        let iris = self.target_conn()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
         let result =
             admin_tools::resolve_storage_impl(&iris, &self.client, &class, &namespace).await;
@@ -9637,132 +9835,81 @@ impl ServerHandler for IrisTools {
             .scope(
                 start,
                 crate::iris::connection::MCP_PEER.scope(peer, async move {
-                    // Reload before resolving the gate, not after. Reload used to happen only inside
-                    // the handlers that call `get_iris_reloaded`, so a gate resolved ahead of dispatch
-                    // would answer from the *previous* load and let one more write through after the
-                    // operator turned writes off. FR-002 has to hold on the very next call, in both
-                    // directions. `has_changed()` is an mtime stat, so this costs nothing when the
-                    // file is untouched.
-                    self.check_reload().await;
-                    if let Some(args) = request.arguments.as_mut() {
-                        write_gate::normalize_dispatch_args(args);
-                    }
-                    let gates = self.connection.lock().unwrap().gates;
-                    if let Some(refusal) =
-                        write_gate::gate_check(&request.name, request.arguments.as_ref(), &gates)
-                    {
-                        self.record_call(&request.name, false);
-                        return refusal.map(Into::into);
-                    }
-
-                    // Unknown-parameter check, second (113 FR-015/FR-016). Second because the gate
-                    // is the security answer and it outranks the usability one: a caller with
-                    // writes disabled who also misspells a key on `global_kill` is told the gate
-                    // refused, not that they made a typo. And ahead of `tool_router.call`, so a
-                    // rejected call never enters the handler — nothing half-applies.
-                    //
-                    // One site for all 81 tools, off the advertised schema. A per-handler check is
-                    // one the eighty-second tool forgets.
-                    let advertised = self.accepted_params.get(request.name.as_ref());
-                    if let Some(accepted) = advertised {
-                        let unknown =
-                            param_check::unknown_keys(request.arguments.as_ref(), &accepted.names);
-                        if !unknown.is_empty() {
-                            self.record_call(&request.name, false);
-                            return err_result(serde_json::json!({
-                                "success": false,
-                                "error_code": param_check::ERR_UNKNOWN_PARAMETER,
-                                "error": param_check::unknown_parameter_message(
-                                    &request.name, &unknown, &accepted.names,
-                                ),
-                            }))
-                            .map(Into::into);
-                        }
-                    }
-
-                    // Namespace check, third (137). Every tool that takes a namespace splices it
-                    // into generated code (`New $NAMESPACE Set $NAMESPACE="…"`, `zn`, a URL), and
-                    // `resolve_namespace` accepts any non-empty string. One site, like the
-                    // unknown-parameter check above, so the next tool cannot forget it.
-                    if let Some(args) = request.arguments.as_ref() {
-                        for (key, value) in args {
-                            if key != "namespace" && !key.ends_with("_namespace") {
-                                continue;
-                            }
-                            let Some(ns) = value.as_str().filter(|s| !s.is_empty()) else {
-                                continue;
-                            };
-                            if let Err(e) = crate::objectscript::validate_namespace(ns) {
-                                self.record_call(&request.name, false);
-                                return err_result(e).map(Into::into);
-                            }
-                        }
-                    }
-
-                    // T019: warn once when the connection is docker_only so operators know
-                    // that HTTP headers (including User-Agent) cannot be set on this transport.
-                    {
-                        let is_docker_only = self
-                            .connection
-                            .lock()
-                            .unwrap()
-                            .iris
-                            .as_ref()
-                            .map(|i| {
-                                i.base_url == "http://127.0.0.1:1"
-                                    || i.base_url.starts_with("http://127.0.0.1:1/")
-                            })
-                            .unwrap_or(false);
-                        if is_docker_only
-                            && !self
-                                .docker_only_attr_warned
-                                .swap(true, std::sync::atomic::Ordering::Relaxed)
-                        {
-                            tracing::warn!(
-                                "attribution unavailable: docker_only connection uses docker exec \
-                             rather than HTTP, so no User-Agent header is sent to IRIS. \
-                             To make agent traffic identifiable, use an HTTP connection."
-                            );
-                        }
-                    }
-
-                    // Located before dispatch because `request` is consumed by the call context, and
-                    // the answer to "which parameter was the wrong shape" needs the arguments.
-                    // Usually empty, and cheap when it is: the walk only visits keys the caller
-                    // actually sent. Nothing is refused on the strength of it — serde stays the
-                    // authority on what deserializes, so a schema this check reads differently from
-                    // the struct behind it can only make a message less specific, never reject a
-                    // call that used to work (FR-004).
-                    let mismatches = advertised
-                        .map(|a| {
-                            param_check::type_mismatches(request.arguments.as_ref(), &a.properties)
-                        })
-                        .unwrap_or_default();
                     let tool_name = request.name.to_string();
+                    let gated_name = tool_name.clone();
+                    let arguments = request.arguments.take();
+                    // Every gate, in one place (spec 141, R1 D8). The router is the tail.
+                    self.dispatch_gated(&gated_name, arguments, |arguments| async move {
+                        request.arguments = arguments;
+                        // Located before dispatch because `request` is consumed by the call
+                        // context, and the answer to "which parameter was the wrong shape" needs
+                        // the arguments. Usually empty, and cheap when it is: the walk only visits
+                        // keys the caller actually sent. Nothing is refused on the strength of it —
+                        // serde stays the authority on what deserializes, so a schema this check
+                        // reads differently from the struct behind it can only make a message less
+                        // specific, never reject a call that used to work (FR-004).
+                        let mismatches = self
+                            .accepted_params
+                            .get(request.name.as_ref())
+                            .map(|a| {
+                                param_check::type_mismatches(
+                                    request.arguments.as_ref(),
+                                    &a.properties,
+                                )
+                            })
+                            .unwrap_or_default();
+                        let tcc = rmcp::handler::server::tool::ToolCallContext::new(
+                            self, request, context,
+                        );
+                        let (answer, scratch_left) =
+                            crate::iris::connection::collecting_scratch_left(
+                                self.tool_router.call(tcc),
+                            )
+                            .await;
+                        // A scratch class IRIS would not delete is a warning on this answer.
+                        let answer = match answer {
+                            Ok(rmcp::model::CallToolResponse::Complete(result)) => {
+                                Ok(rmcp::model::CallToolResponse::Complete(with_warnings(
+                                    result,
+                                    scratch_left,
+                                )))
+                            }
+                            other => other,
+                        };
+                        // Refusals raised inside a handler (a confirm token, an admin or check-in
+                        // switch, a PHI acknowledgement) get the same `refusal` object as the
+                        // gates that run before dispatch (FR-039).
+                        let answer = match answer {
+                            Ok(rmcp::model::CallToolResponse::Complete(result)) => {
+                                Ok(rmcp::model::CallToolResponse::Complete(
+                                    self.classify_answer(result),
+                                ))
+                            }
+                            other => other,
+                        };
 
-                    let tcc =
-                        rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-                    let answer = self.tool_router.call(tcc).await;
-
-                    // Normalize rmcp's deserialization refusal into the project's refusal shape
-                    // (113 FR-017). rmcp answers a bad argument type with bare `isError` text and no
-                    // `error_code`, which a client cannot branch on and a `structuredContent` reader
-                    // cannot see at all. Only that one refusal is rewritten; every handler answer,
-                    // success or failure, passes through untouched.
-                    if let Ok(rmcp::model::CallToolResponse::Complete(ref result)) = answer {
-                        if let Some(serde_text) = param_check::deserialization_failure(result) {
-                            self.record_call(&tool_name, false);
-                            return err_result(serde_json::json!({
-                                "success": false,
-                                "error_code": param_check::ERR_INVALID_PARAMS,
-                                "error": param_check::invalid_params_message(
-                                    &tool_name, &mismatches, &serde_text,
-                                ),
-                            }))
-                            .map(Into::into);
+                        // Normalize rmcp's deserialization refusal into the project's refusal
+                        // shape (113 FR-017). rmcp answers a bad argument type with bare `isError`
+                        // text and no `error_code`, which a client cannot branch on and a
+                        // `structuredContent` reader cannot see at all. Only that one refusal is
+                        // rewritten; every handler answer, success or failure, passes through
+                        // untouched.
+                        if let Ok(rmcp::model::CallToolResponse::Complete(ref result)) = answer {
+                            if let Some(serde_text) = param_check::deserialization_failure(result) {
+                                self.record_call(&tool_name, false);
+                                return err_result(serde_json::json!({
+                                    "success": false,
+                                    "error_code": param_check::ERR_INVALID_PARAMS,
+                                    "error": param_check::invalid_params_message(
+                                        &tool_name, &mismatches, &serde_text,
+                                    ),
+                                }))
+                                .map(Into::into);
+                            }
                         }
-                    }
-                    answer
+                        answer
+                    })
+                    .await
                 }),
             )
             .await
@@ -10045,14 +10192,7 @@ async fn detect_xdata_flow(
     let xdata_block = if is_bpl { "BPL" } else { "DTL" };
     // BPL/DTL classes must be exported with their type suffix (.bpl/.dtl), not as .cls
     let ext = if is_bpl { "bpl" } else { "dtl" };
-    let export_item = format!("{}.{}", crate::objectscript::os_lit_inner(class_name), ext);
-    let export_code = format!(
-        "Set stream = ##class(%Stream.GlobalCharacter).%New() \
-         Do $system.OBJ.ExportToStream(\"{}\",stream,,\"c\") \
-         Do stream.Rewind() \
-         Write stream.Read(1000000)",
-        export_item
-    );
+    let export_code = crate::objectscript::export_class_xml_code(class_name, ext);
     let class_xml = iris
         .execute_via_generator(&export_code, namespace, client)
         .await
@@ -10061,7 +10201,10 @@ async fn detect_xdata_flow(
     let xdata_content = xdata_flow::extract_xdata_content(&class_xml, xdata_block)?;
 
     if is_bpl {
-        let flow = xdata_flow::parse_bpl(&xdata_content).ok()?;
+        let flow = match xdata_flow::parse_bpl(&xdata_content) {
+            Ok(flow) => flow,
+            Err(e) => return xdata_flow::bpl_refusal(&e),
+        };
         serde_json::to_value(serde_json::json!({
             "kind": "bpl",
             "steps": flow.steps,
@@ -11587,12 +11730,11 @@ mod toolset_tests {
     }
 }
 
-/// Test-only dispatch helper — call private IrisTools handler methods by tool name.
-#[cfg(any(test, feature = "testing"))]
+/// Dispatch by tool name: the tail the CLI and the tests use in place of the MCP router.
 impl IrisTools {
-    /// Call a tool by name with JSON params. Returns the raw CallToolResult or an error string.
-    /// Only covers the tools most useful for coverage testing.
-    pub async fn call_for_test(
+    /// The name match: the handler for `tool`, with no gate in front of it. Private on purpose —
+    /// everything outside this module reaches a handler through [`Self::call_gated`].
+    async fn dispatch_by_name(
         &self,
         tool: &str,
         mut params: serde_json::Value,
@@ -11907,5 +12049,54 @@ impl IrisTools {
                 .map_err(|e| format!("{e:?}"));
         }
         Err(format!("unknown tool: {tool}"))
+    }
+}
+
+#[cfg(any(test, feature = "testing"))]
+impl IrisTools {
+    /// An `IrisTools` whose default connection has `declared` as its write and destructive gates,
+    /// for a test that calls a mutating tool and means to get past the gate. A test that leaves the
+    /// gate to the environment tests the environment (spec 141, R1 5.2).
+    pub fn for_test_with_gates(
+        iris: Option<IrisConnection>,
+        toolset: Toolset,
+        declared: write_gate::DeclaredGates,
+    ) -> anyhow::Result<Self> {
+        Self::with_registry_and_toolset(
+            iris,
+            crate::skills::SkillRegistry::new(),
+            toolset,
+            None,
+            None,
+            false,
+            declared,
+        )
+    }
+
+    /// [`Self::for_test_with_gates`] with both gates open: writes and the destructive tier
+    /// declared on.
+    pub fn for_test_gates_open(
+        iris: Option<IrisConnection>,
+        toolset: Toolset,
+    ) -> anyhow::Result<Self> {
+        Self::for_test_with_gates(
+            iris,
+            toolset,
+            write_gate::DeclaredGates {
+                write_tools_enabled: Some(true),
+                destructive_tools_enabled: Some(true),
+                ..Default::default()
+            },
+        )
+    }
+
+    /// The old name of [`Self::call_gated`], kept so the tests that call handlers by name run
+    /// through the gates too.
+    pub async fn call_for_test(
+        &self,
+        tool: &str,
+        params: serde_json::Value,
+    ) -> Result<rmcp::model::CallToolResult, String> {
+        self.call_gated(tool, params).await
     }
 }

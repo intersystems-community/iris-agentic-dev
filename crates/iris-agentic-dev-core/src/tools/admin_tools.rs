@@ -2,7 +2,7 @@
 //! Implements T077–T105 from spec 072-c.
 
 use crate::iris::connection::{generator_error_message, is_generator_error, IrisConnection};
-use crate::objectscript::{os_str_expr, validate_class_name, validate_timestamp};
+use crate::objectscript::{os_str_expr, validate_class_name};
 use rmcp::{model::*, ErrorData as McpError};
 use std::sync::Arc;
 
@@ -263,7 +263,7 @@ pub async fn iris_namespace_list_impl(
         .await
     {
         Ok(resp) if resp.status().is_success() => {
-            if let Ok(body) = resp.json::<serde_json::Value>().await {
+            if let Ok(body) = crate::iris::http::capped_json::<serde_json::Value>(resp).await {
                 if let Some(arr) = body["result"]["content"]["namespaces"].as_array() {
                     let namespaces: Vec<String> = arr
                         .iter()
@@ -1632,96 +1632,6 @@ While tRS.Next() {
     }
 }
 
-// ── journal_search (T088) ─────────────────────────────────────────────────────
-
-pub async fn journal_search_impl(
-    iris: &IrisConnection,
-    client: &reqwest::Client,
-    start: Option<&str>,
-    end: Option<&str>,
-    global_pattern: Option<&str>,
-    max_entries: u32,
-) -> Result<CallToolResult, McpError> {
-    let limit = max_entries.clamp(1, 500);
-    for bound in [start, end].into_iter().flatten() {
-        if let Err(e) = validate_timestamp(bound) {
-            return crate::tools::err_result(e);
-        }
-    }
-    let start_filter = start
-        .map(|s| format!("If ts<{} Continue", os_str_expr(s)))
-        .unwrap_or_default();
-    let end_filter = end
-        .map(|e| format!("If ts>{} Continue", os_str_expr(e)))
-        .unwrap_or_default();
-    let global_filter = global_pattern
-        .map(|p| {
-            // rec.TypeName holds the journal record's operation ("SET", "ZKILL", "BeginTrans",
-            // ...), not a class name — it never equals "SetKillRecord". That's the class
-            // itself (%SYS.Journal.SetKillRecord, which SET and ZKILL both instantiate).
-            // Gating on TypeName="SetKillRecord" made this `If` permanently false, so the
-            // filter below never ran and every record passed through unfiltered.
-            format!(
-                "If $classname(rec)[\"SetKillRecord\" {{ If rec.GlobalReference'[{} Continue }}",
-                os_str_expr(p)
-            )
-        })
-        .unwrap_or_default();
-
-    let code = format!(
-        r#"Set jfName=##class(%SYS.Journal.System).GetCurrentFileName()
-Set jf=##class(%SYS.Journal.File).%OpenId(jfName)
-If jf="" {{ Write "NO_JOURNAL",! Quit }}
-Set rec=jf.FirstRecord
-Set cnt=0
-While (rec'="")&&(cnt<{limit}) {{
-  Set ts=rec.TimeStamp
-  {start_filter}
-  {end_filter}
-  {global_filter}
-  Set typeName=rec.TypeName
-  Set jobID=rec.JobID
-  Set gref=""
-  If $classname(rec)["SetKillRecord" {{ Set gref=rec.GlobalReference }}
-  Write ts,"|",typeName,"|",jobID,"|",gref,!
-  Set cnt=cnt+1
-  Set rec=rec.Next
-}}
-Write "DONE|"_cnt,!"#
-    );
-
-    match iris.execute_via_generator(&code, "%SYS", client).await {
-        Ok(out) => {
-            let mut entries: Vec<serde_json::Value> = Vec::new();
-            let mut total = 0u32;
-            for line in out.lines() {
-                if line.is_empty() {
-                    continue;
-                }
-                if let Some(rest) = line.strip_prefix("DONE|") {
-                    total = rest.parse().unwrap_or(0);
-                } else if line == "NO_JOURNAL" {
-                    return err_json("NO_JOURNAL", "No current journal file found.");
-                } else {
-                    let parts: Vec<&str> = line.splitn(4, '|').collect();
-                    entries.push(serde_json::json!({
-                        "timestamp": parts.first().copied().unwrap_or(""),
-                        "type": parts.get(1).copied().unwrap_or(""),
-                        "job_id": parts.get(2).copied().unwrap_or("").parse::<i64>().unwrap_or(0),
-                        "global": parts.get(3).copied().unwrap_or(""),
-                    }));
-                }
-            }
-            ok_json(serde_json::json!({
-                "success": true,
-                "entries": entries,
-                "returned": total,
-            }))
-        }
-        Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
-    }
-}
-
 // ── query_audit_log (T089) ────────────────────────────────────────────────────
 
 pub async fn query_audit_log_impl(
@@ -1794,63 +1704,183 @@ pub async fn query_audit_log_impl(
 
 // ── stream_inspect (T090) ─────────────────────────────────────────────────────
 
+/// Characters `stream_inspect` returns when the caller names no cap.
+pub const STREAM_DEFAULT_MAX_CHARS: usize = 20_000;
+
+/// The largest cap `stream_inspect` honours. A response past this is more than an agent can use,
+/// and the read is in pieces so IRIS's string limit is not the reason for it.
+pub const STREAM_MAX_CHARS_LIMIT: usize = 1_000_000;
+
+/// Characters read, and so encoded, per output line. The generator's output file wraps a line at
+/// 32,000 characters by inserting a newline, which would corrupt the content (measured: a 50,000
+/// character stream came back 50,001 characters long). 6,000 characters are at most 18,000 bytes of
+/// UTF-8 and 24,000 of base64, so a line never reaches the wrap.
+const STREAM_PIECE_CHARS: usize = 6_000;
+
+/// The ObjectScript that reads at most `max_chars` characters of stream `id`.
+///
+/// `%OpenId` on an id that holds no stream returns a usable empty object with an OK status, so
+/// `%ExistsId` decides not-found. Nothing here writes to the stream. The content leaves as base64
+/// lines (`B|`), one per piece, so line breaks in the stream and the output file's own line
+/// wrapping cannot be confused.
+pub fn build_stream_inspect_code(id: &str, max_chars: usize) -> String {
+    let id = os_str_expr(id);
+    format!(
+        r#"Try {{
+  Set tId={id}
+  Set tClass="%Stream.GlobalCharacter"
+  If '$ClassMethod(tClass,"%ExistsId",tId) {{
+    Write "ERROR:STREAM_NOT_FOUND",!
+  }} Else {{
+    Set tStream=$ClassMethod(tClass,"%OpenId",tId)
+    Set tSize=tStream.Size
+    Write "SIZE|"_tSize,!
+    Write "CLASS|"_$ClassName(tStream),!
+    Set tLeft={max_chars},tRead=0
+    While (tLeft>0)&&('tStream.AtEnd) {{
+      Set tPiece=tStream.Read($Select(tLeft<{piece}:tLeft,1:{piece}))
+      If tPiece="" Quit
+      Set tRead=tRead+$Length(tPiece),tLeft=tLeft-$Length(tPiece)
+      Write "B|"_$System.Encryption.Base64Encode($ZConvert(tPiece,"O","UTF8"),1),!
+    }}
+    Write "READ|"_tRead,!
+    Write "TRUNCATED|"_(tRead<tSize),!
+    Write "END|",!
+  }}
+}} Catch tEx {{
+  Write "ERROR: "_tEx.DisplayString(),!
+}}"#,
+        piece = STREAM_PIECE_CHARS
+    )
+}
+
+/// What a `stream_inspect` generator run said.
+#[derive(Debug, PartialEq, Eq)]
+pub enum StreamRead {
+    NotFound,
+    /// IRIS reported an error, or the output is not one the code writes.
+    Failed(String),
+    Read {
+        size: i64,
+        class: String,
+        truncated: bool,
+        content: String,
+    },
+}
+
+/// Read a [`build_stream_inspect_code`] run back.
+///
+/// An error is recognised by the output *starting* with it, never by finding the text anywhere. The
+/// content is base64 and cannot look like a marker, but a failure after the header must still not
+/// read as a shorter stream: the reply counts as read only with its `END|` line and a character
+/// count that matches what was decoded.
+pub fn parse_stream_inspect_output(out: &str) -> StreamRead {
+    use base64::Engine as _;
+    if out.trim_start().starts_with("ERROR:STREAM_NOT_FOUND") {
+        return StreamRead::NotFound;
+    }
+    if let Some(msg) = generator_error_message(out) {
+        return StreamRead::Failed(msg.trim().to_string());
+    }
+    let failed = |why: &str| StreamRead::Failed(format!("{why}. Output: {}", out.trim()));
+    let mut size = None;
+    let mut class = None;
+    let mut truncated = None;
+    let mut declared = None;
+    let mut ended = false;
+    let mut content = String::new();
+    for line in out.lines() {
+        let line = line.trim_end_matches('\r');
+        if let Some(rest) = line.strip_prefix("B|") {
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(rest.trim())
+                .ok()
+                .and_then(|bytes| String::from_utf8(bytes).ok());
+            match decoded {
+                Some(piece) => content.push_str(&piece),
+                None => return failed("a piece of the stream content did not decode"),
+            }
+        } else if let Some(rest) = line.strip_prefix("SIZE|") {
+            size = rest.trim().parse::<i64>().ok();
+        } else if let Some(rest) = line.strip_prefix("CLASS|") {
+            class = Some(rest.trim().to_string());
+        } else if let Some(rest) = line.strip_prefix("READ|") {
+            declared = rest.trim().parse::<usize>().ok();
+        } else if let Some(rest) = line.strip_prefix("TRUNCATED|") {
+            truncated = Some(rest.trim() == "1");
+        } else if line.starts_with("END|") {
+            ended = true;
+        }
+    }
+    if !ended {
+        return failed("the stream answer ended before its end marker, so it may be cut short");
+    }
+    match (size, class, truncated, declared) {
+        (Some(size), Some(class), Some(truncated), Some(declared)) => {
+            if content.chars().count() != declared {
+                return failed(&format!(
+                    "IRIS read {declared} characters and {} arrived",
+                    content.chars().count()
+                ));
+            }
+            StreamRead::Read {
+                size,
+                class,
+                truncated,
+                content,
+            }
+        }
+        _ => failed("the stream answer is missing its size, class, count or truncation line"),
+    }
+}
+
 pub async fn stream_inspect_impl(
     iris: &IrisConnection,
     client: &reqwest::Client,
     oid: &str,
+    max_chars: Option<u32>,
     namespace: &str,
+    policy: &crate::iris::workspace_config::DataPolicy,
 ) -> Result<CallToolResult, McpError> {
-    // Strip leading/trailing whitespace and extract numeric id
-    let id = os_str_expr(oid.trim());
-    let code = format!(
-        r#"Set stream=##class(%Stream.GlobalCharacter).%OpenId({id})
-If stream="" {{
-  // Try binary
-  Set stream=##class(%Stream.GlobalBinary).%OpenId({id})
-  If stream="" {{ Write "ERROR:STREAM_NOT_FOUND",! Quit }}
-  Set isText=0
-}} Else {{
-  Set isText=1
-}}
-Set size=stream.Size
-Set content=""
-Do stream.Rewind()
-While stream.AtEnd=0 {{
-  Set content=content_stream.Read(4096)
-}}
-Write "SIZE|"_size,!
-Write "TYPE|"_$Select(isText:"text",1:"binary"),!
-Write "CONTENT|"_content,!"#
-    );
+    let max_chars =
+        match max_chars {
+            None => STREAM_DEFAULT_MAX_CHARS,
+            Some(0) => return err_json(
+                "INVALID_PARAMS",
+                "max_chars must be at least 1: it is the most characters of the stream to return.",
+            ),
+            Some(n) => (n as usize).min(STREAM_MAX_CHARS_LIMIT),
+        };
+    let code = build_stream_inspect_code(oid.trim(), max_chars);
 
     match iris.execute_via_generator(&code, namespace, client).await {
-        Ok(out) => {
-            if out.contains("ERROR:STREAM_NOT_FOUND") {
-                return err_json(
-                    "STREAM_NOT_FOUND",
-                    &format!("Stream with oid '{oid}' not found."),
-                );
-            }
-            let mut size: i64 = 0;
-            let mut stream_type = "text".to_string();
-            let mut content = String::new();
-            for line in out.lines() {
-                if let Some(rest) = line.strip_prefix("SIZE|") {
-                    size = rest.parse().unwrap_or(0);
-                } else if let Some(rest) = line.strip_prefix("TYPE|") {
-                    stream_type = rest.to_string();
-                } else if let Some(rest) = line.strip_prefix("CONTENT|") {
-                    content = rest.to_string();
+        Ok(out) => match parse_stream_inspect_output(&out) {
+            StreamRead::NotFound => err_json(
+                "STREAM_NOT_FOUND",
+                &format!("No stream with oid '{oid}' in namespace {namespace}."),
+            ),
+            StreamRead::Failed(msg) => err_json("STREAM_READ_FAILED", &msg),
+            StreamRead::Read {
+                size,
+                class,
+                truncated,
+                content,
+            } => {
+                let facts = crate::tools::interop::StreamFacts {
+                    oid,
+                    class: &class,
+                    size,
+                    content: &content,
+                    truncated,
+                    max_chars,
+                };
+                match crate::tools::interop::stream_inspect_outcome(policy, &facts) {
+                    Ok(body) => ok_json(body),
+                    // A refused stream is a refusal: the pipeline adds the `refusal` object.
+                    Err(body) => crate::tools::err_result(body),
                 }
             }
-            ok_json(serde_json::json!({
-                "success": true,
-                "oid": oid,
-                "type": stream_type,
-                "size": size,
-                "content": content,
-            }))
-        }
+        },
         Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
     }
 }

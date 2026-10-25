@@ -57,12 +57,18 @@ const {
 // downloads. The extension's own version is deliberately different here so a
 // regression back to packageJSON.version fails these tests instead of quietly
 // building a 404 URL.
-function makeContext(version, tmpDir) {
+const crypto = require("node:crypto");
+const sha256 = (buf) => crypto.createHash("sha256").update(buf).digest("hex");
+
+// `hashes` maps a release asset name to the SHA-256 the extension pins for it.
+// Omitted, the extension has no pin for any platform, which is what an
+// unstamped checkout looks like.
+function makeContext(version, tmpDir, hashes = {}) {
   return {
     extension: {
       packageJSON: {
         version: "0.4.26",
-        irisAgenticDev: { serverVersion: version },
+        irisAgenticDev: { serverVersion: version, assetSha256: hashes },
       },
     },
     globalStorageUri: { fsPath: tmpDir },
@@ -81,26 +87,51 @@ function makeMemento() {
   };
 }
 
+const { getBinaryName: _binaryName } = require("../.test-out/platform.cjs");
+const THIS_ASSET = _binaryName(process.platform, process.arch);
+
+/** A download stand-in that records its arguments and writes `content` to dest. */
+function fakeDownload(content) {
+  const calls = [];
+  const fn = async (url, dest, onProgress, expectedSha256) => {
+    calls.push({ url, dest, expectedSha256 });
+    require("node:fs").mkdirSync(require("node:path").dirname(dest), { recursive: true });
+    require("node:fs").writeFileSync(dest, content);
+    onProgress(1);
+  };
+  fn.calls = calls;
+  return fn;
+}
+
+function failingDownload(err) {
+  const calls = [];
+  const fn = async (...args) => {
+    calls.push(args);
+    throw err;
+  };
+  fn.calls = calls;
+  return fn;
+}
+
 // ---------------------------------------------------------------------------
 // US1 tests
 // ---------------------------------------------------------------------------
 
 test("US1: version marker absent → download path triggered", async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
-  const ctx = makeContext("0.9.5", tmp);
+  const body = "#!/bin/sh\necho fresh";
+  const ctx = makeContext("0.9.5", tmp, { [THIS_ASSET]: sha256(body) });
+  const dl = fakeDownload(body);
 
-  // Can't override process.platform in the bundle, so verify the no-marker
-  // path either returns a path or null without throwing.
-  let result;
-  try {
-    // This will attempt a real download in CI — but we accept null or a path
-    // The key invariant: no throw even when download fails
-    result = await resolveServerBinary(ctx);
-  } catch (err) {
-    assert.fail(`resolveServerBinary must not throw: ${err}`);
-  }
-  // Result is either a string (path) or null — never throws
-  assert.ok(result === null || typeof result === "string");
+  const result = await resolveServerBinary(ctx, { download: dl });
+
+  assert.equal(dl.calls.length, 1, "no marker means one download");
+  // The download lands in the version directory; the caller gets the
+  // fixed-name copy of it.
+  const { stableBinaryPath } = require("../.test-out/stablePath.cjs");
+  assert.equal(result, stableBinaryPath(tmp, process.platform));
+  assert.equal(fs.readFileSync(result, "utf8"), body);
+  assert.equal(fs.readFileSync(path.join(tmp, "iris-agentic-dev.version"), "utf8"), "0.9.5");
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -124,9 +155,11 @@ test("US1: version marker matches and binary exists → returns cached path with
   fs.writeFileSync(binaryPath, "#!/bin/sh\necho fake", { mode: 0o755 });
   fs.writeFileSync(path.join(tmp, "iris-agentic-dev.version"), version);
 
-  const ctx = makeContext(version, tmp);
-  const result = await resolveServerBinary(ctx);
+  const ctx = makeContext(version, tmp, { [binaryName]: sha256("#!/bin/sh\necho fake") });
+  const dl = failingDownload(new Error("must not download"));
+  const result = await resolveServerBinary(ctx, { download: dl });
 
+  assert.equal(dl.calls.length, 0);
   // The caller gets the fixed-name copy, not the version directory: that is
   // the path the Output channel shows, and so the one people paste into other
   // clients' configs.
@@ -200,15 +233,15 @@ test("US3: version marker mismatch → download triggered (no throw)", async () 
   // Write an old version marker
   fs.writeFileSync(path.join(tmp, "iris-agentic-dev.version"), "0.0.0");
 
-  const ctx = makeContext("0.9.5", tmp);
-  let result;
-  try {
-    result = await resolveServerBinary(ctx);
-  } catch (err) {
-    assert.fail(`must not throw on version mismatch: ${err}`);
-  }
-  // Either downloaded successfully or fell back — never throws
-  assert.ok(result === null || typeof result === "string");
+  const body = "#!/bin/sh\necho new";
+  const ctx = makeContext("0.9.5", tmp, { [THIS_ASSET]: sha256(body) });
+  const dl = fakeDownload(body);
+  const result = await resolveServerBinary(ctx, { download: dl });
+
+  assert.equal(dl.calls.length, 1);
+  const { stableBinaryPath } = require("../.test-out/stablePath.cjs");
+  assert.equal(result, stableBinaryPath(tmp, process.platform));
+  assert.equal(fs.readFileSync(result, "utf8"), body);
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -230,16 +263,12 @@ test("US3: download fails and stale binary exists → returns stale path", async
   fs.writeFileSync(binaryPath, "#!/bin/sh\necho stale", { mode: 0o755 });
   fs.writeFileSync(path.join(tmp, "iris-agentic-dev.version"), "0.0.0");
 
-  // Make withProgress simulate a download failure
-  const origWithProgress = vscodeStub.window.withProgress;
-  vscodeStub.window.withProgress = async () => {
-    throw new Error("simulated network failure");
-  };
+  // The stale copy is only usable if it still matches the pin.
+  const ctx = makeContext(version, tmp, { [binaryName]: sha256("#!/bin/sh\necho stale") });
+  const result = await resolveServerBinary(ctx, {
+    download: failingDownload(new Error("simulated network failure")),
+  });
 
-  const ctx = makeContext(version, tmp);
-  const result = await resolveServerBinary(ctx);
-
-  vscodeStub.window.withProgress = origWithProgress;
 
   // The stale binary is served through the fixed-name copy, like any other.
   const { stableBinaryPath } = require("../.test-out/stablePath.cjs");
@@ -251,15 +280,11 @@ test("US3: download fails and stale binary exists → returns stale path", async
 test("US3: download fails and no cache → returns null", async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
 
-  const origWithProgress = vscodeStub.window.withProgress;
-  vscodeStub.window.withProgress = async () => {
-    throw new Error("simulated network failure");
-  };
+  const ctx = makeContext("0.9.5", tmp, { [THIS_ASSET]: sha256("x") });
+  const result = await resolveServerBinary(ctx, {
+    download: failingDownload(new Error("simulated network failure")),
+  });
 
-  const ctx = makeContext("0.9.5", tmp);
-  const result = await resolveServerBinary(ctx);
-
-  vscodeStub.window.withProgress = origWithProgress;
   fs.rmSync(tmp, { recursive: true, force: true });
 
   assert.equal(result, null);
@@ -409,6 +434,124 @@ test("tier 2: version check cannot hang on a binary that never exits", async () 
   }
 });
 
+// --- Tier 3: pinned hash --------------------------------------------------
+
+test("tier 3: no pinned hash for this platform means no install and no request", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
+  vscodeStub.__resetLog();
+  const dl = fakeDownload("anything");
+  try {
+    // Pins for other platforms do not count.
+    const ctx = makeContext("0.9.5", tmp, { "iris-agentic-dev-someother": sha256("x") });
+    const result = await resolveServerBinary(ctx, { download: dl });
+    assert.equal(result, null);
+    assert.equal(dl.calls.length, 0);
+    assert.match(vscodeStub.__log.error.join("\n"), /serverPath/);
+    assert.equal(fs.existsSync(path.join(tmp, "iris-agentic-dev.version")), false);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("tier 3: the download is asked for exactly the pinned hash", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
+  const body = "#!/bin/sh\necho pinned";
+  const dl = fakeDownload(body);
+  try {
+    await resolveServerBinary(makeContext("0.9.5", tmp, { [THIS_ASSET]: sha256(body) }), { download: dl });
+    assert.equal(dl.calls[0].expectedSha256, sha256(body));
+    assert.match(dl.calls[0].url, new RegExp(`/v0\\.9\\.5/${THIS_ASSET}$`));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("tier 3: a hash mismatch is reported, writes no version marker and returns null", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
+  vscodeStub.__resetLog();
+  const shown = [];
+  const origShow = vscodeStub.window.showErrorMessage;
+  vscodeStub.window.showErrorMessage = async (m) => shown.push(m);
+  const { DownloadError } = require("../.test-out/download.cjs");
+  try {
+    const dl = failingDownload(new DownloadError("HASH_MISMATCH", "SHA-256 is aa, expected bb"));
+    const result = await resolveServerBinary(
+      makeContext("0.9.5", tmp, { [THIS_ASSET]: sha256("x") }),
+      { download: dl }
+    );
+    assert.equal(result, null);
+    assert.equal(fs.existsSync(path.join(tmp, "iris-agentic-dev.version")), false);
+    assert.match(vscodeStub.__log.error.join("\n"), /does not match/i);
+    assert.equal(shown.length, 1, "the user is told, not just the log");
+    assert.match(shown[0], /SHA-256|hash|checksum/i);
+  } finally {
+    vscodeStub.window.showErrorMessage = origShow;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("tier 3: a cached binary that no longer matches its pin is deleted and fetched again", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
+  const version = "0.9.5";
+  const binaryDir = path.join(tmp, `iris-agentic-dev-${version}`);
+  fs.mkdirSync(binaryDir, { recursive: true });
+  const binaryPath = path.join(binaryDir, THIS_ASSET);
+  fs.writeFileSync(binaryPath, "#!/bin/sh\necho tampered", { mode: 0o755 });
+  fs.writeFileSync(path.join(tmp, "iris-agentic-dev.version"), version);
+  const good = "#!/bin/sh\necho good";
+  const dl = fakeDownload(good);
+  try {
+    const result = await resolveServerBinary(
+      makeContext(version, tmp, { [THIS_ASSET]: sha256(good) }),
+      { download: dl }
+    );
+    assert.equal(dl.calls.length, 1, "the mismatching cache must not be reused");
+    const { stableBinaryPath } = require("../.test-out/stablePath.cjs");
+    assert.equal(result, stableBinaryPath(tmp, process.platform));
+    assert.equal(fs.readFileSync(result, "utf8"), good);
+    assert.equal(fs.readFileSync(binaryPath, "utf8"), good);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("tier 3: a tampered cache is not run when the re-download also fails", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
+  const version = "0.9.5";
+  const binaryDir = path.join(tmp, `iris-agentic-dev-${version}`);
+  fs.mkdirSync(binaryDir, { recursive: true });
+  const binaryPath = path.join(binaryDir, THIS_ASSET);
+  fs.writeFileSync(binaryPath, "#!/bin/sh\necho tampered", { mode: 0o755 });
+  fs.writeFileSync(path.join(tmp, "iris-agentic-dev.version"), version);
+  try {
+    const result = await resolveServerBinary(
+      makeContext(version, tmp, { [THIS_ASSET]: sha256("#!/bin/sh\necho good") }),
+      { download: failingDownload(new Error("offline")) }
+    );
+    assert.equal(result, null);
+    assert.equal(fs.existsSync(binaryPath), false, "the mismatching file is removed");
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("tier 3: a cached binary with no pin for this platform is not used", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "iad-test-"));
+  const version = "0.9.5";
+  const binaryDir = path.join(tmp, `iris-agentic-dev-${version}`);
+  fs.mkdirSync(binaryDir, { recursive: true });
+  fs.writeFileSync(path.join(binaryDir, THIS_ASSET), "#!/bin/sh\necho x", { mode: 0o755 });
+  fs.writeFileSync(path.join(tmp, "iris-agentic-dev.version"), version);
+  try {
+    const result = await resolveServerBinary(makeContext(version, tmp), {
+      download: failingDownload(new Error("must not be called")),
+    });
+    assert.equal(result, null);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 // --- other clients' registrations: found, then offered ----------------------
 //
 // A Windows user's ~/.claude.json named .../iris-agentic-dev-1.5.0/...exe,
@@ -478,12 +621,16 @@ test("activation finds a pinned entry, asks, and writes nothing before the answe
   const env = pinnedSetup(["1.5.0"]);
   const dir = path.join(env.storage, "iris-agentic-dev-1.6.4");
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, binaryName), "#!/bin/sh\necho 1.6.4\n", { mode: 0o755 });
+  const body164 = "#!/bin/sh\necho 1.6.4\n";
+  fs.writeFileSync(path.join(dir, binaryName), body164, { mode: 0o755 });
   fs.writeFileSync(path.join(env.storage, "iris-agentic-dev.version"), "1.6.4");
   const before = fs.readFileSync(env.claudeJson, "utf8");
   const prompts = scriptPrompts(undefined);
   try {
-    assert.equal(await resolveServerBinary(makeContext("1.6.4", env.storage)), env.stable);
+    assert.equal(
+      await resolveServerBinary(makeContext("1.6.4", env.storage, { [binaryName]: sha256(body164) })),
+      env.stable
+    );
     await registrationOffer();
     assert.equal(prompts.calls.length, 1);
     assert.match(prompts.calls[0].message, ASK);
@@ -597,13 +744,15 @@ test("an accepted update leaves every registration on the newest binary", async 
   const seed = (v) => {
     const dir = path.join(env.storage, `iris-agentic-dev-${v}`);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, binaryName), `#!/bin/sh\necho "iris-agentic-dev ${v}"\n`, { mode: 0o755 });
+    const body = `#!/bin/sh\necho "iris-agentic-dev ${v}"\n`;
+    fs.writeFileSync(path.join(dir, binaryName), body, { mode: 0o755 });
     fs.writeFileSync(path.join(env.storage, "iris-agentic-dev.version"), v);
+    return { [binaryName]: sha256(body) };
   };
   const prompts = scriptPrompts("Update");
   try {
-    seed("1.6.4");
-    assert.equal(await resolveServerBinary(makeContext("1.6.4", env.storage)), env.stable);
+    const pins164 = seed("1.6.4");
+    assert.equal(await resolveServerBinary(makeContext("1.6.4", env.storage, pins164)), env.stable);
     await registrationOffer();
     assert.equal(env.read().mcpServers["iris-agentic-dev"].command, env.stable);
     assert.match(fs.readFileSync(env.stable, "utf8"), /1\.6\.4/);
@@ -611,8 +760,8 @@ test("an accepted update leaves every registration on the newest binary", async 
     // The next update changes the binary behind the path, not the path, and
     // there is nothing left to ask about.
     const asked = prompts.calls.length;
-    seed("1.6.5");
-    assert.equal(await resolveServerBinary(makeContext("1.6.5", env.storage)), env.stable);
+    const pins165 = seed("1.6.5");
+    assert.equal(await resolveServerBinary(makeContext("1.6.5", env.storage, pins165)), env.stable);
     await registrationOffer();
     assert.equal(prompts.calls.length, asked);
     assert.equal(env.read().mcpServers["iris-agentic-dev"].command, env.stable);

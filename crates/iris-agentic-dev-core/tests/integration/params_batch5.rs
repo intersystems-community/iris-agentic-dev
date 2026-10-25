@@ -22,8 +22,8 @@
 //! - `iris_production_item`: `action` by INVALID_ACTION listing the four verbs, `namespace` by 404.
 //! - `iris_production_diff` / `iris_business_rule_info`: `namespace` by 404, `action` and
 //!   `rule_name` by the rule set that comes back named.
-//! - `iris_message_body`: `message_id` by the handler's required-parameter check, which runs before
-//!   the PHI gate.
+//! - `iris_message_body`: `message_id` by the handler's required-parameter check, reached only with
+//!   data reads allowed, because the PHI gate answers before the handler reads its arguments.
 //! - All five: `server` by SERVER_NOT_FOUND.
 //!
 //! # What is not provable live, and why
@@ -399,7 +399,11 @@ fn body_class_where_and_select_join_the_body_table() {
     // The fixture's bodies are `Ens.StringContainer`, so the join has something to join to. It used
     // to rely on the container already holding string-container messages.
     let fixture = seed_interop_fixture();
-    let mut mcp = McpSession::start(&live_env());
+    // Body mode reads message bodies, so the bulk-data gate answers it unless the server allows data
+    // reads (spec 141 T214).
+    let mut env = live_env();
+    env.extend(iris_agentic_dev_core::testing::data_reads_allowed_env());
+    let mut mcp = McpSession::start(&env);
 
     let joined = interop(
         &mut mcp,
@@ -654,17 +658,27 @@ fn business_rule_info_honors_action_rule_name_and_namespace() {
     );
 }
 
-/// `message_id` is checked by the handler before the bulk-PHI dispatch gate runs, which is the only
-/// window in which this tool's parameters are observable on a default-policy instance. The two
-/// answers differ, so the parameter arrived.
+/// The bulk-PHI gate answers before the handler reads its arguments (spec 141), so on a
+/// default-policy instance every call is `DATA_POLICY_BLOCKED` and `message_id` cannot be seen. With
+/// data reads allowed the handler runs: an absent `message_id` reaches its own check, and a given one
+/// gets past it. The two answers differ, so the parameter arrived.
 #[test]
 #[ignore = "requires live IRIS (iris-dev-iris) and the built binary"]
-fn message_body_reads_message_id_before_the_phi_gate() {
+fn message_body_reads_message_id_once_the_phi_gate_lets_the_call_through() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
-    let mut mcp = McpSession::start(&live_env());
+    let mut blocked = McpSession::start(&live_env());
+    let refused = call(&mut blocked, "iris_message_body", serde_json::json!({}));
+    assert_eq!(
+        code_of(&refused),
+        "DATA_POLICY_BLOCKED",
+        "the gate answers first, before the handler's own check: {refused}"
+    );
 
+    let mut env = live_env();
+    env.extend(iris_agentic_dev_core::testing::data_reads_allowed_env());
+    let mut mcp = McpSession::start(&env);
     let missing = call(&mut mcp, "iris_message_body", serde_json::json!({}));
     assert_eq!(code_of(&missing), "INVALID_PARAMS");
     assert!(
@@ -678,11 +692,10 @@ fn message_body_reads_message_id_before_the_phi_gate() {
         "iris_message_body",
         serde_json::json!({"message_id": "1"}),
     );
-    assert_eq!(
+    assert_ne!(
         code_of(&given),
-        "DATA_POLICY_BLOCKED",
-        "with a message_id the handler gets past its own check and the PHI gate answers instead: \
-         {given}"
+        "INVALID_PARAMS",
+        "with a message_id the handler gets past its own check: {given}"
     );
 }
 
@@ -738,7 +751,11 @@ fn wrongly_typed_values_are_refused() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
-    let mut mcp = McpSession::start(&live_env());
+    let mut mcp = {
+        let mut env = live_env();
+        env.extend(iris_agentic_dev_core::testing::data_reads_allowed_env());
+        McpSession::start(&env)
+    };
 
     for (tool, expected_type, args) in [
         (

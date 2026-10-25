@@ -36,8 +36,11 @@ fn test_iris_connection() -> IrisConnection {
 }
 
 fn mock_llm_client() -> LlmClient {
-    std::env::set_var("IRIS_GENERATE_CLASS_MODEL", "mock");
-    std::env::set_var("ANTHROPIC_API_KEY", "dummy-for-mock");
+    // `from_env` reads the variables once, here; the mock model never reads them again, so the
+    // guard can put them back as soon as the client exists.
+    let mut env_guard = iris_agentic_dev_core::testing::EnvGuard::new();
+    env_guard.set("IRIS_GENERATE_CLASS_MODEL", "mock");
+    env_guard.set("ANTHROPIC_API_KEY", "dummy-for-mock");
     LlmClient::from_env().expect("mock LLM should be constructible")
 }
 

@@ -5,10 +5,8 @@ use iris_agentic_dev_core::iris::workspace_config::{
     load_workspace_config, validate_fleet_config, workspace_config_to_connection, workspace_root,
     ConnectionRole, FleetConfig,
 };
+use iris_agentic_dev_core::testing::EnvGuard;
 use std::io::Write;
-
-// Serialize tests that mutate env vars — concurrent set/remove_var calls race.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn write_toml(dir: &tempfile::TempDir, contents: &str) {
     let path = dir.path().join(".iris-agentic-dev.toml");
@@ -20,6 +18,7 @@ fn write_toml(dir: &tempfile::TempDir, contents: &str) {
 
 #[test]
 fn test_load_returns_none_when_no_file() {
+    let _env_guard = EnvGuard::clean();
     let result = load_workspace_config(Some("/nonexistent/path/that/cannot/exist"));
     assert!(
         result.is_none(),
@@ -29,6 +28,7 @@ fn test_load_returns_none_when_no_file() {
 
 #[test]
 fn test_load_parses_container_field() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(&dir, r#"container = "test-iris""#);
     let cfg = load_workspace_config(Some(dir.path().to_str().unwrap())).unwrap();
@@ -37,6 +37,7 @@ fn test_load_parses_container_field() {
 
 #[test]
 fn test_load_parses_all_fields() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -60,6 +61,7 @@ password = "mypass"
 
 #[test]
 fn test_load_returns_none_on_syntax_error() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(&dir, "this is not valid toml = = = !!!");
     let result = load_workspace_config(Some(dir.path().to_str().unwrap()));
@@ -71,6 +73,7 @@ fn test_load_returns_none_on_syntax_error() {
 
 #[test]
 fn test_load_uses_cwd_when_workspace_none() {
+    let _env_guard = EnvGuard::clean();
     // Call with None from a temp dir that has no .iris-dev.toml
     let dir = tempfile::TempDir::new().unwrap();
     let result = load_workspace_config(Some(dir.path().to_str().unwrap()));
@@ -79,12 +82,12 @@ fn test_load_uses_cwd_when_workspace_none() {
 
 #[test]
 fn test_workspace_root_uses_env_var() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut env_guard = EnvGuard::new();
     let tmp = tempfile::TempDir::new().unwrap();
     let tmp_str = tmp.path().to_str().unwrap().to_string();
-    std::env::set_var("OBJECTSCRIPT_WORKSPACE", &tmp_str);
+    env_guard.set("OBJECTSCRIPT_WORKSPACE", &tmp_str);
     let root = workspace_root(Some("/some/other/path"));
-    std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+    env_guard.unset("OBJECTSCRIPT_WORKSPACE");
     assert_eq!(
         root,
         tmp.path(),
@@ -94,8 +97,8 @@ fn test_workspace_root_uses_env_var() {
 
 #[test]
 fn test_workspace_root_uses_path_when_no_env_var() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("OBJECTSCRIPT_WORKSPACE");
     let root = workspace_root(Some("/explicit/path"));
     assert_eq!(root.to_str().unwrap(), "/explicit/path");
 }
@@ -132,47 +135,54 @@ fn test_workspace_config_host_returns_connection() {
 
 #[test]
 fn test_workspace_config_namespace_applied() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("IRIS_NAMESPACE");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_NAMESPACE");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         container: Some("mytest-iris".to_string()),
         namespace: Some("TESTNS".to_string()),
         ..Default::default()
     };
     workspace_config_to_connection(&cfg, "USER");
+    // The namespace reaches discovery as data; the environment is not written (spec 141 T202).
     assert_eq!(
-        std::env::var("IRIS_NAMESPACE").ok().as_deref(),
+        iris_agentic_dev_core::iris::workspace_config::container_discovery_hints(&cfg)
+            .namespace
+            .as_deref(),
         Some("TESTNS"),
-        "IRIS_NAMESPACE should be set from workspace config namespace"
+        "the namespace from the workspace config should be in the discovery hints"
     );
-    // Cleanup
-    std::env::remove_var("IRIS_NAMESPACE");
+    assert!(std::env::var("IRIS_NAMESPACE").is_err());
 }
 
 #[test]
-fn test_workspace_config_sets_iris_container_env() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("IRIS_CONTAINER");
+fn test_workspace_config_hands_the_container_to_discovery() {
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_CONTAINER");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         container: Some("mytest-iris".to_string()),
         ..Default::default()
     };
     workspace_config_to_connection(&cfg, "USER");
     assert_eq!(
-        std::env::var("IRIS_CONTAINER").ok().as_deref(),
+        iris_agentic_dev_core::iris::workspace_config::container_discovery_hints(&cfg)
+            .container
+            .as_deref(),
         Some("mytest-iris"),
-        "IRIS_CONTAINER should be set from workspace config container"
+        "the workspace config container should be in the discovery hints"
     );
-    std::env::remove_var("IRIS_CONTAINER");
+    assert!(
+        std::env::var("IRIS_CONTAINER").is_err(),
+        "IRIS_CONTAINER must not be written from a config file"
+    );
 }
 
 // ── T015: Priority ordering test ─────────────────────────────────────────────
 
 #[test]
 fn test_compile_workspace_config_overrides_env() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut env_guard = EnvGuard::new();
     // Set IRIS_CONTAINER to an "old" value via env
-    std::env::set_var("IRIS_CONTAINER", "old-container");
+    env_guard.set("IRIS_CONTAINER", "old-container");
 
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         container: Some("new-container".to_string()),
@@ -180,13 +190,20 @@ fn test_compile_workspace_config_overrides_env() {
     };
     workspace_config_to_connection(&cfg, "USER");
 
-    // Config file should win over the pre-existing env var
+    // The file's container outranks the launch's for discovery, and the launch's variable is left
+    // as it was.
+    assert_eq!(
+        iris_agentic_dev_core::iris::workspace_config::container_discovery_hints(&cfg)
+            .container
+            .as_deref(),
+        Some("new-container"),
+        "workspace config container should be what discovery looks for"
+    );
     assert_eq!(
         std::env::var("IRIS_CONTAINER").ok().as_deref(),
-        Some("new-container"),
-        "workspace config container should override pre-existing IRIS_CONTAINER env var"
+        Some("old-container"),
+        "the launch's IRIS_CONTAINER must not be overwritten from a config file"
     );
-    std::env::remove_var("IRIS_CONTAINER");
 }
 
 // ── T019: generate_toml_content tests ────────────────────────────────────────
@@ -265,6 +282,7 @@ fn test_workspace_config_field_shape() {
 
 #[test]
 fn test_load_parses_web_prefix_field() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -312,8 +330,8 @@ fn test_web_prefix_strips_leading_trailing_slashes() {
 
 #[test]
 fn test_no_web_prefix_gives_clean_base_url() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("IRIS_WEB_PREFIX");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_WEB_PREFIX");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("localhost".to_string()),
         web_port: Some(52773),
@@ -330,8 +348,8 @@ fn test_no_web_prefix_gives_clean_base_url() {
 
 #[test]
 fn test_iris_web_prefix_env_var_used_when_no_toml_prefix() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::set_var("IRIS_WEB_PREFIX", "myprefix");
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("IRIS_WEB_PREFIX", "myprefix");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("localhost".to_string()),
         web_port: Some(52773),
@@ -339,7 +357,7 @@ fn test_iris_web_prefix_env_var_used_when_no_toml_prefix() {
         ..Default::default()
     };
     let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
-    std::env::remove_var("IRIS_WEB_PREFIX");
+    env_guard.unset("IRIS_WEB_PREFIX");
     assert_eq!(
         conn.base_url, "http://localhost:52773/myprefix",
         "IRIS_WEB_PREFIX env var should be used when web_prefix not in config, got: {}",
@@ -349,8 +367,8 @@ fn test_iris_web_prefix_env_var_used_when_no_toml_prefix() {
 
 #[test]
 fn test_toml_web_prefix_overrides_env_var() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::set_var("IRIS_WEB_PREFIX", "envprefix");
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("IRIS_WEB_PREFIX", "envprefix");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("localhost".to_string()),
         web_port: Some(52773),
@@ -358,7 +376,7 @@ fn test_toml_web_prefix_overrides_env_var() {
         ..Default::default()
     };
     let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
-    std::env::remove_var("IRIS_WEB_PREFIX");
+    env_guard.unset("IRIS_WEB_PREFIX");
     assert_eq!(
         conn.base_url, "http://localhost:52773/tomlprefix",
         "TOML web_prefix should override IRIS_WEB_PREFIX env var, got: {}",
@@ -380,6 +398,7 @@ fn test_generate_toml_contains_web_prefix_comment() {
 
 #[test]
 fn test_load_parses_scheme_field() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -395,8 +414,8 @@ scheme = "https"
 
 #[test]
 fn test_https_scheme_in_base_url() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("IRIS_SCHEME");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_SCHEME");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("iris.example.com".to_string()),
         web_port: Some(443),
@@ -414,8 +433,8 @@ fn test_https_scheme_in_base_url() {
 
 #[test]
 fn test_https_scheme_with_prefix() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("IRIS_SCHEME");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_SCHEME");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("dem".to_string()),
         web_port: Some(443),
@@ -433,8 +452,8 @@ fn test_https_scheme_with_prefix() {
 
 #[test]
 fn test_default_scheme_is_http() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("IRIS_SCHEME");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_SCHEME");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("localhost".to_string()),
         web_port: Some(52773),
@@ -451,8 +470,8 @@ fn test_default_scheme_is_http() {
 
 #[test]
 fn test_iris_scheme_env_var() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::set_var("IRIS_SCHEME", "https");
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("IRIS_SCHEME", "https");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("localhost".to_string()),
         web_port: Some(443),
@@ -460,7 +479,7 @@ fn test_iris_scheme_env_var() {
         ..Default::default()
     };
     let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
-    std::env::remove_var("IRIS_SCHEME");
+    env_guard.unset("IRIS_SCHEME");
     assert!(
         conn.base_url.starts_with("https://"),
         "IRIS_SCHEME env var should set https, got: {}",
@@ -470,8 +489,8 @@ fn test_iris_scheme_env_var() {
 
 #[test]
 fn test_toml_scheme_overrides_env_var() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::set_var("IRIS_SCHEME", "http");
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("IRIS_SCHEME", "http");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("localhost".to_string()),
         web_port: Some(443),
@@ -479,7 +498,7 @@ fn test_toml_scheme_overrides_env_var() {
         ..Default::default()
     };
     let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
-    std::env::remove_var("IRIS_SCHEME");
+    env_guard.unset("IRIS_SCHEME");
     assert!(
         conn.base_url.starts_with("https://"),
         "TOML scheme should override IRIS_SCHEME env var, got: {}",
@@ -562,6 +581,7 @@ fn test_score_container_beats_unrelated_after_normalization() {
 
 #[test]
 fn test_load_falls_back_to_legacy_iris_dev_toml() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::tempdir().unwrap();
     // Only legacy file exists — not the new .iris-agentic-dev.toml
     let legacy = dir.path().join(".iris-dev.toml");
@@ -575,6 +595,7 @@ fn test_load_falls_back_to_legacy_iris_dev_toml() {
 
 #[test]
 fn test_workspace_root_prefers_new_over_legacy() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::tempdir().unwrap();
     // Both files exist — new one should win
     std::fs::write(
@@ -597,10 +618,52 @@ fn test_workspace_root_prefers_new_over_legacy() {
     );
 }
 
+/// T185. The test above failed once in four parallel unit runs: a neighbour set
+/// `OBJECTSCRIPT_WORKSPACE`, which outranks the directory argument, while it was loading. Here the
+/// neighbour does that on purpose, as fast as it can; a reader that takes `EnvGuard::clean()` must
+/// never see it.
+#[test]
+fn a_loader_holding_a_clean_guard_never_sees_a_neighbours_workspace_variable() {
+    let other = tempfile::tempdir().unwrap();
+    std::fs::write(
+        other.path().join(".iris-agentic-dev.toml"),
+        "container = \"neighbour-iris\"\n",
+    )
+    .unwrap();
+    let mine = tempfile::tempdir().unwrap();
+    std::fs::write(
+        mine.path().join(".iris-agentic-dev.toml"),
+        "container = \"my-iris\"\n",
+    )
+    .unwrap();
+
+    let other_path = other.path().to_path_buf();
+    let neighbour = std::thread::spawn(move || {
+        for _ in 0..300 {
+            let mut g = EnvGuard::new();
+            g.set("OBJECTSCRIPT_WORKSPACE", &other_path);
+            std::thread::sleep(std::time::Duration::from_micros(200));
+        }
+    });
+    for round in 0..300 {
+        let _env_guard = EnvGuard::clean();
+        std::thread::sleep(std::time::Duration::from_micros(150));
+        let cfg = load_workspace_config(Some(mine.path().to_str().unwrap()))
+            .expect("the file in the directory I passed");
+        assert_eq!(
+            cfg.container.as_deref(),
+            Some("my-iris"),
+            "round {round}: the neighbour's workspace variable reached this load"
+        );
+    }
+    neighbour.join().unwrap();
+}
+
 // ── docker_only field ─────────────────────────────────────────────────────────
 
 #[test]
 fn test_load_parses_docker_only_field() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(&dir, "container = \"myapp-iris\"\ndocker_only = true\n");
     let cfg = load_workspace_config(Some(dir.path().to_str().unwrap())).unwrap();
@@ -609,15 +672,15 @@ fn test_load_parses_docker_only_field() {
 
 #[test]
 fn test_docker_only_returns_localhost_connection() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("IRIS_CONTAINER");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_CONTAINER");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         container: Some("myapp-iris".to_string()),
         docker_only: true,
         ..Default::default()
     };
     let conn = workspace_config_to_connection(&cfg, "USER");
-    std::env::remove_var("IRIS_CONTAINER");
+    env_guard.unset("IRIS_CONTAINER");
     assert!(
         conn.is_some(),
         "docker_only with container should return Some(IrisConnection)"
@@ -631,11 +694,11 @@ fn test_docker_only_returns_localhost_connection() {
 }
 
 #[test]
-fn test_workspace_config_username_password_set_env() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("IRIS_USERNAME");
-    std::env::remove_var("IRIS_PASSWORD");
-    std::env::remove_var("IRIS_CONTAINER");
+fn test_workspace_config_username_password_reach_discovery_not_env() {
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_USERNAME");
+    env_guard.unset("IRIS_PASSWORD");
+    env_guard.unset("IRIS_CONTAINER");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         container: Some("mytest-iris".to_string()),
         username: Some("admin".to_string()),
@@ -643,19 +706,14 @@ fn test_workspace_config_username_password_set_env() {
         ..Default::default()
     };
     workspace_config_to_connection(&cfg, "USER");
-    assert_eq!(
-        std::env::var("IRIS_USERNAME").ok().as_deref(),
-        Some("admin"),
-        "IRIS_USERNAME should be set from config"
-    );
-    assert_eq!(
-        std::env::var("IRIS_PASSWORD").ok().as_deref(),
-        Some("secret"),
-        "IRIS_PASSWORD should be set from config"
-    );
-    std::env::remove_var("IRIS_USERNAME");
-    std::env::remove_var("IRIS_PASSWORD");
-    std::env::remove_var("IRIS_CONTAINER");
+    let hints = iris_agentic_dev_core::iris::workspace_config::container_discovery_hints(&cfg);
+    assert_eq!(hints.username.as_deref(), Some("admin"));
+    assert_eq!(hints.password.as_deref(), Some("secret"));
+    assert!(std::env::var("IRIS_USERNAME").is_err());
+    assert!(std::env::var("IRIS_PASSWORD").is_err());
+    env_guard.unset("IRIS_USERNAME");
+    env_guard.unset("IRIS_PASSWORD");
+    env_guard.unset("IRIS_CONTAINER");
 }
 
 // ── apply_workspace_config ────────────────────────────────────────────────────
@@ -697,6 +755,7 @@ fn test_apply_workspace_config_none_with_no_file_returns_none() {
 // T004-a: flat file parses identically via FleetConfig::workspace
 #[test]
 fn test_fleet_config_develop_mode_flat_file_identical() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -724,6 +783,7 @@ namespace = "LOANAPP"
 // T004-b: mode="operate" parses [instance.*] blocks
 #[test]
 fn test_fleet_config_operate_mode_parses_instances() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -766,6 +826,7 @@ role = "subject"
 /// `load_pool` passes `config_file` this way — without this, server= fleet routing breaks.
 #[test]
 fn test_load_fleet_config_accepts_toml_file_path() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -887,6 +948,7 @@ host = "prod.example.com"
 // T004-c: ConnectionRole defaults to Workspace when absent
 #[test]
 fn test_connection_role_defaults_to_workspace() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -899,7 +961,7 @@ container = "my-iris"
     let fleet = load_fleet_config(Some(dir.path().to_str().unwrap())).expect("fleet config loads");
     assert_eq!(
         fleet.instance["local"].role,
-        ConnectionRole::Workspace,
+        ConnectionRole::Workbench,
         "absent role must default to Workspace"
     );
 }
@@ -907,6 +969,7 @@ container = "my-iris"
 // T004-d: role = "subject" parses correctly
 #[test]
 fn test_connection_role_subject_parses() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -923,7 +986,8 @@ role = "subject"
 
 // T004-e: role = "control-plane" parses correctly
 #[test]
-fn test_connection_role_control_plane_parses() {
+fn test_connection_role_control_plane_reads_as_workbench() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -935,12 +999,13 @@ role = "control-plane"
 "#,
     );
     let fleet = load_fleet_config(Some(dir.path().to_str().unwrap())).expect("fleet config loads");
-    assert_eq!(fleet.instance["ctrl"].role, ConnectionRole::ControlPlane);
+    assert_eq!(fleet.instance["ctrl"].role, ConnectionRole::Workbench);
 }
 
 // T004-f: [instance.*] blocks ignored when mode="develop"
 #[test]
 fn test_fleet_config_instance_blocks_ignored_in_develop_mode() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -962,6 +1027,7 @@ role = "subject"
 // T004-g: memory-home defaults to "self" when absent
 #[test]
 fn test_fleet_config_memory_home_defaults_to_self() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -982,6 +1048,7 @@ role = "subject"
 // T004-h: validate_fleet_config warns and falls back to "self" for unknown memory-home
 #[test]
 fn test_fleet_config_unknown_memory_home_falls_back_to_self() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -1012,6 +1079,7 @@ memory-home = "nonexistent-instance"
 // T004-i: subject field is None when absent
 #[test]
 fn test_fleet_config_subject_field_absent_is_none() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -1034,6 +1102,7 @@ role = "subject"
 // T010-a: operate mode response includes "mode": "operate"
 #[test]
 fn test_list_containers_workspace_config_includes_mode_operate() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -1060,6 +1129,7 @@ role = "workspace"
 // T010-b: operate mode instances have role/memory_home/subject/running fields
 #[test]
 fn test_list_containers_instances_have_role_and_memory_home() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -1087,7 +1157,7 @@ subject = "Acme Corp"
         instances["local"].is_object(),
         "local instance must be present"
     );
-    assert_eq!(instances["local"]["role"].as_str(), Some("workspace"));
+    assert_eq!(instances["local"]["role"].as_str(), Some("workbench"));
     assert_eq!(
         instances["local"]["running"].as_bool(),
         Some(true),
@@ -1111,6 +1181,7 @@ subject = "Acme Corp"
 // T010-c: develop mode response has no "mode" or "instances" field (SC-011)
 #[test]
 fn test_list_containers_develop_mode_response_unchanged() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -1168,8 +1239,8 @@ fn test_generate_operate_toml_has_instance_local_workspace() {
     );
     assert_eq!(
         fleet.instance["local"].role,
-        ConnectionRole::Workspace,
-        "[instance.local] must have role = workspace"
+        ConnectionRole::Workbench,
+        "[instance.local] must have role = workbench"
     );
     assert_eq!(
         fleet.instance["local"].container.as_deref(),
@@ -1207,8 +1278,8 @@ fn test_generate_develop_toml_content_has_no_mode_field() {
 // workspace_root walk-up: called with "." triggers cwd walk-up path
 #[test]
 fn test_workspace_root_dot_path_falls_through_to_walkup() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("OBJECTSCRIPT_WORKSPACE");
     // "." triggers the walk-up branch — just verify it returns a valid path without panic
     let root = workspace_root(Some("."));
     assert!(
@@ -1220,8 +1291,8 @@ fn test_workspace_root_dot_path_falls_through_to_walkup() {
 // workspace_root: None workspace_path also triggers walk-up
 #[test]
 fn test_workspace_root_none_triggers_walkup() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("OBJECTSCRIPT_WORKSPACE");
     let root = workspace_root(None);
     assert!(
         !root.to_string_lossy().is_empty(),
@@ -1232,6 +1303,7 @@ fn test_workspace_root_none_triggers_walkup() {
 // build_workspace_config_json: no config file → returns Null
 #[test]
 fn test_build_workspace_config_json_no_config_returns_null() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     let json = build_workspace_config_json(Some(dir.path().to_str().unwrap()), &[]);
     assert!(
@@ -1243,6 +1315,7 @@ fn test_build_workspace_config_json_no_config_returns_null() {
 // load_fleet_config: parse error → returns None (not panic)
 #[test]
 fn test_load_fleet_config_returns_none_on_parse_error() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(&dir, "this is not valid toml = = !!!");
     let result = load_fleet_config(Some(dir.path().to_str().unwrap()));
@@ -1255,6 +1328,7 @@ fn test_load_fleet_config_returns_none_on_parse_error() {
 // load_fleet_config: legacy .iris-dev.toml fallback
 #[test]
 fn test_load_fleet_config_falls_back_to_legacy() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::tempdir().unwrap();
     let legacy = dir.path().join(".iris-dev.toml");
     std::fs::write(&legacy, "container = \"legacy-fleet-iris\"\n").unwrap();
@@ -1269,11 +1343,11 @@ fn test_load_fleet_config_falls_back_to_legacy() {
     );
 }
 
-// workspace_config_to_connection: host + container sets IRIS_CONTAINER too
+// workspace_config_to_connection: host + container puts the container on the connection
 #[test]
-fn test_host_with_container_sets_iris_container_env() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("IRIS_CONTAINER");
+fn test_host_with_container_puts_the_container_on_the_connection() {
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_CONTAINER");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("remotehost".to_string()),
         container: Some("remote-iris".to_string()),
@@ -1285,11 +1359,12 @@ fn test_host_with_container_sets_iris_container_env() {
         "host config must return Some(IrisConnection)"
     );
     assert_eq!(
-        std::env::var("IRIS_CONTAINER").ok().as_deref(),
+        conn.unwrap().default_container().as_deref(),
         Some("remote-iris"),
-        "IRIS_CONTAINER should be set even when host is specified alongside container"
+        "the container must travel on the connection when host is specified alongside it"
     );
-    std::env::remove_var("IRIS_CONTAINER");
+    assert!(std::env::var("IRIS_CONTAINER").is_err());
+    env_guard.unset("IRIS_CONTAINER");
 }
 
 // ── ToolCategory::as_str coverage ────────────────────────────────────────────
@@ -1454,7 +1529,7 @@ fn test_tool_category_from_str_unknown() {
 fn test_check_role_gate_workspace_returns_none() {
     use iris_agentic_dev_core::iris::workspace_config::{check_role_gate, ConnectionRole};
     let result = check_role_gate(
-        &ConnectionRole::Workspace,
+        &ConnectionRole::Workbench,
         "iris_compile",
         false,
         "local",
@@ -1467,13 +1542,16 @@ fn test_check_role_gate_workspace_returns_none() {
 fn test_check_role_gate_control_plane_returns_none() {
     use iris_agentic_dev_core::iris::workspace_config::{check_role_gate, ConnectionRole};
     let result = check_role_gate(
-        &ConnectionRole::ControlPlane,
+        &ConnectionRole::Workbench,
         "iris_compile",
         false,
         "local",
         false,
     );
-    assert!(result.is_none(), "ControlPlane role should not be gated");
+    assert!(
+        result.is_none(),
+        "a workbench (once control-plane) should not be gated"
+    );
 }
 
 #[test]
@@ -1675,8 +1753,8 @@ fn test_workspace_config_scheme_strips_slashes() {
 
 #[test]
 fn test_workspace_config_scheme_empty_string_becomes_http() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("IRIS_SCHEME");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_SCHEME");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("localhost".to_string()),
         web_port: Some(52773),
@@ -1694,9 +1772,9 @@ fn test_workspace_config_scheme_empty_string_becomes_http() {
 
 #[test]
 fn test_container_config_respects_custom_namespace_default() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("IRIS_NAMESPACE");
-    std::env::remove_var("IRIS_CONTAINER");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_NAMESPACE");
+    env_guard.unset("IRIS_CONTAINER");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         container: Some("iris-container".to_string()),
         namespace: Some("FROM_CONFIG".to_string()),
@@ -1704,25 +1782,27 @@ fn test_container_config_respects_custom_namespace_default() {
     };
     workspace_config_to_connection(&cfg, "CUSTOM_DEFAULT");
     assert_eq!(
-        std::env::var("IRIS_NAMESPACE").ok().as_deref(),
+        iris_agentic_dev_core::iris::workspace_config::container_discovery_hints(&cfg)
+            .namespace
+            .as_deref(),
         Some("FROM_CONFIG"),
         "should use namespace from config when present"
     );
-    std::env::remove_var("IRIS_NAMESPACE");
-    std::env::remove_var("IRIS_CONTAINER");
+    env_guard.unset("IRIS_NAMESPACE");
+    env_guard.unset("IRIS_CONTAINER");
 }
 
 #[test]
 fn test_container_config_with_docker_only_sets_unreachable_url() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("IRIS_CONTAINER");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_CONTAINER");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         container: Some("docker-only-iris".to_string()),
         docker_only: true,
         ..Default::default()
     };
     let conn = workspace_config_to_connection(&cfg, "USER");
-    std::env::remove_var("IRIS_CONTAINER");
+    env_guard.unset("IRIS_CONTAINER");
     assert!(conn.is_some());
     assert_eq!(conn.unwrap().base_url, "http://127.0.0.1:1");
 }
@@ -1731,6 +1811,7 @@ fn test_container_config_with_docker_only_sets_unreachable_url() {
 
 #[test]
 fn test_load_toml_with_empty_web_prefix() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -1766,8 +1847,8 @@ fn test_workspace_config_empty_web_prefix_ignored_in_url() {
 
 #[test]
 fn test_iris_scheme_env_var_with_slashes_stripped() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::set_var("IRIS_SCHEME", "//https//");
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("IRIS_SCHEME", "//https//");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("localhost".to_string()),
         web_port: Some(443),
@@ -1775,7 +1856,7 @@ fn test_iris_scheme_env_var_with_slashes_stripped() {
         ..Default::default()
     };
     let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
-    std::env::remove_var("IRIS_SCHEME");
+    env_guard.unset("IRIS_SCHEME");
     assert!(
         conn.base_url.contains("https"),
         "IRIS_SCHEME env var should strip slashes"
@@ -1784,8 +1865,8 @@ fn test_iris_scheme_env_var_with_slashes_stripped() {
 
 #[test]
 fn test_iris_web_prefix_env_var_with_slashes_stripped() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::set_var("IRIS_WEB_PREFIX", "//myprefix//");
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("IRIS_WEB_PREFIX", "//myprefix//");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("localhost".to_string()),
         web_port: Some(52773),
@@ -1793,7 +1874,7 @@ fn test_iris_web_prefix_env_var_with_slashes_stripped() {
         ..Default::default()
     };
     let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
-    std::env::remove_var("IRIS_WEB_PREFIX");
+    env_guard.unset("IRIS_WEB_PREFIX");
     assert_eq!(
         conn.base_url, "http://localhost:52773/myprefix",
         "IRIS_WEB_PREFIX should strip leading/trailing slashes"
@@ -1804,8 +1885,8 @@ fn test_iris_web_prefix_env_var_with_slashes_stripped() {
 
 #[test]
 fn test_iris_scheme_env_var_empty_defaults_to_http() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::set_var("IRIS_SCHEME", "");
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("IRIS_SCHEME", "");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("localhost".to_string()),
         web_port: Some(52773),
@@ -1813,7 +1894,7 @@ fn test_iris_scheme_env_var_empty_defaults_to_http() {
         ..Default::default()
     };
     let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
-    std::env::remove_var("IRIS_SCHEME");
+    env_guard.unset("IRIS_SCHEME");
     assert!(
         conn.base_url.starts_with("http://"),
         "empty IRIS_SCHEME env var should default to http"
@@ -1822,8 +1903,8 @@ fn test_iris_scheme_env_var_empty_defaults_to_http() {
 
 #[test]
 fn test_iris_web_prefix_env_var_empty_not_included() {
-    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::set_var("IRIS_WEB_PREFIX", "");
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("IRIS_WEB_PREFIX", "");
     let cfg = iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig {
         host: Some("localhost".to_string()),
         web_port: Some(52773),
@@ -1831,7 +1912,7 @@ fn test_iris_web_prefix_env_var_empty_not_included() {
         ..Default::default()
     };
     let conn = workspace_config_to_connection(&cfg, "USER").unwrap();
-    std::env::remove_var("IRIS_WEB_PREFIX");
+    env_guard.unset("IRIS_WEB_PREFIX");
     assert_eq!(
         conn.base_url, "http://localhost:52773",
         "empty IRIS_WEB_PREFIX env var should be filtered out"
@@ -1842,6 +1923,7 @@ fn test_iris_web_prefix_env_var_empty_not_included() {
 
 #[test]
 fn test_build_workspace_config_json_operate_mode_empty_instances() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -1856,6 +1938,7 @@ fn test_build_workspace_config_json_operate_mode_empty_instances() {
 
 #[test]
 fn test_build_workspace_config_json_instance_no_container_running_false() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -1874,6 +1957,7 @@ host = "example.com"
 
 #[test]
 fn test_build_workspace_config_json_develop_mode_with_no_container() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(&dir, r#"namespace = "USER""#);
     let json = build_workspace_config_json(Some(dir.path().to_str().unwrap()), &[]);
@@ -1885,6 +1969,7 @@ fn test_build_workspace_config_json_develop_mode_with_no_container() {
 
 #[test]
 fn test_validate_fleet_config_known_memory_home_unchanged() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -1909,6 +1994,7 @@ memory-home = "local"
 
 #[test]
 fn test_validate_fleet_config_multiple_unknown_memory_homes() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(
         &dir,
@@ -2043,17 +2129,23 @@ mcpTemplate = "live"
 }
 
 #[test]
-fn test_mcp_template_unknown_returns_none_with_warning() {
+fn test_mcp_template_unknown_reads_as_live_with_a_note() {
     use iris_agentic_dev_core::iris::workspace_config::load_fleet_config_from_str;
     let toml_str = r#"
 [policy.server1]
 mcpTemplate = "unknown_template"
 "#;
     let fleet = load_fleet_config_from_str(toml_str).unwrap();
-    // Unknown template should be treated as None (deserialize_opt_mcp_template returns Ok(None))
+    // An unknown template fails closed: it reads as `live`, the strictest, and the file says so.
+    assert_eq!(
+        fleet.policies["server1"].mcp_template,
+        Some(iris_agentic_dev_core::iris::workspace_config::McpTemplate::Live),
+        "unknown mcpTemplate must read as live"
+    );
     assert!(
-        fleet.policies["server1"].mcp_template.is_none(),
-        "unknown mcpTemplate should return None"
+        fleet.errors.iter().any(|e| e.contains("unknown_template")),
+        "and the operator is told: {:?}",
+        fleet.errors
     );
 }
 
@@ -2132,11 +2224,11 @@ fn test_disabled_tools_empty_by_default() {
 
 #[test]
 fn test_workspace_config_to_connection_exports_disabled_tools_env() {
+    let mut env_guard = EnvGuard::new();
     use iris_agentic_dev_core::iris::workspace_config::{
         load_fleet_config_from_str, workspace_config_to_connection,
     };
-    let _lock = ENV_LOCK.lock().unwrap();
-    std::env::remove_var("IRIS_DISABLED_TOOLS");
+    env_guard.unset("IRIS_DISABLED_TOOLS");
 
     let toml_str = r#"
 host = "localhost"
@@ -2158,17 +2250,17 @@ disabled_tools = ["iris_admin", "iris_credential_manage"]
         exported.contains("iris_credential_manage"),
         "iris_credential_manage must appear in IRIS_DISABLED_TOOLS"
     );
-    std::env::remove_var("IRIS_DISABLED_TOOLS");
+    env_guard.unset("IRIS_DISABLED_TOOLS");
 }
 
 #[test]
 fn test_workspace_config_to_connection_respects_existing_env_var() {
+    let mut env_guard = EnvGuard::new();
     use iris_agentic_dev_core::iris::workspace_config::{
         load_fleet_config_from_str, workspace_config_to_connection,
     };
-    let _lock = ENV_LOCK.lock().unwrap();
     // Pre-set env var — toml field must NOT override it
-    std::env::set_var("IRIS_DISABLED_TOOLS", "iris_compile");
+    env_guard.set("IRIS_DISABLED_TOOLS", "iris_compile");
 
     let toml_str = r#"
 host = "localhost"
@@ -2186,7 +2278,6 @@ disabled_tools = ["iris_admin"]
         exported, "iris_compile",
         "existing env var must not be overwritten by toml"
     );
-    std::env::remove_var("IRIS_DISABLED_TOOLS");
 }
 
 // ── enabled_tools config field (075-modular-tool-install, FR-001) ────────────
@@ -2216,11 +2307,11 @@ fn test_enabled_tools_empty_by_default() {
 
 #[test]
 fn test_workspace_config_to_connection_exports_enabled_tools_env() {
+    let mut env_guard = EnvGuard::new();
     use iris_agentic_dev_core::iris::workspace_config::{
         load_fleet_config_from_str, workspace_config_to_connection,
     };
-    let _lock = ENV_LOCK.lock().unwrap();
-    std::env::remove_var("IRIS_ENABLED_TOOLS");
+    env_guard.unset("IRIS_ENABLED_TOOLS");
 
     let toml_str = r#"
 host = "localhost"
@@ -2242,17 +2333,17 @@ enabled_tools = ["iris_query", "iris_search"]
         exported.contains("iris_search"),
         "iris_search must appear in IRIS_ENABLED_TOOLS"
     );
-    std::env::remove_var("IRIS_ENABLED_TOOLS");
+    env_guard.unset("IRIS_ENABLED_TOOLS");
 }
 
 #[test]
 fn test_workspace_config_to_connection_respects_existing_enabled_tools_env_var() {
+    let mut env_guard = EnvGuard::new();
     use iris_agentic_dev_core::iris::workspace_config::{
         load_fleet_config_from_str, workspace_config_to_connection,
     };
-    let _lock = ENV_LOCK.lock().unwrap();
     // Pre-set env var — toml field must NOT override it
-    std::env::set_var("IRIS_ENABLED_TOOLS", "iris_compile");
+    env_guard.set("IRIS_ENABLED_TOOLS", "iris_compile");
 
     let toml_str = r#"
 host = "localhost"
@@ -2270,7 +2361,6 @@ enabled_tools = ["iris_query"]
         exported, "iris_compile",
         "existing env var must not be overwritten by toml"
     );
-    std::env::remove_var("IRIS_ENABLED_TOOLS");
 }
 
 // ── tls_verify (#127) ─────────────────────────────────────────────────────────
@@ -2292,12 +2382,17 @@ scheme = "https"
 tls_verify = false
 "#,
     );
-    let cfg = load_workspace_config(Some(dir.path().to_str().unwrap())).unwrap();
+    // The file as written; whether it applies depends on trust (spec 141).
+    let cfg: iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig = toml::from_str(
+        &std::fs::read_to_string(dir.path().join(".iris-agentic-dev.toml")).unwrap(),
+    )
+    .unwrap();
     assert_eq!(cfg.tls_verify, Some(false));
 }
 
 #[test]
 fn test_load_parses_tls_verify_true() {
+    let _env_guard = EnvGuard::clean();
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(&dir, "host = \"localhost\"\ntls_verify = true\n");
     let cfg = load_workspace_config(Some(dir.path().to_str().unwrap())).unwrap();
@@ -2306,96 +2401,114 @@ fn test_load_parses_tls_verify_true() {
 
 #[test]
 fn test_tls_verify_absent_is_none_not_a_default() {
-    // `None` has to stay distinguishable from `Some(true)`: absent means "don't touch the
-    // environment", which is what lets an env var still work when no config declares the key.
+    let _env_guard = EnvGuard::clean();
+    // `None` has to stay distinguishable from `Some(true)`: absent declares nothing, so the
+    // launch settings can still speak for the server they name.
     let dir = tempfile::TempDir::new().unwrap();
     write_toml(&dir, r#"host = "localhost""#);
     let cfg = load_workspace_config(Some(dir.path().to_str().unwrap())).unwrap();
     assert_eq!(cfg.tls_verify, None);
 }
 
-#[test]
-fn test_tls_verify_false_exports_iris_tls_verify() {
-    let _lock = ENV_LOCK.lock().unwrap();
-    std::env::remove_var("IRIS_TLS_VERIFY");
-    std::env::remove_var("IRIS_INSECURE");
-
-    let toml_str = r#"
-host = "localhost"
-web_port = 9443
-scheme = "https"
-tls_verify = false
-"#;
+fn tls_connection(toml_str: &str) -> iris_agentic_dev_core::iris::connection::IrisConnection {
     let fleet = load_fleet_config_from_str(toml_str).unwrap();
-    let _ = workspace_config_to_connection(&fleet.workspace, "USER");
-
-    assert_eq!(
-        std::env::var("IRIS_TLS_VERIFY").unwrap_or_default(),
-        "false",
-        "tls_verify = false must reach the HTTP client, which reads the env var"
-    );
-    std::env::remove_var("IRIS_TLS_VERIFY");
+    workspace_config_to_connection(&fleet.workspace, "USER").expect("the file names a host")
 }
 
 #[test]
-fn test_tls_verify_true_clears_a_stale_iris_insecure() {
-    // The resolver checks IRIS_INSECURE first, so leaving it set would make `tls_verify = true`
-    // a no-op — the config would say "validate" and the process would not.
-    let _lock = ENV_LOCK.lock().unwrap();
-    std::env::set_var("IRIS_INSECURE", "true");
+fn test_tls_verify_false_applies_to_the_files_own_connection_not_the_environment() {
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_TLS_VERIFY");
+    env_guard.unset("IRIS_INSECURE");
 
-    let toml_str = "host = \"localhost\"\ntls_verify = true\n";
-    let fleet = load_fleet_config_from_str(toml_str).unwrap();
-    let _ = workspace_config_to_connection(&fleet.workspace, "USER");
+    let conn = tls_connection(
+        "host = \"localhost\"\nweb_port = 9443\nscheme = \"https\"\ntls_verify = false\n",
+    );
+
+    assert!(!conn.tls.verify, "the file's connection skips the check");
+    assert_eq!(
+        conn.tls.source,
+        iris_agentic_dev_core::iris::http::TlsSource::ConfigFile
+    );
+    assert!(
+        std::env::var("IRIS_TLS_VERIFY").is_err() && std::env::var("IRIS_INSECURE").is_err(),
+        "a config file must not set a variable every other server's client would read"
+    );
+}
+
+#[test]
+fn test_tls_verify_true_in_the_file_wins_for_its_connection_and_leaves_the_environment() {
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("IRIS_INSECURE", "true");
+
+    let conn = tls_connection("host = \"localhost\"\ntls_verify = true\n");
+    let still = std::env::var("IRIS_INSECURE");
+    env_guard.unset("IRIS_INSECURE");
+
+    assert!(conn.tls.verify, "the file says check");
+    assert_eq!(
+        still.as_deref(),
+        Ok("true"),
+        "the environment is not rewritten"
+    );
+}
+
+#[test]
+fn test_tls_verify_in_config_beats_the_launch_variable_for_its_connection() {
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("IRIS_TLS_VERIFY", "true");
+    env_guard.unset("IRIS_INSECURE");
+
+    let conn = tls_connection("host = \"localhost\"\ntls_verify = false\n");
+    let still = std::env::var("IRIS_TLS_VERIFY");
+    env_guard.unset("IRIS_TLS_VERIFY");
+
+    assert!(!conn.tls.verify);
+    assert_eq!(still.as_deref(), Ok("true"));
+}
+
+#[test]
+fn test_launch_variable_does_not_reach_a_file_connection_to_another_server() {
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("IRIS_TLS_VERIFY", "false");
+    env_guard.unset("IRIS_INSECURE");
+    env_guard.unset("IRIS_HOST");
+
+    let conn = tls_connection("host = \"elsewhere.example\"\n");
+    env_guard.unset("IRIS_TLS_VERIFY");
 
     assert!(
-        std::env::var("IRIS_INSECURE").is_err(),
-        "tls_verify = true must clear IRIS_INSECURE, got {:?}",
-        std::env::var("IRIS_INSECURE")
+        conn.tls.verify,
+        "IRIS_TLS_VERIFY=false is for the server the launch settings name"
     );
-    assert_eq!(std::env::var("IRIS_TLS_VERIFY").unwrap_or_default(), "true");
-    std::env::remove_var("IRIS_TLS_VERIFY");
 }
 
 #[test]
-fn test_tls_verify_in_config_overrides_the_env_var() {
-    // Documented precedence is toml > env for connection settings, and this is one. The tool-list
-    // keys deliberately go the other way; don't copy their pattern here.
-    let _lock = ENV_LOCK.lock().unwrap();
-    std::env::set_var("IRIS_TLS_VERIFY", "true");
-    std::env::remove_var("IRIS_INSECURE");
+fn test_launch_variable_reaches_a_file_connection_to_the_launch_server() {
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("IRIS_TLS_VERIFY", "false");
+    env_guard.unset("IRIS_INSECURE");
+    env_guard.set("IRIS_HOST", "iris.corp");
+    env_guard.set("IRIS_WEB_PORT", "9443");
 
-    let toml_str = "host = \"localhost\"\ntls_verify = false\n";
-    let fleet = load_fleet_config_from_str(toml_str).unwrap();
-    let _ = workspace_config_to_connection(&fleet.workspace, "USER");
+    let conn = tls_connection("host = \"iris.corp\"\nweb_port = 9443\n");
+    for k in ["IRIS_TLS_VERIFY", "IRIS_HOST", "IRIS_WEB_PORT"] {
+        env_guard.unset(k);
+    }
 
-    assert_eq!(
-        std::env::var("IRIS_TLS_VERIFY").unwrap_or_default(),
-        "false",
-        "the config file must win over a pre-set env var"
+    assert!(
+        !conn.tls.verify,
+        "the file names the server IRIS_HOST names, so the operator's setting for it applies"
     );
-    std::env::remove_var("IRIS_TLS_VERIFY");
-}
-
-#[test]
-fn test_tls_verify_absent_leaves_the_env_var_alone() {
-    let _lock = ENV_LOCK.lock().unwrap();
-    std::env::set_var("IRIS_TLS_VERIFY", "false");
-
-    let toml_str = "host = \"localhost\"\n";
-    let fleet = load_fleet_config_from_str(toml_str).unwrap();
-    let _ = workspace_config_to_connection(&fleet.workspace, "USER");
-
     assert_eq!(
-        std::env::var("IRIS_TLS_VERIFY").unwrap_or_default(),
-        "false",
-        "a config that declares nothing must not overwrite the environment"
+        conn.tls.source,
+        iris_agentic_dev_core::iris::http::TlsSource::LaunchEnv
     );
-    std::env::remove_var("IRIS_TLS_VERIFY");
 }
 
 #[test]
 fn test_check_config_reports_tls_verify() {
+    let _env_guard = EnvGuard::clean();
     // check_config makes no network calls, so this is the only place an operator can see that
     // certificate validation is off before wondering why nothing complained about a bad cert.
     let dir = tempfile::TempDir::new().unwrap();
@@ -2403,10 +2516,95 @@ fn test_check_config_reports_tls_verify() {
         &dir,
         "container = \"iris-dev-iris\"\nhost = \"localhost\"\ntls_verify = false\n",
     );
+    // The report describes the file as written, trusted or not.
     let json = build_workspace_config_json(Some(dir.path().to_str().unwrap()), &[]);
     assert_eq!(
         json["tls_verify"],
         serde_json::json!(false),
         "check_config must surface tls_verify, got: {json}"
     );
+}
+
+// ── Spec 141 R5 C11 / FR-034: a file that does not parse is an error, not a missing file ─────────
+
+/// A broken workspace file used to log a warning and fall through to auto-discovery with the gates
+/// on their permissive defaults. Now it leaves the snapshot invalid: no connection from it, both
+/// gates closed, and the error names the file, line and column.
+#[test]
+fn unparsable_file_is_a_config_error() {
+    use iris_agentic_dev_core::iris::config_sources::{
+        ConfigSnapshot, LoadInputs, CONFIG_FILE_NAME,
+    };
+    use iris_agentic_dev_core::iris::connection::SystemMode;
+    use iris_agentic_dev_core::tools::write_gate::{
+        resolve_declared, GateSource, OperatorEnvGates,
+    };
+
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let proj = tmp.path().join("proj");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&proj).unwrap();
+    let broken = proj.join(CONFIG_FILE_NAME);
+    std::fs::write(
+        &broken,
+        "namespace = \"USER\"\nwrite_tools_enabled = = true\n",
+    )
+    .unwrap();
+    let inputs = LoadInputs {
+        cwd: std::fs::canonicalize(&proj).unwrap(),
+        home: Some(std::fs::canonicalize(&home).unwrap()),
+        ..Default::default()
+    };
+
+    let snap = ConfigSnapshot::load(&inputs);
+    assert!(snap.is_invalid());
+    assert_eq!(snap.errors.len(), 1, "{:?}", snap.errors);
+    let e = &snap.errors[0];
+    assert_eq!(e.path, std::fs::canonicalize(&broken).unwrap());
+    assert_eq!(e.line, Some(2), "the error is on the second line: {e:?}");
+    assert!(e.column.is_some_and(|c| c >= 1), "{e:?}");
+    assert!(!e.message.is_empty());
+    assert!(
+        snap.connection_config.is_none(),
+        "a broken file chooses no connection"
+    );
+
+    let declared = snap.declared_gates();
+    assert_eq!(declared.write_tools_enabled, Some(false));
+    assert_eq!(declared.destructive_tools_enabled, Some(false));
+    let r = resolve_declared(
+        &OperatorEnvGates::default(),
+        declared,
+        SystemMode::Development,
+        "USER",
+    );
+    assert!(!r.write_enabled && !r.destructive_enabled);
+    assert_eq!(
+        r.write_source,
+        GateSource::FailClosed,
+        "even on a development instance, where inference would have allowed writes"
+    );
+
+    // A broken operator file means the trust entries cannot be read: a workspace file that raises
+    // the gates is untrusted, and the gates close.
+    std::fs::write(home.join(CONFIG_FILE_NAME), "[[trust\n").unwrap();
+    std::fs::write(&broken, "write_tools_enabled = true\n").unwrap();
+    let snap = ConfigSnapshot::load(&inputs);
+    assert!(
+        snap.is_invalid(),
+        "an unparsable operator file is an error too"
+    );
+    assert!(snap.errors[0]
+        .path
+        .ends_with(std::path::Path::new("home").join(CONFIG_FILE_NAME)));
+    let declared = snap.declared_gates();
+    assert_ne!(declared.write_tools_enabled, Some(true));
+    let r = resolve_declared(
+        &OperatorEnvGates::default(),
+        declared,
+        SystemMode::Development,
+        "USER",
+    );
+    assert!(!r.write_enabled);
 }

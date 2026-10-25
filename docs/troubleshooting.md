@@ -4,28 +4,197 @@
 
 ## Symptom table
 
-| Symptom                                                       | Likely cause                                                           | Fix                                                                                           |
-| ------------------------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| 404 on `/api/atelier` (Windows)                               | IIS missing `/api` web application                                     | See [Windows IIS setup](connecting.md#windows-iis-api-web-application-required)               |
-| `check_config` works but compile/search fail                  | Atelier web app `Recurse=0`                                            | Management Portal → Security → Web Apps → `/api/atelier` → enable **Recurse**                 |
-| `Mapping not found for %Service_WebGateway//mcp/path`         | CSP application not registered in IRIS                                 | See [WebGateway: CSP app registration](#webgateway-csp-application-mapping-not-found)         |
-| All tools fail, `check_config` shows `atelier_rest: false`    | NoPWS build (IRIS 2026.2.0AI+) or no WebGateway                        | Set `docker_only = true` in `.iris-agentic-dev.toml`                                          |
-| All tools fail, namespace listing works                       | API version mismatch                                                   | Verify IRIS supports Atelier v8 (`iris-agentic-dev --verbose` shows detected version)         |
-| 403 on write operations                                       | Insufficient permissions                                               | Use a user with `%DB_USER` or `%All` role                                                     |
-| Connection delays on Windows                                  | `localhost` DNS issue                                                  | Use `host = "127.0.0.1"` in `.iris-agentic-dev.toml`                                          |
-| `SERVER_MANAGER_CREDENTIAL_ERROR`                             | Credential not in OS keychain                                          | VS Code → Server Manager → right-click server → **Reconnect**                                 |
-| `SERVER_MANAGER_CREDENTIAL_ERROR` on Windows, after Reconnect | Secret storage unseal failed                                           | See [Windows: Server Manager credentials](#windows-server-manager-credentials-cannot-be-read) |
-| `SERVER_MANAGER_AMBIGUOUS`                                    | Multiple SM servers, no `IRIS_SERVER_NAME`                             | Set `IRIS_SERVER_NAME=<server-key>` (see `check_config` for available names)                  |
-| `STALE_CONTENT` from `iris_doc`                               | `expected` text doesn't match current file                             | Re-fetch the document (`mode=get`) and retry with current content                             |
-| `SCOPE_REQUIRED` from `iris_search`                           | Search called with no document scope                                   | Pass at least one category or document type in `scope`                                        |
-| `CODE_EDIT_BLOCKED`                                           | Touched `%Dictionary`, `$SYSTEM.OBJ`, or a code global — read or write | Read with `iris_doc` (get) or `iris_symbols`; write with `iris_doc` (put) + `iris_compile`    |
-| `CHECKIN_BLOCKED` from `iris_source_control`                  | CheckIn disabled by default                                            | Set `IRIS_SCM_ALLOW_CHECKIN=1` to enable                                                      |
-| `HTTP_EXECUTION_FAILED` from `iris_execute`                   | Atelier execution failed and no Docker fallback                        | Verify Atelier endpoint reachable; set `IRIS_CONTAINER` for Docker fallback                   |
-| `IRIS_UNREACHABLE`                                            | No IRIS connection discoverable                                        | Run `check_config` to see discovery state; check host/port/credentials                        |
-| `FILE_NOT_FOUND` from `iris_compile` or `compile`             | Local file path does not exist on disk                                 | Check the file path — the compile command requires the file to exist locally before uploading |
-| `UNKNOWN_PARAMETER`                                           | Call passed a parameter the tool does not declare                      | Use one of the names the error lists; see [Unknown parameters](#unknown-parameters)           |
-| `INVALID_ACTION`                                              | `action`/`mode`/`what` value outside the tool's enum                   | Read the enum out of the tool's `inputSchema`; see [Unknown parameters](#unknown-parameters)  |
-| `SESSION_STALE` on the CLI token `iris_ws_open` just printed  | Each `tool` call is its own process; the session died with the first   | Run open/exec/close as one [`batch` script](#session_stale-after-iris_ws_open-in-the-cli)     |
+| Symptom                                                                                              | Likely cause                                                           | Fix                                                                                           |
+| ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| 404 on `/api/atelier` (Windows)                                                                      | IIS missing `/api` web application                                     | See [Windows IIS setup](connecting.md#windows-iis-api-web-application-required)               |
+| `check_config` works but compile/search fail                                                         | Atelier web app `Recurse=0`                                            | Management Portal → Security → Web Apps → `/api/atelier` → enable **Recurse**                 |
+| `Mapping not found for %Service_WebGateway//mcp/path`                                                | CSP application not registered in IRIS                                 | See [WebGateway: CSP app registration](#webgateway-csp-application-mapping-not-found)         |
+| All tools fail, `check_config` shows `atelier_rest: false`                                           | NoPWS build (IRIS 2026.2.0AI+) or no WebGateway                        | Set `docker_only = true` in `.iris-agentic-dev.toml`                                          |
+| All tools fail, namespace listing works                                                              | API version mismatch                                                   | Verify IRIS supports Atelier v8 (`iris-agentic-dev --verbose` shows detected version)         |
+| 403 on write operations                                                                              | Insufficient permissions                                               | Use a user with `%DB_USER` or `%All` role                                                     |
+| Connection delays on Windows                                                                         | `localhost` DNS issue                                                  | Use `host = "127.0.0.1"` in `.iris-agentic-dev.toml`                                          |
+| `SERVER_MANAGER_CREDENTIAL_ERROR`                                                                    | Credential not in OS keychain                                          | VS Code → Server Manager → right-click server → **Reconnect**                                 |
+| `SERVER_MANAGER_CREDENTIAL_ERROR` on Windows, after Reconnect                                        | Secret storage unseal failed                                           | See [Windows: Server Manager credentials](#windows-server-manager-credentials-cannot-be-read) |
+| `SERVER_MANAGER_AMBIGUOUS`                                                                           | Multiple SM servers, no `IRIS_SERVER_NAME`                             | Set `IRIS_SERVER_NAME=<server-key>` (see `check_config` for available names)                  |
+| `STALE_CONTENT` from `iris_doc`                                                                      | `expected` text doesn't match current file                             | Re-fetch the document (`mode=get`) and retry with current content                             |
+| `SCOPE_REQUIRED` from `iris_search`                                                                  | Search called with no document scope                                   | Pass at least one category or document type in `scope`                                        |
+| `CODE_EDIT_BLOCKED`                                                                                  | Touched `%Dictionary`, `$SYSTEM.OBJ`, or a code global — read or write | Read with `iris_doc` (get) or `iris_symbols`; write with `iris_doc` (put) + `iris_compile`    |
+| `CHECKIN_BLOCKED` from `iris_source_control`                                                         | CheckIn disabled by default                                            | Set `IRIS_SCM_ALLOW_CHECKIN=1` to enable                                                      |
+| `SCM_ADMIN_BLOCKED` from `iris_source_control`                                                       | Disconnect and Reconnect disabled by default                           | Set `IRIS_SCM_ALLOW_DISCONNECT=1` to enable (separate from the CheckIn switch)                |
+| `HTTP_EXECUTION_FAILED` from `iris_execute`                                                          | Atelier execution failed and no Docker fallback                        | Verify Atelier endpoint reachable; set `IRIS_CONTAINER` for Docker fallback                   |
+| `IRIS_UNREACHABLE`                                                                                   | No IRIS connection discoverable                                        | Run `check_config` to see discovery state; check host/port/credentials                        |
+| `FILE_NOT_FOUND` from `iris_compile` or `compile`                                                    | Local file path does not exist on disk                                 | Check the file path — the compile command requires the file to exist locally before uploading |
+| `UNKNOWN_PARAMETER`                                                                                  | Call passed a parameter the tool does not declare                      | Use one of the names the error lists; see [Unknown parameters](#unknown-parameters)           |
+| `INVALID_ACTION`                                                                                     | `action`/`mode`/`what` value outside the tool's enum                   | Read the enum out of the tool's `inputSchema`; see [Unknown parameters](#unknown-parameters)  |
+| `SESSION_STALE` on the CLI token `iris_ws_open` just printed                                         | Each `tool` call is its own process; the session died with the first   | Run open/exec/close as one [`batch` script](#session_stale-after-iris_ws_open-in-the-cli)     |
+| `WRITE_TOOLS_DISABLED`, but the project's `.iris-agentic-dev.toml` says `write_tools_enabled = true` | The project file is not trusted, or the server is Live                 | See [Write tools are disabled in my project](#write-tools-are-disabled-in-my-project)         |
+| `SERVICE_ACCOUNT_*`                                                                                  | The agent's code could not run as the service account                  | See [`SERVICE_ACCOUNT_*` errors](#service_account_-errors)                                    |
+| `READ_ONLY_STRICT`                                                                                   | `read_only = "strict"` is set; the tool needs a scratch class          | See [`READ_ONLY_STRICT`](#read_only_strict)                                                   |
+| `CONFIG_INVALID`                                                                                     | A configuration file does not parse                                    | See [`CONFIG_INVALID`](#config_invalid)                                                       |
+| `NAME_CONFLICT` from `iris_add_server`                                                               | The name is a Server Manager profile                                   | See [`NAME_CONFLICT`](#name_conflict)                                                         |
+| A call hangs, a keychain dialog is on screen                                                         | The OS keychain is waiting for approval                                | See [The keychain prompt](#the-keychain-prompt-blocks-a-call)                                 |
+| `journal_search` returns `truncated: true`                                                           | The walk hit its record or time cap                                    | See [`journal_search` is truncated](#journal_search-is-truncated)                             |
+
+---
+
+## Write tools are disabled in my project
+
+Symptom: a project's `.iris-agentic-dev.toml` says `write_tools_enabled = true` (or
+`destructive_tools_enabled = true`, or `[policy.<name>] writeTools = true`), and a write tool
+answers `WRITE_TOOLS_DISABLED` (or `DESTRUCTIVE_TOOLS_DISABLED`). At startup iad printed one line
+on stderr: `iris-agentic-dev: 1 setting set aside (...)`.
+
+A project file comes with the repository, so iad does not let it widen what the agent may do
+until you accept it. Call `check_config` and read three fields:
+
+- `config_sources.workspace_file.trust`: `untrusted` (never trusted), `lapsed` (trusted once, then
+  changed; `changed` lists each setting with its old and new value), or `trusted`.
+- `set_aside`: each setting iad read and did not act on, with its `reason` and the `lift` that
+  would make it act. A write refused for this reason also carries `refusal.kind:
+"untrusted_setting"` and the item's id in `refusal.set_aside`.
+- `write_tools_source`: what decided the tier. `inferred_system_mode` means no trusted file
+  declared one and the server's own mode did.
+
+Fixes, in order of likelihood:
+
+1. **The file is untrusted or its trust lapsed.** Read what trusting would apply, then trust it
+   yourself at a terminal:
+
+   ```bash
+   iris-agentic-dev trust --show
+   iris-agentic-dev trust
+   ```
+
+   Trust covers the exact loosening settings and the server address each applies to, so any
+   later change to them, or pointing the file at another host, lapses it again. The agent cannot
+   do this step for you, and you should not let it run `trust` in a shell you auto-approve; see
+   [Trust](connecting.md#trust).
+
+2. **The server is Live.** With nothing declared, a Live or Failover instance has its write tier
+   off and a `live` template, whatever a project file says. Declare the tier in
+   `~/.iris-agentic-dev.toml` (`[policy.<name>] writeTools = true`), or trust the project file.
+   If you do not want writes there, this is the setting working.
+
+3. **The project names a host your environment's credentials may not go to.** Your looser
+   launch settings stay behind with the credentials (`set_aside` lists them as
+   `credential_withheld`). Put the credentials in the file or point `IRIS_HOST` at that server.
+
+4. **A launch setting says no.** `IRIS_WRITE_TOOLS_ENABLED=0` outranks every file, and
+   `read_only = "strict"` removes the scratch-class tools whatever the tier.
+
+5. **A file does not parse.** Both tiers close and `write_tools_source` is `fail_closed`; see
+   [`CONFIG_INVALID`](#config_invalid).
+
+The same applies to every loosening setting. A project's `tls_verify = false`, `ssh_host`,
+`service_username`, `compile_time_gate = false`, `dataPolicy = "allow"` or `mcpTemplate = "dev"`
+is set aside until you trust the file.
+
+---
+
+## `SERVICE_ACCOUNT_*` errors
+
+With `IRIS_SERVICE_USERNAME` set, or a `service_username` on a server, the tools that run the
+agent's code (`iris_execute`, `iris_query` writes, `iris_global` set/kill, `iris_execute_method`,
+`global_kill`, `iris_test`, `iris_coverage` run/start, `iris_ws_open` and `iris_ws_exec`) run as
+that account on every path, or the call is refused. They never fall back to the connection
+account. `check_config.identity` lists the user each path would run as and each server's account.
+
+| Code                                                                                              | Cause                                                                                                                                               | Fix                                                                                                                                                                                              |
+| ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SERVICE_ACCOUNT_UNCONFIGURED_FOR_SERVER`                                                         | `IRIS_SERVICE_USERNAME` is set and the named server has no account of its own                                                                       | Give the server a `service_username` in `servers.json`, `iris_add_server` or `~/.iris-agentic-dev.toml`                                                                                          |
+| `SERVICE_ACCOUNT_WITHHELD`                                                                        | A project file named a host your environment's credentials may not go to, so the service account is withheld from it                                | Put credentials in the file, or point `IRIS_HOST` at that server                                                                                                                                 |
+| `SERVICE_ACCOUNT_HTTP_DENIED`                                                                     | Atelier REST refused the account                                                                                                                    | Grant `%Development:USE` and database access; see [the layout that works](connecting.md#service-account-for-the-agents-code). iad does not fall back to `docker exec`, which would run as `%All` |
+| `SERVICE_ACCOUNT_TERMINAL_DENIED`                                                                 | The terminal logged in as the account, then printed `Access Denied`                                                                                 | Grant `%Development:USE` and read access to the namespace's databases                                                                                                                            |
+| `SERVICE_ACCOUNT_LOGIN_FAILED`                                                                    | The docker or SSH terminal could not log in as the account (it must exist, be enabled, and the container's OS user must be allowed to log in as it) | Create or enable the account, or opt in to the OS user (below)                                                                                                                                   |
+| `DOCKER_TERMINAL_LOGIN_REQUIRED`                                                                  | The container's terminal asks for a user name and password, which iad does not send                                                                 | Enable operating-system authentication for `%Service_Terminal`, or use the Atelier path                                                                                                          |
+| `SERVICE_ACCOUNT_IDENTITY_MISMATCH`                                                               | IRIS reported a different `$USERNAME` than the account iad asked for                                                                                | Check how the instance maps the OS user; iad refuses output it cannot attribute                                                                                                                  |
+| `SESSION_IDENTITY_CHANGED`                                                                        | You changed or removed the service account while a WebSocket session was open                                                                       | Open a new session with `iris_ws_open`                                                                                                                                                           |
+| `SERVICE_ACCOUNT_INVALID`                                                                         | The configured user name is empty or holds a control character                                                                                      | Fix the name                                                                                                                                                                                     |
+| `NO_DOCKER_ROUTE_FOR_SERVER` (the `no_docker_route` field of an `HTTP_EXECUTION_FAILED` response) | A named server's HTTP path failed, and it has no `container` of its own to fall back to                                                             | Give the server a `container`, or fix the HTTP path. It never falls back to the default connection's container                                                                                   |
+| `COVERAGE_PRIVILEGE_DENIED`                                                                       | `iris_coverage` `run`/`start` as an account without write access to the IRISSYS database's resource                                                 | Grant it, or accept that the line monitor is not available to that account                                                                                                                       |
+
+**Running as the container's OS user instead.** Where the terminal login guard cannot work, the
+operator can opt in with `IAD_EXEC_AS_OS_USER=1` in the environment that launches iad, or
+`exec_as_os_user = true` (all servers) or `[policy.<name>] execAsOsUser = true` (one server) in
+`~/.iris-agentic-dev.toml`. The response then says `"source": "os_user_opt_in"`. A project file
+cannot set it; `check_config` lists the attempt under `identity.os_user_opt_in.ignored`. Treat it
+as giving the agent the container's `%All` access.
+
+---
+
+## `READ_ONLY_STRICT`
+
+Symptom: a read tool such as `iris_table_info`, `my_access`, `iris_production`, `journal_search`
+or `iris_execute` answers `READ_ONLY_STRICT`, and is missing from `tools/list`.
+
+`read_only = "strict"` (a configuration file) or `IAD_READ_ONLY=strict` (launch settings) is
+set; `check_config.read_only_from` says which. Under strict, iad writes nothing to the server, so
+every tool that runs its ObjectScript through a scratch class in the `IrisDevTmp` package is off,
+and the write and destructive gates are closed on every server, whatever opens them elsewhere (a
+write such as `iris_doc` put answers `READ_ONLY_STRICT` with `gate: "write_tools"`). `iris_doc`
+reads, `iris_query`, `iris_search`, `iris_info`, `iris_servers` and `check_config` still work. To use the others, remove the setting (any file may set strict, and
+a project file cannot unset it from the operator file). Strict together with `irisAudit = true` is
+a configuration error, because the audit emission compiles a class: `iris-agentic-dev mcp` names
+both settings on stderr and exits 2. See
+[Strict read-only](connecting.md#strict-read-only-no-scratch-classes).
+
+---
+
+## `CONFIG_INVALID`
+
+Symptom: every tool that talks to IRIS answers `CONFIG_INVALID`, with the `file`, `line` and
+`column` of the problem, and writes are off.
+
+A configuration file does not parse, or a value has the wrong type (`web_port = "abc"`). iad will
+not fall back to discovery with a broken file: that would attach the agent to whichever IRIS
+answers first with gates nobody chose. Fix the file at the position given; iad reads it again on
+the next call, with no restart. `check_config` still works and lists the same text in
+`config_parse_error` and `config_errors`. The file may be the operator file
+(`~/.iris-agentic-dev.toml`), the project's, or the one `--config` names.
+
+---
+
+## `NAME_CONFLICT`
+
+Symptom: `iris_add_server` answers `NAME_CONFLICT`.
+
+The name is the name of a Server Manager profile in VS Code's `intersystems.servers`. An iad
+entry with that name would be read as the profile and handed its password. Choose another name,
+or run `iris_import_servers` to link the profile: the imported entry is marked
+`credential = "server-manager"` and its password stays in the Server Manager's keychain.
+
+---
+
+## The keychain prompt blocks a call
+
+Symptom: on macOS a call hangs, and a Keychain dialog (often behind another window) asks whether
+`iris-agentic-dev` may use an item. It can recur after an upgrade, when the keychain sees a new binary.
+
+iad keeps passwords under its own service, `iris-agentic-dev`, and reads the Server Manager's
+`intersystems-server-credentials` item without writing to it. Choose **Always Allow** once. On a
+host with nobody at the screen, or in CI, set `IAD_NO_KEYCHAIN=1` in the environment that launches
+iad: it never touches the keychain, and passwords come from `IRIS_PASSWORD` or from `servers.json`
+(owner-only, tied to the address they were saved for). A password saved for one address is not
+found for another; if a moved server stopped authenticating, re-register it with a password.
+In `check_config`, a Server Manager profile whose item could not be read has
+`credential_status: "keychain_unavailable"`.
+
+---
+
+## `journal_search` is truncated
+
+Symptom: `journal_search`, or `iris_admin` with `action="journal_search"`, answers
+`truncated: true` and fewer records than you expect.
+
+The search walks the current journal file from its first record and stops at 200,000 records read
+or 20 seconds, whichever comes first, or at the result cap (`max_entries`, at most 500;
+`max_records`, at most 1000). `truncated_reason` says which: `scan_cap`, `time_cap` or
+`max_records`. `scanned` is how many records it read. **A truncated answer has not seen the rest
+of the file**, so a missing record is not proof that nothing was journaled. Narrow `start`/`end`
+(or `time_range`) and `global_pattern`, and read `scanned` to see how far it got. If instead the
+call fails with `JOURNAL_SEARCH_TIMEOUT`, the walk outran the 30-second HTTP timeout; the error
+names the journal file and its size. A refusal with `DATA_POLICY_BLOCKED` means the target
+server's `dataPolicy` is not `allow`.
 
 ---
 

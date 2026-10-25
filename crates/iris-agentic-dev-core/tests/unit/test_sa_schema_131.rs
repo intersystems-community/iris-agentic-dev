@@ -6,7 +6,7 @@
 //! IRIS call, with text that says where cube discovery really lives.
 
 use iris_agentic_dev_core::tools::info::{
-    sa_schema_name_problem, sa_schema_path, InfoParams, SA_SCHEMA_GUIDANCE,
+    sa_schema_name_problem, sa_schema_path, sa_schema_url_problem, InfoParams, SA_SCHEMA_GUIDANCE,
 };
 use std::path::Path;
 
@@ -121,4 +121,45 @@ fn the_url_keeps_its_slashes_in_the_path() {
         sa_schema_path(" https://example.com/a b "),
         "/saschema/https%3A//example.com/a%20b"
     );
+}
+
+/// Spec 141 C5: a dot segment would make the HTTP client resolve the path off the Studio Assist
+/// prefix (`/saschema/http://host/../..` reaches any path on the origin), so it is refused.
+#[test]
+fn sa_schema_refuses_dot_segments() {
+    for name in [
+        "http://x/../..",
+        "http://x/./a",
+        "https://x/a/..",
+        "http://x/a/../b",
+    ] {
+        assert!(
+            sa_schema_name_problem(Some(name)).is_some(),
+            "a dot segment must be refused: {name}"
+        );
+    }
+}
+
+/// Spec 141 C5, second check: once the HTTP client has resolved the URL, its path must still start
+/// with the Studio Assist prefix. The name check above catches a dot segment before the request;
+/// this catches any path that leaves the prefix after resolution.
+#[test]
+fn sa_schema_url_keeps_the_prefix() {
+    let prefix = "http://localhost:52780/api/atelier/v8/USER/saschema/";
+    assert_eq!(
+        sa_schema_url_problem(
+            "http://localhost:52780/api/atelier/v8/USER/saschema/http%3A//www.intersystems.com/deepsee",
+            prefix
+        ),
+        None
+    );
+    for url in [
+        "http://localhost:52780/api/atelier/v8/USER/saschema/x/../../action/query",
+        "http://localhost:52780/api/atelier/v8/USER/saschema/x/../../../",
+    ] {
+        assert!(
+            sa_schema_url_problem(url, prefix).is_some(),
+            "a URL that resolves off the prefix must be refused: {url}"
+        );
+    }
 }

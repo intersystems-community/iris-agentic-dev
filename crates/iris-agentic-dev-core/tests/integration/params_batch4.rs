@@ -12,27 +12,20 @@
 //! - `my_access` / `capability_matrix` / `iris_mirror_status`: `user` by the echoed account,
 //!   `server` by SERVER_NOT_FOUND.
 //!
-//! # Two defects found while writing these tests
+//! # Two defects found while writing these tests, both fixed by 141 T180
 //!
-//! `journal_search`'s `start`, `end` and `global_pattern` are **not** live-provable, and the reason
-//! is that they do not work:
+//! `journal_search`'s `start`, `end` and `global_pattern` did not work, and the language fact
+//! behind the first is still pinned below:
 //!
-//! 1. The generated scan compares timestamps with `If ts<"<start>" Continue`. `<` is a *numeric*
-//!    operator in ObjectScript, so both sides collapse to their leading number — the year — and
-//!    `"2026-09-07 00:00:00" < "2026-09-07 00:30:16"` is 0. Inside one calendar year the two
-//!    filters do nothing at all. That is the `max_chars` bug again: a documented parameter accepted
-//!    and silently discarded. `objectscript_numeric_comparison_is_why_time_filters_do_nothing`
-//!    pins the language fact the defect rests on.
-//! 2. Every filter skips with `Continue`, which jumps back to the `While` condition *without*
-//!    executing the `Set rec=rec.Next` at the bottom of the loop. So the first record that fails a
-//!    filter spins one IRIS job on the same record forever; the call returns `IRIS_UNREACHABLE`
-//!    after the 90-second HTTP timeout. Reachable today with any `global_pattern` that misses, or
-//!    any `start`/`end` in a different year. No test here sends such a value: a deliberate
-//!    90-second hang in the suite is not worth the coverage, and any discriminating live assertion
-//!    about the filters would have to send one.
+//! 1. The generated scan compared timestamps with `If ts<"<start>" Continue`. `<` is a *numeric*
+//!    operator in ObjectScript, so both sides collapse to their leading number, the year.
+//!    `objectscript_numeric_comparison_is_why_time_filters_do_nothing` pins that fact.
+//! 2. Every filter skipped with `Continue`, which jumped back to the `While` condition *without*
+//!    advancing the cursor, so the first record that failed a filter spun one IRIS job forever.
 //!
-//! Both are runtime defects, outside this feature's scope (it changes schemas, not semantics), and
-//! both are recorded in `specs/113-typed-tool-schemas/parameter-audit.md`.
+//! The tool now walks the journal with the string operator `]`, advances before it tests, and
+//! stops at a scanned-record cap and a time cap. `test_journal_walk_141_live` proves the filters
+//! on the throwaway container.
 //!
 //! Requires `iris-dev-iris`: `IRIS_HOST=localhost IRIS_WEB_PORT=52780 IRIS_USERNAME=_SYSTEM
 //! IRIS_PASSWORD=SYS IRIS_NAMESPACE=USER`.
@@ -133,9 +126,8 @@ fn system_performance_honors_mode_run_id_and_profile() {
     );
 }
 
-/// `max_entries` is the only journal filter that works (see the module docs), and it is the one this
-/// batch changed the type of. Since 137 the standalone tool answers to the bulk-PHI gate like the
-/// `iris_admin action=journal_search` route, so under the default `dataPolicy = "block"` it is refused
+/// `max_entries` is the journal parameter this batch changed the type of. Since 137 the standalone
+/// tool answers to the bulk-PHI gate like the `iris_admin action=journal_search` route, so under the default `dataPolicy = "block"` it is refused
 /// before the handler reads `max_entries`. The refusal still shows the value passed the schema: a
 /// mistyped parameter is refused first, with its own code.
 #[test]
@@ -161,8 +153,8 @@ fn journal_search_honors_max_entries() {
 
 /// The language fact behind defect 1: ObjectScript's `<` is numeric, so two timestamps in the same
 /// year compare equal and `If ts<"<start>" Continue` never fires. This is why
-/// `journal_search`'s `start`/`end` are accepted and do nothing, and why no test here asserts they
-/// filter. If IRIS ever compares these as strings, this test fails and the audit entry gets revisited.
+/// `journal_search`'s `start`/`end` used to do nothing, and why. `test_journal_walk_141_live` now
+/// asserts they filter. If IRIS ever compares these as strings, this test fails and the audit entry gets revisited.
 #[test]
 #[ignore = "requires live IRIS (iris-dev-iris) and the built binary"]
 fn objectscript_numeric_comparison_is_why_time_filters_do_nothing() {
@@ -191,8 +183,8 @@ fn objectscript_numeric_comparison_is_why_time_filters_do_nothing() {
     assert_eq!(
         out, "0|0",
         "`<` on two same-year timestamps must be 0 (numeric comparison of the year) and `]]` must \
-         be 0 (the string operator, correctly ordering them); got {out}. journal_search uses `<`, \
-         which is the defect."
+         be 0 (the string operator, correctly ordering them); got {out}. The journal walk uses `]` \
+         for that reason."
     );
 }
 
@@ -377,7 +369,11 @@ fn wrongly_typed_counts_are_refused() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
-    let mut mcp = McpSession::start(&live_env());
+    let mut mcp = {
+        let mut env = live_env();
+        env.extend(iris_agentic_dev_core::testing::data_reads_allowed_env());
+        McpSession::start(&env)
+    };
 
     for (tool, args) in [
         ("journal_search", serde_json::json!({"max_entries": "3"})),

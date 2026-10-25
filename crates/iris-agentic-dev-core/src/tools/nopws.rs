@@ -16,6 +16,18 @@ pub fn nopws_is_active(docker_only: bool, no_pws_version: bool) -> bool {
     docker_only || no_pws_version
 }
 
+/// Atelier REST is out of reach for `iris`: the connection is `docker_only`, or the build has no
+/// private web server. The guard of every tool that needs Atelier (FR-010).
+pub fn atelier_unavailable(iris: &crate::iris::connection::IrisConnection) -> bool {
+    nopws_is_active(
+        iris.base_url == "http://127.0.0.1:1" || iris.base_url.starts_with("http://127.0.0.1:1/"),
+        iris.version
+            .as_deref()
+            .map(|v| v.contains("2026.2.0AI"))
+            .unwrap_or(false),
+    )
+}
+
 /// Build the NOPWS_ATELIER_REQUIRED structured error response (FR-010).
 pub fn nopws_atelier_required_error() -> serde_json::Value {
     serde_json::json!({

@@ -10,9 +10,9 @@
 use iris_agentic_dev_core::iris::audit_log::scrub_params;
 use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, DataPolicy, McpTemplate};
 use iris_agentic_dev_core::policy::data_policy_gate::check_phi_name_gate;
-use iris_agentic_dev_core::policy::gate::dispatch_gate;
 use iris_agentic_dev_core::policy::patterns::{PHI_NAME_PATTERNS, SYSTEM_BLOCKLIST};
 use iris_agentic_dev_core::policy::system_blocklist_gate::check_system_blocklist;
+use iris_agentic_dev_core::testing::gated;
 use iris_agentic_dev_core::tools::global::canonical_global_name;
 
 fn policy(blocklist: &[&str], kill_allow: &[&str]) -> ConnectionPolicy {
@@ -219,23 +219,32 @@ fn custom_blocklist_entries_work_with_and_without_a_caret() {
 
 #[test]
 fn the_kill_allowlist_matches_either_form_but_only_for_a_kill() {
-    let allow = vec!["^SYS.Scratch*".to_string()];
-    // `^SYS.Scratch...` is under the system rule `^SYS.*`; the allowlist exempts a kill only.
-    for name in both_forms("SYS.ScratchTemp") {
+    // A custom pattern, so the allowlist can exempt it; the built-in `^SYS.*` it overlaps cannot be
+    // lifted by any allowlist (spec 141 FR-030b).
+    let custom = vec!["^Scratch*".to_string()];
+    let allow = vec!["^Scratch.Temp*".to_string()];
+    for name in both_forms("Scratch.TempData") {
         assert!(
-            check_system_blocklist(&name, &[], &allow, true, "s").is_none(),
+            check_system_blocklist(&name, &custom, &allow, true, "s").is_none(),
             "{name} kill"
         );
         assert!(
-            check_system_blocklist(&name, &[], &allow, false, "s").is_some(),
+            check_system_blocklist(&name, &custom, &allow, false, "s").is_some(),
             "{name} write"
         );
     }
-    let bare = vec!["SYS.Scratch*".to_string()];
-    for name in both_forms("SYS.ScratchTemp") {
+    let bare = vec!["Scratch.Temp*".to_string()];
+    for name in both_forms("Scratch.TempData") {
         assert!(
-            check_system_blocklist(&name, &[], &bare, true, "s").is_none(),
+            check_system_blocklist(&name, &custom, &bare, true, "s").is_none(),
             "{name}"
+        );
+    }
+    for name in both_forms("SYS.ScratchTemp") {
+        let sys_allow = vec!["^SYS.Scratch*".to_string()];
+        assert!(
+            check_system_blocklist(&name, &[], &sys_allow, true, "s").is_some(),
+            "{name}: the built-in list is not lifted by an allowlist"
         );
     }
 }
@@ -347,7 +356,12 @@ fn dispatch_gate_blocks_the_system_global_in_every_key_and_form() {
         for name in both_forms("oddDEF") {
             let params = serde_json::json!({ key: name, "action": "get" });
             assert_eq!(
-                code(dispatch_gate("iris_global", "iris-dev", Some(&p), &params)),
+                code(gated::dispatch(
+                    "iris_global",
+                    "iris-dev",
+                    Some(&p),
+                    &params
+                )),
                 "SYSTEM_BLOCKLIST",
                 "key {key}, name {name}"
             );
@@ -362,7 +376,7 @@ fn global_preview_and_global_kill_pass_through_gates_3_and_4() {
         for name in both_forms("oddDEF") {
             let params = serde_json::json!({ "global": name, "confirm_token": "t" });
             assert_eq!(
-                code(dispatch_gate(tool, "iris-dev", Some(&p), &params)),
+                code(gated::dispatch(tool, "iris-dev", Some(&p), &params)),
                 "SYSTEM_BLOCKLIST",
                 "{tool} {name}"
             );
@@ -370,7 +384,7 @@ fn global_preview_and_global_kill_pass_through_gates_3_and_4() {
         for name in both_forms("PAPMIPatient") {
             let params = serde_json::json!({ "global": name });
             assert_eq!(
-                code(dispatch_gate(tool, "iris-dev", Some(&p), &params)),
+                code(gated::dispatch(tool, "iris-dev", Some(&p), &params)),
                 "PHI_GATE_BLOCKED",
                 "{tool} {name}"
             );
@@ -378,7 +392,7 @@ fn global_preview_and_global_kill_pass_through_gates_3_and_4() {
         for name in both_forms("MyApp.Data") {
             let params = serde_json::json!({ "global": name });
             assert!(
-                dispatch_gate(tool, "iris-dev", Some(&p), &params).is_ok(),
+                gated::dispatch(tool, "iris-dev", Some(&p), &params).is_ok(),
                 "{tool} {name}"
             );
         }
@@ -398,7 +412,12 @@ fn an_invalid_name_is_refused_before_the_blocklist_looks_at_it() {
         ] {
             let params = serde_json::json!({ key: raw, "action": "get" });
             assert_eq!(
-                code(dispatch_gate("iris_global", "iris-dev", Some(&p), &params)),
+                code(gated::dispatch(
+                    "iris_global",
+                    "iris-dev",
+                    Some(&p),
+                    &params
+                )),
                 "INVALID_GLOBAL_NAME",
                 "key {key}, raw {raw:?}"
             );
@@ -410,10 +429,10 @@ fn an_invalid_name_is_refused_before_the_blocklist_looks_at_it() {
 fn a_tool_with_no_global_param_is_untouched() {
     let p = policy(&[], &[]);
     let params = serde_json::json!({ "query": "SELECT 1" });
-    assert!(dispatch_gate("iris_query", "iris-dev", Some(&p), &params).is_ok());
+    assert!(gated::dispatch("iris_query", "iris-dev", Some(&p), &params).is_ok());
     // A missing name on a tool that carries one is the handler's `MISSING_PARAMS`, not a gate error.
     let params = serde_json::json!({ "action": "list" });
-    assert!(dispatch_gate("iris_global", "iris-dev", Some(&p), &params).is_ok());
+    assert!(gated::dispatch("iris_global", "iris-dev", Some(&p), &params).is_ok());
 }
 
 #[test]
@@ -421,14 +440,14 @@ fn no_policy_still_applies_the_name_rules() {
     for name in both_forms("oddDEF") {
         let params = serde_json::json!({ "global_name": name, "action": "get" });
         assert_eq!(
-            code(dispatch_gate("iris_global", "s", None, &params)),
+            code(gated::dispatch("iris_global", "s", None, &params)),
             "SYSTEM_BLOCKLIST",
             "{name}"
         );
     }
     let params = serde_json::json!({ "global": "oddDEF(\"x\")" });
     assert_eq!(
-        code(dispatch_gate("global_preview", "s", None, &params)),
+        code(gated::dispatch("global_preview", "s", None, &params)),
         "INVALID_GLOBAL_NAME"
     );
 }
@@ -439,7 +458,7 @@ fn a_custom_blocklist_entry_blocks_global_preview_in_both_forms() {
     for name in both_forms("VaultKeys") {
         let params = serde_json::json!({ "global": name });
         assert_eq!(
-            code(dispatch_gate(
+            code(gated::dispatch(
                 "global_preview",
                 "iris-dev",
                 Some(&p),
@@ -466,12 +485,12 @@ fn global_kill_is_an_execute_operation_on_live_and_test_like_iris_global_kill() 
         let p = with_template(template);
         let kill = serde_json::json!({ "global": "MyApp.Data", "confirm_token": "t" });
         assert_eq!(
-            code(dispatch_gate("global_kill", "s", Some(&p), &kill)),
+            code(gated::dispatch("global_kill", "s", Some(&p), &kill)),
             "ENV_GATE_BLOCKED"
         );
         let via_iris_global = serde_json::json!({ "global_name": "MyApp.Data", "action": "kill" });
         assert_eq!(
-            code(dispatch_gate(
+            code(gated::dispatch(
                 "iris_global",
                 "s",
                 Some(&p),
@@ -483,7 +502,7 @@ fn global_kill_is_an_execute_operation_on_live_and_test_like_iris_global_kill() 
     }
     let dev = with_template(McpTemplate::Dev);
     let kill = serde_json::json!({ "global": "MyApp.Data", "confirm_token": "t" });
-    assert!(dispatch_gate("global_kill", "s", Some(&dev), &kill).is_ok());
+    assert!(gated::dispatch("global_kill", "s", Some(&dev), &kill).is_ok());
 }
 
 #[test]
@@ -491,7 +510,7 @@ fn global_preview_is_a_read_on_every_template() {
     for template in [McpTemplate::Dev, McpTemplate::Test, McpTemplate::Live] {
         let p = with_template(template);
         let params = serde_json::json!({ "global": "MyApp.Data", "count": 1 });
-        assert!(dispatch_gate("global_preview", "s", Some(&p), &params).is_ok());
+        assert!(gated::dispatch("global_preview", "s", Some(&p), &params).is_ok());
     }
 }
 
@@ -537,6 +556,7 @@ fn unreachable_conn() -> Arc<IrisConnection> {
 
 fn global_params(action: &str, name: &str) -> IrisGlobalParams {
     IrisGlobalParams {
+        confirm: false,
         action: action.to_string(),
         global_name: name.to_string(),
         subscripts: None,

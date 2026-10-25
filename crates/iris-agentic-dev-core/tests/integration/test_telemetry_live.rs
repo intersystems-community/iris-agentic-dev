@@ -203,9 +203,9 @@ async fn live_prune_sessions_removes_local_file_data() {
     prune_sessions(&[Uuid::new_v4()], None, &client, &config_dir).await;
 }
 
-/// End-to-end via the MCP dispatch layer: a real tool call's durable write actually
-/// completes against live IRIS, and both telemetry_query and telemetry_export_trace
-/// (which only read the durable sink, not the in-memory buffer) see it.
+/// End-to-end via the MCP dispatch layer: a real tool call's durable write lands (in the local
+/// file by default, spec 141 R5 C16), and both telemetry_query and telemetry_export_trace
+/// (which only read the durable sinks, not the in-memory buffer) see it.
 #[cfg(feature = "testing")]
 #[tokio::test]
 #[ignore]

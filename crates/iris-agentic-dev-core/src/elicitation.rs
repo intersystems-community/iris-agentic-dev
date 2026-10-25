@@ -29,6 +29,29 @@ pub struct PendingElicitationRecord {
     pub namespace: String,
 }
 
+impl Origin {
+    /// The origin of the call in progress; see [`ElicitationStore::insert`].
+    pub fn current() -> Self {
+        crate::tools::target::current_origin().unwrap_or(Origin {
+            tool: String::new(),
+            target_key: None,
+            class: crate::tools::write_gate::WriteClass::Write,
+        })
+    }
+}
+
+/// What the call that opened a dialog was judged as, recorded so the resume is judged the same way
+/// (spec 141, R1 D3). The resume carries no `mode`, so without this it classified as a read and
+/// finished a write on whichever server the resume call named.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Origin {
+    /// The tool that opened the dialog.
+    pub tool: String,
+    /// The pool name of the server it ran on; `None` is the default connection.
+    pub target_key: Option<String>,
+    pub class: crate::tools::write_gate::WriteClass,
+}
+
 #[derive(Debug, Clone)]
 pub struct PendingElicitation {
     pub id: String,
@@ -40,6 +63,8 @@ pub struct PendingElicitation {
     pub scm_action_id: Option<String>,
     pub namespace: String,
     pub expires_at: Instant,
+    /// The tool, server and class of the call that opened the dialog.
+    pub origin: Origin,
 }
 
 /// TTL for a cached "this document is checked out by me" entry. Kept short so a
@@ -112,9 +137,31 @@ impl ElicitationStore {
         Self::default()
     }
 
-    /// Insert a new pending elicitation and return its UUID.
+    /// Insert a new pending elicitation for the call in progress and return its UUID. The origin is
+    /// that call's tool, server and class, read from the pipeline's scope; outside one it is a call
+    /// no resume matches, so the entry can never be answered (fail closed).
     pub fn insert(
         &self,
+        document: impl Into<String>,
+        action: ElicitationAction,
+        content: Option<String>,
+        scm_action_id: Option<String>,
+        namespace: impl Into<String>,
+    ) -> String {
+        self.insert_from(
+            Origin::current(),
+            document,
+            action,
+            content,
+            scm_action_id,
+            namespace,
+        )
+    }
+
+    /// [`Self::insert`] with the origin given.
+    pub fn insert_from(
+        &self,
+        origin: Origin,
         document: impl Into<String>,
         action: ElicitationAction,
         content: Option<String>,
@@ -130,6 +177,7 @@ impl ElicitationStore {
             scm_action_id,
             namespace: namespace.into(),
             expires_at: Instant::now() + EXPIRY,
+            origin,
         };
         self.0.lock().unwrap().insert(id.clone(), entry);
         id
@@ -380,6 +428,7 @@ mod tests {
             scm_action_id: None,
             namespace: "USER".into(),
             expires_at: Instant::now() - Duration::from_secs(1),
+            origin: Origin::current(),
         };
         store.0.lock().unwrap().insert(id.clone(), entry);
         // Lookup should return None and remove the entry
@@ -402,6 +451,7 @@ mod tests {
             scm_action_id: None,
             namespace: "USER".into(),
             expires_at: Instant::now() - Duration::from_secs(1),
+            origin: Origin::current(),
         };
         store
             .0

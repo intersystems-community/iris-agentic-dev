@@ -108,6 +108,8 @@ async fn live_journal_search_with_pattern_returns_success() {
         Some("IrisDevTest.*"),
         None,
         Some(10),
+        &[],
+        false,
     )
     .await
     .expect("Ok");

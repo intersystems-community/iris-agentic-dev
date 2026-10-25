@@ -101,7 +101,11 @@ Notes:
 - Prefer an **absolute path** for `command` if the binary is not on the PATH that
   Cursor’s MCP process inherits (common with GUI-launched Cursor).
 - `--workspace` should be the directory that contains `.iris-agentic-dev.toml`
-  (often your home directory for a personal fleet file, or a project root).
+  (often your home directory for a personal fleet file, or a project root). A
+  file in your home directory is your **operator file** and is always trusted.
+  A file in a project root is a **workspace file**: its connection settings work
+  at once, but anything that loosens a gate waits for `iris-agentic-dev trust`
+  (see [Trust](#trust-and-project-files) below).
 - After editing `mcp.json`, **restart the iris-agentic-dev MCP server** in
   Cursor Settings → MCP (or reload the window).
 
@@ -125,7 +129,9 @@ username = "_SYSTEM"
 password = "SYS"
 ```
 
-Use `https` / port `443` for TLS gateways. Do **not** commit real passwords.
+Use `https` / port `443` for TLS gateways. Do **not** commit real passwords:
+keep them in the `env` block of `mcp.json` (`IRIS_PASSWORD`) or in a toml file
+under your home directory.
 
 ### Fleet / operate mode (multiple instances, `server=` routing)
 
@@ -149,7 +155,7 @@ scheme = "https"
 namespace = "DEV"
 username = "your.user"
 password = "your-password"
-role = "workspace"
+# role defaults to "workbench": a server the agent builds on
 
 [instance.prod]
 host = "gateway.example.com"
@@ -196,10 +202,13 @@ today. For team sharing, ship a **secret-free** stub (hosts, namespaces, instanc
 names) and have each developer add credentials locally — or generate a private
 file from a template outside iad.
 
-**Role gates:** in `mode = "operate"`, `role = "subject"` blocks write tools unless
-confirmed per tool docs. Role matching uses the **default** connection for the
-gate in some paths; prefer aligning top-level namespace with the instance you
-write against when unsure.
+**Roles:** `role` is `workbench` (the default; `workspace` is the old spelling
+and still reads as `workbench` through 1.7.x) or `subject`. A write on a
+`subject` server is refused until the call repeats with `confirm: true`, and a
+source-control write is refused outright. Every gate judges the server the call
+names in `server`, not the default connection, so aligning the top-level
+namespace is no longer needed. See
+[Server roles](connecting.md#server-roles).
 
 ---
 
@@ -213,7 +222,7 @@ Ask the agent (or call tools directly):
    `iad-native`).
 3. **`iris_query`** with `SELECT $Namespace` — with and without `server=`.
 
-Expect on the order of **~70+ tools** enabled when no `IRIS_ENABLED_TOOLS`
+Expect on the order of **80 tools** enabled when no `IRIS_ENABLED_TOOLS`
 allowlist is set. If Cursor shows **0 tools**, update past the `#113`
 `outputSchema` strip, remove any accidental empty allowlist, and restart MCP.
 
@@ -230,12 +239,34 @@ broken for many Cursor setups:
    Linux / remote SSH. `check_config` may list SM servers with
    `credential_status: "error"`; `server="<sm-name>"` then 401s. Put credentials
    in `.iris-agentic-dev.toml` (or a working keychain setup you have verified).
+   On a host with no usable keychain set `IAD_NO_KEYCHAIN=1`; passwords
+   `iris_add_server` is given then go to `servers.json` (owner-only), tied to
+   the address they were saved for.
 3. **`iris_add_server` / `iris_import_servers` / `server=` SM names** without
    verifying keychain resolution first.
 4. **`iris-agentic-dev skill install --agent cursor`** — not implemented; use
    community skill pack install if you need Cursor rules.
 5. **TOML `${ENV}` placeholders for per-developer passwords** — not supported;
    do not put secret expansion syntax in shared files expecting iad to resolve it.
+
+---
+
+## Trust and project files
+
+Cursor launches iad from a project, and the project may carry its own
+`.iris-agentic-dev.toml`. iad uses what such a file says about the connection,
+but sets aside anything that would widen what the agent may do — raising the
+write or destructive tier, `tls_verify = false`, `ssh_host`, `service_username`,
+a looser `mcpTemplate` or `dataPolicy` — until you run, in a terminal:
+
+```bash
+iris-agentic-dev trust --show   # read what it would apply
+iris-agentic-dev trust          # type "trust" to accept
+```
+
+`check_config` lists what was set aside (`set_aside`) and why. Do not
+auto-approve `iris-agentic-dev trust` in Cursor's terminal tool: the check proves
+a terminal, not a person. See [Connecting: Trust](connecting.md#trust).
 
 ---
 

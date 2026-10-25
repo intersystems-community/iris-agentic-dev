@@ -11,10 +11,10 @@
 //! coverage of the file they live in.
 
 use iris_agentic_dev_core::testing::{
-    clean_command, clean_mcp_command, iad_binary_path, require_iad_binary, BEHAVIOR_ENV_VARS,
+    clean_command, clean_mcp_command, iad_binary_path, require_iad_binary, EnvGuard,
+    BEHAVIOR_ENV_VARS,
 };
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, OnceLock};
 
 /// The variables `iad_binary_path` reads are process-global. Serialize the tests that write
 /// them and put the previous values back, so a harness that set `IAD_BINARY` for the whole
@@ -26,38 +26,14 @@ const GUARDED: [&str; 4] = [
     "CARGO_LLVM_COV",
 ];
 
-struct EnvGuard {
-    _lock: MutexGuard<'static, ()>,
-    saved: Vec<(&'static str, Option<String>)>,
-}
-
-impl EnvGuard {
-    fn new() -> Self {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        let lock = LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let saved = GUARDED
-            .iter()
-            .map(|k| (*k, std::env::var(k).ok()))
-            .collect();
-        for k in GUARDED {
-            std::env::remove_var(k);
-        }
-        EnvGuard { _lock: lock, saved }
+/// Takes the shared guard and clears the variables these tests are about, so a value the shell
+/// exported cannot change the result; everything is put back on drop.
+fn guarded() -> EnvGuard {
+    let mut g = EnvGuard::new();
+    for k in GUARDED {
+        g.unset(k);
     }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (k, v) in &self.saved {
-            match v {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
-        }
-    }
+    g
 }
 
 /// A path that is absolute and certain not to exist.
@@ -67,9 +43,9 @@ fn missing_absolute_path() -> PathBuf {
 
 #[test]
 fn absolute_iad_binary_is_returned_unchanged() {
-    let _g = EnvGuard::new();
+    let mut env_guard = guarded();
     let want = missing_absolute_path();
-    std::env::set_var("IAD_BINARY", &want);
+    env_guard.set("IAD_BINARY", &want);
     assert_eq!(iad_binary_path(), want);
 }
 
@@ -78,8 +54,8 @@ fn absolute_iad_binary_is_returned_unchanged() {
 /// against the cwd points at `crates/<member>/target/debug/…` — which never exists.
 #[test]
 fn relative_iad_binary_resolves_against_the_workspace_root_not_the_cwd() {
-    let _g = EnvGuard::new();
-    std::env::set_var("IAD_BINARY", "./target/debug/iris-agentic-dev");
+    let mut env_guard = guarded();
+    env_guard.set("IAD_BINARY", "./target/debug/iris-agentic-dev");
     let resolved = iad_binary_path();
 
     assert!(
@@ -112,7 +88,7 @@ fn relative_iad_binary_resolves_against_the_workspace_root_not_the_cwd() {
 
 #[test]
 fn unset_iad_binary_falls_back_to_a_workspace_target_path() {
-    let _g = EnvGuard::new();
+    let mut _env_guard = guarded();
     let resolved = iad_binary_path();
 
     assert!(resolved.is_absolute(), "fallback must be absolute");
@@ -140,7 +116,7 @@ fn unset_iad_binary_falls_back_to_a_workspace_target_path() {
 /// were testing old code. The instrumented build is right only inside `cargo llvm-cov`.
 #[test]
 fn outside_cargo_llvm_cov_the_instrumented_build_is_never_chosen() {
-    let _g = EnvGuard::new();
+    let mut _env_guard = guarded();
     let resolved = iad_binary_path();
     assert!(
         !resolved.to_string_lossy().contains("llvm-cov-target"),
@@ -151,8 +127,8 @@ fn outside_cargo_llvm_cov_the_instrumented_build_is_never_chosen() {
 
 #[test]
 fn under_cargo_llvm_cov_the_instrumented_build_is_chosen() {
-    let _g = EnvGuard::new();
-    std::env::set_var("CARGO_LLVM_COV", "1");
+    let mut env_guard = guarded();
+    env_guard.set("CARGO_LLVM_COV", "1");
     let resolved = iad_binary_path();
     assert!(
         resolved.ends_with("target/llvm-cov-target/debug/iris-agentic-dev"),
@@ -164,36 +140,36 @@ fn under_cargo_llvm_cov_the_instrumented_build_is_chosen() {
 /// `scripts/coverage.sh` points `IRIS_DEV_BIN` at its instrumented wrapper.
 #[test]
 fn iris_dev_bin_names_the_binary_when_iad_binary_is_unset() {
-    let _g = EnvGuard::new();
+    let mut env_guard = guarded();
     let want = missing_absolute_path();
-    std::env::set_var("IRIS_DEV_BIN", &want);
+    env_guard.set("IRIS_DEV_BIN", &want);
     assert_eq!(iad_binary_path(), want);
 }
 
 #[test]
 fn iad_binary_wins_over_iris_dev_bin() {
-    let _g = EnvGuard::new();
+    let mut env_guard = guarded();
     let want = missing_absolute_path();
-    std::env::set_var("IAD_BINARY", &want);
-    std::env::set_var("IRIS_DEV_BIN", "/elsewhere/iris-agentic-dev");
+    env_guard.set("IAD_BINARY", &want);
+    env_guard.set("IRIS_DEV_BIN", "/elsewhere/iris-agentic-dev");
     assert_eq!(iad_binary_path(), want);
 }
 
 #[test]
 fn require_returns_the_path_when_the_binary_exists() {
-    let _g = EnvGuard::new();
+    let mut env_guard = guarded();
     // The test binary itself is the one file guaranteed to be on disk right now.
     let existing = std::env::current_exe().expect("current_exe");
-    std::env::set_var("IAD_BINARY", &existing);
+    env_guard.set("IAD_BINARY", &existing);
     assert_eq!(require_iad_binary(), Some(existing));
 }
 
 /// A skip is only honest when someone asked for it, and it has to say so.
 #[test]
 fn require_returns_none_when_allow_skip_is_set_and_the_binary_is_missing() {
-    let _g = EnvGuard::new();
-    std::env::set_var("IAD_BINARY", missing_absolute_path());
-    std::env::set_var("IAD_ALLOW_SKIP", "1");
+    let mut env_guard = guarded();
+    env_guard.set("IAD_BINARY", missing_absolute_path());
+    env_guard.set("IAD_ALLOW_SKIP", "1");
     assert_eq!(require_iad_binary(), None);
 }
 
@@ -202,8 +178,8 @@ fn require_returns_none_when_allow_skip_is_set_and_the_binary_is_missing() {
 #[test]
 #[should_panic(expected = "no iris-agentic-dev binary at")]
 fn require_panics_when_the_binary_is_missing() {
-    let _g = EnvGuard::new();
-    std::env::set_var("IAD_BINARY", missing_absolute_path());
+    let mut env_guard = guarded();
+    env_guard.set("IAD_BINARY", missing_absolute_path());
     require_iad_binary();
 }
 
@@ -216,12 +192,21 @@ fn clean_command_removes_every_behavior_var() {
         .filter_map(|(k, _)| k.to_str())
         .collect();
 
-    for var in BEHAVIOR_ENV_VARS {
+    // The one variable `clean_command` sets instead of removing: a spawned server must not open the
+    // developer's real keychain.
+    const PINNED: &str = "IAD_NO_KEYCHAIN";
+    for var in BEHAVIOR_ENV_VARS.iter().filter(|v| **v != PINNED) {
         assert!(
             removed.contains(var),
             "{var} is in BEHAVIOR_ENV_VARS but clean_command did not remove it"
         );
     }
+    let pinned = cmd
+        .get_envs()
+        .find(|(k, _)| k.to_str() == Some(PINNED))
+        .and_then(|(_, v)| v)
+        .and_then(|v| v.to_str());
+    assert_eq!(pinned, Some("1"));
 }
 
 #[test]

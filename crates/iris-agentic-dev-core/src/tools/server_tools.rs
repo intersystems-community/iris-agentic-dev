@@ -28,7 +28,8 @@ pub struct AddServerParams {
     pub namespace: String,
     /// IRIS username.
     pub username: String,
-    /// IRIS password — stored in OS keychain, never written to disk.
+    /// IRIS password — stored in the OS keychain under iad's own service, bound to this endpoint.
+    /// On a host with no keychain it is saved in servers.json (owner-only) for this endpoint.
     pub password: String,
     /// Optional human-readable description.
     pub description: Option<String>,
@@ -40,6 +41,20 @@ pub struct AddServerParams {
     /// instance served at the root. A path only — no scheme or host.
     #[serde(default)]
     pub web_prefix: Option<String>,
+    /// The restricted account the agent's code runs as on this server (`iris_execute`,
+    /// `iris_query` writes, `iris_global` set/kill, `iris_execute_method`, `global_kill`,
+    /// `iris_test`, `iris_coverage` run/start and the WebSocket terminal). A server without one is
+    /// refused those tools while `IRIS_SERVICE_USERNAME` is set. The account needs
+    /// `%Development:USE`; see docs/connecting.md.
+    #[serde(default)]
+    pub service_username: Option<String>,
+    /// The service account's password — stored in the OS keychain, never written to disk unless
+    /// there is no keychain.
+    #[serde(default)]
+    pub service_password: Option<String>,
+    /// The Docker container of this server: the only one a docker exec fallback may use for it.
+    #[serde(default)]
+    pub container: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -94,10 +109,33 @@ pub struct ProbeResult {
     pub error: Option<String>,
 }
 
+/// Why `host` cannot be an ad-hoc probe target, or `None` when it is a hostname or IP literal
+/// (IPv6 in brackets). A scheme, port, path, query, fragment or user part is refused (spec 141 C6).
+pub fn probe_host_problem(host: &str) -> Option<String> {
+    let plain = !host.is_empty()
+        && !host
+            .chars()
+            .any(|c| c.is_whitespace() || "/?#@\\".contains(c));
+    let parsed = reqwest::Url::parse(&format!("http://{host}/")).ok();
+    let is_host = parsed.as_ref().is_some_and(|u| {
+        u.host().is_some()
+            && u.port().is_none()
+            && u.username().is_empty()
+            && u.path() == "/"
+            && u.query().is_none()
+    });
+    (!(plain && is_host)).then(|| {
+        format!("host {host:?} must be a hostname or IP address, without a scheme, port or path")
+    })
+}
+
 /// Probe a single IRIS server via Atelier REST (`GET /api/atelier/`) with a 5-second timeout.
 ///
 /// Returns `ProbeResult { reachable: false, auth: false, ... error: Some(...) }` on any
 /// network error or timeout. Returns `reachable: true, auth: false` on HTTP 401.
+///
+/// The ad-hoc probe takes its own client: no shared cookie store, and redirects are not followed,
+/// so the session cookie stays off a probe aimed at another origin (spec 141 C6).
 pub async fn probe_server(
     host: &str,
     web_port: u16,
@@ -105,13 +143,35 @@ pub async fn probe_server(
     username: &str,
     password: &str,
 ) -> ProbeResult {
-    probe_base_url(
+    use crate::iris::http::{client_for, ClientKind, TlsSetting};
+
+    if let Some(problem) = probe_host_problem(host) {
+        return unreachable_probe(problem);
+    }
+    let client = match client_for(&TlsSetting::default(), ClientKind::AdHoc) {
+        Ok(c) => c,
+        Err(e) => return unreachable_probe(format!("Failed to build HTTP client: {e}")),
+    };
+    probe_with_client(
+        &client,
         &format!("http://{host}:{web_port}"),
         namespace,
         username,
         password,
     )
     .await
+}
+
+fn unreachable_probe(error: String) -> ProbeResult {
+    ProbeResult {
+        reachable: false,
+        auth: false,
+        iris_version: None,
+        atelier_version: None,
+        namespace: None,
+        latency_ms: None,
+        error: Some(error),
+    }
 }
 
 /// Probe an already-assembled base URL — `scheme://host:port` plus any web path prefix.
@@ -122,27 +182,28 @@ pub async fn probe_server(
 /// probe its `base_url` instead.
 pub async fn probe_base_url(
     base_url: &str,
+    tls: &crate::iris::http::TlsSetting,
     namespace: &str,
     username: &str,
     password: &str,
 ) -> ProbeResult {
-    use crate::iris::connection::IrisConnection;
-    use std::time::Instant;
+    use crate::iris::http::{client_for, ClientKind};
 
-    let client = match IrisConnection::probe_client() {
+    let client = match client_for(tls, ClientKind::Probe) {
         Ok(c) => c,
-        Err(e) => {
-            return ProbeResult {
-                reachable: false,
-                auth: false,
-                iris_version: None,
-                atelier_version: None,
-                namespace: None,
-                latency_ms: None,
-                error: Some(format!("Failed to build HTTP client: {e}")),
-            };
-        }
+        Err(e) => return unreachable_probe(format!("Failed to build HTTP client: {e}")),
     };
+    probe_with_client(&client, base_url, namespace, username, password).await
+}
+
+async fn probe_with_client(
+    client: &reqwest::Client,
+    base_url: &str,
+    namespace: &str,
+    username: &str,
+    password: &str,
+) -> ProbeResult {
+    use std::time::Instant;
 
     let url = format!("{}/api/atelier/", base_url.trim_end_matches('/'));
     let start = Instant::now();
@@ -200,7 +261,7 @@ pub async fn probe_base_url(
             }
             // Parse Atelier root response for version info.
             let (iris_version, atelier_version) =
-                if let Ok(body) = resp.json::<serde_json::Value>().await {
+                if let Ok(body) = crate::iris::http::capped_json::<serde_json::Value>(resp).await {
                     let content = &body["result"]["content"];
                     let iv = content["version"].as_str().map(|s| s.to_string());
                     let av = content["api"].as_u64().map(|v| v.to_string());

@@ -44,6 +44,9 @@ fn mcp_exchange_timed(
         // fail on the refusal, which is the gate working, not a bug.
         .env("IRIS_WRITE_TOOLS_ENABLED", "1")
         .env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "1")
+        // Body-class search reads message bodies, so the bulk-data gate answers it before the handler
+        // does (spec 141 T214); the operator file in this home sets `dataPolicy = "allow"`.
+        .envs(iris_agentic_dev_core::testing::data_reads_allowed_env())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

@@ -46,6 +46,7 @@ const BATCH5: &[ParamContract] = &[
     ParamContract {
         tool: "iris_production_item",
         params: &[
+            ("confirm", "boolean"),
             ("action", "string"),
             ("item", "string"),
             ("namespace", "string"),

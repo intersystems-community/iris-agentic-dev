@@ -14,9 +14,7 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
-use crate::iris::connection::{
-    caller_mode, iris_http_client, user_agent, CallerMode, IrisConnection,
-};
+use crate::iris::connection::{caller_mode, user_agent, CallerMode, IrisConnection};
 
 // ── Error codes ───────────────────────────────────────────────────────────────
 
@@ -87,6 +85,13 @@ struct WsSessionInner {
 /// Thread-safe pool of live WebSocket terminal sessions keyed by token.
 pub struct WsSessionPool {
     sessions: Mutex<HashMap<String, WsSessionInner>>,
+    /// The pool name each session was opened against; `None` is the default connection. The
+    /// pipeline gates `iris_ws_exec` and `iris_ws_close` on this entry, never on the server name a
+    /// caller can write into the token text (spec 141, R1 D3).
+    targets: std::sync::Mutex<HashMap<String, Option<String>>>,
+    /// The user each session's terminal reported at open (`$USERNAME`), so a call can be refused
+    /// once the identity it would run as is no longer the one the session opened with (spec 141, R2).
+    identities: std::sync::Mutex<HashMap<String, (String, bool)>>,
 }
 
 impl WsSessionPool {
@@ -94,7 +99,76 @@ impl WsSessionPool {
     pub fn new() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            targets: std::sync::Mutex::new(HashMap::new()),
+            identities: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Record who `token`'s session runs as. A probed user is `verified`; one taken from the
+    /// credentials the socket was opened with is not.
+    pub fn record_identity(&self, token: &str, user: &str) {
+        self.record_identity_checked(token, user, true);
+    }
+
+    /// [`Self::record_identity`], saying whether the terminal reported `user` itself.
+    pub fn record_identity_checked(&self, token: &str, user: &str, verified: bool) {
+        self.identities
+            .lock()
+            .unwrap()
+            .insert(token.to_string(), (user.to_string(), verified));
+    }
+
+    /// Who `token`'s session was opened as.
+    pub fn identity_of(&self, token: &str) -> Option<String> {
+        self.identities
+            .lock()
+            .unwrap()
+            .get(token)
+            .map(|(u, _)| u.clone())
+    }
+
+    /// Did the terminal itself report the user `token`'s session runs as?
+    pub fn identity_verified(&self, token: &str) -> bool {
+        self.identities
+            .lock()
+            .unwrap()
+            .get(token)
+            .is_some_and(|(_, v)| *v)
+    }
+
+    /// Is `current` the user the session opened as? A session opened before the operator set,
+    /// changed or removed the service account keeps its original login, so a call that would now
+    /// run as someone else is refused and the session's records are dropped; the caller closes the
+    /// socket. A session with no record is refused too: its identity is unknown.
+    pub fn check_identity(&self, token: &str, current: &str) -> Result<(), String> {
+        let recorded = self.identity_of(token);
+        match recorded {
+            Some(was) if was.eq_ignore_ascii_case(current) => Ok(()),
+            was => {
+                self.identities.lock().unwrap().remove(token);
+                self.targets.lock().unwrap().remove(token);
+                Err(format!(
+                    "{}: this session was opened as {} and this call would run as {current}. \
+                     Close it and open a new one.",
+                    crate::tools::exec::ERR_SESSION_IDENTITY_CHANGED,
+                    was.as_deref().unwrap_or("an unrecorded user")
+                ))
+            }
+        }
+    }
+
+    /// Record which server `token`'s session acts on. `None` is the default connection.
+    pub fn record_target(&self, token: &str, target: Option<&str>) {
+        self.targets
+            .lock()
+            .unwrap()
+            .insert(token.to_string(), target.map(str::to_string));
+    }
+
+    /// The server `token`'s session was opened against: `Some(None)` is the default connection and
+    /// `None` is a token no session holds.
+    pub fn target_of(&self, token: &str) -> Option<Option<String>> {
+        self.targets.lock().unwrap().get(token).cloned()
     }
 
     /// Parse a session token into `(server_name, namespace, uuid)`.
@@ -140,6 +214,20 @@ impl WsSessionPool {
         conn: &IrisConnection,
         server_name: &str,
         namespace: &str,
+    ) -> Result<String, McpError> {
+        Self::open_as(pool_ref, conn, server_name, namespace, None).await
+    }
+
+    /// [`Self::open`], and after the first prompt ask the terminal who it is (`$USERNAME`). The
+    /// answer is recorded with the session. With `expected` set (a service account) another answer
+    /// closes the socket and fails with `SERVICE_ACCOUNT_IDENTITY_MISMATCH`: the credentials were
+    /// the service account's, but a session cookie can outrank them.
+    pub async fn open_as(
+        pool_ref: &Arc<Self>,
+        conn: &IrisConnection,
+        server_name: &str,
+        namespace: &str,
+        expected: Option<&str>,
     ) -> Result<String, McpError> {
         // Step 1: fetch CSP session cookies via Basic auth HTTP GET.
         let cookie_string = get_csp_session_cookie(conn).await?;
@@ -205,14 +293,52 @@ impl WsSessionPool {
         let uuid = uuid::Uuid::new_v4().to_string();
         let token = Self::make_token(server_name, namespace, &uuid);
 
-        // Store session.
-        let inner = WsSessionInner {
+        let mut inner = WsSessionInner {
             server_name: server_name.to_string(),
             namespace: namespace.to_string(),
             uuid,
             sink,
             stream,
         };
+
+        // Step 7: ask the terminal who it is, once per session.
+        let probe = send_line(&mut inner, crate::tools::exec::IDENTITY_PROBE_LINE).await?;
+        let ran_as = probe
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("IAD-ID:"))
+            .map(|u| u.trim().to_string());
+        if let (Some(want), Some(got)) = (expected, ran_as.as_deref()) {
+            if !want.eq_ignore_ascii_case(got) {
+                let _ = inner.sink.close().await;
+                return Err(McpError::invalid_request(
+                    format!(
+                        "{}: the terminal reports {got}, not the service account {want}. The \
+                         session was closed before any code ran.",
+                        crate::tools::exec::ERR_SERVICE_ACCOUNT_IDENTITY_MISMATCH
+                    ),
+                    None,
+                ));
+            }
+        }
+        if expected.is_some() && ran_as.is_none() {
+            let _ = inner.sink.close().await;
+            return Err(McpError::invalid_request(
+                format!(
+                    "{}: the terminal did not say who it is, so the session was closed before \
+                     any code ran.",
+                    crate::tools::exec::ERR_SERVICE_ACCOUNT_LOGIN_FAILED
+                ),
+                None,
+            ));
+        }
+        match &ran_as {
+            Some(user) => pool_ref.record_identity(&token, user),
+            // A terminal that did not answer the probe is recorded as the user it logged in as, so
+            // a later call as the same user is not refused.
+            None => pool_ref.record_identity_checked(&token, &conn.username, false),
+        }
+
+        // Store session.
         pool_ref.sessions.lock().await.insert(token.clone(), inner);
 
         Ok(token)
@@ -242,87 +368,7 @@ impl WsSessionPool {
         let inner = sessions
             .get_mut(token)
             .ok_or_else(|| McpError::invalid_request(stale_session_message(caller_mode()), None))?;
-
-        // Send the prompt/input frame.
-        let prompt_msg = json!({
-            "type": "prompt",
-            "input": code,
-        });
-        inner
-            .sink
-            .send(Message::Text(prompt_msg.to_string().into()))
-            .await
-            .map_err(|e| {
-                McpError::internal_error(
-                    format!("{}: send failed: {e}", SESSION_WS_DISCONNECTED),
-                    None,
-                )
-            })?;
-
-        // Collect output frames until the next prompt frame.
-        let timeout_dur = std::time::Duration::from_secs(WS_FRAME_TIMEOUT_SECS);
-        let mut output = String::new();
-
-        loop {
-            let frame = tokio::time::timeout(timeout_dur, inner.stream.next())
-                .await
-                .map_err(|_| {
-                    McpError::internal_error(
-                        format!("{}: No response from IRIS within timeout", SESSION_TIMEOUT),
-                        None,
-                    )
-                })?;
-
-            let msg = match frame {
-                Some(Ok(m)) => m,
-                Some(Err(e)) => {
-                    return Err(McpError::internal_error(
-                        format!("{}: connection error: {e}", SESSION_WS_DISCONNECTED),
-                        None,
-                    ))
-                }
-                None => {
-                    return Err(McpError::internal_error(
-                        format!("{}: connection closed by server", SESSION_WS_DISCONNECTED),
-                        None,
-                    ))
-                }
-            };
-
-            let text: String = match msg {
-                Message::Text(t) => t.to_string(),
-                Message::Binary(b) => String::from_utf8_lossy(&b).into_owned(),
-                Message::Close(_) => {
-                    return Err(McpError::internal_error(
-                        format!("{}: server closed connection", SESSION_WS_DISCONNECTED),
-                        None,
-                    ))
-                }
-                // Ping/Pong — ignore and continue.
-                _ => continue,
-            };
-
-            let parsed: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-            match parsed["type"].as_str() {
-                Some("output") => {
-                    if let Some(t) = parsed["text"].as_str() {
-                        output.push_str(t);
-                    }
-                }
-                Some("prompt") => {
-                    // Prompt frame signals end of output for this exec.
-                    break;
-                }
-                _ => {
-                    // Other frame types (e.g. "error") — include any text if present.
-                    if let Some(t) = parsed["text"].as_str() {
-                        output.push_str(t);
-                    }
-                }
-            }
-        }
-
-        Ok(output)
+        send_line(inner, code).await
     }
 
     /// Close a WebSocket terminal session.
@@ -334,6 +380,8 @@ impl WsSessionPool {
             McpError::invalid_request(format!("{}: invalid token format", SESSION_STALE), None)
         })?;
 
+        pool_ref.targets.lock().unwrap().remove(token);
+        pool_ref.identities.lock().unwrap().remove(token);
         let mut sessions = pool_ref.sessions.lock().await;
         let mut inner = sessions
             .remove(token)
@@ -357,6 +405,89 @@ impl Default for WsSessionPool {
     }
 }
 
+/// Send one input line to an open terminal and collect the output up to the next prompt.
+async fn send_line(inner: &mut WsSessionInner, code: &str) -> Result<String, McpError> {
+    // Send the prompt/input frame.
+    let prompt_msg = json!({
+        "type": "prompt",
+        "input": code,
+    });
+    inner
+        .sink
+        .send(Message::Text(prompt_msg.to_string().into()))
+        .await
+        .map_err(|e| {
+            McpError::internal_error(
+                format!("{}: send failed: {e}", SESSION_WS_DISCONNECTED),
+                None,
+            )
+        })?;
+
+    // Collect output frames until the next prompt frame.
+    let timeout_dur = std::time::Duration::from_secs(WS_FRAME_TIMEOUT_SECS);
+    let mut output = String::new();
+
+    loop {
+        let frame = tokio::time::timeout(timeout_dur, inner.stream.next())
+            .await
+            .map_err(|_| {
+                McpError::internal_error(
+                    format!("{}: No response from IRIS within timeout", SESSION_TIMEOUT),
+                    None,
+                )
+            })?;
+
+        let msg = match frame {
+            Some(Ok(m)) => m,
+            Some(Err(e)) => {
+                return Err(McpError::internal_error(
+                    format!("{}: connection error: {e}", SESSION_WS_DISCONNECTED),
+                    None,
+                ))
+            }
+            None => {
+                return Err(McpError::internal_error(
+                    format!("{}: connection closed by server", SESSION_WS_DISCONNECTED),
+                    None,
+                ))
+            }
+        };
+
+        let text: String = match msg {
+            Message::Text(t) => t.to_string(),
+            Message::Binary(b) => String::from_utf8_lossy(&b).into_owned(),
+            Message::Close(_) => {
+                return Err(McpError::internal_error(
+                    format!("{}: server closed connection", SESSION_WS_DISCONNECTED),
+                    None,
+                ))
+            }
+            // Ping/Pong — ignore and continue.
+            _ => continue,
+        };
+
+        let parsed: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
+        match parsed["type"].as_str() {
+            Some("output") => {
+                if let Some(t) = parsed["text"].as_str() {
+                    output.push_str(t);
+                }
+            }
+            Some("prompt") => {
+                // Prompt frame signals end of output for this exec.
+                break;
+            }
+            _ => {
+                // Other frame types (e.g. "error") — include any text if present.
+                if let Some(t) = parsed["text"].as_str() {
+                    output.push_str(t);
+                }
+            }
+        }
+    }
+
+    Ok(output)
+}
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 /// Fetch a CSP session cookie by issuing a GET `/api/atelier/` with Basic auth.
@@ -364,11 +495,10 @@ impl Default for WsSessionPool {
 /// Collects ALL `Set-Cookie` response headers and assembles them into a single
 /// `"k=v; k2=v2"` cookie string for use in the WS handshake.
 async fn get_csp_session_cookie(conn: &IrisConnection) -> Result<String, McpError> {
-    // Use a fresh client without cookie_store so we can see raw Set-Cookie headers.
-    // Via the shared resolver: this copy read only IRIS_INSECURE, so IRIS_TLS_VERIFY=false could
-    // not get a websocket its own cookie fetch (#127).
-    let insecure = crate::iris::connection::tls_insecure_from_env();
-    let client = iris_http_client(None, insecure, false)
+    // Use a fresh client without cookie_store so we can see raw Set-Cookie headers, checked the
+    // way this connection's own setting says (#127).
+    let client = conn
+        .client(crate::iris::http::ClientKind::Raw)
         .map_err(|e| McpError::internal_error(format!("HTTP client build failed: {e}"), None))?;
 
     let url = format!("{}/api/atelier/", conn.base_url.trim_end_matches('/'));

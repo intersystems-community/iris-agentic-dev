@@ -70,6 +70,10 @@ pub struct GlobalPreviewParams {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalKillParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     /// Global name, with or without the leading `^`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub global: Option<String>,

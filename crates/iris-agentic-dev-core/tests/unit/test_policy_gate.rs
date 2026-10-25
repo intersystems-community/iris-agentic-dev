@@ -2,16 +2,16 @@
 //
 // Verifies:
 // - All 10 tool→category mappings
-// - policy_gate() blocks when category not in allow list
-// - policy_gate() permits when category in allow list
-// - policy_gate() permits all when no policy block
+// - gated::policy() blocks when category not in allow list
+// - gated::policy() permits when category in allow list
+// - gated::policy() permits all when no policy block
 // - Interop with role-gate: policy wins as most restrictive (policy checked first)
 // - check_config includes policy summary
 
-use iris_agentic_dev_core::iris::server_manager::policy_gate;
 use iris_agentic_dev_core::iris::workspace_config::{
     check_role_gate, ConnectionPolicy, ConnectionRole, ToolCategory,
 };
+use iris_agentic_dev_core::testing::gated;
 
 fn policy_allow(cats: &[&str]) -> ConnectionPolicy {
     ConnectionPolicy {
@@ -34,7 +34,7 @@ fn policy_allow(cats: &[&str]) -> ConnectionPolicy {
 #[test]
 fn tool_category_mapping_compile() {
     let policy = policy_allow(&["execute"]);
-    let result = policy_gate("iris_compile", "test-server", Some(&policy));
+    let result = gated::policy("iris_compile", "test-server", Some(&policy));
     assert!(
         result.is_some(),
         "iris_compile should be blocked when compile not in allow list"
@@ -44,7 +44,7 @@ fn tool_category_mapping_compile() {
 #[test]
 fn tool_category_mapping_execute() {
     let policy = policy_allow(&["compile"]);
-    let result = policy_gate("iris_execute", "test-server", Some(&policy));
+    let result = gated::policy("iris_execute", "test-server", Some(&policy));
     assert!(
         result.is_some(),
         "iris_execute should be blocked when execute not in allow list"
@@ -54,7 +54,7 @@ fn tool_category_mapping_execute() {
 #[test]
 fn tool_category_mapping_query() {
     let policy = policy_allow(&["compile"]);
-    let result = policy_gate("iris_query", "test-server", Some(&policy));
+    let result = gated::policy("iris_query", "test-server", Some(&policy));
     assert!(
         result.is_some(),
         "iris_query should be blocked when query not in allow list"
@@ -64,7 +64,7 @@ fn tool_category_mapping_query() {
 #[test]
 fn tool_category_mapping_search() {
     let policy = policy_allow(&["compile"]);
-    let result = policy_gate("iris_search", "test-server", Some(&policy));
+    let result = gated::policy("iris_search", "test-server", Some(&policy));
     assert!(
         result.is_some(),
         "iris_search should be blocked when search not in allow list"
@@ -74,7 +74,7 @@ fn tool_category_mapping_search() {
 #[test]
 fn tool_category_mapping_docs() {
     let policy = policy_allow(&["compile"]);
-    let result = policy_gate("docs_introspect", "test-server", Some(&policy));
+    let result = gated::policy("docs_introspect", "test-server", Some(&policy));
     assert!(
         result.is_some(),
         "docs_introspect should be blocked when docs not in allow list"
@@ -84,7 +84,7 @@ fn tool_category_mapping_docs() {
 #[test]
 fn tool_category_mapping_source_control() {
     let policy = policy_allow(&["compile"]);
-    let result = policy_gate("iris_source_control", "test-server", Some(&policy));
+    let result = gated::policy("iris_source_control", "test-server", Some(&policy));
     assert!(
         result.is_some(),
         "iris_source_control blocked when source_control not in allow"
@@ -94,7 +94,7 @@ fn tool_category_mapping_source_control() {
 #[test]
 fn tool_category_mapping_debug() {
     let policy = policy_allow(&["compile"]);
-    let result = policy_gate("debug_capture_packet", "test-server", Some(&policy));
+    let result = gated::policy("debug_capture_packet", "test-server", Some(&policy));
     assert!(
         result.is_some(),
         "debug tool blocked when debug not in allow list"
@@ -104,7 +104,7 @@ fn tool_category_mapping_debug() {
 #[test]
 fn tool_category_mapping_admin() {
     let policy = policy_allow(&["compile"]);
-    let result = policy_gate("iris_admin", "test-server", Some(&policy));
+    let result = gated::policy("iris_admin", "test-server", Some(&policy));
     assert!(
         result.is_some(),
         "iris_admin blocked when admin not in allow list"
@@ -114,7 +114,7 @@ fn tool_category_mapping_admin() {
 #[test]
 fn tool_category_mapping_skill() {
     let policy = policy_allow(&["compile"]);
-    let result = policy_gate("skill_list", "test-server", Some(&policy));
+    let result = gated::policy("skill_list", "test-server", Some(&policy));
     assert!(
         result.is_some(),
         "skill tools blocked when skill not in allow list"
@@ -124,19 +124,19 @@ fn tool_category_mapping_skill() {
 #[test]
 fn tool_category_mapping_kb() {
     let policy = policy_allow(&["compile"]);
-    let result = policy_gate("kb_recall", "test-server", Some(&policy));
+    let result = gated::policy("kb_recall", "test-server", Some(&policy));
     assert!(
         result.is_some(),
         "kb tools blocked when kb not in allow list"
     );
 }
 
-// ── policy_gate() logic tests ─────────────────────────────────────────────
+// ── gated::policy() logic tests ─────────────────────────────────────────────
 
 #[test]
 fn policy_gate_blocks_when_category_not_in_allow_list() {
     let policy = policy_allow(&["query", "search", "docs"]);
-    let result = policy_gate("iris_compile", "prod", Some(&policy));
+    let result = gated::policy("iris_compile", "prod", Some(&policy));
     assert!(result.is_some(), "compile should be blocked");
     let json = result.unwrap();
     assert_eq!(json["error_code"], "POLICY_GATE");
@@ -156,7 +156,7 @@ fn policy_gate_blocks_when_category_not_in_allow_list() {
 #[test]
 fn policy_gate_permits_when_in_allow_list() {
     let policy = policy_allow(&["query", "search"]);
-    let result = policy_gate("iris_query", "prod", Some(&policy));
+    let result = gated::policy("iris_query", "prod", Some(&policy));
     assert!(
         result.is_none(),
         "iris_query should be permitted when query is in allow list"
@@ -166,14 +166,14 @@ fn policy_gate_permits_when_in_allow_list() {
 #[test]
 fn policy_gate_permits_all_when_no_policy() {
     // No policy block → all tools permitted
-    let result = policy_gate("iris_compile", "dev-local", None);
+    let result = gated::policy("iris_compile", "dev-local", None);
     assert!(result.is_none(), "no policy → all tools permitted");
 }
 
 #[test]
 fn policy_gate_response_includes_server_name() {
     let policy = policy_allow(&["query"]);
-    let json = policy_gate("iris_compile", "prod-server", Some(&policy)).unwrap();
+    let json = gated::policy("iris_compile", "prod-server", Some(&policy)).unwrap();
     assert_eq!(json["server_name"], "prod-server");
 }
 
@@ -184,7 +184,7 @@ fn policy_gate_fires_before_role_gate() {
     // When both policy and role-gate would block, policy error should be returned
     // (policy is checked first in handler wiring, role-gate never reached)
     let policy = policy_allow(&["query"]);
-    let policy_result = policy_gate("iris_compile", "prod", Some(&policy));
+    let policy_result = gated::policy("iris_compile", "prod", Some(&policy));
     assert!(
         policy_result.is_some(),
         "policy gate must fire for iris_compile blocked by policy"
@@ -211,7 +211,7 @@ fn policy_gate_fires_before_role_gate() {
 fn policy_gate_none_falls_through_to_role_gate() {
     // When policy permits (query allowed), role-gate can still block for subject instances
     let policy = policy_allow(&["query", "compile", "execute"]);
-    let policy_result = policy_gate("iris_compile", "prod", Some(&policy));
+    let policy_result = gated::policy("iris_compile", "prod", Some(&policy));
     assert!(
         policy_result.is_none(),
         "compile is in allow list → policy permits → role-gate can fire next"
@@ -266,12 +266,12 @@ allow = ["query", "compile"]
 
     let cfg_v1 = load_fleet_config_from_str(toml_v1).unwrap();
     let policy_v1 = cfg_v1.policies.get("prod").unwrap();
-    let gate_v1 = policy_gate("iris_compile", "prod", Some(policy_v1));
+    let gate_v1 = gated::policy("iris_compile", "prod", Some(policy_v1));
     assert!(gate_v1.is_some(), "compile blocked in v1 policy");
 
     let cfg_v2 = load_fleet_config_from_str(toml_v2).unwrap();
     let policy_v2 = cfg_v2.policies.get("prod").unwrap();
-    let gate_v2 = policy_gate("iris_compile", "prod", Some(policy_v2));
+    let gate_v2 = gated::policy("iris_compile", "prod", Some(policy_v2));
     assert!(
         gate_v2.is_none(),
         "compile permitted in v2 policy after hot-reload"

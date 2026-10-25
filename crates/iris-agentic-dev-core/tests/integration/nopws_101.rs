@@ -23,7 +23,7 @@ fn live_iris_env() -> Vec<(&'static str, String)> {
 
 /// The container `docker exec` should target, same rule.
 fn live_iris_container() -> String {
-    env_or("IRIS_CONTAINER", "iris-dev-iris")
+    iris_agentic_dev_core::testing::LiveTarget::from_env().container
 }
 
 fn env_or(name: &str, default: &str) -> String {

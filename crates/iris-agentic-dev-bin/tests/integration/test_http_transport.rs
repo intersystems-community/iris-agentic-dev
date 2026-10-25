@@ -6,6 +6,8 @@
 fn test_invalid_transport_exits_one() {
     let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
     let out = std::process::Command::new(bin)
+        .env("HOME", crate::support_141::home())
+        .env("USERPROFILE", crate::support_141::home())
         .args(["mcp", "--transport", "grpc"])
         .output()
         .expect("failed to run iris-agentic-dev");
@@ -35,6 +37,8 @@ fn test_http_transport_binds_and_accepts() {
     let port = free_port();
 
     let mut child = std::process::Command::new(bin)
+        .env("HOME", crate::support_141::home())
+        .env("USERPROFILE", crate::support_141::home())
         .args(["mcp", "--transport", "http", "--port", &port.to_string()])
         .env("IRIS_HOST", "localhost")
         .env("IRIS_WEB_PORT", "52780")
@@ -81,6 +85,8 @@ fn test_http_transport_initialize() {
     let port = free_port();
 
     let mut child = std::process::Command::new(bin)
+        .env("HOME", crate::support_141::home())
+        .env("USERPROFILE", crate::support_141::home())
         .args(["mcp", "--transport", "http", "--port", &port.to_string()])
         .env("IRIS_HOST", "localhost")
         .env("IRIS_WEB_PORT", "52780")
@@ -158,6 +164,8 @@ fn test_http_transport_bind_flag() {
     let port = free_port();
 
     let mut child = std::process::Command::new(bin)
+        .env("HOME", crate::support_141::home())
+        .env("USERPROFILE", crate::support_141::home())
         .args([
             "mcp",
             "--transport",

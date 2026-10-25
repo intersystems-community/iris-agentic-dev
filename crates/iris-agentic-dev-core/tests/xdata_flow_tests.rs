@@ -377,3 +377,38 @@ fn an_attribute_value_with_references_is_read_resolved() {
     let xml = r#"<Export><Class name="Demo.Foo"><XData name="B&amp;C"><Data>x</Data></XData></Class></Export>"#;
     assert_eq!(extract_xdata_content(xml, "B&C").as_deref(), Some("x"));
 }
+
+/// Spec 141 C7: a BPL nested past the limit is an error, not a stack overflow. The overflow would
+/// abort the whole MCP server, not just the call. The parse runs on a 2 MiB stack, the default
+/// size of a tokio worker thread, and the limit has to stop it first.
+#[test]
+fn bpl_nesting_past_the_limit_is_refused_without_overflowing() {
+    let depth = 100_000;
+    let xml = format!(
+        "<process>{}{}</process>",
+        "<sequence>".repeat(depth),
+        "</sequence>".repeat(depth)
+    );
+    let worker = std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || parse_bpl(&xml).err().map(|e| e.to_string()))
+        .expect("spawn");
+    let msg = worker
+        .join()
+        .expect("the parser must return, not overflow the stack")
+        .expect("nesting past the limit must be an error");
+    assert!(msg.starts_with("BPL_TOO_DEEP"), "{msg}");
+    assert!(msg.contains("BPL nesting exceeds 128"), "{msg}");
+}
+
+/// The limit is generous: real BPLs are a few levels deep, so 128 levels still parse.
+#[test]
+fn bpl_nesting_at_the_limit_still_parses() {
+    let depth = 100;
+    let xml = format!(
+        "<process>{}{}</process>",
+        "<sequence>".repeat(depth),
+        "</sequence>".repeat(depth)
+    );
+    assert!(parse_bpl(&xml).is_ok());
+}

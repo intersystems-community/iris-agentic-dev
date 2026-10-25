@@ -422,3 +422,107 @@ fn sql_patterns_section_9_says_count_into_sets_zero() {
         "sql-patterns §9 must keep the true fact: SQLCODE 100 sets the INTO variable to \"\""
     );
 }
+
+// ── Spec 141 T-R4b-U16: skill recipes keep the password and the scheme out of argv ────────────
+
+/// Every `*.md` under `skills/`, with its repository-relative path.
+fn skill_markdown_files() -> Vec<(String, String)> {
+    fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                walk(&p, out);
+            } else if p.extension().is_some_and(|e| e == "md") {
+                out.push(p);
+            }
+        }
+    }
+    let root = skills_dir().join("..");
+    let mut paths = Vec::new();
+    walk(&root, &mut paths);
+    assert!(paths.len() > 30, "found only {} skill files", paths.len());
+    paths
+        .into_iter()
+        .map(|p| {
+            let text = std::fs::read_to_string(&p).unwrap();
+            (p.strip_prefix(&root).unwrap().display().to_string(), text)
+        })
+        .collect()
+}
+
+/// The logical command lines of a file that run `curl`: a line ending in `\` joins the next.
+fn curl_commands(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut lines = text.lines();
+    while let Some(line) = lines.next() {
+        let mut cmd = line.to_string();
+        while cmd.trim_end().ends_with('\\') {
+            cmd.pop();
+            match lines.next() {
+                Some(next) => cmd.push_str(next),
+                None => break,
+            }
+        }
+        // A command, not prose: `curl` starts the line, follows a pipe or an `$(` / `=`.
+        let t = cmd.trim_start();
+        let runs_curl = t.starts_with("curl ")
+            || t.contains("| curl ")
+            || t.contains("$(curl ")
+            || t.contains("&& curl ")
+            || t.contains("|| curl ");
+        if runs_curl {
+            out.push(cmd);
+        }
+    }
+    out
+}
+
+#[test]
+fn no_skill_recipe_puts_a_password_on_the_curl_command_line() {
+    let mut bad = Vec::new();
+    let mut seen = 0;
+    for (name, text) in skill_markdown_files() {
+        for cmd in curl_commands(&text) {
+            seen += 1;
+            let has_user_flag = cmd.split_whitespace().any(|w| w == "-u" || w == "--user")
+                || cmd.contains(" -su ")
+                || cmd.contains("-u \"") && cmd.contains("PASS");
+            if has_user_flag || cmd.contains("_SYSTEM:SYS") || cmd.contains(":-SYS}") {
+                bad.push(format!("{name}: {}", cmd.trim()));
+            }
+        }
+    }
+    assert!(
+        seen > 5,
+        "found only {seen} curl commands; the scan is broken"
+    );
+    assert!(
+        bad.is_empty(),
+        "curl commands with a password in argv (use `curl -K -` or the `tool` CLI):\n  {}",
+        bad.join("\n  ")
+    );
+}
+
+#[test]
+fn skill_recipes_that_call_atelier_keep_the_scheme_configurable() {
+    let mut bad = Vec::new();
+    for (name, text) in skill_markdown_files() {
+        for cmd in curl_commands(&text) {
+            let calls_iris = cmd.contains("/api/atelier") || cmd.contains("${BASE_URL}");
+            if !calls_iris {
+                continue;
+            }
+            let ok = cmd.contains("${IRIS_SCHEME") || cmd.contains("localhost");
+            let via_base_url =
+                cmd.contains("${BASE_URL}") && text.contains("BASE_URL=\"${IRIS_SCHEME");
+            if !(ok || via_base_url) {
+                bad.push(format!("{name}: {}", cmd.trim()));
+            }
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "curl commands against Atelier with a fixed scheme and a non-local host:\n  {}",
+        bad.join("\n  ")
+    );
+}

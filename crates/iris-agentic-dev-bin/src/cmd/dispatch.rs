@@ -1,19 +1,13 @@
 //! Shared dispatch path for CLI subcommands that wrap a real MCP tool.
 //!
 //! `compile`/`exec`/`query`/`doc` used to re-implement their Atelier HTTP calls
-//! directly instead of calling the tool methods — the same "hand-maintained parallel
-//! implementation drifts from the real one" pattern found (and fixed) twice elsewhere
-//! this session, in `registered_tool_names()` and the `TOOL_NAMES`/`call_for_test`
-//! dispatch gap. That drift had already cost these four commands real capability:
-//! none of them could route to a named `--server`, and `doc` had no path through an
-//! SCM-checkout elicitation at all. See specs/076-interface-modernization/spec.md,
-//! User Story 2.
+//! directly instead of calling the tool methods, and every one of them ran with its own gate or
+//! none (spec 141 FR-003). They now build one `IrisTools` with `for_cli` and call `call_gated`, the
+//! pipeline the MCP server's `call_tool` runs: the same target resolution, the same write,
+//! destructive, template, `allow` and role gates, the same refusal body.
 //!
-//! `dispatch_tool` is the fix: route through `IrisTools::call_for_test`, the exact
-//! dispatcher `tool.rs`'s generic `tool <name> --args '{...}'` fallback already uses,
-//! so these commands inherit every tool-level feature (multi-server routing, policy
-//! gates, session carriers, elicitation) by construction instead of by a second
-//! hand-maintained copy that can drift again.
+//! `for_cli` sets `strict_toolset`, so the CLI dispatches exactly the names `tools/list`
+//! advertises for the toolset.
 
 use anyhow::Context;
 use iris_agentic_dev_core::{
@@ -21,26 +15,23 @@ use iris_agentic_dev_core::{
     tools::{IrisTools, Toolset},
 };
 
-/// Build an `IrisTools` instance around an already-resolved connection.
+/// Build an `IrisTools` around an already-resolved connection, with the operator's declared gates.
 ///
-/// Takes an already-resolved `IrisConnection` rather than resolving one itself —
-/// callers that need a pre-dispatch safety check against the connection (e.g.
-/// `exec`/`doc put`'s `is_write_allowed()` guard, which the `iris_execute`/`iris_doc`
-/// tool methods do NOT enforce for the default, non-fleet connection role — their
-/// `check_role_gate` only fires for `ConnectionRole::Subject`, so delegating naively
-/// would have silently dropped the one guard the CLI actually had) need the connection
-/// in hand before this runs, not resolved a second time inside it.
-///
-/// `Toolset::Merged` matches `tool.rs`'s own choice — `call_for_test`'s dispatch match
-/// arms are unconditional on tool name and don't consult the toolset at all (toolset
-/// pruning only affects what `list_tools` advertises), so the choice has no effect on
-/// which tools are reachable here; it's just the convention this project already uses
-/// for CLI-driven dispatch.
+/// Takes an already-resolved `IrisConnection` so a caller that needs the connection in hand
+/// first does not resolve it twice. `Toolset::Merged` matches `tool.rs`'s own default.
 pub fn build_tools(iris: IrisConnection) -> anyhow::Result<IrisTools> {
-    IrisTools::new_with_toolset(Some(iris), Toolset::Merged)
+    build_tools_for(Some(iris), Toolset::Merged)
 }
 
-/// Dispatch `tool_name` with `args` through `call_for_test`, and parse the single JSON
+/// `build_tools` for a caller with a toolset of its own, or no default connection (`tool`).
+pub fn build_tools_for(
+    iris: Option<IrisConnection>,
+    toolset: Toolset,
+) -> anyhow::Result<IrisTools> {
+    IrisTools::for_cli(iris, toolset, None)
+}
+
+/// Dispatch `tool_name` with `args` through `call_gated`, and parse the single JSON
 /// text response back into a `serde_json::Value`.
 ///
 /// Takes a `&IrisTools` rather than owning one so a caller that needs two related
@@ -55,7 +46,7 @@ pub async fn call(
     args: serde_json::Value,
 ) -> anyhow::Result<serde_json::Value> {
     let result = tools
-        .call_for_test(tool_name, args)
+        .call_gated(tool_name, args)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -86,4 +77,19 @@ pub async fn dispatch_tool(
 /// describe a failure. Callers must check this field, not `is_error`.)
 pub fn is_failure(v: &serde_json::Value) -> bool {
     v.get("success") == Some(&serde_json::Value::Bool(false))
+}
+
+/// A gate's refusal carries a `refusal` object (kind, server, what lifts it). Print the whole body
+/// to stderr, the one the MCP server sends, and exit 1.
+///
+/// The subcommands that wrap a tool each shape their own success output, and each would otherwise
+/// reduce a refusal to its `error` string and lose the code and the `refusal` object.
+pub fn exit_if_refused(body: &serde_json::Value) {
+    if body
+        .get("refusal")
+        .is_some_and(serde_json::Value::is_object)
+    {
+        eprintln!("{body}");
+        crate::exit(1);
+    }
 }

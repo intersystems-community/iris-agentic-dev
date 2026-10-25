@@ -10,6 +10,10 @@ license.workspace = true
 
 [features]
 testing = []
+# Compiles in the tests that need the operating system's real keychain, and so a person at the
+# machine to answer its approval dialog. `--include-ignored` does not reach them: they are not
+# `#[ignore]`d, they are absent without this feature. See CLAUDE.md ("A test that must use the real keychain").
+real-keychain-tests = []
 
 [dependencies]
 rmcp.workspace = true
@@ -60,6 +64,8 @@ zbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] 
 
 # Test dependencies
 [dev-dependencies]
+# Runs `testing::isolate_process` before `main` in every test target (spec 141 T183).
+ctor = "0.2"
 tokio = { workspace = true, features = ["full"] }
 tempfile = "3"
 serde_json.workspace = true
@@ -67,6 +73,10 @@ reqwest.workspace = true
 regex.workspace = true
 wiremock = "0.6"
 toml.workspace = true
+# T-R4b-B03: a TLS listener with a certificate made at test time. Already in Cargo.lock through
+# hyper-rustls, so no crate is added: the default features would pull in aws-lc-rs, so they are off
+# and the `ring` provider the rest of the tree uses is on.
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
 
 [[test]]
 # All 15 files directly under tests/ compile into this one binary. See tests/main.rs.

@@ -4,6 +4,7 @@
 
 use iris_agentic_dev_core::iris::connection::AtelierVersion;
 use iris_agentic_dev_core::iris::discovery::probe_atelier_with_client;
+use iris_agentic_dev_core::testing::EnvGuard;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -39,6 +40,7 @@ async fn probe_returns_none_on_401() {
 
 #[tokio::test]
 async fn probe_returns_none_on_401_with_iris_container_env() {
+    let mut env_guard = EnvGuard::new();
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/api/atelier/"))
@@ -54,12 +56,12 @@ async fn probe_returns_none_on_401_with_iris_container_env() {
     let port: u16 = port.parse().unwrap();
 
     // Set IRIS_CONTAINER to exercise the container-specific warn branch
-    std::env::set_var("IRIS_CONTAINER_TEST_PROBE", "iris-dev-iris");
+    env_guard.set("IRIS_CONTAINER_TEST_PROBE", "iris-dev-iris");
     // Can't set IRIS_CONTAINER globally safely in parallel tests, so we just verify
     // both branches lead to None — the container-var branch is exercised via env manipulation
     // in the non-parallel test below.
     let result = probe_atelier_with_client(&client, host, port, "_SYSTEM", "SYS", "USER").await;
-    std::env::remove_var("IRIS_CONTAINER_TEST_PROBE");
+    env_guard.unset("IRIS_CONTAINER_TEST_PROBE");
     assert!(result.is_none());
 }
 

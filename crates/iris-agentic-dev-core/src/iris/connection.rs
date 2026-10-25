@@ -70,28 +70,12 @@ const MAX_LABEL_LEN: usize = 64;
 /// `docs/agent-attribution.md`. `IRIS_AGENT_LABEL` is a free-text tag (which agent, which
 /// team, which pipeline) that is stripped of non-ASCII and control characters and
 /// length-capped. The MCP client part (`<name>/<version>`) is appended when a peer
-/// identified itself at `initialize`; it is read from the task-local set by `call_tool`.
+/// identified itself at `initialize`; it is read from the task-local set by `call_tool` and
+/// cleaned by [`clean_peer`] first.
 pub fn user_agent(mode: CallerMode) -> String {
-    let mut ua = format!(
-        "iris-agentic-dev/{} ({}",
-        env!("CARGO_PKG_VERSION"),
-        mode.marker()
-    );
-    if let Some(label) = sanitized_agent_label() {
-        ua.push_str("; ");
-        ua.push_str(&label);
-    }
-    // Append connected MCP client identity when inside a tool call scope (task-local).
-    // This is what lets an operator distinguish "claude-code" from "cursor" from a
+    // The MCP client identity lets an operator distinguish "claude-code" from "cursor" from a
     // custom harness, rather than knowing only that some agent acted.
-    if let Some((name, version)) = mcp_peer() {
-        ua.push_str("; ");
-        ua.push_str(&name);
-        ua.push('/');
-        ua.push_str(&version);
-    }
-    ua.push(')');
-    ua
+    user_agent_with_peer(mode, mcp_peer().as_ref())
 }
 
 /// Like [`user_agent`] but accepts an explicit MCP peer rather than reading the task-local.
@@ -106,14 +90,54 @@ pub fn user_agent_with_peer(mode: CallerMode, peer: Option<&(String, String)>) -
         ua.push_str("; ");
         ua.push_str(&label);
     }
-    if let Some((name, version)) = peer {
+    if let Some((name, version)) = peer.and_then(clean_peer) {
         ua.push_str("; ");
-        ua.push_str(name);
+        ua.push_str(&name);
         ua.push('/');
-        ua.push_str(version);
+        ua.push_str(&version);
     }
     ua.push(')');
     ua
+}
+
+/// Longest client name and version that reach IRIS.
+const MAX_PEER_NAME_LEN: usize = 64;
+const MAX_PEER_VERSION_LEN: usize = 32;
+
+/// The MCP client's `clientInfo` reduced to what is safe in a header and in an audit event's
+/// `key=value` text (spec 141 T221). The client chose both strings and iad passes them on, so
+/// they get the `IRIS_AGENT_LABEL` treatment and a little more: only ASCII letters, digits and
+/// `. _ + -` survive, every other character (non-ASCII, controls, whitespace, and the `; ( ) / = "`
+/// the User-Agent and the event text use as separators) becomes `_`, runs of `_` collapse, and the
+/// name and version are capped. A client that cleans to nothing is left out rather than printed as
+/// `/`. A version that cleans to nothing is `unknown`. Clean input is returned unchanged.
+pub fn clean_peer((name, version): &(String, String)) -> Option<(String, String)> {
+    let name = clean_peer_part(name, MAX_PEER_NAME_LEN);
+    if name.is_empty() {
+        return None;
+    }
+    let mut version = clean_peer_part(version, MAX_PEER_VERSION_LEN);
+    if version.is_empty() {
+        version = "unknown".to_string();
+    }
+    Some((name, version))
+}
+
+fn clean_peer_part(raw: &str, max: usize) -> String {
+    let mut out = String::with_capacity(raw.len().min(max));
+    for c in raw.chars() {
+        let c = if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '+' | '-') {
+            c
+        } else {
+            '_'
+        };
+        if c == '_' && out.ends_with('_') {
+            continue;
+        }
+        out.push(c);
+    }
+    let trimmed = out.trim_matches('_');
+    trimmed.chars().take(max).collect()
 }
 
 /// `IRIS_AGENT_LABEL` reduced to something safe to put in a header: control characters
@@ -145,7 +169,7 @@ fn sanitized_agent_label() -> Option<String> {
 /// Decide whether to skip TLS certificate validation, given the two env var values.
 ///
 /// Takes the values rather than reading the environment so the truth table can be tested without
-/// `set_var`. Call [`tls_insecure_from_env`] for the env-reading form.
+/// `set_var`. `http::TlsSetting::from_launch_env` is the env-reading form.
 ///
 /// `IRIS_INSECURE` is checked first and wins. `IRIS_INSECURE=false` is not an instruction to
 /// validate, only the absence of one, so `IRIS_TLS_VERIFY` still gets to speak — a shell that
@@ -153,9 +177,10 @@ fn sanitized_agent_label() -> Option<String> {
 /// config. Anything unrecognised means validate: `IRIS_INSECURE=yes` is a typo, not consent, and
 /// failing closed produces a legible handshake error instead of silently unvalidated TLS.
 ///
-/// Every caller must come through here. Four hand-copied versions of this decision used to exist
-/// and two of them read only `IRIS_INSECURE`, so `IRIS_TLS_VERIFY=false` was honoured for a single
-/// `iris_doc` get and ignored for a batch get and for every websocket (#127).
+/// Every reader of the two variables comes through here, by way of `http::TlsSetting`. Four
+/// hand-copied versions of this decision used to exist and two of them read only `IRIS_INSECURE`,
+/// so `IRIS_TLS_VERIFY=false` was honoured for a single `iris_doc` get and ignored for a batch get
+/// and for every websocket (#127).
 ///
 /// The parameters are named for what they hold rather than after the variables themselves: the
 /// tool-name gate reads a bare snake-cased `iris_…` identifier in a signature as a reference to a
@@ -170,41 +195,6 @@ pub fn tls_insecure(insecure_var: Option<&str>, tls_verify_var: Option<&str>) ->
     matches!(tls_verify_var, Some("false") | Some("0"))
 }
 
-/// [`tls_insecure`] applied to `IRIS_INSECURE` and `IRIS_TLS_VERIFY`.
-pub fn tls_insecure_from_env() -> bool {
-    let insecure = std::env::var("IRIS_INSECURE").ok();
-    let verify = std::env::var("IRIS_TLS_VERIFY").ok();
-    tls_insecure(insecure.as_deref(), verify.as_deref())
-}
-
-/// Build a `reqwest::Client` that identifies this tool on every IRIS-bound request.
-///
-/// Every client that sends requests to an IRIS Atelier REST endpoint MUST go through this
-/// constructor so the `User-Agent` is applied in exactly one place (FR-001, FR-009). A
-/// client built without calling this function will be anonymous — an operator greping the
-/// web-server access log would see no marker for it.
-///
-/// `timeout_secs`: wall-clock request timeout. Pass `None` to inherit reqwest's default.
-/// `insecure`: skip TLS certificate validation (e.g. for self-signed dev certs).
-/// `cookie_store`: retain CSP session cookies, in the process-wide store (`csp_session`).
-pub fn iris_http_client(
-    timeout: Option<std::time::Duration>,
-    insecure: bool,
-    cookie_store: bool,
-) -> anyhow::Result<reqwest::Client> {
-    let mut b = reqwest::Client::builder()
-        .user_agent(user_agent(caller_mode()))
-        .danger_accept_invalid_certs(insecure)
-        .tcp_keepalive(std::time::Duration::from_secs(20));
-    if cookie_store {
-        b = b.cookie_provider(super::csp_session::shared_cookie_store());
-    }
-    if let Some(t) = timeout {
-        b = b.timeout(t);
-    }
-    Ok(b.build()?)
-}
-
 /// Whether the connected IRIS instance is a production (Live) system.
 /// Detected at probe time via `^%SYS("SystemMode")` SQL query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -212,8 +202,11 @@ pub enum SystemMode {
     Live,        // "LIVE" or "FAILOVER" — lock write tools
     Development, // "DEVELOPMENT" — allow write tools
     Test,        // "TEST" — allow write tools
+    /// The query ran and `^%SYS("SystemMode")` holds nothing: a fresh instance. Judged like
+    /// `Unknown` by the write gates; the environment template reads it as dev (R4a D6).
+    Unset,
     #[default]
-    Unknown, // null/empty — apply namespace heuristic
+    Unknown, // could not read it — apply namespace heuristic
 }
 
 /// Read `^%SYS("SystemMode")`. The Management Portal stores `LIVE`, `TEST`, `DEVELOPMENT` or
@@ -227,6 +220,29 @@ pub fn parse_system_mode(raw: &str) -> SystemMode {
         "TEST" => SystemMode::Test,
         _ => SystemMode::Unknown,
     }
+}
+
+/// Read the answer of the `SystemMode` query: `Unset` when the query ran and returned no value,
+/// `Unknown` when it did not answer (HTTP error, an account without `%SYS` read, no `result`).
+pub fn parse_system_mode_response(status: u16, body: &str) -> SystemMode {
+    if !(200..300).contains(&status) {
+        return SystemMode::Unknown;
+    }
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body) else {
+        return SystemMode::Unknown;
+    };
+    let Some(rows) = v["result"]["content"].as_array() else {
+        return SystemMode::Unknown;
+    };
+    let value = rows
+        .first()
+        .and_then(|r| r["Value"].as_str())
+        .map(str::trim)
+        .unwrap_or("");
+    if value.is_empty() {
+        return SystemMode::Unset;
+    }
+    parse_system_mode(value)
 }
 
 /// Which version of the Atelier REST API to use.
@@ -276,6 +292,29 @@ pub struct IrisConnection {
     /// Why the operator's `IRIS_USERNAME`/`IRIS_PASSWORD` were not sent to this server: a
     /// workspace file named a host that is neither this machine nor `IRIS_HOST`'s server.
     pub credentials_withheld: Option<String>,
+    /// Whether this server's certificate is checked, and what said so. Set where the connection
+    /// is built from its source; `IrisConnection::new` validates.
+    pub tls: super::http::TlsSetting,
+    /// What is particular to a pool member for running the agent's code (spec 141, R2).
+    pub member: Box<MemberExec>,
+}
+
+/// A pool member's own restricted account, container and SSH strictness. Boxed: most connections
+/// carry none of it, and `IrisConnection` is moved by value through the discovery code.
+#[derive(Clone, Default)]
+pub struct MemberExec {
+    /// This server's own restricted account for the agent's code. The default connection's comes
+    /// from `IRIS_SERVICE_USERNAME`, not from here.
+    pub service_username: Option<String>,
+    pub service_password: Option<String>,
+    /// This server's own container for a docker exec fallback. The default connection's comes from
+    /// `IRIS_CONTAINER`; a named server never inherits it (FR-009).
+    pub container: Option<String>,
+    /// Require a known SSH host key (`StrictHostKeyChecking=yes`) instead of accepting a new one.
+    pub ssh_strict: bool,
+    /// Set on a service account's connection: the user every generated class must report running
+    /// as (`$USERNAME`). A different answer is an error, whichever tool made the call.
+    pub expect_user: Option<String>,
 }
 
 /// T011: Manual Debug implementation — never prints the password.
@@ -293,6 +332,13 @@ impl fmt::Debug for IrisConnection {
             .field("system_mode", &self.system_mode)
             .field("ssh_host", &self.ssh_host)
             .field("credentials_withheld", &self.credentials_withheld)
+            .field("tls", &self.tls)
+            .field("service_username", &self.member.service_username)
+            .field(
+                "service_password",
+                &self.member.service_password.as_ref().map(|_| "[redacted]"),
+            )
+            .field("container", &self.member.container)
             .finish()
     }
 }
@@ -334,7 +380,33 @@ pub fn container_from_env() -> Option<String> {
     non_blank(std::env::var("IRIS_CONTAINER").ok())
 }
 
+impl IrisConnection {
+    /// The container this connection's docker leg runs in: the one a configuration file named for
+    /// it (`member.container`), else `IRIS_CONTAINER`. A file's container is data on the
+    /// connection, and outranks the launch environment as the rest of the file's connection does.
+    pub fn default_container(&self) -> Option<String> {
+        non_blank(self.member.container.clone()).or_else(container_from_env)
+    }
+}
+
 /// `IRIS_HOST`, unless it is unset or blank.
+/// The server the launch settings name: `IRIS_HOST` with `IRIS_SCHEME`, `IRIS_WEB_PORT` and
+/// `IRIS_WEB_PREFIX`. `None` when `IRIS_HOST` is unset or the settings are not a valid endpoint.
+pub fn launch_endpoint() -> Option<super::endpoint::Endpoint> {
+    let host = host_from_env()?;
+    let port = std::env::var("IRIS_WEB_PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(52773);
+    super::endpoint::Endpoint::parse(
+        std::env::var("IRIS_SCHEME").ok().as_deref(),
+        &host,
+        port,
+        std::env::var("IRIS_WEB_PREFIX").ok().as_deref(),
+    )
+    .ok()
+}
+
 pub fn host_from_env() -> Option<String> {
     non_blank(std::env::var("IRIS_HOST").ok())
 }
@@ -348,7 +420,7 @@ pub fn non_blank(v: Option<String>) -> Option<String> {
 const RESULT_MARK: char = '\u{2}';
 /// After [`RESULT_MARK`]: the code left the device at `$PRINCIPAL`, and the rest of its output is
 /// in Atelier's `console` lines.
-const PRINCIPAL_MARK: char = '\u{3}';
+const PRINCIPAL_MARK: char = '\u{4}';
 
 /// The captured output from a generator's `/action/query` answer.
 ///
@@ -359,6 +431,21 @@ const PRINCIPAL_MARK: char = '\u{3}';
 /// output parses as JSON on its own (an array, an object, a number, a bare `true`) IRIS emits it
 /// structurally, so it is re-serialized rather than read as empty.
 pub fn query_output(status: u16, body: &str) -> anyhow::Result<String> {
+    query_output_identified(status, body).map(|(out, _)| out)
+}
+
+/// What the generator puts between the leading mark and the output: `$USERNAME`, then this.
+const IDENTITY_MARK: char = '\u{3}';
+
+/// [`query_output`], and the user name IRIS reported as having run the code.
+///
+/// The user is `None` when the answer carries no identity, which an executor class built before
+/// this field existed would produce. The output is split at the first separator, so a separator
+/// inside the output stays in the output.
+pub fn query_output_identified(
+    status: u16,
+    body: &str,
+) -> anyhow::Result<(String, Option<String>)> {
     let head: String = body.chars().take(300).collect();
     if !(200..300).contains(&status) {
         anyhow::bail!("Atelier answered the generator query with HTTP {status}: {head}");
@@ -394,9 +481,15 @@ pub fn query_output(status: u16, body: &str) -> anyhow::Result<String> {
     }
     Ok(match result {
         serde_json::Value::String(s) => {
-            let s = s.strip_prefix(RESULT_MARK).unwrap_or(s);
-            let at_principal = s.strip_prefix(PRINCIPAL_MARK);
-            let mut out = at_principal.unwrap_or(s).replace('\x01', "\n");
+            let marked = s.strip_prefix(RESULT_MARK);
+            // `$USERNAME`, then IDENTITY_MARK, then the output; the output may itself open with
+            // PRINCIPAL_MARK when the code left the device at `$PRINCIPAL`.
+            let (user, rest) = match marked.and_then(|m| m.split_once(IDENTITY_MARK)) {
+                Some((user, rest)) => (Some(user.to_string()), rest),
+                None => (None, marked.unwrap_or(s)),
+            };
+            let at_principal = rest.strip_prefix(PRINCIPAL_MARK);
+            let mut out = at_principal.unwrap_or(rest).replace('\x01', "\n");
             // The code moved the device to $PRINCIPAL; Atelier carries what it wrote after
             // that in `console`, so the output is the capture followed by those lines.
             if at_principal.is_some() {
@@ -405,10 +498,10 @@ pub fn query_output(status: u16, body: &str) -> anyhow::Result<String> {
                     out.push('\n');
                 }
             }
-            out
+            (out, user)
         }
-        serde_json::Value::Null => String::new(),
-        other => other.to_string(),
+        serde_json::Value::Null => (String::new(), None),
+        other => (other.to_string(), None),
     })
 }
 
@@ -427,8 +520,30 @@ impl std::fmt::Display for CodeMayHaveRun {
 
 impl std::error::Error for CodeMayHaveRun {}
 
+/// The generator's query was sent and did not answer within the HTTP timeout. IRIS may still be
+/// running the code, so it is never retried, and a caller can tell it from a refused connection
+/// (spec 141 T174: `journal_search` reports it as a timeout, not as `IRIS_UNREACHABLE`).
+#[derive(Debug)]
+pub struct RequestTimedOut(pub String);
+
+impl std::fmt::Display for RequestTimedOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for RequestTimedOut {}
+
 pub fn code_may_have_run(e: &anyhow::Error) -> bool {
-    e.downcast_ref::<CodeMayHaveRun>().is_some()
+    e.downcast_ref::<CodeMayHaveRun>().is_some() || e.downcast_ref::<RequestTimedOut>().is_some()
+}
+
+/// True when `e` is an HTTP timeout: a generator query that did not answer in time, or any other
+/// request that reqwest timed out.
+pub fn is_request_timeout(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<RequestTimedOut>().is_some()
+        || e.downcast_ref::<reqwest::Error>()
+            .is_some_and(reqwest::Error::is_timeout)
 }
 
 /// May a failed generator attempt be tried again? Only on a transient network error or a 5xx
@@ -504,6 +619,51 @@ pub fn generator_error_message(out: &str) -> Option<&str> {
     None
 }
 
+/// A value that must reach IRIS and nothing else: a password to store, a new password to set.
+///
+/// `Debug` prints `[redacted]`, so a `tracing` line or an `{:?}` in an error cannot show it. There
+/// is no `Display`. The one reader is [`encode_args_header`], through [`Secret::expose`].
+pub struct Secret(String);
+
+impl Secret {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for Secret {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Secret([redacted])")
+    }
+}
+
+/// Request header that carries the arguments of [`IrisConnection::execute_via_generator_with_args`].
+///
+/// Not a SQL parameter: with `%System/%SQL` auditing on, IRIS writes a bound parameter into
+/// `%SYS.Audit` (T-R4b-L02, spec 141). A header is exposed where `Authorization` already is, and
+/// the audit does not record it.
+pub const IAD_ARGS_HEADER: &str = "X-IAD-Args";
+
+/// A snippet and the secrets it reads as `tIadArgs.%Get(n)`. The snippet holds no value.
+#[derive(Debug)]
+pub struct GeneratorCall {
+    pub code: String,
+    pub args: Vec<Secret>,
+}
+
+/// The `X-IAD-Args` value for `args`: a JSON array of strings, base64-encoded. Base64 because a
+/// password may hold a quote, a newline or a non-ASCII byte that a header value cannot.
+pub fn encode_args_header(args: &[Secret]) -> String {
+    use base64::Engine as _;
+    let values: Vec<&str> = args.iter().map(Secret::expose).collect();
+    let json = serde_json::to_vec(&values).expect("a list of strings always serialises");
+    base64::engine::general_purpose::STANDARD.encode(json)
+}
+
 impl IrisConnection {
     pub fn new(
         base_url: impl Into<String>,
@@ -524,7 +684,29 @@ impl IrisConnection {
             system_mode: SystemMode::Unknown,
             ssh_host: None,
             credentials_withheld: None,
+            tls: super::http::TlsSetting::default(),
+            member: Box::default(),
         }
+    }
+
+    /// This connection with the certificate setting its source gave it.
+    pub fn with_tls(mut self, tls: super::http::TlsSetting) -> Self {
+        if !tls.verify {
+            // The logout at exit must reach this server the way the session did.
+            super::csp_session::note_unchecked_origin(&self.base_url);
+        }
+        self.tls = tls;
+        self
+    }
+
+    /// Where this server is, parsed from `base_url`.
+    pub fn endpoint(&self) -> Result<super::endpoint::Endpoint, super::endpoint::InvalidEndpoint> {
+        super::endpoint::Endpoint::from_base_url(&self.base_url)
+    }
+
+    /// A client for `kind` that checks this server's certificate as its own setting says.
+    pub fn client(&self, kind: super::http::ClientKind) -> anyhow::Result<reqwest::Client> {
+        super::http::client_for(&self.tls, kind)
     }
 
     /// Returns true if write-capable calls are allowed against *this* connection, judged from the
@@ -543,29 +725,6 @@ impl IrisConnection {
             &self.namespace,
         )
         .write_enabled
-    }
-
-    /// Return a clone of this connection authenticating as the restricted service account
-    /// configured via `IRIS_SERVICE_USERNAME` / `IRIS_SERVICE_PASSWORD`, or `None` when no
-    /// such account is set.
-    ///
-    /// Used to route privileged arbitrary-execution tools (`iris_execute`, `iris_query`
-    /// mode="write", `iris_global` set/kill) through a least-privilege IRIS identity that lacks
-    /// code-editing rights (no `%Development`), so those tools cannot edit class/routine code
-    /// even via ObjectScript indirection — while SCM / audit-sensitive tools keep running under
-    /// the primary (user) identity so checkouts and audit stay attributed to the real user.
-    ///
-    /// Enforcement lives in IRIS privileges (the service role), not in a string filter: a bare
-    /// `IRIS_SERVICE_USERNAME` with insufficient rights is what closes the bypass.
-    pub fn with_service_account(&self) -> Option<IrisConnection> {
-        let username = std::env::var("IRIS_SERVICE_USERNAME")
-            .ok()
-            .filter(|s| !s.is_empty())?;
-        let password = std::env::var("IRIS_SERVICE_PASSWORD").unwrap_or_default();
-        let mut c = self.clone();
-        c.username = username;
-        c.password = password;
-        Some(c)
     }
 
     /// Build the full Atelier REST URL for a given path suffix.
@@ -592,7 +751,7 @@ impl IrisConnection {
 
     /// Probe this connection: fetch IRIS version, Atelier API level, and SystemMode.
     pub async fn probe(&mut self) {
-        let client = match Self::probe_client() {
+        let client = match self.client(super::http::ClientKind::Probe) {
             Ok(c) => c,
             Err(_) => return,
         };
@@ -606,7 +765,7 @@ impl IrisConnection {
         {
             let status = resp.status();
             if status.is_success() {
-                if let Ok(body) = resp.json::<serde_json::Value>().await {
+                if let Ok(body) = crate::iris::http::capped_json::<serde_json::Value>(resp).await {
                     tracing::debug!("Atelier root response: {}", body);
                     let content = &body["result"]["content"];
                     self.version = content["version"].as_str().map(|v| v.to_string());
@@ -636,7 +795,7 @@ impl IrisConnection {
     }
 
     /// Query `^%SYS("SystemMode")` to detect whether this is a Live instance.
-    async fn detect_system_mode(&self, client: &reqwest::Client) -> SystemMode {
+    pub(crate) async fn detect_system_mode(&self, client: &reqwest::Client) -> SystemMode {
         let url = self.versioned_ns_url("%SYS", "/action/query");
         let resp = client
             .post(&url)
@@ -646,20 +805,14 @@ impl IrisConnection {
             }))
             .send()
             .await;
-        let mode = match resp {
+        match resp {
             Ok(r) => {
-                if let Ok(body) = r.json::<serde_json::Value>().await {
-                    body["result"]["content"][0]["Value"]
-                        .as_str()
-                        .map(|s| s.trim().to_string())
-                        .unwrap_or_default()
-                } else {
-                    String::new()
-                }
+                let status = r.status().as_u16();
+                let body = crate::iris::http::text_or_default(r).await;
+                parse_system_mode_response(status, &body)
             }
-            Err(_) => String::new(),
-        };
-        parse_system_mode(&mode)
+            Err(_) => SystemMode::Unknown,
+        }
     }
 
     /// Execute ObjectScript code via the write-compile-query cycle (pure HTTP, no docker).
@@ -670,8 +823,36 @@ impl IrisConnection {
         namespace: &str,
         client: &reqwest::Client,
     ) -> anyhow::Result<String> {
-        self.execute_via_generator_prefixed(code, namespace, client, "IrisDevRun")
+        self.execute_via_generator_identified(code, namespace, client, "IrisDevRun")
             .await
+            .map(|(out, _)| out)
+    }
+
+    /// [`Self::execute_via_generator`], and the user name IRIS reported as having run the code.
+    /// The scratch class is named `IrisDevTmp.<prefix><id>`.
+    pub async fn execute_via_generator_identified(
+        &self,
+        code: &str,
+        namespace: &str,
+        client: &reqwest::Client,
+        prefix: &str,
+    ) -> anyhow::Result<(String, Option<String>)> {
+        self.execute_generator_with(code, namespace, client, prefix, &[])
+            .await
+    }
+
+    /// [`Self::execute_via_generator`] for a snippet that needs a secret. The snippet reads
+    /// `tIadArgs.%Get(n)`; the values travel in the `X-IAD-Args` request header and are never in
+    /// the class source, the SQL text or a SQL parameter (FR-020).
+    pub async fn execute_via_generator_with_args(
+        &self,
+        call: &GeneratorCall,
+        namespace: &str,
+        client: &reqwest::Client,
+    ) -> anyhow::Result<String> {
+        self.execute_generator_with(&call.code, namespace, client, "IrisDevRun", &call.args)
+            .await
+            .map(|(out, _)| out)
     }
 
     /// [`Self::execute_via_generator`] with the scratch class named `IrisDevTmp.<prefix><id>`.
@@ -682,6 +863,19 @@ impl IrisConnection {
         client: &reqwest::Client,
         prefix: &str,
     ) -> anyhow::Result<String> {
+        self.execute_via_generator_identified(code, namespace, client, prefix)
+            .await
+            .map(|(out, _)| out)
+    }
+
+    async fn execute_generator_with(
+        &self,
+        code: &str,
+        namespace: &str,
+        client: &reqwest::Client,
+        prefix: &str,
+        args: &[Secret],
+    ) -> anyhow::Result<(String, Option<String>)> {
         let delays = [
             std::time::Duration::from_millis(100),
             std::time::Duration::from_millis(200),
@@ -691,7 +885,7 @@ impl IrisConnection {
 
         for (attempt, delay) in delays.iter().enumerate() {
             match self
-                .execute_via_generator_once(code, namespace, client, prefix)
+                .execute_via_generator_once(code, namespace, client, prefix, args)
                 .await
             {
                 Ok(output) => {
@@ -730,7 +924,8 @@ impl IrisConnection {
         namespace: &str,
         client: &reqwest::Client,
         prefix: &str,
-    ) -> anyhow::Result<String> {
+        args: &[Secret],
+    ) -> anyhow::Result<(String, Option<String>)> {
         let id: String = uuid::Uuid::new_v4()
             .simple()
             .to_string()
@@ -745,7 +940,7 @@ impl IrisConnection {
         // IrisDevTmp.IrisDevRunXXX → SQL schema IrisDevTmp, proc IrisDevTmp.IrisDevRunXXX_Execute.
         // (The SQLUser prefix is a historical special case only for the User package.)
         let sql_func = format!("{}_Execute", class_name);
-        let content = Self::build_exec_class(&class_name, code);
+        let content = Self::build_exec_class(&class_name, code, !args.is_empty());
 
         // Compute the per-request User-Agent now (inside call_tool task scope so mcp_peer()
         // returns the connected client's name/version). This overrides the static default
@@ -794,7 +989,8 @@ impl IrisConnection {
             scratch.release(self, client).await;
             anyhow::bail!("compile HTTP {}", compile_resp.status());
         }
-        let compile_body: serde_json::Value = compile_resp.json().await.unwrap_or_default();
+        let compile_body: serde_json::Value =
+            crate::iris::http::json_or_default(compile_resp).await;
         let has_errors = compile_body["result"]["log"]
             .as_array()
             .map(|entries| {
@@ -815,13 +1011,15 @@ impl IrisConnection {
         // "output" is a reserved word in IRIS SQL — use "result" as the column alias.
         let sql = format!("SELECT {}() AS result", sql_func);
         let query_url = self.versioned_ns_url(namespace, "/action/query");
-        let query_resp = client
+        let mut query_req = client
             .post(&query_url)
             .header(reqwest::header::USER_AGENT, &ua)
             .basic_auth(&self.username, Some(&self.password))
-            .json(&serde_json::json!({"query": sql}))
-            .send()
-            .await;
+            .json(&serde_json::json!({"query": sql}));
+        if !args.is_empty() {
+            query_req = query_req.header(IAD_ARGS_HEADER, encode_args_header(args));
+        }
+        let query_resp = query_req.send().await;
         // The class is compiled by now, so a failed send must still remove it before returning.
         // Past a connect failure the request may have reached IRIS, so the code may have run.
         let query_resp = match query_resp {
@@ -831,16 +1029,33 @@ impl IrisConnection {
                 if e.is_connect() {
                     return Err(e.into());
                 }
+                if e.is_timeout() {
+                    return Err(RequestTimedOut(e.to_string()).into());
+                }
                 return Err(CodeMayHaveRun(e.to_string()).into());
             }
         };
         let status = query_resp.status().as_u16();
-        let body = query_resp.text().await.unwrap_or_default();
+        let body = crate::iris::http::text_or_default(query_resp).await;
 
         // 4. Delete the temp class; a failure is logged, the output still returns
         scratch.release(self, client).await;
 
-        query_output(status, &body).map_err(|e| CodeMayHaveRun(e.to_string()).into())
+        let (out, ran_as) = query_output_identified(status, &body)
+            .map_err(|e| anyhow::Error::from(CodeMayHaveRun(e.to_string())))?;
+        if let (Some(want), Some(got)) = (&self.member.expect_user, &ran_as) {
+            if !want.eq_ignore_ascii_case(got) {
+                return Err(CodeMayHaveRun(format!(
+                    "{}: IRIS reports the code ran as {got}, not as the service account {want}. \
+                     The request named {want}, but IRIS answered from another login, which \
+                     happens when a session cookie outranks the credentials. The code has \
+                     already run.",
+                    crate::tools::exec::ERR_SERVICE_ACCOUNT_IDENTITY_MISMATCH
+                ))
+                .into());
+            }
+        }
+        Ok((out, ran_as))
     }
 
     /// Build the `.cls` source lines for the temp executor class.
@@ -852,7 +1067,7 @@ impl IrisConnection {
     /// compiled directly through the IRIS macro preprocessor. This means $$$macros and
     /// #include / #define directives in user code work as expected, matching what a real
     /// .cls compilation provides.
-    fn build_exec_class(class_name: &str, code: &str) -> Vec<String> {
+    fn build_exec_class(class_name: &str, code: &str, with_args: bool) -> Vec<String> {
         let mut lines: Vec<String> = vec![
             "Include %occInclude".into(),
             "".into(),
@@ -874,12 +1089,32 @@ impl IrisConnection {
             "  Use tmpfile  Set capdev = $IO".into(),
             "  Try {".into(),
         ];
+        if with_args {
+            // The arguments come from the request, not from the class: see `IAD_ARGS_HEADER`. A
+            // missing header fails `%FromJSON` and is reported by the Catch below, never run.
+            lines.extend([
+                "    Set tIadRaw = $Get(%request.CgiEnvs(\"HTTP_X_IAD_ARGS\"))".into(),
+                "    Set tIadArgs = [].%FromJSON($ZConvert($System.Encryption.Base64Decode(tIadRaw),\"I\",\"UTF8\"))".into(),
+                "    Kill tIadRaw".into(),
+            ]);
+        }
         for line in code.lines() {
             lines.push(format!("    {}", line));
         }
+        // Nothing after the snippet needs the arguments, and a local left behind is what an error
+        // trap that dumps variables would write out.
+        let (kill_after, kill_in_catch): (&[&str], &[&str]) = if with_args {
+            (&["    Kill tIadArgs"], &["    Kill tIadArgs,tIadRaw"])
+        } else {
+            (&[], &[])
+        };
+        lines.extend(kill_after.iter().map(|l| l.to_string()));
         lines.extend([
             "    Write !".into(), // sentinel ensures output always ends with \n (IDEV-3)
             "  } Catch ex {".into(),
+        ]);
+        lines.extend(kill_in_catch.iter().map(|l| l.to_string()));
+        lines.extend([
             "    Write \"ERROR: \",ex.DisplayString(),!".into(),
             "  }".into(),
             // Which device is current now that the body has run? Routines like
@@ -912,14 +1147,15 @@ impl IrisConnection {
             // Whatever we captured is partial when the device moved, so refuse the whole
             // result rather than hand back a plausible-looking fragment. The exception is a move
             // to $PRINCIPAL (`Use 0`, `Use $PRINCIPAL`, closing the current device): Atelier
-            // returns what was written after it in the answer's `console`, so `$Char(3)` tells
+            // returns what was written after it in the answer's `console`, so `$Char(4)` tells
             // `query_output` to append that and nothing is lost.
-            "  If devio'=capdev { If devio=$PRINCIPAL { Set out = $Char(3)_out } Else { Set out = \"ERROR($DEVICE): the called code left the current device set to \"\"\"_devio_\"\"\" instead of the capture file, so its output was written elsewhere and is lost. Snapshot and restore around the call: Set io=$IO / <call> / Use io\"_$Char(10) } }"
+            "  If devio'=capdev { If devio=$PRINCIPAL { Set out = $Char(4)_out } Else { Set out = \"ERROR($DEVICE): the called code left the current device set to \"\"\"_devio_\"\"\" instead of the capture file, so its output was written elsewhere and is lost. Snapshot and restore around the call: Set io=$IO / <call> / Use io\"_$Char(10) } }"
                 .into(),
             // $Char(2) first, so Atelier never sees text that looks like JSON: it hands such a
             // column back parsed, and fails with ERROR #5035 when the JSON is not valid (an output
-            // of `[1,2`). `query_output` strips it.
-            "  Quit $Char(2)_out".into(),
+            // of `[1,2`). `query_output` strips it. `$USERNAME` comes next, then $Char(3): the
+            // identity IRIS ran the code as, read inside the process that ran it (spec 141, R2).
+            "  Quit $Char(2)_$USERNAME_$Char(3)_out".into(),
             "}".into(),
             "".into(),
             "}".into(),
@@ -927,14 +1163,14 @@ impl IrisConnection {
         lines
     }
 
-    /// Delete an Atelier document. A non-2xx answer is an error, not a success: the status used to
-    /// be ignored, so a scratch class IRIS refused to delete left no trace anywhere.
+    /// Delete an Atelier document and say what the reply amounted to ([`delete_outcome`]).
+    /// `Err` is a failure to ask at all; a document IRIS refused to delete is `Ok(Refused(..))`.
     async fn delete_doc(
         &self,
         doc_name: &str,
         namespace: &str,
         client: &reqwest::Client,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<DeleteOutcome> {
         let url = self.versioned_ns_url(
             namespace,
             &format!("/doc/{}", urlencoding::encode(doc_name)),
@@ -944,17 +1180,28 @@ impl IrisConnection {
             .basic_auth(&self.username, Some(&self.password))
             .send()
             .await?;
-        if !resp.status().is_success() {
-            anyhow::bail!("DELETE {doc_name} failed: HTTP {}", resp.status());
-        }
-        Ok(())
+        let status = resp.status();
+        let body = crate::iris::http::text_or_default(resp).await;
+        Ok(delete_outcome(status, &body))
     }
 
-    /// Delete the executor's scratch class; the caller's result stands, a failure is logged.
-    async fn delete_scratch(&self, doc_name: &str, namespace: &str, client: &reqwest::Client) {
-        if let Err(e) = self.delete_doc(doc_name, namespace, client).await {
-            tracing::warn!("scratch class not removed, it stays in {namespace}: {e}");
-        }
+    /// Delete the executor's scratch class; the caller's result stands. Returns whether the class is
+    /// gone. One that stays is logged and handed to the call in progress as a warning
+    /// ([`note_scratch_left`]).
+    async fn delete_scratch(
+        &self,
+        doc_name: &str,
+        namespace: &str,
+        client: &reqwest::Client,
+    ) -> bool {
+        let why = match self.delete_doc(doc_name, namespace, client).await {
+            Ok(DeleteOutcome::Gone) => return true,
+            Ok(outcome) => outcome.why(),
+            Err(e) => e.to_string(),
+        };
+        tracing::warn!("scratch class not removed, it stays in {namespace}: {why}");
+        note_scratch_left(doc_name, namespace, &why);
+        false
     }
 
     /// Execute ObjectScript code via docker exec (iris session stdin).
@@ -964,17 +1211,93 @@ impl IrisConnection {
     /// an HTTP client should use execute_via_generator() instead — it compiles
     /// user code into a temp class with no line-length restriction.
     ///
-    /// This method is preserved for environments without Atelier REST access.
-    /// Reads IRIS_CONTAINER fresh on each call to pick up late env var changes.
+    /// This method is preserved for environments without Atelier REST access, and for code iad
+    /// wrote itself: it runs as the container's OS user in `IRIS_CONTAINER`, read fresh on each
+    /// call. Code the agent wrote goes through `tools::exec`, which names the container and the
+    /// identity.
     pub async fn execute(&self, code: &str, namespace: &str) -> anyhow::Result<String> {
-        let container = container_from_env().ok_or_else(|| anyhow::anyhow!("DOCKER_REQUIRED"))?;
+        let container = self
+            .default_container()
+            .ok_or_else(|| anyhow::anyhow!("DOCKER_REQUIRED"))?;
+        let target = TerminalTarget {
+            container,
+            ssh_host: None,
+            login: None,
+            ssh_strict: self.member.ssh_strict,
+        };
+        self.execute_terminal(code, namespace, &target)
+            .await
+            .map(|o| o.text)
+    }
 
+    /// FR-007 (101-nopws-connectivity): [`Self::execute`] on a remote container, through SSH.
+    pub async fn execute_ssh(
+        &self,
+        code: &str,
+        namespace: &str,
+        ssh_host: &str,
+    ) -> anyhow::Result<String> {
+        let container = self
+            .default_container()
+            .ok_or_else(|| anyhow::anyhow!("DOCKER_REQUIRED"))?;
+        let target = TerminalTarget {
+            container,
+            ssh_host: Some(ssh_host.to_string()),
+            login: None,
+            ssh_strict: self.member.ssh_strict,
+        };
+        self.execute_terminal(code, namespace, &target)
+            .await
+            .map(|o| o.text)
+    }
+
+    /// Run `code` in an `iris session` in `target.container`, locally or through SSH.
+    ///
+    /// The first stdin line names the identity: with `target.login` it drops to that account and
+    /// halts when it cannot (`exec::build_login_guard`); without, it only prints `$USERNAME`. The
+    /// answer is read back, the identity lines are taken out, and a guarded call whose output
+    /// shows the login failed, the terminal wanted a password, or another user ran is an error
+    /// that holds a [`MarkerError`]. No password goes through argv or stdin.
+    pub async fn execute_terminal(
+        &self,
+        code: &str,
+        namespace: &str,
+        target: &TerminalTarget,
+    ) -> anyhow::Result<TerminalOutput> {
         use tokio::io::AsyncWriteExt;
 
-        let mut child = tokio::process::Command::new("docker")
-            .args([
-                "exec", "-i", &container, "iris", "session", "IRIS", "-U", namespace,
-            ])
+        let eol = if target.ssh_host.is_some() {
+            "\r\n"
+        } else {
+            "\n"
+        };
+        let mut child = match &target.ssh_host {
+            None => {
+                validate_container_name(&target.container).map_err(|e| anyhow::anyhow!(e))?;
+                let mut c = tokio::process::Command::new("docker");
+                // `--` ends docker's options: whatever follows is the container and the command.
+                c.args([
+                    "exec",
+                    "-i",
+                    "--",
+                    &target.container,
+                    "iris",
+                    "session",
+                    "IRIS",
+                    "-U",
+                    namespace,
+                ]);
+                c
+            }
+            Some(host) => {
+                let remote_cmd = build_ssh_remote_command(&target.container, namespace, host)
+                    .map_err(|e| anyhow::anyhow!(e))?;
+                let mut c = tokio::process::Command::new("ssh");
+                c.args(ssh_args(host, &remote_cmd, target.ssh_strict));
+                c
+            }
+        };
+        let mut child = child
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             // Kept, not discarded: when the daemon refuses the exec, its stderr is the only
@@ -982,75 +1305,81 @@ impl IrisConnection {
             // success. See [`docker_exec_failure`].
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| anyhow::anyhow!("docker not available: {e}"))?;
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "{} not available: {e}",
+                    if target.ssh_host.is_some() {
+                        "ssh"
+                    } else {
+                        "docker"
+                    }
+                )
+            })?;
 
         if let Some(mut stdin) = child.stdin.take() {
+            use crate::tools::exec::{build_login_guard, END_PROBE_LINE, IDENTITY_PROBE_LINE};
+            let first = match &target.login {
+                Some(user) => build_login_guard(user),
+                None => IDENTITY_PROBE_LINE.to_string(),
+            };
+            let _ = stdin.write_all(format!("{first}{eol}").as_bytes()).await;
             let _ = stdin.write_all(code.as_bytes()).await;
-            let _ = stdin.write_all(b"\nhalt\n").await;
+            if target.login.is_some() {
+                let _ = stdin
+                    .write_all(format!("{eol}{END_PROBE_LINE}").as_bytes())
+                    .await;
+            }
+            let halt = if target.ssh_host.is_some() {
+                "Halt"
+            } else {
+                "halt"
+            };
+            let _ = stdin
+                .write_all(format!("{eol}{halt}{eol}").as_bytes())
+                .await;
         }
 
+        let label = if target.ssh_host.is_some() {
+            "ssh docker exec"
+        } else {
+            "docker exec"
+        };
         let output =
             tokio::time::timeout(std::time::Duration::from_secs(30), child.wait_with_output())
                 .await
-                .map_err(|_| anyhow::anyhow!("docker exec timed out after 30s"))??;
+                .map_err(|_| anyhow::anyhow!("{label} timed out after 30s"))??;
 
         // Non-zero exit with output is IRIS reporting a problem in the code, and the caller reads
         // that text (`is_generator_error` classifies it). Non-zero exit with nothing to show means
-        // the exec itself did not happen — the same rule execute_ssh has always used.
+        // the exec itself did not happen.
         if !output.status.success() && output.stdout.is_empty() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if target.ssh_host.is_some() {
+                if ssh_host_key_failure(&stderr) {
+                    return Err(anyhow::anyhow!(
+                        "{}: the host key of {} does not match the one on record, so nothing ran. \
+                         {}",
+                        crate::tools::exec::ERR_SSH_HOST_KEY_MISMATCH,
+                        target.ssh_host.as_deref().unwrap_or_default(),
+                        stderr.trim()
+                    ));
+                }
+                return Err(anyhow::anyhow!("ssh exec failed: {stderr}"));
+            }
             return Err(anyhow::anyhow!(docker_exec_failure(
-                &container,
+                &target.container,
                 output.status.code(),
-                &String::from_utf8_lossy(&output.stderr),
+                &stderr,
             )));
         }
 
         let raw = String::from_utf8_lossy(&output.stdout).to_string();
-        Ok(strip_iris_banner(&raw))
-    }
-
-    /// FR-007 (101-nopws-connectivity): Execute ObjectScript on a remote container via SSH.
-    ///
-    /// Routes through `ssh -o StrictHostKeyChecking=no <ssh_host> docker exec -i <container>
-    /// iris session IRIS -U <namespace>`. StrictHostKeyChecking=no is required for
-    /// non-interactive MCP subprocess use.
-    pub async fn execute_ssh(
-        &self,
-        code: &str,
-        namespace: &str,
-        ssh_host: &str,
-    ) -> anyhow::Result<String> {
-        let container = container_from_env().ok_or_else(|| anyhow::anyhow!("DOCKER_REQUIRED"))?;
-
-        use tokio::io::AsyncWriteExt;
-
-        let remote_cmd = build_ssh_remote_command(&container, namespace, ssh_host)
-            .map_err(|e| anyhow::anyhow!(e))?;
-        let mut child = tokio::process::Command::new("ssh")
-            .args(["-o", "StrictHostKeyChecking=no", ssh_host, &remote_cmd])
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| anyhow::anyhow!("ssh not available: {e}"))?;
-
-        if let Some(mut stdin) = child.stdin.take() {
-            let _ = stdin.write_all(code.as_bytes()).await;
-            let _ = stdin.write_all(b"\r\nHalt\r\n").await;
-        }
-
-        let output =
-            tokio::time::timeout(std::time::Duration::from_secs(30), child.wait_with_output())
-                .await
-                .map_err(|_| anyhow::anyhow!("ssh docker exec timed out after 30s"))??;
-
-        if !output.status.success() && output.stdout.is_empty() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow::anyhow!("ssh exec failed: {stderr}"));
-        }
-
-        let raw = String::from_utf8_lossy(&output.stdout).to_string();
-        Ok(strip_iris_banner(&raw))
+        let marker = crate::tools::exec::split_identity_marker(&raw, target.login.as_deref())
+            .map_err(anyhow::Error::new)?;
+        Ok(TerminalOutput {
+            text: strip_iris_banner(&marker.rest),
+            ran_as: marker.user,
+        })
     }
 
     /// FR-004: Run a SQL query via the Atelier query endpoint.
@@ -1087,7 +1416,8 @@ impl IrisConnection {
         if !status.is_success() {
             anyhow::bail!("query HTTP {}", status);
         }
-        let body: serde_json::Value = resp.json().await?;
+        let body: serde_json::Value =
+            crate::iris::http::capped_json::<serde_json::Value>(resp).await?;
         // Surface Atelier-level errors returned as 200 OK with status.errors in body.
         if let Some(errs) = body["status"]["errors"].as_array() {
             if !errs.is_empty() {
@@ -1120,7 +1450,7 @@ impl IrisConnection {
         if !resp.status().is_success() {
             anyhow::bail!("compile HTTP {}", resp.status());
         }
-        let body: serde_json::Value = resp.json().await.unwrap_or_default();
+        let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
         let console: Vec<String> = body["console"]
             .as_array()
             .map(|a| {
@@ -1148,41 +1478,41 @@ impl IrisConnection {
         Ok(CompileResult { errors, console })
     }
 
-    /// Build a reqwest Client suitable for Atelier REST calls.
-    /// TLS certificate validation is enabled by default; set `IRIS_INSECURE=true` to disable.
-    /// Short-timeout client used only for the startup probe — fail fast rather than hanging.
-    pub fn probe_client() -> anyhow::Result<reqwest::Client> {
-        let insecure = tls_insecure_from_env();
-        Ok(reqwest::Client::builder()
-            .user_agent(user_agent(caller_mode()))
-            .connect_timeout(std::time::Duration::from_secs(5))
-            .timeout(std::time::Duration::from_secs(10))
-            .danger_accept_invalid_certs(insecure)
-            .cookie_provider(super::csp_session::shared_cookie_store())
-            .tcp_keepalive(std::time::Duration::from_secs(20))
-            .build()?)
+    /// A tool-call client for the connection the launch settings describe: `IRIS_INSECURE` and
+    /// `IRIS_TLS_VERIFY` apply to it and to nothing else. A client for a connection of its own is
+    /// `conn.client(ClientKind::Call)`.
+    pub fn http_client() -> anyhow::Result<reqwest::Client> {
+        super::http::client_for(
+            &super::http::TlsSetting::from_launch_env(),
+            super::http::ClientKind::Call,
+        )
     }
 
-    pub fn http_client() -> anyhow::Result<reqwest::Client> {
-        // IRIS_INSECURE=true or IRIS_TLS_VERIFY=false both disable TLS cert validation.
-        let insecure = tls_insecure_from_env();
-        Ok(reqwest::Client::builder()
-            // Identifies agent traffic in Web Gateway / IIS / Apache access logs and to
-            // `%request.CgiEnvs("HTTP_USER_AGENT")`. Without it IRIS sees an empty
-            // User-Agent and an operator has nothing to filter on.
-            .user_agent(user_agent(caller_mode()))
-            .timeout(std::time::Duration::from_secs(30))
-            .danger_accept_invalid_certs(insecure)
-            // One CSP session per process, shared with the probe, and ended at exit (#43, 132 B1).
-            .cookie_provider(super::csp_session::shared_cookie_store())
-            .tcp_keepalive(std::time::Duration::from_secs(20)) // prevent NAT/firewall from silently dropping idle connections (#44)
-            .build()?)
+    /// A tool-call client for a connection whose certificate setting is `tls`, with the cookie jar
+    /// of identity `key` (`csp_session::store_for_identity`). A service account's requests must not
+    /// carry the primary's CSP cookie: IRIS reads the cookie before the `Authorization` header and
+    /// would run the code as the primary.
+    pub fn http_client_for_identity(
+        key: &str,
+        tls: &super::http::TlsSetting,
+    ) -> anyhow::Result<reqwest::Client> {
+        super::http::client_with_store(
+            tls,
+            super::http::ClientKind::Call,
+            super::csp_session::store_for_identity(key),
+        )
     }
 
     /// Test accessor for build_exec_class. Exposed for integration tests.
     #[doc(hidden)]
     pub fn build_exec_class_for_test(class_name: &str, _tmpfile: &str, code: &str) -> Vec<String> {
-        Self::build_exec_class(class_name, code)
+        Self::build_exec_class(class_name, code, false)
+    }
+
+    /// As [`Self::build_exec_class_for_test`], for a call that carries `X-IAD-Args`.
+    #[doc(hidden)]
+    pub fn build_exec_class_with_args_for_test(class_name: &str, code: &str) -> Vec<String> {
+        Self::build_exec_class(class_name, code, true)
     }
 }
 
@@ -1342,6 +1672,99 @@ fn is_bare_prompt_line(s: &str) -> bool {
     !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
 }
 
+/// What a DELETE of an Atelier document achieved.
+///
+/// HTTP 200 is not the answer on its own. A locked or checked-out document is refused with a 200
+/// and the diagnosis in `status.errors` (ERROR #5845), which `iris_doc` has read that way for a
+/// long time. The scratch-class delete read neither half, so a refused delete and a completed one
+/// were the same event, and a class that could not be removed (a namespace under source control
+/// that locks new documents) was neither reported nor tried again. The shape follows
+/// iris-interop-dev's `delete_outcome`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeleteOutcome {
+    /// The document is not there: a clean 2xx, or a 404, which is the same result by another route.
+    Gone,
+    /// IRIS answered 2xx and refused in the reply body, in its own words.
+    Refused(String),
+    /// A non-2xx that is not a 404. Nothing is known about the document.
+    HttpError(u16),
+}
+
+impl DeleteOutcome {
+    /// Only `Gone` lets the scratch guard stand down: on anything else the class may still be
+    /// compiled in the namespace.
+    pub fn is_gone(&self) -> bool {
+        matches!(self, Self::Gone)
+    }
+
+    /// Text for a log line or a warning. Every variant names itself, so none reads as "deleted".
+    pub fn why(&self) -> String {
+        match self {
+            Self::Gone => "deleted".to_string(),
+            Self::Refused(e) => format!("IRIS refused the delete: {e}"),
+            Self::HttpError(s) => format!("the delete answered HTTP {s}"),
+        }
+    }
+}
+
+/// Read a DELETE reply. It takes the body text because a 200 can carry a refusal.
+pub fn delete_outcome(status: reqwest::StatusCode, body: &str) -> DeleteOutcome {
+    // 404 before `is_success`: an absent document is what the delete wanted.
+    if status.as_u16() == 404 {
+        return DeleteOutcome::Gone;
+    }
+    if !status.is_success() {
+        return DeleteOutcome::HttpError(status.as_u16());
+    }
+    // A 2xx whose body is not JSON counts as done: only the shapes known to carry a refusal are
+    // treated as one. There are two, both measured on 2026.2. A locked document puts its reason in
+    // `status.errors`. A source-control class that refuses in `OnBeforeDelete` leaves `status.errors`
+    // empty and puts it in `result.status` (and the console): the reply is a 200 either way.
+    let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+    if let Some(first) = parsed["status"]["errors"]
+        .as_array()
+        .and_then(|errs| errs.first())
+    {
+        return DeleteOutcome::Refused(
+            first["error"]
+                .as_str()
+                .unwrap_or("delete refused with no text")
+                .to_string(),
+        );
+    }
+    match parsed["result"]["status"].as_str() {
+        Some(text) if text.trim_start().starts_with("ERROR") => {
+            DeleteOutcome::Refused(text.trim().to_string())
+        }
+        _ => DeleteOutcome::Gone,
+    }
+}
+
+tokio::task_local! {
+    /// Scratch classes the call in progress could not remove, as warning texts. Set by
+    /// [`collecting_scratch_left`] around a tool call so that `execute_via_generator`, which many
+    /// tools reach, can report a class that stays without every caller carrying it.
+    static SCRATCH_LEFT: std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+}
+
+/// Run `fut`, and return its output with the warnings for every scratch class it left behind.
+pub async fn collecting_scratch_left<F: std::future::Future>(fut: F) -> (F::Output, Vec<String>) {
+    let left = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let out = SCRATCH_LEFT.scope(left.clone(), fut).await;
+    let warnings = std::mem::take(&mut *left.lock().unwrap_or_else(|e| e.into_inner()));
+    (out, warnings)
+}
+
+/// Record that scratch class `doc_name` stays in `namespace`. A no-op outside a call.
+fn note_scratch_left(doc_name: &str, namespace: &str, why: &str) {
+    let _ = SCRATCH_LEFT.try_with(|left| {
+        left.lock().unwrap_or_else(|e| e.into_inner()).push(format!(
+            "The scratch class {doc_name} stays in namespace {namespace}: {why}. It is safe to \
+             delete; this call's result is not affected."
+        ));
+    });
+}
+
 /// Removes an executor's scratch class even when the executing future never reaches its own delete.
 ///
 /// A dropped future runs none of the deletes in `execute_via_generator_once`. That happens when a
@@ -1355,6 +1778,7 @@ struct ScratchGuard {
     password: String,
     doc_name: String,
     namespace: String,
+    tls: super::http::TlsSetting,
     armed: bool,
 }
 
@@ -1369,16 +1793,20 @@ impl ScratchGuard {
             password: conn.password.clone(),
             doc_name: doc_name.to_string(),
             namespace: namespace.to_string(),
+            tls: conn.tls,
             armed: true,
         }
     }
 
-    /// Delete on the caller's runtime. Disarmed only once the delete has returned, so a drop
-    /// during it still cleans up.
+    /// Delete on the caller's runtime. Disarmed only once IRIS says the class is gone, so a drop
+    /// during the delete, or a delete IRIS refused, still gets one more attempt from `Drop`.
     async fn release(&mut self, conn: &IrisConnection, client: &reqwest::Client) {
-        conn.delete_scratch(&self.doc_name, &self.namespace, client)
-            .await;
-        self.armed = false;
+        if conn
+            .delete_scratch(&self.doc_name, &self.namespace, client)
+            .await
+        {
+            self.armed = false;
+        }
     }
 
     /// IRIS never stored the class.
@@ -1397,6 +1825,7 @@ impl Drop for ScratchGuard {
         let pass = std::mem::take(&mut self.password);
         let doc = std::mem::take(&mut self.doc_name);
         let namespace = std::mem::take(&mut self.namespace);
+        let tls = self.tls;
         let worker = std::thread::spawn(move || {
             let Ok(rt) = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -1405,7 +1834,8 @@ impl Drop for ScratchGuard {
                 return;
             };
             rt.block_on(async move {
-                let Ok(client) = IrisConnection::http_client() else {
+                let Ok(client) = super::http::client_for(&tls, super::http::ClientKind::Call)
+                else {
                     return;
                 };
                 let sent = client
@@ -1415,11 +1845,18 @@ impl Drop for ScratchGuard {
                     .send()
                     .await;
                 match sent {
-                    Ok(r) if r.status().is_success() || r.status() == 404 => {}
-                    Ok(r) => tracing::warn!(
-                        "scratch class {doc} not removed after cancel, it stays in {namespace}: HTTP {}",
-                        r.status()
-                    ),
+                    Ok(r) => {
+                        let status = r.status();
+                        let body = crate::iris::http::text_or_default(r).await;
+                        let outcome = delete_outcome(status, &body);
+                        if !outcome.is_gone() {
+                            tracing::warn!(
+                                "scratch class {doc} not removed after cancel, it stays in \
+                                 {namespace}: {}",
+                                outcome.why()
+                            );
+                        }
+                    }
                     Err(e) => tracing::warn!(
                         "scratch class {doc} not removed after cancel, it stays in {namespace}: {e}"
                     ),
@@ -1427,6 +1864,29 @@ impl Drop for ScratchGuard {
             });
         });
         let _ = worker.join();
+    }
+}
+
+/// Is `container` a container name? Docker's own rule: letters, digits, `_ . -`, starting with a
+/// letter or digit. Both `docker exec` paths check it, the local one and the one through SSH, so a
+/// name that docker would read as an option (`--privileged`, `-v/:/host`) never gets that far
+/// (spec 141 T221).
+pub fn validate_container_name(container: &str) -> Result<(), String> {
+    let ok = !container.is_empty()
+        && container
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        && container
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'));
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "INVALID_CONTAINER: '{container}' is not a container name (letters, digits, _ . -, \
+             starting with a letter or digit)"
+        ))
     }
 }
 
@@ -1439,20 +1899,7 @@ pub fn build_ssh_remote_command(
     namespace: &str,
     ssh_host: &str,
 ) -> Result<String, String> {
-    let container_ok = !container.is_empty()
-        && container
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphanumeric())
-        && container
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'));
-    if !container_ok {
-        return Err(format!(
-            "INVALID_CONTAINER: '{container}' is not a container name (letters, digits, _ . -, \
-             starting with a letter or digit)"
-        ));
-    }
+    validate_container_name(container)?;
     if let Err(e) = crate::objectscript::validate_namespace(namespace) {
         return Err(e["message"]
             .as_str()
@@ -1467,12 +1914,52 @@ pub fn build_ssh_remote_command(
     ))
 }
 
+/// Where a terminal call runs and as whom.
+#[derive(Debug, Clone)]
+pub struct TerminalTarget {
+    pub container: String,
+    /// Run the `docker exec` on this host, through SSH.
+    pub ssh_host: Option<String>,
+    /// Drop to this account before the code runs; `None` runs as the OS-authenticated user.
+    pub login: Option<String>,
+    pub ssh_strict: bool,
+}
+
+/// What a terminal call printed, with the identity lines taken out.
+#[derive(Debug, Clone)]
+pub struct TerminalOutput {
+    pub text: String,
+    /// The user the terminal reported (`$USERNAME`), when it printed the marker.
+    pub ran_as: Option<String>,
+}
+
+/// The arguments for `ssh` to run `remote_cmd` on `host`.
+///
+/// `BatchMode=yes` makes a question the user cannot answer (a new host key, a password) a failure
+/// instead of a hang. The host key is checked: a new one is recorded (`accept-new`), a changed one
+/// refuses, and `strict` refuses a new one too. `StrictHostKeyChecking=no` accepted any key, which
+/// let anyone on the path pose as the host the agent's code runs on.
+pub fn ssh_args(host: &str, remote_cmd: &str, strict: bool) -> Vec<String> {
+    let check = if strict { "yes" } else { "accept-new" };
+    vec![
+        "-o".into(),
+        "BatchMode=yes".into(),
+        "-o".into(),
+        format!("StrictHostKeyChecking={check}"),
+        host.to_string(),
+        remote_cmd.to_string(),
+    ]
+}
+
+/// Did `ssh` stop on the host key?
+fn ssh_host_key_failure(stderr: &str) -> bool {
+    stderr.contains("Host key verification failed")
+        || stderr.contains("REMOTE HOST IDENTIFICATION HAS CHANGED")
+}
+
 #[cfg(test)]
 mod system_mode_tests {
     use super::*;
-
-    // Serialize tests that read or write IRIS_ALLOW_PROD to prevent races.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn conn(namespace: &str, mode: SystemMode) -> IrisConnection {
         let mut c = IrisConnection::new(
@@ -1503,84 +1990,6 @@ mod system_mode_tests {
             debug_str.contains("IrisConnection"),
             "should be an IrisConnection: {debug_str}"
         );
-    }
-
-    #[test]
-    fn service_account_none_when_env_unset() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let saved_u = std::env::var("IRIS_SERVICE_USERNAME").ok();
-        let saved_p = std::env::var("IRIS_SERVICE_PASSWORD").ok();
-        unsafe {
-            std::env::remove_var("IRIS_SERVICE_USERNAME");
-            std::env::remove_var("IRIS_SERVICE_PASSWORD");
-        }
-        let c = conn("USER", SystemMode::Unknown);
-        assert!(
-            c.with_service_account().is_none(),
-            "no service account configured → None (falls back to primary identity)"
-        );
-        unsafe {
-            if let Some(v) = saved_u {
-                std::env::set_var("IRIS_SERVICE_USERNAME", v);
-            }
-            if let Some(v) = saved_p {
-                std::env::set_var("IRIS_SERVICE_PASSWORD", v);
-            }
-        }
-    }
-
-    #[test]
-    fn service_account_overrides_credentials_only() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let saved_u = std::env::var("IRIS_SERVICE_USERNAME").ok();
-        let saved_p = std::env::var("IRIS_SERVICE_PASSWORD").ok();
-        unsafe {
-            std::env::set_var("IRIS_SERVICE_USERNAME", "dtetu_mcp");
-            std::env::set_var("IRIS_SERVICE_PASSWORD", "password");
-        }
-        let c = conn("USER", SystemMode::Development);
-        let svc = c
-            .with_service_account()
-            .expect("service account configured");
-        // Credentials swapped to the service account…
-        assert_eq!(svc.username, "dtetu_mcp");
-        assert_eq!(svc.password, "password");
-        // …but every other connection property is preserved (same instance, namespace, mode).
-        assert_eq!(svc.base_url, c.base_url);
-        assert_eq!(svc.namespace, c.namespace);
-        assert_eq!(svc.system_mode, c.system_mode);
-        // Original connection is untouched.
-        assert_eq!(c.username, "_SYSTEM");
-        unsafe {
-            std::env::remove_var("IRIS_SERVICE_USERNAME");
-            std::env::remove_var("IRIS_SERVICE_PASSWORD");
-            if let Some(v) = saved_u {
-                std::env::set_var("IRIS_SERVICE_USERNAME", v);
-            }
-            if let Some(v) = saved_p {
-                std::env::set_var("IRIS_SERVICE_PASSWORD", v);
-            }
-        }
-    }
-
-    #[test]
-    fn service_account_ignored_when_username_empty() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let saved_u = std::env::var("IRIS_SERVICE_USERNAME").ok();
-        unsafe {
-            std::env::set_var("IRIS_SERVICE_USERNAME", "");
-        }
-        let c = conn("USER", SystemMode::Unknown);
-        assert!(
-            c.with_service_account().is_none(),
-            "empty username must be treated as unset"
-        );
-        unsafe {
-            std::env::remove_var("IRIS_SERVICE_USERNAME");
-            if let Some(v) = saved_u {
-                std::env::set_var("IRIS_SERVICE_USERNAME", v);
-            }
-        }
     }
 
     #[test]

@@ -81,15 +81,16 @@ The plugin and a bare `iris-agentic-dev skill install` ship the core skills only
 
 Before writing any config, call `check_config` and read what it reports.
 
-| What you see                                           | What it means                                                |
-| ------------------------------------------------------ | ------------------------------------------------------------ |
-| `connected: true, connection_source: "env_var"`        | Connected via env vars — a config file is optional           |
-| `connected: true, connection_source: "docker"`         | Connected via Docker discovery — a config file is optional   |
-| `connected: true, connection_source: "server_manager"` | VS Code Server Manager is working — no config needed         |
-| `connected: false`                                     | No connection found — you need a config file                 |
-| `config_parse_error` present                           | The existing config has a TOML syntax error — fix that first |
-| `server_manager.available: true`                       | Set `IRIS_SERVER_NAME` instead of writing a manual config    |
-| `atelier_rest: false`                                  | No Atelier REST — use the `docker exec` path (see below)     |
+| What you see                                                  | What it means                                                                            |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `connected: true, connection_source: "config_file"`           | A `.iris-agentic-dev.toml` chose the connection — the config is working                  |
+| `connected: true, connection_source: "env_vars"`              | Connected via env vars (`IRIS_HOST`) — a config file is optional                         |
+| `connected: true, connection_source: "auto_discovered"`       | Found on its own (Docker, a local port scan, Server Manager) — a config file is optional |
+| `connected: true, connection_source: "iris_select_container"` | Switched mid-session with `iris_select_container`                                        |
+| `connected: false`                                            | No connection found — you need a config file                                             |
+| `config_parse_error` present                                  | The existing config has a TOML syntax error — fix that first                             |
+| `server_manager.available: true`                              | Set `IRIS_SERVER_NAME` instead of writing a manual config                                |
+| `atelier_rest: false`                                         | No Atelier REST — use the `docker exec` path (see below)                                 |
 
 Write the config to the path reported as `config_watch_path`. Hot-reload is automatic.
 
@@ -240,19 +241,20 @@ Manage the pool with the server management tools:
 iris_servers()                        # list all registered instances + reachability
 iris_add_server(name="prod", host="iris.example.com", port=52773,
                 namespace="LIVE", username="svc", password="...")
-iris_test_server(server="prod")       # probe: version, Atelier API, latency
+iris_test_server(name="prod")         # probe: version, Atelier API, latency
 iris_remove_server(server="prod")     # ☠ destructive — requires destructive_tools_enabled
 iris_import_servers()                 # pull VS Code Server Manager entries into iad
 ```
 
-`iris_servers` shows `reachable: null` until you call `iris_test_server` — reachability
-is not probed at startup.
+`iris_servers` shows `reachable: null` until you pass `probe: true` or call
+`iris_test_server` — reachability is not probed at startup.
 
 ### Write protection — two tiers
 
 **Tier 1** (`write_tools_enabled = true`) — compile, execute, source control, routine
-writes. Default: respects `mcpTemplate`; `live` template sets it false. With it off,
-every write-capable tool returns `WRITE_TOOLS_DISABLED` before it reaches IRIS.
+writes. With nothing declared, the target server's IRIS system mode decides: off on Live,
+on on Development and Test. With it off, every write-capable tool returns
+`WRITE_TOOLS_DISABLED` before it reaches IRIS.
 
 **Tier 2** (`destructive_tools_enabled = true`) — `global_kill`, `iris_global(kill)`,
 `iris_admin` writes, `iris_credential_manage`, `iris_lookup_manage` (write/delete),
@@ -267,13 +269,19 @@ destructive_tools_enabled = true          # only needed for ☠ tools
 
 Both gates are resolved once per config load and checked once per tool call, so a tool
 cannot be write-capable and ungated. Precedence: an env var the operator exported before
-the process started beats the toml, which beats IRIS `SystemMode`, which beats the
+the process started beats the config files, which beat IRIS `SystemMode`, which beats the
 namespace heuristic. `check_config` reports which one decided, as `write_tools_source`
 and `destructive_tools_source`.
 
-There is no per-server allowlist. `specs/074-write-server-allowlist/` is the design of
-record for one; it is not implemented, and nothing in the config accepts a list of
-server names.
+**A project file cannot raise either tier.** The operator's own `~/.iris-agentic-dev.toml` is
+always trusted. A `.iris-agentic-dev.toml` in the project (or one named by `--config`) is
+trusted only after the operator runs `iris-agentic-dev trust` on it at a terminal; until then
+its `write_tools_enabled = true` is set aside, and `check_config` lists it under `set_aside`
+with the command that would lift it. A file can always turn a tier off. You cannot run `trust`
+for the operator: ask them to.
+
+The tiers are per server. `[policy.<name>] writeTools` and `destructiveTools` set them for one
+server, and each call is judged against the server it runs on.
 
 ### Fleet / operate mode (multi-instance)
 
@@ -291,10 +299,12 @@ role      = "subject"
 [instance.dev]
 container = "dev-iris"
 namespace = "DEV"
-role      = "workspace"
+role      = "workbench"
 ```
 
-Roles: `workspace` (writes allowed), `subject` (read-only by default), `control-plane`.
+Roles: `workbench` (the default; a server the agent builds on) and `subject` (a server under
+study: source-control writes are refused, and any other write needs `confirm: true`).
+`workspace` is the pre-1.7 spelling of `workbench`; any other word reads as `subject`.
 
 ### Per-connection policy
 
@@ -306,7 +316,9 @@ allow = ["query", "search", "docs"]
 That blocks `compile`, `execute`, `source_control`, `debug`, `admin`, `skill`, and `kb`
 on the `prod` Server Manager connection. Categories: `compile`, `execute`, `query`,
 `search`, `docs`, `source_control`, `debug`, `admin`, `skill`, `kb`. Omit the
-`[policy.*]` block (or the `allow` key) to permit everything.
+`[policy.*]` block (or the `allow` key) to permit everything. A project file's `allow` can only
+narrow what the operator's file allows; a looser `mcpTemplate` or `dataPolicy` in it waits for
+trust.
 
 ### Config troubleshooting
 
@@ -322,7 +334,11 @@ on the `prod` Server Manager connection. Categories: `compile`, `execute`, `quer
   map key from `intersystems.servers`.
 - **`WRITE_TOOLS_DISABLED`** — a 🔒 tool was called with tier 1 off. `check_config`'s
   `write_tools_source` names what decided it; fix that input, not the toml, if the source
-  is `operator_env` or `inferred_system_mode`.
+  is `operator_env` or `inferred_system_mode`. If the project's toml says
+  `write_tools_enabled = true` and `set_aside` lists it, the file is not trusted: the operator
+  runs `iris-agentic-dev trust --show`, then `iris-agentic-dev trust`, in a terminal.
+- **`set_aside` is not empty** — iad read a setting and did not act on it. Each item has a
+  `reason` and a `lift`. Do not edit the file to get around it, and do not run `trust` yourself.
 - **`DESTRUCTIVE_TOOLS_DISABLED`** — a ☠ tool was called without
   `destructive_tools_enabled = true`. Add that key to the toml for this connection.
 - **`DESTRUCTIVE_REQUIRES_WRITES`** — the toml declares `destructive_tools_enabled = true`

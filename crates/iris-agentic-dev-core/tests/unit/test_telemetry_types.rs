@@ -3,6 +3,7 @@
 use iris_agentic_dev_core::telemetry::{
     ago_secs, eval_session_from_env, now_rfc3339, Session, ToolCallRecord,
 };
+use iris_agentic_dev_core::testing::EnvGuard;
 use uuid::Uuid;
 
 #[test]
@@ -64,10 +65,11 @@ fn tool_call_record_with_params_serializes() {
 
 #[test]
 fn test_eval_session_absent_when_env_not_set() {
+    let mut env_guard = EnvGuard::new();
     // Remove env vars if set by a parent process
-    std::env::remove_var("GAUNTLET_RUN_ID");
-    std::env::remove_var("GAUNTLET_TASK_ID");
-    std::env::remove_var("GAUNTLET_CONDITION");
+    env_guard.unset("GAUNTLET_RUN_ID");
+    env_guard.unset("GAUNTLET_TASK_ID");
+    env_guard.unset("GAUNTLET_CONDITION");
     let (run_id, task_id, condition) = eval_session_from_env();
     assert!(
         run_id.is_none(),
@@ -85,17 +87,18 @@ fn test_eval_session_absent_when_env_not_set() {
 
 #[test]
 fn test_eval_session_present_when_env_set() {
+    let mut env_guard = EnvGuard::new();
     // Serialize env mutations — env is process-global state
     static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = ENV_MUTEX.lock().unwrap();
 
-    std::env::set_var("GAUNTLET_RUN_ID", "run-abc123");
-    std::env::set_var("GAUNTLET_TASK_ID", "task-42");
-    std::env::set_var("GAUNTLET_CONDITION", "harness");
+    env_guard.set("GAUNTLET_RUN_ID", "run-abc123");
+    env_guard.set("GAUNTLET_TASK_ID", "task-42");
+    env_guard.set("GAUNTLET_CONDITION", "harness");
     let (run_id, task_id, condition) = eval_session_from_env();
-    std::env::remove_var("GAUNTLET_RUN_ID");
-    std::env::remove_var("GAUNTLET_TASK_ID");
-    std::env::remove_var("GAUNTLET_CONDITION");
+    env_guard.unset("GAUNTLET_RUN_ID");
+    env_guard.unset("GAUNTLET_TASK_ID");
+    env_guard.unset("GAUNTLET_CONDITION");
 
     assert_eq!(run_id.as_deref(), Some("run-abc123"));
     assert_eq!(task_id.as_deref(), Some("task-42"));
@@ -104,16 +107,17 @@ fn test_eval_session_present_when_env_set() {
 
 #[test]
 fn test_eval_session_fields_round_trip_serde() {
+    let mut env_guard = EnvGuard::new();
     static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _guard = ENV_MUTEX.lock().unwrap();
 
-    std::env::set_var("GAUNTLET_RUN_ID", "run-serde-test");
-    std::env::set_var("GAUNTLET_TASK_ID", "task-serde");
-    std::env::set_var("GAUNTLET_CONDITION", "test-condition");
+    env_guard.set("GAUNTLET_RUN_ID", "run-serde-test");
+    env_guard.set("GAUNTLET_TASK_ID", "task-serde");
+    env_guard.set("GAUNTLET_CONDITION", "test-condition");
     let record = ToolCallRecord::now("iris_execute", true, 10, Uuid::new_v4());
-    std::env::remove_var("GAUNTLET_RUN_ID");
-    std::env::remove_var("GAUNTLET_TASK_ID");
-    std::env::remove_var("GAUNTLET_CONDITION");
+    env_guard.unset("GAUNTLET_RUN_ID");
+    env_guard.unset("GAUNTLET_TASK_ID");
+    env_guard.unset("GAUNTLET_CONDITION");
 
     let json = serde_json::to_string(&record).unwrap();
     let back: ToolCallRecord = serde_json::from_str(&json).unwrap();

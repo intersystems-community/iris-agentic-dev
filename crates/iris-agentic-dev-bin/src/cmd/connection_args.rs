@@ -1,11 +1,12 @@
 use clap::Args;
 use iris_agentic_dev_core::iris::{
     connection::{DiscoverySource, IrisConnection},
-    discovery::{discover_iris, IrisDiscovery},
-    workspace_config::apply_workspace_config,
+    discovery::{discover_iris_with, IrisDiscovery},
+    workspace_config::{apply_workspace_config, workspace_discovery_hints},
 };
 
-/// Shared IRIS connection flags reused by all CLI subcommands.
+/// Shared IRIS connection flags reused by all CLI subcommands. They are `global`, so a command with
+/// an action (`doc put`) takes them after the action as well as before it.
 /// Precedence (highest to lowest):
 ///   1. Explicit CLI flags (--host, --port, --namespace, ...)
 ///   2. iris-dev.toml workspace config
@@ -17,35 +18,41 @@ pub struct ConnectionArgs {
     // No `env = "IRIS_HOST"`: clap would fill this slot from the variable, so any `IRIS_HOST`
     // made the connection explicit and outranked `.iris-agentic-dev.toml`. The documented order is
     // flag, then the file, then `IRIS_*`; discovery reads `IRIS_HOST` itself after the file.
-    #[arg(long)]
+    #[arg(global = true, long)]
     pub host: Option<String>,
 
     /// IRIS web port
-    #[arg(long, env = "IRIS_WEB_PORT", default_value = "52773")]
+    #[arg(global = true, long, env = "IRIS_WEB_PORT", default_value = "52773")]
     pub web_port: u16,
 
     /// URL path prefix for IIS-fronted instances (e.g. healthshareucr)
-    #[arg(long, env = "IRIS_WEB_PREFIX", default_value = "")]
+    #[arg(global = true, long, env = "IRIS_WEB_PREFIX", default_value = "")]
     pub web_prefix: String,
 
     /// URL scheme: http or https
-    #[arg(long, env = "IRIS_SCHEME", default_value = "http")]
+    #[arg(global = true, long, env = "IRIS_SCHEME", default_value = "http")]
     pub scheme: String,
 
     /// IRIS namespace
-    #[arg(long, short = 'n', env = "IRIS_NAMESPACE", default_value = "USER")]
+    #[arg(
+        global = true,
+        long,
+        short = 'n',
+        env = "IRIS_NAMESPACE",
+        default_value = "USER"
+    )]
     pub namespace: String,
 
     /// IRIS username
-    #[arg(long, short = 'u', env = "IRIS_USERNAME")]
+    #[arg(global = true, long, short = 'u', env = "IRIS_USERNAME")]
     pub username: Option<String>,
 
     /// IRIS password
-    #[arg(long, short = 'p', env = "IRIS_PASSWORD")]
+    #[arg(global = true, long, short = 'p', env = "IRIS_PASSWORD")]
     pub password: Option<String>,
 
     /// Named Docker container for IRIS (overrides auto-discovery)
-    #[arg(long, env = "IRIS_CONTAINER")]
+    #[arg(global = true, long, env = "IRIS_CONTAINER")]
     pub container: Option<String>,
 }
 
@@ -55,13 +62,19 @@ impl ConnectionArgs {
     /// Exits the process (printing to stderr) on connection failure.
     pub async fn resolve(self) -> anyhow::Result<IrisConnection> {
         let explicit = self.host.as_ref().map(|host| {
-            let scheme = self.scheme.trim_matches('/');
-            let prefix = self.web_prefix.trim_matches('/');
-            let base_url = if prefix.is_empty() {
-                format!("{}://{}:{}", scheme, host, self.web_port)
-            } else {
-                format!("{}://{}:{}/{}", scheme, host, self.web_port, prefix)
+            let endpoint = match iris_agentic_dev_core::iris::endpoint::Endpoint::parse(
+                Some(&self.scheme),
+                host,
+                self.web_port,
+                Some(&self.web_prefix),
+            ) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("Error [INVALID_CONFIG]: --host/--scheme/--web-prefix: {e}");
+                    crate::exit(2);
+                }
             };
+            let base_url = endpoint.base_url();
             let username = self.username.as_deref().unwrap_or("_SYSTEM");
             let password = self.password.as_deref().unwrap_or("SYS");
             IrisConnection::new(
@@ -71,13 +84,16 @@ impl ConnectionArgs {
                 password,
                 DiscoverySource::ExplicitFlag,
             )
+            // The launch settings describe this server, so their certificate setting applies.
+            .with_tls(iris_agentic_dev_core::iris::http::TlsSetting::from_launch_env())
         });
 
         // Apply workspace config — sits between CLI flags and env/auto-discovery
         let ws_path = std::env::var("OBJECTSCRIPT_WORKSPACE").ok();
         let explicit = apply_workspace_config(explicit, ws_path.as_deref(), &self.namespace);
+        let hints = workspace_discovery_hints(ws_path.as_deref());
 
-        match discover_iris(explicit).await {
+        match discover_iris_with(explicit, &hints).await {
             IrisDiscovery::Found(c) => Ok(c),
             IrisDiscovery::NotFound => {
                 anyhow::bail!(

@@ -386,7 +386,11 @@ fn wrongly_typed_parameters_are_refused_by_name() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
-    let mut mcp = McpSession::start(&admin_env());
+    let mut mcp = {
+        let mut env = admin_env();
+        env.extend(iris_agentic_dev_core::testing::data_reads_allowed_env());
+        McpSession::start(&env)
+    };
     for (field, expected_type, args) in [
         (
             "max_records",

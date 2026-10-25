@@ -24,6 +24,11 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "cli: drives a command-line entry point")
     config.addinivalue_line(
         "markers",
+        "live: starts a throwaway Docker container and follows shipped setup steps on it; "
+        "select with -m live, and run under the shared lock",
+    )
+    config.addinivalue_line(
+        "markers",
         "requires_binary: needs a real iris-agentic-dev build; skips without one, so CI has "
         "to select it by this marker with IAD_BINARY set or it reports green over nothing",
     )

@@ -1,12 +1,14 @@
 use anyhow::Result;
 use clap::Args;
 use iris_agentic_dev_core::{
-    iris::discovery::{discover_iris, IrisDiscovery},
+    iris::discovery::{discover_iris_with, IrisDiscovery},
     skills::SkillRegistry,
     tools::{ConfigWatcher, IrisTools, Toolset},
 };
 use rmcp::{transport::stdio, ServiceExt};
 use tokio::sync::watch;
+
+use super::http_guard::{self, HttpGuard};
 
 /// Start the iris-dev MCP server (stdio transport by default).
 ///
@@ -27,10 +29,13 @@ use tokio::sync::watch;
 /// WEBGATEWAY SETUP GOTCHAS (verified 2026-05-03)
 ///   Three non-obvious bugs in fresh enterprise container + webgateway setups:
 ///   a) CSP.ini race: patch CSP.ini only after "Configuration_Initialized" appears in it
-///   b) Missing credentials: add Username=_SYSTEM + Password=SYS to [LOCAL] in CSP.ini
-///      (default tries CSPSystem which doesn't exist in fresh enterprise containers)
+///   b) Missing credentials: the gateway's [LOCAL] section needs a login (the default tries
+///      CSPSystem, which doesn't exist in fresh enterprise containers). Give it the _SYSTEM
+///      password you set from the environment; never write the default SYS into CSP.ini
 ///   c) Wrong Apache directive: use "CSP On" in <Location />, not "SetHandler csp-handler-sa"
-///   d) Expired password: run UnExpireUserPasswords("*") in %SYS on first start
+///   d) Expired password: set a new _SYSTEM password on first start (setup skill, step 4);
+///      do not un-expire every account, which keeps the published default working on all of them
+///   Publish container ports on 127.0.0.1 only (-p 127.0.0.1:<host>:<container>).
 ///   See: https://github.com/intersystems-community/iris-agentic-dev/blob/master/skills/skills/iris-vscode-objectscript/SKILL.md
 ///
 /// CONNECTION DISCOVERY (in priority order)
@@ -50,6 +55,17 @@ pub struct McpCommand {
     /// Bind address for HTTP transport (default: 127.0.0.1)
     #[arg(long, default_value = "127.0.0.1")]
     pub bind: String,
+    /// File holding the HTTP transport's bearer token (at least 32 bytes). `IAD_HTTP_TOKEN` and
+    /// `[transport] http_token` in ~/.iris-agentic-dev.toml set it too; no flag takes the value,
+    /// because a value on the command line shows in `ps`. A bind other than loopback needs one.
+    #[arg(long, value_name = "PATH")]
+    pub auth_token_file: Option<std::path::PathBuf>,
+    /// Extra `Host` name the HTTP transport serves, such as `host.docker.internal`. Repeatable.
+    #[arg(long = "allowed-host", value_name = "NAME")]
+    pub allowed_host: Vec<String>,
+    /// Extra `Origin` the HTTP transport serves, such as `https://app.example`. Repeatable.
+    #[arg(long = "allowed-origin", value_name = "ORIGIN")]
+    pub allowed_origin: Vec<String>,
     // No `env = "IRIS_HOST"`: clap would fill this slot from the variable, so any `IRIS_HOST`
     // made the connection explicit and outranked `.iris-agentic-dev.toml`. The documented order is
     // flag, then the file, then `IRIS_*`; discovery reads `IRIS_HOST` itself after the file.
@@ -100,22 +116,85 @@ impl McpCommand {
         use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
         let host = self.host.as_deref()?;
         let port = self.web_port.unwrap_or(52773);
-        let prefix = self.web_prefix.trim_matches('/');
-        let scheme = self.scheme.trim_matches('/');
-        let base_url = if prefix.is_empty() {
-            format!("{}://{}:{}", scheme, host, port)
-        } else {
-            format!("{}://{}:{}/{}", scheme, host, port, prefix)
+        let endpoint = match iris_agentic_dev_core::iris::endpoint::Endpoint::parse(
+            Some(&self.scheme),
+            host,
+            port,
+            Some(&self.web_prefix),
+        ) {
+            Ok(e) => e,
+            Err(e) => {
+                eprintln!("Error [INVALID_CONFIG]: --host/--scheme/--web-prefix: {e}");
+                crate::exit(2);
+            }
         };
+        let base_url = endpoint.base_url();
         let username = self.username.as_deref().unwrap_or("_SYSTEM");
         let password = self.password.as_deref().unwrap_or("SYS");
-        Some(IrisConnection::new(
-            base_url,
-            &self.namespace,
-            username,
-            password,
-            DiscoverySource::ExplicitFlag,
-        ))
+        Some(
+            IrisConnection::new(
+                base_url,
+                &self.namespace,
+                username,
+                password,
+                DiscoverySource::ExplicitFlag,
+            )
+            // The launch settings describe this server, so their certificate setting applies to it.
+            .with_tls(iris_agentic_dev_core::iris::http::TlsSetting::from_launch_env()),
+        )
+    }
+
+    /// The HTTP transport's guard, or exit 2 with the reason it cannot start (FR-025).
+    ///
+    /// The token comes from `IAD_HTTP_TOKEN`, then `--auth-token-file`, then the operator file's
+    /// `[transport] http_token`. A workspace file's token is set aside and never read here.
+    fn http_guard(
+        &self,
+        snapshot: &iris_agentic_dev_core::iris::config_sources::ConfigSnapshot,
+    ) -> Result<super::http_guard::HttpGuard> {
+        use super::http_guard::{GuardSettings, HttpGuard, TokenSources};
+
+        let bind_ip = parse_bind(&self.bind)?;
+        let file = match &self.auth_token_file {
+            Some(p) => Some(std::fs::read_to_string(p).map_err(|e| {
+                anyhow::anyhow!("cannot read --auth-token-file {}: {e}", p.display())
+            })?),
+            None => None,
+        };
+        let sources = TokenSources {
+            env: std::env::var("IAD_HTTP_TOKEN").ok(),
+            file,
+            operator: snapshot.operator.http_token.clone(),
+        };
+        let fail = |reason: String| -> ! {
+            // Bare stderr as well as tracing: the exit comes before any MCP handshake, and
+            // `RUST_LOG` can silence tracing.
+            tracing::error!("{reason}");
+            eprintln!("error: {reason}");
+            crate::exit(2)
+        };
+        let token = sources.resolve().unwrap_or_else(|e| fail(e));
+        let ignored = snapshot
+            .set_aside
+            .iter()
+            .find(|i| i.id == "workspace:transport.http_token");
+        HttpGuard::from_settings(
+            bind_ip,
+            GuardSettings {
+                token,
+                allowed_hosts: self.allowed_host.clone(),
+                allowed_origins: self.allowed_origin.clone(),
+            },
+        )
+        .map_err(|reason| match ignored {
+            Some(item) => format!(
+                "{reason}. The `[transport] http_token` in {} was set aside: only the operator \
+                 file or launch settings may set it (see check_config)",
+                item.file.as_deref().unwrap_or("the workspace file")
+            ),
+            None => reason,
+        })
+        .or_else(|reason| fail(reason))
     }
 
     pub async fn run(self) -> Result<()> {
@@ -144,35 +223,41 @@ impl McpCommand {
         let (iris_tx, iris_rx) =
             watch::channel::<Option<iris_agentic_dev_core::iris::connection::IrisConnection>>(None);
 
-        // Load .iris-agentic-dev.toml — takes precedence over env vars but not CLI flags (FR-006).
+        // Read the operator file and at most one workspace file — takes precedence over env vars but
+        // not CLI flags (FR-006). A workspace file cannot raise a gate until the operator trusts
+        // it (spec 141), so what it asked for and was refused is in the snapshot's set-aside list.
+        let inputs = iris_agentic_dev_core::iris::config_sources::LoadInputs::from_process(
+            Some(&self.workspace),
+            self.config.as_deref().map(std::path::Path::new),
+        );
+        let snapshot = iris_agentic_dev_core::iris::config_sources::ConfigSnapshot::load(&inputs);
         // If --workspace was explicitly passed (not the default "."), warn when no config found.
-        let ws_root =
-            iris_agentic_dev_core::iris::workspace_config::workspace_root(Some(&self.workspace));
-        if self.workspace != "." && !ws_root.join(".iris-agentic-dev.toml").exists() {
+        if inputs.workspace_flag.is_some()
+            && inputs.env_workspace.is_none()
+            && snapshot.workspace_layer.is_none()
+        {
             tracing::warn!(
                 "No .iris-agentic-dev.toml found at {} — falling back to auto-discovery. \
                  Set IRIS_HOST or IRIS_CONTAINER to connect directly.",
-                ws_root.display()
+                iris_agentic_dev_core::iris::config_sources::workspace_root(&inputs).display()
             );
         }
-        // When --config is given, load connection + tool settings from that explicit file.
-        // Otherwise walk the workspace directory as before. Fixes issue #111.
+        for e in &snapshot.errors {
+            tracing::error!("configuration file does not parse: {}", e.display());
+            eprintln!("error: configuration file does not parse: {}", e.display());
+        }
+        snapshot.announce();
+        iris_agentic_dev_core::skills::bundled::note_started_with_local_skills(
+            snapshot.operator.local_skills,
+        );
+        // apply_snapshot returns the loaded config path so we can record it in ConnectionState at
+        // startup (not just after hot-reload). Fixes issue #82.
         let (explicit, startup_config_path, declared_gates) =
-            if let Some(ref cfg_path) = self.config {
-                iris_agentic_dev_core::iris::workspace_config::apply_explicit_config_file(
-                    explicit,
-                    std::path::Path::new(cfg_path),
-                    &self.namespace,
-                )
-            } else {
-                // apply_workspace_config_with_path returns the loaded config path so we can record
-                // it in ConnectionState at startup (not just after hot-reload). Fixes issue #82.
-                iris_agentic_dev_core::iris::workspace_config::apply_workspace_config_with_path(
-                    explicit,
-                    Some(&self.workspace),
-                    &self.namespace,
-                )
-            };
+            iris_agentic_dev_core::iris::workspace_config::apply_snapshot(
+                explicit,
+                &snapshot,
+                &self.namespace,
+            );
 
         // FR-005/FR-006: refuse a gate declaration that can never mean what it says, before
         // anything is served. `destructive_tools_enabled = true` with `write_tools_enabled = false`
@@ -183,9 +268,7 @@ impl McpCommand {
         // dropped the server into the permissive namespace heuristic. The operator got the warning
         // they asked for and the opposite of the configuration they asked for. Exiting here is what
         // docs/tools.md and specs/073-destructive-gate have promised since 1.2.1.
-        if let Err(e) =
-            iris_agentic_dev_core::tools::write_gate::validate_declared_gates(&declared_gates)
-        {
+        if let Some(e) = snapshot.gate_error() {
             tracing::error!("{}", e);
             // Also on bare stderr: the exit happens before the MCP handshake, so a client sees a
             // process that died without speaking. `RUST_LOG` can silence tracing; this it cannot.
@@ -193,8 +276,27 @@ impl McpCommand {
             crate::exit(2);
         }
 
+        // FR-025: the HTTP transport's guard is decided before anything is served or discovered, so
+        // a public bind with no token exits 2 without having opened a connection.
+        let http_guard = if self.transport == "http" {
+            Some(self.http_guard(&snapshot)?)
+        } else {
+            None
+        };
+
+        // A configuration file that does not parse builds no connection: discovery would attach to
+        // whichever IRIS answers first, with gates the operator never chose. Every IRIS tool says
+        // CONFIG_INVALID until the file is fixed (R5 C11).
+        let config_invalid = snapshot.is_invalid();
+        // A file that names a container and no host hands it to discovery as data.
+        let hints =
+            iris_agentic_dev_core::iris::workspace_config::snapshot_discovery_hints(&snapshot);
         tokio::spawn(async move {
-            let conn = match discover_iris(explicit).await {
+            if config_invalid {
+                let _ = iris_tx.send(None);
+                return;
+            }
+            let conn = match discover_iris_with(explicit, &hints).await {
                 IrisDiscovery::Found(c) => {
                     tracing::info!(
                         "IRIS connected: {}/api/atelier/{} {}",
@@ -231,11 +333,13 @@ impl McpCommand {
         // Docker/localhost-scan discovery may still be running when tools are first called;
         // those return IRIS_UNREACHABLE and the client can retry.
         let mut iris_rx_wait = iris_rx.clone();
-        let _ = tokio::time::timeout(
-            tokio::time::Duration::from_secs(2),
-            iris_rx_wait.wait_for(|v| v.is_some()),
-        )
-        .await;
+        if !config_invalid {
+            let _ = tokio::time::timeout(
+                tokio::time::Duration::from_secs(2),
+                iris_rx_wait.wait_for(|v| v.is_some()),
+            )
+            .await;
+        }
         let iris = iris_rx.borrow().clone();
 
         // On Windows, stdout opens in text mode which translates \n → \r\n.
@@ -250,18 +354,11 @@ impl McpCommand {
             _setmode(1, O_BINARY); // stdout
         }
 
-        // Build ConfigWatcher for .iris-agentic-dev.toml hot-reload (034-live-connection-reload).
-        // When spawned from a launcher (e.g. Claude Desktop) the CWD is often "/" — fall back
-        // to $HOME so the watch path is usable without setting OBJECTSCRIPT_WORKSPACE.
-        let config_root = if ws_root == std::path::Path::new("/") {
-            std::env::var("HOME")
-                .ok()
-                .map(std::path::PathBuf::from)
-                .unwrap_or(ws_root)
-        } else {
-            ws_root
-        };
-        let config_watcher = ConfigWatcher::new(config_root.join(".iris-agentic-dev.toml"));
+        // Build ConfigWatcher for hot-reload (034-live-connection-reload): the workspace file, or
+        // where one would appear in the project directory, and the operator file. The path handed to
+        // the agent is never the operator file; with no project directory (a launcher's cwd of "/",
+        // or the home directory) there is nothing to watch but the operator file.
+        let config_watcher = ConfigWatcher::for_snapshot(&snapshot);
         let tools = IrisTools::with_registry_and_toolset(
             iris,
             registry,
@@ -271,6 +368,7 @@ impl McpCommand {
             self.no_skills,
             declared_gates,
         )?;
+        tools.set_config(inputs, snapshot);
 
         // FR-007: periodically sweep expired elicitation entries.
         {
@@ -295,8 +393,9 @@ impl McpCommand {
                 }
             }
             "http" => {
+                let guard = http_guard.expect("built above for the http transport");
                 tokio::select! {
-                    r = run_http_transport(tools, &self.bind, self.port) => r?,
+                    r = run_http_transport(tools, &self.bind, self.port, guard) => r?,
                     sig = shutdown_signal() => tracing::info!("{sig}: shutting down"),
                 }
             }
@@ -341,13 +440,19 @@ async fn shutdown_signal() -> &'static str {
     }
 }
 
+fn parse_bind(bind: &str) -> anyhow::Result<std::net::IpAddr> {
+    use std::str::FromStr;
+    std::net::IpAddr::from_str(bind)
+        .map_err(|e| anyhow::anyhow!("invalid bind address '{}': {}", bind, e))
+}
+
 pub(crate) async fn run_http_transport(
     tools: IrisTools,
     bind: &str,
     port: u16,
+    guard: HttpGuard,
 ) -> anyhow::Result<()> {
-    use std::net::{IpAddr, SocketAddr};
-    use std::str::FromStr;
+    use std::net::SocketAddr;
     use std::sync::Arc;
 
     use hyper::body::Incoming;
@@ -357,17 +462,19 @@ pub(crate) async fn run_http_transport(
         session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
     };
 
-    let bind_ip = IpAddr::from_str(bind)
-        .map_err(|e| anyhow::anyhow!("invalid bind address '{}': {}", bind, e))?;
+    let bind_ip = parse_bind(bind)?;
     let addr = SocketAddr::from((bind_ip, port));
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| anyhow::anyhow!("failed to bind {}:{}: {}", bind, port, e))?;
 
-    // When binding to all interfaces (0.0.0.0 / ::) the server is intentionally
-    // reachable from external callers (e.g. AI Hub containers using host.docker.internal).
-    // Disable the Host header allowlist so those callers aren't rejected.
+    // Host, Origin and the token are checked by `http_guard::check` before rmcp sees a request.
+    // Where rmcp can state the same Host rule (a loopback or pinned bind) it is told too, so a
+    // wiring mistake in the guard still fails closed there. An unspecified bind
+    // (0.0.0.0 / ::) is reachable from other machines on purpose (an AI Hub container calling
+    // host.docker.internal), and rmcp's list cannot name every IP literal, so there the guard
+    // alone decides.
     let config = if bind_ip.is_unspecified() {
         StreamableHttpServerConfig::default().disable_allowed_hosts()
     } else {
@@ -378,28 +485,47 @@ pub(crate) async fn run_http_transport(
             "::1".into(),
             bind.to_string(),
         ];
+        c.allowed_hosts.extend(guard.extra_hosts().iter().cloned());
         c
     };
+    let guard = Arc::new(guard);
 
     let session_mgr = Arc::new(LocalSessionManager::default());
-    // IrisTools is Clone — each session gets its own clone that shares the inner Arcs
-    // (connection state, client, registry, etc.) so they all observe the same IRIS state.
+    // Each session gets its own tools from `for_new_session`: they share the connection state,
+    // pool, clients and registry, so every session sees the same IRIS state, but the log store,
+    // pending SCM dialogs and call history are the session's own. A plain clone shared those too,
+    // and `iris_get_log` listed another client's results (spec 141 T220).
     let tools = Arc::new(tools);
-    let svc = StreamableHttpService::new(move || Ok((*tools).clone()), session_mgr, config);
+    let svc = StreamableHttpService::new(move || Ok(tools.for_new_session()), session_mgr, config);
 
     tracing::info!("iris-agentic-dev mcp listening on http://{}/mcp", addr);
 
     loop {
-        let (stream, _peer) = listener.accept().await?;
+        let (stream, peer) = listener.accept().await?;
         let io = TokioIo::new(stream);
         let svc_clone = svc.clone();
+        let guard = guard.clone();
         tokio::spawn(async move {
             let result = hyper::server::conn::http1::Builder::new()
                 .serve_connection(
                     io,
                     service_fn(move |req: hyper::Request<Incoming>| {
                         let mut s = svc_clone.clone();
-                        async move { tower_service::Service::call(&mut s, req).await }
+                        let guard = guard.clone();
+                        async move {
+                            // Every method and path goes through the guard: POST, the GET event
+                            // stream and DELETE. A refused request never reaches rmcp.
+                            let (parts, body) = req.into_parts();
+                            if let Err(refusal) = http_guard::check(&parts, &guard) {
+                                tracing::warn!(
+                                    "refused {} from {peer}: {refusal:?}",
+                                    parts.uri.path()
+                                );
+                                return Ok(http_guard::rejection_response(refusal));
+                            }
+                            let req = hyper::Request::from_parts(parts, body);
+                            tower_service::Service::call(&mut s, req).await
+                        }
                     }),
                 )
                 .await;
@@ -432,11 +558,29 @@ mod tests {
         .unwrap()
     }
 
+    /// A guard for `bind`: loopback needs none, anything else gets a token.
+    fn guard_for(bind: &str) -> HttpGuard {
+        use crate::cmd::http_guard::GuardSettings;
+        let ip: std::net::IpAddr = bind.parse().unwrap_or([127, 0, 0, 1].into());
+        let token = (!ip.is_loopback()).then(|| "t".repeat(40));
+        HttpGuard::from_settings(
+            ip,
+            GuardSettings {
+                token,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    }
+
     fn base_cmd() -> McpCommand {
         McpCommand {
             transport: "stdio".into(),
             port: 8080,
             bind: "127.0.0.1".into(),
+            auth_token_file: None,
+            allowed_host: Vec::new(),
+            allowed_origin: Vec::new(),
             host: None,
             web_port: None,
             web_prefix: String::new(),
@@ -496,7 +640,9 @@ mod tests {
     #[tokio::test]
     async fn test_run_http_transport_bad_bind() {
         let tools = make_tools();
-        let err = run_http_transport(tools, "not-an-ip", 0).await.unwrap_err();
+        let err = run_http_transport(tools, "not-an-ip", 0, guard_for("127.0.0.1"))
+            .await
+            .unwrap_err();
         assert!(
             err.to_string().contains("invalid bind address"),
             "expected invalid bind address error, got: {err}"
@@ -507,7 +653,12 @@ mod tests {
     async fn test_run_http_transport_binds_127_0_0_1() {
         let tools = make_tools();
         // Port 0 lets the OS assign a free port; we abort after the first connection.
-        let handle = tokio::spawn(run_http_transport(tools, "127.0.0.1", 0));
+        let handle = tokio::spawn(run_http_transport(
+            tools,
+            "127.0.0.1",
+            0,
+            guard_for("127.0.0.1"),
+        ));
         // Give the listener a moment to bind.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         // The task is still running (infinite loop). Abort it — this instruments the
@@ -521,10 +672,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_http_transport_binds_unspecified() {
+    async fn test_run_http_transport_binds_unspecified_with_a_token() {
         let tools = make_tools();
-        // 0.0.0.0 with port 0 exercises the disable_allowed_hosts branch.
-        let handle = tokio::spawn(run_http_transport(tools, "0.0.0.0", 0));
+        // 0.0.0.0 with port 0 exercises the unspecified-bind branch, which only the guard checks.
+        let handle = tokio::spawn(run_http_transport(
+            tools,
+            "0.0.0.0",
+            0,
+            guard_for("0.0.0.0"),
+        ));
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         handle.abort();
         let result = handle.await;
@@ -532,6 +688,15 @@ mod tests {
             result.unwrap_err().is_cancelled(),
             "task should be cancelled"
         );
+    }
+
+    #[test]
+    fn an_unspecified_bind_without_a_token_has_no_guard() {
+        // The allow-all branch this replaces served 0.0.0.0 to anyone who could reach it.
+        for bind in ["0.0.0.0", "::"] {
+            let ip: std::net::IpAddr = bind.parse().unwrap();
+            assert!(HttpGuard::from_settings(ip, Default::default()).is_err());
+        }
     }
 
     #[tokio::test]
@@ -549,7 +714,12 @@ mod tests {
         let tools = make_tools();
         // Spawn with port 0; the server picks a port and starts accepting.
         // We detect readiness by polling until a TCP connect succeeds.
-        let handle = tokio::spawn(run_http_transport(tools, "127.0.0.1", 0));
+        let handle = tokio::spawn(run_http_transport(
+            tools,
+            "127.0.0.1",
+            0,
+            guard_for("127.0.0.1"),
+        ));
         // Give the server time to bind.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         // We can't easily retrieve the bound port from run_http_transport, so probe
@@ -561,7 +731,12 @@ mod tests {
 
         // Spawn a second server on the recorded port to exercise accept loop body.
         let tools2 = make_tools();
-        let handle2 = tokio::spawn(run_http_transport(tools2, "127.0.0.1", probe_port));
+        let handle2 = tokio::spawn(run_http_transport(
+            tools2,
+            "127.0.0.1",
+            probe_port,
+            guard_for("127.0.0.1"),
+        ));
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         // Connect and send a minimal HTTP/1.1 request to drive the accept loop body.
@@ -591,6 +766,9 @@ mod tests {
             transport: "http".into(),
             port,
             bind: "127.0.0.1".into(),
+            auth_token_file: None,
+            allowed_host: Vec::new(),
+            allowed_origin: Vec::new(),
             host: None,
             web_port: None,
             web_prefix: String::new(),
@@ -623,6 +801,9 @@ mod tests {
             transport: "grpc".into(),
             port: 9999,
             bind: "127.0.0.1".into(),
+            auth_token_file: None,
+            allowed_host: Vec::new(),
+            allowed_origin: Vec::new(),
             host: None,
             web_port: None,
             web_prefix: String::new(),

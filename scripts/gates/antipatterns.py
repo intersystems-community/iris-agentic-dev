@@ -1845,6 +1845,9 @@ def check_unpowered_result() -> list[Finding]:
 # is not flagged. The suffix is the claim; review checks the binding. A SCREAMING_CASE placeholder
 # names a Rust constant, which carries no caller text, so it is not flagged either.
 #
+# Positional placeholders (`{}`, `{0}`) count too: they carry no name, so no `_lit` suffix can claim
+# safety. Bind the value to a `*_lit` local and name it inline, or mark the site with splice-ok.
+#
 # Not flagged: a bare `{x}` splice, because code builders splice generated fragments that way.
 # research.md lists those by hand. A site that is safe for a reason the detector cannot see (the
 # value had its quotes doubled earlier) carries a `splice-ok: <reason>` comment within the three
@@ -1853,7 +1856,10 @@ def check_unpowered_result() -> list[Finding]:
 
 RAW_STRING = re.compile(r'r(#+)"(.*?)"\1', re.S)
 NORMAL_STRING = re.compile(r'(?<![r#\w])"((?:[^"\\]|\\.)*)"', re.S)
-PLACEHOLDER = r"\{[A-Za-z_][A-Za-z0-9_]*(?::[^}]*)?\}"
+# Named (`{x}`), indexed (`{0}`) and bare (`{}`, `{:?}`) placeholders. `{{` and `}}` are escaped
+# braces, so a placeholder is not preceded by `{` (the quote patterns below anchor on a quote) and
+# a bare one is not followed by `}`.
+PLACEHOLDER = r"\{(?:[A-Za-z_][A-Za-z0-9_]*|\d+)?(?::[^}]*)?\}(?!\})"
 QUOTED_IN_RAW = re.compile(r'(?<!\{)"' + PLACEHOLDER + r'"')
 QUOTED_ESCAPED = re.compile(r'\\"' + PLACEHOLDER + r'\\"')
 QUOTED_SQL = re.compile(r"'" + PLACEHOLDER + r"'")

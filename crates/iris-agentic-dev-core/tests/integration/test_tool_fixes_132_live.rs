@@ -26,6 +26,7 @@ fn conn() -> Option<IrisConnection> {
 async fn call(class: &str, method: &str, args: &[&str]) -> serde_json::Value {
     let iris = conn().expect("IRIS_HOST not set");
     let p = IrisExecuteMethodParams {
+        confirm: false,
         class: class.to_string(),
         method: method.to_string(),
         args: args.iter().map(|s| s.to_string()).collect(),

@@ -233,6 +233,7 @@ mcpTemplate = "dev"
 
 mod workspace_config_loading {
     use iris_agentic_dev_core::iris::workspace_config::{load_workspace_config, workspace_root};
+    use iris_agentic_dev_core::testing::EnvGuard;
     use std::io::Write;
 
     fn write_file(dir: &tempfile::TempDir, name: &str, contents: &str) {
@@ -269,22 +270,24 @@ mod workspace_config_loading {
 
     #[test]
     fn workspace_root_empty_workspace_var_falls_through() {
+        let mut env_guard = EnvGuard::new();
         // OBJECTSCRIPT_WORKSPACE = "" should not use env var, fall to path arg
         let _guard: std::sync::MutexGuard<'_, ()> = super::WORKSPACE_LOCK.lock().unwrap_or_else(
             |e: std::sync::PoisonError<std::sync::MutexGuard<'_, ()>>| e.into_inner(),
         );
-        std::env::set_var("OBJECTSCRIPT_WORKSPACE", "");
+        env_guard.set("OBJECTSCRIPT_WORKSPACE", "");
         let root = workspace_root(Some("/explicit/path"));
-        std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+        env_guard.unset("OBJECTSCRIPT_WORKSPACE");
         assert_eq!(root.to_str().unwrap(), "/explicit/path");
     }
 
     #[test]
     fn workspace_root_dot_path_falls_through_to_walkup() {
+        let mut env_guard = EnvGuard::new();
         let _guard: std::sync::MutexGuard<'_, ()> = super::WORKSPACE_LOCK.lock().unwrap_or_else(
             |e: std::sync::PoisonError<std::sync::MutexGuard<'_, ()>>| e.into_inner(),
         );
-        std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+        env_guard.unset("OBJECTSCRIPT_WORKSPACE");
         // "." is treated as empty — should trigger walk-up, not return "."
         let root = workspace_root(Some("."));
         // Result is not literally "." — it walked up (may be cwd or a parent)
@@ -297,10 +300,11 @@ mod workspace_config_loading {
 
     #[test]
     fn workspace_root_empty_path_falls_through_to_walkup() {
+        let mut env_guard = EnvGuard::new();
         let _guard: std::sync::MutexGuard<'_, ()> = super::WORKSPACE_LOCK.lock().unwrap_or_else(
             |e: std::sync::PoisonError<std::sync::MutexGuard<'_, ()>>| e.into_inner(),
         );
-        std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+        env_guard.unset("OBJECTSCRIPT_WORKSPACE");
         let root = workspace_root(Some(""));
         // Walk-up result: path returned is a real directory, not empty
         assert!(!root.to_str().unwrap().is_empty());
@@ -366,6 +370,7 @@ mod server_manager_coverage {
         build_server_manager_config_json, select_server, ServerManagerCredentialEntry,
         ServerManagerProfile, SmCredentialError,
     };
+    use iris_agentic_dev_core::testing::EnvGuard;
     use std::sync::Mutex;
 
     // Serialize tests that mutate IRIS_SERVER_NAME env var.
@@ -405,8 +410,9 @@ mod server_manager_coverage {
 
     #[test]
     fn select_server_multi_no_env_var_returns_ambiguous() {
+        let mut env_guard = EnvGuard::new();
         let _g = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("IRIS_SERVER_NAME");
+        env_guard.unset("IRIS_SERVER_NAME");
         let profiles = vec![profile("dev"), profile("staging"), profile("prod")];
         let r = select_server(&profiles);
         assert!(matches!(r, Err(SmCredentialError::Ambiguous { .. })));
@@ -414,32 +420,32 @@ mod server_manager_coverage {
 
     #[test]
     fn select_server_multi_with_env_var_selects_match() {
+        let mut env_guard = EnvGuard::new();
         let _g = ENV_LOCK.lock().unwrap();
-        std::env::set_var("IRIS_SERVER_NAME", "staging");
+        env_guard.set("IRIS_SERVER_NAME", "staging");
         let profiles = vec![profile("dev"), profile("staging"), profile("prod")];
         let r = select_server(&profiles).unwrap();
         assert_eq!(r.name, "staging");
-        std::env::remove_var("IRIS_SERVER_NAME");
     }
 
     #[test]
     fn select_server_multi_with_env_var_no_match_returns_ambiguous() {
+        let mut env_guard = EnvGuard::new();
         let _g = ENV_LOCK.lock().unwrap();
-        std::env::set_var("IRIS_SERVER_NAME", "nonexistent");
+        env_guard.set("IRIS_SERVER_NAME", "nonexistent");
         let profiles = vec![profile("dev"), profile("prod")];
         let r = select_server(&profiles);
         assert!(matches!(r, Err(SmCredentialError::Ambiguous { .. })));
-        std::env::remove_var("IRIS_SERVER_NAME");
     }
 
     #[test]
     fn select_server_case_insensitive_match() {
+        let mut env_guard = EnvGuard::new();
         let _g = ENV_LOCK.lock().unwrap();
-        std::env::set_var("IRIS_SERVER_NAME", "STAGING");
+        env_guard.set("IRIS_SERVER_NAME", "STAGING");
         let profiles = vec![profile("dev"), profile("staging")];
         let r = select_server(&profiles).unwrap();
         assert_eq!(r.name, "staging");
-        std::env::remove_var("IRIS_SERVER_NAME");
     }
 
     // ── build_server_manager_config_json: all policy template variants ────────
@@ -874,7 +880,10 @@ role = "subject"
         let instances = json["instances"].as_object().unwrap();
         assert!(instances.contains_key("local"));
         assert!(instances.contains_key("subject"));
-        assert_eq!(instances["local"]["role"], "workspace");
+        assert_eq!(
+            instances["local"]["role"], "workbench",
+            "`workspace` is the pre-1.7 spelling of `workbench`"
+        );
         assert_eq!(instances["subject"]["role"], "subject");
     }
 
@@ -980,7 +989,7 @@ mod coverage_parse_output_pipes {
         let output = "TOTAL|0|0";
         let v = parse_coverage_output(output);
         assert_eq!(v["success"], true);
-        assert_eq!(v["total_pct"], 0.0);
+        assert!(v["total_pct"].is_null(), "0 of 0 is not 0%: {v}");
         assert_eq!(v["hits"], 0);
         assert_eq!(v["total"], 0);
         let classes = v["classes"].as_array().unwrap();
@@ -1006,12 +1015,12 @@ mod coverage_parse_output_pipes {
     }
 
     #[test]
-    fn parse_class_with_zero_total_pct_is_zero() {
+    fn parse_class_with_zero_total_pct_is_null() {
         let output = "MyApp.X|MyApp.X.1|0|0\nTOTAL|0|0";
         let v = parse_coverage_output(output);
         assert_eq!(v["success"], true);
         let classes = v["classes"].as_array().unwrap();
-        assert_eq!(classes[0]["pct"], 0.0, "zero total should give 0.0%");
+        assert!(classes[0]["pct"].is_null(), "0 of 0 lines is not 0%: {v}");
     }
 
     #[test]
@@ -1196,31 +1205,26 @@ mod coverage_build_run_code {
             "TOTAL line must be present even with no routines"
         );
         assert!(
-            !code.contains("rset0"),
-            "no rset0 when no routines provided"
+            !code.contains("COVERAGE_ROUTINE_UNKNOWN"),
+            "no class asked for, none unknown"
         );
     }
 
+    /// A pattern or routine name stands for its class: the class is read off it, and the class is
+    /// what the unknown-class check looks for in the monitor (`Class.` as a prefix).
     #[test]
-    fn build_run_routine_without_dot_one_suffix() {
-        let code = build_coverage_run_code(&["MyApp.ClassA".to_string()], "MyApp.Tests", "USER");
-        // Routine is used as-is in the ResultSet.Execute call
-        assert!(code.contains("MyApp.ClassA"), "full routine name used");
-        // strip_suffix in write statement should use the name as-is
-        assert!(
-            code.contains("MyApp.ClassA|MyApp.ClassA"),
-            "class name = routine when no .1"
-        );
-    }
-
-    #[test]
-    fn build_run_routine_with_dot_one_suffix() {
-        let code = build_coverage_run_code(&["MyApp.ClassA.1".to_string()], "MyApp.Tests", "USER");
-        // Class name extracted by stripping .1
-        assert!(
-            code.contains("MyApp.ClassA|MyApp.ClassA.1"),
-            "class extracted by strip_suffix(.1)"
-        );
+    fn build_run_checks_each_class_asked_for() {
+        for routine in ["MyApp.ClassA", "MyApp.ClassA.1", "MyApp.ClassA.*"] {
+            let code = build_coverage_run_code(&[routine.to_string()], "MyApp.Tests", "USER");
+            assert!(
+                code.contains("\"MyApp.ClassA.\""),
+                "{routine}: prefix check: {code}"
+            );
+            assert!(
+                code.contains(routine),
+                "{routine}: the pattern is started: {code}"
+            );
+        }
     }
 
     #[test]
@@ -1229,14 +1233,22 @@ mod coverage_build_run_code {
         assert!(code.contains("MYNS"), "namespace must be embedded");
     }
 
+    /// Blocks are allowed only when they open and close on their own line: the docker exec terminal
+    /// reads one line at a time, so a block spread over lines is a `<SYNTAX>` error there.
     #[test]
-    fn build_run_no_curly_braces() {
+    fn build_run_blocks_close_on_their_own_line() {
         let code = build_coverage_run_code(
-            &["MyApp.A.1".to_string(), "MyApp.B.1".to_string()],
+            &["MyApp.A.*".to_string(), "MyApp.B.*".to_string()],
             "MyApp.Tests",
             "USER",
         );
-        assert!(!code.contains('{'), "no curly braces in code");
+        for line in code.lines() {
+            assert_eq!(
+                line.matches('{').count(),
+                line.matches('}').count(),
+                "a block runs over lines: {line}"
+            );
+        }
     }
 }
 
@@ -1282,10 +1294,15 @@ mod coverage_build_package_expand_code {
     #[test]
     fn build_expand_single_quote_escaping() {
         let code = build_package_expand_code("O'Corp", "USER");
-        // Single quotes in SQL strings must be doubled; prefix uses plain dot
+        // The prefix is a bound parameter (spec 141 C2): it never lands in the SQL text, so there is
+        // no SQL literal to close. It reaches IRIS as one ObjectScript string expression.
         assert!(
-            code.contains("O''Corp."),
-            "single quote must be escaped as ''"
+            code.contains("%Execute(\"O'Corp.\")"),
+            "prefix must be passed to %Execute: {code}"
+        );
+        assert!(
+            code.contains("%STARTSWITH ? AND"),
+            "the statement must take the prefix as a parameter: {code}"
         );
     }
 

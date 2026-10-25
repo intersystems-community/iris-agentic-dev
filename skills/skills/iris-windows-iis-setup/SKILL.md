@@ -98,7 +98,7 @@ namespace = "USER"          # your target namespace
 **Verification**: Run `check_config` via `iris-agentic-dev`. The response should show:
 
 - `"connected": true`
-- `"connection_source": "http"`
+- `"connection_source": "config_file"`
 - `"host": "localhost"` (or `"127.0.0.1"`)
 
-If `connected` is false, recheck Steps 1–4. If `connection_source` is `"docker"`, the config file is not being picked up — verify the `.iris-agentic-dev.toml` path matches the workspace root.
+If `connected` is false, recheck Steps 1–4. If `connection_source` is `"auto_discovered"` or `"env_vars"`, the config file is not being picked up — verify the `.iris-agentic-dev.toml` path matches the workspace root.

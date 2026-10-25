@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "iris-agentic-dev/141/refusal.schema.json",
+  "title": "Refusal body (FR-039)",
+  "description": "Every gate refusal. Sent as an isError tool result. The existing gate-specific fields (env_gate_blocked, server_name, remediation, role_gate, ...) stay alongside.",
+  "type": "object",
+  "required": ["success", "error_code", "error", "refusal"],
+  "properties": {
+    "success": { "const": false },
+    "error_code": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]+$" },
+    "error": { "type": "string", "minLength": 1 },
+    "refusal": {
+      "type": "object",
+      "required": ["kind", "server", "lift"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "acknowledgement_required",
+            "operator_limit",
+            "untrusted_setting",
+            "fixed_rule"
+          ]
+        },
+        "server": { "type": "string" },
+        "lift": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["argument"],
+              "additionalProperties": false,
+              "properties": {
+                "argument": { "enum": ["confirm", "acknowledgePhi"] }
+              }
+            },
+            {
+              "type": "object",
+              "required": ["setting"],
+              "additionalProperties": false,
+              "description": "The setting only. The operator file's path and the edit that lifts the limit go to stderr and `iris-agentic-dev trust --show` (FR-039, 2026-10-24).",
+              "properties": {
+                "setting": { "type": "string" }
+              }
+            }
+          ]
+        },
+        "set_aside": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "const": "fixed_rule" } } },
+          "then": { "properties": { "lift": { "type": "null" } } }
+        },
+        {
+          "if": {
+            "properties": { "kind": { "const": "acknowledgement_required" } }
+          },
+          "then": { "properties": { "lift": { "required": ["argument"] } } }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "untrusted_setting" } } },
+          "then": {
+            "required": ["set_aside"],
+            "properties": { "lift": { "required": ["setting"] } }
+          }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "operator_limit" } } },
+          "then": {
+            "properties": { "lift": { "required": ["setting"] } }
+          }
+        }
+      ]
+    }
+  }
+}

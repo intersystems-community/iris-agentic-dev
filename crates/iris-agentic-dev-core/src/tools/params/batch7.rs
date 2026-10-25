@@ -3,10 +3,10 @@
 //! Twenty-one slots, the last of the thirty-one tools that advertised an open object. One integer —
 //! `mermaid_class.depth`, read with `as_u64()` and clamped to 5 — and twenty strings.
 //!
-//! `stream_inspect` takes `oid`, `namespace` and `server`, and nothing else. It shipped documented
-//! with a `max_chars` that no code read, which is the bug that named this feature; the struct below
-//! is the fix, and `stream_inspect_declares_exactly_three_parameters` in
-//! `tests/binary/schema_batch7.rs` is what keeps it fixed.
+//! `stream_inspect` shipped documented with a `max_chars` that no code read, which is the bug that
+//! named this feature. 113 removed the promise; spec 141 (T199) made it real: the struct below
+//! declares it, `stream_inspect_impl` reads it, and `stream_inspect_declares_exactly_four_parameters`
+//! in `tests/binary/schema_batch7.rs` is what keeps the declaration and the reader together.
 //!
 //! Nothing is `required`. `mermaid_class.class` and `hl7_schema_inspect.schema` come closest — both
 //! default to the empty string and fail downstream — but the handlers' own answers name the class or
@@ -98,15 +98,20 @@ pub struct ResolveStorageParams {
 
 /// Parameters of `stream_inspect`.
 ///
-/// Three fields, and no fourth. See the module doc: this is the tool whose documentation promised a
-/// `max_chars` the code never read.
+/// Four fields. `max_chars` is the one this feature was named for: it was documented for five minor
+/// versions with nothing reading it. The handler reads it now (`stream_inspect_impl`), and
+/// `stream_inspect_declares_exactly_four_parameters` in `tests/binary/schema_batch7.rs` and
+/// `tests/integration/test_stream_inspect_141_live.rs` hold that it does.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StreamInspectParams {
-    /// Stream OID — an integer as a string. Tried against `%Stream.GlobalCharacter` first, then
-    /// `%Stream.GlobalBinary`.
+    /// Stream OID — an integer as a string. An id that holds no stream is `STREAM_NOT_FOUND`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oid: Option<String>,
+    /// Most characters of the stream to return, counted from the start. Default 20000, at most
+    /// 1000000. The answer carries the stream's whole `size`, `truncated`, and the cap it used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_chars: Option<u32>,
     /// Namespace holding the stream. Omit to use the connection's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,

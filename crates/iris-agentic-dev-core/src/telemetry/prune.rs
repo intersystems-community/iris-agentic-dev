@@ -40,7 +40,8 @@ pub fn sessions_to_prune(
         .collect()
 }
 
-/// Deletes durable-sink data for the given session ids from whichever sink is active.
+/// Deletes durable data for the given session ids: the local file always, and the IRIS global too
+/// when a connection is given (the local file is written whatever the sink, R5 C16).
 /// Best-effort — swallows errors (pruning failure must never be a hard error).
 pub async fn prune_sessions(
     session_ids: &[Uuid],
@@ -48,23 +49,17 @@ pub async fn prune_sessions(
     client: &reqwest::Client,
     config_dir: &Path,
 ) {
-    match iris {
-        Some(iris) => {
-            for sid in session_ids {
-                let code = format!("kill ^IRISDEV(\"telemetry\",\"{sid}\")\n");
-                if let Err(e) = iris.execute_via_generator(&code, "USER", client).await {
-                    tracing::debug!("telemetry prune (IRIS) failed for {sid}: {e}");
-                }
+    for sid in session_ids {
+        let path = config_dir.join("telemetry").join(format!("{sid}.jsonl"));
+        if let Err(e) = std::fs::remove_file(&path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                tracing::debug!("telemetry prune (local file) failed for {sid}: {e}");
             }
         }
-        None => {
-            for sid in session_ids {
-                let path = config_dir.join("telemetry").join(format!("{sid}.jsonl"));
-                if let Err(e) = std::fs::remove_file(&path) {
-                    if e.kind() != std::io::ErrorKind::NotFound {
-                        tracing::debug!("telemetry prune (local file) failed for {sid}: {e}");
-                    }
-                }
+        if let Some(iris) = &iris {
+            let code = format!("kill ^IRISDEV(\"telemetry\",\"{sid}\")\n");
+            if let Err(e) = iris.execute_via_generator(&code, "USER", client).await {
+                tracing::debug!("telemetry prune (IRIS) failed for {sid}: {e}");
             }
         }
     }
@@ -118,5 +113,28 @@ mod tests {
         let sessions = vec![(fresh, ts(1, now)), (stale, ts(60, now))];
         let result = sessions_to_prune(&sessions, active, now, 30);
         assert_eq!(result, vec![stale]);
+    }
+
+    #[tokio::test]
+    async fn pruning_with_an_iris_connection_removes_the_local_file_too() {
+        // The local file is written whatever the sink (R5 C16), so pruning that goes to IRIS must
+        // still reach it. The connection here answers nothing: the IRIS half fails and is swallowed.
+        use crate::iris::connection::DiscoverySource;
+        let dir = tempfile::tempdir().unwrap();
+        let sid = Uuid::new_v4();
+        let client = reqwest::Client::new();
+        let record = crate::telemetry::ToolCallRecord::now("iris_info", true, 1, sid);
+        crate::telemetry::write_durable(&record, None, &client, dir.path()).await;
+        let file = dir.path().join("telemetry").join(format!("{sid}.jsonl"));
+        assert!(file.exists(), "the file this test prunes was not written");
+        let dead = Arc::new(IrisConnection::new(
+            "http://127.0.0.1:1",
+            "USER",
+            "_SYSTEM",
+            "SYS",
+            DiscoverySource::ExplicitFlag,
+        ));
+        prune_sessions(&[sid], Some(dead), &client, dir.path()).await;
+        assert!(!file.exists(), "pruned session's local file must be gone");
     }
 }

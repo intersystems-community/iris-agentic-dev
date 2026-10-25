@@ -7,6 +7,7 @@
 //!   cargo test -p iris-agentic-dev-core --features testing \
 //!     --test test_server_pool_e2e -- --include-ignored --test-threads=1 --nocapture
 
+use iris_agentic_dev_core::testing::EnvGuard;
 use iris_agentic_dev_core::tools::{ConfigWatcher, IrisTools};
 
 /// Extract JSON from the first text content of a CallToolResult.
@@ -46,7 +47,9 @@ async fn e2e_server_add_remove() {
 
     // Clean up any stale entry from a previous aborted run before we start.
     {
-        let tools = IrisTools::new(None).expect("IrisTools::new");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new");
         let _ = tools
             .call_for_test(
                 "iris_remove_server",
@@ -57,7 +60,9 @@ async fn e2e_server_add_remove() {
 
     // ── Step 1: add the server ────────────────────────────────────────────────
     {
-        let tools = IrisTools::new(None).expect("IrisTools::new");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new");
         let v = parse_result(
             tools
                 .call_for_test(
@@ -84,7 +89,9 @@ async fn e2e_server_add_remove() {
 
     // ── Step 2: fresh pool — server must appear in iris_servers ──────────────
     {
-        let tools = IrisTools::new(None).expect("IrisTools::new after add");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new after add");
         let v = parse_result(
             tools
                 .call_for_test("iris_servers", serde_json::json!({}))
@@ -100,7 +107,9 @@ async fn e2e_server_add_remove() {
 
     // ── Step 3: remove the server ─────────────────────────────────────────────
     {
-        let tools = IrisTools::new(None).expect("IrisTools::new for remove");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new for remove");
         let v = parse_result(
             tools
                 .call_for_test(
@@ -117,7 +126,9 @@ async fn e2e_server_add_remove() {
 
     // ── Step 4: fresh pool — server must NOT appear in iris_servers ───────────
     {
-        let tools = IrisTools::new(None).expect("IrisTools::new after remove");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new after remove");
         let v = parse_result(
             tools
                 .call_for_test("iris_servers", serde_json::json!({}))
@@ -150,7 +161,9 @@ async fn e2e_server_test() {
 
     // Clean up any stale entry before starting.
     {
-        let tools = IrisTools::new(None).expect("IrisTools::new");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new");
         let _ = tools
             .call_for_test(
                 "iris_remove_server",
@@ -161,7 +174,9 @@ async fn e2e_server_test() {
 
     // ── Step 1: register the server ───────────────────────────────────────────
     {
-        let tools = IrisTools::new(None).expect("IrisTools::new");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new");
         let v = parse_result(
             tools
                 .call_for_test(
@@ -187,7 +202,9 @@ async fn e2e_server_test() {
 
     // ── Step 2: fresh pool picks up the server — probe it ────────────────────
     let probe_result = {
-        let tools = IrisTools::new(None).expect("IrisTools::new with server");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new with server");
         parse_result(
             tools
                 .call_for_test("iris_test_server", serde_json::json!({"name": SERVER_NAME}))
@@ -197,7 +214,9 @@ async fn e2e_server_test() {
 
     // ── Step 3: clean up — remove regardless of probe outcome ─────────────────
     {
-        let tools = IrisTools::new(None).expect("IrisTools::new for cleanup");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new for cleanup");
         let _ = tools
             .call_for_test(
                 "iris_remove_server",
@@ -239,7 +258,9 @@ async fn e2e_reload_pool_hot_swap() {
     let username = std::env::var("IRIS_USERNAME").unwrap_or_else(|_| "_SYSTEM".into());
     let password = std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".into());
 
-    let tools = IrisTools::new(None).expect("IrisTools::new");
+    let tools =
+        IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+            .expect("IrisTools::new");
 
     // ── Step 1: add the server ────────────────────────────────────────────────
     let add_result = parse_result(
@@ -330,7 +351,9 @@ async fn test_iris_test_server_adhoc_reachable() {
     let username = std::env::var("IRIS_USERNAME").unwrap_or_else(|_| "_SYSTEM".into());
     let password = std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".into());
 
-    let tools = IrisTools::new(None).expect("IrisTools::new");
+    let tools =
+        IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+            .expect("IrisTools::new");
     let v = parse_result(
         tools
             .call_for_test(
@@ -372,7 +395,9 @@ async fn test_iris_test_server_adhoc_wrong_password() {
         .unwrap_or(52780);
     let correct_pw = std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".into());
 
-    let tools = IrisTools::new(None).expect("IrisTools::new");
+    let tools =
+        IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+            .expect("IrisTools::new");
 
     // Pre-check: if a known-wrong password also returns auth:true, the container has
     // authentication disabled (e.g. fresh community container after clear_password_change_flag).
@@ -444,7 +469,9 @@ async fn test_sc002_discover_then_add_workflow() {
     const SERVER_NAME: &str = "sc002-discover-then-add-098";
 
     // Clean up any stale entry from a previous run.
-    let tools = IrisTools::new(None).expect("IrisTools::new");
+    let tools =
+        IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+            .expect("IrisTools::new");
     let _ = tools
         .call_for_test(
             "iris_remove_server",
@@ -542,7 +569,9 @@ async fn test_iris_servers_probe_true_live() {
 
     // Clean up any stale entry.
     {
-        let tools = IrisTools::new(None).expect("IrisTools::new");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new");
         let _ = tools
             .call_for_test(
                 "iris_remove_server",
@@ -553,7 +582,9 @@ async fn test_iris_servers_probe_true_live() {
 
     // Register a server.
     {
-        let tools = IrisTools::new(None).expect("IrisTools::new");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new");
         let v = parse_result(
             tools
                 .call_for_test(
@@ -582,7 +613,9 @@ async fn test_iris_servers_probe_true_live() {
 
     // Fresh pool picks up the server, then probe.
     let probe_v = {
-        let tools = IrisTools::new(None).expect("IrisTools::new");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new");
         parse_result(
             tools
                 .call_for_test("iris_servers", serde_json::json!({"probe": true}))
@@ -592,7 +625,9 @@ async fn test_iris_servers_probe_true_live() {
 
     // Clean up.
     {
-        let tools = IrisTools::new(None).expect("IrisTools::new");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new");
         let _ = tools
             .call_for_test(
                 "iris_remove_server",
@@ -641,7 +676,9 @@ async fn test_iris_servers_probe_differential() {
 
     // Clean up stale entries.
     {
-        let tools = IrisTools::new(None).expect("IrisTools::new");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new");
         let _ = tools
             .call_for_test("iris_remove_server", serde_json::json!({"name": LIVE_NAME}))
             .await;
@@ -652,7 +689,9 @@ async fn test_iris_servers_probe_differential() {
 
     // Add live server.
     {
-        let tools = IrisTools::new(None).expect("IrisTools::new");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new");
         let v = parse_result(
             tools
                 .call_for_test(
@@ -681,7 +720,9 @@ async fn test_iris_servers_probe_differential() {
 
     // Add dead server (port 1 is always closed).
     {
-        let tools = IrisTools::new(None).expect("IrisTools::new");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new");
         let v = parse_result(
             tools
                 .call_for_test(
@@ -714,7 +755,9 @@ async fn test_iris_servers_probe_differential() {
 
     // Clean up.
     {
-        let tools = IrisTools::new(None).expect("IrisTools::new");
+        let tools =
+            IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+                .expect("IrisTools::new");
         let _ = tools
             .call_for_test("iris_remove_server", serde_json::json!({"name": LIVE_NAME}))
             .await;
@@ -758,6 +801,7 @@ async fn test_iris_servers_probe_differential() {
 #[tokio::test]
 #[ignore]
 async fn test_background_pool_reload() {
+    let mut env_guard = EnvGuard::new();
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join(".iris-agentic-dev.toml");
 
@@ -766,7 +810,7 @@ async fn test_background_pool_reload() {
     std::fs::write(&config_path, initial).unwrap();
 
     // Point workspace_root() at the temp dir so load_pool uses our test config.
-    std::env::set_var("OBJECTSCRIPT_WORKSPACE", dir.path().to_str().unwrap());
+    env_guard.set("OBJECTSCRIPT_WORKSPACE", dir.path().to_str().unwrap());
 
     // Build IrisTools with a watcher on the temp config file.
     // ConfigWatcher::new reads the current mtime so has_changed() is false initially.
@@ -817,7 +861,7 @@ async fn test_background_pool_reload() {
             .await,
     );
 
-    std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
+    env_guard.unset("OBJECTSCRIPT_WORKSPACE");
 
     let empty2 = vec![];
     let after_names: Vec<&str> = after["servers"]

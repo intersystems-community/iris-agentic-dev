@@ -7,6 +7,7 @@ fn env_or(key: &str, default: &str) -> String {
 fn iris_dev() -> Command {
     let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
     let mut cmd = Command::new(bin);
+    crate::support_141::isolate(&mut cmd);
     cmd.env("IRIS_HOST", env_or("IRIS_HOST", "localhost"))
         .env("IRIS_WEB_PORT", env_or("IRIS_WEB_PORT", "52780"))
         .env("IRIS_NAMESPACE", env_or("IRIS_NAMESPACE", "USER"))
@@ -264,7 +265,8 @@ fn test_exec_kill_global_allowed_live() {
 
 // --- 130 round 4: a CLI call leaves no telemetry scratch class behind ---------------------------
 //
-// Every tool call writes a telemetry record to `^IRISDEV("telemetry",...)` through a scratch class.
+// With the operator's opt-in (`IAD_TELEMETRY_SINK=iris`), every tool call on a server with writes
+// on writes a telemetry record to `^IRISDEV("telemetry",...)` through a scratch class.
 // `record_call` spawned that write and the CLI exited without waiting, so the runtime dropped it
 // between compile and delete: 78,183 `IrisDevTmp.IrisDevRun*` classes in USER. Telemetry now uses
 // its own prefix, so this counts the fix alone and not the older MCP processes still running.
@@ -314,14 +316,19 @@ fn telemetry_sessions() -> u64 {
 #[ignore]
 fn test_exec_leaves_no_telemetry_scratch_class_130() {
     let before = telemetry_sessions();
+    let iris_sink = || {
+        let mut cmd = iris_dev();
+        cmd.env("IAD_TELEMETRY_SINK", "iris");
+        cmd
+    };
     // Names, not a count: a class another suite leaked (a killed server, a dropped runtime) must
     // not fail this one, and one this test leaks must not hide behind a cleanup elsewhere.
     let classes_before = telemetry_scratch_classes();
 
-    let ok = iris_dev().args(["exec", "write 1,!"]).output().unwrap();
+    let ok = iris_sink().args(["exec", "write 1,!"]).output().unwrap();
     assert!(ok.status.success(), "{ok:?}");
     // A failing call exits through the other path, `exit(1)`.
-    let failed = iris_dev()
+    let failed = iris_sink()
         .args(["exec", "do ##class(Nonexistent.Class130).Method()"])
         .output()
         .unwrap();

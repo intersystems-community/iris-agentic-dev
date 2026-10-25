@@ -5,7 +5,9 @@
 // `tests/integration/test_gate_enforcement_live.rs`.
 
 use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
-use iris_agentic_dev_core::tools::write_gate::{DeclaredGates, WriteClass, CLASSIFICATION};
+use iris_agentic_dev_core::tools::write_gate::{
+    tool_class, DeclaredGates, TargetKind, WriteClass, CLASSIFICATION,
+};
 use iris_agentic_dev_core::tools::{IrisTools, Toolset};
 
 /// A connection object, not a connection. Nothing here dials IRIS — but the constructor's
@@ -45,6 +47,10 @@ fn tools_with_declared(toolset: Toolset, declared: DeclaredGates) -> IrisTools {
 const WRITES_OFF: DeclaredGates = DeclaredGates {
     write_tools_enabled: Some(false),
     destructive_tools_enabled: None,
+    write_source: None,
+    destructive_source: None,
+    withhold_launch_loosening: false,
+    read_only_strict: false,
 };
 
 /// Writes declared off — the state in which the old code stripped tools out of the router.
@@ -129,6 +135,7 @@ fn the_advertised_tool_list_does_not_depend_on_the_gate() {
         DeclaredGates {
             write_tools_enabled: Some(true),
             destructive_tools_enabled: Some(true),
+            ..Default::default()
         },
     )
     .registered_tool_names();
@@ -370,5 +377,439 @@ fn test_mirror_failover_classifies_as_destructive() {
         Some(WriteClass::Destructive),
         "iris_admin action=mirror_failover must classify as WriteClass::Destructive, got {:?}",
         class
+    );
+}
+
+// ── spec 141 R1 D3: an elicitation resume is judged on what its pending entry recorded ──────────
+
+mod elicitation_resume_141 {
+    use crate::support_gate_141::*;
+    use iris_agentic_dev_core::elicitation::{ElicitationAction, Origin};
+    use iris_agentic_dev_core::tools::write_gate::WriteClass;
+    use serde_json::json;
+
+    fn pend(
+        rig: &Rig,
+        tool: &str,
+        target: Option<&str>,
+        class: WriteClass,
+        action: ElicitationAction,
+    ) -> String {
+        rig.tools.elicitation_store.insert_from(
+            Origin {
+                tool: tool.to_string(),
+                target_key: target.map(str::to_string),
+                class,
+            },
+            "Sentinel141.cls",
+            action,
+            Some("Class Sentinel141 {}".to_string()),
+            Some("1".to_string()),
+            "USER",
+        )
+    }
+
+    async fn resume_doc(rig: &Rig, id: &str, server: Option<&str>) -> serde_json::Value {
+        let mut args = json!({"elicitation_id": id, "elicitation_answer": "yes"});
+        if let Some(s) = server {
+            args["server"] = json!(s);
+        }
+        let r = rig.tools.call_gated("iris_doc", args).await;
+        match r {
+            Ok(r) => body_of(&r),
+            Err(e) => json!({"error": e}),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_put_pending_on_dev_cannot_be_finished_on_prod() {
+        let rig = rig(PROD_LOCKED_WRITES_DECLARED);
+        let id = pend(
+            &rig,
+            "iris_doc",
+            Some("dev"),
+            WriteClass::Write,
+            ElicitationAction::Put,
+        );
+        let body = resume_doc(&rig, &id, Some("prod")).await;
+        assert_eq!(
+            code_of(&body),
+            "ELICITATION_SERVER_MISMATCH",
+            "the resume names another server than the call that opened the dialog: {body}"
+        );
+        assert!(
+            rig.tools.elicitation_store.lookup(&id).is_some(),
+            "a refused resume must leave the entry for the server it belongs to"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_resume_that_names_no_server_does_not_fall_back_to_the_default() {
+        let rig = rig(PROD_LOCKED_WRITES_DECLARED);
+        let id = pend(
+            &rig,
+            "iris_doc",
+            Some("prod"),
+            WriteClass::Write,
+            ElicitationAction::Put,
+        );
+        let body = resume_doc(&rig, &id, None).await;
+        assert_eq!(code_of(&body), "ELICITATION_SERVER_MISMATCH", "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_resume_carries_no_mode_and_is_classified_as_the_pending_entrys_write() {
+        // Writes are off on the default. A resume has no `mode`, so it classified as a read and
+        // went through; it finishes a write, and the write gate must say so.
+        let rig = rig("write_tools_enabled = false\n");
+        let id = pend(
+            &rig,
+            "iris_doc",
+            None,
+            WriteClass::Write,
+            ElicitationAction::Put,
+        );
+        let body = resume_doc(&rig, &id, None).await;
+        assert_eq!(code_of(&body), "WRITE_TOOLS_DISABLED", "{body}");
+    }
+
+    #[tokio::test]
+    async fn an_scm_id_cannot_be_answered_through_iris_doc_and_the_reverse() {
+        let rig = rig("");
+        let scm = pend(
+            &rig,
+            "iris_source_control",
+            None,
+            WriteClass::Write,
+            ElicitationAction::ScmExecute,
+        );
+        let body = resume_doc(&rig, &scm, None).await;
+        assert_eq!(code_of(&body), "ELICITATION_NOT_FOUND", "{body}");
+
+        let doc = pend(
+            &rig,
+            "iris_doc",
+            None,
+            WriteClass::Write,
+            ElicitationAction::Put,
+        );
+        let r = rig
+            .tools
+            .call_gated(
+                "iris_source_control",
+                json!({"elicitation_id": doc, "answer": "yes"}),
+            )
+            .await
+            .map(|r| body_of(&r))
+            .unwrap_or_else(|e| json!({"error": e}));
+        assert_eq!(code_of(&r), "ELICITATION_NOT_FOUND", "{r}");
+    }
+}
+
+// ── 141 C14: the scratch column ────────────────────────────────────────────────────────────────
+
+/// Replace comments and the inside of string and char literals with nothing, so a call graph read
+/// off the text sees code only. A raw string such as the ObjectScript in `info.rs` holds `//`
+/// comments and quotes that would otherwise end the scan early.
+fn code_only(src: &str) -> String {
+    let b: Vec<char> = src.chars().collect();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i];
+        let next = b.get(i + 1).copied();
+        if c == '/' && next == Some('/') {
+            while i < b.len() && b[i] != '\n' {
+                i += 1;
+            }
+        } else if c == '/' && next == Some('*') {
+            i += 2;
+            while i + 1 < b.len() && !(b[i] == '*' && b[i + 1] == '/') {
+                i += 1;
+            }
+            i += 2;
+        } else if c == 'r' && matches!(next, Some('"') | Some('#')) && {
+            let mut j = i + 1;
+            while b.get(j) == Some(&'#') {
+                j += 1;
+            }
+            b.get(j) == Some(&'"')
+        } {
+            let mut hashes = 0;
+            let mut j = i + 1;
+            while b[j] == '#' {
+                hashes += 1;
+                j += 1;
+            }
+            j += 1;
+            let close: Vec<char> = std::iter::once('"')
+                .chain(std::iter::repeat_n('#', hashes))
+                .collect();
+            while j + close.len() <= b.len() && b[j..j + close.len()] != close[..] {
+                j += 1;
+            }
+            i = j + close.len();
+            out.push_str("\"\"");
+        } else if c == '"' {
+            i += 1;
+            while i < b.len() && b[i] != '"' {
+                i += if b[i] == '\\' { 2 } else { 1 };
+            }
+            i += 1;
+            out.push_str("\"\"");
+        } else if c == '\'' && next == Some('\\') {
+            i += 2;
+            while i < b.len() && b[i] != '\'' {
+                i += 1;
+            }
+            i += 1;
+        } else if c == '\'' && b.get(i + 2) == Some(&'\'') {
+            i += 3;
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    out
+}
+
+fn rust_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            rust_files(&path, out);
+        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// Calls the scan does not follow. Each reaches the scratch class on its own account, and each has
+/// its own answer: telemetry's IRIS sink stops when the target's writes are off (C16), and the
+/// `%SYS.Audit` emission is opt-in per server (`irisAudit`). Following them would put every tool in
+/// the column.
+const NOT_FOLLOWED: &[&str] = &[
+    "record_call",
+    "write_durable",
+    "read_durable",
+    "write_audit_entry",
+    "write_audit_entry_on",
+    "audit_call",
+    // Names that appear in many unrelated types. The scan reads names, not types, so a call to
+    // `.get(` would join every function called `get`.
+    // `run` is not here: `ExecContext::run` is the one function of that name, and it is how every
+    // tool that runs the agent's code reaches the generator (spec 141, R2).
+    "new",
+    "get",
+    "from",
+    "into",
+    "default",
+    "fmt",
+    "clone",
+    "drop",
+    "len",
+    "is_empty",
+    "contains",
+    "insert",
+    "push",
+    "map",
+    "read",
+    "write",
+    "flush",
+    "start",
+    "stop",
+    "list",
+    "error",
+];
+
+/// The tools in `CLASSIFICATION` whose handler can reach `execute_via_generator`, found by reading
+/// the source: a call graph over function names, from each tool method to any function (outside the
+/// connection module that defines it) that calls the generator.
+fn tools_that_reach_the_generator() -> std::collections::BTreeSet<String> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    rust_files(&root, &mut files);
+
+    let def = regex::Regex::new(r"\bfn\s+([a-z_][A-Za-z0-9_]*)").unwrap();
+    let call = regex::Regex::new(r"\b([a-z_][A-Za-z0-9_]*)\s*(?:::<[^>]*>)?\(").unwrap();
+    // name -> (calls, reaches the generator itself)
+    let mut graph: BTreeMap<String, (BTreeSet<String>, bool)> = BTreeMap::new();
+    for path in &files {
+        let is_connection = path.ends_with("iris/connection.rs");
+        let text = code_only(&std::fs::read_to_string(path).unwrap());
+        for m in def.captures_iter(&text) {
+            let whole = m.get(0).unwrap();
+            let name = m[1].to_string();
+            // The body starts at the first `{` after the signature; a `;` first means no body.
+            let rest = &text[whole.end()..];
+            let (Some(open), semi) = (rest.find('{'), rest.find(';')) else {
+                continue;
+            };
+            if semi.is_some_and(|s| s < open) {
+                continue;
+            }
+            let mut depth = 0usize;
+            let mut end = rest.len();
+            for (k, ch) in rest[open..].char_indices() {
+                match ch {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = open + k;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let body = &rest[open..end];
+            let entry = graph.entry(name.clone()).or_default();
+            if !is_connection && body.contains("execute_via_generator") {
+                entry.1 = true;
+            }
+            for c in call.captures_iter(body) {
+                let callee = c[1].to_string();
+                if callee != name && !NOT_FOLLOWED.contains(&callee.as_str()) {
+                    entry.0.insert(callee);
+                }
+            }
+        }
+    }
+
+    let mut reaching: BTreeSet<String> = graph
+        .iter()
+        .filter(|(_, (_, direct))| *direct)
+        .map(|(n, _)| n.clone())
+        .collect();
+    loop {
+        let before = reaching.len();
+        for (name, (calls, _)) in &graph {
+            if !reaching.contains(name) && calls.iter().any(|c| reaching.contains(c)) {
+                reaching.insert(name.clone());
+            }
+        }
+        if reaching.len() == before {
+            break;
+        }
+    }
+    CLASSIFICATION
+        .iter()
+        .map(|e| e.tool.to_string())
+        .filter(|t| reaching.contains(t))
+        .collect()
+}
+
+/// Tools that reach the scratch class only through a branch the write gate already governs: a put
+/// that runs a source-control hook, `iris_query` with `mode = "write"` or `force`, and the
+/// documented put. A read call never compiles a class, so strict read-only leaves them
+/// listed.
+const SCRATCH_ONLY_ON_WRITE_BRANCHES: &[&str] = &["iris_doc", "iris_query"];
+
+/// Local tools that reach the generator through the skill and knowledge store on the default
+/// connection (`skills_tools::xecute`). They act on no target server, so the column leaves them
+/// out: marking them would hide `skill` and `kb`, and with them the guardrail skills, from an
+/// operator who asked for no scratch classes on a production server. They still obey the write
+/// gate (`kb` and `skill` writes are Write).
+const LOCAL_STORE_TOOLS: &[&str] = &["agent_info", "kb", "kb_index", "skill", "skill_community"];
+
+/// T135 (C14). The scratch column agrees with the source: every tool whose handler can reach
+/// `execute_via_generator` is marked, and no other tool is. `readOnlyHint` is a separate promise
+/// and stays where it is.
+#[test]
+fn scratch_column_matches_generator_callers() {
+    let reaching = tools_that_reach_the_generator();
+    assert!(
+        reaching.len() > 25
+            && reaching.contains("iris_table_info")
+            && reaching.contains("iris_execute"),
+        "the scan found {} tools; it is reading the wrong thing: {reaching:?}",
+        reaching.len()
+    );
+    for t in SCRATCH_ONLY_ON_WRITE_BRANCHES {
+        assert!(
+            reaching.contains(*t),
+            "{t} is excused as write-branch-only but the scan no longer finds it reaching the \
+             generator; drop it from SCRATCH_ONLY_ON_WRITE_BRANCHES"
+        );
+    }
+    let local: Vec<&str> = reaching
+        .iter()
+        .map(String::as_str)
+        .filter(|t| tool_class(t).is_some_and(|e| e.kind == TargetKind::Local))
+        .collect();
+    assert_eq!(
+        local, LOCAL_STORE_TOOLS,
+        "the local tools that reach the generator changed; LOCAL_STORE_TOOLS says which ones the \
+         column leaves out and why"
+    );
+    let expected: std::collections::BTreeSet<String> = reaching
+        .into_iter()
+        .filter(|t| !SCRATCH_ONLY_ON_WRITE_BRANCHES.contains(&t.as_str()))
+        .filter(|t| !LOCAL_STORE_TOOLS.contains(&t.as_str()))
+        .collect();
+    let marked: std::collections::BTreeSet<String> = CLASSIFICATION
+        .iter()
+        .filter(|e| e.scratch)
+        .map(|e| e.tool.to_string())
+        .collect();
+    let unmarked: Vec<_> = expected.difference(&marked).collect();
+    let spurious: Vec<_> = marked.difference(&expected).collect();
+    assert!(
+        unmarked.is_empty() && spurious.is_empty(),
+        "the scratch column and the source disagree. Reach the generator but not marked: \
+         {unmarked:?}. Marked but nothing reaches the generator: {spurious:?}. Mark a tool with \
+         `.scratch()` in write_gate::CLASSIFICATION."
+    );
+}
+
+/// `readOnlyHint` stays `true` on the scratch tools that read (R5 C14): flipping about 18 hints
+/// would make clients ask for approval on routine reads.
+#[test]
+fn scratch_tools_that_read_keep_their_read_only_hint() {
+    let tools = tools_with_declared(Toolset::Merged, WRITES_OFF);
+    for name in [
+        "iris_table_info",
+        "global_preview",
+        "my_access",
+        "hl7_schema_list",
+    ] {
+        let ann = tools
+            .tool_annotations(name)
+            .unwrap_or_else(|| panic!("{name} has no annotations"));
+        assert_eq!(
+            ann.get("readOnlyHint").and_then(|v| v.as_bool()),
+            Some(true),
+            "{name} must keep readOnlyHint = true"
+        );
+        assert!(
+            CLASSIFICATION.iter().any(|e| e.tool == name && e.scratch),
+            "{name} is a scratch-class tool"
+        );
+    }
+}
+
+/// T135 (C18). Replacing a whole lookup table is at least as destructive as deleting one row, and
+/// `iris_lookup_manage` already puts a single-row `set` in the destructive tier.
+#[test]
+fn lookup_import_is_destructive() {
+    use iris_agentic_dev_core::tools::write_gate::classify;
+    for key in ["action", "mode"] {
+        let mut m = serde_json::Map::new();
+        m.insert(key.to_string(), serde_json::json!("import"));
+        assert_eq!(
+            classify("iris_lookup_transfer", Some(&m)),
+            Some(WriteClass::Destructive),
+            "import ({key}) replaces a non-empty table"
+        );
+    }
+    assert_eq!(
+        classify("iris_lookup_transfer", Some(&args_with_action("export"))),
+        Some(WriteClass::ReadOnly)
+    );
+    assert_eq!(
+        classify("iris_lookup_manage", Some(&args_with_action("set"))),
+        Some(WriteClass::Destructive)
     );
 }

@@ -49,6 +49,8 @@ fn spawn_mcp_docker_only() -> Option<(Child, ChildStdin, ChildStdout, tempfile::
     .ok()?;
 
     let mut cmd = Command::new(&bin);
+
+    crate::support_141::isolate(&mut cmd);
     cmd.arg("mcp")
         .args(["--config", cfg_path.to_str().unwrap()])
         // Clear IRIS env so the server doesn't pick up a live connection accidentally.
@@ -243,6 +245,8 @@ fn test_http_path_does_not_trigger_terminal_guard() {
     .unwrap();
 
     let mut cmd = Command::new(&bin);
+
+    crate::support_141::isolate(&mut cmd);
     cmd.arg("mcp")
         .args(["--config", cfg_path.to_str().unwrap()])
         .env_remove("IRIS_CONTAINER")
@@ -311,9 +315,11 @@ fn test_iris_execute_description_documents_both_paths() {
         return;
     }
 
-    let mut cmd = Command::new(&bin);
+    let mut cmd = iris_agentic_dev_core::testing::clean_command(&bin);
+
+    crate::support_141::isolate(&mut cmd);
     cmd.arg("mcp")
-        .env_remove("IRIS_HOST")
+        .env("IRIS_HOST", "127.0.0.1")
         .env("IRIS_WEB_PORT", "9") // unreachable port — no live IRIS needed
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

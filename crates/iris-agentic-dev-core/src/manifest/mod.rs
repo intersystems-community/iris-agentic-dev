@@ -10,7 +10,26 @@ use std::path::Path;
 pub fn parse_manifest(path: impl AsRef<Path>) -> Result<Manifest> {
     let content = std::fs::read_to_string(path.as_ref())
         .with_context(|| format!("reading {}", path.as_ref().display()))?;
-    toml::from_str(&content).with_context(|| format!("parsing {}", path.as_ref().display()))
+    let manifest: Manifest =
+        toml::from_str(&content).with_context(|| format!("parsing {}", path.as_ref().display()))?;
+    check_names(&manifest, path.as_ref())?;
+    Ok(manifest)
+}
+
+/// A name that holds a control character (a newline, an escape, a NUL) is refused before it reaches
+/// resolution, a lock file or a terminal (FR-026).
+fn check_names(manifest: &Manifest, path: &Path) -> Result<()> {
+    let names = std::iter::once(("package name", &manifest.package.name))
+        .chain(manifest.dependencies.keys().map(|k| ("dependency name", k)));
+    for (what, name) in names {
+        if name.chars().any(char::is_control) {
+            anyhow::bail!(
+                "INVALID_MANIFEST: {what} {name:?} in {} contains a control character",
+                path.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

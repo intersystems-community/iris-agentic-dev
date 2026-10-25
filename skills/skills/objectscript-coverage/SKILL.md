@@ -76,7 +76,7 @@ If you get `BBSIZ_NOT_CONFIGURED`:
 | `classes`        | start/run/report | Explicit class list (e.g. `["MyApp.MyClass"]`). Mutually exclusive with `package`.                                                     |
 | `package`        | start/run/report | Auto-discover concrete classes (e.g. `"MyApp"`). Expands via `%Dictionary.ClassDefinition`.                                            |
 | `test_path`      | run              | Compiled class pattern for `%UnitTest.Manager.RunTest` (e.g. `"MyApp.Tests"`). `/noload` always used — classes must be compiled first. |
-| `target_pct`     | optional         | Coverage target percentage. Response includes `meets_target: true/false`.                                                              |
+| `target_pct`     | optional         | Coverage target percentage. Response includes `meets_target: true/false`, or `null` when no lines were counted or the run threw.       |
 | `namespace`      | optional         | IRIS namespace. Defaults to connection default.                                                                                        |
 | `cobertura_path` | optional         | Path for Cobertura XML output. Requires TestCoverage IPM package (`zpm "install testcoverage"`).                                       |
 
@@ -145,16 +145,18 @@ When it's `false`, a `testcoverage_hint` with install instructions is also retur
 - Compile test classes before calling `iris_coverage` — use `iris_compile` first
 - Use `target_pct` to enforce a coverage gate in CI: check `meets_target` in the response
 - Coverage measures **line** execution, not branch or path coverage
+- A class with `pct: null` had no lines counted (never loaded during the run, or nothing executable): that is not 0%
 
 ## Error Codes
 
-| Code                   | Meaning                         | Fix                                                                         |
-| ---------------------- | ------------------------------- | --------------------------------------------------------------------------- |
-| `BBSIZ_NOT_CONFIGURED` | `gmheap` too small for monitor  | Increase `gmheap` to 256+ in Management Portal, restart IRIS                |
-| `MONITOR_IN_USE`       | Another process has the monitor | Call `mode=stop` first                                                      |
-| `NO_CLASSES`           | Package expansion found nothing | Check package name; verify classes are compiled                             |
-| `MISSING_PARAM`        | Required param absent           | Add `test_path` for `mode=run`; add `classes` or `package` for start/report |
-| `INVALID_ACTION`       | Unknown mode string             | Use: `run`, `check`, `start`, `stop`, `report`                              |
+| Code                       | Meaning                                              | Fix                                                                         |
+| -------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------- |
+| `BBSIZ_NOT_CONFIGURED`     | `gmheap` too small for monitor                       | Increase `gmheap` to 256+ in Management Portal, restart IRIS                |
+| `MONITOR_IN_USE`           | A line monitor is already running; it was left alone | It may be another session's. `mode=stop` stops it, if it is yours           |
+| `COVERAGE_ROUTINE_UNKNOWN` | A class has no compiled routine                      | Check the class name and compile it; nothing ran                            |
+| `NO_CLASSES`               | Package expansion found nothing                      | Check package name; verify classes are compiled                             |
+| `MISSING_PARAM`            | Required param absent                                | Add `test_path` for `mode=run`; add `classes` or `package` for start/report |
+| `INVALID_ACTION`           | Unknown mode string                                  | Use: `run`, `check`, `start`, `stop`, `report`                              |
 
 ## Related skills
 

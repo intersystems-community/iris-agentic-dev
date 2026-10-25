@@ -3,10 +3,15 @@
 //! asserts ≥23 tools returned and response within 500ms.
 //!
 //! Tests written FIRST — must fail until T015–T022 are implemented.
+//!
+//! Every spawn goes through `testing::clean_mcp_command` (a temporary `HOME` and working
+//! directory, no keychain, no behavior variable from the developer's shell) and points the server
+//! at a closed port with `IRIS_HOST` and `IRIS_WEB_PORT` together: with the port alone, discovery
+//! adopts whatever IRIS is running on the machine (spec 141 T207).
 #![allow(dead_code, clippy::zombie_processes)]
 
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 /// The binary under test, or `None` only when an operator has explicitly asked for a quiet
@@ -45,9 +50,9 @@ fn mcp_server_starts_and_responds_to_initialize() {
         return;
     };
 
-    let mut child = Command::new(&bin)
-        .arg("mcp")
+    let mut child = iris_agentic_dev_core::testing::clean_mcp_command(&bin)
         // Disable IRIS discovery for handshake tests — we only test MCP protocol, not tools
+        .env("IRIS_HOST", "127.0.0.1")
         .env("IRIS_WEB_PORT", "9") // Port 9 (discard) — instant ECONNREFUSED, no DNS lookup
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -99,9 +104,9 @@ fn mcp_server_tools_list_returns_23_tools() {
         return;
     };
 
-    let mut child = Command::new(&bin)
-        .arg("mcp")
+    let mut child = iris_agentic_dev_core::testing::clean_mcp_command(&bin)
         // Disable IRIS discovery for handshake tests — we only test MCP protocol, not tools
+        .env("IRIS_HOST", "127.0.0.1")
         .env("IRIS_WEB_PORT", "9") // Port 9 (discard) — instant ECONNREFUSED, no DNS lookup
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -192,8 +197,8 @@ fn mcp_server_tools_list_pagination_works() {
         return;
     };
 
-    let mut child = Command::new(&bin)
-        .arg("mcp")
+    let mut child = iris_agentic_dev_core::testing::clean_mcp_command(&bin)
+        .env("IRIS_HOST", "127.0.0.1")
         .env("IRIS_WEB_PORT", "9")
         .env("IRIS_LIST_TOOLS_PAGE_SIZE", "5")
         .stdin(Stdio::piped())
@@ -293,8 +298,9 @@ fn mcp_server_startup_latency_under_100ms() {
 
     let mut latencies = Vec::new();
     for _ in 0..5 {
-        let mut child = Command::new(&bin)
-            .arg("mcp")
+        let mut child = iris_agentic_dev_core::testing::clean_mcp_command(&bin)
+            .env("IRIS_HOST", "127.0.0.1")
+            .env("IRIS_WEB_PORT", "9")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -347,8 +353,8 @@ fn discovery_waits_for_iris() {
         return;
     };
 
-    let mut child = Command::new(&bin)
-        .arg("mcp")
+    let mut child = iris_agentic_dev_core::testing::clean_mcp_command(&bin)
+        .env("IRIS_HOST", "127.0.0.1")
         .env("IRIS_WEB_PORT", "9") // instant fail — tests that server doesn't hang
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -440,8 +446,8 @@ fn mcp_server_negotiates_all_known_protocol_versions() {
 
     // All known protocol versions should be echoed back
     for client_version in &["2026-07-28", "2025-11-25", "2024-11-05"] {
-        let mut child = Command::new(&bin)
-            .arg("mcp")
+        let mut child = iris_agentic_dev_core::testing::clean_mcp_command(&bin)
+            .env("IRIS_HOST", "127.0.0.1")
             .env("IRIS_WEB_PORT", "9")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -485,8 +491,8 @@ fn mcp_server_tools_list_includes_cache_annotation_for_2026_07_28() {
         return;
     };
 
-    let mut child = Command::new(&bin)
-        .arg("mcp")
+    let mut child = iris_agentic_dev_core::testing::clean_mcp_command(&bin)
+        .env("IRIS_HOST", "127.0.0.1")
         .env("IRIS_WEB_PORT", "9")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

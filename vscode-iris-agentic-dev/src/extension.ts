@@ -5,6 +5,7 @@ import * as path from 'path';
 import * as serverManager from '@intersystems-community/intersystems-servermanager';
 import { stringifyForLog } from './redact';
 import { resolveServerBinary } from './managedInstall';
+import { mayUseStoredPassword, selectNamedServer, ServerScopes } from './serverSelection';
 
 interface ObjectScriptConn {
   active: boolean;
@@ -29,11 +30,28 @@ interface NamedServer {
   password?: string;
 }
 
+/**
+ * `intersystems.servers` kept apart by where it was set. `get()` would hand
+ * back one merged object in which the workspace's entry for a name replaces
+ * the user's, and a repository's settings file must not be able to do that.
+ */
+function readServerScopes(wsFolder: vscode.WorkspaceFolder | undefined): ServerScopes<NamedServer> {
+  const info = vscode.workspace
+    .getConfiguration('intersystems', wsFolder ?? null)
+    .inspect<Record<string, NamedServer>>('servers');
+  return {
+    user: info?.globalValue,
+    workspace: { ...info?.workspaceValue, ...info?.workspaceFolderValue },
+  };
+}
+
 export class IrisDevMcpProvider
   implements vscode.McpServerDefinitionProvider<vscode.McpStdioServerDefinition>, vscode.Disposable
 {
   private readonly emitter = new vscode.EventEmitter<void>();
   private readonly watcher: vscode.Disposable;
+  private readonly trustWatcher: vscode.Disposable;
+  private untrustedNoticeShown = false;
   private readonly log = vscode.window.createOutputChannel('iris-agentic-dev', { log: true });
 
   public readonly onDidChangeMcpServerDefinitions = this.emitter.event;
@@ -54,10 +72,14 @@ export class IrisDevMcpProvider
         this.emitter.fire();
       }
     });
+    // Trusting the workspace is what lets the server start, so offer the
+    // definitions again the moment it happens.
+    this.trustWatcher = vscode.workspace.onDidGrantWorkspaceTrust(() => this.emitter.fire());
   }
 
   dispose() {
     this.watcher.dispose();
+    this.trustWatcher.dispose();
     this.emitter.dispose();
     this.log.dispose();
   }
@@ -69,6 +91,21 @@ export class IrisDevMcpProvider
   ): Promise<vscode.McpStdioServerDefinition[]> {
     this.log.show(true);   // reveal without stealing focus
     this.log.info('iris-agentic-dev: provideMcpServerDefinitions called');
+
+    // Restricted Mode: the workspace's settings are not ours to act on, and
+    // the server runs with the user's IRIS credentials. Nothing is read from
+    // the workspace and nothing is started until the user trusts it.
+    if (!vscode.workspace.isTrusted) {
+      this.log.warn('iris-agentic-dev: workspace is not trusted; the MCP server is not started');
+      if (!this.untrustedNoticeShown) {
+        this.untrustedNoticeShown = true;
+        void vscode.window.showInformationMessage(
+          'iris-agentic-dev: the MCP server does not start in an untrusted workspace. ' +
+          'Trust the workspace to use it.'
+        );
+      }
+      return [];
+    }
 
     // Use workspace folder scope to honour .vscode/settings.json (fix #42).
     // Falls back to global scope when no workspace folder is open.
@@ -125,25 +162,25 @@ export class IrisDevMcpProvider
     // when the workspace has no intersystems config of its own.
     let named: NamedServer | null = null;
     if (conn.server) {
-      const wsServers = vscode.workspace
-        .getConfiguration('intersystems', wsFolder ?? null)
-        .get<Record<string, NamedServer>>('servers');
-      const globalServers = vscode.workspace
-        .getConfiguration('intersystems', null)
-        .get<Record<string, NamedServer>>('servers');
-      this.log.info(`iris-agentic-dev: globalServers keys = ${Object.keys(globalServers ?? {}).join(', ') || '(none)'}`);
-      this.log.info(`iris-agentic-dev: wsServers keys = ${Object.keys(wsServers ?? {}).join(', ') || '(none)'}`);
-      const servers = { ...globalServers, ...wsServers };
-      this.log.info(`iris-agentic-dev: looking for server "${conn.server}" in merged servers: ${Object.keys(servers).join(', ') || '(none)'}`);
-      if (!servers || !servers[conn.server]) {
+      const scopes = readServerScopes(wsFolder);
+      this.log.info(`iris-agentic-dev: user server keys = ${Object.keys(scopes.user ?? {}).join(', ') || '(none)'}`);
+      this.log.info(`iris-agentic-dev: workspace server keys = ${Object.keys(scopes.workspace ?? {}).join(', ') || '(none)'}`);
+      const selected = selectNamedServer(conn.server, scopes);
+      if (!selected) {
         this.log.warn(`iris-agentic-dev: named connection "${conn.server}" not found`);
         vscode.window.showWarningMessage(
           `iris-agentic-dev: named connection "${conn.server}" not found in intersystems.servers. Check your .vscode/settings.json or user settings.`
         );
         return [];
       }
-      named = servers[conn.server];
-      this.log.info(`iris-agentic-dev: named server resolved = ${stringifyForLog(named)}`);
+      if (selected.shadowedWorkspaceDefinition) {
+        this.log.warn(
+          `iris-agentic-dev: the workspace's definition of server "${conn.server}" is ignored; ` +
+          'the user-level definition of the same name is used'
+        );
+      }
+      named = selected.server;
+      this.log.info(`iris-agentic-dev: named server resolved (${selected.source}) = ${stringifyForLog(named)}`);
     }
 
     const host = conn.host ?? 'localhost';
@@ -209,8 +246,22 @@ export class IrisDevMcpProvider
       const namedServer = env.IRIS_SERVER_NAME as string | undefined;
       let resolvedByServerManager = false;
 
+      // The stored password belongs to the user's own definition of this
+      // server. A definition that exists only in the workspace names a host
+      // the user never vouched for, so it gets no stored secret.
+      const selected = namedServer
+        ? selectNamedServer(namedServer, readServerScopes(vscode.workspace.workspaceFolders?.[0]))
+        : null;
+      const mayUseStored = selected !== null && mayUseStoredPassword(selected);
+      if (namedServer && !mayUseStored) {
+        this.log.warn(
+          `iris-agentic-dev: server "${namedServer}" is defined only in the workspace; ` +
+          'no stored password is used for it'
+        );
+      }
+
       // Try InterSystems Server Manager authentication provider when a named server is configured
-      if (namedServer) {
+      if (namedServer && mayUseStored) {
         const smExt = vscode.extensions.getExtension<serverManager.ServerManagerAPI>(serverManager.EXTENSION_ID);
         if (smExt) {
           try {
@@ -256,7 +307,8 @@ export class IrisDevMcpProvider
 
       // Fall back to a password prompt if Server Manager did not provide credentials
       if (!resolvedByServerManager) {
-        const pw = await vscode.window.showInputBox({ prompt: 'IRIS password', password: true });
+        const target = `${env.IRIS_USERNAME ?? ''}${env.IRIS_USERNAME ? '@' : ''}${env.IRIS_HOST ?? 'IRIS'}`;
+        const pw = await vscode.window.showInputBox({ prompt: `IRIS password for ${target}`, password: true });
         if (pw !== undefined) { env.IRIS_PASSWORD = pw; server.env = env; }
       }
     }

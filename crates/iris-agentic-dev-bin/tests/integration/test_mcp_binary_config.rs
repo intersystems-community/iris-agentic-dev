@@ -19,6 +19,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 fn spawn_mcp(config: Option<&str>) -> (Child, ChildStdin, ChildStdout) {
     let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
     let mut cmd = Command::new(bin);
+    crate::support_141::isolate(&mut cmd);
     cmd.arg("mcp");
     if let Some(cfg) = config {
         cmd.args(["--config", cfg]);
@@ -255,6 +256,7 @@ fn config_file_write_tools_enabled_shown_in_check_config() {
 fn run_with_gate_config(args: &[&str], cwd: &std::path::Path) -> (Option<i32>, String, String) {
     let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
     let mut cmd = Command::new(bin);
+    crate::support_141::isolate(&mut cmd);
     cmd.arg("mcp")
         .args(args)
         .current_dir(cwd)
@@ -389,6 +391,8 @@ fn workspace_flag_applies_enabled_tools_from_toml() {
 
     let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
     let mut child = Command::new(bin)
+        .env("HOME", crate::support_141::home())
+        .env("USERPROFILE", crate::support_141::home())
         .args(["mcp", "--workspace", &dir.path().to_string_lossy()])
         .env_remove("IRIS_WRITE_TOOLS_ENABLED")
         .env_remove("IRIS_ENABLED_TOOLS")
@@ -432,6 +436,8 @@ fn no_config_returns_default_toolset() {
 
     let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
     let mut child = Command::new(bin)
+        .env("HOME", crate::support_141::home())
+        .env("USERPROFILE", crate::support_141::home())
         .args(["mcp", "--workspace", &dir.path().to_string_lossy()])
         .env_remove("IRIS_WRITE_TOOLS_ENABLED")
         .env_remove("IRIS_ENABLED_TOOLS")
@@ -480,6 +486,8 @@ fn tools_list_response_omits_output_schema() {
 
     let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
     let mut child = Command::new(bin)
+        .env("HOME", crate::support_141::home())
+        .env("USERPROFILE", crate::support_141::home())
         .args(["mcp", "--workspace", &dir.path().to_string_lossy()])
         // OBJECTSCRIPT_WORKSPACE outranks `--workspace` in `workspace_root`
         // (workspace_config.rs:293), so an operator with it exported gets their own config applied
@@ -547,6 +555,8 @@ fn iris_debug_capture_no_docker_required() {
     let dir = tempfile::tempdir().unwrap();
     let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
     let mut child = Command::new(bin)
+        .env("HOME", crate::support_141::home())
+        .env("USERPROFILE", crate::support_141::home())
         .args(["mcp", "--workspace", &dir.path().to_string_lossy()])
         .env_remove("IRIS_CONTAINER")
         .env_remove("IRIS_HOST")
@@ -656,6 +666,7 @@ fn spawn_mcp_extra(
 ) -> (Child, ChildStdin, ChildStdout) {
     let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
     let mut cmd = Command::new(bin);
+    crate::support_141::isolate(&mut cmd);
     cmd.arg("mcp");
     for a in extra_args {
         cmd.arg(a);
@@ -869,21 +880,18 @@ impl Drop for Session {
 }
 
 impl Session {
-    /// Spawn with workspace discovery — deliberately *not* `--config`.
-    ///
-    /// `check_reload`'s watcher is what is under test, and it watches
-    /// `workspace_root()/.iris-agentic-dev.toml`. `OBJECTSCRIPT_WORKSPACE` is the one input
-    /// `workspace_root` consults before anything else, so it pins the watch path without depending
-    /// on the test process's cwd.
-    fn start(workspace: &std::path::Path) -> Self {
-        Self::start_with_env(workspace, &[])
-    }
-
-    /// `start`, plus environment overrides applied last — used to serve a different `IRIS_TOOLSET`
-    /// from the same fixture.
+    // Spawned with workspace discovery — deliberately *not* `--config`.
+    //
+    // `check_reload`'s watcher is what is under test, and it watches
+    // `workspace_root()/.iris-agentic-dev.toml`. `OBJECTSCRIPT_WORKSPACE` is the one input
+    // `workspace_root` consults before anything else, so it pins the watch path without depending
+    // on the test process's cwd.
+    /// Environment overrides are applied last — used to serve a different `IRIS_TOOLSET` from the
+    /// same fixture, and to give a run its own operator file.
     fn start_with_env(workspace: &std::path::Path, extra_env: &[(&str, &str)]) -> Self {
         let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
         let mut cmd = Command::new(bin);
+        crate::support_141::isolate(&mut cmd);
         cmd.arg("mcp")
             .current_dir(workspace)
             .env("OBJECTSCRIPT_WORKSPACE", workspace)
@@ -1019,7 +1027,20 @@ fn config_rewritten_twice_in_one_process_moves_the_gate_both_ways() {
     };
 
     std::fs::write(&cfg, toml(true)).unwrap();
-    let mut s = Session::start(dir.path());
+    // Raising the gate from a project file counts only once the operator trusts that file (spec 141),
+    // so this run has an operator file that does. `false` loosens nothing and needs no trust.
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(
+        home.path().join(".iris-agentic-dev.toml"),
+        format!(
+            "[[trust]]\npath = {:?}\nformat = 1\nsettings = [\n  'connection = \"http://localhost:52780\"',\n  'connection.namespace = \"USER\"',\n  'write_tools_enabled = true',\n]\n",
+            std::fs::canonicalize(&cfg).unwrap().to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let home_str = home.path().to_str().unwrap();
+    let mut s =
+        Session::start_with_env(dir.path(), &[("HOME", home_str), ("USERPROFILE", home_str)]);
 
     for (tick, declared) in [true, false, true].into_iter().enumerate() {
         let step = match tick {

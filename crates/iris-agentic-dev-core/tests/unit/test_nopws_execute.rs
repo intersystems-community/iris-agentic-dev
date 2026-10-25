@@ -4,6 +4,7 @@
 // See tests/integration/nopws_101.rs for live IRIS tests.
 
 use iris_agentic_dev_core::iris::workspace_config::WorkspaceConfig;
+use iris_agentic_dev_core::testing::EnvGuard;
 
 // ── SSH command construction tests (FR-009) ───────────────────────────────────
 
@@ -69,11 +70,12 @@ nopws = true
 
 #[test]
 fn test_nopws_with_docker_only_creates_unreachable_connection() {
+    let mut env_guard = EnvGuard::new();
     let _guard: std::sync::MutexGuard<'_, ()> = {
         static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
         ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
     };
-    std::env::remove_var("IRIS_CONTAINER");
+    env_guard.unset("IRIS_CONTAINER");
     let cfg: WorkspaceConfig = toml::from_str(
         r#"
 container = "my-iris-ai"
@@ -85,7 +87,7 @@ docker_only = true
     .expect("must parse");
     let conn =
         iris_agentic_dev_core::iris::workspace_config::workspace_config_to_connection(&cfg, "USER");
-    std::env::remove_var("IRIS_CONTAINER");
+    env_guard.unset("IRIS_CONTAINER");
     let conn = conn.expect("nopws+docker_only+container must return connection");
     assert!(
         conn.base_url.contains("127.0.0.1:1"),

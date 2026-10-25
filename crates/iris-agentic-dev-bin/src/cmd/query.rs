@@ -1,8 +1,9 @@
 use anyhow::Result;
 use clap::Args;
+use iris_agentic_dev_core::tools::validate_read_only_sql;
 
 use super::connection_args::ConnectionArgs;
-use super::dispatch::dispatch_tool;
+use super::dispatch::{dispatch_tool, exit_if_refused};
 use super::tsv::{extract_columns, extract_rows, rows_to_tsv, tsv_header};
 
 #[derive(Args)]
@@ -28,6 +29,12 @@ impl QueryCommand {
         if let Some(server) = &self.server {
             args["server"] = serde_json::Value::String(server.clone());
         }
+        // A statement that is not a read goes in as `mode: "write"`, so the write gate answers for
+        // it. Left in the default read mode, the handler's SQL check refused it first and the gate
+        // never saw it.
+        if matches!(validate_read_only_sql(&self.sql), Err(kw) if kw != "EMPTY") {
+            args["mode"] = serde_json::Value::String("write".into());
+        }
 
         let body = dispatch_tool(iris, "iris_query", args).await;
         let body = match body {
@@ -38,6 +45,7 @@ impl QueryCommand {
             }
         };
 
+        exit_if_refused(&body);
         if body["success"].as_bool() != Some(true) {
             let msg = body["error"].as_str().unwrap_or("query failed");
             eprintln!("error: {}", msg);

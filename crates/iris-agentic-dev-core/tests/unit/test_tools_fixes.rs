@@ -1,3 +1,5 @@
+use iris_agentic_dev_core::testing::EnvGuard;
+
 // Tests for tools/mod.rs fixes
 
 #[test]
@@ -84,15 +86,15 @@ fn test_agent_history_shape() {
 
 #[test]
 fn test_learning_enabled_false_when_env_set() {
+    let mut env_guard = EnvGuard::new();
     // When OBJECTSCRIPT_LEARNING=false, learning_enabled() returns false
-    std::env::set_var("OBJECTSCRIPT_LEARNING", "false");
+    env_guard.set("OBJECTSCRIPT_LEARNING", "false");
     // We can't call learning_enabled() directly (it's private to skills_tools),
     // but we verify the env var parsing logic
     let val = std::env::var("OBJECTSCRIPT_LEARNING").unwrap_or_default();
     assert_eq!(val, "false");
     let enabled = val != "false";
     assert!(!enabled);
-    std::env::remove_var("OBJECTSCRIPT_LEARNING");
 }
 
 #[test]

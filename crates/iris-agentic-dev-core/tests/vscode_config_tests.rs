@@ -4,10 +4,10 @@
 use iris_agentic_dev_core::iris::vscode_config::parse_vscode_settings;
 
 const SM_SERVICE: &str = "intersystems-server-credentials";
-static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+use iris_agentic_dev_core::testing::KEYSTORE_LOCK as STORE_LOCK;
 
 fn with_mock_store<F: FnOnce()>(f: F) {
-    let _guard = STORE_LOCK.lock().unwrap();
+    let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
     f();
     keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
@@ -149,8 +149,9 @@ fn settings_without_objectscript_conn_is_ok() {
 
 // ── T097: Named server keychain credential resolution ────────────────────────
 
-/// Named server with no password in settings.json but credential in keychain →
-/// to_iris_connection resolves the real password from the OS keychain.
+/// Named server with no password in settings.json but credential in keychain → the connection gets
+/// the real password from the OS keychain, when the user-level Server Manager profile of that name
+/// is at the same address (spec 141, FR-024).
 #[test]
 fn named_server_no_settings_password_uses_keychain() {
     with_mock_store(|| {
@@ -173,18 +174,31 @@ fn named_server_no_settings_password_uses_keychain() {
         );
 
         let settings = parse_vscode_settings(&path).unwrap();
-        let conn = tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(settings.to_iris_connection())
-            .unwrap();
-        assert_eq!(conn.password, "real-secret-42");
+        let profile = iris_agentic_dev_core::iris::server_manager::ServerManagerProfile {
+            name: "sec-iris".to_string(),
+            host: "sec.iscinternal.com".to_string(),
+            port: 443,
+            scheme: "https".to_string(),
+            path_prefix: None,
+            username: "svc_account".to_string(),
+            password_deprecated: None,
+        };
+        let resolved = settings
+            .connection_with_profiles(&[profile])
+            .expect("a connection");
+        assert_eq!(resolved.conn.password, "real-secret-42");
+        assert!(resolved.set_aside.is_empty());
+
+        // The same definition with no user-level profile of that name: a repository's own address
+        // gets no keychain password, and so no connection (T204).
+        assert!(settings.connection_with_profiles(&[]).is_none());
     });
 }
 
-/// Named server with no password in settings.json and nothing in keychain →
-/// to_iris_connection falls back to "SYS".
+/// Named server with no password in settings.json and nothing in keychain: no connection is built,
+/// and in particular not one with the guessed password "SYS" (spec 141 T204).
 #[test]
-fn named_server_no_settings_password_no_keychain_falls_back() {
+fn named_server_no_settings_password_no_keychain_builds_no_connection() {
     with_mock_store(|| {
         // Empty store — no entry seeded.
         let dir = tempfile::tempdir().unwrap();
@@ -204,8 +218,7 @@ fn named_server_no_settings_password_no_keychain_falls_back() {
         let settings = parse_vscode_settings(&path).unwrap();
         let conn = tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(settings.to_iris_connection())
-            .unwrap();
-        assert_eq!(conn.password, "SYS");
+            .block_on(settings.to_iris_connection());
+        assert!(conn.is_none(), "got {conn:?}");
     });
 }

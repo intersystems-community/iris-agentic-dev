@@ -102,9 +102,9 @@ fn only_one_source_file_reads_the_tls_env_vars() {
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .to_string();
-            // `iris/connection.rs` owns the resolver; `testing.rs` only lists the names as env
-            // vars a test harness must strip.
-            if rel == "iris/connection.rs" || rel == "testing.rs" {
+            // `iris/http.rs` reads the two variables for the launch settings' connection;
+            // `testing.rs` only lists the names as env vars a test harness must strip.
+            if rel == "iris/http.rs" || rel == "testing.rs" {
                 continue;
             }
             offenders.push(rel);
@@ -113,7 +113,7 @@ fn only_one_source_file_reads_the_tls_env_vars() {
     assert!(
         offenders.is_empty(),
         "these files resolve the TLS env vars themselves instead of calling \
-         `tls_insecure_from_env()`, which is how `IRIS_TLS_VERIFY=false` came to be honoured on \
+         `TlsSetting::from_launch_env()`, which is how `IRIS_TLS_VERIFY=false` came to be honoured on \
          some code paths and ignored on others: {offenders:?}"
     );
 }

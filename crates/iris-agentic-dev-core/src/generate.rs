@@ -88,11 +88,28 @@ struct AnthropicContent {
 // ─────────────────────────────────────────────────────────────────────────────
 
 impl LlmClient {
+    /// The client the environment describes, or `None` when the model or its provider's key is
+    /// unset. The model picks the provider ([`is_anthropic_model`](Self::is_anthropic_model)), and
+    /// only that provider's key is read: `ANTHROPIC_API_KEY` for a Claude model, `OPENAI_API_KEY`
+    /// for any other. One provider's key used to stand in for the other's, so an OpenAI key set
+    /// next to a Claude model was sent to Anthropic's URL, and an Anthropic key next to a GPT model
+    /// to the OpenAI-compatible URL, which `OPENAI_BASE_URL` can point anywhere (spec 141 T221).
     pub fn from_env() -> Option<Self> {
         let model = std::env::var("IRIS_GENERATE_CLASS_MODEL").ok()?;
-        let api_key = std::env::var("OPENAI_API_KEY")
-            .or_else(|_| std::env::var("ANTHROPIC_API_KEY"))
-            .ok()?;
+        let key_var = if Self::model_is_anthropic(&model) {
+            "ANTHROPIC_API_KEY"
+        } else {
+            "OPENAI_API_KEY"
+        };
+        let api_key = std::env::var(key_var).ok();
+        // The mock model never sends its key anywhere; either provider's satisfies it.
+        #[cfg(any(test, feature = "testing"))]
+        let api_key = api_key.or_else(|| {
+            (model == "mock")
+                .then(|| std::env::var("ANTHROPIC_API_KEY").ok())
+                .flatten()
+        });
+        let api_key = api_key?;
         let timeout_secs = std::env::var("IRIS_GENERATE_TIMEOUT")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -111,104 +128,19 @@ impl LlmClient {
     /// Anthropic `/v1/messages` request/response format when routed through a proxy like
     /// `ANTHROPIC_BASE_URL=http://127.0.0.1:8082`.
     fn is_anthropic_model(&self) -> bool {
-        self.model.starts_with("claude")
-            || self.model.contains(".anthropic.")
-            || self.model.starts_with("anthropic.")
+        Self::model_is_anthropic(&self.model)
+    }
+
+    fn model_is_anthropic(model: &str) -> bool {
+        model.starts_with("claude")
+            || model.contains(".anthropic.")
+            || model.starts_with("anthropic.")
     }
 
     pub async fn complete(&self, system: &str, user: &str) -> Result<String> {
-        #[cfg(any(test, feature = "testing"))]
-        if self.model == "mock" {
-            let _ = (system, user);
-            return Ok(
-                "Class Generated.MockClass Extends %RegisteredObject {\nMethod Hello() As %String { Quit \"hello\" }\n}".to_string(),
-            );
-        }
-
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(self.timeout_secs))
-            .build()?;
-
-        if self.is_anthropic_model() {
-            // Bug 6: Anthropic API requires:
-            //   - x-api-key header (not Authorization: Bearer)
-            //   - anthropic-version header
-            //   - max_tokens field (required, causes 400 if absent)
-            //   - system as top-level field (not in messages[])
-            //   - response is content[].text (not choices[].message.content)
-            let anthropic_base = std::env::var("ANTHROPIC_BASE_URL")
-                .unwrap_or_else(|_| "https://api.anthropic.com".to_string());
-            let resp = client
-                .post(format!("{}/v1/messages", anthropic_base))
-                .header("x-api-key", &self.api_key)
-                .header("anthropic-version", "2023-06-01")
-                .header("content-type", "application/json")
-                .json(&AnthropicRequest {
-                    model: self.model.clone(),
-                    max_tokens: 4096,
-                    system: system.to_string(),
-                    messages: vec![AnthropicMessage {
-                        role: "user".to_string(),
-                        content: user.to_string(),
-                    }],
-                })
-                .send()
-                .await
-                .context("Anthropic API request failed")?;
-
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
-                anyhow::bail!("Anthropic API error {}: {}", status, body);
-            }
-
-            let parsed: AnthropicResponse =
-                resp.json().await.context("parsing Anthropic response")?;
-            return parsed
-                .content
-                .into_iter()
-                .next()
-                .map(|c| c.text)
-                .context("empty Anthropic response");
-        }
-
-        // OpenAI-compatible path
-        let openai_base = std::env::var("OPENAI_BASE_URL")
-            .unwrap_or_else(|_| "https://api.openai.com".to_string());
-        let resp = client
-            .post(format!("{}/v1/chat/completions", openai_base))
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
-            .json(&OpenAiRequest {
-                model: self.model.clone(),
-                messages: vec![
-                    OpenAiMessage {
-                        role: "system".to_string(),
-                        content: system.to_string(),
-                    },
-                    OpenAiMessage {
-                        role: "user".to_string(),
-                        content: user.to_string(),
-                    },
-                ],
-            })
-            .send()
+        self.complete_with_usage(system, user)
             .await
-            .context("OpenAI API request failed")?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            anyhow::bail!("LLM API error {}: {}", status, body);
-        }
-
-        let parsed: OpenAiResponse = resp.json().await.context("parsing OpenAI response")?;
-        parsed
-            .choices
-            .into_iter()
-            .next()
-            .map(|c| c.message.content)
-            .context("empty LLM response")
+            .map(|(text, _usage)| text)
     }
 
     /// Like `complete`, but also returns token usage from the API response.

@@ -167,8 +167,9 @@ fn mermaid_production_and_resolve_storage_echo_their_subject() {
     );
 }
 
-/// `oid` for the stream reader. An id with no stream behind it is not an error — `%OpenId` hands back
-/// an empty stream — so the echo is the discriminator here too.
+/// `oid` for the stream reader. Whether stream 1 exists on the container varies, so either answer
+/// is accepted, and each names the oid it was given: the stream's own answer echoes it, and the
+/// `STREAM_NOT_FOUND` message quotes it. An `oid` that never reached the handler would show neither.
 #[test]
 #[ignore = "requires live IRIS (iris-dev-iris) and the built binary"]
 fn stream_inspect_echoes_the_oid_it_was_given() {
@@ -178,15 +179,27 @@ fn stream_inspect_echoes_the_oid_it_was_given() {
     let mut mcp = McpSession::start(&live_env());
 
     let inspected = call(&mut mcp, "stream_inspect", serde_json::json!({"oid": "1"}));
-    assert_eq!(
-        str_of(&inspected, "oid"),
-        "1",
-        "`oid` must be echoed: {inspected}"
-    );
-    assert!(
-        inspected.get("type").is_some() && inspected.get("size").is_some(),
-        "the answer must carry the stream's type and size: {inspected}"
-    );
+    let text = inspected.to_string();
+    if inspected["success"] == true {
+        assert_eq!(
+            str_of(&inspected, "oid"),
+            "1",
+            "`oid` must be echoed: {text}"
+        );
+        assert!(
+            inspected.get("size").is_some() && inspected.get("truncated").is_some(),
+            "the answer must carry the stream's size and whether it was cut: {text}"
+        );
+    } else {
+        assert_eq!(
+            inspected["error_code"], "STREAM_NOT_FOUND",
+            "an unreadable stream 1 must be reported as not found: {text}"
+        );
+        assert!(
+            text.contains("oid '1'"),
+            "the not-found message must quote the oid it looked up: {text}"
+        );
+    }
 }
 
 /// The HL7 pair. `namespace` is provable — it is resolved before the availability check — but
@@ -315,6 +328,10 @@ fn wrongly_typed_values_are_refused() {
             serde_json::json!({"class": ["%Library.Base"]}),
         ),
         ("stream_inspect", serde_json::json!({"oid": 1})),
+        (
+            "stream_inspect",
+            serde_json::json!({"oid": "1", "max_chars": "10"}),
+        ),
         ("resolve_storage", serde_json::json!({"class": {}})),
         ("hl7_schema_inspect", serde_json::json!({"segment": 3})),
         (
@@ -330,34 +347,39 @@ fn wrongly_typed_values_are_refused() {
     }
 }
 
-/// The bug that motivated the feature, run as a test. `stream_inspect` was documented with a
-/// character cap no code read, so a caller asking for 10,000 characters got the whole stream and no
-/// warning. The same call now comes back as `UNKNOWN_PARAMETER` naming the key and the three
-/// parameters that do exist.
+/// The bug that motivated the feature, run as a test, turned round. `stream_inspect` was documented
+/// with a character cap no code read; the cap is real now, so the handler must read the key before
+/// any IRIS call is made. A cap of 0 is refused by name, which only a handler that parses
+/// `max_chars` can do, and the near-miss spelling is still refused with `max_chars` listed.
 #[test]
 #[ignore = "requires the built binary; no IRIS call is reached"]
-fn the_parameter_that_named_this_feature_is_refused_by_name() {
+fn the_parameter_that_named_this_feature_is_read_by_the_handler() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
     let mut mcp = McpSession::start(&live_env());
 
-    let text = answer_text(&mcp.call(
+    let zero = answer_text(&mcp.call(
         "stream_inspect",
-        &serde_json::json!({"oid": "1", "max_chars": 10000}),
+        &serde_json::json!({"oid": "1", "max_chars": 0}),
     ));
     assert!(
-        text.contains("UNKNOWN_PARAMETER"),
-        "the refusal must carry the UNKNOWN_PARAMETER code: {text}"
+        zero.contains("INVALID_PARAMS") && zero.contains("max_chars"),
+        "a cap of 0 must be refused by the handler, naming `max_chars`: {zero}"
     );
+
+    let misspelt = answer_text(&mcp.call(
+        "stream_inspect",
+        &serde_json::json!({"oid": "1", "maxChars": 10000}),
+    ));
     assert!(
-        text.contains("stream_inspect") && text.contains("max_chars"),
-        "the refusal must name the tool and the invented parameter: {text}"
+        misspelt.contains("UNKNOWN_PARAMETER") && misspelt.contains("maxChars"),
+        "a misspelt cap must be refused by name: {misspelt}"
     );
-    for accepted in ["namespace", "oid", "server"] {
+    for accepted in ["max_chars", "namespace", "oid", "server"] {
         assert!(
-            text.contains(accepted),
-            "the refusal must list `{accepted}` among the accepted parameters: {text}"
+            misspelt.contains(accepted),
+            "the refusal must list `{accepted}` among the accepted parameters: {misspelt}"
         );
     }
 }

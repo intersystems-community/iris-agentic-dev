@@ -83,6 +83,19 @@ Replace `host.docker.internal` with the IP or hostname of your IRIS server:
 ]
 ```
 
+## Project files and trust
+
+Inside the container, `IRIS_*` variables in the `env` block above are launch settings, which iad
+trusts. A project's `.iris-agentic-dev.toml` is not: if you mount one in, its connection settings
+apply, but anything that would widen what the agent may do (`write_tools_enabled = true`,
+`tls_verify = false`, and so on) is set aside until you trust the file with
+`iris-agentic-dev trust`, and `trust` needs a terminal and writes the entry to the operator file
+(`~/.iris-agentic-dev.toml`) in the home directory of the process that reads it. A container started
+with `--rm` has no operator file of its own to record it in, so put such settings in the `env`
+block instead. The container has no OS keychain either, so a password given to `iris_add_server`
+is written to `servers.json` inside the container, which `--rm` removes with it.
+`check_config` shows what was set aside.
+
 ## Verify the connection
 
 Once configured, ask Claude:

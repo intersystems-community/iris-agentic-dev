@@ -56,7 +56,7 @@ A rebuild by hand lasts until the next load. If the loader clears the extent and
 
 ## `TUNE TABLE`
 
-`TUNE TABLE Pkg.Orders` measures extent size (row count), selectivity per field, outlier values, average field size and block counts. Run it on data shaped like production, after a large load or when the distribution changes. On the test table the `CustIdx` plan stayed on the index map and its cost went from 3272 to 2672.
+`TUNE TABLE Pkg.Orders` measures extent size (row count), selectivity per field, outlier values, average field size and block counts. Run it on data shaped like production, after a large load or when the distribution changes. `iris_query` refuses `TUNE TABLE` in both modes, so run it through `iris_execute`: `Set r=$SYSTEM.SQL.Execute("TUNE TABLE Pkg.Orders") Write r.%SQLCODE` (0 when it ran). On the test table the `CustIdx` plan stayed on the index map and its cost went from 3272 to 2672.
 
 ## Statistics: fixed and collected
 

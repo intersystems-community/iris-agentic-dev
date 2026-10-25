@@ -7,7 +7,7 @@ use iris_agentic_dev_core::benchmark::{
 use iris_agentic_dev_core::generate::LlmClient;
 use iris_agentic_dev_core::iris::{
     connection::{DiscoverySource, IrisConnection},
-    discovery::{discover_iris, IrisDiscovery},
+    discovery::{discover_iris_with, IrisDiscovery},
 };
 
 #[derive(Args)]
@@ -30,6 +30,9 @@ pub struct BenchmarkCommand {
     pub host: Option<String>,
     #[arg(long, env = "IRIS_WEB_PORT", default_value = "52773")]
     pub web_port: u16,
+    /// URL scheme of the Atelier endpoint: http or https (default: http)
+    #[arg(long, env = "IRIS_SCHEME", default_value = "http")]
+    pub scheme: String,
     #[arg(long, env = "IRIS_NAMESPACE", default_value = "USER")]
     pub namespace: String,
     #[arg(long, env = "IRIS_USERNAME")]
@@ -51,6 +54,19 @@ pub struct BenchmarkCommand {
 }
 
 impl BenchmarkCommand {
+    /// The Atelier base URL `--host` names, with the scheme the operator chose. `Ok(None)` without
+    /// `--host`. A scheme other than http or https is refused rather than sent to `reqwest`.
+    pub fn base_url(&self) -> Result<Option<String>> {
+        let Some(host) = &self.host else {
+            return Ok(None);
+        };
+        let scheme = self.scheme.trim().to_ascii_lowercase();
+        if scheme != "http" && scheme != "https" {
+            anyhow::bail!("--scheme must be http or https, not '{}'", self.scheme);
+        }
+        Ok(Some(format!("{scheme}://{host}:{}", self.web_port)))
+    }
+
     pub async fn run(self) -> Result<()> {
         if self.suite != "jira" {
             eprintln!(
@@ -82,8 +98,7 @@ impl BenchmarkCommand {
             std::env::set_var("IRIS_GENERATE_CLASS_MODEL", model);
         }
 
-        let explicit = self.host.as_ref().map(|host| {
-            let base_url = format!("http://{}:{}", host, self.web_port);
+        let explicit = self.base_url()?.map(|base_url| {
             let username = self.username.as_deref().unwrap_or("_SYSTEM");
             let password = self.password.as_deref().unwrap_or("SYS");
             IrisConnection::new(
@@ -93,6 +108,7 @@ impl BenchmarkCommand {
                 password,
                 DiscoverySource::ExplicitFlag,
             )
+            .with_tls(iris_agentic_dev_core::iris::http::TlsSetting::from_launch_env())
         });
         let ws_path = std::env::var("OBJECTSCRIPT_WORKSPACE").ok();
         let explicit = iris_agentic_dev_core::iris::workspace_config::apply_workspace_config(
@@ -101,7 +117,10 @@ impl BenchmarkCommand {
             &self.namespace,
         );
 
-        let iris = match discover_iris(explicit).await {
+        let hints = iris_agentic_dev_core::iris::workspace_config::workspace_discovery_hints(
+            ws_path.as_deref(),
+        );
+        let iris = match discover_iris_with(explicit, &hints).await {
             IrisDiscovery::Found(c) => c,
             IrisDiscovery::NotFound => {
                 anyhow::bail!(
@@ -113,7 +132,7 @@ impl BenchmarkCommand {
             }
         };
 
-        let client = IrisConnection::http_client()?;
+        let client = iris.client(iris_agentic_dev_core::iris::http::ClientKind::Call)?;
 
         // FR-013: reject a run against a container already in use by another active run.
         let container_name = self.host.clone().unwrap_or_else(|| self.namespace.clone());

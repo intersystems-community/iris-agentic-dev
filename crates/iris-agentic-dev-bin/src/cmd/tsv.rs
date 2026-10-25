@@ -24,8 +24,23 @@ pub fn rows_to_tsv(rows: &[Vec<String>]) -> String {
     out
 }
 
+/// The backslash is escaped first, so the encoding can be reversed. Control characters, DEL and C1
+/// characters become `\xNN`, so IRIS data cannot write a terminal escape sequence (spec 141 C4).
 fn escape_cell(s: &str) -> String {
-    s.replace('\t', "\\t").replace('\n', "\\n")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c if c < ' ' || c == '\x7f' || ('\u{80}'..='\u{9f}').contains(&c) => {
+                out.push_str(&format!("\\x{:02x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Extract column names from an Atelier query result body.

@@ -59,19 +59,24 @@ API directly. The document name includes the `.mac` extension.
 
 ```bash
 # Read
-curl -s -u "${IRIS_USERNAME:-_SYSTEM}:${IRIS_PASSWORD:-SYS}" \
-  "http://localhost:52773/api/atelier/v1/${IRIS_NAMESPACE:-USER}/doc/MYROUTINE.mac"
+iris-agentic-dev tool iris_doc --args '{"mode":"get","name":"MYROUTINE.mac"}'
 
-# Write — ignoreConflict=1 overwrites regardless of server timestamp
-curl -s -X PUT -u "${IRIS_USERNAME:-_SYSTEM}:${IRIS_PASSWORD:-SYS}" \
-  -H "Content-Type: application/json" \
-  "http://localhost:52773/api/atelier/v1/${IRIS_NAMESPACE:-USER}/doc/MYROUTINE.mac?ignoreConflict=1" \
-  -d '{"enc":false,"content":["MYROUTINE"," Quit"]}'
+# Write (checks the document out of source control first when one is configured)
+iris-agentic-dev tool iris_doc --args '{"mode":"put","name":"MYROUTINE.mac","content":"MYROUTINE\n Quit\n"}'
 
 # List MAC routines
-curl -s -u "${IRIS_USERNAME:-_SYSTEM}:${IRIS_PASSWORD:-SYS}" \
-  "http://localhost:52773/api/atelier/v1/${IRIS_NAMESPACE:-USER}/docnames/MAC"
+iris-agentic-dev tool iris_doc --args '{"mode":"list","pattern":"*.mac"}'
 ```
+
+Without the CLI, call Atelier with `curl -K -`, which reads the credential from stdin so it stays out
+of the process list. `IRIS_SCHEME` is `https` for an HTTPS endpoint:
+
+```bash
+printf 'user = "%s:%s"\n' "${IRIS_USERNAME:-_SYSTEM}" "$IRIS_PASSWORD" \
+  | curl -s -K - "${IRIS_SCHEME:-http}://${IRIS_HOST:-localhost}:${IRIS_WEB_PORT:-52773}/api/atelier/v1/${IRIS_NAMESPACE:-USER}/doc/MYROUTINE.mac"
+```
+
+A PUT to the same URL with `?ignoreConflict=1` overwrites regardless of the server timestamp.
 
 A PUT does not compile — follow it with `POST /action/compile` and a body of
 `["MYROUTINE.mac"]`, or use the `iris_compile` MCP tool. Always re-read after writing;

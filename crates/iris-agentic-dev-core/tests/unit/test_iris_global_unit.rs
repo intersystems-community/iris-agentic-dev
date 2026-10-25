@@ -117,10 +117,10 @@ fn parse_execute_output_passes_clean() {
 #[test]
 fn env_gate_get_permitted_on_live() {
     use iris_agentic_dev_core::iris::workspace_config::McpTemplate;
-    use iris_agentic_dev_core::policy::env_gate::check_env_gate;
+    use iris_agentic_dev_core::testing::gated;
 
     let params = serde_json::json!({"action": "get", "global_name": "MyApp"});
-    let result = check_env_gate("iris_global", &McpTemplate::Live, "test-server", &params);
+    let result = gated::env("iris_global", &McpTemplate::Live, "test-server", &params);
     assert!(
         result.is_none(),
         "get should NOT be blocked on live: {:?}",
@@ -131,10 +131,10 @@ fn env_gate_get_permitted_on_live() {
 #[test]
 fn env_gate_list_permitted_on_live() {
     use iris_agentic_dev_core::iris::workspace_config::McpTemplate;
-    use iris_agentic_dev_core::policy::env_gate::check_env_gate;
+    use iris_agentic_dev_core::testing::gated;
 
     let params = serde_json::json!({"action": "list", "global_name": "MyApp"});
-    let result = check_env_gate("iris_global", &McpTemplate::Live, "test-server", &params);
+    let result = gated::env("iris_global", &McpTemplate::Live, "test-server", &params);
     assert!(
         result.is_none(),
         "list should NOT be blocked on live: {:?}",
@@ -149,10 +149,10 @@ fn env_gate_list_permitted_on_live() {
 #[test]
 fn env_gate_set_blocked_on_live() {
     use iris_agentic_dev_core::iris::workspace_config::McpTemplate;
-    use iris_agentic_dev_core::policy::env_gate::check_env_gate;
+    use iris_agentic_dev_core::testing::gated;
 
     let params = serde_json::json!({"action": "set", "global_name": "MyApp"});
-    let result = check_env_gate("iris_global", &McpTemplate::Live, "test-server", &params);
+    let result = gated::env("iris_global", &McpTemplate::Live, "test-server", &params);
     assert!(result.is_some(), "set MUST be blocked on live");
     assert_eq!(result.unwrap()["error_code"], "ENV_GATE_BLOCKED");
 }
@@ -160,10 +160,10 @@ fn env_gate_set_blocked_on_live() {
 #[test]
 fn env_gate_kill_blocked_on_live() {
     use iris_agentic_dev_core::iris::workspace_config::McpTemplate;
-    use iris_agentic_dev_core::policy::env_gate::check_env_gate;
+    use iris_agentic_dev_core::testing::gated;
 
     let params = serde_json::json!({"action": "kill", "global_name": "MyApp"});
-    let result = check_env_gate("iris_global", &McpTemplate::Live, "test-server", &params);
+    let result = gated::env("iris_global", &McpTemplate::Live, "test-server", &params);
     assert!(result.is_some(), "kill MUST be blocked on live");
     assert_eq!(result.unwrap()["error_code"], "ENV_GATE_BLOCKED");
 }
@@ -171,10 +171,10 @@ fn env_gate_kill_blocked_on_live() {
 #[test]
 fn env_gate_set_blocked_on_test() {
     use iris_agentic_dev_core::iris::workspace_config::McpTemplate;
-    use iris_agentic_dev_core::policy::env_gate::check_env_gate;
+    use iris_agentic_dev_core::testing::gated;
 
     let params = serde_json::json!({"action": "set", "global_name": "MyApp"});
-    let result = check_env_gate("iris_global", &McpTemplate::Test, "test-server", &params);
+    let result = gated::env("iris_global", &McpTemplate::Test, "test-server", &params);
     assert!(result.is_some(), "set MUST be blocked on test");
     assert_eq!(result.unwrap()["error_code"], "ENV_GATE_BLOCKED");
 }
@@ -302,7 +302,7 @@ fn build_subtree_get_code_contains_query() {
 #[test]
 fn dispatch_gate_system_blocklist_blocks_pct_sys() {
     use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, DataPolicy};
-    use iris_agentic_dev_core::policy::gate::dispatch_gate;
+    use iris_agentic_dev_core::testing::gated;
 
     let policy = ConnectionPolicy {
         server_name: "test-server".to_string(),
@@ -314,7 +314,7 @@ fn dispatch_gate_system_blocklist_blocks_pct_sys() {
         iris_audit: false,
     };
     let params = serde_json::json!({"action": "get", "global_name": "%SYS"});
-    let result = dispatch_gate("iris_global", "test-server", Some(&policy), &params);
+    let result = gated::dispatch("iris_global", "test-server", Some(&policy), &params);
     assert!(result.is_err(), "^%SYS must be blocked");
     assert_eq!(result.unwrap_err()["error_code"], "SYSTEM_BLOCKLIST");
 }
@@ -322,7 +322,7 @@ fn dispatch_gate_system_blocklist_blocks_pct_sys() {
 #[test]
 fn dispatch_gate_phi_gate_blocks_papmi_without_ack() {
     use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, DataPolicy};
-    use iris_agentic_dev_core::policy::gate::dispatch_gate;
+    use iris_agentic_dev_core::testing::gated;
 
     let policy = ConnectionPolicy {
         server_name: "test-server".to_string(),
@@ -334,7 +334,7 @@ fn dispatch_gate_phi_gate_blocks_papmi_without_ack() {
         iris_audit: false,
     };
     let params = serde_json::json!({"action": "get", "global_name": "PAPMI"});
-    let result = dispatch_gate("iris_global", "test-server", Some(&policy), &params);
+    let result = gated::dispatch("iris_global", "test-server", Some(&policy), &params);
     assert!(result.is_err(), "PAPMI without ack must be blocked");
     assert_eq!(result.unwrap_err()["error_code"], "PHI_GATE_BLOCKED");
 }
@@ -342,7 +342,7 @@ fn dispatch_gate_phi_gate_blocks_papmi_without_ack() {
 #[test]
 fn dispatch_gate_phi_gate_passes_papmi_with_ack() {
     use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, DataPolicy};
-    use iris_agentic_dev_core::policy::gate::dispatch_gate;
+    use iris_agentic_dev_core::testing::gated;
 
     let policy = ConnectionPolicy {
         server_name: "test-server".to_string(),
@@ -355,14 +355,14 @@ fn dispatch_gate_phi_gate_passes_papmi_with_ack() {
     };
     let params =
         serde_json::json!({"action": "get", "global_name": "PAPMI", "acknowledgePhi": true});
-    let result = dispatch_gate("iris_global", "test-server", Some(&policy), &params);
+    let result = gated::dispatch("iris_global", "test-server", Some(&policy), &params);
     assert!(result.is_ok(), "PAPMI with ack must pass: {:?}", result);
 }
 
 #[test]
 fn dispatch_gate_non_phi_global_passes() {
     use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, DataPolicy};
-    use iris_agentic_dev_core::policy::gate::dispatch_gate;
+    use iris_agentic_dev_core::testing::gated;
 
     let policy = ConnectionPolicy {
         server_name: "test-server".to_string(),
@@ -374,7 +374,7 @@ fn dispatch_gate_non_phi_global_passes() {
         iris_audit: false,
     };
     let params = serde_json::json!({"action": "get", "global_name": "MyAppData"});
-    let result = dispatch_gate("iris_global", "test-server", Some(&policy), &params);
+    let result = gated::dispatch("iris_global", "test-server", Some(&policy), &params);
     assert!(result.is_ok(), "non-PHI global must pass: {:?}", result);
 }
 
@@ -382,7 +382,7 @@ fn dispatch_gate_non_phi_global_passes() {
 #[test]
 fn dispatch_gate_kill_non_blocklisted_passes() {
     use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, DataPolicy};
-    use iris_agentic_dev_core::policy::gate::dispatch_gate;
+    use iris_agentic_dev_core::testing::gated;
 
     let policy = ConnectionPolicy {
         server_name: "test-server".to_string(),
@@ -394,7 +394,7 @@ fn dispatch_gate_kill_non_blocklisted_passes() {
         iris_audit: false,
     };
     let params = serde_json::json!({"action": "kill", "global_name": "IrisDevTest"});
-    let result = dispatch_gate("iris_global", "test-server", Some(&policy), &params);
+    let result = gated::dispatch("iris_global", "test-server", Some(&policy), &params);
     assert!(
         result.is_ok(),
         "kill on IrisDevTest must pass: {:?}",
@@ -632,7 +632,11 @@ fn build_get_code_simple() {
     let code = build_get_code("^MyApp");
     assert!(code.contains("Set val = $Get(^MyApp)"));
     assert!(code.contains("Set def = ($Data(^MyApp) > 0)"));
-    assert!(code.contains(r#"If def  Write "1|""#));
+    assert!(code.contains(r#"Write "1|""#));
+    assert!(
+        code.contains("Base64Encode"),
+        "the value goes out as Base64: {code}"
+    );
     assert!(code.contains(r#"If 'def  Write "0|""#));
 }
 
@@ -657,10 +661,15 @@ fn build_get_code_has_char_function() {
 }
 
 #[test]
-fn build_get_code_has_underscore_concatenation() {
+fn build_get_code_writes_base64_not_the_raw_value() {
+    // T170: the raw value never reaches the output, so the line reader cannot drop its CR or
+    // trailing whitespace. It goes out as Base64 of its UTF-8 bytes on one line, then `;`.
     let code = build_get_code("^MyApp");
-    // Should use _ for ObjectScript string concatenation
-    assert!(code.contains("_val"));
+    assert!(
+        code.contains(r#"Base64Encode($ZCVT(val,"O","UTF8"),1)"#),
+        "{code}"
+    );
+    assert!(!code.contains("_val"), "{code}");
 }
 
 // ---------------------------------------------------------------------------
@@ -837,10 +846,40 @@ fn parse_execute_output_error_with_special_chars() {
 
 #[test]
 fn parse_get_output_returns_defined_with_value() {
-    let result = parse_get_output("1|hello");
+    let result = parse_get_output("1|aGVsbG8=;");
     assert_eq!(result["success"], true);
     assert_eq!(result["defined"], true);
     assert_eq!(result["value"], "hello");
+}
+
+/// Spec 141 T170: the value comes back exactly, so a CR, a trailing space and a newline survive
+/// the generator's line reader and the whitespace trim.
+#[test]
+fn parse_get_output_keeps_cr_lf_and_trailing_space() {
+    let result = parse_get_output("1|bDEKbDINCiAg;");
+    assert_eq!(result["defined"], true);
+    assert_eq!(result["value"], "l1\nl2\r\n  ");
+}
+
+#[test]
+fn parse_get_output_rejects_a_value_that_is_not_base64() {
+    let result = parse_get_output("1|!!!;");
+    assert_eq!(result["error_code"], "IRIS_EXECUTE_ERROR");
+}
+
+#[test]
+fn parse_get_output_decodes_utf8() {
+    let result = parse_get_output("1|w6k=;");
+    assert_eq!(result["value"], "é");
+}
+
+/// A value cut by the generator's output cap has no closing `;`. That is an error, not a prefix.
+#[test]
+fn parse_get_output_reports_a_value_cut_by_the_output_cap() {
+    let result = parse_get_output("1|bDEKbDIN");
+    assert_eq!(result["success"], false);
+    assert_eq!(result["error_code"], "IRIS_EXECUTE_ERROR");
+    assert!(result["message"].as_str().unwrap().contains("ended before"));
 }
 
 #[test]
@@ -853,7 +892,7 @@ fn parse_get_output_returns_undefined() {
 
 #[test]
 fn parse_get_output_empty_defined_value() {
-    let result = parse_get_output("1|");
+    let result = parse_get_output("1|;");
     assert_eq!(result["success"], true);
     assert_eq!(result["defined"], true);
     assert_eq!(result["value"], "");
@@ -861,7 +900,7 @@ fn parse_get_output_empty_defined_value() {
 
 #[test]
 fn parse_get_output_value_with_pipes() {
-    let result = parse_get_output("1|a|b|c");
+    let result = parse_get_output("1|YXxifGM=;");
     assert_eq!(result["success"], true);
     assert_eq!(result["defined"], true);
     assert_eq!(result["value"], "a|b|c");
@@ -881,7 +920,7 @@ fn parse_get_output_unexpected_format() {
 
 #[test]
 fn parse_subtree_output_single_node() {
-    let input = r#"^MyApp("a")|hello
+    let input = r#"^MyApp("a")|aGVsbG8=;
 DONE|1|0
 "#;
     let result = parse_subtree_output(input);
@@ -895,8 +934,8 @@ DONE|1|0
 
 #[test]
 fn parse_subtree_output_truncated() {
-    let input = r#"^Global("x")|value1
-^Global("y")|value2
+    let input = r#"^Global("x")|dmFsdWUx;
+^Global("y")|dmFsdWUy;
 DONE|100|1
 "#;
     let result = parse_subtree_output(input);
@@ -917,9 +956,9 @@ fn parse_subtree_output_empty() {
 
 #[test]
 fn parse_subtree_output_multiple_nodes() {
-    let input = r#"^App("a")|val1
-^App("b")|val2
-^App("c")|val3
+    let input = r#"^App("a")|dmFsMQ==;
+^App("b")|dmFsMg==;
+^App("c")|dmFsMw==;
 DONE|3|0
 "#;
     let result = parse_subtree_output(input);
@@ -933,9 +972,9 @@ DONE|3|0
 
 #[test]
 fn parse_subtree_output_skips_empty_lines() {
-    let input = r#"^App("a")|val1
+    let input = r#"^App("a")|dmFsMQ==;
 
-^App("b")|val2
+^App("b")|dmFsMg==;
 
 DONE|2|0
 "#;
@@ -1057,7 +1096,7 @@ fn parse_get_output_unexpected_prefix_no_pipe() {
 #[test]
 fn parse_subtree_output_silently_skips_lines_without_pipe() {
     // One well-formed node line, one orphan line (no pipe), one DONE marker
-    let input = r#"^MyApp("x")|v
+    let input = r#"^MyApp("x")|dg==;
 orphanline
 DONE|1|0
 "#;
@@ -1079,7 +1118,7 @@ DONE|1|0
 #[test]
 fn parse_subtree_output_done_with_non_numeric_count() {
     // DONE line with non-numeric count (e.g., 'abc') → parse().ok() defaults to 0
-    let input = r#"^A("x")|v
+    let input = r#"^A("x")|dg==;
 DONE|abc|0
 "#;
     let result = parse_subtree_output(input);
@@ -1094,10 +1133,10 @@ DONE|abc|0
 #[test]
 fn parse_subtree_output_multiple_lines_without_pipe() {
     // Multiple orphan lines to ensure they're all skipped
-    let input = r#"^App("a")|val1
+    let input = r#"^App("a")|dmFsMQ==;
 no_pipe_line_1
 no_pipe_line_2
-^App("b")|val2
+^App("b")|dmFsMg==;
 incomplete
 DONE|2|0
 "#;
@@ -1343,4 +1382,104 @@ fn global_names_that_carry_code_fail() {
         let err = validate_global_name(name).expect_err(name);
         assert_eq!(err["error_code"], "INVALID_GLOBAL_NAME", "{name}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// Spec 141 T171: subtree get returns each value exactly
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parse_subtree_output_keeps_cr_lf_and_trailing_space() {
+    let input = "^G(1)|bDENCmwy;\n^G(2)|bA0KICA=;\nDONE|2|0\n";
+    let result = parse_subtree_output(input);
+    assert_eq!(result["nodes"][0]["value"], "l1\r\nl2");
+    assert_eq!(result["nodes"][1]["value"], "l\r\n  ");
+}
+
+#[test]
+fn parse_subtree_output_splits_on_the_last_pipe() {
+    // A string subscript can hold `|`; Base64 never does.
+    let input = "^G(\"a|b\")|dg==;\nDONE|1|0\n";
+    let result = parse_subtree_output(input);
+    assert_eq!(result["nodes"][0]["path"], "^G(\"a|b\")");
+    assert_eq!(result["nodes"][0]["value"], "v");
+}
+
+#[test]
+fn parse_subtree_output_empty_value_is_an_empty_string() {
+    let result = parse_subtree_output("^G(1)|;\nDONE|1|0\n");
+    assert_eq!(result["nodes"][0]["value"], "");
+}
+
+#[test]
+fn parse_subtree_output_rejects_a_value_that_is_not_base64() {
+    let result = parse_subtree_output("^G(1)|!!!;\nDONE|1|0\n");
+    assert_eq!(result["success"], false);
+    assert_eq!(result["error_code"], "IRIS_EXECUTE_ERROR");
+}
+
+/// A node with no closing `;` and output with no `DONE` were cut short.
+#[test]
+fn parse_subtree_output_reports_output_cut_by_the_cap() {
+    for cut in ["^G(1)|dg==;\n^G(2)|bDEKbDIN", "^G(1)|dg==;\n^G(2)|dg==;\n"] {
+        let result = parse_subtree_output(cut);
+        assert_eq!(result["success"], false, "{cut}");
+        assert_eq!(result["error_code"], "IRIS_EXECUTE_ERROR", "{cut}");
+    }
+}
+
+#[test]
+fn build_subtree_get_code_writes_base64_not_the_raw_value() {
+    let code = build_subtree_get_code("^MyApp", 100);
+    assert_eq!(code.matches("Base64Encode").count(), 2, "{code}");
+    assert!(!code.contains(r#"_@node,"#), "{code}");
+    assert!(!code.contains(r#"_@baseRef,"#), "{code}");
+}
+
+/// The generator's line reader returns 32,000 characters at a time and puts a line feed after each
+/// piece, so a long value arrives split. The pieces join back into one value.
+#[test]
+fn parse_get_output_joins_a_value_the_line_reader_split() {
+    use base64::Engine;
+    let value = "xy\r\n".repeat(25_000);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&value);
+    let pieces: Vec<&str> = encoded
+        .as_bytes()
+        .chunks(32_000)
+        .map(|c| std::str::from_utf8(c).unwrap())
+        .collect();
+    assert!(pieces.len() > 1);
+    let raw = format!("1|{};", pieces.join("\n"));
+    let result = parse_get_output(&raw);
+    assert_eq!(result["success"], true);
+    assert!(result["value"] == value.as_str(), "joined value differs");
+}
+
+#[test]
+fn parse_subtree_output_joins_a_value_the_line_reader_split() {
+    use base64::Engine;
+    let value = "xy\r\n".repeat(25_000);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&value);
+    let pieces: Vec<&str> = encoded
+        .as_bytes()
+        .chunks(32_000)
+        .map(|c| std::str::from_utf8(c).unwrap())
+        .collect();
+    let raw = format!(
+        "^G(1)|dg==;\n^G(2)|{};\n^G(3)|dg==;\nDONE|3|0\n",
+        pieces.join("\n")
+    );
+    let result = parse_subtree_output(&raw);
+    assert_eq!(result["success"], true);
+    let nodes = result["nodes"].as_array().unwrap();
+    assert_eq!(nodes.len(), 3);
+    assert_eq!(nodes[0]["value"], "v");
+    assert!(nodes[1]["value"] == value.as_str(), "joined value differs");
+    assert_eq!(nodes[2]["value"], "v");
+}
+
+#[test]
+fn parse_subtree_output_a_new_node_inside_an_unfinished_one_is_an_error() {
+    let result = parse_subtree_output("^G(1)|dmFs\n^G(2)|dg==;\nDONE|2|0\n");
+    assert_eq!(result["success"], false);
 }

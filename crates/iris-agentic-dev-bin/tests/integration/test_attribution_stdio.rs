@@ -36,6 +36,7 @@ fn spawn_mcp_live() -> Option<(
         return None;
     }
     let mut cmd = Command::new(&bin);
+    crate::support_141::isolate(&mut cmd);
     cmd.arg("mcp")
         .env("IRIS_HOST", &host)
         .env(
@@ -312,6 +313,8 @@ fn iris_audit_emission_wiring() {
         let dir = tempfile::tempdir().expect("tempdir");
         std::fs::write(dir.path().join(".iris-agentic-dev.toml"), toml_content).unwrap();
         let mut child = Command::new(&bin)
+            .env("HOME", crate::support_141::home())
+            .env("USERPROFILE", crate::support_141::home())
             .arg("mcp")
             .arg("--workspace")
             .arg(".")
@@ -433,6 +436,8 @@ fn iris_audit_failures_surfaced_in_check_config() {
         let dir = tempfile::tempdir().ok()?;
         std::fs::write(dir.path().join(".iris-agentic-dev.toml"), toml_content).ok()?;
         let mut child = std::process::Command::new(&bin)
+            .env("HOME", crate::support_141::home())
+            .env("USERPROFILE", crate::support_141::home())
             .arg("mcp")
             .arg("--workspace")
             .arg(".")

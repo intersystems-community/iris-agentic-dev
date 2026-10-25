@@ -97,6 +97,9 @@ fn test_add_server_returns_success_without_keychain() {
         .args(["--config", cfg_path.to_str().unwrap()])
         // Override HOME so servers.json writes to our temp dir.
         .env("HOME", tmp.path())
+        // No OS keychain on any platform: the plaintext fallback is what this test is about (the
+        // keychain path has a unit test over an in-memory store).
+        .env("IAD_NO_KEYCHAIN", "1")
         .env_remove("IRIS_HOST")
         .env_remove("IRIS_CONTAINER")
         .stdin(Stdio::piped())
@@ -161,21 +164,41 @@ fn test_add_server_returns_success_without_keychain() {
         "T095-B1: KEYCHAIN_FAILED must no longer be returned when credential can be stored, got: {result}"
     );
 
-    // On Linux (no keychain), stored_plaintext must be true and servers.json must
-    // contain the credential field. On macOS (keychain available) we don't assert
-    // stored_plaintext because it goes through the keychain path.
-    if result["stored_plaintext"].as_bool() == Some(true) {
-        // Plaintext path: verify the servers.json was written with the credential field.
-        let contents = std::fs::read_to_string(&servers_json)
-            .expect("T095-B1: servers.json must exist after iris_add_server");
-        assert!(
-            contents.contains("\"password\""),
-            "T095-B1: servers.json must contain 'password' field when stored_plaintext=true, got: {contents}"
-        );
-        assert!(
-            contents.contains("\"test-plaintext\""),
-            "T095-B1: servers.json must contain the server name, got: {contents}"
-        );
+    // With no keychain, the password is in servers.json, bound to the address it was saved for, and
+    // the file is readable by its owner only (spec 141, FR-023).
+    assert_eq!(
+        result["stored_plaintext"].as_bool(),
+        Some(true),
+        "T095-B1: stored_plaintext must be true without a keychain, got: {result}"
+    );
+    assert_eq!(
+        result["credential_store"].as_str(),
+        Some("file"),
+        "{result}"
+    );
+    let contents = std::fs::read_to_string(&servers_json)
+        .expect("T095-B1: servers.json must exist after iris_add_server");
+    assert!(
+        contents.contains("\"password\""),
+        "T095-B1: servers.json must contain 'password' field when stored_plaintext=true, got: {contents}"
+    );
+    assert!(
+        contents.contains("\"password_endpoint\"") && contents.contains("http://192.0.2.1:52780"),
+        "the password must be bound to its endpoint, got: {contents}"
+    );
+    assert!(
+        contents.contains("\"test-plaintext\""),
+        "T095-B1: servers.json must contain the server name, got: {contents}"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&servers_json)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "servers.json holds a password");
     }
 }
 
@@ -194,9 +217,9 @@ fn test_add_server_description_mentions_plaintext_fallback() {
         return;
     }
 
-    let mut cmd = Command::new(&bin);
+    let mut cmd = iris_agentic_dev_core::testing::clean_command(&bin);
     cmd.arg("mcp")
-        .env_remove("IRIS_HOST")
+        .env("IRIS_HOST", "127.0.0.1")
         .env("IRIS_WEB_PORT", "9")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

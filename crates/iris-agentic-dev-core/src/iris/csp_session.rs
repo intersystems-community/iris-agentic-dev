@@ -94,18 +94,89 @@ impl CookieStore for CspSessionStore {
 
 static SHARED: LazyLock<Arc<CspSessionStore>> = LazyLock::new(|| Arc::new(CspSessionStore::new()));
 
-/// The store every IRIS-bound client in this process shares.
+/// One store per service identity (spec 141, R2 point 2). A service account that shared the
+/// primary's jar could be answered from the primary's CSP session, because IRIS reads the cookie
+/// before the `Authorization` header: the code would then run as the primary while the request
+/// named the service account. `$USERNAME` in the result detects that; a jar of its own prevents it.
+static IDENTITY_STORES: LazyLock<Mutex<std::collections::BTreeMap<String, Arc<CspSessionStore>>>> =
+    LazyLock::new(Default::default);
+
+/// The store every client of the primary identity in this process shares.
 pub fn shared_cookie_store() -> Arc<CspSessionStore> {
     SHARED.clone()
 }
 
-/// End every CSP session the shared store has seen. Waits at most `timeout` in all.
+/// Origins whose connection has certificate checks off. A logout to one of them uses the same
+/// setting as the session it ends, and every other origin is logged out with checks on.
+static UNCHECKED_ORIGINS: LazyLock<Mutex<BTreeSet<String>>> =
+    LazyLock::new(|| Mutex::new(BTreeSet::new()));
+
+/// Record that the connection at `base_url` runs with certificate checks off.
+pub fn note_unchecked_origin(base_url: &str) {
+    if let Ok(u) = Url::parse(base_url) {
+        UNCHECKED_ORIGINS
+            .lock()
+            .unwrap()
+            .insert(u.origin().ascii_serialization());
+    }
+}
+
+fn setting_for(url: &str) -> super::http::TlsSetting {
+    let unchecked = Url::parse(url).is_ok_and(|u| {
+        UNCHECKED_ORIGINS
+            .lock()
+            .unwrap()
+            .contains(&u.origin().ascii_serialization())
+    });
+    if unchecked {
+        super::http::TlsSetting {
+            verify: false,
+            source: super::http::TlsSource::Default,
+        }
+    } else {
+        super::http::TlsSetting::default()
+    }
+}
+
+/// The store every client of identity `key` shares, created on first use and registered for
+/// [`logout_blocking`]. `key` names the server and the account, so two servers' accounts never
+/// share a jar.
+pub fn store_for_identity(key: &str) -> Arc<CspSessionStore> {
+    IDENTITY_STORES
+        .lock()
+        .unwrap()
+        .entry(key.to_string())
+        .or_default()
+        .clone()
+}
+
+/// The `?IRISLogout=end` URL of every CSP session any registered store has seen.
+pub fn all_logout_urls() -> Vec<String> {
+    let mut urls = SHARED.logout_urls();
+    for store in IDENTITY_STORES.lock().unwrap().values() {
+        urls.extend(store.logout_urls());
+    }
+    urls.sort();
+    urls.dedup();
+    urls
+}
+
+/// End every CSP session any store has seen. Waits at most `timeout` in all.
 ///
 /// Runs on a thread of its own with its own runtime, so it can be called from `main` after the
 /// runtime has returned and from `crate::exit` inside a tokio task alike.
 pub fn logout_blocking(timeout: Duration) {
-    let urls = SHARED.logout_urls();
-    if urls.is_empty() {
+    // A session ends only when the request carries its cookie, so each store logs out through a
+    // client that holds that store.
+    let stores: Vec<(Arc<CspSessionStore>, Vec<String>)> = std::iter::once(SHARED.clone())
+        .chain(IDENTITY_STORES.lock().unwrap().values().cloned())
+        .map(|s| {
+            let urls = s.logout_urls();
+            (s, urls)
+        })
+        .filter(|(_, urls)| !urls.is_empty())
+        .collect();
+    if stores.is_empty() {
         return;
     }
     let (done_tx, done_rx) = std::sync::mpsc::channel();
@@ -117,21 +188,22 @@ pub fn logout_blocking(timeout: Duration) {
             return;
         };
         rt.block_on(async {
-            let Ok(client) = reqwest::Client::builder()
-                .user_agent(super::connection::user_agent(
-                    super::connection::caller_mode(),
-                ))
-                .danger_accept_invalid_certs(super::connection::tls_insecure_from_env())
-                .cookie_provider(SHARED.clone())
-                .timeout(timeout)
-                .build()
-            else {
-                return;
-            };
-            let sends = urls.iter().map(|u| client.get(u).send());
-            for result in futures_util::future::join_all(sends).await {
-                if let Err(e) = result {
-                    tracing::debug!("CSP logout failed: {e}");
+            for (store, urls) in stores {
+                // Each URL goes out through a client that holds this store and takes its origin's
+                // certificate setting, so a logout checks certificates exactly as the session did.
+                let sends = urls.iter().filter_map(|u| {
+                    let client = super::http::client_with_store(
+                        &setting_for(u),
+                        super::http::ClientKind::Logout,
+                        store.clone(),
+                    )
+                    .ok()?;
+                    Some(client.get(u).timeout(timeout).send())
+                });
+                for result in futures_util::future::join_all(sends).await {
+                    if let Err(e) = result {
+                        tracing::debug!("CSP logout failed: {e}");
+                    }
                 }
             }
         });

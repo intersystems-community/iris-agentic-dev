@@ -13,6 +13,7 @@ The binary comes from `IAD_BINARY`, falling back to `target/debug/iris-agentic-d
 neither exists the tests skip, because a checkout with nothing built cannot answer.
 """
 
+import glob
 import json
 import os
 import re
@@ -213,7 +214,16 @@ def test_every_document_names_the_homebrew_tap_that_exists():
     wrong: list[str] = []
     # Tracked plus untracked-but-not-ignored: git-ignored local scratch (.iad-local/) never ships.
     listed = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.md"],
+        [
+            "git",
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            "*.md",
+        ],
         cwd=_REPO_ROOT,
         capture_output=True,
         text=True,
@@ -278,3 +288,286 @@ def test_the_skill_has_frontmatter_a_loader_can_read():
         "a skill description has to say when to use it, or the model reads the description "
         "and skips the body — see skills/BENCHMARKING.md"
     )
+
+
+# --------------------------------------------------------------------------------------------
+# Spec 141 US5 (FR-029): what the shipped setup material leaves behind on a container.
+#
+# The checks below read every file iad ships that starts or configures a container. They need no
+# binary and no Docker, so they cannot skip: a skill that publishes a port on every interface or
+# sets the published default password fails here, not on a stranger's laptop. The live proof that
+# the corrected steps work is in `test_setup_skill_live.py`.
+# --------------------------------------------------------------------------------------------
+
+#: Output fences hold what a command printed, not something a reader runs.
+_OUTPUT_FENCES = frozenset({"text", "output", "txt"})
+
+_SCANNED_RS = (
+    os.path.join("crates", "iris-agentic-dev-bin", "src", "cmd", "mcp.rs"),
+    os.path.join("crates", "iris-agentic-dev-bin", "src", "cmd", "init.rs"),
+)
+
+#: Files whose whole text (prose included) must not tell a reader to set the default password or
+#: put one in a workspace file. These are the files a reader follows to get a first connection.
+_SETUP_PATHS = (
+    os.path.join("skills", "iris-agentic-dev-setup", "SKILL.md"),
+    os.path.join("skills", "skills", "iris-agentic-dev", "nopws-setup", "SKILL.md"),
+    os.path.join("docs", "getting-started.md"),
+    os.path.join("docs", "connecting.md"),
+    "README.md",
+    *_SCANNED_RS,
+)
+
+#: The `_SYSTEM` hash CPFPreset ships. It is the hash of the published default password, so a
+#: skill that shows it teaches the reader to set `SYS`.
+_DEFAULT_PASSWORD_HASH = "FBFE8593AEFA510C27FD184738D6E865A441DE98"
+
+_LOOPBACK_PREFIXES = ("127.0.0.1:", "[::1]:")
+
+
+def _shipped_files() -> list[str]:
+    """Repo-relative paths of every shipped file that may start or configure a container."""
+    found: list[str] = []
+    for pattern in (
+        ("skills", "**", "SKILL.md"),
+        ("skills", "*.md"),
+        ("docs", "*.md"),
+        ("README.md",),
+    ):
+        matches = glob.glob(os.path.join(_REPO_ROOT, *pattern), recursive=True)
+        assert matches, (
+            f"the scan pattern {'/'.join(pattern)} matches nothing; it has rotted"
+        )
+        found.extend(os.path.relpath(path, _REPO_ROOT) for path in matches)
+    for relpath in _SCANNED_RS:
+        assert os.path.isfile(os.path.join(_REPO_ROOT, relpath)), f"{relpath} is gone"
+        found.append(relpath)
+    return sorted(set(found))
+
+
+def _read(relpath: str) -> str:
+    with open(os.path.join(_REPO_ROOT, relpath), encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _fenced_blocks(relpath: str) -> list[tuple[int, str]]:
+    """(first line number, text) of each fenced block in a Markdown file, output fences dropped.
+
+    A `.rs` file has no fences; its whole text is one block, because its help strings and
+    doc comments are what a reader sees.
+    """
+    text = _read(relpath)
+    if relpath.endswith(".rs"):
+        return [(1, text)]
+    blocks: list[tuple[int, str]] = []
+    fence: str | None = None
+    start = 0
+    body: list[str] = []
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            if fence is None:
+                fence = (
+                    stripped[3:].strip().lower().split()[0]
+                    if stripped[3:].strip()
+                    else "none"
+                )
+                start = number + 1
+                body = []
+            else:
+                if fence not in _OUTPUT_FENCES:
+                    blocks.append((start, "\n".join(body)))
+                fence = None
+            continue
+        if fence is not None:
+            body.append(line)
+    return blocks
+
+
+def _logical_lines(first_line: int, block: str) -> list[tuple[int, str]]:
+    """Lines of a block with backslash continuations joined, each with its first line number."""
+    joined: list[tuple[int, str]] = []
+    pending: list[str] = []
+    pending_start = first_line
+    for offset, line in enumerate(block.splitlines()):
+        if not pending:
+            pending_start = first_line + offset
+        if line.rstrip().endswith("\\"):
+            pending.append(line.rstrip()[:-1])
+            continue
+        pending.append(line)
+        joined.append((pending_start, " ".join(part.strip() for part in pending)))
+        pending = []
+    if pending:
+        joined.append((pending_start, " ".join(part.strip() for part in pending)))
+    return joined
+
+
+_PUBLISH_RE = re.compile(r"(?:^|\s)(?:-p|--publish)(?:=|\s+)(\S+)")
+_PUBLISH_ALL_RE = re.compile(r"(?:^|\s)(?:-P|--publish-all)(?:\s|$)")
+_COMPOSE_PORT_ITEM_RE = re.compile(r"^\s*-\s*[\"']?([^\"'\s#]+)")
+_COMPOSE_PORTS_KEY_RE = re.compile(r"^(\s*)ports:\s*(\[.*\])?\s*(#.*)?$")
+
+
+def _compose_port_entries(first_line: int, block: str) -> list[tuple[int, str]]:
+    entries: list[tuple[int, str]] = []
+    lines = block.splitlines()
+    index = 0
+    while index < len(lines):
+        match = _COMPOSE_PORTS_KEY_RE.match(lines[index])
+        if match is None:
+            index += 1
+            continue
+        indent, inline = len(match.group(1)), match.group(2)
+        if inline:
+            for item in inline.strip("[]").split(","):
+                item = item.strip().strip("\"'")
+                if item:
+                    entries.append((first_line + index, item))
+            index += 1
+            continue
+        index += 1
+        while index < len(lines):
+            line = lines[index]
+            item = _COMPOSE_PORT_ITEM_RE.match(line)
+            if not line.strip():
+                index += 1
+                continue
+            if item is None or len(line) - len(line.lstrip()) <= indent:
+                break
+            entries.append((first_line + index, item.group(1)))
+            index += 1
+    return entries
+
+
+def test_shipped_files_publish_on_loopback_only():
+    """FR-029: every published port in a shipped file binds 127.0.0.1.
+
+    `-p 1972:1972` publishes on every host interface, and on Linux Docker's own iptables rules
+    sit ahead of ufw and firewalld, so "the machine has a firewall" protects nobody. A container
+    a skill starts is for one developer on one machine, so the bind address says so.
+    """
+    open_binds: list[str] = []
+    for relpath in _shipped_files():
+        for first_line, block in _fenced_blocks(relpath):
+            for number, line in _logical_lines(first_line, block):
+                if re.search(r"\bdocker\s+(?:container\s+)?(?:run|create)\b", line):
+                    for value in _PUBLISH_RE.findall(line):
+                        if not value.startswith(_LOOPBACK_PREFIXES):
+                            open_binds.append(f"{relpath}:{number}: -p {value}")
+                    if _PUBLISH_ALL_RE.search(line):
+                        open_binds.append(
+                            f"{relpath}:{number}: -P publishes every port"
+                        )
+            for number, entry in _compose_port_entries(first_line, block):
+                if not entry.startswith(_LOOPBACK_PREFIXES):
+                    open_binds.append(f"{relpath}:{number}: ports: {entry}")
+    assert not open_binds, (
+        "these shipped lines publish a container port on every host interface; prefix each "
+        f"with 127.0.0.1: {open_binds}"
+    )
+
+
+_UNEXPIRE_ALL_RE = re.compile(r"UnExpireUserPasswords\(\s*\\?\"\*\\?\"\s*[,)]")
+
+
+def test_no_shipped_file_unexpires_every_account():
+    """FR-029: no shipped command clears the expiry on every predefined account.
+
+    `UnExpireUserPasswords("*")` leaves `_SYSTEM`, `SuperUser`, `Admin` and `CSPSystem` with
+    their published passwords and no expiry. The expiry on those accounts is the only thing
+    that stops `SYS` working on a container someone else can reach.
+    """
+    found: list[str] = []
+    for relpath in _shipped_files():
+        for first_line, block in _fenced_blocks(relpath):
+            for offset, line in enumerate(block.splitlines()):
+                if _UNEXPIRE_ALL_RE.search(line):
+                    found.append(f"{relpath}:{first_line + offset}")
+    assert not found, (
+        f"these lines un-expire every account, so every predefined user keeps `SYS`: {found}"
+    )
+
+
+_SYS_CHANGE_RE = re.compile(
+    r"ChangePassword\(\s*\\?\"[^\"]*\\?\"\s*,\s*\\?\"SYS\\?\"\s*,\s*\\?\"SYS\\?\""
+)
+_CONNECTION_PASSWORD_RE = re.compile(
+    r"""(?:^|[\s"'])(?:IRIS_PASSWORD(?:=|"?\s*:\s*"?)|password\s*=\s*")SYS\b"""
+)
+
+
+def test_no_shipped_file_sets_the_default_password():
+    """FR-029: no shipped step sets, resets or keeps the published default password.
+
+    Covers each form the earlier skills used: a CSP.ini line, a reset to `SYS`, the hash of
+    `SYS`, an expiry switched off with no new hash beside it, a docker run with
+    `IRIS_PASSWORD=SYS`, and `SYS` written into a connection example a reader copies.
+    """
+    found: list[str] = []
+    for relpath in _shipped_files():
+        for first_line, block in _fenced_blocks(relpath):
+            for number, line in _logical_lines(first_line, block):
+                if re.search(r"(?<![A-Za-z])Password=SYS\b", line):
+                    found.append(f"{relpath}:{number}: Password=SYS")
+                if _SYS_CHANGE_RE.search(line):
+                    found.append(f"{relpath}:{number}: ChangePassword(...,SYS,SYS)")
+                if "PasswordNeverExpires=1" in line and "PasswordHash=" not in line:
+                    found.append(
+                        f"{relpath}:{number}: PasswordNeverExpires=1 with no PasswordHash"
+                    )
+                if re.search(r"new_password\s*=\s*[\"']SYS[\"']", line):
+                    found.append(
+                        f"{relpath}:{number}: reset_password(new_password=SYS)"
+                    )
+                if (
+                    re.search(r"\bdocker\s+run\b", line)
+                    and "IRIS_PASSWORD=SYS" in line
+                    and "iris-agentic-dev" not in line
+                ):
+                    found.append(f"{relpath}:{number}: docker run -e IRIS_PASSWORD=SYS")
+        # The hash of `SYS` is a recipe in prose too; anything that prints it is a copy source.
+        if _DEFAULT_PASSWORD_HASH in _read(relpath).upper():
+            found.append(f"{relpath}: prints the hash of the default password")
+    for relpath in _SETUP_PATHS:
+        for number, line in enumerate(_read(relpath).splitlines(), start=1):
+            if _CONNECTION_PASSWORD_RE.search(line):
+                found.append(f"{relpath}:{number}: {line.strip()[:80]}")
+    assert not found, (
+        f"these shipped lines set or teach the default password: {sorted(found)}"
+    )
+
+
+def _section(text: str, heading_start: str) -> str:
+    """The text from a `## <heading_start>...` heading up to the next `## ` heading."""
+    match = re.search(
+        rf"^## {re.escape(heading_start)}.*?$(.*?)(?=^## |\Z)", text, re.M | re.S
+    )
+    assert match, f"the setup skill has no `## {heading_start}` section"
+    return match.group(1)
+
+
+def test_setup_skill_asks_before_reusing_a_container():
+    """FR-029: an existing container is the user's, so the skill asks and changes nothing.
+
+    The old step 3 said "If there is exactly one, use it and go to step 4", and step 4 changed
+    the accounts of whatever step 3 found. That is a password change on a container the skill
+    did not start, on the word of a `docker ps` filter.
+    """
+    skill = _skill_text()
+    find = _section(skill, "3.")
+    assert "go to step 4" not in find, (
+        "step 3 still sends the reader to step 4 with a container the skill did not start"
+    )
+    assert "ask" in find.lower(), (
+        "step 3 never says to ask the user about an existing container"
+    )
+    assert "never" in find.lower(), (
+        "step 3 has to say what it never does to an existing container (change its accounts, "
+        "stop it, recreate it)"
+    )
+    password_step = _section(skill, "4.")
+    assert "iris-quickstart" in password_step, (
+        "step 4 has to name the container the skill started, not 'the container from step 3'"
+    )
+    assert "docker exec" in password_step and "iris-quickstart" in password_step

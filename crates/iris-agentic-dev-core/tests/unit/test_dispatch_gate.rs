@@ -1,12 +1,12 @@
-// Tests for dispatch_gate() orchestrator (051-phi-policy-env-gates).
+// Tests for gated::dispatch() orchestrator (051-phi-policy-env-gates).
 //
 // Verifies the 4-gate evaluation order and that each gate fires correctly
-// via the unified dispatch_gate() entry point.
+// via the unified gated::dispatch() entry point.
 
 use iris_agentic_dev_core::iris::workspace_config::{
     ConnectionPolicy, DataPolicy, McpTemplate, ToolCategory,
 };
-use iris_agentic_dev_core::policy::gate::dispatch_gate;
+use iris_agentic_dev_core::testing::gated;
 
 fn policy_live() -> ConnectionPolicy {
     ConnectionPolicy {
@@ -76,7 +76,7 @@ fn no_params() -> serde_json::Value {
 
 #[test]
 fn no_policy_permits_ordinary_tools() {
-    let r = dispatch_gate("iris_execute", "server", None, &no_params());
+    let r = gated::dispatch("iris_execute", "server", None, &no_params());
     assert!(
         r.is_ok(),
         "no policy must not block a tool the default policy permits"
@@ -88,7 +88,7 @@ fn no_policy_permits_ordinary_tools() {
 /// names and values — on any unconfigured connection.
 #[test]
 fn no_policy_still_blocks_bulk_phi() {
-    let r = dispatch_gate("journal_search", "server", None, &no_params());
+    let r = gated::dispatch("journal_search", "server", None, &no_params());
     assert!(
         r.is_err(),
         "bulk-PHI hard block must fire on an unconfigured connection"
@@ -101,7 +101,7 @@ fn no_policy_still_blocks_bulk_phi() {
 #[test]
 fn no_policy_still_blocks_system_globals() {
     let params = serde_json::json!({ "global_name": "oddDEF", "action": "set" });
-    let r = dispatch_gate("iris_global", "server", None, &params);
+    let r = gated::dispatch("iris_global", "server", None, &params);
     assert!(
         r.is_err(),
         "system blocklist must fire on an unconfigured connection"
@@ -112,7 +112,7 @@ fn no_policy_still_blocks_system_globals() {
 
 #[test]
 fn gate1_live_blocks_iris_execute() {
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "iris_execute",
         "iris-prod",
         Some(&policy_live()),
@@ -124,7 +124,7 @@ fn gate1_live_blocks_iris_execute() {
 
 #[test]
 fn gate1_live_blocks_iris_compile() {
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "iris_compile",
         "iris-prod",
         Some(&policy_live()),
@@ -136,7 +136,7 @@ fn gate1_live_blocks_iris_compile() {
 
 #[test]
 fn gate1_live_blocks_iris_source_control() {
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "iris_source_control",
         "iris-prod",
         Some(&policy_live()),
@@ -148,7 +148,7 @@ fn gate1_live_blocks_iris_source_control() {
 
 #[test]
 fn gate1_live_permits_iris_query() {
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "iris_query",
         "iris-prod",
         Some(&policy_live()),
@@ -159,7 +159,7 @@ fn gate1_live_permits_iris_query() {
 
 #[test]
 fn gate1_test_blocks_execute_permits_source_control() {
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "iris_execute",
         "iris-staging",
         Some(&policy_test()),
@@ -168,7 +168,7 @@ fn gate1_test_blocks_execute_permits_source_control() {
     assert!(r.is_err());
     assert_eq!(r.unwrap_err()["error_code"], "ENV_GATE_BLOCKED");
 
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "iris_source_control",
         "iris-staging",
         Some(&policy_test()),
@@ -186,7 +186,7 @@ fn gate1_dev_permits_all_categories() {
         "iris_source_control",
         "iris_query",
     ] {
-        let r = dispatch_gate(tool, "iris-dev", Some(&policy), &no_params());
+        let r = gated::dispatch(tool, "iris-dev", Some(&policy), &no_params());
         assert!(r.is_ok(), "dev permits {tool}");
     }
 }
@@ -195,7 +195,7 @@ fn gate1_dev_permits_all_categories() {
 
 #[test]
 fn gate2_journal_search_blocked_when_policy_block() {
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "journal_search",
         "iris-dev",
         Some(&policy_dev_block()),
@@ -207,7 +207,7 @@ fn gate2_journal_search_blocked_when_policy_block() {
 
 #[test]
 fn gate2_journal_search_permitted_when_policy_allow() {
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "journal_search",
         "iris-dev",
         Some(&policy_dev_allow()),
@@ -222,7 +222,7 @@ fn gate2_journal_search_permitted_when_policy_allow() {
 /// `test_data_policy_gate.rs` is what makes this checkable.
 #[test]
 fn gate2_iris_message_body_blocked() {
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "iris_message_body",
         "iris-dev",
         Some(&policy_dev_block()),
@@ -237,7 +237,7 @@ fn gate2_iris_message_body_blocked() {
 #[test]
 fn gate3_system_global_blocked() {
     let params = serde_json::json!({"global_name": "oddDEF"});
-    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    let r = gated::dispatch("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
     assert!(r.is_err());
     assert_eq!(r.unwrap_err()["error_code"], "SYSTEM_BLOCKLIST");
 }
@@ -245,7 +245,7 @@ fn gate3_system_global_blocked() {
 #[test]
 fn gate3_percent_sys_blocked() {
     let params = serde_json::json!({"global_name": "%SYS.Security"});
-    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    let r = gated::dispatch("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
     assert!(r.is_err());
     assert_eq!(r.unwrap_err()["error_code"], "SYSTEM_BLOCKLIST");
 }
@@ -253,7 +253,7 @@ fn gate3_percent_sys_blocked() {
 #[test]
 fn gate3_custom_blocklist_blocked() {
     let params = serde_json::json!({"global_name": "SecretData"});
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "iris_query",
         "iris-custom",
         Some(&policy_custom_blocklist()),
@@ -267,7 +267,7 @@ fn gate3_custom_blocklist_blocked() {
 fn gate3_camel_case_global_name_param_also_checked() {
     // globalName (camelCase) is also extracted
     let params = serde_json::json!({"globalName": "oddDEF"});
-    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    let r = gated::dispatch("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
     assert!(r.is_err());
     assert_eq!(r.unwrap_err()["error_code"], "SYSTEM_BLOCKLIST");
 }
@@ -275,7 +275,7 @@ fn gate3_camel_case_global_name_param_also_checked() {
 #[test]
 fn gate3_app_global_not_blocked() {
     let params = serde_json::json!({"global_name": "MyAppData"});
-    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    let r = gated::dispatch("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
     assert!(r.is_ok(), "app global must not be blocked");
 }
 
@@ -291,7 +291,7 @@ fn gate3_kill_action_on_kill_allowlist_permitted() {
         iris_audit: false,
     };
     let params = serde_json::json!({"global_name": "TempCache.Work", "action": "kill"});
-    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy), &params);
+    let r = gated::dispatch("iris_query", "iris-dev", Some(&policy), &params);
     assert!(r.is_ok(), "kill op on kill allowlist must be permitted");
 }
 
@@ -300,7 +300,7 @@ fn gate3_kill_action_on_kill_allowlist_permitted() {
 #[test]
 fn gate4_phi_global_blocked_without_acknowledge() {
     let params = serde_json::json!({"global_name": "PAPMI"});
-    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    let r = gated::dispatch("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
     assert!(r.is_err());
     assert_eq!(r.unwrap_err()["error_code"], "PHI_GATE_BLOCKED");
 }
@@ -308,14 +308,14 @@ fn gate4_phi_global_blocked_without_acknowledge() {
 #[test]
 fn gate4_phi_global_permitted_with_acknowledge() {
     let params = serde_json::json!({"global_name": "PAPMI", "acknowledgePhi": true});
-    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    let r = gated::dispatch("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
     assert!(r.is_ok(), "acknowledgePhi=true must bypass PHI gate");
 }
 
 #[test]
 fn gate4_paadm_blocked() {
     let params = serde_json::json!({"global_name": "PAADM1234"});
-    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    let r = gated::dispatch("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
     assert!(r.is_err());
     assert_eq!(r.unwrap_err()["error_code"], "PHI_GATE_BLOCKED");
 }
@@ -325,7 +325,7 @@ fn gate4_paadm_blocked() {
 #[test]
 fn gate_order_1_before_2() {
     // live blocks execute (gate [1]) even if bulk-PHI would also block
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "iris_execute",
         "iris-prod",
         Some(&policy_live()),
@@ -343,7 +343,7 @@ fn gate_order_1_before_2() {
 fn gate_order_2_before_3() {
     // bulk-PHI tool call with a system global in params — gate [2] fires first
     let params = serde_json::json!({"global_name": "oddDEF"});
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "journal_search",
         "iris-dev",
         Some(&policy_dev_block()),
@@ -362,7 +362,7 @@ fn gate_order_3_before_4() {
     // system global that also matches a PHI pattern — gate [3] fires first
     // Ens.MessageHeader is in both SYSTEM_BLOCKLIST and PHI_NAME_PATTERNS
     let params = serde_json::json!({"global_name": "Ens.MessageHeader.1"});
-    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    let r = gated::dispatch("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
     assert!(r.is_err());
     assert_eq!(
         r.unwrap_err()["error_code"],
@@ -385,7 +385,7 @@ fn default_template_is_dev_all_permitted() {
         data_policy_kill_allowlist: vec![],
         iris_audit: false,
     };
-    let r = dispatch_gate("iris_execute", "iris-default", Some(&policy), &no_params());
+    let r = gated::dispatch("iris_execute", "iris-default", Some(&policy), &no_params());
     assert!(
         r.is_ok(),
         "missing mcpTemplate defaults to dev, all permitted"
@@ -404,7 +404,7 @@ fn default_data_policy_is_block() {
         data_policy_kill_allowlist: vec![],
         iris_audit: false,
     };
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "journal_search",
         "iris-default",
         Some(&policy),
@@ -430,7 +430,7 @@ fn dispatch_gate_does_not_check_policy_allow_list() {
         iris_audit: false,
     };
     // dispatch_gate permits compile (policy.allow is not its concern)
-    let r = dispatch_gate("iris_compile", "iris-dev", Some(&policy), &no_params());
+    let r = gated::dispatch("iris_compile", "iris-dev", Some(&policy), &no_params());
     assert!(
         r.is_ok(),
         "dispatch_gate does not enforce policy.allow list — that is policy_gate's job"
@@ -445,7 +445,7 @@ fn gate0_blocks_iris_execute_dictionary_edit() {
         "namespace": "USER",
         "code": r#"set c=##class(%Dictionary.ClassDefinition).%OpenId("My.Class") do c.%Save()"#,
     });
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "iris_execute",
         "iris-dev",
         Some(&policy_dev_allow()),
@@ -461,7 +461,7 @@ fn gate0_blocks_iris_execute_obj_compile() {
         "namespace": "USER",
         "code": r#"do $system.OBJ.Compile("My.Class","ck")"#,
     });
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "iris_execute",
         "iris-dev",
         Some(&policy_dev_allow()),
@@ -478,7 +478,7 @@ fn gate0_fires_even_with_no_policy() {
         "namespace": "USER",
         "code": "set ^oddDEF(\"My.Class\")=1",
     });
-    let r = dispatch_gate("iris_execute", "server", None, &params);
+    let r = gated::dispatch("iris_execute", "server", None, &params);
     assert!(r.is_err(), "code-edit block must fire even with no policy");
     assert_eq!(r.unwrap_err()["error_code"], "CODE_EDIT_BLOCKED");
 }
@@ -486,7 +486,7 @@ fn gate0_fires_even_with_no_policy() {
 #[test]
 fn gate0_permits_ordinary_execute() {
     let params = serde_json::json!({ "namespace": "USER", "code": "write $ZVERSION,!" });
-    let r = dispatch_gate(
+    let r = gated::dispatch(
         "iris_execute",
         "iris-dev",
         Some(&policy_dev_allow()),
@@ -502,7 +502,7 @@ fn gate0_blocks_iris_query_write_to_dictionary() {
         "mode": "write",
         "query": "UPDATE %Dictionary.MethodDefinition SET Name='x' WHERE parent='My.Class'",
     });
-    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    let r = gated::dispatch("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
     assert!(r.is_err());
     assert_eq!(r.unwrap_err()["error_code"], "CODE_EDIT_BLOCKED");
 }
@@ -515,7 +515,7 @@ fn gate0_permits_iris_query_read_of_dictionary() {
         "mode": "read",
         "query": "SELECT Name FROM %Dictionary.CompiledClass",
     });
-    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    let r = gated::dispatch("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
     assert!(
         r.is_ok(),
         "read-mode %Dictionary introspection must be permitted"
@@ -536,7 +536,7 @@ fn gate0_blocks_execute_method_code_apis() {
         ("%Dictionary.ClassDefinition", "%DeleteId"),
     ] {
         let params = serde_json::json!({ "class": class, "method": method, "args": [] });
-        let r = dispatch_gate("iris_execute_method", "iris-dev", None, &params);
+        let r = gated::dispatch("iris_execute_method", "iris-dev", None, &params);
         assert!(
             r.is_err(),
             "iris_execute_method must not reach {class}.{method}"
@@ -554,7 +554,7 @@ fn gate0_permits_ordinary_execute_method() {
         ("%Dictionary.CompiledClass", "%OpenId"),
     ] {
         let params = serde_json::json!({ "class": class, "method": method, "args": [] });
-        let r = dispatch_gate("iris_execute_method", "iris-dev", None, &params);
+        let r = gated::dispatch("iris_execute_method", "iris-dev", None, &params);
         assert!(r.is_ok(), "{class}.{method} must stay callable");
     }
 }
@@ -570,7 +570,7 @@ fn gate0_blocks_forced_read_mode_dictionary_write() {
         "force": true,
         "query": "DELETE FROM %Dictionary.ClassDefinition WHERE ID='My.Class'",
     });
-    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    let r = gated::dispatch("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
     assert!(
         r.is_err(),
         "force=true must not be a way past the code-edit gate"
@@ -586,7 +586,7 @@ fn gate0_permits_forced_write_to_app_table() {
         "force": true,
         "query": "DELETE FROM MyApp.Patient WHERE ID=1",
     });
-    let r = dispatch_gate("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
+    let r = gated::dispatch("iris_query", "iris-dev", Some(&policy_dev_allow()), &params);
     assert!(
         r.is_ok(),
         "force=true against an application table is not a code edit"
@@ -636,7 +636,7 @@ fn every_gate_rejection_carries_success_false_and_an_error_code() {
     ];
 
     for (tool, policy, params, expected_code) in cases {
-        let e = dispatch_gate(tool, &policy.server_name.clone(), Some(&policy), &params)
+        let e = gated::dispatch(tool, &policy.server_name.clone(), Some(&policy), &params)
             .expect_err(&format!("{tool} must be blocked with {expected_code}"));
         assert_eq!(
             e["error_code"], expected_code,
@@ -660,7 +660,7 @@ fn every_gate_rejection_carries_success_false_and_an_error_code() {
 #[test]
 fn gate2_blocks_bulk_phi_reached_through_the_iris_admin_action() {
     let policy = policy_dev_block();
-    let e = dispatch_gate(
+    let e = gated::dispatch(
         "iris_admin",
         &policy.server_name.clone(),
         Some(&policy),
@@ -686,7 +686,7 @@ fn gate2_permits_iris_admin_actions_that_are_not_bulk_phi() {
         "view_processes",
         "create_namespace",
     ] {
-        dispatch_gate(
+        gated::dispatch(
             "iris_admin",
             &blocked.server_name.clone(),
             Some(&blocked),
@@ -696,7 +696,7 @@ fn gate2_permits_iris_admin_actions_that_are_not_bulk_phi() {
     }
 
     let allowed = policy_dev_allow();
-    dispatch_gate(
+    gated::dispatch(
         "iris_admin",
         &allowed.server_name.clone(),
         Some(&allowed),
@@ -710,7 +710,7 @@ fn gate2_permits_iris_admin_actions_that_are_not_bulk_phi() {
 #[test]
 fn gate2_ignores_caller_supplied_data_policy_on_the_admin_route() {
     let policy = policy_dev_block();
-    let e = dispatch_gate(
+    let e = gated::dispatch(
         "iris_admin",
         &policy.server_name.clone(),
         Some(&policy),

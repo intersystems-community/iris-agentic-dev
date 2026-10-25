@@ -3,6 +3,7 @@
 
 #[cfg(test)]
 mod tests {
+    use iris_agentic_dev_core::testing::EnvGuard;
     use iris_agentic_dev_core::tools::skills_tools::{
         skills_namespace, AgentInfoParams, KbParams, SkillCommunityParams, SkillParams,
     };
@@ -18,45 +19,50 @@ mod tests {
 
     #[test]
     fn test_skills_namespace_absent_default() {
+        let mut env_guard = EnvGuard::new();
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+        env_guard.unset("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
         let ns = skills_namespace();
         assert_eq!(ns, "USER", "Missing env var should default to USER");
     }
 
     #[test]
     fn test_skills_namespace_custom_value() {
+        let mut env_guard = EnvGuard::new();
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "MYAPP");
+        env_guard.set("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "MYAPP");
         let ns = skills_namespace();
-        std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+        env_guard.unset("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
         assert_eq!(ns, "MYAPP");
     }
 
     #[test]
     fn test_skills_namespace_empty_string() {
+        let mut env_guard = EnvGuard::new();
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "");
+        env_guard.set("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "");
         let ns = skills_namespace();
-        std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+        env_guard.unset("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
         assert_eq!(ns, "", "Empty string should be preserved");
     }
 
     #[test]
     fn test_skills_namespace_with_special_chars() {
+        let mut env_guard = EnvGuard::new();
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "PROD-ENV_1");
+        env_guard.set("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "PROD-ENV_1");
         let ns = skills_namespace();
-        std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+        env_guard.unset("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
         assert_eq!(ns, "PROD-ENV_1");
     }
 
     #[test]
     fn test_skills_namespace_case_preserved() {
+        let mut env_guard = EnvGuard::new();
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "MixedCase");
+        env_guard.set("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "MixedCase");
         let ns = skills_namespace();
-        std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+        env_guard.unset("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
         assert_eq!(ns, "MixedCase", "Case should be preserved");
     }
 
@@ -64,10 +70,11 @@ mod tests {
 
     #[test]
     fn test_skills_namespace_reset_cycle() {
+        let mut env_guard = EnvGuard::new();
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "TEMP");
+        env_guard.set("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "TEMP");
         let set = skills_namespace();
-        std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+        env_guard.unset("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
         let cleared = skills_namespace();
         assert_eq!(set, "TEMP");
         assert_eq!(cleared, "USER");
@@ -75,14 +82,15 @@ mod tests {
 
     #[test]
     fn test_skills_namespace_multiple_values() {
+        let mut env_guard = EnvGuard::new();
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let values = vec!["NS1", "NS2", "NS3"];
         let mut seen = Vec::new();
         for val in &values {
-            std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", val);
+            env_guard.set("OBJECTSCRIPT_SKILLMCP_NAMESPACE", val);
             seen.push(skills_namespace());
         }
-        std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+        env_guard.unset("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
         assert_eq!(seen, values);
     }
 

@@ -22,46 +22,56 @@ format so the AI can fix them immediately. **Always run this after writing or ed
 
 ## Step 1 — Upload and compile a .cls file
 
+Use the CLI. It reads the connection from `.iris-agentic-dev.toml` or the `IRIS_*` variables, so no
+password goes on a command line. A local file path as `target` uploads the file first, then compiles:
+
 ```bash
+iris-agentic-dev tool iris_compile --args '{"target":"MyPackage/MyClass.cls"}'
+```
+
+Re-read the class afterwards to confirm the content landed. The compile answer already carries the
+post-compile source in `content`; for a separate read:
+
+```bash
+iris-agentic-dev tool iris_doc --args '{"mode":"get","name":"MyPackage.MyClass.cls"}'
+```
+
+The compile answer lists `errors` (parse failures, class-not-found) and per-line messages with
+`severity`, line and column. Read them before the next step.
+
+If the CLI is not installed, call Atelier directly. `curl -K -` reads the credential from stdin, so it
+stays out of the process list. Set `IRIS_PASSWORD` first; `IRIS_SCHEME` stays `https` for an HTTPS
+endpoint. The helper below is the only place the URL and credential are built:
+
+```bash
+# atelier METHOD PATH [curl args...] — PATH is relative to /api/atelier/v1/<namespace>/
+atelier() {
+  local method="$1" path="$2"
+  shift 2
+  printf 'user = "%s:%s"\n' "${IRIS_USERNAME:-_SYSTEM}" "$IRIS_PASSWORD" \
+    | curl -s -K - -X "$method" -H "Content-Type: application/json" "$@" \
+      "${IRIS_SCHEME:-http}://${IRIS_HOST:-localhost}:${IRIS_WEB_PORT:-52773}${IRIS_WEB_PREFIX:+/${IRIS_WEB_PREFIX}}/api/atelier/v1/${IRIS_NAMESPACE:-USER}/${path}"
+}
+
 CLASS="${1:-MyPackage.MyClass}"
 FILE="${2:-${CLASS//./\/}.cls}"   # MyPackage.MyClass → MyPackage/MyClass.cls
-HOST="${IRIS_HOST:-localhost}"
-PORT="${IRIS_WEB_PORT:-52773}"
-USER="${IRIS_USERNAME:-_SYSTEM}"
-PASS="${IRIS_PASSWORD:-SYS}"
-NS="${IRIS_NAMESPACE:-USER}"
-PREFIX="${IRIS_WEB_PREFIX:-}"
-BASE_URL="http://${HOST}:${PORT}${PREFIX:+/${PREFIX}}/api/atelier/v1"
 
 # Read file content as a JSON array of lines
 CONTENT=$(python3 -c "
 import json, sys
-with open('${FILE}') as f:
-    lines = f.read().splitlines()
-print(json.dumps(lines))
-")
+with open(sys.argv[1]) as f:
+    print(json.dumps(f.read().splitlines()))
+" "$FILE")
 
-# Upload (PUT) the class source — use ignoreConflict=1 to bypass timestamp conflicts
-HTTP_CODE=$(curl -s -o /tmp/atelier_put.json -w "%{http_code}" -X PUT \
-  -u "${USER}:${PASS}" \
-  -H "Content-Type: application/json" \
-  "${BASE_URL}/${NS}/doc/${CLASS}.cls?ignoreConflict=1" \
-  -d "{\"enc\": false, \"content\": ${CONTENT}}")
-
-echo "HTTP: $HTTP_CODE"
+# Upload (PUT) the class source — ignoreConflict=1 bypasses timestamp conflicts
+atelier PUT "doc/${CLASS}.cls?ignoreConflict=1" -d "{\"enc\": false, \"content\": ${CONTENT}}" -o /dev/null
 
 # **Always re-read after writing to confirm the content landed**
-VERIFY=$(curl -s -u "${USER}:${PASS}" \
-  "${BASE_URL}/${NS}/doc/${CLASS}.cls" \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d['result']['content']), 'lines stored')")
-echo "Stored: ${VERIFY}"
+atelier GET "doc/${CLASS}.cls" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d['result']['content']), 'lines stored')"
 
 # Compile
-RESULT=$(curl -s -X POST \
-  -u "${USER}:${PASS}" \
-  -H "Content-Type: application/json" \
-  "${BASE_URL}/${NS}/action/compile" \
-  -d "[\"${CLASS}.cls\"]")
+RESULT=$(atelier POST "action/compile" -d "[\"${CLASS}.cls\"]")
 
 # Parse and display errors — IRIS 2025.1 compile response shape:
 # - status.errors[] = top-level errors (parse failures, class-not-found)
@@ -126,11 +136,7 @@ After fixing an error:
 ## Compile-only (class already in IRIS, no upload)
 
 ```bash
-curl -s -X POST \
-  -u "${IRIS_USERNAME:-_SYSTEM}:${IRIS_PASSWORD:-SYS}" \
-  -H "Content-Type: application/json" \
-  "${BASE_URL}/${NS}/action/compile" \
-  -d '["MyPackage.MyClass.cls"]'
+iris-agentic-dev tool iris_compile --args '{"target":"MyPackage.MyClass.cls"}'
 ```
 
 ## Run %UnitTest after compile
@@ -147,11 +153,7 @@ iris session IRIS -U "${IRIS_NAMESPACE:-USER}" \
 
 ```bash
 # Compile all classes in MyPackage.*
-curl -s -X POST \
-  -u "${IRIS_USERNAME:-_SYSTEM}:${IRIS_PASSWORD:-SYS}" \
-  -H "Content-Type: application/json" \
-  "${BASE_URL}/${NS}/action/compile" \
-  -d '["MyPackage.*.cls"]'
+iris-agentic-dev tool iris_compile --args '{"target":"MyPackage.*.cls"}'
 ```
 
 ## Notes
@@ -168,10 +170,8 @@ Atelier returns **HTTP 409** when the server has a newer copy of the document th
 **The correct fix is `?ignoreConflict=1`**, not delete+PUT:
 
 ```bash
-curl -s -X PUT -u _SYSTEM:SYS \
-  -H "Content-Type: application/json" \
-  "http://localhost:52773/api/atelier/v1/USER/doc/MyDoc.mac?ignoreConflict=1" \
-  -d '{"enc":false,"content":[...]}'
+# the atelier helper from Step 1
+atelier PUT "doc/MyDoc.mac?ignoreConflict=1" -d '{"enc":false,"content":[...]}'
 ```
 
 This tells the server to overwrite regardless of timestamp. Use it when you know your version is the one you want to keep (i.e. you just generated or edited the content).

@@ -19,9 +19,13 @@ still exists.
 ## Step 1 — Get an IRIS running
 
 ```bash
-docker run -d --name iris-quickstart -p 1972:1972 -p 52773:52773 \
+docker run -d --name iris-quickstart -p 127.0.0.1:1972:1972 -p 127.0.0.1:52773:52773 \
   intersystemsdc/iris-community:latest
 ```
+
+The `127.0.0.1:` in front of each port keeps the instance reachable from this machine only. Without
+it Docker publishes on every network interface, and on Linux its own firewall rules sit ahead of
+ufw and firewalld. Drop the prefix only if you want other machines to log in.
 
 That image is on Docker Hub and needs no login. Give it a minute, then:
 
@@ -30,15 +34,21 @@ docker ps --filter name=iris-quickstart
 ```
 
 The default password starts out expired. Every HTTP call gets back `401 Unauthorized` until you
-clear it, and nothing in the 401 says that is why:
+change it, and nothing in the 401 says that is why. Give `_SYSTEM` a new password. Do not clear the
+expiry on every account: that leaves `SuperUser`, `Admin` and `CSPSystem` with the published
+default `SYS`.
 
 ```bash
-docker exec iris-quickstart iris session IRIS -U%SYS \
-  '##class(Security.Users).UnExpireUserPasswords("*")'
+PW="$(openssl rand -base64 18)"
+printf 'Set p("Password")="%s",p("ChangePassword")=0\nSet sc=##class(Security.Users).Modify("_SYSTEM",.p)\nWrite $Select(sc:"password changed",1:$System.Status.GetErrorText(sc)),!\nHalt\n' "$PW" \
+  | docker exec -i iris-quickstart iris session IRIS -U %SYS
+echo "_SYSTEM password: $PW"
 ```
 
-It prints nothing when it works. The credentials are now `_SYSTEM` / `SYS`, which is fine for a
-throwaway container on your laptop and nowhere else.
+It prints `password changed` when it works, and the password goes in on stdin so it never appears
+in a process list. Copy the password somewhere you will find it: the container does not store it
+in a form you can read back. If the command prints `Sign-on and JOB inhibited`, IRIS is still
+starting; wait ten seconds and run it again.
 
 ## Step 2 — Install `iris-agentic-dev`, and prove it runs
 
@@ -90,7 +100,7 @@ Five environment variables, matching the container from step 1:
 export IRIS_HOST=localhost
 export IRIS_WEB_PORT=52773
 export IRIS_USERNAME=_SYSTEM
-export IRIS_PASSWORD=SYS
+export IRIS_PASSWORD='<the _SYSTEM password from step 1>'
 export IRIS_NAMESPACE=USER
 ```
 
@@ -121,9 +131,10 @@ used what you just exported. `iris_version` is only filled in if IRIS answered, 
 `connected: true` with `iris_version: null` means the port is open and your credentials were
 refused, which is what you get if you skipped the password step above.
 
-With no environment variables and no config file, the binary goes looking instead: Docker
-container names, then VS Code Server Manager, then a port scan. With one IRIS running that
-usually lands on the right one and says so in `connection_source`. With several, it picks one.
+With no environment variables and no config file, the binary goes looking instead: a named
+`IRIS_CONTAINER`, a scan of localhost ports, running Docker containers, then VS Code settings and
+Server Manager. The port scan sends your credentials only to a listener that has shown it is IRIS.
+With one IRIS running that usually lands on the right one and says so in `connection_source`. With several, it picks one.
 Pin the target in a file before that matters:
 
 ```bash
@@ -131,8 +142,10 @@ iris-agentic-dev init        # writes ./.iris-agentic-dev.toml
 ```
 
 Set `container` or `host`/`web_port` in it and commit it; credentials stay in the environment,
-not in the file. The full precedence order and every field are in
-[connecting.md](connecting.md).
+not in the file. A file like this is a project file: its connection settings work at once, but a
+setting that widens what the agent may do (`write_tools_enabled = true`, `tls_verify = false`) is
+set aside until you run `iris-agentic-dev trust`, and `check_config` says so. The full precedence
+order and every field are in [connecting.md](connecting.md).
 
 ## Step 4 — Run a query
 
@@ -173,6 +186,13 @@ iris-agentic-dev tool iris_execute --args '{"code":"Write $ZVERSION"}'
   "output": "IRIS for UNIX ... 2026.1 (Build 234U) ...",
   "namespace": "USER",
   "execution_path": "atelier",
+  "identity": {
+    "user": "_SYSTEM",
+    "source": "primary",
+    "path": "atelier",
+    "verified": true,
+    "server": "default"
+  },
   "auth_user": "_SYSTEM",
   "success": true
 }
@@ -200,7 +220,7 @@ One command, no config file to edit by hand:
 ```bash
 claude mcp add iris-agentic-dev --scope user \
   -e IRIS_HOST=localhost -e IRIS_WEB_PORT=52773 \
-  -e IRIS_USERNAME=_SYSTEM -e IRIS_PASSWORD=SYS -e IRIS_NAMESPACE=USER \
+  -e IRIS_USERNAME=_SYSTEM -e IRIS_PASSWORD="$IRIS_PASSWORD" -e IRIS_NAMESPACE=USER \
   -- iris-agentic-dev mcp
 ```
 
@@ -280,14 +300,14 @@ deciding to install them.
 
 The errors you are most likely to hit first, verbatim.
 
-**401 Unauthorized on everything.** Almost always the expired password from step 1. Run the
-`UnExpireUserPasswords` command and try again. To see whether the problem is the network or the
+**401 Unauthorized on everything.** Almost always the expired password from step 1. Run step 1's
+password command and try again. To see whether the problem is the network or the
 credentials, ask for the two answers separately. This tool takes the target explicitly rather
 than reading your environment:
 
 ```bash
 iris-agentic-dev tool iris_test_server \
-  --args '{"host":"localhost","web_port":52773,"username":"_SYSTEM","password":"SYS"}'
+  --args '{"host":"localhost","web_port":52773,"username":"_SYSTEM","password":"<password>"}'
 ```
 
 ```json

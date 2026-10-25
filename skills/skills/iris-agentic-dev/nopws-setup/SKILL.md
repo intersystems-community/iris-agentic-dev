@@ -54,16 +54,20 @@ when the reason is a NoPWS build (documents intent).
 
 ## First-boot password
 
-Fresh AI branch containers ship with a default `_SYSTEM` password that must be changed
-before any connection works. Use the Management Portal or run:
+Fresh AI branch containers ship with a default `_SYSTEM` password that is expired and must be
+changed before any connection works. Do not reset it to `SYS` and do not un-expire every account:
+`SYS` is the published default, and it would then work for anyone who can reach the container.
 
-```bash
-docker exec <container> iris session IRIS -U %SYS \
-  "Do ##class(Security.Users).ChangePassword(\"_SYSTEM\",\"SYS\",\"SYS\")"
-```
+Set a new, generated password for `_SYSTEM` only. The `iris-agentic-dev-setup` skill's step 4 has
+the command: it generates the password on the host and sends the ObjectScript on `docker exec -i`
+stdin, so the password is never on a command line. Run it with this container's name in place of
+`iris-quickstart`, and ask the user first if the container is not one you just started. That
+command works here, because it goes through `iris session` inside the container and needs no web
+server.
 
-This sets the password to `SYS`. Then set `IRIS_PASSWORD=SYS` or add `password = "SYS"`
-to your `.iris-agentic-dev.toml`.
+Put the password in the MCP registration's launch settings (`IRIS_PASSWORD` in the `--env` of
+`claude mcp add`, or the operator file). Never put it in `.iris-agentic-dev.toml`: that file lives
+in the workspace, which gets committed and shared.
 
 ## Remote containers (SSH routing)
 
@@ -92,14 +96,14 @@ To restore full Atelier REST access alongside NoPWS, add a webgateway sidecar:
 webgateway:
   image: containers.intersystems.com/intersystems/webgateway:latest
   ports:
-    - "8080:80"
+    - "127.0.0.1:8080:80"
   environment:
     - CSP_CONF_FILE=/webgateway.conf
   volumes:
     - ./webgateway.conf:/webgateway.conf:ro
 ```
 
-Point `host` and `port` in `.iris-agentic-dev.toml` at the webgateway port (8080 above).
+Point `host` and `port` in `.iris-agentic-dev.toml` at the webgateway port (8080 above). The `127.0.0.1:` prefix keeps the gateway reachable from this machine only.
 Remove `docker_only` and `nopws` once the gateway is reachable.
 
 ## Execution path field

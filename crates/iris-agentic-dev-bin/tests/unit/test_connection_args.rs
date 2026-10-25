@@ -1,5 +1,6 @@
 use clap::Parser;
 use iris_agentic_dev::cmd::connection_args::ConnectionArgs;
+use iris_agentic_dev_core::testing::EnvGuard;
 
 // Minimal CLI wrapper used by these tests to exercise ConnectionArgs parsing.
 #[derive(Parser)]
@@ -16,20 +17,17 @@ fn parse(args: &[&str]) -> ConnectionArgs {
 
 #[test]
 fn test_defaults_are_none_except_namespace_and_web_port() {
-    // Save and remove env vars so clap env-defaults don't interfere.
-    let saved: Vec<(&str, Option<String>)> = [
+    let mut env_guard = EnvGuard::new();
+    // Remove env vars so clap env-defaults don't interfere; the guard puts them back.
+    for k in [
         "IRIS_HOST",
         "IRIS_WEB_PORT",
         "IRIS_USERNAME",
         "IRIS_PASSWORD",
         "IRIS_NAMESPACE",
         "IRIS_CONTAINER",
-    ]
-    .iter()
-    .map(|&k| (k, std::env::var(k).ok()))
-    .collect();
-    for (k, _) in &saved {
-        std::env::remove_var(k);
+    ] {
+        env_guard.unset(k);
     }
 
     let c = parse(&[]);
@@ -39,13 +37,6 @@ fn test_defaults_are_none_except_namespace_and_web_port() {
     assert!(c.username.is_none());
     assert!(c.password.is_none());
     assert!(c.container.is_none());
-
-    // Restore
-    for (k, v) in saved {
-        if let Some(val) = v {
-            std::env::set_var(k, val);
-        }
-    }
 }
 
 #[test]

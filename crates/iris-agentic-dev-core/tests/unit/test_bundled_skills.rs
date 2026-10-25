@@ -11,6 +11,7 @@
 use iris_agentic_dev_core::skills::bundled::{
     self, merge_sources, score_skill, search_bundled, BundledSkill, SkillSource,
 };
+use iris_agentic_dev_core::testing::EnvGuard;
 
 // ── frontmatter parsing ───────────────────────────────────────────────────────
 
@@ -421,26 +422,25 @@ fn skills_only_reference_tools_that_exist() {
 
 // ── directory resolution (must not depend on build-time paths) ────────────────
 
-/// `IRIS_AGENTIC_DEV_SKILLS_DIR` is process-global; the tests that set it must
-/// not overlap with each other.
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 #[test]
 fn discovery_does_not_depend_on_any_build_time_path() {
     // Documented past bug class: env!("CARGO_MANIFEST_DIR") and similar bake in
     // the build machine's path and break in a shipped/relocated binary. The
     // bundled catalog must resolve with no skills directory reachable at all —
-    // from an unrelated working directory, with no env override.
-    let _guard = ENV_LOCK.lock().unwrap();
+    // from an unrelated working directory, with no env override. The inputs are
+    // passed in, so this test touches neither the environment nor the working
+    // directory, which every parallel test shares.
     let tmp = tempfile::tempdir().unwrap();
-    let original = std::env::current_dir().unwrap();
-    std::env::remove_var("IRIS_AGENTIC_DEV_SKILLS_DIR");
-    std::env::set_current_dir(tmp.path()).unwrap();
+    let inputs = bundled::CandidateInputs {
+        env_dir: None,
+        exe: std::env::current_exe().ok(),
+        workspace_env: None,
+        cwd: Some(tmp.path().to_path_buf()),
+        local_skills: false,
+    };
 
-    let all = bundled::load_bundled_skills();
-    let candidates = bundled::skills_dir_candidates();
-
-    std::env::set_current_dir(&original).unwrap();
+    let candidates = bundled::skills_dir_candidates_from(&inputs);
+    let all = bundled::load_bundled_skills_from(&candidates);
 
     assert!(
         all.len() >= 25,
@@ -449,9 +449,9 @@ fn discovery_does_not_depend_on_any_build_time_path() {
     );
     for c in candidates {
         assert!(
-            !c.starts_with(env!("CARGO_MANIFEST_DIR")),
+            !c.path.starts_with(env!("CARGO_MANIFEST_DIR")),
             "candidate {} derives from the build-time manifest dir",
-            c.display()
+            c.path.display()
         );
     }
 }
@@ -478,12 +478,15 @@ fn bundled_module_source_uses_no_build_time_path_constants() {
 
 #[test]
 fn env_override_is_the_first_candidate() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let mut env_guard = EnvGuard::new();
     let tmp = tempfile::tempdir().unwrap();
-    std::env::set_var("IRIS_AGENTIC_DEV_SKILLS_DIR", tmp.path());
+    env_guard.set("IRIS_AGENTIC_DEV_SKILLS_DIR", tmp.path());
     let candidates = bundled::skills_dir_candidates();
-    std::env::remove_var("IRIS_AGENTIC_DEV_SKILLS_DIR");
-    assert_eq!(candidates.first().map(|p| p.as_path()), Some(tmp.path()));
+    env_guard.unset("IRIS_AGENTIC_DEV_SKILLS_DIR");
+    assert_eq!(
+        candidates.first().map(|d| d.path.as_path()),
+        Some(tmp.path())
+    );
 }
 
 #[test]
@@ -518,7 +521,7 @@ fn load_from_dir_on_missing_directory_is_empty_not_a_panic() {
 
 #[test]
 fn disk_override_wins_over_embedded_copy_of_the_same_name() {
-    let _guard = ENV_LOCK.lock().unwrap();
+    let mut env_guard = EnvGuard::new();
     let tmp = tempfile::tempdir().unwrap();
     let skill_dir = tmp.path().join("iris-vector-ai");
     std::fs::create_dir_all(&skill_dir).unwrap();
@@ -528,9 +531,9 @@ fn disk_override_wins_over_embedded_copy_of_the_same_name() {
     )
     .unwrap();
 
-    std::env::set_var("IRIS_AGENTIC_DEV_SKILLS_DIR", tmp.path());
+    env_guard.set("IRIS_AGENTIC_DEV_SKILLS_DIR", tmp.path());
     let all = bundled::load_bundled_skills();
-    std::env::remove_var("IRIS_AGENTIC_DEV_SKILLS_DIR");
+    env_guard.unset("IRIS_AGENTIC_DEV_SKILLS_DIR");
 
     let v = all.iter().find(|s| s.name == "iris-vector-ai").unwrap();
     assert_eq!(v.description, "overridden on disk");

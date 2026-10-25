@@ -21,6 +21,10 @@ pub struct IrisNamespaceListParams {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IrisNamespaceCreateParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     /// Name of the namespace to create.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,

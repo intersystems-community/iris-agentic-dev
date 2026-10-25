@@ -1,6 +1,7 @@
 // Unit tests for tools/mod.rs internal helpers and public functions.
 // Targets uncovered branches identified from LCOV analysis.
 
+use iris_agentic_dev_core::testing::EnvGuard;
 use iris_agentic_dev_core::tools::{
     build_superclass_probe, build_test_run_code, map_status_int, translate_sql_macros,
     validate_read_only_sql,
@@ -711,10 +712,11 @@ fn translate_symbols_query_dot_prefix_with_wildcard() {
 #[cfg(feature = "testing")]
 #[tokio::test]
 async fn telemetry_query_returns_empty_records_when_no_calls_made() {
+    let mut env_guard = EnvGuard::new();
     use iris_agentic_dev_core::tools::IrisTools;
 
     let tmp = tempfile::tempdir().unwrap();
-    std::env::set_var("HOME", tmp.path());
+    env_guard.set("HOME", tmp.path());
     let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
     let result = tools
         .call_for_test("telemetry_query", serde_json::json!({}))
@@ -760,7 +762,7 @@ async fn telemetry_query_rejects_invalid_session_id() {
 }
 
 /// Builds an `IrisTools` with a present-but-unreachable connection, so tools that call
-/// `get_iris`/`get_iris_reloaded` succeed past the connection check (reaching
+/// `target_conn` succeeds past the connection check (reaching
 /// `record_call`) even though the underlying HTTP call itself then fails.
 #[cfg(feature = "testing")]
 fn tools_with_unreachable_connection() -> iris_agentic_dev_core::tools::IrisTools {
@@ -787,10 +789,11 @@ fn tools_with_unreachable_connection() -> iris_agentic_dev_core::tools::IrisTool
 #[cfg(feature = "testing")]
 #[tokio::test]
 async fn telemetry_export_trace_returns_empty_when_no_calls_made() {
+    let mut env_guard = EnvGuard::new();
     use iris_agentic_dev_core::tools::IrisTools;
 
     let tmp = tempfile::tempdir().unwrap();
-    std::env::set_var("HOME", tmp.path());
+    env_guard.set("HOME", tmp.path());
     let tools = IrisTools::new(None).expect("IrisTools::new should succeed");
     let result = tools
         .call_for_test("telemetry_export_trace", serde_json::json!({}))
@@ -1702,6 +1705,7 @@ fn connection_state_carries_the_declaration_for_later_reresolution() {
     let declared = DeclaredGates {
         write_tools_enabled: Some(false),
         destructive_tools_enabled: None,
+        ..Default::default()
     };
     let state =
         ConnectionState::from_iris(iris_conn, ConnectionSource::ConfigFile, None, gates_on())
@@ -2007,6 +2011,7 @@ async fn check_config_returns_capabilities_field() {
 /// EnvVars when IRIS_HOST is set, AutoDiscovered when it is not.
 #[test]
 fn connection_source_is_env_vars_when_iris_host_set() {
+    let mut env_guard = EnvGuard::new();
     use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
     use iris_agentic_dev_core::tools::{ConnectionSource, IrisTools, Toolset};
 
@@ -2019,7 +2024,7 @@ fn connection_source_is_env_vars_when_iris_host_set() {
     );
 
     // With IRIS_HOST set: source must be EnvVars, not AutoDiscovered.
-    std::env::set_var("IRIS_HOST", "sec.iscinternal.com");
+    env_guard.set("IRIS_HOST", "sec.iscinternal.com");
     let tools = IrisTools::with_registry_and_toolset(
         Some(iris_conn.clone()),
         iris_agentic_dev_core::skills::SkillRegistry::new(),
@@ -2034,7 +2039,7 @@ fn connection_source_is_env_vars_when_iris_host_set() {
         let conn = tools.connection.lock().unwrap();
         conn.source.clone()
     };
-    std::env::remove_var("IRIS_HOST");
+    env_guard.unset("IRIS_HOST");
     assert_eq!(
         source_with,
         ConnectionSource::EnvVars,
@@ -2393,20 +2398,19 @@ fn build_test_run_code_testproduction_class_pattern() {
 }
 
 #[test]
-fn build_test_run_code_testproduction_false_for_directory_path() {
-    // is_test_production=true is ignored when pattern is a directory path (contains /)
-    let code = build_test_run_code("MyApp/Tests", "/verbose=1/nodelete", "tok3", true);
-    // falls through to directory path branch: uses RunTest
-    assert!(code.contains("##class(%UnitTest.Manager).RunTest("));
-    assert!(code.contains("^UnitTestRoot"));
-}
-
-#[test]
-fn build_test_run_code_directory_path() {
-    let code = build_test_run_code("MyApp/Tests", "/verbose=1/nodelete", "tok4", false);
-    assert!(code.contains("^UnitTestRoot"));
-    assert!(code.contains("##class(%UnitTest.Manager).RunTest("));
-    assert!(code.contains("tok4"));
+fn build_test_run_code_makes_only_its_own_run_root() {
+    // T218: the only directory a run makes is its own root under `<mgr>/Temp`, never a shared
+    // `/tmp/httest/`; the pattern reaches it only as escaped data in the literal.
+    for production in [false, true] {
+        let code = build_test_run_code("MyApp/Tests", "/verbose=1/nodelete", "tok4", production);
+        assert!(!code.contains("httest"), "{code}");
+        assert!(code.contains("ManagerDirectory()"), "{code}");
+        assert!(code.contains("RemoveDirectoryTree(iadRoot)"), "{code}");
+        assert!(
+            code.contains("##class(%UnitTest.Manager).RunTest("),
+            "{code}"
+        );
+    }
 }
 
 #[test]

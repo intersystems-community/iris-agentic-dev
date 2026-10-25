@@ -1,4 +1,5 @@
 #![allow(clippy::all)]
+use iris_agentic_dev_core::testing::EnvGuard;
 use iris_agentic_dev_core::tools::admin::*;
 
 // Serialize tests that mutate IRIS_ADMIN_TOOLS to prevent races.
@@ -20,8 +21,9 @@ fn result_text(r: &rmcp::model::CallToolResult) -> serde_json::Value {
 
 #[test]
 fn write_actions_disabled_without_env() {
+    let mut env_guard = EnvGuard::new();
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::remove_var("IRIS_ADMIN_TOOLS");
+    env_guard.unset("IRIS_ADMIN_TOOLS");
     let rt = rt();
 
     let actions: &[&str] = &[
@@ -197,16 +199,18 @@ fn webapp_type_inference() {
 
 #[test]
 fn write_allowed_with_env_set() {
+    let mut env_guard = EnvGuard::new();
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe { std::env::set_var("IRIS_ADMIN_TOOLS", "1") };
+    env_guard.set("IRIS_ADMIN_TOOLS", "1");
     let result = admin_write_allowed();
-    unsafe { std::env::remove_var("IRIS_ADMIN_TOOLS") };
+    env_guard.unset("IRIS_ADMIN_TOOLS");
     assert!(result);
 }
 
 #[test]
 fn write_not_allowed_without_env() {
+    let mut env_guard = EnvGuard::new();
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    unsafe { std::env::remove_var("IRIS_ADMIN_TOOLS") };
+    env_guard.unset("IRIS_ADMIN_TOOLS");
     assert!(!admin_write_allowed());
 }

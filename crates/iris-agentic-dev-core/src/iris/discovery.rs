@@ -10,15 +10,122 @@
 //! Each step fails silently and falls through to the next, except step 2: a server named by
 //! `IRIS_HOST` is kept even when it does not answer.
 
-use crate::iris::connection::{
-    container_from_env, host_from_env, iris_http_client, DiscoverySource, IrisConnection,
-};
+use crate::iris::connection::{container_from_env, host_from_env, DiscoverySource, IrisConnection};
+use crate::iris::http::{client_for, ClientKind, IdentifyClient, TlsSetting};
+use std::sync::Mutex;
 use std::time::Duration;
 
 /// The ports we scan on localhost for IRIS web servers.
 /// Includes 52773 (IRIS private web server), 80/8080/8443/443 (ISC Web Gateway container),
 /// and legacy ports 41773/51773.
 const IRIS_WEB_PORTS: &[u16] = &[52773, 80, 8080, 41773, 51773, 8443, 443];
+
+/// The ports the localhost scan visits. Debug builds read `IAD_TEST_SCAN_PORTS` (comma-separated)
+/// instead, so a test can aim the scan at listeners it owns; a release build never does.
+fn scan_ports() -> Vec<u16> {
+    if cfg!(debug_assertions) {
+        if let Ok(list) = std::env::var("IAD_TEST_SCAN_PORTS") {
+            return list
+                .split(',')
+                .filter_map(|p| p.trim().parse::<u16>().ok())
+                .collect();
+        }
+    }
+    IRIS_WEB_PORTS.to_vec()
+}
+
+// ── Identification (FR-024) ──────────────────────────────────────────────────
+
+/// How a listener showed it is an IRIS web server, without being sent a credential.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Identified {
+    /// `GET /api/atelier/` answered `200` with an IRIS version: the web application allows
+    /// unauthenticated access.
+    UnauthenticatedAtelier,
+    /// `GET /csp/sys/UtilHome.csp` set a `CSPSESSIONID-…` or `IRISSessionToken` cookie. Every
+    /// instance with a web server serves the Portal login page this way.
+    PortalCookie,
+    /// `GET /api/monitor/metrics` returned Prometheus text with `iris_` metrics.
+    Metrics,
+}
+
+/// What asking a listener who it is found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Identification {
+    Iris(Identified),
+    /// Nothing answered.
+    NoListener,
+    /// Something answered and showed no sign of being IRIS. A bare `401 Basic` is not a sign: IRIS
+    /// sends it with no realm, and so does any web server.
+    Other(String),
+}
+
+/// A listener that answered and was not identified, so it got no credentials.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedListener {
+    pub port: u16,
+    pub reason: String,
+}
+
+static SKIPPED: Mutex<Vec<SkippedListener>> = Mutex::new(Vec::new());
+
+/// The listeners the last discovery scan did not send credentials to, for `check_config`.
+pub fn skipped_listeners() -> Vec<SkippedListener> {
+    SKIPPED.lock().unwrap().clone()
+}
+
+fn note_skipped(port: u16, reason: &str) {
+    tracing::info!("discovery: not sending credentials to port {port}: {reason}");
+    SKIPPED.lock().unwrap().push(SkippedListener {
+        port,
+        reason: reason.to_string(),
+    });
+}
+
+/// Ask the web server at `base_url` who it is. Sends no credential: the client cannot.
+pub async fn identify_listener(client: &IdentifyClient, base_url: &str) -> Identification {
+    let base = base_url.trim_end_matches('/');
+
+    match client.get(&format!("{base}/api/atelier/")).await {
+        Err(_) => return Identification::NoListener,
+        Ok(id) if id.status == 200 => {
+            let version_says_iris = serde_json::from_str::<serde_json::Value>(&id.body)
+                .ok()
+                .and_then(|v| {
+                    v["result"]["content"]["version"]
+                        .as_str()
+                        .map(str::to_string)
+                })
+                .is_some_and(|v| v.to_uppercase().contains("IRIS"));
+            if version_says_iris {
+                return Identification::Iris(Identified::UnauthenticatedAtelier);
+            }
+        }
+        Ok(_) => {}
+    }
+
+    if let Ok(id) = client.get(&format!("{base}/csp/sys/UtilHome.csp")).await {
+        if id
+            .set_cookie_names
+            .iter()
+            .any(|n| n.starts_with("CSPSESSIONID") || n == "IRISSessionToken")
+        {
+            return Identification::Iris(Identified::PortalCookie);
+        }
+    }
+
+    if let Ok(id) = client.get(&format!("{base}/api/monitor/metrics")).await {
+        let text = id
+            .content_type
+            .as_deref()
+            .is_some_and(|t| t.starts_with("text/plain"));
+        if id.status == 200 && text && id.body.lines().any(|l| l.starts_with("iris_")) {
+            return Identification::Iris(Identified::Metrics);
+        }
+    }
+
+    Identification::Other("answered, and showed no sign of being IRIS".to_string())
+}
 
 // ── Discovery result types ────────────────────────────────────────────────────
 
@@ -103,7 +210,9 @@ pub async fn probe_atelier_with_client(
         return None;
     }
 
-    let body: serde_json::Value = resp.json().await.ok()?;
+    let body: serde_json::Value = crate::iris::http::capped_json::<serde_json::Value>(resp)
+        .await
+        .ok()?;
     let content = &body["result"]["content"];
 
     let version = content["version"]
@@ -117,7 +226,8 @@ pub async fn probe_atelier_with_client(
         username,
         password,
         DiscoverySource::LocalhostScan { port },
-    );
+    )
+    .with_tls(TlsSetting::from_launch_env());
     conn.version = Some(version);
     conn.atelier_version = match content["api"].as_u64() {
         Some(v) if v >= 8 => crate::iris::connection::AtelierVersion::V8,
@@ -138,12 +248,86 @@ pub async fn probe_atelier(
 ) -> Option<IrisConnection> {
     // Bug 24: for the public API we still create a client here, but internal callers
     // (localhost scan, docker probe) reuse a shared client via probe_atelier_with_client.
-    let client = iris_http_client(Some(Duration::from_millis(timeout_ms)), true, false).ok()?;
-    probe_atelier_with_client(&client, host, port, username, password, namespace).await
+    // The listener identifies itself first, through a client that cannot send a credential.
+    let tls = TlsSetting::from_launch_env();
+    let identify = IdentifyClient::new(&tls, Duration::from_millis(timeout_ms)).ok()?;
+    match identify_listener(&identify, &format!("http://{host}:{port}")).await {
+        Identification::Iris(_) => {}
+        Identification::NoListener => return None,
+        Identification::Other(reason) => {
+            note_skipped(port, &reason);
+            return None;
+        }
+    }
+    let client = client_for(&tls, ClientKind::Raw).ok()?;
+    tokio::time::timeout(
+        Duration::from_millis(timeout_ms).max(Duration::from_secs(1)),
+        probe_atelier_with_client(&client, host, port, username, password, namespace),
+    )
+    .await
+    .ok()?
 }
 
 /// Full discovery cascade. Returns `IrisDiscovery` — infallible.
+/// What a configuration file asked discovery to look for, passed as data.
+///
+/// A file's `container`, `namespace`, `username` and `password` used to be written into the
+/// process environment so the cascade would pick them up there. That made a workspace file's
+/// credentials indistinguishable from the launch settings for every later reader, and a value
+/// outlived a reload that removed the key. Now they travel in this struct and only the container
+/// lookup reads them; the environment is not touched.
+#[derive(Clone, Default)]
+pub struct DiscoveryHints {
+    /// The container the file names, when it names a container and no host.
+    pub container: Option<String>,
+    pub namespace: Option<String>,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+
+impl std::fmt::Debug for DiscoveryHints {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DiscoveryHints")
+            .field("container", &self.container)
+            .field("namespace", &self.namespace)
+            .field("username", &self.username)
+            .field("password", &self.password.as_ref().map(|_| "[redacted]"))
+            .finish()
+    }
+}
+
+impl DiscoveryHints {
+    fn username(&self) -> String {
+        self.username
+            .clone()
+            .or_else(|| std::env::var("IRIS_USERNAME").ok())
+            .unwrap_or_else(|| "_SYSTEM".to_string())
+    }
+
+    fn password(&self) -> String {
+        self.password
+            .clone()
+            .or_else(|| std::env::var("IRIS_PASSWORD").ok())
+            .unwrap_or_else(|| "SYS".to_string())
+    }
+
+    fn namespace(&self) -> String {
+        self.namespace
+            .clone()
+            .or_else(|| std::env::var("IRIS_NAMESPACE").ok())
+            .unwrap_or_else(|| "USER".to_string())
+    }
+}
+
+/// [`discover_iris_with`] for a caller with no configuration file's hints.
 pub async fn discover_iris(explicit: Option<IrisConnection>) -> IrisDiscovery {
+    discover_iris_with(explicit, &DiscoveryHints::default()).await
+}
+
+pub async fn discover_iris_with(
+    explicit: Option<IrisConnection>,
+    hints: &DiscoveryHints,
+) -> IrisDiscovery {
     // 1. Explicit wins immediately — but probe for version + Atelier API level first
     if let Some(mut conn) = explicit {
         conn.probe().await;
@@ -181,30 +365,34 @@ pub async fn discover_iris(explicit: Option<IrisConnection>) -> IrisDiscovery {
             username,
             password,
             DiscoverySource::EnvVar,
-        );
+        )
+        .with_tls(TlsSetting::from_launch_env());
         conn.probe().await;
         return IrisDiscovery::Found(conn);
     }
 
-    // 3. IRIS_CONTAINER: resolve the named container's web port via Docker.
-    // workspace_config sets this when container = "..." in .iris-dev.toml.
-    // Must run before the generic localhost scan or another container on port 52773 wins.
-    if let Ok(container_name) = std::env::var("IRIS_CONTAINER") {
-        if !container_name.is_empty() {
-            match discover_via_docker_named(&container_name).await {
-                DiscoveryResult::Connected(conn) => return IrisDiscovery::Found(conn),
-                DiscoveryResult::NotFound => {
-                    tracing::warn!(
-                        "Container '{}' not found in Docker — is it running? ('docker ps' to check)",
-                        container_name
-                    );
-                    // Container not found — cascade continues to localhost scan
-                }
-                DiscoveryResult::FoundUnhealthy(mode) => {
-                    // Container was found but probe failed — emit specific message, stop cascade.
-                    emit_unhealthy_message(&container_name, mode);
-                    return IrisDiscovery::Explained;
-                }
+    // 3. The named container: resolve its web port via Docker. A configuration file's
+    // `container = "..."` arrives in `hints`, ahead of `IRIS_CONTAINER`. Must run before the
+    // generic localhost scan or another container on port 52773 wins.
+    let named = hints
+        .container
+        .clone()
+        .filter(|c| !c.trim().is_empty())
+        .or_else(container_from_env);
+    if let Some(container_name) = named {
+        match discover_via_docker_named_with(&container_name, hints).await {
+            DiscoveryResult::Connected(conn) => return IrisDiscovery::Found(conn),
+            DiscoveryResult::NotFound => {
+                tracing::warn!(
+                    "Container '{}' not found in Docker — is it running? ('docker ps' to check)",
+                    container_name
+                );
+                // Container not found — cascade continues to localhost scan
+            }
+            DiscoveryResult::FoundUnhealthy(mode) => {
+                // Container was found but probe failed — emit specific message, stop cascade.
+                emit_unhealthy_message(&container_name, mode);
+                return IrisDiscovery::Explained;
             }
         }
     }
@@ -214,27 +402,50 @@ pub async fn discover_iris(explicit: Option<IrisConnection>) -> IrisDiscovery {
     let password = std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".to_string());
     let namespace = std::env::var("IRIS_NAMESPACE").unwrap_or_else(|_| "USER".to_string());
 
-    let scan_client = match iris_http_client(Some(Duration::from_millis(100)), true, false) {
+    // Each listener says who it is first, through a client that has no way to send a credential.
+    // The first one that is IRIS gets the one credentialed request; the rest are listed in
+    // `check_config.discovery.skipped` (FR-024).
+    SKIPPED.lock().unwrap().clear();
+    let tls = TlsSetting::from_launch_env();
+    let identify = match IdentifyClient::new(&tls, Duration::from_millis(100)) {
         Ok(c) => std::sync::Arc::new(c),
         Err(_) => return IrisDiscovery::NotFound,
     };
-
-    let scan_tasks: Vec<_> = IRIS_WEB_PORTS
-        .iter()
-        .map(|&port| {
-            let client = scan_client.clone();
-            let u = username.clone();
-            let p = password.clone();
-            let ns = namespace.clone();
+    let scan_tasks: Vec<_> = scan_ports()
+        .into_iter()
+        .map(|port| {
+            let identify = identify.clone();
             tokio::spawn(async move {
-                probe_atelier_with_client(&client, "localhost", port, &u, &p, &ns).await
+                let found = identify_listener(&identify, &format!("http://localhost:{port}")).await;
+                (port, found)
             })
         })
         .collect();
 
+    let mut identified_port = None;
     for task in scan_tasks {
-        if let Ok(Some(conn)) = task.await {
-            return IrisDiscovery::Found(conn);
+        match task.await {
+            Ok((port, Identification::Iris(_))) if identified_port.is_none() => {
+                identified_port = Some(port);
+            }
+            Ok((_, Identification::Iris(_))) | Ok((_, Identification::NoListener)) | Err(_) => {}
+            Ok((port, Identification::Other(reason))) => note_skipped(port, &reason),
+        }
+    }
+    if let Some(port) = identified_port {
+        if let Ok(client) = client_for(&tls, ClientKind::Scan) {
+            if let Some(conn) = probe_atelier_with_client(
+                &client,
+                "localhost",
+                port,
+                &username,
+                &password,
+                &namespace,
+            )
+            .await
+            {
+                return IrisDiscovery::Found(conn);
+            }
         }
     }
 
@@ -343,6 +554,14 @@ pub fn score_container_name(container_name: &str, workspace_basename: &str) -> u
 /// Returns a structured `DiscoveryResult` — never emits log messages itself.
 /// `pub` so live Docker integration tests can probe real containers directly.
 pub async fn discover_via_docker_named(target: &str) -> DiscoveryResult {
+    discover_via_docker_named_with(target, &DiscoveryHints::default()).await
+}
+
+/// [`discover_via_docker_named`] with the account and namespace a configuration file named.
+pub async fn discover_via_docker_named_with(
+    target: &str,
+    hints: &DiscoveryHints,
+) -> DiscoveryResult {
     use bollard::query_parameters::ListContainersOptionsBuilder;
     use bollard::Docker;
 
@@ -362,9 +581,7 @@ pub async fn discover_via_docker_named(target: &str) -> DiscoveryResult {
         _ => return DiscoveryResult::NotFound, // timeout or Docker error
     };
 
-    let username = std::env::var("IRIS_USERNAME").unwrap_or_else(|_| "_SYSTEM".to_string());
-    let password = std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".to_string());
-    let namespace = std::env::var("IRIS_NAMESPACE").unwrap_or_else(|_| "USER".to_string());
+    let (username, password, namespace) = (hints.username(), hints.password(), hints.namespace());
 
     for container in containers {
         let name = container
@@ -416,7 +633,26 @@ async fn probe_atelier_for_container(
     namespace: &str,
     port_ss: Option<u16>,
 ) -> DiscoveryResult {
-    let client = match iris_http_client(Some(Duration::from_millis(2000)), true, false) {
+    // The named container's mapped port says who it is before it is sent a credential: a workspace
+    // file can name the container (FR-024).
+    let tls = TlsSetting::from_launch_env();
+    let identify = match IdentifyClient::new(&tls, Duration::from_millis(2000)) {
+        Ok(c) => c,
+        Err(_) => {
+            return DiscoveryResult::FoundUnhealthy(FailureMode::AtelierNotResponding { port })
+        }
+    };
+    match identify_listener(&identify, &format!("http://localhost:{port}")).await {
+        Identification::Iris(_) => {}
+        Identification::NoListener => {
+            return DiscoveryResult::FoundUnhealthy(FailureMode::AtelierNotResponding { port })
+        }
+        Identification::Other(reason) => {
+            note_skipped(port, &reason);
+            return DiscoveryResult::FoundUnhealthy(FailureMode::AtelierNotResponding { port });
+        }
+    }
+    let client = match client_for(&tls, ClientKind::Scan) {
         Ok(c) => c,
         Err(_) => {
             return DiscoveryResult::FoundUnhealthy(FailureMode::AtelierNotResponding { port })
@@ -452,12 +688,13 @@ async fn probe_atelier_for_container(
         return DiscoveryResult::FoundUnhealthy(FailureMode::AtelierHttpError { port, status });
     }
 
-    let body: serde_json::Value = match resp.json().await {
-        Ok(b) => b,
-        Err(_) => {
-            return DiscoveryResult::FoundUnhealthy(FailureMode::AtelierNotResponding { port })
-        }
-    };
+    let body: serde_json::Value =
+        match crate::iris::http::capped_json::<serde_json::Value>(resp).await {
+            Ok(b) => b,
+            Err(_) => {
+                return DiscoveryResult::FoundUnhealthy(FailureMode::AtelierNotResponding { port })
+            }
+        };
 
     let content = &body["result"]["content"];
     let version = match content["version"]
@@ -478,7 +715,8 @@ async fn probe_atelier_for_container(
         DiscoverySource::Docker {
             container_name: container_name.to_string(),
         },
-    );
+    )
+    .with_tls(tls);
     conn.version = Some(version);
     conn.atelier_version = match content["api"].as_u64() {
         Some(v) if v >= 8 => crate::iris::connection::AtelierVersion::V8,
@@ -564,13 +802,21 @@ pub async fn discover_via_docker() -> Option<IrisConnection> {
     let username = std::env::var("IRIS_USERNAME").unwrap_or_else(|_| "_SYSTEM".to_string());
     let password = std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".to_string());
 
-    // Bug 24: create a single shared HTTP client for all docker probes.
-    let probe_client = match iris_http_client(Some(Duration::from_millis(500)), true, false) {
-        Ok(c) => c,
-        Err(_) => return None,
-    };
+    // Each candidate says who it is first. The first that is IRIS gets the credentialed request
+    // (FR-024).
+    let tls = TlsSetting::from_launch_env();
+    let identify = IdentifyClient::new(&tls, Duration::from_millis(500)).ok()?;
+    let probe_client = client_for(&tls, ClientKind::Scan).ok()?;
 
     for (_score, container_name, web_port, port_ss) in candidates {
+        match identify_listener(&identify, &format!("http://localhost:{web_port}")).await {
+            Identification::Iris(_) => {}
+            Identification::NoListener => continue,
+            Identification::Other(reason) => {
+                note_skipped(web_port, &reason);
+                continue;
+            }
+        }
         if let Some(mut conn) = probe_atelier_with_client(
             &probe_client,
             "localhost",
@@ -585,6 +831,7 @@ pub async fn discover_via_docker() -> Option<IrisConnection> {
             conn.port_superserver = port_ss;
             return Some(conn);
         }
+        break;
     }
     None
 }
@@ -602,8 +849,8 @@ enum SmDiscovery {
 
 async fn discover_via_server_manager() -> SmDiscovery {
     use crate::iris::server_manager::{
-        init_platform_keystore, parse_sm_settings, resolve_credential, select_server,
-        sm_settings_path, SmCredentialError,
+        parse_sm_settings, select_server, sm_secret_for_in, sm_settings_path, SmCredentialError,
+        SmSecretError,
     };
 
     let path = match sm_settings_path() {
@@ -628,25 +875,25 @@ async fn discover_via_server_manager() -> SmDiscovery {
         Err(e) => return SmDiscovery::CredentialError(e.to_string()),
     };
 
-    // Initialize platform keystore (once-only via Once guard).
-    init_platform_keystore();
-
-    let password = match resolve_credential(&profile.name, &profile.username) {
+    // The profile's own endpoint: its secret goes only there (the keychain is initialised on first
+    // use).
+    let endpoint = match profile.endpoint() {
+        Ok(e) => e,
+        Err(e) => {
+            return SmDiscovery::CredentialError(format!(
+                "Server Manager profile '{}' has an unusable address: {e}",
+                profile.name
+            ))
+        }
+    };
+    let password = match sm_secret_for_in(&profiles, &profile.name, &profile.username, &endpoint) {
         Ok(pw) => pw,
-        Err(e) => return SmDiscovery::CredentialError(e.to_string()),
+        Err(SmSecretError::Credential(e)) => return SmDiscovery::CredentialError(e.to_string()),
+        Err(e) => return SmDiscovery::CredentialError(format!("{e:?}")),
     };
 
     let namespace = std::env::var("IRIS_NAMESPACE").unwrap_or_else(|_| "USER".to_string());
-    let base_url = match &profile.path_prefix {
-        Some(prefix) if !prefix.trim_matches('/').is_empty() => format!(
-            "{}://{}:{}/{}",
-            profile.scheme,
-            profile.host,
-            profile.port,
-            prefix.trim_matches('/')
-        ),
-        _ => format!("{}://{}:{}", profile.scheme, profile.host, profile.port),
-    };
+    let base_url = endpoint.base_url();
 
     let mut conn = IrisConnection::new(
         base_url,
@@ -656,26 +903,54 @@ async fn discover_via_server_manager() -> SmDiscovery {
         DiscoverySource::ServerManager {
             server_name: profile.name.clone(),
         },
-    );
+    )
+    .with_tls(TlsSetting::validating(
+        crate::iris::http::TlsSource::ServerManager,
+    ));
     conn.probe().await;
     SmDiscovery::Found(conn)
 }
 
-/// Attempt to find IRIS connection from VS Code settings.json in common locations.
+/// Attempt to find IRIS connection from VS Code settings.json in the working directory.
 async fn discover_via_vscode_settings() -> Option<IrisConnection> {
-    let candidates = [std::env::current_dir().ok()?.join(".vscode/settings.json")];
+    discover_vscode_settings_in(&std::env::current_dir().ok()?).await
+}
 
-    for path in &candidates {
-        if !path.exists() {
-            continue;
-        }
-        if let Ok(settings) = crate::iris::vscode_config::parse_vscode_settings(path) {
-            if let Some(conn) = settings.to_iris_connection().await {
-                return Some(conn);
-            }
-        }
+static VSCODE_SET_ASIDE: Mutex<Vec<crate::iris::config_sources::SetAsideItem>> =
+    Mutex::new(Vec::new());
+
+/// What discovery found in `.vscode/settings.json` and did not act on: a connection whose password
+/// could not be read, so none was built (spec 141, T204). `check_config` lists it under
+/// `set_aside`, because with no connection there is nothing else to report it on.
+pub fn discovery_set_aside() -> Vec<crate::iris::config_sources::SetAsideItem> {
+    VSCODE_SET_ASIDE.lock().unwrap().clone()
+}
+
+/// [`discover_via_vscode_settings`] for the settings file under `dir`, so a test needs no working
+/// directory. A file that exists replaces what the last read of it reported.
+pub async fn discover_vscode_settings_in(dir: &std::path::Path) -> Option<IrisConnection> {
+    use crate::iris::vscode_config::VsCodeResolution;
+    let path = dir.join(".vscode/settings.json");
+    if !path.exists() {
+        return None;
     }
-    None
+    VSCODE_SET_ASIDE.lock().unwrap().clear();
+    let settings = crate::iris::vscode_config::parse_vscode_settings(&path).ok()?;
+    match settings.resolve_connection().await {
+        VsCodeResolution::Connection(r) => {
+            let mut conn = r.conn;
+            if let Some(item) = r.set_aside.first() {
+                conn.credentials_withheld = Some(item.reason.clone());
+            }
+            Some(conn)
+        }
+        VsCodeResolution::PasswordMissing(item) => {
+            tracing::warn!("{}", item.reason);
+            VSCODE_SET_ASIDE.lock().unwrap().push(item);
+            None
+        }
+        VsCodeResolution::NotConfigured => None,
+    }
 }
 
 #[cfg(test)]

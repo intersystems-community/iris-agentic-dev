@@ -47,7 +47,7 @@ pub async fn write_and_compile(
     if !put_resp.status().is_success() {
         anyhow::bail!("PUT {doc_name} returned HTTP {}", put_resp.status());
     }
-    let put_body: serde_json::Value = put_resp.json().await.unwrap_or_default();
+    let put_body: serde_json::Value = crate::iris::http::json_or_default(put_resp).await;
     if let Some(errs) = put_body["status"]["errors"].as_array() {
         if !errs.is_empty() {
             let msg = errs[0]["error"].as_str().unwrap_or("Upload failed");
@@ -84,8 +84,17 @@ pub async fn run_class_tests(
     class_name: &str,
 ) -> anyhow::Result<(bool, String)> {
     let resolved = resolve_class_name(class_name);
-    let safe = objectscript_string_literal(&resolved);
-    let code = format!(
+    let code = build_run_all_code(&resolved);
+    let output = iris.execute_via_generator(&code, namespace, client).await?;
+    Ok(parse_run_all_output(&output))
+}
+
+/// The ObjectScript that runs every `Test*` method of `resolved_class` and writes
+/// `passed_failed|failMsg`. The class name goes in as an expression, so no character in it can end
+/// the line or the string.
+pub fn build_run_all_code(resolved_class: &str) -> String {
+    let safe = crate::objectscript::os_str_expr(resolved_class);
+    format!(
         r#"set passed = 0
 set failed = 0
 set failMsg = ""
@@ -114,13 +123,7 @@ if '$IsObject(classDef) {{
   write passed,"_",failed,"|",failMsg,!
 }}
 "#
-    );
-    let output = iris.execute_via_generator(&code, namespace, client).await?;
-    Ok(parse_run_all_output(&output))
-}
-
-fn objectscript_string_literal(s: &str) -> String {
-    format!("\"{}\"", s.replace('"', "\"\""))
+    )
 }
 
 /// Parses the `passed_failed|failMsg` line this module's generated code writes, mirroring

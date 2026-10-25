@@ -4,9 +4,13 @@
 // All tests run without a live IRIS connection or real OS keychain.
 // Credential tests use keyring_core mock store.
 
+use iris_agentic_dev_core::iris::endpoint::Endpoint;
 use iris_agentic_dev_core::iris::server_manager::{
-    parse_sm_settings, resolve_credential, select_server, SmCredentialError,
+    parse_sm_settings, select_server, sm_secret_for_in, ServerManagerProfile, SmCredentialError,
+    SmSecretError,
 };
+use iris_agentic_dev_core::testing::EnvGuard;
+use iris_agentic_dev_core::testing::KEYSTORE_LOCK;
 use std::path::PathBuf;
 
 fn fixture(name: &str) -> PathBuf {
@@ -106,8 +110,9 @@ fn parse_deprecated_password_captured() {
 
 #[test]
 fn select_server_single_auto_selects() {
+    let mut env_guard = EnvGuard::new();
     let _guard = ENV_LOCK.lock().unwrap();
-    std::env::remove_var("IRIS_SERVER_NAME");
+    env_guard.unset("IRIS_SERVER_NAME");
     let profiles = parse_sm_settings(&fixture("sm_settings_single.json"));
     let result = select_server(&profiles);
     assert!(result.is_ok(), "single server should auto-select");
@@ -116,8 +121,9 @@ fn select_server_single_auto_selects() {
 
 #[test]
 fn select_server_multi_requires_env_var() {
+    let mut env_guard = EnvGuard::new();
     let _guard = ENV_LOCK.lock().unwrap();
-    std::env::remove_var("IRIS_SERVER_NAME");
+    env_guard.unset("IRIS_SERVER_NAME");
     let profiles = parse_sm_settings(&fixture("sm_settings_multi.json"));
     let result = select_server(&profiles);
     assert!(
@@ -137,22 +143,24 @@ fn select_server_multi_requires_env_var() {
 
 #[test]
 fn select_server_multi_with_env_var_selects_named() {
+    let mut env_guard = EnvGuard::new();
     let _guard = ENV_LOCK.lock().unwrap();
-    std::env::set_var("IRIS_SERVER_NAME", "staging");
+    env_guard.set("IRIS_SERVER_NAME", "staging");
     let profiles = parse_sm_settings(&fixture("sm_settings_multi.json"));
     let result = select_server(&profiles);
-    std::env::remove_var("IRIS_SERVER_NAME");
+    env_guard.unset("IRIS_SERVER_NAME");
     assert!(result.is_ok());
     assert_eq!(result.unwrap().name, "staging");
 }
 
 #[test]
 fn select_server_env_var_case_insensitive() {
+    let mut env_guard = EnvGuard::new();
     let _guard = ENV_LOCK.lock().unwrap();
-    std::env::set_var("IRIS_SERVER_NAME", "STAGING");
+    env_guard.set("IRIS_SERVER_NAME", "STAGING");
     let profiles = parse_sm_settings(&fixture("sm_settings_multi.json"));
     let result = select_server(&profiles);
-    std::env::remove_var("IRIS_SERVER_NAME");
+    env_guard.unset("IRIS_SERVER_NAME");
     assert!(
         result.is_ok(),
         "IRIS_SERVER_NAME match must be case-insensitive"
@@ -162,11 +170,12 @@ fn select_server_env_var_case_insensitive() {
 
 #[test]
 fn select_server_env_var_unknown_name_returns_ambiguous() {
+    let mut env_guard = EnvGuard::new();
     let _guard = ENV_LOCK.lock().unwrap();
-    std::env::set_var("IRIS_SERVER_NAME", "does-not-exist");
+    env_guard.set("IRIS_SERVER_NAME", "does-not-exist");
     let profiles = parse_sm_settings(&fixture("sm_settings_multi.json"));
     let result = select_server(&profiles);
-    std::env::remove_var("IRIS_SERVER_NAME");
+    env_guard.unset("IRIS_SERVER_NAME");
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
@@ -176,8 +185,9 @@ fn select_server_env_var_unknown_name_returns_ambiguous() {
 
 #[test]
 fn select_server_empty_profiles_returns_ambiguous() {
+    let mut env_guard = EnvGuard::new();
     let _guard = ENV_LOCK.lock().unwrap();
-    std::env::remove_var("IRIS_SERVER_NAME");
+    env_guard.unset("IRIS_SERVER_NAME");
     let result = select_server(&[]);
     assert!(result.is_err());
 }
@@ -193,11 +203,30 @@ fn select_server_empty_profiles_returns_ambiguous() {
 // AUTHENTICATION_PROVIDER = "intersystems-server-credentials"
 const SM_SERVICE: &str = "intersystems-server-credentials";
 
-// Serialize mock-store tests — set_default_store() modifies global state.
-static STORE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// The Server Manager's secret for `name`, asked for at a profile of that name aimed at `localhost`
+/// (the only way iad reads it: through the profile's own endpoint).
+fn resolve_credential(name: &str, username: &str) -> Result<String, SmCredentialError> {
+    let profile = ServerManagerProfile {
+        name: name.to_string(),
+        host: "localhost".to_string(),
+        port: 52773,
+        scheme: "http".to_string(),
+        path_prefix: None,
+        username: username.to_string(),
+        password_deprecated: None,
+    };
+    let ep = Endpoint::parse(None, "localhost", 52773, None).unwrap();
+    match sm_secret_for_in(&[profile], name, username, &ep) {
+        Ok(pw) => Ok(pw),
+        Err(SmSecretError::Credential(e)) => Err(e),
+        Err(other) => panic!("unexpected {other:?}"),
+    }
+}
 
+// Serialize mock-store tests — set_default_store() modifies global state, in this file and in every
+// other unit test file that sets a mock store.
 fn with_mock_store<F: FnOnce()>(f: F) {
-    let _guard = STORE_LOCK.lock().unwrap();
+    let _guard = KEYSTORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
     f();
     // Reset to a fresh empty store so the next test starts clean.
@@ -491,27 +520,45 @@ fn init_platform_keystore_does_not_panic() {
 }
 
 #[test]
-fn init_platform_keystore_enables_keyring_core_entry() {
-    // After init_platform_keystore(), keyring_core::Entry::new() must not return
-    // NoDefaultStore — the platform store must be registered.
-    // On headless CI (no keychain daemon) the store init may fail gracefully;
-    // the important thing is that it does NOT panic and does NOT leave keyring_core
-    // in a state where all subsequent Entry::new() calls return NoDefaultStore
-    // when a real daemon IS available.
-    //
-    // We verify this by calling init and then creating an Entry — the test passes
-    // if there's no panic. Actual keychain availability is tested in the
-    // store_resolve_credential_roundtrip #[ignore] test.
+fn init_platform_keystore_installs_nothing_when_the_keychain_is_disabled() {
+    // A test process runs with IAD_NO_KEYCHAIN set (testing::isolate_process), and the setting has
+    // to hold for a direct call too: this used to install the real OS store for every later test
+    // in the process, and a later read from it raised a keychain approval dialog.
     use iris_agentic_dev_core::iris::server_manager::init_platform_keystore;
+    let _guard = KEYSTORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    keyring_core::unset_default_store();
     init_platform_keystore();
-    // After init, Entry::new must not return NoDefaultStore (may return NoEntry or similar)
+    let installed = keyring_core::get_default_store().map(|s| s.vendor());
+    keyring_core::unset_default_store();
+    assert_eq!(installed, None);
+}
+
+/// Needs the real OS keychain, so it is compiled in only by the `real-keychain-tests` feature, and
+/// `IAD_TEST_REAL_KEYCHAIN=1` makes `isolate_process` leave `IAD_NO_KEYCHAIN` unset. `#[ignore]`
+/// would not do: `--include-ignored` runs ignored tests, and this one needs a person at the machine
+/// for the approval dialog. It only registers the store and builds an `Entry`; it never reads or
+/// writes an item, which is what raises the dialog.
+/// Run: `IAD_TEST_REAL_KEYCHAIN=1 cargo test -p iris-agentic-dev-core --features testing,real-keychain-tests --test unit init_platform_keystore_registers`
+#[test]
+#[cfg(feature = "real-keychain-tests")]
+fn init_platform_keystore_registers_the_real_store() {
+    use iris_agentic_dev_core::iris::server_manager::init_platform_keystore;
+    assert_eq!(
+        std::env::var("IAD_NO_KEYCHAIN").ok(),
+        None,
+        "run with IAD_TEST_REAL_KEYCHAIN=1 and no IAD_NO_KEYCHAIN"
+    );
+    let _guard = KEYSTORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    keyring_core::unset_default_store();
+    init_platform_keystore();
     let result = keyring_core::Entry::new("iad-test-service", "iad-test-account");
+    keyring_core::unset_default_store();
     match result {
         Ok(_) => {} // store available
         Err(keyring_core::Error::NoDefaultStore) => {
-            panic!("init_platform_keystore() did not register a default store — keyring_core::Entry::new returns NoDefaultStore")
+            panic!("init_platform_keystore() did not register a default store")
         }
-        Err(_) => {} // other errors (NoEntry, NoStorageAccess) are fine — store was registered but entry absent
+        Err(_) => {} // the store was registered; the entry itself is unavailable here
     }
 }
 
@@ -617,8 +664,8 @@ fn check_config_sm_null_policy_when_no_policy_entry() {
 
 #[test]
 fn policy_gate_unknown_tool_not_gated() {
-    use iris_agentic_dev_core::iris::server_manager::policy_gate;
     use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, ToolCategory};
+    use iris_agentic_dev_core::testing::gated;
     let policy = ConnectionPolicy {
         server_name: "prod".to_string(),
         allow: Some(vec![ToolCategory::Query]),
@@ -628,7 +675,7 @@ fn policy_gate_unknown_tool_not_gated() {
         data_policy_kill_allowlist: vec![],
         iris_audit: false,
     };
-    let gate = policy_gate("unknown_future_tool", "prod", Some(&policy));
+    let gate = gated::policy("unknown_future_tool", "prod", Some(&policy));
     assert!(
         gate.is_none(),
         "unknown tool must not be gated (returns None)"
@@ -677,7 +724,7 @@ fn check_config_sm_policy_includes_mcp_template_and_data_policy() {
 // ── T061: unknown mcpTemplate TOML value deserializes to None ─────────────────
 
 #[test]
-fn unknown_mcp_template_toml_deserializes_to_none() {
+fn unknown_mcp_template_toml_fails_closed_to_live() {
     use iris_agentic_dev_core::iris::workspace_config::load_fleet_config_from_str;
     let toml = r#"
 [policy.prod]
@@ -685,9 +732,11 @@ mcpTemplate = "staging"
 "#;
     let cfg = load_fleet_config_from_str(toml).expect("parse must not fail");
     let pol = cfg.policies.get("prod").expect("policy must exist");
-    assert!(
-        pol.mcp_template.is_none(),
-        "unknown mcpTemplate 'staging' must deserialize to None, not an error: {pol:?}"
+    // Not an error, and not the permissive default: an unknown template reads as the strictest.
+    assert_eq!(
+        pol.mcp_template,
+        Some(iris_agentic_dev_core::iris::workspace_config::McpTemplate::Live),
+        "unknown mcpTemplate 'staging' must read as live: {pol:?}"
     );
 }
 
@@ -1241,8 +1290,8 @@ fn build_config_multiple_servers_each_with_policy() {
 
 #[test]
 fn policy_gate_permitted_category_returns_none() {
-    use iris_agentic_dev_core::iris::server_manager::policy_gate;
     use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, ToolCategory};
+    use iris_agentic_dev_core::testing::gated;
     let policy = ConnectionPolicy {
         server_name: "prod".to_string(),
         allow: Some(vec![ToolCategory::Query, ToolCategory::Docs]),
@@ -1252,7 +1301,7 @@ fn policy_gate_permitted_category_returns_none() {
         data_policy_kill_allowlist: vec![],
         iris_audit: false,
     };
-    let gate = policy_gate("iris_query", "prod", Some(&policy));
+    let gate = gated::policy("iris_query", "prod", Some(&policy));
     assert!(
         gate.is_none(),
         "iris_query (Query category) should be permitted"
@@ -1261,8 +1310,8 @@ fn policy_gate_permitted_category_returns_none() {
 
 #[test]
 fn policy_gate_blocked_category_returns_error() {
-    use iris_agentic_dev_core::iris::server_manager::policy_gate;
     use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, ToolCategory};
+    use iris_agentic_dev_core::testing::gated;
     let policy = ConnectionPolicy {
         server_name: "prod".to_string(),
         allow: Some(vec![ToolCategory::Query]),
@@ -1272,7 +1321,7 @@ fn policy_gate_blocked_category_returns_error() {
         data_policy_kill_allowlist: vec![],
         iris_audit: false,
     };
-    let gate = policy_gate("iris_compile", "prod", Some(&policy));
+    let gate = gated::policy("iris_compile", "prod", Some(&policy));
     assert!(
         gate.is_some(),
         "iris_compile (Compile category) should be blocked"
@@ -1285,15 +1334,15 @@ fn policy_gate_blocked_category_returns_error() {
 
 #[test]
 fn policy_gate_no_policy_allows_all() {
-    use iris_agentic_dev_core::iris::server_manager::policy_gate;
-    let gate = policy_gate("iris_compile", "prod", None);
+    use iris_agentic_dev_core::testing::gated;
+    let gate = gated::policy("iris_compile", "prod", None);
     assert!(gate.is_none(), "no policy should allow all tools");
 }
 
 #[test]
 fn policy_gate_allow_none_permits_all() {
-    use iris_agentic_dev_core::iris::server_manager::policy_gate;
     use iris_agentic_dev_core::iris::workspace_config::ConnectionPolicy;
+    use iris_agentic_dev_core::testing::gated;
     let policy = ConnectionPolicy {
         server_name: "prod".to_string(),
         allow: None,
@@ -1303,7 +1352,7 @@ fn policy_gate_allow_none_permits_all() {
         data_policy_kill_allowlist: vec![],
         iris_audit: false,
     };
-    let gate = policy_gate("iris_execute", "prod", Some(&policy));
+    let gate = gated::policy("iris_execute", "prod", Some(&policy));
     assert!(
         gate.is_none(),
         "allow=None should permit all tools (no restriction)"
@@ -1312,8 +1361,8 @@ fn policy_gate_allow_none_permits_all() {
 
 #[test]
 fn policy_gate_tool_suffix_ignored() {
-    use iris_agentic_dev_core::iris::server_manager::policy_gate;
     use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, ToolCategory};
+    use iris_agentic_dev_core::testing::gated;
     let policy = ConnectionPolicy {
         server_name: "prod".to_string(),
         allow: Some(vec![ToolCategory::SourceControl]),
@@ -1324,12 +1373,12 @@ fn policy_gate_tool_suffix_ignored() {
         iris_audit: false,
     };
     // Tool with action suffix — source control tools map to SourceControl category
-    let gate = policy_gate("iris_source_control:commit", "prod", Some(&policy));
+    let gate = gated::policy("iris_source_control:commit", "prod", Some(&policy));
     assert!(
         gate.is_none(),
         "iris_source_control:commit should be allowed (SourceControl category)"
     );
-    let gate = policy_gate("iris_compile:fast", "prod", Some(&policy));
+    let gate = gated::policy("iris_compile:fast", "prod", Some(&policy));
     assert!(
         gate.is_some(),
         "iris_compile:fast should be blocked (Compile category not allowed)"

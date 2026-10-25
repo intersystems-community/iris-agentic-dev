@@ -45,6 +45,8 @@ fn test_compile_valid_file_exits_zero() {
     let cls = write_valid_cls(&name);
     let out = iris_dev()
         .args(["compile", cls.path().to_str().unwrap()])
+        // The file is compiled only from inside the project directory, which is the working one.
+        .current_dir(cls.path().parent().unwrap())
         .output()
         .expect("failed to run iris-agentic-dev");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -62,6 +64,8 @@ fn test_compile_invalid_file_exits_nonzero() {
     let cls = write_invalid_cls();
     let out = iris_dev()
         .args(["compile", cls.path().to_str().unwrap()])
+        // The file is compiled only from inside the project directory, which is the working one.
+        .current_dir(cls.path().parent().unwrap())
         .output()
         .expect("failed to run iris-agentic-dev");
     let stdout = String::from_utf8_lossy(&out.stdout);

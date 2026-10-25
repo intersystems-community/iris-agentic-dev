@@ -1,9 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Args;
 use std::path::PathBuf;
 
 use super::connection_args::ConnectionArgs;
-use super::dispatch::dispatch_tool;
+use super::dispatch::{build_tools, call, exit_if_refused};
 
 #[derive(Args)]
 pub struct CompileCommand {
@@ -35,34 +35,22 @@ impl CompileCommand {
         let flags = self.flags.clone();
         let format = self.format.clone();
 
-        let iris = self.conn.resolve().await?;
-
-        if self.files.is_empty() {
-            // Legacy toml-based compile (original behavior preserved). This is a
-            // namespace-wide $SYSTEM.OBJ.CompileAll, not a single iris_compile call —
-            // there's no tool method to delegate to here, so it stays direct.
-            let client = iris_agentic_dev_core::iris::connection::IrisConnection::http_client()?;
-            let target = ".";
-            let code = format!(
-                "Set sc=$SYSTEM.OBJ.CompileAll(\"{}\") If $System.Status.IsOK(sc) {{Write \"OK\"}} Else {{Write $System.Status.GetErrorText(sc)}}",
-                flags
-            );
-            let out = iris
-                .execute_via_generator(&code, &namespace, &client)
-                .await
-                .context("CompileAll failed")?;
-            let out = out.trim();
-            if out.ends_with("OK") || out == "OK" {
-                let result =
-                    serde_json::json!({"success": true, "target": target, "namespace": namespace});
-                output_result(&result, &format);
-            } else {
-                let result = serde_json::json!({"success": false, "error_code": "IRIS_COMPILE_FAILED", "error": out, "target": target});
-                output_result(&result, &format);
-                crate::exit(1);
-            }
-            return Ok(());
+        if let Some(msg) = iris_agentic_dev_core::tools::compile_flags_problem(&flags) {
+            anyhow::bail!("{msg}");
         }
+        if self.files.is_empty() {
+            // `compile` with no file used to run `$SYSTEM.OBJ.CompileAll` straight through
+            // `execute_via_generator`, outside every gate. Naming the target is what the gates
+            // and the audit entry need, so it is refused rather than widened.
+            eprintln!(
+                "error: `compile` needs at least one .cls file. A namespace-wide compile is not \
+                 offered here; compile a package with `iris-agentic-dev tool iris_compile --args \
+                 '{{\"target\":\"MyApp.*.cls\"}}'`."
+            );
+            crate::exit(1);
+        }
+
+        let iris = self.conn.resolve().await?;
 
         // File-args mode: delegate to iris_compile per file. iris_compile's own
         // is_local_path detection (target contains a path separator, or ends in .cls
@@ -70,6 +58,7 @@ impl CompileCommand {
         // upload via PUT, derive the class name from the file's `Class` declaration,
         // then compile. Passing the file path as `target` is enough; the tool method
         // does the read/upload/compile itself.
+        let tools = build_tools(iris)?;
         let mut any_error = false;
         for path in &self.files {
             let target = path.to_string_lossy().to_string();
@@ -85,8 +74,9 @@ impl CompileCommand {
                 args["force_writable"] = serde_json::Value::Bool(true);
             }
 
-            match dispatch_tool(iris.clone(), "iris_compile", args).await {
+            match call(&tools, "iris_compile", args).await {
                 Ok(body) => {
+                    exit_if_refused(&body);
                     let success = body["success"].as_bool().unwrap_or(false);
                     let doc_name = body["target"].as_str().unwrap_or(&target);
                     if format == "json" {
@@ -116,19 +106,5 @@ impl CompileCommand {
             crate::exit(1);
         }
         Ok(())
-    }
-}
-
-fn output_result(result: &serde_json::Value, format: &str) {
-    if format == "json" {
-        println!("{}", result);
-    } else if result["success"] == true {
-        println!("✓ Compiled: {}", result["target"].as_str().unwrap_or(""));
-    } else {
-        eprintln!(
-            "error: [{}]: {}",
-            result["error_code"].as_str().unwrap_or(""),
-            result["error"].as_str().unwrap_or("")
-        );
     }
 }

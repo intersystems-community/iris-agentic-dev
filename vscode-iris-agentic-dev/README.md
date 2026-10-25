@@ -44,6 +44,14 @@ automatically when you update the extension.
 **Already have the binary?** If `iris-agentic-dev` is on your PATH (e.g. via Homebrew), or you
 have set `iris-agentic-dev.serverPath`, that path takes priority — no download occurs.
 
+**How the download is checked.** Each release of the extension carries the SHA-256 of every
+server binary it can install. The download is hashed before it is put in place; if the hash
+differs, or the connection ends short of the declared length, the file is deleted, the failure
+is reported in the **iris-agentic-dev** output channel and in a notification, and nothing runs.
+Downloads and redirects are accepted only from GitHub's release hosts over HTTPS. A build of the
+extension that was not produced by the release workflow has no hashes and installs nothing; in
+that case install the server yourself and set `iris-agentic-dev.serverPath`.
+
 ### 2. Open Copilot Chat in agent mode
 
 Press `Ctrl+Shift+I` (or `Cmd+Shift+I` on Mac), switch to **Agent** mode, and ask:
@@ -102,14 +110,14 @@ see [docs/windows-docker.md](https://github.com/intersystems-community/iris-agen
 
 ## Settings
 
-| Setting                          | Default     | Description                                                                        |
-| -------------------------------- | ----------- | ---------------------------------------------------------------------------------- |
-| `iris-agentic-dev.serverPath`    | _(auto)_    | Full path to the iris-agentic-dev binary. Leave empty to use PATH or auto-install. |
-| `iris-agentic-dev.containerName` | _(empty)_   | Docker container name for tools that need direct container access.                 |
-| `iris-agentic-dev.namespace`     | _(conn ns)_ | Namespace override. Leave empty to use the objectscript.conn namespace.            |
-| `iris-agentic-dev.toolset`       | `baseline`  | `baseline` — standard tools. `merged` — adds interop and container tools.          |
-| `iris-agentic-dev.tlsVerify`     | `true`      | Set `false` for self-signed TLS certificates.                                      |
-| `iris-agentic-dev.scheme`        | _(auto)_    | Force `http` or `https`. Leave empty to auto-detect.                               |
+| Setting                          | Default     | Description                                                                                                                                 |
+| -------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `iris-agentic-dev.serverPath`    | _(auto)_    | Full path to the iris-agentic-dev binary. Leave empty to use PATH or auto-install. User or remote settings only; a workspace cannot set it. |
+| `iris-agentic-dev.containerName` | _(empty)_   | Docker container name for tools that need direct container access.                                                                          |
+| `iris-agentic-dev.namespace`     | _(conn ns)_ | Namespace override. Leave empty to use the objectscript.conn namespace.                                                                     |
+| `iris-agentic-dev.toolset`       | `baseline`  | `baseline` — standard tools. `merged` — adds interop and container tools.                                                                   |
+| `iris-agentic-dev.tlsVerify`     | `true`      | Set `false` for self-signed TLS certificates.                                                                                               |
+| `iris-agentic-dev.scheme`        | _(auto)_    | Force `http` or `https`. Leave empty to auto-detect.                                                                                        |
 
 ---
 
@@ -154,3 +162,17 @@ manual MCP setup in
 - [Cursor quick start](https://github.com/intersystems-community/iris-agentic-dev/blob/master/docs/cursor-quickstart.md)
 - [Release notes](https://github.com/intersystems-community/iris-agentic-dev/releases)
 - [Report an issue](https://github.com/intersystems-community/iris-agentic-dev/issues)
+
+---
+
+## Workspace trust
+
+The server runs with your IRIS credentials, so the extension treats an untrusted workspace as
+unsafe to act on. In Restricted Mode it reads nothing from the workspace (`objectscript.conn`,
+`intersystems.servers`, `.vscode/settings.json`) and does not start the server; it offers the
+server as soon as you trust the workspace.
+
+When a workspace and your user settings both define an `intersystems.servers` entry with the same
+name, yours wins and the workspace entry is ignored. The password stored by Server Manager is
+used only with your own entry; a server that is defined only in the workspace gets a password
+prompt that names the host instead.

@@ -67,7 +67,10 @@ iris_execute, and for one cube's dimensions and measures \
 /// The error text when `name` cannot be an XData namespace URL, or `None` when it can.
 pub fn sa_schema_name_problem(name: Option<&str>) -> Option<String> {
     let n = name.unwrap_or("").trim();
-    if n.starts_with("http://") || n.starts_with("https://") {
+    let is_url = n.starts_with("http://") || n.starts_with("https://");
+    // A `.` or `..` segment would leave the Studio Assist path once the HTTP client resolves it (spec 141 C5).
+    let dot_segment = n.split('/').any(|s| s == "." || s == "..");
+    if is_url && !dot_segment {
         return None;
     }
     let got = if n.is_empty() {
@@ -94,6 +97,16 @@ pub fn sa_schema_path(name: &str) -> String {
         .map(|s| urlencoding::encode(s).into_owned())
         .collect();
     format!("/saschema/{}", segments.join("/"))
+}
+
+/// The error text when a built `sa_schema` URL does not stay under `prefix` (the Studio Assist path)
+/// once the HTTP client has resolved its dot segments, or `None` when it does (spec 141 C5).
+pub fn sa_schema_url_problem(url: &str, prefix: &str) -> Option<String> {
+    let inside = match (reqwest::Url::parse(url), reqwest::Url::parse(prefix)) {
+        (Ok(u), Ok(p)) => u.path().starts_with(p.path()),
+        _ => false,
+    };
+    (!inside).then(|| format!("sa_schema URL {url} leaves the Studio Assist path"))
 }
 
 /// A refusal that needs no IRIS, so it reaches a caller before the server is resolved.
@@ -194,7 +207,11 @@ pub async fn handle_iris_info(
             if let Some(msg) = sa_schema_name_problem(p.name.as_deref()) {
                 return err_json("INVALID_PARAMS", &msg);
             }
-            iris.versioned_ns_url(ns, &sa_schema_path(p.name.as_deref().unwrap_or("")))
+            let url = iris.versioned_ns_url(ns, &sa_schema_path(p.name.as_deref().unwrap_or("")));
+            if let Some(msg) = sa_schema_url_problem(&url, &iris.versioned_ns_url(ns, "/saschema/")) {
+                return err_json("INVALID_PARAMS", &msg);
+            }
+            url
         }
         other => return err_json("INVALID_PARAM", &format!("Unknown what='{}'. Use: documents, modified, namespace, metadata, jobs, csp_apps, csp_debug, sa_schema", other)),
     };
@@ -237,7 +254,7 @@ pub async fn handle_iris_info(
         );
     }
 
-    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
     if p.what == "sa_schema" && is_empty_result(&body["result"]) {
         return err_json(
             "SA_SCHEMA_NOT_FOUND",
@@ -464,7 +481,7 @@ async fn macro_get(
         .await
         .map_err(|e| format!("HTTP error: {e}"))?;
     let status = resp.status();
-    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
     if !status.is_success() {
         return Err(format!("HTTP {status} from {url}"));
     }
@@ -488,7 +505,7 @@ async fn macro_post(
         .await
         .map_err(|e| format!("HTTP error: {e}"))?;
     let status = resp.status();
-    let answer: serde_json::Value = resp.json().await.unwrap_or_default();
+    let answer: serde_json::Value = crate::iris::http::json_or_default(resp).await;
     if !status.is_success() {
         return Err(format!("HTTP {status} from {url}"));
     }
@@ -756,6 +773,10 @@ pub async fn handle_iris_debug(
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GenerateParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     /// What to generate — natural language description, e.g. "a Patient class with Name and DOB properties"
     pub description: String,
     /// Type: "class" (default) or "test"
@@ -789,19 +810,16 @@ pub async fn handle_iris_generate(
             let cls = p.class_name.as_deref().unwrap_or("");
 
             // Fetch the class's methods and properties as generation context
-            let sql = format!(
-                "SELECT Name, FormalSpec, ReturnType, Description \
-                 FROM %Dictionary.CompiledMethod WHERE parent = '{}' ORDER BY Name",
-                cls.replace('\'', "''")
-            );
+            let sql = "SELECT Name, FormalSpec, ReturnType, Description \
+                 FROM %Dictionary.CompiledMethod WHERE parent = ? ORDER BY Name";
             let resp = client
                 .post(&query_url)
                 .basic_auth(&iris.username, Some(&iris.password))
-                .json(&serde_json::json!({"query": sql}))
+                .json(&serde_json::json!({"query": sql, "parameters": [cls]}))
                 .send()
                 .await
                 .map_err(|e| rmcp::ErrorData::internal_error(format!("HTTP error: {e}"), None))?;
-            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
             let methods = body["result"]["content"].clone();
 
             let prompt = format!(
@@ -842,7 +860,7 @@ pub async fn handle_iris_generate(
                 .send()
                 .await
                 .map_err(|e| rmcp::ErrorData::internal_error(format!("HTTP error: {e}"), None))?;
-            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
             let existing: Vec<String> = body["result"]["content"]
                 .as_array()
                 .unwrap_or(&vec![])
@@ -911,11 +929,7 @@ pub async fn handle_iris_table_info(
     if let Err(e) = crate::objectscript::validate_sql_identifier(&p.table) {
         return crate::tools::err_result(e);
     }
-    // Split "Schema.Table" → (schema, table). Tables with no dot use SQLUser schema.
-    let (sql_schema, sql_table) = match p.table.find('.') {
-        Some(idx) => (p.table[..idx].to_string(), p.table[idx + 1..].to_string()),
-        None => ("SQLUser".to_string(), p.table.clone()),
-    };
+    let (sql_schema, sql_table) = table_schema_and_name(&p.table);
 
     // Look up class projection: find a compiled class whose SQL mapping matches.
     let lookup_code = format!(
@@ -1049,6 +1063,23 @@ if rs.%Next() {{
     }))
 }
 
+/// `Schema.Table` → (schema, table), each without its delimiting quotes. A name with no dot is in
+/// `SQLUser`. Only a dot outside a delimited identifier separates the two, so `"A.B".C` is schema
+/// `A.B` and table `C`.
+pub fn table_schema_and_name(table: &str) -> (String, String) {
+    let mut parts = crate::sql_lex::split_qualified_name(table);
+    if parts.len() == 1 {
+        return ("SQLUser".to_string(), parts.remove(0));
+    }
+    let schema = parts.remove(0);
+    (schema, parts.join("."))
+}
+
+/// `name` as a SQL delimited identifier: quoted, with an embedded `"` doubled.
+pub fn quote_sql_identifier(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
 async fn get_row_count(
     iris: &crate::iris::connection::IrisConnection,
     client: &reqwest::Client,
@@ -1057,10 +1088,13 @@ async fn get_row_count(
     table: &str,
 ) -> serde_json::Value {
     let code = format!(
-        r#"set rs = ##class(%SQL.Statement).%ExecDirect(,"SELECT COUNT(*) FROM ""{schema_lit}"".{table_lit}")
+        r#"set rs = ##class(%SQL.Statement).%ExecDirect(,"SELECT COUNT(*) FROM {from_lit}")
 if rs.%Next() {{ write rs.%GetData(1),! }} else {{ write "error",! }}"#,
-        schema_lit = crate::objectscript::os_lit_inner(schema),
-        table_lit = crate::objectscript::os_lit_inner(table),
+        from_lit = crate::objectscript::os_lit_inner(&format!(
+            "{}.{}",
+            quote_sql_identifier(schema),
+            quote_sql_identifier(table)
+        )),
     );
     match iris.execute_via_generator(&code, namespace, client).await {
         Ok(out) => out

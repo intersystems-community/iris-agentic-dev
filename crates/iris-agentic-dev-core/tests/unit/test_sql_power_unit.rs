@@ -145,9 +145,9 @@ fn explain_mode_is_query_category_not_execute_by_default() {
 #[test]
 fn explain_mode_not_blocked_on_live_template() {
     use iris_agentic_dev_core::iris::workspace_config::McpTemplate;
-    use iris_agentic_dev_core::policy::env_gate::check_env_gate;
+    use iris_agentic_dev_core::testing::gated;
     let params = serde_json::json!({"mode": "explain"});
-    let result = check_env_gate("iris_query", &McpTemplate::Live, "test-server", &params);
+    let result = gated::env("iris_query", &McpTemplate::Live, "test-server", &params);
     assert!(
         result.is_none(),
         "explain (Query) must not be blocked on live"
@@ -239,9 +239,9 @@ fn count_query_from_query_only() {
 #[test]
 fn count_mode_not_blocked_on_live_template() {
     use iris_agentic_dev_core::iris::workspace_config::McpTemplate;
-    use iris_agentic_dev_core::policy::env_gate::check_env_gate;
+    use iris_agentic_dev_core::testing::gated;
     let params = serde_json::json!({"mode": "count"});
-    let result = check_env_gate("iris_query", &McpTemplate::Live, "test-server", &params);
+    let result = gated::env("iris_query", &McpTemplate::Live, "test-server", &params);
     assert!(
         result.is_none(),
         "count (Query) must not be blocked on live"
@@ -255,9 +255,9 @@ fn count_mode_not_blocked_on_live_template() {
 #[test]
 fn write_mode_blocked_on_live_template() {
     use iris_agentic_dev_core::iris::workspace_config::McpTemplate;
-    use iris_agentic_dev_core::policy::env_gate::check_env_gate;
+    use iris_agentic_dev_core::testing::gated;
     let params = serde_json::json!({"mode": "write"});
-    let result = check_env_gate("iris_query", &McpTemplate::Live, "test-server", &params);
+    let result = gated::env("iris_query", &McpTemplate::Live, "test-server", &params);
     assert!(result.is_some(), "write (Execute) must be blocked on live");
     assert_eq!(result.unwrap()["error_code"], "ENV_GATE_BLOCKED");
 }
@@ -265,9 +265,9 @@ fn write_mode_blocked_on_live_template() {
 #[test]
 fn write_mode_blocked_on_test_template() {
     use iris_agentic_dev_core::iris::workspace_config::McpTemplate;
-    use iris_agentic_dev_core::policy::env_gate::check_env_gate;
+    use iris_agentic_dev_core::testing::gated;
     let params = serde_json::json!({"mode": "write"});
-    let result = check_env_gate("iris_query", &McpTemplate::Test, "test-server", &params);
+    let result = gated::env("iris_query", &McpTemplate::Test, "test-server", &params);
     assert!(result.is_some(), "write (Execute) must be blocked on test");
     assert_eq!(result.unwrap()["error_code"], "ENV_GATE_BLOCKED");
 }
@@ -275,10 +275,10 @@ fn write_mode_blocked_on_test_template() {
 #[test]
 fn read_mode_not_blocked_on_live_or_test() {
     use iris_agentic_dev_core::iris::workspace_config::McpTemplate;
-    use iris_agentic_dev_core::policy::env_gate::check_env_gate;
+    use iris_agentic_dev_core::testing::gated;
     let params = serde_json::json!({"mode": "read"});
-    assert!(check_env_gate("iris_query", &McpTemplate::Live, "test-server", &params).is_none());
-    assert!(check_env_gate("iris_query", &McpTemplate::Test, "test-server", &params).is_none());
+    assert!(gated::env("iris_query", &McpTemplate::Live, "test-server", &params).is_none());
+    assert!(gated::env("iris_query", &McpTemplate::Test, "test-server", &params).is_none());
 }
 
 // ---------------------------------------------------------------------------

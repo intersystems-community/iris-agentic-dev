@@ -44,6 +44,10 @@ impl DocMode {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IrisDocParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     /// Operation, one of: get, put, delete, head, fragment, compiled, list, insert,
     /// delete_lines. Defaults to "get". get=fetch source, put=write whole doc,
     /// delete=remove, head=check existence, fragment=read a line range, compiled=read
@@ -172,7 +176,7 @@ where
 fn default_mode() -> String {
     "get".to_string()
 }
-use crate::iris::connection::{iris_http_client, IrisConnection};
+use crate::iris::connection::IrisConnection;
 
 fn ok_json(v: serde_json::Value) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     Ok(rmcp::model::CallToolResult::structured(v))
@@ -257,21 +261,28 @@ pub async fn handle_iris_doc(
             // %SourceControl session from the pre-write check is already gone —
             // so without this the write hits ERROR #5865 "not checked out of
             // source control". AfterUserAction persists the checkout server-side.
-            let after_code = crate::tools::scm::after_user_action_code(
-                "%CheckOut",
-                &pending.document,
-                "yes",
-                &iris.username,
-                &iris.password,
-            );
-            if let Ok(out) = iris
+            let after_code =
+                crate::tools::scm::after_user_action_code("%CheckOut", &pending.document, "yes");
+            // The write goes ahead only when the finalizer says it finished. A call that failed, an
+            // empty reply and an unreadable one are all "unknown", and unknown is not a checkout.
+            match iris
                 .execute_via_generator(&after_code, &pending.namespace, client)
                 .await
             {
-                let out = out.lines().next().unwrap_or("").trim().to_string();
-                // Non-empty output from after_user_action_code is an SCM error string.
-                if !out.is_empty() {
-                    return err_json("SCM_CHECKOUT_FAILED", &out);
+                Ok(out) => {
+                    if let Err((code, detail)) = crate::tools::scm::after_action_outcome(&out) {
+                        return err_json(code, &detail);
+                    }
+                }
+                Err(e) => {
+                    return err_json(
+                        "SCM_UNAVAILABLE",
+                        &format!(
+                            "could not finish the checkout of {} ({e}), so the write was refused \
+                             rather than attempted without one",
+                            pending.document
+                        ),
+                    )
                 }
             }
             // Checkout is now committed server-side — cache it so the chained
@@ -376,12 +387,10 @@ async fn handle_get(
     if !p.names.is_empty() {
         // Build a fresh client for batch gets with a shorter timeout so concurrent
         // requests fail fast and the handler returns within the MCP response deadline.
-        // Via the shared resolver: this copy read only IRIS_INSECURE, so a caller who set
-        // IRIS_TLS_VERIFY=false got working single gets and failing batch gets (#127).
-        let insecure = crate::iris::connection::tls_insecure_from_env();
-        let batch_client =
-            iris_http_client(Some(std::time::Duration::from_secs(5)), insecure, false)
-                .unwrap_or_else(|_| client.clone());
+        // Checked the way this connection's own setting says, as the single gets are (#127).
+        let batch_client = iris
+            .client(crate::iris::http::ClientKind::Batch)
+            .unwrap_or_else(|_| client.clone());
         let mut set = tokio::task::JoinSet::new();
         for name in &p.names {
             let url = iris.versioned_ns_url(ns, &format!("/doc/{}", urlencoding::encode(name)));
@@ -405,7 +414,8 @@ async fn handle_get(
             if let Ok((name, fetch_result)) = res {
                 let entry = match fetch_result {
                     Ok(resp) if resp.status().is_success() => {
-                        let body: serde_json::Value = resp.json().await.unwrap_or_default();
+                        let body: serde_json::Value =
+                            crate::iris::http::json_or_default(resp).await;
                         let content = doc_content_to_string(&body);
                         serde_json::json!({"name": name, "content": content})
                     }
@@ -438,11 +448,11 @@ async fn handle_get(
         return err_json("NOT_FOUND", &format!("Document not found: {name}"));
     }
     if !status.is_success() {
-        let body_hint = resp.text().await.unwrap_or_default();
+        let body_hint = crate::iris::http::text_or_default(resp).await;
         return http_err_json(status, body_hint.trim());
     }
 
-    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
     let content = doc_content_to_string(&body);
     let ts = body["result"]["content"][0]["ts"]
         .as_str()
@@ -499,6 +509,33 @@ async fn handle_put(
     .await
 }
 
+/// Store `content` as the document `name` and compile it: `iris_doc` put with `compile` set, for a
+/// caller that holds the text itself (`iris_generate_class`). The compile-time gate, the stored
+/// include check, the source-control probe, the storage guardrail and the superclass check all run
+/// as they do for the tool, and a refusal comes back as the same error result.
+pub(crate) async fn put_and_compile(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    name: &str,
+    content: &str,
+    ns: &str,
+    elicitation_store: &crate::elicitation::ElicitationStore,
+    checkout_cache: &crate::elicitation::CheckoutCache,
+) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+    write_with_scm(
+        iris,
+        client,
+        name,
+        content,
+        ns,
+        true,
+        false,
+        elicitation_store,
+        checkout_cache,
+    )
+    .await
+}
+
 /// Run the SCM pre-write check, then write. Shared by mode=put and the surgical
 /// edit modes (insert/delete_lines) so they all honour source-control checkout and
 /// the elicitation dialog identically. `content` is the full document body to write.
@@ -516,6 +553,13 @@ async fn write_with_scm(
     elicitation_store: &crate::elicitation::ElicitationStore,
     checkout_cache: &crate::elicitation::CheckoutCache,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+    // The source-control probe and the storage check are requests to the server. Text the
+    // compile-time gate refuses is not worth one: refuse it here, before either. `do_write` runs
+    // the scan again on the same content, so every path that skips this still meets it.
+    if let (_, Some(refusal)) = compile_time_gate(name, content)? {
+        return crate::tools::err_result(refusal);
+    }
+
     // SCM takes precedence over the storage guardrail: every path below
     // resolves checkout first, and only once it's settled do we run
     // check_storage_reset just before do_write.
@@ -552,12 +596,7 @@ async fn write_with_scm(
     // returns action=1 ("needs confirmation dialog"), which made every chained surgical edit
     // (insert/delete_lines on an already-checked-out doc) re-elicit "requires checkout" forever.
     // In that case emit a PROCEED sentinel and write directly.
-    let n_lit = crate::objectscript::os_lit_inner(name);
-    let scm_check = format!(
-        "set scmClass=##class(%Studio.SourceControl.Interface).SourceControlClassGet() if scmClass=\"\" {{ write \"NO_SCM\" }} else {{ set sc=##class(%Studio.SourceControl.Interface).SourceControlCreate(\"{u_lit}\",\"{p_lit}\",.c,.f,.o) set obj=$get(%SourceControl) if '$IsObject(obj) {{ write \"NO_SCM\" }} else {{ set hasUndoCheckout=0 try {{ set rset=##class(%ResultSet).%New(\"%Studio.SourceControl.Interface:MenuItems\") set sc=rset.Execute(\"%SourceMenu\",\"{n_lit}\",\"\") while rset.Next() {{ if rset.GetData(2)&&(rset.GetData(1)=\"%UndoCheckout\") {{ set hasUndoCheckout=1 }} }} }} catch {{}} if hasUndoCheckout {{ write \"PROCEED|\" }} else {{ set action=0 set msg=\"\" set target=\"\" set reload=0 set sc=obj.UserAction(0,\"%SourceMenu,%CheckOut\",\"{n_lit}\",\"\",.action,.target,.msg,.reload) write action_\"|\"_msg }} }} }}",
-        u_lit = crate::objectscript::os_lit_inner(&iris.username),
-        p_lit = crate::objectscript::os_lit_inner(&iris.password),
-    );
+    let scm_check = scm_checkout_probe_code(name);
     // Whether the probe told us the doc is already writable by us (PROCEED / already checked out).
     // Only such a "we hold it" outcome is safe to cache — NOT NO_SCM (no source control at all),
     // where there is no checkout to remember.
@@ -600,37 +639,39 @@ async fn write_with_scm(
                 ),
             );
         }
-        // "NO_SCM" → no source control; "PROCEED" → we already hold the checkout.
-        // Both skip the checkout dialog and fall through to do_write below.
-        if out.starts_with("PROCEED") {
-            we_hold_checkout = true;
-        } else if out != "NO_SCM" {
-            let parts: Vec<&str> = out.splitn(2, '|').collect();
-            let action_code = parts
-                .first()
-                .and_then(|s| s.trim().parse::<u8>().ok())
-                .unwrap_or(0);
-            let msg = parts.get(1).map(|s| s.trim()).unwrap_or("");
-
-            if action_code == 1 {
-                let eid = elicitation_store.insert(
-                    name,
-                    crate::elicitation::ElicitationAction::Put,
-                    Some(content.to_string()),
-                    None,
-                    ns.to_string(),
-                );
-                return ok_json(serde_json::json!({
-                    "success": false,
-                    "elicitation_required": true,
-                    "elicitation_id": eid,
-                    "message": if msg.is_empty() { format!("{} requires checkout. Check out and write?", name) } else { msg.to_string() },
-                    "options": ["yes", "no"],
-                }));
-            } else if action_code == 6 {
-                return err_json("SCM_REJECTED", &format!("Source control rejected: {}", msg));
+        // The probe answers in a record: no source control, a checkout this session already holds,
+        // or a `UserAction` answer. Anything else is a refusal, never a go-ahead.
+        match probe_outcome(&out) {
+            Err((code, detail)) => return err_json(code, &detail),
+            Ok(ProbeAnswer::NoSourceControl) => {}
+            Ok(ProbeAnswer::WeHoldIt) => we_hold_checkout = true,
+            Ok(ProbeAnswer::Action(ans)) => {
+                use crate::tools::scm::{action_gate, needs_input_refusal, ActionGate};
+                match action_gate(&ans, name) {
+                    ActionGate::Proceed => {}
+                    ActionGate::Dialog(msg) => {
+                        let eid = elicitation_store.insert(
+                            name,
+                            crate::elicitation::ElicitationAction::Put,
+                            Some(content.to_string()),
+                            None,
+                            ns.to_string(),
+                        );
+                        return ok_json(serde_json::json!({
+                            "success": false,
+                            "elicitation_required": true,
+                            "elicitation_id": eid,
+                            "message": if msg.is_empty() { format!("{} requires checkout. Check out and write?", name) } else { msg },
+                            "options": ["yes", "no"],
+                        }));
+                    }
+                    ActionGate::Prompt(msg) => {
+                        let (code, detail) = needs_input_refusal(name, &msg);
+                        return err_json(code, &detail);
+                    }
+                    ActionGate::Refuse(code, detail) => return err_json(code, &detail),
+                }
             }
-            // action_code == 0: proceed
         }
     }
 
@@ -683,7 +724,7 @@ pub(crate) async fn fetch_doc_content(
     if !resp.status().is_success() {
         return None;
     }
-    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
     Some(doc_content_to_string(&body))
 }
 
@@ -799,6 +840,22 @@ fn write_result_succeeded(result: &rmcp::model::CallToolResult) -> bool {
         .unwrap_or(false)
 }
 
+/// The compile-time gate on `content` as the document `name`: the gate's switch for the target
+/// server, and the refusal when the switch is on and the text holds code that runs while it
+/// compiles. Pure, so a caller can run it before it sends anything.
+fn compile_time_gate(
+    name: &str,
+    content: &str,
+) -> Result<(crate::tools::target::CompileGate, Option<serde_json::Value>), rmcp::ErrorData> {
+    let gate = crate::tools::target::compile_gate()?;
+    let refusal = if gate.on {
+        crate::policy::code_edit_gate::check_compile_time_code_mode(content, name)
+    } else {
+        None
+    };
+    Ok((gate, refusal))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn do_write(
     iris: &IrisConnection,
@@ -819,10 +876,32 @@ async fn do_write(
              If a previous call lost its arguments, resend with name/content set explicitly.",
         );
     }
-    // Compile-time code execution gate: block CodeMode = objectgenerator/generator/expression/call.
-    // Fires on the FULL assembled content, so multi-call assembly tricks are moot.
-    if let Some(err) = crate::policy::code_edit_gate::check_compile_time_code_mode(content, name) {
-        return ok_json(err);
+    // Compile-time code execution gate: generators, preprocessor directives, braced parameters,
+    // projections; `.cls` (UDL or class XML), `.mac` and `.inc`. Fires on the FULL assembled
+    // content, so multi-call assembly tricks are moot. A refusal is an error result. The switch is
+    // the target server's (R4a D9); a put that ran with it off says so.
+    let (gate, refusal) = compile_time_gate(name, content)?;
+    if let Some(err) = refusal {
+        return crate::tools::err_result(err);
+    }
+
+    // The compile runs what the stored `.inc` files it includes say to run, so those are read and
+    // scanned before the upload, like a local file given to `iris_compile`. Without `compile`
+    // nothing runs, and the includes are the compile's to check when it comes.
+    if compile_after && gate.on {
+        if let Some(err) = super::stored_check::check_http(
+            iris,
+            client,
+            namespace,
+            vec![super::stored_check::Seed::Content {
+                doc: name.to_string(),
+                content: content.to_string(),
+            }],
+        )
+        .await
+        {
+            return crate::tools::err_result(err);
+        }
     }
 
     // Write content verbatim, exactly as supplied — matching the Atelier REST
@@ -845,12 +924,12 @@ async fn do_write(
 
     let put_status = resp.status();
     if !put_status.is_success() {
-        let body_hint = resp.text().await.unwrap_or_default();
+        let body_hint = crate::iris::http::text_or_default(resp).await;
         return http_err_json(put_status, body_hint.trim());
     }
     // Check body for Atelier-level errors (200 OK with status.errors, e.g. build 110
     // SetTextFromString NULL namespace bug via web gateway).
-    let put_body: serde_json::Value = resp.json().await.unwrap_or_default();
+    let put_body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
     if let Some(errs) = put_body["status"]["errors"].as_array() {
         if !errs.is_empty() {
             let msg = errs[0]["error"]
@@ -866,6 +945,23 @@ async fn do_write(
     let open_uri = format!("isfs://{}/{}", namespace, name);
 
     if compile_after {
+        // The put stored the class, so its `Extends` is readable in the dictionary now. A
+        // superclass IRIS would compile with it is refused (FR-015a); the document stays written
+        // and nothing is compiled.
+        if gate.on {
+            if let super::stored_check::Outcome::Refused(mut err) =
+                super::superclass_check::check_http(
+                    iris,
+                    client,
+                    namespace,
+                    std::slice::from_ref(&name.to_string()),
+                )
+                .await
+            {
+                err["written"] = serde_json::Value::Bool(true);
+                return crate::tools::err_result(err);
+            }
+        }
         let compile_url = iris.versioned_ns_url(namespace, "/action/compile?flags=cuk");
         let compile_resp = client
             .post(&compile_url)
@@ -880,7 +976,7 @@ async fn do_write(
                 // Non-2xx (e.g. HTTP 400 on concurrent compile conflict) means compile did not run.
                 let compile_status = r.status();
                 if !compile_status.is_success() {
-                    let hint = r.text().await.unwrap_or_default();
+                    let hint = crate::iris::http::text_or_default(r).await;
                     let msg = format!(
                         "Compile request failed: HTTP {} {}",
                         compile_status,
@@ -888,7 +984,7 @@ async fn do_write(
                     );
                     return err_json("COMPILE_FAILED", &msg);
                 }
-                let body: serde_json::Value = r.json().await.unwrap_or_default();
+                let body: serde_json::Value = crate::iris::http::json_or_default(r).await;
                 let console: Vec<String> = body["console"]
                     .as_array()
                     .map(|a| {
@@ -943,10 +1039,13 @@ async fn do_write(
                 &[compile_errors.as_slice(), compile_console.as_slice()].concat(),
             );
         }
+        gate.note_if_off(&mut resp);
         return ok_json(resp);
     }
 
-    ok_json(serde_json::json!({"success": true, "name": name, "open_uri": open_uri}))
+    let mut resp = serde_json::json!({"success": true, "name": name, "open_uri": open_uri});
+    gate.note_if_off(&mut resp);
+    ok_json(resp)
 }
 
 async fn handle_delete(
@@ -967,23 +1066,18 @@ async fn handle_delete(
                 .send()
                 .await
             {
-                Ok(r) if r.status().is_success() => {
-                    // HTTP 200 doesn't mean the delete happened — a locked / checked-out doc
-                    // (ERROR #5845) still returns 200 with the failure in status.errors. Treat a
-                    // non-empty status.errors as a failure so a locked doc lands in `errors`, not
-                    // `deleted` (same false-positive fix as the single-delete path).
-                    let body: serde_json::Value = r.json().await.unwrap_or_default();
-                    match body["status"]["errors"].as_array() {
-                        Some(errs) if !errs.is_empty() => {
-                            let msg = errs[0]["error"].as_str().unwrap_or("delete failed");
-                            errors.push(serde_json::json!({"name": name, "error": msg}));
+                Ok(r) => {
+                    // A 200 can carry a refusal (a locked document, or source control refusing in
+                    // `OnBeforeDelete`), so the reply body decides, not the status.
+                    let status = r.status();
+                    let text = crate::iris::http::text_or_default(r).await;
+                    match crate::iris::connection::delete_outcome(status, &text) {
+                        crate::iris::connection::DeleteOutcome::Gone => deleted.push(name.clone()),
+                        other => {
+                            errors.push(serde_json::json!({"name": name, "error": other.why()}))
                         }
-                        _ => deleted.push(name.clone()),
                     }
                 }
-                Ok(r) => errors.push(
-                    serde_json::json!({"name": name, "error": format!("HTTP {}", r.status())}),
-                ),
                 Err(e) => errors.push(serde_json::json!({"name": name, "error": e.to_string()})),
             }
         }
@@ -1009,21 +1103,17 @@ async fn handle_delete(
         return err_json("NOT_FOUND", &format!("Document not found: {name}"));
     }
     if !del_status.is_success() {
-        let body_hint = resp.text().await.unwrap_or_default();
+        let body_hint = crate::iris::http::text_or_default(resp).await;
         return http_err_json(del_status, body_hint.trim());
     }
-    // Atelier returns HTTP 200 even when the delete failed server-side (e.g. the doc is locked /
-    // checked out → ERROR #5845): the real failure is in the JSON body's status.errors, not the
-    // HTTP status. Without this check we'd report success:true for a delete that never happened —
-    // a dangerous false positive for any caller that trusts it (mirrors the put path above).
-    let del_body: serde_json::Value = resp.json().await.unwrap_or_default();
-    if let Some(errs) = del_body["status"]["errors"].as_array() {
-        if !errs.is_empty() {
-            let msg = errs[0]["error"]
-                .as_str()
-                .unwrap_or("Document delete failed");
-            return err_json("DELETE_FAILED", msg);
-        }
+    // Atelier answers 200 for a delete it refused: a locked document puts the reason in
+    // `status.errors`, a source-control `OnBeforeDelete` refusal in `result.status`. Reporting
+    // success for either is a false positive any caller would trust.
+    let del_text = crate::iris::http::text_or_default(resp).await;
+    if let crate::iris::connection::DeleteOutcome::Refused(msg) =
+        crate::iris::connection::delete_outcome(del_status, &del_text)
+    {
+        return err_json("DELETE_FAILED", &msg);
     }
     ok_json(serde_json::json!({"success": true, "name": name}))
 }
@@ -1246,10 +1336,10 @@ async fn fetch_doc_lines(
         return Ok(None);
     }
     if !status.is_success() {
-        let body_hint = resp.text().await.unwrap_or_default();
+        let body_hint = crate::iris::http::text_or_default(resp).await;
         return Err(http_err_json(status, body_hint.trim()).unwrap());
     }
-    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
     let lines: Vec<String> = body["result"]["content"]
         .as_array()
         .map(|a| {
@@ -1560,11 +1650,11 @@ async fn handle_fragment(
         return err_json("NOT_FOUND", &format!("Document not found: {name}"));
     }
     if !status.is_success() {
-        let body_hint = resp.text().await.unwrap_or_default();
+        let body_hint = crate::iris::http::text_or_default(resp).await;
         return http_err_json(status, body_hint.trim());
     }
 
-    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
     let all_lines: Vec<String> = body["result"]["content"]
         .as_array()
         .map(|a| {
@@ -1770,7 +1860,7 @@ async fn fetch_docnames_for_cat(
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
-    let body: serde_json::Value = resp.json().await.unwrap_or_default();
+    let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
     let docs = body["result"]["content"]
         .as_array()
         .cloned()
@@ -2052,6 +2142,64 @@ pub(crate) fn doc_content_to_string(body: &serde_json::Value) -> String {
                 .join("\n")
         })
         .unwrap_or_default()
+}
+
+/// The pre-write probe. It writes one record (see `scm::SCM_RECORD`): kind `none` when there is no
+/// source control, `hold` when this session already holds the checkout, otherwise the `action`
+/// record of `UserAction(%CheckOut)`.
+///
+/// `SourceControlCreate` gets `$USERNAME` and an empty password (FR-020), so the connection
+/// account's password is not in the class source this snippet is stored as.
+#[doc(hidden)]
+pub fn scm_checkout_probe_code(name: &str) -> String {
+    let n_lit = crate::objectscript::os_lit_inner(name);
+    let create = crate::tools::scm::SCM_CREATE_CALL;
+    let none = probe_record_literal("none");
+    let hold = probe_record_literal("hold");
+    let unavailable = probe_record_literal("unavailable");
+    let action = crate::tools::scm::user_action_record_code("%CheckOut", &n_lit);
+    let write = crate::tools::scm::WRITE_RECORD;
+    format!(
+        "set scmClass=##class(%Studio.SourceControl.Interface).SourceControlClassGet() if scmClass=\"\" {{ write {none} }} else {{ {create} set obj=$get(%SourceControl) if '$IsObject(obj) {{ write {unavailable} }} else {{ set hasUndoCheckout=0 try {{ set rset=##class(%ResultSet).%New(\"%Studio.SourceControl.Interface:MenuItems\") set sc=rset.Execute(\"%SourceMenu\",\"{n_lit}\",\"\") while rset.Next() {{ if rset.GetData(2)&&(rset.GetData(1)=\"%UndoCheckout\") {{ set hasUndoCheckout=1 }} }} }} catch {{}} if hasUndoCheckout {{ write {hold} }} else {{ {action}{write} }} }} }}"
+    )
+}
+
+/// An ObjectScript string literal holding a one-field record of `kind`.
+fn probe_record_literal(kind: &str) -> String {
+    format!(
+        "\"{}{{\"\"kind\"\":\"\"{kind}\"\"}}\"",
+        crate::tools::scm::SCM_RECORD
+    )
+}
+
+/// What the pre-write probe found.
+#[derive(Debug)]
+pub enum ProbeAnswer {
+    /// No source-control class is set for the namespace, so there is no checkout to satisfy.
+    NoSourceControl,
+    /// The menu offers `%UndoCheckout`: this session already holds the checkout.
+    WeHoldIt,
+    /// `UserAction` for `%CheckOut` answered with a documented code.
+    Action(crate::tools::scm::ActionAnswer),
+}
+
+/// Read the probe's output. `Err` carries the refusal for a reply that is none of the three
+/// answers: the old bare `NO_SCM` and `PROCEED|` words and a `code|message` line are not read, and
+/// nothing unreadable becomes "proceed".
+pub fn probe_outcome(out: &str) -> Result<ProbeAnswer, crate::tools::scm::Refusal> {
+    let rec = crate::tools::scm::record_or_refusal(out)?;
+    match rec.kind.as_str() {
+        "none" => Ok(ProbeAnswer::NoSourceControl),
+        "hold" => Ok(ProbeAnswer::WeHoldIt),
+        // A class is set but `SourceControlCreate` made no object: not the same as no class.
+        "unavailable" => Err((
+            "SCM_UNAVAILABLE",
+            "A source-control class is set for this namespace but its session could not be \
+             started, so the write was refused rather than made without a checkout."
+                .to_string(),
+        )),
+        _ => crate::tools::scm::answer_from_record(&rec).map(ProbeAnswer::Action),
+    }
 }
 
 #[cfg(test)]

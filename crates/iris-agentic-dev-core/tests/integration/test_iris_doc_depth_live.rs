@@ -61,6 +61,7 @@ fn list_params(pattern: &str, category: &str, max_results: i64) -> IrisDocParams
 
 fn execute_method_params(class: &str, method: &str, args: Vec<&str>) -> IrisExecuteMethodParams {
     IrisExecuteMethodParams {
+        confirm: false,
         class: class.to_string(),
         method: method.to_string(),
         args: args.iter().map(|s| s.to_string()).collect(),

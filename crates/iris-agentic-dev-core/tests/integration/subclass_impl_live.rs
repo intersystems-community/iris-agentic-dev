@@ -21,12 +21,11 @@
 //!    `%Library.Persistent` in USER took 29 s, which is what made the two `_v2`/`_cache_hit` tests
 //!    look flaky under a long serial run — they were timing out, not losing the connection.
 
-use iris_agentic_dev_core::elicitation::{CheckoutCache, ElicitationStore};
 use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
 use iris_agentic_dev_core::tools::dict::{
     handle_find_subclass_implementations, FindSubclassImplementationsParams, MetadataCache,
 };
-use iris_agentic_dev_core::tools::doc::{handle_iris_doc, IrisDocParams};
+use iris_agentic_dev_core::tools::{IrisTools, Toolset};
 
 fn make_conn() -> Option<(IrisConnection, reqwest::Client)> {
     let host = std::env::var("IRIS_HOST").unwrap_or_default();
@@ -206,8 +205,7 @@ async fn a_sibling_whose_name_extends_the_base_is_not_a_descendant() {
     let Some((iris, client)) = make_conn() else {
         return;
     };
-    let store = ElicitationStore::new();
-    let checkout = CheckoutCache::new();
+    let tools = IrisTools::for_test_gates_open(Some(iris.clone()), Toolset::Merged).unwrap();
 
     let fixtures = [
         (
@@ -225,12 +223,11 @@ async fn a_sibling_whose_name_extends_the_base_is_not_a_descendant() {
         ),
     ];
     for (name, content) in fixtures {
-        let p: IrisDocParams = serde_json::from_value(serde_json::json!({
+        let p = serde_json::json!({
             "mode": "put", "name": name, "content": content,
             "namespace": "USER", "compile": true
-        }))
-        .unwrap();
-        let r = handle_iris_doc(&iris, &client, p, &store, &checkout).await;
+        });
+        let r = tools.call_gated("iris_doc", p).await;
         let text = r.unwrap().content[0].as_text().unwrap().text.clone();
         let j: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(j["success"], true, "fixture {name} failed to compile: {j}");

@@ -30,6 +30,10 @@ pub struct IrisCredentialListParams {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IrisCredentialManageParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     /// `create`, `update`, or `delete`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("enum" = ["create", "update", "delete"]))]
@@ -52,6 +56,10 @@ pub struct IrisCredentialManageParams {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IrisLookupManageParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     /// `get`, `set`, `delete`, `list_keys`, or `list_tables`. The first, fourth and fifth are
     /// read-only; `set` and `delete` need the destructive tier, and so does any value this list does
     /// not contain.
@@ -76,6 +84,10 @@ pub struct IrisLookupManageParams {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IrisLookupTransferParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     /// `export` (read-only) or `import` (write-gated).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("enum" = ["export", "import"]))]

@@ -1,4 +1,4 @@
-// Integration tests: dispatch_gate() wiring through tool handlers.
+// Integration tests: gated::dispatch() wiring through tool handlers.
 //
 // Verifies that when a ConnectionPolicy with mcpTemplate=live is configured,
 // the tool handlers return ENV_GATE_BLOCKED before any IRIS call is made.

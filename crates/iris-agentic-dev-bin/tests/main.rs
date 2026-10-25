@@ -7,5 +7,12 @@
 //! file up as its own target and compile everything twice. That flag also means a new file in
 //! `tests/` is invisible until its `mod` line appears below.
 
+// Runs before `main`, so before any test thread: no test in this binary reaches the developer's
+// real keychain or home directory. See `testing::isolate_process`.
+#[ctor::ctor]
+fn isolate_the_test_process() {
+    iris_agentic_dev_core::testing::isolate_process();
+}
+
 mod benchmark_relocated_binary_tests;
 mod plugin_dispatch_tests;

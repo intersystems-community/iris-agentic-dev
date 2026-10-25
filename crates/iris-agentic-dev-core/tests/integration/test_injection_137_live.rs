@@ -86,12 +86,16 @@ fn answer(msg: &Value) -> Value {
 /// Calls `tool` once per payload; the sentinel must survive every call, and when `code` is given,
 /// every call must be refused with it.
 async fn case(tool: &str, args: Value, code: Option<&str>) {
+    case_in(tool, args, code, &live_env()).await;
+}
+
+/// [`case`] against a server started with `env`.
+async fn case_in(tool: &str, args: Value, code: Option<&str>, env: &[(String, String)]) {
     require_iad_binary().expect("binary");
-    let env = live_env();
     let mut failures = Vec::new();
     for p in PAYLOADS {
         sentinel_set().await;
-        let got = answer(&call_tool_with_env(tool, &fill(&args, p), &env));
+        let got = answer(&call_tool_with_env(tool, &fill(&args, p), env));
         if !sentinel_alive().await {
             failures.push(format!("{p:?} killed the sentinel: {got}"));
         }
@@ -217,12 +221,19 @@ async fn injection_137_a09_table_info_and_dispatch() {
 #[tokio::test]
 #[ignore]
 async fn injection_137_a03_interop_body_where() {
+    let args =
+        json!({"what": "messages", "body_class": "Ens.StringRequest", "body_where": "1=1; @P"});
+    // Body mode is a bulk-data call (141 T214): under the default policy the gate answers first.
     case(
         "iris_interop_query",
-        json!({"what": "messages", "body_class": "Ens.StringRequest", "body_where": "1=1; @P"}),
-        Some("INVALID_PARAMS"),
+        args.clone(),
+        Some("DATA_POLICY_BLOCKED"),
     )
     .await;
+    // On a server that allows data reads, the fragment check is what refuses it.
+    let mut env = live_env();
+    env.extend(iris_agentic_dev_core::testing::data_reads_allowed_env());
+    case_in("iris_interop_query", args, Some("INVALID_PARAMS"), &env).await;
 }
 
 /// A12: the journal route through iris_admin. Under the default `dataPolicy = "block"` the bulk-PHI

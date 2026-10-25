@@ -42,8 +42,10 @@ impl InitCommand {
             iris_agentic_dev_core::tools::list_iris_containers_pub(&workspace_basename).await;
         if containers.is_empty() {
             eprintln!(
-                "⚠ No running IRIS containers found. If your container was started without \
-                 IRIS_PASSWORD, restart with: docker run -e IRIS_PASSWORD=SYS ..."
+                "⚠ No running IRIS containers found. To start one that only this machine can \
+                 reach and give it a generated _SYSTEM password, follow steps 3 and 4 of the \
+                 iris-agentic-dev-setup skill (docker run -p 127.0.0.1:... and a password sent \
+                 on docker exec -i stdin)."
             );
         }
         let suggested_container = containers

@@ -113,6 +113,10 @@ pub struct IrisInteropQueryParams {
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IrisProductionItemParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     /// `enable`, `disable`, `get_settings`, or `set_settings`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("enum" = ["enable", "disable", "get_settings", "set_settings"]))]
@@ -167,17 +171,21 @@ pub struct IrisMessageBodyParams {
     /// Required with `dataPolicy=allow`: acknowledges that the body may contain PHI.
     #[serde(
         rename = "acknowledgePhi",
+        alias = "acknowledge_phi",
         default,
         skip_serializing_if = "Option::is_none"
     )]
     pub acknowledge_phi: Option<bool>,
-    /// `block` (default), `allow`, or `redact`. The server's own policy is applied first, so this
-    /// cannot widen what a `.iris-agentic-dev.toml` has restricted.
+    /// `block`, `redact`, or `allow`; any other value is `INVALID_PARAMS`. Omitted means the server's
+    /// own policy. The stricter of this and the server's policy applies, so it cannot widen what a
+    /// configuration file has restricted.
     #[serde(
         rename = "dataPolicy",
+        alias = "data_policy",
         default,
         skip_serializing_if = "Option::is_none"
     )]
+    #[schemars(extend("enum" = ["block", "redact", "allow"]))]
     pub data_policy: Option<String>,
     /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]

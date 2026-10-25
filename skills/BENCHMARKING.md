@@ -63,9 +63,11 @@ up the latest release.
 ```bash
 # 1. Start the IRIS benchmark container
 docker run -d --name iris-bench \
-  -p 1972:1972 -p 52773:52773 \
+  -p 127.0.0.1:1972:1972 -p 127.0.0.1:52773:52773 \
   intersystemsdc/iris-community:latest
 sleep 30   # wait for IRIS to finish starting before the next step
+# The fresh container's _SYSTEM password is expired. Set a new one with step 4 of
+# skills/iris-agentic-dev-setup/SKILL.md, then: export IRIS_PASSWORD="$PW"
 
 # 2. Get the SKILL.md files (only needed if you don't already have a local clone —
 #    the harness itself needs no repository, only the skill file you want to test)
@@ -461,7 +463,7 @@ this Quick Start exercises. `--suite mf` / `--suite sql` will error with
 ### No IRIS connection found
 
 ```bash
-docker run -d --name iris-bench -p 1972:1972 -p 52773:52773 \
+docker run -d --name iris-bench -p 127.0.0.1:1972:1972 -p 127.0.0.1:52773:52773 \
   intersystemsdc/iris-community:latest
 export IRIS_HOST=localhost
 export IRIS_WEB_PORT=52773

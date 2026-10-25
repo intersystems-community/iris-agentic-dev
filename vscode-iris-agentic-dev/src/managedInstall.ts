@@ -4,8 +4,14 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import which from "which";
+import * as crypto from "crypto";
 import { downloadBinary } from "./download";
-import { getBinaryName, getDownloadUrl, getServerVersion } from "./platform";
+import {
+  getAssetSha256,
+  getBinaryName,
+  getDownloadUrl,
+  getServerVersion,
+} from "./platform";
 import {
   applyRegistrations,
   installStableBinary,
@@ -13,6 +19,30 @@ import {
   registrationFiles,
   scanRegistrations,
 } from "./stablePath";
+
+/** Seams for tests; the extension itself always uses the defaults. */
+export interface InstallDeps {
+  download: typeof downloadBinary;
+}
+
+function sha256File(file: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    fs.createReadStream(file)
+      .on("data", (chunk) => hash.update(chunk))
+      .on("error", reject)
+      .on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+/** True when `file` exists and hashes to `expected`. Never throws. */
+async function matchesPin(file: string, expected: string): Promise<boolean> {
+  try {
+    return (await sha256File(file)) === expected;
+  } catch {
+    return false;
+  }
+}
 
 // `iris-agentic-dev --version` prints "iris-agentic-dev 0.9.6".
 const VERSION_OUTPUT = /(\d+\.\d+\.\d+)/;
@@ -65,17 +95,19 @@ function expectedServerVersion(
 let activeResolve: Promise<string | null> | undefined;
 
 export function resolveServerBinary(
-  context: vscode.ExtensionContext
+  context: vscode.ExtensionContext,
+  deps: InstallDeps = { download: downloadBinary }
 ): Promise<string | null> {
   if (activeResolve) return activeResolve;
-  activeResolve = _resolve(context).finally(() => {
+  activeResolve = _resolve(context, deps).finally(() => {
     activeResolve = undefined;
   });
   return activeResolve;
 }
 
 async function _resolve(
-  context: vscode.ExtensionContext
+  context: vscode.ExtensionContext,
+  deps: InstallDeps
 ): Promise<string | null> {
   const log = vscode.window.createOutputChannel("iris-agentic-dev", {
     log: true,
@@ -151,6 +183,23 @@ async function _resolve(
     );
     return null;
   }
+
+  // The extension runs what it installs, so it installs only a binary it can
+  // check against a hash it carries (stamped by the release workflow). No
+  // pin for this platform, no install: that also covers a checkout or a
+  // hand-built VSIX that was never stamped.
+  const pinned = getAssetSha256(context.extension.packageJSON, binaryName);
+  if (!pinned) {
+    log.error(
+      `iris-agentic-dev: this extension build has no pinned SHA-256 for ${binaryName}, ` +
+        "so it will not download or run a managed binary. Install the server yourself " +
+        "(brew install, or a release asset from " +
+        "https://github.com/intersystems-community/iris-agentic-dev/releases) and set " +
+        "iris-agentic-dev.serverPath."
+    );
+    return null;
+  }
+
   const storageDir = context.globalStorageUri.fsPath;
   const versionFile = path.join(storageDir, "iris-agentic-dev.version");
   const binaryDir = path.join(storageDir, `iris-agentic-dev-${version}`);
@@ -162,18 +211,25 @@ async function _resolve(
     .then((s) => s.trim())
     .catch(() => "");
 
-  if (cachedVersion === version) {
-    try {
-      fs.accessSync(binaryPath, fs.constants.X_OK);
-      // On Windows: clean up leftover .old binary from previous update
-      if (process.platform === "win32") {
-        const oldPath = binaryPath + ".old";
-        await fs.promises.unlink(oldPath).catch(() => {});
+  if (cachedVersion === version && fs.existsSync(binaryPath)) {
+    if (await matchesPin(binaryPath, pinned)) {
+      try {
+        fs.accessSync(binaryPath, fs.constants.X_OK);
+        // On Windows: clean up leftover .old binary from previous update
+        if (process.platform === "win32") {
+          await fs.promises.unlink(binaryPath + ".old").catch(() => {});
+        }
+        log.info(`iris-agentic-dev: using cached binary v${version}: ${binaryPath}`);
+        return publish(context, binaryPath, storageDir, version, log);
+      } catch {
+        // Not executable despite the version marker — fall through to download
       }
-      log.info(`iris-agentic-dev: using cached binary v${version}: ${binaryPath}`);
-      return publish(context, binaryPath, storageDir, version, log);
-    } catch {
-      // Binary missing despite version marker — fall through to download
+    } else {
+      log.warn(
+        `iris-agentic-dev: cached binary ${binaryPath} does not match the pinned SHA-256; ` +
+          "deleting it and downloading again."
+      );
+      await fs.promises.unlink(binaryPath).catch(() => {});
     }
   }
 
@@ -206,12 +262,17 @@ async function _resolve(
           message: `Downloading MCP server v${version}…`,
           increment: 0,
         });
-        await downloadBinary(downloadUrl, binaryPath, (fraction) => {
-          progress.report({
-            message: `Downloading MCP server v${version} (${Math.round(fraction * 100)}%)`,
-            increment: fraction * 100,
-          });
-        });
+        await deps.download(
+          downloadUrl,
+          binaryPath,
+          (fraction) => {
+            progress.report({
+              message: `Downloading MCP server v${version} (${Math.round(fraction * 100)}%)`,
+              increment: fraction * 100,
+            });
+          },
+          pinned
+        );
       }
     );
   } catch (err) {
@@ -229,24 +290,41 @@ async function _resolve(
     return publish(context, binaryPath, storageDir, version, log);
   }
 
-  // Download failed — fall back to stale cache if available
-  log.warn(
-    `iris-agentic-dev: download failed: ${downloadError.message}. Checking for stale cached binary.`
-  );
-  try {
-    fs.accessSync(binaryPath, fs.constants.X_OK);
-    log.warn(
-      `iris-agentic-dev: falling back to stale binary v${cachedVersion}: ${binaryPath}`
-    );
-    return publish(context, binaryPath, storageDir, version, log);
-  } catch {
+  // Download failed — fall back to a cached copy, but only one that matches
+  // the pin. A hash mismatch is also shown to the user: it is the one failure
+  // that may mean the release asset is not what the extension was built for.
+  if ((downloadError as { code?: unknown }).code === "HASH_MISMATCH") {
     log.error(
+      `iris-agentic-dev: the downloaded server binary does not match the SHA-256 pinned ` +
+        `in this extension (${downloadError.message}). The download was deleted and not run.`
+    );
+    void vscode.window.showErrorMessage(
+      "iris-agentic-dev: the downloaded server binary failed its SHA-256 check and was " +
+        "deleted. Update the extension, or install the server yourself and set " +
+        "iris-agentic-dev.serverPath."
+    );
+  } else {
+    log.warn(
+      `iris-agentic-dev: download failed: ${downloadError.message}. Checking for stale cached binary.`
+    );
+  }
+  if (await matchesPin(binaryPath, pinned)) {
+    try {
+      fs.accessSync(binaryPath, fs.constants.X_OK);
+      log.warn(
+        `iris-agentic-dev: falling back to cached binary v${cachedVersion || version}: ${binaryPath}`
+      );
+      return publish(context, binaryPath, storageDir, version, log);
+    } catch {
+      // not executable; fall through
+    }
+  }
+  log.error(
       `iris-agentic-dev: download failed and no cached binary available. ` +
         "Download manually from https://github.com/intersystems-community/iris-agentic-dev/releases " +
         "and set iris-agentic-dev.serverPath."
     );
-    return null;
-  }
+  return null;
 }
 
 /**

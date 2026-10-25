@@ -302,10 +302,10 @@ impl ToolCommand {
             }
         };
 
-        let tools = IrisTools::new_with_toolset(iris, Toolset::from_str(&self.toolset))?;
+        let tools = super::dispatch::build_tools_for(iris, Toolset::from_str(&self.toolset))?;
         let t0 = Instant::now();
 
-        match tools.call_for_test(&name, args_json).await {
+        match tools.call_gated(&name, args_json).await {
             Ok(result) => {
                 let elapsed_ms = t0.elapsed().as_millis() as u64;
                 if envelope {

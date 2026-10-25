@@ -54,6 +54,8 @@ enum Commands {
     CapabilityMatrix(cmd::capability_matrix::CapabilityMatrixCommand),
     /// Export or inspect tool-call telemetry records
     Telemetry(cmd::telemetry::TelemetryCommand),
+    /// Trust a project's .iris-agentic-dev.toml: let its loosening settings apply (needs a terminal)
+    Trust(cmd::trust::TrustCommand),
     /// Any unrecognized subcommand — dispatched to an `iris-agentic-dev-<name>` plugin on
     /// PATH if one exists (regression: clap rejects unknown subcommands with exit code 2
     /// before main()'s own dispatch logic ever runs, so plugin dispatch was dead code
@@ -119,6 +121,7 @@ async fn async_main() -> Result<()> {
         Some(Commands::CheckSmCredential(cmd)) => cmd.run().await,
         Some(Commands::CapabilityMatrix(cmd)) => cmd.run().await,
         Some(Commands::Telemetry(cmd)) => cmd.run().await,
+        Some(Commands::Trust(cmd)) => cmd.run().await,
         Some(Commands::External(args)) => {
             let name = args
                 .first()

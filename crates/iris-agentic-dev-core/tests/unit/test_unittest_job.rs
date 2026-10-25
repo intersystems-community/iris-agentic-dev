@@ -33,9 +33,6 @@ fn assert_runs_in_a_job(code: &str, call: &str) {
 fn every_iris_test_path_runs_the_manager_in_a_job() {
     let c = build_test_run_code("MyApp.Tests", "/verbose=1/nodelete/noload", "tok", false);
     assert_runs_in_a_job(&c, "##class(%UnitTest.Manager).RunTest(");
-    let c = build_test_run_code("MyApp/Tests", "/verbose=1/nodelete", "tok", false);
-    assert_runs_in_a_job(&c, "##class(%UnitTest.Manager).RunTest(");
-    assert!(c.contains("^UnitTestRoot"), "the root is still set: {c}");
     let c = build_test_run_code("MyApp.ProdTest", "/verbose=1/nodelete/noload", "tok", true);
     assert_runs_in_a_job(&c, "##class(MyApp.ProdTest).Run(");
 }

@@ -1207,6 +1207,79 @@ def test_objectscript_splice() -> None:
     )
 
 
+# A positional `{}` or `{0}` placeholder names nothing, so the named-only pattern never saw it.
+SPLICE_POSITIONAL_EMPTY = """
+fn p1(a: &str, b: &str) -> String {
+    format!(" Set {} = \\"{}\\"", a, b)
+}
+"""
+
+SPLICE_POSITIONAL_INDEX = """
+fn p2(a: &str) -> String {
+    format!("Set v=\\"{0}\\" Write v", a)
+}
+"""
+
+SPLICE_POSITIONAL_RAW = """
+fn p3(a: &str) -> String {
+    format!(r#"Set v="{}" Write v"#, a)
+}
+"""
+
+SPLICE_POSITIONAL_SQL = """
+fn p4(a: &str) -> String {
+    format!("SELECT Name FROM Sample.Person WHERE Name = '{}'", a)
+}
+"""
+
+SPLICE_POSITIONAL_MARKED = """
+fn p5(ts: &str) -> String {
+    // splice-ok: ts is a validated timestamp
+    format!(" Set t = \\"{}\\"", ts)
+}
+"""
+
+SPLICE_POSITIONAL_CLEAN = """
+fn p6(a: &str) -> String {
+    format!(" Set v = {}", crate::objectscript::os_str_expr(a))
+}
+fn p7(n: u32) -> String {
+    format!("Write {}", n)
+}
+fn p8() -> String {
+    format!(r#"Set v="{{}}" Write v"#)
+}
+"""
+
+
+def test_objectscript_splice_positional() -> None:
+    print("objectscript-splice (positional placeholders)")
+    for label, text, want in [
+        ("an empty {} inside an escaped quote", SPLICE_POSITIONAL_EMPTY, 1),
+        ("a {0} inside an escaped quote", SPLICE_POSITIONAL_INDEX, 1),
+        ("an empty {} inside a raw-string quote", SPLICE_POSITIONAL_RAW, 1),
+        ("an empty {} inside a SQL literal", SPLICE_POSITIONAL_SQL, 1),
+    ]:
+        found = ap.objectscript_splice_findings({"crates/c/src/a.rs": text})
+        check(f"fires on {label}", len(found) == want, messages(found))
+    found = ap.objectscript_splice_findings(
+        {"crates/c/src/a.rs": SPLICE_POSITIONAL_MARKED}
+    )
+    check(
+        "silent on a positional splice with a splice-ok reason",
+        not found,
+        messages(found),
+    )
+    found = ap.objectscript_splice_findings(
+        {"crates/c/src/a.rs": SPLICE_POSITIONAL_CLEAN}
+    )
+    check(
+        "silent on an unquoted os_str_expr splice, a number and escaped braces",
+        not found,
+        messages(found),
+    )
+
+
 # committed-api-key: a 32-character hex key on a line that names Algolia or a search key.
 # TPRM-6602: the docs site's Algolia key sat in four tracked files. The hex here is made up.
 FAKE_HEX = "ab" * 16
@@ -1262,6 +1335,7 @@ def main() -> int:
     test_empty_tests()
     test_device_capture()
     test_objectscript_splice()
+    test_objectscript_splice_positional()
     test_committed_api_key()
     test_scored_exception()
     test_unpowered_result()

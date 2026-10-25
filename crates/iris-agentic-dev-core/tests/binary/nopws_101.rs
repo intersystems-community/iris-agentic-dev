@@ -19,10 +19,7 @@ use iris_agentic_dev_core::testing::require_iad_binary;
 /// mode. Writing `iris-dev-iris` into that toml pinned both tests to one laptop's container, so on
 /// a CI runner they exercised a `docker exec` that could never land anywhere.
 fn live_container() -> String {
-    std::env::var("IRIS_CONTAINER")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "iris-dev-iris".to_string())
+    iris_agentic_dev_core::testing::LiveTarget::from_env().container
 }
 
 /// FR-012: Binary invocation test — spawn binary, call tools/list, assert iris_execute is listed.

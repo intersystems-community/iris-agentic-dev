@@ -18,9 +18,7 @@
 //!   IAD_BINARY=/path/to/iris-agentic-dev \
 //!   cargo test --test test_environment_restriction_live -- --include-ignored --test-threads=1
 
-use iris_agentic_dev_core::iris::connection::{
-    iris_http_client, CallerMode, DiscoverySource, IrisConnection,
-};
+use iris_agentic_dev_core::iris::connection::{CallerMode, DiscoverySource, IrisConnection};
 
 const RESTRICTED_USER: &str = "IadT042RestrictedUser";
 const RESTRICTED_ROLE: &str = "IadT042RestrictedRole";
@@ -50,7 +48,10 @@ fn iris_conn() -> Option<IrisConnection> {
 }
 
 async fn run_os(conn: &IrisConnection, namespace: &str, code: &str) -> anyhow::Result<String> {
-    let client = iris_http_client(None, true, false)?;
+    let client = iris_agentic_dev_core::iris::http::client_for(
+        &iris_agentic_dev_core::iris::http::TlsSetting::default(),
+        iris_agentic_dev_core::iris::http::ClientKind::Raw,
+    )?;
     let out = conn.execute_via_generator(code, namespace, &client).await?;
     Ok(out.trim().to_string())
 }

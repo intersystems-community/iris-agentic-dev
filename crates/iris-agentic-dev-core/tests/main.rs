@@ -9,6 +9,13 @@
 //! is invisible until it appears both here and — for nothing, since this target covers them all —
 //! nowhere else. Add the `mod` line below or the file does not run.
 
+// Runs before `main`, so before any test thread: no test in this binary reaches the developer's
+// real keychain or home directory. See `testing::isolate_process`.
+#[ctor::ctor]
+fn isolate_the_test_process() {
+    iris_agentic_dev_core::testing::isolate_process();
+}
+
 mod admin_e2e_tests;
 mod admin_unit_tests;
 mod cli_dispatch_integration;

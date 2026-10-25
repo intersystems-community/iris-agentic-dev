@@ -12,6 +12,7 @@
 //!     --ignored --test-threads=1
 
 use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
+use iris_agentic_dev_core::testing::EnvGuard;
 use iris_agentic_dev_core::tools::error_hints::{runtime_error_hint, sql_error_hint};
 use iris_agentic_dev_core::tools::IrisTools;
 use std::path::PathBuf;
@@ -221,13 +222,14 @@ async fn replay_corpus_still_matches_live_iris() {
 #[tokio::test]
 #[ignore]
 async fn coding_pack_off_drops_hint_ref_on_a_live_error() {
+    let mut env_guard = EnvGuard::new();
     let Some((t, _conn)) = tools() else { return };
     let args =
         serde_json::json!({"query": "SELECT TOP 1 Name FROM Security.Users", "namespace": "USER"});
     let on = parse(t.call_for_test("iris_query", args.clone()).await);
-    std::env::set_var("IAD_CODING_PACK", "off");
+    env_guard.set("IAD_CODING_PACK", "off");
     let off = parse(t.call_for_test("iris_query", args).await);
-    std::env::remove_var("IAD_CODING_PACK");
+    env_guard.unset("IAD_CODING_PACK");
     assert_eq!(on["hint_ref"]["skill"], "iris-agentic-dev", "{on}");
     assert!(off.get("hint_ref").is_none(), "{off}");
     assert_eq!(on["hint"], off["hint"]);

@@ -118,7 +118,7 @@ fn view_locks_empty_output_parses_to_empty_array() {
 fn view_locks_gate_allows_on_live_template() {
     let policy = live_policy();
     let params = serde_json::json!({"action": "view_locks"});
-    let result = iris_agentic_dev_core::policy::gate::dispatch_gate(
+    let result = iris_agentic_dev_core::testing::gated::dispatch(
         "iris_admin",
         "test-server",
         Some(&policy),
@@ -197,7 +197,13 @@ async fn view_processes_block_returns_data_policy_blocked() {
 #[tokio::test]
 async fn journal_search_no_filters_returns_missing_params() {
     let result = iris_agentic_dev_core::tools::observability::journal_search_impl(
-        None, "allow", None, None, None,
+        None,
+        "allow",
+        None,
+        None,
+        None,
+        &[],
+        false,
     )
     .await
     .expect("Ok");
@@ -217,6 +223,8 @@ async fn journal_search_block_returns_data_policy_blocked() {
         Some("IrisDevTest.*"),
         None,
         None,
+        &[],
+        false,
     )
     .await
     .expect("Ok");
@@ -236,6 +244,8 @@ async fn journal_search_redact_returns_data_policy_blocked() {
         Some("IrisDevTest.*"),
         None,
         None,
+        &[],
+        false,
     )
     .await
     .expect("Ok");
@@ -267,6 +277,8 @@ async fn journal_search_pattern_only_not_missing_params() {
         Some("IrisDevTest.*"),
         None,
         None,
+        &[],
+        false,
     )
     .await
     .expect("Ok");
@@ -289,6 +301,8 @@ async fn journal_search_time_range_only_not_missing_params() {
         None,
         Some(&time_range),
         None,
+        &[],
+        false,
     )
     .await
     .expect("Ok");
@@ -519,6 +533,8 @@ async fn journal_search_wildcard_only_pattern_no_iris() {
         Some("*"),
         None,
         None,
+        &[],
+        false,
     )
     .await
     .expect("Ok(CallToolResult)");
@@ -540,6 +556,8 @@ async fn journal_search_double_wildcard_pattern_no_iris() {
         Some("**"),
         None,
         None,
+        &[],
+        false,
     )
     .await
     .expect("Ok(CallToolResult)");

@@ -5,6 +5,7 @@
 //! graceful fallthrough when localhost probe fails, env var resolution.
 
 use iris_agentic_dev_core::iris::discovery::{discover_iris, probe_atelier, IrisDiscovery};
+use iris_agentic_dev_core::testing::EnvGuard;
 
 // ── probe_atelier ────────────────────────────────────────────────────────────
 
@@ -55,6 +56,7 @@ async fn probe_atelier_respects_timeout() {
 #[tokio::test]
 #[ignore = "requires isolated env — no Docker IRIS, no VS Code Server Manager configured"]
 async fn discover_iris_reads_env_vars() {
+    let mut env_guard = EnvGuard::new();
     // Skip on machines with Docker IRIS running — Docker discovery fires before env vars
     if std::env::var("IRIS_CONTAINER").is_ok()
         || std::env::var("IRIS_WEB_PORT").is_ok()
@@ -63,10 +65,10 @@ async fn discover_iris_reads_env_vars() {
         return;
     }
     // Set env vars to a non-existent host
-    std::env::set_var("IRIS_HOST", "nonexistent.invalid");
-    std::env::set_var("IRIS_WEB_PORT", "52773");
-    std::env::set_var("IRIS_USERNAME", "testuser");
-    std::env::set_var("IRIS_PASSWORD", "testpass");
+    env_guard.set("IRIS_HOST", "nonexistent.invalid");
+    env_guard.set("IRIS_WEB_PORT", "52773");
+    env_guard.set("IRIS_USERNAME", "testuser");
+    env_guard.set("IRIS_PASSWORD", "testpass");
 
     let result = discover_iris(None).await;
     // Env vars found but host unreachable: the named server is kept, not replaced by another
@@ -74,12 +76,6 @@ async fn discover_iris_reads_env_vars() {
         matches!(&result, IrisDiscovery::Found(c) if c.base_url == "http://nonexistent.invalid:52773"),
         "an unreachable named host is still the connection"
     );
-
-    // Clean up
-    std::env::remove_var("IRIS_HOST");
-    std::env::remove_var("IRIS_WEB_PORT");
-    std::env::remove_var("IRIS_USERNAME");
-    std::env::remove_var("IRIS_PASSWORD");
 }
 
 /// Without any config, discover_iris returns Ok(None) — not an error.
@@ -89,6 +85,7 @@ async fn discover_iris_reads_env_vars() {
 #[tokio::test]
 #[ignore = "requires isolated env — no Docker IRIS, no VS Code Server Manager configured"]
 async fn discover_iris_returns_none_when_nothing_found() {
+    let mut env_guard = EnvGuard::new();
     // Skip on machines with Docker IRIS running — Docker discovery fires even after env var cleanup
     if std::env::var("IRIS_CONTAINER").is_ok() || std::env::var("IRIS_WEB_PORT").is_ok() {
         return;
@@ -96,9 +93,9 @@ async fn discover_iris_returns_none_when_nothing_found() {
     // Ensure no env vars interfere — IRIS_CONTAINER must also be cleared, since the
     // named-container Docker path (cascade step 3) runs before the localhost scan and
     // would otherwise resolve to a real container on a dev machine that has one set.
-    std::env::remove_var("IRIS_HOST");
-    std::env::remove_var("IRIS_WEB_PORT");
-    std::env::remove_var("IRIS_CONTAINER");
+    env_guard.unset("IRIS_HOST");
+    env_guard.unset("IRIS_WEB_PORT");
+    env_guard.unset("IRIS_CONTAINER");
 
     // With no IRIS running and no config, should return NotFound (not panic)
     let result = discover_iris(None).await;

@@ -72,7 +72,9 @@ const CONTRACT: &[ContractRow] = &[
         "elicitation_answer",
         &[("no", Why::DeclineHalf)],
     ),
-    ("iris_test", "test_type", &[]),
+    // `"auto"` is the `_ =>` arm since 23d7212 moved detection into `detect_test_production`; the
+    // literal used to sit in the arm's body.
+    ("iris_test", "test_type", &[("auto", Why::DefaultArm)]),
     ("iris_generate", "gen_type", &[("class", Why::DefaultArm)]),
     (
         "iris_add_server",

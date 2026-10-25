@@ -1,7 +1,7 @@
 //! Environment template gate (051-phi-policy-env-gates, US1).
 //!
 //! Checks `mcpTemplate` against the tool's category and returns `ENV_GATE_BLOCKED`
-//! when the template forbids it. Gate [1] in `dispatch_gate`.
+//! when the template forbids it. Gate [1] in `dispatch_gate_for`.
 
 use crate::iris::workspace_config::{McpTemplate, ToolCategory};
 
@@ -14,77 +14,44 @@ const LIVE_BLOCKED: &[ToolCategory] = &[
 
 const TEST_BLOCKED: &[ToolCategory] = &[ToolCategory::Execute, ToolCategory::Compile];
 
-/// Check whether `tool_name` is blocked by the active `mcpTemplate`.
-///
-/// `params` is the full tool call parameters; used for action-aware category overrides
-/// (e.g. `iris_global` with `action=set` is classified as `Execute` even though
-/// the default category is `Query`).
+/// Check whether `tool_name` is blocked by the server's `mcpTemplate`, for the categories the
+/// pipeline worked out with [`effective_category`], the one place an action raises a tool's
+/// category (an `iris_global` set is `Execute`, an `iris_doc` put is `Compile`).
 ///
 /// Returns `Some(error_json)` when blocked, `None` when permitted.
-pub fn check_env_gate(
+pub fn check_env_gate_for(
     tool_name: &str,
     template: &McpTemplate,
     server_name: &str,
-    params: &serde_json::Value,
+    categories: &[ToolCategory],
 ) -> Option<serde_json::Value> {
     let blocked = match template {
         McpTemplate::Dev => return None,
         McpTemplate::Live => LIVE_BLOCKED,
         McpTemplate::Test => TEST_BLOCKED,
     };
+    let category = categories.iter().find(|c| blocked.contains(c))?;
 
-    let mut category = crate::iris::server_manager::tool_to_category_pub(tool_name)?;
-
-    // Action-aware override for iris_global: set/kill are write operations → Execute.
-    if tool_name == "iris_global" {
-        if let Some(action) = params.get("action").and_then(|v| v.as_str()) {
-            if action == "set" || action == "kill" {
-                category = ToolCategory::Execute;
-            }
-        }
-    }
-
-    // `global_kill` is the same operation as `iris_global` with action=kill, so it is Execute here too.
-    // It is categorized Admin in the tool table, which the live and test templates allow, so
-    // `mcpTemplate = "live"` refused one spelling of a kill and not the other (spec 052, FR-023).
-    if tool_name == "global_kill" {
-        category = ToolCategory::Execute;
-    }
-
-    // 057-sql-power: mode="write" is a DML operation → Execute. explain/count stay Query.
-    // `force=true` skips the read-only SQL check, so a forced read is Execute too.
-    if tool_name == "iris_query" {
-        let write = params.get("mode").and_then(|v| v.as_str()) == Some("write");
-        let forced = params.get("force").and_then(|v| v.as_bool()) == Some(true);
-        if write || forced {
-            category = ToolCategory::Execute;
-        }
-    }
-
-    if blocked.contains(&category) {
-        let template_str = match template {
-            McpTemplate::Dev => "dev",
-            McpTemplate::Test => "test",
-            McpTemplate::Live => "live",
-        };
-        return Some(serde_json::json!({
-            "success": false,
-            "error_code": "ENV_GATE_BLOCKED",
-            "env_gate_blocked": true,
-            "server_name": server_name,
-            "template": template_str,
-            "blocked_category": category.as_str(),
-            "message": format!(
-                "Tool '{}' is blocked by environment template '{}' for server '{}'. \
-                 Category '{}' is not permitted in {} mode.",
-                tool_name, template_str, server_name, category.as_str(), template_str
-            ),
-            "remediation": format!(
-                "Set mcpTemplate = \"dev\" or mcpTemplate = \"test\" in [policy.{}] of .iris-agentic-dev.toml",
-                server_name
-            ),
-        }));
-    }
-
-    None
+    let template_str = match template {
+        McpTemplate::Dev => "dev",
+        McpTemplate::Test => "test",
+        McpTemplate::Live => "live",
+    };
+    Some(serde_json::json!({
+        "success": false,
+        "error_code": "ENV_GATE_BLOCKED",
+        "env_gate_blocked": true,
+        "server_name": server_name,
+        "template": template_str,
+        "blocked_category": category.as_str(),
+        "message": format!(
+            "Tool '{}' is blocked by environment template '{}' for server '{}'. \
+             Category '{}' is not permitted in {} mode.",
+            tool_name, template_str, server_name, category.as_str(), template_str
+        ),
+        "remediation": format!(
+            "The environment template of server '{server_name}' is the operator's to change; \
+             the refusal's `refusal.lift.setting` names it."
+        ),
+    }))
 }

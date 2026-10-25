@@ -40,10 +40,10 @@ Enterprise images have `WebServer=0` — the httpd binary and CSP.ini are not in
 **Three bugs that cause 404/403/500 during setup** (verified 2026-05-03 — see `iris-vscode-objectscript` skill for full detail):
 
 1. CSP.ini race condition — patch after `Configuration_Initialized` appears, not immediately
-2. Missing credentials in `[LOCAL]` — add `Username=_SYSTEM` and `Password=SYS` to CSP.ini `[LOCAL]` section; default tries CSPSystem which doesn't exist
+2. Missing credentials in `[LOCAL]` — the gateway needs a login in CSP.ini's `[LOCAL]` section, and the default tries CSPSystem which doesn't exist; the `iris-vscode-objectscript` skill's init script fills it from `ISC_WG_USER` and `ISC_WG_PASSWORD` in the environment, never from a literal
 3. Wrong Apache directive — use `CSP On` inside `<Location />`, NOT `SetHandler csp-handler-sa`
 
-**Also required after first start:** `Do ##class(Security.Users).UnExpireUserPasswords("*")` in `%SYS` — fresh enterprise containers force a password change that blocks the webgateway connection.
+**Also required after first start:** a new `_SYSTEM` password — fresh enterprise containers force a password change that blocks the webgateway connection. Use step 4 of the `iris-agentic-dev-setup` skill: it generates the password and sends it on `docker exec -i` stdin. Do not un-expire every account, which leaves the published `SYS` working on all of them. These steps are for a container you just started; ask before running them on one that already exists.
 
 Load the `iris-vscode-objectscript` skill for the complete working `webgateway-init.sh` and docker-compose.
 
@@ -76,7 +76,7 @@ The `intersystems.objectscript` extension connects via Atelier REST on port 5277
 }
 ```
 
-If your container maps 52773 to a different host port (e.g. `"64773:52773"`), use the host port in settings:
+If your container maps 52773 to a different host port (e.g. `"127.0.0.1:64773:52773"`), use the host port in settings:
 
 ```jsonc
 "webServer": {
@@ -85,10 +85,10 @@ If your container maps 52773 to a different host port (e.g. `"64773:52773"`), us
 }
 ```
 
-**Verify the connection works before opening VSCode:**
+**Verify the connection works before opening VSCode** (`$PW` is the `_SYSTEM` password from the setup skill's step 4; `curl -K -` keeps it off the process list):
 
 ```bash
-curl -s -u "_SYSTEM:SYS" "http://localhost:64773/api/atelier/" | python3 -c \
+printf 'user = "_SYSTEM:%s"\n' "$PW" | curl -s -K - "http://localhost:64773/api/atelier/" | python3 -c \
   "import sys,json; d=json.load(sys.stdin); print(d['result']['content']['version'])"
 # → IRIS 2026.1 (or similar) confirms Atelier REST is working
 ```
@@ -197,12 +197,12 @@ The `-a` hook in `/iris-main` runs **after** IRIS is already started. Any startu
 services:
   fhir:
     image: intersystemsdc/irishealth-community:latest
-    ports: ["1972:1972", "52773:52773"]
+    ports: ["127.0.0.1:1972:1972", "127.0.0.1:52773:52773"]
     # FHIR R4: http://localhost:52773/csp/healthshare/demo/fhir/r4
 
   ai_hub:
     image: docker.iscinternal.com/docker-intersystems/intersystems/irishealth:2026.2.0AI.159.0
-    ports: ["11972:1972"]
+    ports: ["127.0.0.1:11972:1972"]
     volumes:
       - type: tmpfs
         target: /durable

@@ -8,9 +8,9 @@
 //!
 //! `stream_inspect` is why the whole feature exists. It shipped documented with a `max_chars`
 //! parameter that no code read, so a caller asking for 10,000 characters silently got the entire
-//! stream. `stream_inspect_declares_exactly_three_parameters` is the standing guard: the tool takes
-//! `oid`, `namespace` and `server`, and if a fourth appears in the schema it must be because a
-//! handler reads it.
+//! stream. Spec 141 T199 made the cap real. `stream_inspect_declares_exactly_four_parameters` is the
+//! standing guard: the tool takes `oid`, `max_chars`, `namespace` and `server`, and if a fifth
+//! appears in the schema it must be because a handler reads it.
 
 use iris_agentic_dev_core::testing::{
     advertised_properties, advertised_schemas, assert_advertised_contracts,
@@ -65,6 +65,7 @@ const BATCH7: &[ParamContract] = &[
         tool: "stream_inspect",
         params: &[
             ("oid", "string"),
+            ("max_chars", "integer"),
             ("namespace", "string"),
             ("server", "string"),
         ],
@@ -86,16 +87,17 @@ fn batch7_handlers_read_their_contract() {
     assert_source_contracts(BATCH7);
 }
 
-/// The `max_chars` regression guard.
+/// The `max_chars` guard, schema half.
 ///
-/// `stream_inspect` was documented with a `max_chars` parameter that appeared nowhere in `crates/*/src`.
-/// With an open schema there was nothing to contradict the prose; with a closed one, adding a
-/// parameter to the documentation without adding it to the struct fails
-/// `every_documented_tool_parameter_is_in_the_input_schema`, and adding it to the struct without
-/// reading it fails this test.
+/// `stream_inspect` was documented with a `max_chars` parameter that appeared nowhere in
+/// `crates/*/src`. The schema now declares it as an integer because `stream_inspect_impl` reads it
+/// (spec 141 T199); a fifth key, or `max_chars` as anything but an integer, means the schema and
+/// the reader have come apart (its type, `integer`, is pinned by `batch7_advertises_its_contract`).
+/// The docs and source halves are
+/// `max_chars_is_documented_declared_and_read` in `tests/unit/test_docs_contract.rs`.
 #[test]
 #[ignore = "spawns the built binary; run with --include-ignored"]
-fn stream_inspect_declares_exactly_three_parameters() {
+fn stream_inspect_declares_exactly_four_parameters() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
@@ -107,14 +109,8 @@ fn stream_inspect_declares_exactly_three_parameters() {
     let names: Vec<&str> = props.iter().map(String::as_str).collect();
     assert_eq!(
         names,
-        ["namespace", "oid", "server"],
-        "`stream_inspect` reads exactly these three keys. A fourth here means either a parameter was \
-         added to the schema without a handler reading it — the `max_chars` bug returning — or the \
-         handler grew one and this test needs updating along with the docs."
-    );
-    assert!(
-        !props.contains("max_chars"),
-        "`max_chars` is back in the schema. It was documented for five minor versions and read by \
-         nothing; if truncation is wanted, implement it in `stream_inspect_impl` first."
+        ["max_chars", "namespace", "oid", "server"],
+        "`stream_inspect` reads exactly these four keys. A fifth here means a parameter was added to \
+         the schema without a handler reading it — the `max_chars` bug returning."
     );
 }

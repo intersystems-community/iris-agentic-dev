@@ -21,10 +21,7 @@ fn iris_host() -> String {
 /// divert iris_test onto the docker path — a name nothing on the host answers to would make that
 /// assertion hold for the wrong reason.
 fn iris_container() -> String {
-    std::env::var("IRIS_CONTAINER")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "iris-dev-iris".to_string())
+    iris_agentic_dev_core::testing::LiveTarget::from_env().container
 }
 
 fn mcp_call_with_env(

@@ -7,6 +7,7 @@
 // Phase 5 tests (T033–T035): iris_info + debug_get_error_logs — RED before wiring.
 // Phase 6 tests (T044–T046): iris_get_log dispatch — RED before wiring.
 
+use iris_agentic_dev_core::testing::EnvGuard;
 use iris_agentic_dev_core::tools::log_store::{
     apply_truncation, new_log_id, read_inline_threshold, GetResult, LogEntry, LogStore,
 };
@@ -474,23 +475,24 @@ fn test_get_paginated_last_page() {
 
 #[test]
 fn test_read_inline_threshold_default() {
+    let mut env_guard = EnvGuard::new();
     // Ensure a non-existent env var returns the default
-    std::env::remove_var("IRIS_INLINE_TEST_MISSING");
+    env_guard.unset("IRIS_INLINE_TEST_MISSING");
     assert_eq!(read_inline_threshold("IRIS_INLINE_TEST_MISSING", 20), 20);
 }
 
 #[test]
 fn test_read_inline_threshold_from_env() {
-    std::env::set_var("IRIS_INLINE_TEST_SET", "42");
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("IRIS_INLINE_TEST_SET", "42");
     assert_eq!(read_inline_threshold("IRIS_INLINE_TEST_SET", 20), 42);
-    std::env::remove_var("IRIS_INLINE_TEST_SET");
 }
 
 #[test]
 fn test_read_inline_threshold_zero_returns_default() {
-    std::env::set_var("IRIS_INLINE_TEST_ZERO", "0");
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("IRIS_INLINE_TEST_ZERO", "0");
     assert_eq!(read_inline_threshold("IRIS_INLINE_TEST_ZERO", 20), 20);
-    std::env::remove_var("IRIS_INLINE_TEST_ZERO");
 }
 
 // ── get_paginated edge cases ─────────────────────────────────────────────────

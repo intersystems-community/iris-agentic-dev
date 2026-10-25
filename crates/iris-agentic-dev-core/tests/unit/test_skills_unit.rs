@@ -1,6 +1,7 @@
 // Unit tests for skills_tools.rs — param deserialization and skills_namespace logic.
 // No IRIS connection needed.
 
+use iris_agentic_dev_core::testing::EnvGuard;
 use iris_agentic_dev_core::tools::skills_tools::{
     AgentInfoParams, KbParams, SkillCommunityParams, SkillParams,
 };
@@ -120,19 +121,21 @@ fn test_agent_info_params_missing_what_fails() {
 
 #[test]
 fn test_skills_namespace_default() {
+    let mut env_guard = EnvGuard::new();
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     // Remove env var if set, verify fallback
-    std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+    env_guard.unset("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
     let ns = iris_agentic_dev_core::tools::skills_tools::skills_namespace();
     assert_eq!(ns, "USER");
 }
 
 #[test]
 fn test_skills_namespace_env_override() {
+    let mut env_guard = EnvGuard::new();
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    std::env::set_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "SKILLS");
+    env_guard.set("OBJECTSCRIPT_SKILLMCP_NAMESPACE", "SKILLS");
     let ns = iris_agentic_dev_core::tools::skills_tools::skills_namespace();
     // Read before restoring so a failure here cannot leak the var to other tests.
-    std::env::remove_var("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
+    env_guard.unset("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
     assert_eq!(ns, "SKILLS");
 }

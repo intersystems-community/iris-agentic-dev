@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::Args;
-use iris_agentic_dev_core::{iris::connection::IrisConnection, tools::admin_tools};
+use iris_agentic_dev_core::tools::admin_tools;
 
 use super::connection_args::ConnectionArgs;
 
@@ -16,7 +16,7 @@ pub struct CapabilityMatrixCommand {
 impl CapabilityMatrixCommand {
     pub async fn run(self) -> Result<()> {
         let iris = self.conn.resolve().await?;
-        let client = IrisConnection::http_client()?;
+        let client = iris.client(iris_agentic_dev_core::iris::http::ClientKind::Call)?;
 
         match admin_tools::capability_matrix_impl(&iris, &client, None).await {
             Ok(result) => {

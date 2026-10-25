@@ -10,6 +10,7 @@
 //! All tests skip gracefully when IRIS_HOST is not set.
 #![allow(dead_code, clippy::zombie_processes)]
 
+use iris_agentic_dev_core::testing::EnvGuard;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 
@@ -498,6 +499,12 @@ fn e2e_doc_put_round_trips_storage_verbatim_no_flag_needed() {
     let cls_name = "Test022.RoundTripStorage";
     let cls_file = format!("{cls_name}.cls");
     let cls_src = format!("Class {cls_name} Extends %Persistent {{\nProperty Name As %String;\n}}");
+    // A run that failed before its own delete leaves the class with its Storage block, and the
+    // fixture put below is then refused (STORAGE_RESET_REQUIRES_CONFIRMATION). Start clean.
+    call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"delete","name": cls_file, "namespace":"USER"}),
+    );
     let put_result = call_tool(
         "iris_doc",
         serde_json::json!({"mode":"put","name": cls_file, "content": cls_src,
@@ -653,11 +660,22 @@ fn e2e_doc_delete_lines_remove_property_leaves_harmless_orphan() {
     let cls_src = format!(
         "Class {cls_name} Extends %Persistent {{\nProperty Name As %String;\nProperty Description As %String;\n}}"
     );
+    // A run that failed before its cleanup leaves the class behind with a Storage block, and the
+    // put below (which has none) is then refused by the storage guard. Start from nothing.
     call_tool(
+        "iris_doc",
+        serde_json::json!({"mode":"delete","name": cls_file, "namespace":"USER"}),
+    );
+    call_tool(
+        "iris_execute",
+        serde_json::json!({"code": format!("kill ^{cls_name}D, ^{cls_name}I, ^{cls_name}S"), "namespace": "USER"}),
+    );
+    let put = call_tool(
         "iris_doc",
         serde_json::json!({"mode":"put","name": cls_file, "content": cls_src,
             "namespace":"USER", "compile": true}),
     );
+    assert_eq!(put["success"], true, "put failed: {put}");
     let save = call_tool(
         "iris_execute",
         serde_json::json!({"code": format!(
@@ -2789,14 +2807,14 @@ fn e2e_compile_multiple_flags() {
         "iris_doc",
         serde_json::json!({"mode":"put","name":name,"content":content,"namespace":"USER"}),
     );
-    // "ckb" = compile, check, keep source
+    // "cuk" = compile, update only, keep source; `b` is not "keep source" but "include subclasses".
     let result = call_tool(
         "iris_compile",
-        serde_json::json!({"target":name,"namespace":"USER","flags":"ckb"}),
+        serde_json::json!({"target":name,"namespace":"USER","flags":"cuk"}),
     );
     assert_eq!(
         result["success"], true,
-        "compile with flags ckb: {}",
+        "compile with flags cuk: {}",
         result
     );
     call_tool(
@@ -4298,12 +4316,13 @@ fn e2e_http_client_tcp_keepalive_set() {
 
 #[test]
 fn e2e_iris_tls_verify_false_disables_cert_check() {
+    let mut env_guard = EnvGuard::new();
     // IRIS_TLS_VERIFY=false must produce the same result as IRIS_INSECURE=true.
     // We just verify the client builds — actual TLS behavior requires a self-signed
     // cert endpoint which isn't available in CI.
-    std::env::set_var("IRIS_TLS_VERIFY", "false");
+    env_guard.set("IRIS_TLS_VERIFY", "false");
     let client = iris_agentic_dev_core::iris::connection::IrisConnection::http_client();
-    std::env::remove_var("IRIS_TLS_VERIFY");
+    env_guard.unset("IRIS_TLS_VERIFY");
     assert!(
         client.is_ok(),
         "http_client() must build with IRIS_TLS_VERIFY=false: {:?}",
@@ -6173,7 +6192,7 @@ fn e2e_server_param_named() {
     // If the pool knows about this server, the call should succeed and return a version string.
     // If the pool does NOT have this server registered, the call returns SERVER_NOT_FOUND — which
     // we treat as a skip (the pool may not be configured in all CI environments).
-    let container = std::env::var("IRIS_CONTAINER").unwrap_or_else(|_| "iris-dev-iris".to_string());
+    let container = iris_agentic_dev_core::testing::LiveTarget::from_env().container;
     let result = call_tool(
         "iris_execute",
         serde_json::json!({

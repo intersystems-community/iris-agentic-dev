@@ -11,21 +11,18 @@
 // actually receives it.
 
 use iris_agentic_dev_core::iris::connection::{user_agent, CallerMode};
+use iris_agentic_dev_core::testing::EnvGuard;
 use iris_agentic_dev_core::tools::MCP_PEER;
 
-/// Serialize the tests that read/write `IRIS_AGENT_LABEL`. Cargo runs tests in one binary
-/// on threads, so two label tests racing would flake.
-static LABEL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
+/// Run `f` with `IRIS_AGENT_LABEL` set to `value` (or removed); the guard puts it back and keeps
+/// two label tests from racing.
 fn with_label<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
-    let _guard = LABEL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut env_guard = EnvGuard::new();
     match value {
-        Some(v) => std::env::set_var("IRIS_AGENT_LABEL", v),
-        None => std::env::remove_var("IRIS_AGENT_LABEL"),
-    }
-    let out = f();
-    std::env::remove_var("IRIS_AGENT_LABEL");
-    out
+        Some(v) => env_guard.set("IRIS_AGENT_LABEL", v),
+        None => env_guard.unset("IRIS_AGENT_LABEL"),
+    };
+    f()
 }
 
 #[test]

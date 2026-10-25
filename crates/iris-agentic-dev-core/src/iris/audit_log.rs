@@ -3,54 +3,121 @@
 //! One entry per tool call on any connection that has an active `[policy.<server-name>]` block.
 //! Write failures are non-blocking — a warning is emitted and the tool call proceeds normally.
 //! PHI-named globals and credential fields are scrubbed before writing (FR-010, 051-phi-policy-env-gates).
+//! Payload text (`code`, `query`, …) is reduced to its size unless the operator opts in (141, FR-028).
 
 use std::path::PathBuf;
 
-/// Credential/sensitive field names redacted with `[REDACTED]`.
-const CREDENTIAL_FIELDS: &[&str] = &[
+/// Key-name endings that mark a value as a credential. Compared with case, `_` and `-` removed,
+/// so `Password`, `db_password`, `api-key` and `accessToken` all match, and `max_tokens` does not.
+const CREDENTIAL_SUFFIXES: &[&str] = &[
     "password",
-    "token",
-    "api_key",
+    "passwd",
+    "passphrase",
     "secret",
-    "access_token",
-    "auth_token",
+    "token",
+    "apikey",
 ];
 
-/// Scrub PHI global names and credential fields from a params JSON object before audit logging.
-///
-/// - `global_name` field: replaced with `"[REDACTED-PHI]"` if it matches a PHI name pattern.
-/// - Credential fields: replaced with `"[REDACTED]"`.
-/// - All other fields: unchanged.
-pub fn scrub_params(params: serde_json::Value) -> serde_json::Value {
-    let obj = match params.as_object() {
-        Some(o) => o,
-        None => return params,
-    };
+/// Keys whose values are what the caller wrote: code, a query, a value, a file body. They hold the
+/// secrets no key-name rule finds, so the log keeps their size and drops the text (FR-028).
+const PAYLOAD_KEYS: &[&str] = &["code", "query", "sql", "args", "content", "value"];
 
-    let mut out = serde_json::Map::with_capacity(obj.len());
-    for (key, val) in obj {
-        let scrubbed = if CREDENTIAL_FIELDS.contains(&key.as_str()) {
-            serde_json::Value::String("[REDACTED]".to_string())
-        } else if key == "global_name" || key == "globalName" || key == "global" {
-            if let Some(name) = val.as_str() {
-                let normalized = name.strip_prefix('^').unwrap_or(name);
-                if crate::policy::patterns::matches_any(
-                    normalized,
-                    crate::policy::patterns::PHI_NAME_PATTERNS,
-                ) {
-                    serde_json::Value::String("[REDACTED-PHI]".to_string())
+fn is_credential_key(key: &str) -> bool {
+    let normal: String = key
+        .chars()
+        .filter(|c| *c != '_' && *c != '-')
+        .flat_map(char::to_lowercase)
+        .collect();
+    CREDENTIAL_SUFFIXES.iter().any(|s| normal.ends_with(s))
+}
+
+/// `{"redacted": true, "chars": N, "lines": L}` for a payload value. A non-string is measured as
+/// the JSON it serialises to.
+fn payload_size(val: &serde_json::Value) -> serde_json::Value {
+    let text = match val {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    };
+    serde_json::json!({
+        "redacted": true,
+        "chars": text.chars().count(),
+        "lines": text.lines().count(),
+    })
+}
+
+/// [`scrub_params_with`] in the default mode: payloads reduced to their size.
+pub fn scrub_params(params: serde_json::Value) -> serde_json::Value {
+    scrub_params_with(params, false)
+}
+
+/// Scrub a params JSON value before audit logging, at any depth.
+///
+/// - A key that names a credential (see [`CREDENTIAL_SUFFIXES`]): value replaced with `"[REDACTED]"`.
+/// - A payload key (`code`, `query`, `sql`, `args`, `content`, `value`): value replaced with its
+///   size, unless `keep_payloads` (the operator's `audit_payloads` opt-in).
+/// - `global_name`: replaced with `"[REDACTED-PHI]"` if it matches a PHI name pattern.
+/// - Everything else: unchanged.
+pub fn scrub_params_with(params: serde_json::Value, keep_payloads: bool) -> serde_json::Value {
+    use serde_json::Value;
+    match params {
+        Value::Object(obj) => {
+            let mut out = serde_json::Map::with_capacity(obj.len());
+            for (key, val) in obj {
+                let scrubbed = if is_credential_key(&key) {
+                    Value::String("[REDACTED]".to_string())
+                } else if PAYLOAD_KEYS.contains(&key.as_str()) && !keep_payloads {
+                    payload_size(&val)
+                } else if key == "global_name" || key == "globalName" || key == "global" {
+                    match val.as_str() {
+                        Some(name)
+                            if crate::policy::patterns::matches_any(
+                                name.strip_prefix('^').unwrap_or(name),
+                                crate::policy::patterns::PHI_NAME_PATTERNS,
+                            ) =>
+                        {
+                            Value::String("[REDACTED-PHI]".to_string())
+                        }
+                        _ => val,
+                    }
                 } else {
-                    val.clone()
-                }
-            } else {
-                val.clone()
+                    scrub_params_with(val, keep_payloads)
+                };
+                out.insert(key, scrubbed);
             }
-        } else {
-            val.clone()
-        };
-        out.insert(key.clone(), scrubbed);
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .into_iter()
+                .map(|v| scrub_params_with(v, keep_payloads))
+                .collect(),
+        ),
+        other => other,
     }
-    serde_json::Value::Object(out)
+}
+
+/// Are full payloads kept? The operator file's `audit_payloads`, or `IAD_AUDIT_PAYLOADS` in the
+/// launch environment (`env` is that variable's value). A workspace file cannot set either: its
+/// `audit_payloads` is set aside before it reaches `operator`.
+pub fn payloads_enabled(
+    operator: &crate::iris::config_sources::OperatorSettings,
+    env: Option<&str>,
+) -> bool {
+    operator.audit_payloads
+        || env.is_some_and(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+}
+
+/// What `check_config` reports about the log: where it is and whether it keeps payload text.
+pub fn mode_report(keep_payloads: bool, path: &std::path::Path) -> serde_json::Value {
+    serde_json::json!({
+        "path": path.to_string_lossy(),
+        "payloads": if keep_payloads { "full" } else { "sizes" },
+    })
 }
 
 /// A single audit log entry. Serialized as one JSONL line.
@@ -79,12 +146,23 @@ pub struct AuditLogEntry {
 /// Append-only JSONL audit log writer.
 pub struct AuditLog {
     path: PathBuf,
+    keep_payloads: bool,
 }
 
 impl AuditLog {
-    /// Create an `AuditLog` writing to `path`.
+    /// Create an `AuditLog` writing to `path`, payloads reduced to their size.
     pub fn new(path: PathBuf) -> Self {
-        Self { path }
+        Self {
+            path,
+            keep_payloads: false,
+        }
+    }
+
+    /// Keep `code`, `query`, `args`, `content` and `value` in full (the operator-only opt-in).
+    /// Credential keys are still redacted.
+    pub fn with_payloads(mut self, keep: bool) -> Self {
+        self.keep_payloads = keep;
+        self
     }
 
     /// Default audit log path: `~/.iris-agentic-dev/audit.jsonl`.
@@ -110,14 +188,7 @@ impl AuditLog {
     }
 
     fn write_inner(&self, entry: &AuditLogEntry) -> std::io::Result<()> {
-        use std::io::Write;
-
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        // Build a scrubbed version for serialization — PHI and credentials replaced inline.
-        let scrubbed_params = scrub_params(entry.params.clone());
+        // Build a scrubbed version for serialization — PHI, credentials and payloads dealt with.
         let scrubbed_entry = AuditLogEntry {
             ts: entry.ts.clone(),
             tool: entry.tool.clone(),
@@ -126,22 +197,14 @@ impl AuditLog {
             status: entry.status.clone(),
             gate: entry.gate.clone(),
             allowed_categories: entry.allowed_categories.clone(),
-            params: scrubbed_params,
+            params: scrub_params_with(entry.params.clone(), self.keep_payloads),
         };
 
         let line = serde_json::to_string(&scrubbed_entry).map_err(std::io::Error::other)?;
 
-        // O_APPEND is atomic on macOS and Windows for small writes (< PIPE_BUF).
-        // On Linux, concurrent open-append-close from two MCP clients (e.g. Claude Desktop
-        // + Cursor) can interleave; entries remain valid JSON lines but ordering may be
-        // non-deterministic. This is acceptable for an audit log — correctness over ordering.
-        let mut file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(&self.path)?;
-
-        writeln!(file, "{}", line)?;
-        file.flush()?;
-        Ok(())
+        // One O_APPEND write per entry. On Linux, concurrent appends from two MCP clients can
+        // still interleave between entries; ordering is not guaranteed, every line stays whole.
+        // The file is `0600` in a `0700` directory (FR-028).
+        crate::iris::private_file::append_private(&self.path, &line)
     }
 }

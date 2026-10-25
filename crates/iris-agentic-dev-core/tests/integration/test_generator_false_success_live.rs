@@ -10,6 +10,7 @@
 //!     --test test_generator_false_success_live -- --include-ignored --test-threads=1 --nocapture
 
 use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
+use iris_agentic_dev_core::testing::EnvGuard;
 use std::sync::Arc;
 
 fn make_conn() -> Option<(IrisConnection, reqwest::Client)> {
@@ -277,7 +278,11 @@ async fn live_coverage_stop_confirms_the_stop() {
         "namespace": "USER",
     }))
     .expect("params");
-    let v = handle_iris_coverage(&conn, &client, &params).await;
+    let cx = iris_agentic_dev_core::tools::exec::ExecContext::primary(
+        std::sync::Arc::new(conn.clone()),
+        std::sync::Arc::new(client.clone()),
+    );
+    let v = handle_iris_coverage(&cx, &params).await;
     assert_eq!(
         v["success"].as_bool(),
         Some(true),
@@ -288,12 +293,24 @@ async fn live_coverage_stop_confirms_the_stop() {
 
 // ── skill_forget (docker exec path) ───────────────────────────────────────────
 
-fn make_tools() -> Option<iris_agentic_dev_core::tools::IrisTools> {
+/// The tools, and the guard that puts `IRIS_CONTAINER` back: keep it alive for the whole test.
+/// The docker path reads the variable at call time, so it has to stay set while the tools are in
+/// use, and not a moment after.
+fn make_tools() -> Option<(iris_agentic_dev_core::tools::IrisTools, EnvGuard)> {
     let (conn, _) = make_conn()?;
-    if std::env::var("IRIS_CONTAINER").is_err() {
-        std::env::set_var("IRIS_CONTAINER", "iris-dev-iris");
+    let mut env_guard = EnvGuard::new();
+    if std::env::var_os("IRIS_CONTAINER").is_none() {
+        env_guard.set(
+            "IRIS_CONTAINER",
+            iris_agentic_dev_core::testing::LiveTarget::from_env().container,
+        );
     }
-    Some(iris_agentic_dev_core::tools::IrisTools::new(Some(conn)).expect("IrisTools::new"))
+    let tools = iris_agentic_dev_core::tools::IrisTools::for_test_gates_open(
+        Some(conn),
+        iris_agentic_dev_core::tools::Toolset::Baseline,
+    )
+    .expect("IrisTools::for_test_gates_open");
+    Some((tools, env_guard))
 }
 
 /// A name holding a double quote used to produce `Kill ^SKILLS("a\"b")`, which the terminal rejects
@@ -303,7 +320,7 @@ fn make_tools() -> Option<iris_agentic_dev_core::tools::IrisTools> {
 #[tokio::test]
 #[ignore]
 async fn live_skill_forget_refuses_an_unconfirmed_kill() {
-    let tools = match make_tools() {
+    let (tools, _container_env) = match make_tools() {
         Some(t) => t,
         None => {
             eprintln!("IRIS_HOST not set — skipping live_skill_forget_refuses_an_unconfirmed_kill");
@@ -339,7 +356,7 @@ async fn live_skill_forget_refuses_an_unconfirmed_kill() {
 #[tokio::test]
 #[ignore]
 async fn live_skill_forget_removes_a_seeded_skill() {
-    let tools = match make_tools() {
+    let (tools, _container_env) = match make_tools() {
         Some(t) => t,
         None => {
             eprintln!("IRIS_HOST not set — skipping live_skill_forget_removes_a_seeded_skill");
@@ -447,4 +464,25 @@ async fn output_that_looks_like_json_comes_back_as_written() {
             .unwrap_or_else(|e| panic!("{code}: {e}"));
         assert_eq!(out.trim_end(), want, "{code}");
     }
+}
+
+/// 141 T184: `make_tools` set `IRIS_CONTAINER` for the whole process and never put it back, so
+/// every later test in the integration binary took the docker path. The identity-paths test
+/// `l06_iris_test_runs_the_tests_as_the_service_account_with_and_without_a_container` read
+/// `docker_exec_local` where it expected `atelier`, in a full run only.
+#[tokio::test]
+#[ignore]
+async fn making_the_tools_leaves_iris_container_as_it_was() {
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_CONTAINER");
+    let made = make_tools().is_some();
+    let after = std::env::var("IRIS_CONTAINER").ok();
+    assert!(
+        made,
+        "IRIS_HOST unset; set IRIS_HOST=localhost IRIS_WEB_PORT=52780"
+    );
+    assert_eq!(
+        after, None,
+        "make_tools left IRIS_CONTAINER set for the rest of the process"
+    );
 }

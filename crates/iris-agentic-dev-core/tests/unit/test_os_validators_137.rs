@@ -416,6 +416,8 @@ fn test_run_code_keeps_the_pattern_data() {
     }
     let dir = build_test_run_code("Pkg/Dir\" Kill ^Y Set z=\"", "/v", "t", false);
     assert!(!dir.contains("Dir\" Kill"), "{dir}");
+    // The run root is made from the same escaped literal, so the crafted text stays data there too.
+    assert!(dir.contains("$Piece(\"Pkg/Dir\"\" Kill ^Y"), "{dir}");
     let ok = build_test_run_code("MyApp.Tests.Prod", "/v", "t", true);
     assert!(ok.contains("##class(MyApp.Tests.Prod).Run()"), "{ok}");
 }
@@ -444,7 +446,7 @@ fn coverage_run_code_keeps_the_test_path_data() {
     );
     let ok = build_coverage_run_code(&routines, "MyApp.Tests", "USER");
     assert!(
-        ok.contains("RunTest(\"MyApp.Tests\",\"/noload/nodelete\")"),
+        ok.contains("RunTest(\"MyApp.Tests\",\"/verbose=1/nodelete/noload\",\"\")"),
         "{ok}"
     );
 }
@@ -488,6 +490,7 @@ async fn execute_method_checks_names_before_any_call() {
     );
     let client = reqwest::Client::new();
     let run = |class: &str, method: &str| IrisExecuteMethodParams {
+        confirm: false,
         class: class.to_string(),
         method: method.to_string(),
         args: vec![],

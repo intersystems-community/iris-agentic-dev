@@ -27,68 +27,13 @@ if [[ -z "${IRIS_HOST:-}" || -z "${IRIS_WEB_PORT:-}" ]]; then
     exit 0
 fi
 
-BASENAME=$(basename "$FILE_PATH")
-DOC_NAME="$BASENAME"
-
-CLASS_NAME="${BASENAME%.*}"
-
-if [[ "$EXT" == "cls" ]]; then
-    PARENT=$(basename "$(dirname "$FILE_PATH")")
-    if [[ "$PARENT" != "." && "$PARENT" != "" && "$PARENT" != "workspace" && "$PARENT" != "/" ]]; then
-        DOC_NAME="${PARENT}.${BASENAME}"
-        CLASS_NAME="${PARENT}.${CLASS_NAME}"
-    fi
-fi
-
-BASE_URL="http://${IRIS_HOST}:${IRIS_WEB_PORT}/api/atelier/v1"
-NS="${IRIS_NAMESPACE:-USER}"
-USER="${IRIS_USERNAME:-_SYSTEM}"
-PASS="${IRIS_PASSWORD:-SYS}"
-
-START=$(date +%s%N 2>/dev/null || echo 0)
-
-RESPONSE=$(curl --max-time 3 -s \
-    -X POST \
-    -u "${USER}:${PASS}" \
-    -H "Content-Type: application/json" \
-    "${BASE_URL}/${NS}/action/compile" \
-    -d "[\"${DOC_NAME}\"]" 2>/dev/null) || {
-    echo "IRIS not connected — set IRIS_HOST, IRIS_WEB_PORT, IRIS_USERNAME, IRIS_PASSWORD"
-    exit 0
-}
-
-HTTP_CODE=$(curl --max-time 3 -s -o /dev/null -w "%{http_code}" \
-    -u "${USER}:${PASS}" \
-    "${BASE_URL}/${NS}/action/compile" \
-    -X POST \
-    -H "Content-Type: application/json" \
-    -d "[\"${DOC_NAME}\"]" 2>/dev/null) || HTTP_CODE="000"
-
-BODY="$RESPONSE"
-
-if [[ "$HTTP_CODE" == "000" || -z "$HTTP_CODE" ]]; then
-    echo "IRIS not connected — set IRIS_HOST, IRIS_WEB_PORT, IRIS_USERNAME, IRIS_PASSWORD"
+# Compile through the binary: it uploads the local edit, then compiles it, behind the same gates as
+# the MCP server (write gate, template, allow, role, compile-time gate). Never post to IRIS here.
+if ! command -v iris-agentic-dev >/dev/null 2>&1; then
+    echo "iris-agentic-dev is not on PATH — compile-on-save skipped"
     exit 0
 fi
 
-END=$(date +%s%N 2>/dev/null || echo 0)
-if [[ "$START" != "0" && "$END" != "0" ]]; then
-    ELAPSED_MS=$(( (END - START) / 1000000 ))
-    ELAPSED_S=$(awk "BEGIN {printf \"%.1f\", $ELAPSED_MS / 1000}")
-else
-    ELAPSED_S="?"
-fi
-
-ERRORS=$(printf '%s' "$BODY" | jq -r '
-    (.status.errors[]?.error // empty),
-    (.result.console[]? | select(startswith("ERROR") or startswith(" ERROR")))
-' 2>/dev/null | grep -v "^$" | head -10 || true)
-
-if [[ -z "$ERRORS" ]]; then
-    echo "Compiled ${CLASS_NAME} OK (${ELAPSED_S}s)"
-else
-    echo "Compile errors in ${CLASS_NAME}:"
-    printf '%s\n' "$ERRORS" | while IFS= read -r line; do
-        echo "  $line"
-    done
-fi
+# The binary prints its own result and exits 1 on a refusal or a compile error. A hook reports and
+# carries on, so a failed compile never fails the edit.
+iris-agentic-dev compile -- "$FILE_PATH" 2>&1 || true

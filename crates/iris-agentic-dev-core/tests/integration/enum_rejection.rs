@@ -29,6 +29,33 @@ fn make_iris_tools() -> Option<iris_agentic_dev_core::tools::IrisTools> {
     Some(iris_agentic_dev_core::tools::IrisTools::new(Some(conn)).expect("IrisTools::new"))
 }
 
+/// The same connection with the write and destructive tiers declared on, for a tool the gates would
+/// otherwise refuse before its handler sees the action. Gate order (R1 D8) puts `gate_check` ahead
+/// of everything a handler does, so an action value is judged only for a caller the gates admit.
+fn make_iris_tools_gates_open() -> Option<iris_agentic_dev_core::tools::IrisTools> {
+    let host = std::env::var("IRIS_HOST").unwrap_or_default();
+    if host.is_empty() {
+        return None;
+    }
+    let web_port = std::env::var("IRIS_WEB_PORT").unwrap_or_else(|_| "52773".to_string());
+    let username = std::env::var("IRIS_USERNAME").unwrap_or_else(|_| "_SYSTEM".to_string());
+    let password = std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".to_string());
+    let conn = IrisConnection::new(
+        format!("http://{host}:{web_port}"),
+        "USER",
+        username,
+        password,
+        DiscoverySource::EnvVar,
+    );
+    Some(
+        iris_agentic_dev_core::tools::IrisTools::for_test_gates_open(
+            Some(conn),
+            iris_agentic_dev_core::tools::Toolset::Merged,
+        )
+        .expect("IrisTools::for_test_gates_open"),
+    )
+}
+
 fn parse_result(r: Result<rmcp::model::CallToolResult, String>) -> serde_json::Value {
     let r = r.expect("call_for_test returned Err");
     let text = r.content[0].as_text().unwrap().text.clone();
@@ -278,7 +305,7 @@ async fn a_mode_outside_the_enum_names_the_permitted_values() {
 /// and not degrade into a deserialization failure.
 #[tokio::test]
 async fn an_action_outside_the_enum_returns_invalid_action() {
-    let Some(tools) = make_iris_tools() else {
+    let Some(tools) = make_iris_tools_gates_open() else {
         return;
     };
     let v = parse_result(

@@ -66,6 +66,10 @@ jobs:
           path: ${{ matrix.artifact }}
 
   build-vsix:
+    # After the binaries: the extension pins each binary's SHA-256 and checks
+    # its download against it, so the hashes must exist before the VSIX is
+    # packaged. The bytes hashed here are the bytes the release job publishes.
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -87,6 +91,16 @@ jobs:
           fi
           echo "serverVersion $declared matches tag $tag"
 
+      - uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          merge-multiple: true
+          pattern: "iris-agentic-dev-*"
+      - name: Pin the binaries' SHA-256 in the extension
+        # Fails if any of the five assets is missing or empty. Without a pin
+        # for its platform the extension installs nothing, so a VSIX packaged
+        # without this step could never auto-install.
+        run: node vscode-iris-agentic-dev/scripts/stamp-asset-hashes.cjs release-assets vscode-iris-agentic-dev/package.json
       - run: cd vscode-iris-agentic-dev && npm ci && npm test && npm run package
       - uses: actions/upload-artifact@v7
         with:
@@ -128,6 +142,23 @@ jobs:
 
           > The `.vsix` below is a fallback for air-gapped or pinned-version installs. Homebrew and manual binary install still work as before.
           EOF
+      - name: Check the VSIX pins match the assets being published
+        # The VSIX was packaged from the same artifacts, but a pin that
+        # disagrees with a published asset would make every auto-install fail
+        # its hash check, so compare before anything is released.
+        run: |
+          unzip -p vscode-iris-agentic-dev-*.vsix extension/package.json > vsix-package.json
+          for f in iris-agentic-dev-linux-x86_64 iris-agentic-dev-linux-aarch64 \
+                   iris-agentic-dev-macos-arm64 iris-agentic-dev-macos-x86_64 \
+                   iris-agentic-dev-windows-x86_64.exe; do
+            pinned=$(node -p "require('./vsix-package.json').irisAgenticDev.assetSha256['$f']")
+            actual=$(sha256sum "$f" | cut -d' ' -f1)
+            if [ "$pinned" != "$actual" ]; then
+              echo "::error::VSIX pins $pinned for $f but the asset hashes to $actual"
+              exit 1
+            fi
+          done
+          rm vsix-package.json
       - name: Write SHA256SUMS
         run: |
           sha256sum iris-agentic-dev-linux-x86_64 iris-agentic-dev-linux-aarch64 \

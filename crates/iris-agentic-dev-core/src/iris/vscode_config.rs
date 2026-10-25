@@ -19,6 +19,8 @@ pub struct ObjectScriptConn {
     pub active: Option<bool>,
     pub host: Option<String>,
     pub port: Option<u16>,
+    /// The ObjectScript extension's own key: `true` means the web server is served over TLS.
+    pub https: Option<bool>,
     pub username: Option<String>,
     pub password: Option<String>,
     pub ns: Option<String>,
@@ -147,72 +149,225 @@ pub fn parse_vscode_settings(path: impl AsRef<Path>) -> anyhow::Result<VsCodeSet
     Ok(settings)
 }
 
+/// A connection built from `.vscode/settings.json`, and the credentials held back building it.
+#[derive(Debug)]
+pub struct ResolvedVsCodeConn {
+    pub conn: IrisConnection,
+    pub set_aside: Vec<crate::iris::config_sources::SetAsideItem>,
+}
+
+/// What `.vscode/settings.json` yields.
+#[derive(Debug)]
+pub enum VsCodeResolution {
+    /// The file names no active connection, or one that cannot be built (a bad address).
+    NotConfigured,
+    Connection(ResolvedVsCodeConn),
+    /// The file names a connection and supplies no password iad may use: none in the file, none in
+    /// the keychain (or no keychain), or no user-level profile to vouch for the address. No
+    /// connection is built; the item says what is missing (spec 141, T204). A password is never
+    /// guessed.
+    PasswordMissing(crate::iris::config_sources::SetAsideItem),
+}
+
+/// The set-aside item for a connection whose password cannot be read.
+fn password_missing(
+    server: Option<&str>,
+    target: &str,
+    why: &str,
+    lift: &str,
+) -> crate::iris::config_sources::SetAsideItem {
+    let name = server.unwrap_or("default");
+    crate::iris::config_sources::SetAsideItem {
+        id: format!("{name}:password_missing"),
+        part: None,
+        kind: crate::iris::config_sources::SetAsideKind::CredentialWithheld,
+        setting: "password".to_string(),
+        server: Some(name.to_string()),
+        file: None,
+        reason: format!(
+            ".vscode/settings.json connects to {target} and iad has no password for it: {why}. \
+             No connection was built."
+        ),
+        lift: lift.to_string(),
+    }
+}
+
 impl VsCodeSettings {
-    /// Convert parsed settings to an IrisConnection, resolving named servers.
+    /// Convert parsed settings to an IrisConnection, resolving named servers against the
+    /// user-level Server Manager profiles. `None` when the file names no connection or the
+    /// password cannot be read; [`Self::resolve_connection`] says which.
     pub async fn to_iris_connection(&self) -> Option<IrisConnection> {
-        let conn = self.objectscript_conn.as_ref()?;
+        match self.resolve_connection().await {
+            VsCodeResolution::Connection(r) => {
+                let mut conn = r.conn;
+                if let Some(item) = r.set_aside.first() {
+                    conn.credentials_withheld = Some(item.reason.clone());
+                }
+                Some(conn)
+            }
+            _ => None,
+        }
+    }
+
+    /// [`Self::to_iris_connection`], keeping the reason a connection was not built.
+    pub async fn resolve_connection(&self) -> VsCodeResolution {
+        let profiles = crate::iris::server_manager::user_profiles();
+        self.resolve_with_profiles(&profiles)
+    }
+
+    /// [`Self::to_iris_connection`] against a given list of user-level profiles, so a test needs
+    /// no settings file of the user's. A named server gets a Server Manager keychain password only
+    /// when the workspace file's address for it equals the user-level profile of the same name
+    /// (spec 141, FR-024): a repository cannot name a host of its own and borrow the secret.
+    pub fn connection_with_profiles(
+        &self,
+        profiles: &[crate::iris::server_manager::ServerManagerProfile],
+    ) -> Option<ResolvedVsCodeConn> {
+        match self.resolve_with_profiles(profiles) {
+            VsCodeResolution::Connection(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    /// [`Self::connection_with_profiles`], and when no connection is built, why not.
+    pub fn resolve_with_profiles(
+        &self,
+        profiles: &[crate::iris::server_manager::ServerManagerProfile],
+    ) -> VsCodeResolution {
+        use VsCodeResolution::{Connection, NotConfigured, PasswordMissing};
+        let Some(conn) = self.objectscript_conn.as_ref() else {
+            return NotConfigured;
+        };
         if conn.active == Some(false) {
-            return None;
+            return NotConfigured;
         }
 
         // Named server path
         if let Some(server_name) = &conn.server {
-            let servers = self.intersystems_servers.as_ref()?;
-            let server = servers.get(server_name)?;
-            let host = server.web_server.host.as_deref().unwrap_or("localhost");
-            let web_port = server.web_server.port.unwrap_or(52773);
-            let scheme = server.web_server.scheme.as_deref().unwrap_or("http");
-            let path_prefix = server
-                .web_server
-                .path_prefix
-                .as_deref()
-                .unwrap_or("")
-                .trim_matches('/');
-            let base_url = if path_prefix.is_empty() {
-                format!("{}://{}:{}", scheme, host, web_port)
-            } else {
-                format!("{}://{}:{}/{}", scheme, host, web_port, path_prefix)
+            let Some(server) = self
+                .intersystems_servers
+                .as_ref()
+                .and_then(|s| s.get(server_name))
+            else {
+                return NotConfigured;
+            };
+            let endpoint = match crate::iris::endpoint::Endpoint::parse(
+                server.web_server.scheme.as_deref(),
+                server.web_server.host.as_deref().unwrap_or("localhost"),
+                server.web_server.port.unwrap_or(52773),
+                server.web_server.path_prefix.as_deref(),
+            ) {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!("INVALID_CONFIG: .vscode server '{server_name}': {e}");
+                    return NotConfigured;
+                }
             };
             let username = server.username.as_deref().unwrap_or("_SYSTEM");
-            // Password priority: settings.json field → OS keychain (Server Manager key format)
-            // → fallback. The ObjectScript extension stores passwords in SecretStorage, not
-            // settings.json, so keychain lookup is the normal path for named servers.
-            let keychain_pw;
+            // Password priority: settings.json field → the Server Manager's keychain item, only
+            // when this address is the profile's own. The ObjectScript extension stores passwords
+            // in SecretStorage, not settings.json, so the keychain is the normal path.
+            let mut set_aside = Vec::new();
             let password = if let Some(pw) = server.password.as_deref() {
-                pw
+                pw.to_string()
             } else {
-                keychain_pw =
-                    crate::iris::server_manager::resolve_credential(server_name, username).ok();
-                keychain_pw.as_deref().unwrap_or("SYS")
+                use crate::iris::server_manager::{sm_secret_for_in, SmSecretError};
+                let missing = |why: String| {
+                    PasswordMissing(password_missing(
+                        Some(server_name),
+                        &endpoint.to_string(),
+                        &why,
+                        "save the password for this server in Server Manager, or add a \
+                         password to the entry",
+                    ))
+                };
+                match sm_secret_for_in(profiles, server_name, username, &endpoint) {
+                    Ok(pw) => pw,
+                    Err(SmSecretError::Withheld { reason, .. }) => {
+                        set_aside.push(crate::iris::config_sources::SetAsideItem {
+                            id: format!("{server_name}:server_manager"),
+                            part: None,
+                            kind: crate::iris::config_sources::SetAsideKind::CredentialWithheld,
+                            setting: "Server Manager keychain secret".to_string(),
+                            server: Some(server_name.clone()),
+                            file: None,
+                            reason: format!(
+                                "not sent to {endpoint}: .vscode/settings.json names this server \
+                                 at an address other than the user-level profile's. {reason}"
+                            ),
+                            lift: "make the endpoints match, or give the entry its own password"
+                                .to_string(),
+                        });
+                        String::new()
+                    }
+                    Err(SmSecretError::NoProfile { name }) => {
+                        return missing(format!(
+                            "the file sets no password and the user-level Server Manager \
+                             settings have no server named '{name}' to vouch for the address"
+                        ));
+                    }
+                    Err(SmSecretError::Credential(c)) => {
+                        return missing(format!(
+                            "the file sets no password and the keychain could not supply the \
+                             Server Manager one ({c})"
+                        ));
+                    }
+                }
             };
             let ns = conn.ns.as_deref().unwrap_or("USER");
 
             let iris_conn = IrisConnection::new(
-                base_url,
+                endpoint.base_url(),
                 ns,
                 username,
                 password,
                 DiscoverySource::VsCodeSettings,
             );
             // Note: super_server_port is available if needed for native connections
-            return Some(iris_conn);
+            return Connection(ResolvedVsCodeConn {
+                conn: iris_conn,
+                set_aside,
+            });
         }
 
         // Direct host/port path
         let host = conn.host.as_deref().unwrap_or("localhost");
         let port = conn.port.unwrap_or(52773);
         let username = conn.username.as_deref().unwrap_or("_SYSTEM");
-        let password = conn.password.as_deref().unwrap_or("SYS");
         let ns = conn.ns.as_deref().unwrap_or("USER");
-        let base_url = format!("http://{}:{}", host, port);
+        let scheme = if conn.https == Some(true) {
+            "https"
+        } else {
+            "http"
+        };
+        let endpoint = match crate::iris::endpoint::Endpoint::parse(Some(scheme), host, port, None)
+        {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!("INVALID_CONFIG: objectscript.conn: {e}");
+                return NotConfigured;
+            }
+        };
+        let Some(password) = conn.password.as_deref() else {
+            return PasswordMissing(password_missing(
+                None,
+                &endpoint.to_string(),
+                "the file sets no password, and the editor's own prompt is not available here",
+                "add a password to objectscript.conn, or connect with IRIS_HOST, IRIS_USERNAME and \
+                 IRIS_PASSWORD",
+            ));
+        };
 
-        Some(IrisConnection::new(
-            base_url,
-            ns,
-            username,
-            password,
-            DiscoverySource::VsCodeSettings,
-        ))
+        Connection(ResolvedVsCodeConn {
+            conn: IrisConnection::new(
+                endpoint.base_url(),
+                ns,
+                username,
+                password,
+                DiscoverySource::VsCodeSettings,
+            ),
+            set_aside: Vec::new(),
+        })
     }
 }
 
@@ -368,6 +523,7 @@ mod tests {
                 active: Some(false),
                 host: Some("localhost".to_string()),
                 port: Some(52773),
+                https: None,
                 username: None,
                 password: None,
                 ns: None,
@@ -386,6 +542,7 @@ mod tests {
                 active: Some(true),
                 host: Some("localhost".to_string()),
                 port: Some(52773),
+                https: None,
                 username: Some("_SYSTEM".to_string()),
                 password: Some("SYS".to_string()),
                 ns: Some("USER".to_string()),
@@ -467,6 +624,7 @@ mod tests {
                 active: None,
                 host: None,
                 port: None,
+                https: None,
                 username: None,
                 password: None,
                 ns: Some("PROD".to_string()),
@@ -496,7 +654,7 @@ mod tests {
                 },
                 super_server: None,
                 username: None,
-                password: None,
+                password: Some("pw".to_string()),
                 description: None,
             },
         );
@@ -505,6 +663,7 @@ mod tests {
                 active: None,
                 host: None,
                 port: None,
+                https: None,
                 username: None,
                 password: None,
                 ns: Some("USER".to_string()),
@@ -545,6 +704,7 @@ mod tests {
                 active: None,
                 host: None,
                 port: None,
+                https: None,
                 username: None,
                 password: None,
                 ns: None,
@@ -554,5 +714,50 @@ mod tests {
         };
         let conn = settings.to_iris_connection().await;
         assert!(conn.is_none(), "missing server key must return None");
+    }
+    fn from_json(body: &str) -> VsCodeSettings {
+        serde_json::from_str(body).expect("settings parse")
+    }
+
+    /// A named server with no `intersystems.servers` block names nothing to connect to.
+    #[test]
+    fn a_named_server_with_no_servers_block_gives_no_connection() {
+        let s = from_json(r#"{"objectscript.conn":{"server":"dev"}}"#);
+        assert!(s.connection_with_profiles(&[]).is_none());
+    }
+
+    /// A host that is not a bare host (it carries a path) is refused, whether it came from a named
+    /// server or from the direct `objectscript.conn` fields. Nothing is guessed in its place.
+    #[test]
+    fn an_invalid_host_gives_no_connection_on_either_path() {
+        let named = from_json(
+            r#"{"objectscript.conn":{"server":"dev"},
+                "intersystems.servers":{"dev":{"webServer":{"host":"a/b","port":52773}}}}"#,
+        );
+        assert!(named.connection_with_profiles(&[]).is_none());
+
+        let direct = from_json(r#"{"objectscript.conn":{"host":"a/b","port":52773}}"#);
+        assert!(direct.connection_with_profiles(&[]).is_none());
+
+        let bad_scheme = from_json(
+            r#"{"objectscript.conn":{"server":"dev"},
+                "intersystems.servers":{"dev":{"webServer":{"host":"h","scheme":"ftp"}}}}"#,
+        );
+        assert!(bad_scheme.connection_with_profiles(&[]).is_none());
+    }
+
+    /// The direct path uses `https` when the extension's own `https` key is true.
+    #[test]
+    fn the_direct_path_follows_the_https_key() {
+        let s = from_json(
+            r#"{"objectscript.conn":{"host":"iris.example","port":443,"https":true,"password":"pw"}}"#,
+        );
+        let r = s.connection_with_profiles(&[]).expect("a connection");
+        assert!(
+            r.conn.base_url.starts_with("https://iris.example"),
+            "{}",
+            r.conn.base_url
+        );
+        assert!(r.set_aside.is_empty());
     }
 }

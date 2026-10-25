@@ -34,7 +34,10 @@ fn tools() -> Option<IrisTools> {
         pass,
         DiscoverySource::EnvVar,
     );
-    Some(IrisTools::new(Some(conn)).expect("IrisTools::new"))
+    Some(
+        IrisTools::for_test_gates_open(Some(conn), iris_agentic_dev_core::tools::Toolset::Baseline)
+            .expect("IrisTools::for_test_gates_open"),
+    )
 }
 
 async fn call(t: &IrisTools, tool: &'static str, args: serde_json::Value) -> serde_json::Value {

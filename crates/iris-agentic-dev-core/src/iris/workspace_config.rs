@@ -2,7 +2,7 @@
 //!
 //! Priority order: CLI flags > .iris-agentic-dev.toml > env vars > auto-discovery.
 
-use crate::iris::connection::{host_from_env, DiscoverySource, IrisConnection};
+use crate::iris::connection::{DiscoverySource, IrisConnection};
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -27,9 +27,10 @@ pub struct WorkspaceConfig {
     /// locally-installed CA (mkcert and friends) needs nothing here — the HTTP client reads the
     /// OS trust store, so those verify normally.
     ///
-    /// Exported as `IRIS_TLS_VERIFY`, which is what the HTTP and websocket clients read, and
-    /// declaring it here wins over an inherited env var the way every other connection setting
-    /// does (#127). `None` means "declare nothing", leaving any env var in force.
+    /// Applies to this file's own connection only, and `false` counts only from the operator's file
+    /// or a project file the operator trusted (spec 141). It is not exported to the environment.
+    /// `None` declares nothing: certificates are checked, unless the file names the server the
+    /// launch settings name and `IRIS_TLS_VERIFY` says otherwise for it (#127).
     pub tls_verify: Option<bool>,
     pub username: Option<String>,
     pub password: Option<String>,
@@ -45,10 +46,15 @@ pub struct WorkspaceConfig {
     #[serde(default)]
     pub nopws: bool,
     /// Route docker exec commands through SSH to a remote Docker host.
-    /// When set, every docker exec call is prefixed with
-    /// `ssh -o StrictHostKeyChecking=no <ssh_host>`.
+    /// When set, every docker exec call runs through
+    /// `ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new <ssh_host>`.
     /// Requires `container` to be set. See docs/connecting.md for security notes.
     pub ssh_host: Option<String>,
+    /// Require a known host key for `ssh_host` (`StrictHostKeyChecking=yes`). By default a host
+    /// seen for the first time is recorded (`accept-new`) and a changed key is refused. Setting
+    /// this only tightens, so any file may set it.
+    #[serde(default)]
+    pub ssh_strict: bool,
     /// Tools to exclude from the MCP tool list at startup.
     /// Each entry is an exact tool name (e.g. "iris_source_control", "iris_admin").
     /// Useful for stripping tools irrelevant to your workflow to reduce noise.
@@ -75,13 +81,60 @@ pub struct WorkspaceConfig {
 }
 
 /// Connection role for fleet/operate mode instances.
-#[derive(Debug, Deserialize, Clone, PartialEq, Default)]
-#[serde(rename_all = "kebab-case")]
+///
+/// A **workbench** is a server the agent builds on; a **subject** is a server under study, where
+/// source-control writes are refused and other writes need confirmation. Parsing is lenient and
+/// fails closed ([`parse_role`]): `workspace` is the pre-1.7 spelling of `workbench`,
+/// `control-plane` was never gated and so reads as `workbench`, and any other value is `subject`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ConnectionRole {
     #[default]
-    Workspace,
+    Workbench,
     Subject,
-    ControlPlane,
+}
+
+impl ConnectionRole {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ConnectionRole::Workbench => "workbench",
+            ConnectionRole::Subject => "subject",
+        }
+    }
+}
+
+/// Read a role string. The second value is a note for `config_errors` when the spelling is
+/// deprecated or not understood.
+pub fn parse_role(raw: &str) -> (ConnectionRole, Option<String>) {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "workbench" => (ConnectionRole::Workbench, None),
+        "subject" => (ConnectionRole::Subject, None),
+        "workspace" => (
+            ConnectionRole::Workbench,
+            Some(
+                "role \"workspace\" is now \"workbench\"; \"workspace\" is accepted through 1.7.x"
+                    .to_string(),
+            ),
+        ),
+        "control-plane" => (
+            ConnectionRole::Workbench,
+            Some(
+                "role \"control-plane\" is not a role; it is treated as \"workbench\"".to_string(),
+            ),
+        ),
+        other => (
+            ConnectionRole::Subject,
+            Some(format!(
+                "role \"{other}\" is not a role; it is treated as \"subject\""
+            )),
+        ),
+    }
+}
+
+impl<'de> Deserialize<'de> for ConnectionRole {
+    fn deserialize<D: serde::Deserializer<'de>>(de: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(de)?;
+        Ok(parse_role(&raw).0)
+    }
 }
 
 /// Per-instance config block for `mode = "operate"` fleet configs.
@@ -103,27 +156,41 @@ pub struct InstanceConfig {
     pub scheme: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
+    /// The restricted account the agent's code runs as on this server. Honoured from the operator
+    /// file or a trusted workspace file only.
+    pub service_username: Option<String>,
+    pub service_password: Option<String>,
     #[serde(default)]
     pub role: ConnectionRole,
     #[serde(alias = "memory-home")]
     pub memory_home: Option<String>,
     pub subject: Option<String>,
+    /// Check this instance's certificate? `false` turns it off for this instance only, and counts
+    /// only from the operator's file or a project file the operator trusted.
+    pub tls_verify: Option<bool>,
 }
 
-/// Build the Atelier base URL for a fleet `[instance.*]` block.
+/// Where a fleet `[instance.*]` block is.
 ///
-/// Defaults: host `localhost`, port `52773`, scheme `http`, no path prefix.
+/// Defaults: host `localhost`, port `52773`, scheme `http`, no path prefix. A scheme that is not
+/// `http` or `https` is an error.
+pub fn instance_endpoint(
+    inst: &InstanceConfig,
+) -> Result<crate::iris::endpoint::Endpoint, crate::iris::endpoint::InvalidEndpoint> {
+    crate::iris::endpoint::Endpoint::parse(
+        inst.scheme.as_deref(),
+        inst.host.as_deref().unwrap_or("localhost"),
+        inst.web_port.unwrap_or(52773),
+        inst.web_prefix.as_deref(),
+    )
+}
+
+/// The Atelier base URL for a fleet `[instance.*]` block; the unreachable sentinel when the block
+/// has no valid endpoint (see [`instance_endpoint`]).
 pub fn instance_base_url(inst: &InstanceConfig) -> String {
-    let host = inst.host.as_deref().unwrap_or("localhost");
-    let port = inst.web_port.unwrap_or(52773);
-    let scheme = inst
-        .scheme
-        .as_deref()
-        .map(|s| s.trim_matches('/'))
-        .filter(|s| !s.is_empty())
-        .unwrap_or("http");
-    let prefix = crate::iris::connection_pool::web_prefix_path_part(inst.web_prefix.as_deref());
-    format!("{scheme}://{host}:{port}{prefix}")
+    instance_endpoint(inst)
+        .map(|e| e.base_url())
+        .unwrap_or_else(|_| crate::iris::connection_pool::UNREACHABLE_BASE_URL.to_string())
 }
 
 /// Environment template gate: controls which tool categories are available on a connection.
@@ -202,29 +269,62 @@ impl std::str::FromStr for ToolCategory {
     }
 }
 
+/// Lenient and fail-closed (R1 D11): an unknown template reads as `live`, the strictest. The
+/// notice for the operator is added by [`crate::iris::config_sources::value_notes`].
 fn deserialize_opt_mcp_template<'de, D>(de: D) -> Result<Option<McpTemplate>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
-    // Deserialize as a raw string first; return None for unknown variants instead of erroring.
     let s = match Option::<String>::deserialize(de)? {
         Some(s) => s,
         None => return Ok(None),
     };
-    match s.as_str() {
-        "dev" => Ok(Some(McpTemplate::Dev)),
-        "test" => Ok(Some(McpTemplate::Test)),
-        "live" => Ok(Some(McpTemplate::Live)),
-        other => {
-            tracing::warn!(value = other, "unknown mcpTemplate value — treating as Dev");
-            Ok(None)
+    Ok(Some(match s.trim().to_ascii_lowercase().as_str() {
+        "dev" => McpTemplate::Dev,
+        "test" => McpTemplate::Test,
+        _ => McpTemplate::Live,
+    }))
+}
+
+/// Case-insensitive; an unknown value reads as `block`, the strictest.
+fn deserialize_opt_data_policy<'de, D>(de: D) -> Result<Option<DataPolicy>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = match Option::<String>::deserialize(de)? {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    Ok(Some(match s.trim().to_ascii_lowercase().as_str() {
+        "allow" => DataPolicy::Allow,
+        "redact" => DataPolicy::Redact,
+        _ => DataPolicy::Block,
+    }))
+}
+
+/// Case-insensitive; a category iad does not know is dropped, which narrows the list.
+fn deserialize_opt_allow<'de, D>(de: D) -> Result<Option<Vec<ToolCategory>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let Some(items) = Option::<Vec<String>>::deserialize(de)? else {
+        return Ok(None);
+    };
+    let mut out: Vec<ToolCategory> = Vec::new();
+    for s in items {
+        if let Ok(c) = s.trim().to_ascii_lowercase().parse::<ToolCategory>() {
+            if !out.contains(&c) {
+                out.push(c);
+            }
         }
     }
+    Ok(Some(out))
 }
 
 /// Raw TOML deserialization form of a policy block.
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct ConnectionPolicyRaw {
+    #[serde(deserialize_with = "deserialize_opt_allow", default)]
     pub allow: Option<Vec<ToolCategory>>,
     #[serde(
         rename = "mcpTemplate",
@@ -232,7 +332,11 @@ pub struct ConnectionPolicyRaw {
         default
     )]
     pub mcp_template: Option<McpTemplate>,
-    #[serde(rename = "dataPolicy")]
+    #[serde(
+        rename = "dataPolicy",
+        deserialize_with = "deserialize_opt_data_policy",
+        default
+    )]
     pub data_policy: Option<DataPolicy>,
     #[serde(rename = "globalBlocklist", default)]
     pub global_blocklist: Vec<String>,
@@ -272,6 +376,74 @@ pub struct ConnectionPolicy {
     pub iris_audit: bool,
 }
 
+impl ConnectionPolicy {
+    /// The policy that holds when a call is judged by both `self` and `other` (spec 141, R1 D4).
+    ///
+    /// Used when a pool member is the default connection under another name: `[policy.<name>]` alone
+    /// would be a way around `[policy.default]`. The higher template, the stricter data policy, the
+    /// intersection of `allow` and of the kill allowlist, the union of the blocklists and of
+    /// `irisAudit`. The name stays `self`'s.
+    pub fn stricter(&self, other: &ConnectionPolicy) -> ConnectionPolicy {
+        fn rank_template(t: &McpTemplate) -> u8 {
+            match t {
+                McpTemplate::Dev => 0,
+                McpTemplate::Test => 1,
+                McpTemplate::Live => 2,
+            }
+        }
+        fn rank_data(d: &DataPolicy) -> u8 {
+            match d {
+                DataPolicy::Allow => 0,
+                DataPolicy::Redact => 1,
+                DataPolicy::Block => 2,
+            }
+        }
+        let template = match (&self.mcp_template, &other.mcp_template) {
+            (Some(a), Some(b)) => Some(if rank_template(b) > rank_template(a) {
+                b.clone()
+            } else {
+                a.clone()
+            }),
+            (Some(a), None) | (None, Some(a)) => Some(a.clone()),
+            (None, None) => None,
+        };
+        // `None` is `Block`, the strictest.
+        let data = match (&self.data_policy, &other.data_policy) {
+            (Some(a), Some(b)) => Some(if rank_data(b) > rank_data(a) {
+                b.clone()
+            } else {
+                a.clone()
+            }),
+            _ => Some(DataPolicy::Block),
+        };
+        let allow = match (&self.allow, &other.allow) {
+            (Some(a), Some(b)) => Some(a.iter().filter(|c| b.contains(c)).cloned().collect()),
+            (Some(a), None) | (None, Some(a)) => Some(a.clone()),
+            (None, None) => None,
+        };
+        let mut blocklist = self.global_blocklist.clone();
+        for g in &other.global_blocklist {
+            if !blocklist.contains(g) {
+                blocklist.push(g.clone());
+            }
+        }
+        ConnectionPolicy {
+            server_name: self.server_name.clone(),
+            allow,
+            mcp_template: template,
+            data_policy: data,
+            global_blocklist: blocklist,
+            data_policy_kill_allowlist: self
+                .data_policy_kill_allowlist
+                .iter()
+                .filter(|k| other.data_policy_kill_allowlist.contains(k))
+                .cloned()
+                .collect(),
+            iris_audit: self.iris_audit || other.iris_audit,
+        }
+    }
+}
+
 /// Top-level fleet config. Wraps WorkspaceConfig for backward-compatible develop mode.
 ///
 /// Parsing rule: load as FleetConfig.
@@ -290,193 +462,132 @@ pub struct FleetConfig {
     /// Resolved policies (populated after parsing).
     #[serde(skip)]
     pub policies: std::collections::HashMap<String, ConnectionPolicy>,
+    /// Values that parsed but were corrected or not understood (an unknown role, a deprecated
+    /// spelling). Reported by `check_config`; never a reason to refuse the file.
+    #[serde(skip)]
+    pub errors: Vec<String>,
 }
 
 /// Resolve the workspace root path.
 /// Priority: OBJECTSCRIPT_WORKSPACE env var > workspace_path arg > walk up from cwd.
 ///
-/// When no explicit path is given, walks up from current_dir() looking for .iris-agentic-dev.toml
-/// (git-style discovery). This ensures the config is found even when the MCP server is
-/// launched from a parent directory (e.g. by an IDE that sets cwd to the home directory).
+/// The walk looks for `.iris-agentic-dev.toml` (git-style discovery), falling back to the legacy
+/// `.iris-dev.toml`, and stops before the home directory: the file there is the operator file, which
+/// [`crate::iris::config_sources::ConfigSnapshot`] always reads and never treats as a workspace file.
 pub fn workspace_root(workspace_path: Option<&str>) -> PathBuf {
-    if let Ok(ws) = std::env::var("OBJECTSCRIPT_WORKSPACE") {
-        if !ws.is_empty() {
-            return PathBuf::from(ws);
-        }
-    }
-    if let Some(p) = workspace_path {
-        if !p.is_empty() && p != "." {
-            return PathBuf::from(p);
-        }
-    }
-    // Walk up from current directory looking for .iris-agentic-dev.toml
-    // (fall back to legacy .iris-dev.toml for backward compatibility)
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let mut dir = cwd.as_path();
-    let mut legacy_root: Option<PathBuf> = None;
-    loop {
-        if dir.join(".iris-agentic-dev.toml").exists() {
-            return dir.to_path_buf();
-        }
-        if legacy_root.is_none() && dir.join(".iris-dev.toml").exists() {
-            legacy_root = Some(dir.to_path_buf());
-        }
-        match dir.parent() {
-            Some(parent) => dir = parent,
-            None => break,
-        }
-    }
-    // If no .iris-agentic-dev.toml found but legacy .iris-dev.toml exists, use that dir.
-    legacy_root.unwrap_or(cwd)
+    crate::iris::config_sources::workspace_root(
+        &crate::iris::config_sources::LoadInputs::from_process(workspace_path, None),
+    )
 }
 
-/// Load `.iris-agentic-dev.toml` from the resolved workspace root.
-/// Returns `None` if the file does not exist (not an error).
-/// Logs a warning and returns `None` on parse errors — never panics.
-pub fn load_workspace_config(workspace_path: Option<&str>) -> Option<WorkspaceConfig> {
-    let root = workspace_root(workspace_path);
-    // Prefer new config name; fall back to legacy .iris-dev.toml for backward compatibility.
-    let config_path = if root.join(".iris-agentic-dev.toml").exists() {
-        root.join(".iris-agentic-dev.toml")
-    } else if root.join(".iris-dev.toml").exists() {
-        tracing::debug!(
-            "Using legacy .iris-dev.toml (consider renaming to .iris-agentic-dev.toml)"
-        );
-        root.join(".iris-dev.toml")
-    } else {
-        return None;
-    };
+fn snapshot_for(
+    workspace_path: Option<&str>,
+    config_file: Option<&std::path::Path>,
+) -> crate::iris::config_sources::ConfigSnapshot {
+    crate::iris::config_sources::ConfigSnapshot::load(
+        &crate::iris::config_sources::LoadInputs::from_process(workspace_path, config_file),
+    )
+}
 
-    match std::fs::read_to_string(&config_path) {
-        Err(e) => {
-            tracing::warn!(
-                "Could not read .iris-agentic-dev.toml at {}: {}",
-                config_path.display(),
-                e
-            );
-            None
-        }
-        Ok(contents) => match toml::from_str::<WorkspaceConfig>(&contents) {
-            Ok(cfg) => {
-                tracing::debug!(
-                    "Loaded .iris-agentic-dev.toml from {}",
-                    config_path.display()
-                );
-                Some(cfg)
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Could not parse .iris-agentic-dev.toml at {}: {}",
-                    config_path.display(),
-                    e
-                );
-                None
-            }
-        },
-    }
+/// The workspace-layer file's connection settings, if there is such a file and it parsed.
+/// The operator file is not a workspace file and is not returned here.
+pub fn load_workspace_config(workspace_path: Option<&str>) -> Option<WorkspaceConfig> {
+    load_workspace_config_with_path(workspace_path).map(|(cfg, _)| cfg)
 }
 
 /// Like [`load_workspace_config`] but also returns the path of the file that was loaded.
 pub fn load_workspace_config_with_path(
     workspace_path: Option<&str>,
 ) -> Option<(WorkspaceConfig, std::path::PathBuf)> {
-    let root = workspace_root(workspace_path);
-    let config_path = if root.join(".iris-agentic-dev.toml").exists() {
-        root.join(".iris-agentic-dev.toml")
-    } else if root.join(".iris-dev.toml").exists() {
-        tracing::debug!(
-            "Using legacy .iris-dev.toml (consider renaming to .iris-agentic-dev.toml)"
-        );
-        root.join(".iris-dev.toml")
-    } else {
-        return None;
-    };
-
-    match std::fs::read_to_string(&config_path) {
-        Err(e) => {
-            tracing::warn!(
-                "Could not read .iris-agentic-dev.toml at {}: {}",
-                config_path.display(),
-                e
-            );
-            None
-        }
-        Ok(contents) => match toml::from_str::<WorkspaceConfig>(&contents) {
-            Ok(cfg) => {
-                tracing::debug!(
-                    "Loaded .iris-agentic-dev.toml from {}",
-                    config_path.display()
-                );
-                Some((cfg, config_path))
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Could not parse .iris-agentic-dev.toml at {}: {}",
-                    config_path.display(),
-                    e
-                );
-                None
-            }
-        },
-    }
+    let snap = snapshot_for(workspace_path, None);
+    snap.connection_config
+        .filter(|(_, _, kind)| *kind != crate::iris::config_sources::FileKind::Operator)
+        .map(|(cfg, path, _)| (cfg, path))
 }
 
-/// Whether the `.iris-agentic-dev.toml` at `config_path` chooses the connection, given whether
-/// `IRIS_HOST` is set. A project's file does, over the environment (spec 140, iris-interop-dev
-/// #434). A file in the home directory is a personal default that the walk up from any project
-/// without its own file reaches, so it yields to `IRIS_HOST` and chooses only when that is unset.
-/// Its tool and gate settings apply either way.
+/// Does the file name a server? `host` and `container` do, and so do `docker_only` and `nopws`,
+/// which name the route (docker exec, never HTTP): a file that sets one must not let discovery
+/// hand the call to an HTTP server. `web_port`, `namespace`, `scheme`, `web_prefix` and the
+/// credentials shape a connection chosen elsewhere, so a file holding only those is not where the
+/// connection came from (spec 141 T194; iris-interop-dev #410).
+pub fn names_a_target(cfg: &WorkspaceConfig) -> bool {
+    cfg.docker_only
+        || cfg.nopws
+        || [&cfg.host, &cfg.container]
+            .into_iter()
+            .any(|v| v.as_deref().is_some_and(|s| !s.trim().is_empty()))
+}
+
+/// [`names_a_target`] for the file at `path`; a file that cannot be read or parsed names nothing.
+pub fn file_names_a_target(path: &std::path::Path) -> bool {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|c| toml::from_str::<WorkspaceConfig>(&c).ok())
+        .is_some_and(|cfg| names_a_target(&cfg))
+}
+
+/// Whether a file of this kind chooses the connection, given whether `IRIS_HOST` is set. A
+/// workspace-layer file does, over the environment (spec 140, iris-interop-dev #434). The operator
+/// file is a personal default that a project without its own file reaches, so it yields to
+/// `IRIS_HOST` and chooses only when that is unset. Its tool and gate settings apply either way.
 pub fn file_chooses_connection(
-    config_path: &std::path::Path,
-    home: Option<&std::path::Path>,
-    iris_host_set: bool,
+    kind: crate::iris::config_sources::FileKind,
+    host_env_set: bool,
 ) -> bool {
-    if !iris_host_set {
-        return true;
-    }
-    // Canonical paths, so `/var/...` and `/private/var/...` (macOS), or a symlinked home, match.
-    let canon = |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    let in_home =
-        matches!((config_path.parent(), home), (Some(dir), Some(h)) if canon(dir) == canon(h));
-    !in_home
+    kind != crate::iris::config_sources::FileKind::Operator || !host_env_set
 }
 
 /// `http` or `https`, lowercased, from a configured scheme (surrounding `/` and a trailing `:` are
 /// tolerated); `None` for anything else, so a scheme cannot carry the URL to a host the loopback
 /// check never read.
 pub fn checked_scheme(raw: &str) -> Option<String> {
-    let s = raw
-        .trim()
-        .trim_matches('/')
-        .trim_end_matches(':')
-        .to_ascii_lowercase();
-    matches!(s.as_str(), "http" | "https").then_some(s)
+    crate::iris::endpoint::parse_scheme(raw).map(|s| s.as_str().to_string())
 }
 
-/// May the operator's `IRIS_USERNAME`/`IRIS_PASSWORD` go to `host`, which a workspace file named?
-/// Only when it is this machine or the server `IRIS_HOST` already names.
-pub fn env_credentials_may_go_to(host: &str, named_host: Option<&str>) -> bool {
-    let host = host.trim().trim_start_matches('[').trim_end_matches(']');
-    let loopback = host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<std::net::IpAddr>()
-            .is_ok_and(|ip| ip.is_loopback());
-    loopback || named_host.is_some_and(|h| h.trim().eq_ignore_ascii_case(host))
+/// May the operator's `IRIS_USERNAME`/`IRIS_PASSWORD` go to `endpoint`, which a workspace file
+/// named? Only when it is this machine or the server launch settings already name: the same scheme,
+/// host, port and prefix, not just the same host. A file naming the operator's `https` server with
+/// `scheme = "http"` would otherwise get the password in cleartext.
+pub fn env_credentials_may_go_to(
+    endpoint: &crate::iris::endpoint::Endpoint,
+    launch: Option<&crate::iris::endpoint::Endpoint>,
+) -> bool {
+    endpoint.is_loopback() || launch.is_some_and(|l| l.same_server(endpoint))
 }
 
-/// [`file_chooses_connection`] for this process: its home directory and its `IRIS_HOST`. Startup
-/// and the live reload both ask it, so an edit cannot move a session the file yielded.
-pub fn chooses(config_path: &std::path::Path) -> bool {
-    let iris_host_set = crate::iris::connection::host_from_env().is_some();
-    file_chooses_connection(config_path, dirs::home_dir().as_deref(), iris_host_set)
-}
-
-/// Like [`apply_workspace_config`] but also returns the path of the config file that was loaded
-/// and what it declared about the write/destructive gates, so callers can record both in
-/// `ConnectionState` at startup (not just after hot-reload).
+/// The connection and gate declaration a snapshot gives the caller: the explicit connection if
+/// there is one, otherwise the one the chosen file describes; the path of the file that chose it;
+/// and the gates the files declare.
 ///
 /// The gate declaration is returned rather than exported to the environment (085 FR-001): it
 /// belongs to the config load that produced it, and the next load must be able to change it.
+pub fn apply_snapshot(
+    explicit: Option<IrisConnection>,
+    snap: &crate::iris::config_sources::ConfigSnapshot,
+    namespace: &str,
+) -> (
+    Option<IrisConnection>,
+    Option<std::path::PathBuf>,
+    crate::tools::write_gate::DeclaredGates,
+) {
+    let declared = snap.declared_gates();
+    match &snap.connection_config {
+        Some((cfg, path, _)) => {
+            // Tool-list settings apply even when a connection is already established; an explicit
+            // connection wins for connectivity.
+            let conn_from_cfg = if snap.file_chooses_connection() {
+                workspace_config_to_connection(cfg, namespace)
+            } else {
+                export_tool_lists(cfg);
+                None
+            };
+            (explicit.or(conn_from_cfg), Some(path.clone()), declared)
+        }
+        None => (explicit, None, declared),
+    }
+}
+
+/// [`apply_snapshot`] for the workspace found from `workspace_path`.
 pub fn apply_workspace_config_with_path(
     explicit: Option<IrisConnection>,
     workspace_path: Option<&str>,
@@ -486,31 +597,13 @@ pub fn apply_workspace_config_with_path(
     Option<std::path::PathBuf>,
     crate::tools::write_gate::DeclaredGates,
 ) {
-    match load_workspace_config_with_path(workspace_path) {
-        Some((cfg, path)) => {
-            // Always apply tool-list and gate settings from the workspace config,
-            // even when a connection is already established via env vars or CLI flags.
-            // explicit connection wins for connectivity; TOML wins for tool-list settings.
-            let declared = crate::tools::write_gate::DeclaredGates::from_config(&cfg);
-            let conn_from_cfg = if chooses(&path) {
-                workspace_config_to_connection(&cfg, namespace)
-            } else {
-                export_tool_lists(&cfg);
-                None
-            };
-            let conn = explicit.or(conn_from_cfg);
-            (conn, Some(path), declared)
-        }
-        None => (explicit, None, Default::default()),
-    }
+    let snap = snapshot_for(workspace_path, None);
+    snap.announce();
+    apply_snapshot(explicit, &snap, namespace)
 }
 
-/// Like [`apply_workspace_config_with_path`] but loads from an explicit config file path
-/// rather than searching the workspace directory. Used when `--config <path>` is passed
-/// on the command line (issue #111).
-///
-/// If `explicit` connection is already set (from CLI flags), that takes precedence but
-/// the config file is still parsed for tool-list and gate settings.
+/// [`apply_snapshot`] for an explicit `--config <file>` (issue #111). If `explicit` is set (from
+/// CLI flags) that takes precedence, but the file is still read for tool-list and gate settings.
 pub fn apply_explicit_config_file(
     explicit: Option<IrisConnection>,
     config_path: &std::path::Path,
@@ -520,85 +613,33 @@ pub fn apply_explicit_config_file(
     Option<std::path::PathBuf>,
     crate::tools::write_gate::DeclaredGates,
 ) {
-    match std::fs::read_to_string(config_path) {
-        Err(e) => {
-            tracing::warn!(
-                "Could not read --config file at {}: {}",
-                config_path.display(),
-                e
-            );
-            (explicit, None, Default::default())
-        }
-        Ok(contents) => match toml::from_str::<WorkspaceConfig>(&contents) {
-            Err(e) => {
-                tracing::warn!(
-                    "Could not parse --config file at {}: {}",
-                    config_path.display(),
-                    e
-                );
-                (explicit, None, Default::default())
-            }
-            Ok(cfg) => {
-                tracing::debug!("Loaded --config file from {}", config_path.display());
-                // Always apply tool-list and gate settings from the explicit config,
-                // even when CLI flags already provided a connection.
-                let declared = crate::tools::write_gate::DeclaredGates::from_config(&cfg);
-                let conn_from_cfg = workspace_config_to_connection(&cfg, namespace);
-                let conn = explicit.or(conn_from_cfg);
-                (conn, Some(config_path.to_path_buf()), declared)
-            }
-        },
-    }
+    apply_snapshot(explicit, &snapshot_for(None, Some(config_path)), namespace)
 }
 
-/// Load `.iris-agentic-dev.toml` as a `FleetConfig` (Amendment 001).
-/// Returns `None` if the file does not exist or fails to parse (with a warning).
+/// The fleet config of the workspace-layer file found from `workspace_path`: its instances and
+/// policies after layering with the operator file. `None` when there is no such file or it does not
+/// parse.
 ///
-/// `workspace_path` may be either:
-/// - a workspace **directory** containing `.iris-agentic-dev.toml`, or
-/// - a path to the **config file itself** (e.g. what `load_pool` receives as
-///   `config_file`). Passing the file path used to silently skip fleet loading
-///   because this function joined `.iris-agentic-dev.toml` onto the file path.
+/// `workspace_path` may be a workspace **directory** or the path to the config file itself (what
+/// `load_pool` receives as `config_file`).
 pub fn load_fleet_config(workspace_path: Option<&str>) -> Option<FleetConfig> {
-    let root = workspace_root(workspace_path);
-    let config_path = if root.is_file()
-        || root
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("toml"))
-    {
-        // Caller passed the toml path directly (common from `load_pool`).
-        root
-    } else if root.join(".iris-agentic-dev.toml").exists() {
-        root.join(".iris-agentic-dev.toml")
-    } else if root.join(".iris-dev.toml").exists() {
-        root.join(".iris-dev.toml")
-    } else {
-        return None;
-    };
+    let snap = snapshot_for(workspace_path, None);
+    snap.workspace_layer.is_some().then_some(snap.fleet)
+}
 
-    match std::fs::read_to_string(&config_path) {
-        Err(e) => {
-            tracing::warn!("Could not read config at {}: {}", config_path.display(), e);
-            None
-        }
-        Ok(contents) => match load_fleet_config_from_str(&contents) {
-            Ok(cfg) => {
-                tracing::debug!("Loaded fleet config from {}", config_path.display());
-                Some(cfg)
-            }
-            Err(e) => {
-                tracing::warn!("Could not parse config at {}: {}", config_path.display(), e);
-                None
-            }
-        },
-    }
+/// Every instance both files define, operator file first, for the connection pool. Empty when
+/// neither file exists.
+pub fn merged_fleet(workspace_path: Option<&str>) -> FleetConfig {
+    snapshot_for(workspace_path, None).fleet
 }
 
 /// Parse a `FleetConfig` from a TOML string.
 /// Resolves `policy` blocks into the `policies` map post-parse.
 pub fn load_fleet_config_from_str(contents: &str) -> Result<FleetConfig, toml::de::Error> {
     let mut cfg: FleetConfig = toml::from_str(contents)?;
+    if let Ok(raw) = contents.parse::<toml::Table>() {
+        crate::iris::config_sources::value_notes(&raw, &mut cfg.errors);
+    }
     // Resolve raw policy blocks into ConnectionPolicy structs
     for (name, raw) in &cfg.policy {
         cfg.policies.insert(
@@ -653,7 +694,7 @@ pub fn check_role_gate(
     instance_name: &str,
     hard_block: bool,
 ) -> Option<serde_json::Value> {
-    // Workspace and ControlPlane are never gated
+    // A workbench is never gated
     if *role != ConnectionRole::Subject {
         return None;
     }
@@ -675,6 +716,8 @@ pub fn check_role_gate(
     // but has no effect here — confirm_ignored: true makes this explicit to agents.
     if hard_block {
         return Some(serde_json::json!({
+            "success": false,
+            "error_code": "SUBJECT_SCM_WRITE_BLOCKED",
             "error": "role_gate",
             "role_gate": true,
             "hard_block": true,
@@ -694,6 +737,8 @@ pub fn check_role_gate(
     }
 
     Some(serde_json::json!({
+        "success": false,
+        "error_code": "SUBJECT_CONFIRM_REQUIRED",
         "error": "role_gate",
         "role_gate": true,
         "instance": instance_name,
@@ -740,9 +785,8 @@ pub fn build_workspace_config_json(
                 })
                 .unwrap_or(false);
             let role_str = match inst.role {
-                ConnectionRole::Workspace => "workspace",
+                ConnectionRole::Workbench => "workbench",
                 ConnectionRole::Subject => "subject",
-                ConnectionRole::ControlPlane => "control-plane",
             };
             instances.insert(
                 name.clone(),
@@ -794,14 +838,92 @@ pub fn export_tool_lists(cfg: &WorkspaceConfig) {
     }
 }
 
+/// The environment credentials the operator set that must not go to `host`, which a file named:
+/// a variable the file does not override, when `endpoint` is neither this machine nor the server
+/// launch settings name. `is_set` says which of the credential variables the operator set.
+pub fn withheld_env_credentials(
+    cfg: &WorkspaceConfig,
+    endpoint: &crate::iris::endpoint::Endpoint,
+    launch: Option<&crate::iris::endpoint::Endpoint>,
+    is_set: &dyn Fn(&str) -> bool,
+) -> Vec<&'static str> {
+    if env_credentials_may_go_to(endpoint, launch) {
+        return Vec::new();
+    }
+    [
+        ("IRIS_USERNAME", &cfg.username),
+        ("IRIS_PASSWORD", &cfg.password),
+        ("IRIS_SERVICE_USERNAME", &None),
+        ("IRIS_SERVICE_PASSWORD", &None),
+    ]
+    .into_iter()
+    .filter(|(key, from_file)| from_file.is_none() && is_set(key))
+    .map(|(key, _)| key)
+    .collect()
+}
+
+/// The text of `credentials_withheld` and of its set-aside item.
+pub fn credentials_withheld_note(
+    withheld: &[&str],
+    endpoint: &crate::iris::endpoint::Endpoint,
+) -> String {
+    format!(
+        "{} not sent to {endpoint}: .iris-agentic-dev.toml names that server, and the \
+         environment's credentials go only to this machine or to the server IRIS_HOST, \
+         IRIS_SCHEME, IRIS_WEB_PORT and IRIS_WEB_PREFIX name. Put username and password in \
+         the file, or point IRIS_HOST at {endpoint}.",
+        withheld.join(" and ")
+    )
+}
+
+/// What `cfg` hands to discovery when it names a container and no host (and so builds no
+/// connection of its own): the container, with the namespace and account the file gives. Empty
+/// for a file that names a host, runs docker only, or names no container.
+///
+/// The old `workspace_config_to_connection` wrote these into `IRIS_CONTAINER`, `IRIS_NAMESPACE`,
+/// `IRIS_USERNAME` and `IRIS_PASSWORD`. They are data now; the process environment is read, never
+/// written, so a file's credentials stay distinguishable from the launch settings and a reload
+/// that removes the key removes the value.
+pub fn container_discovery_hints(cfg: &WorkspaceConfig) -> crate::iris::discovery::DiscoveryHints {
+    if cfg.host.is_some() || cfg.docker_only || cfg.nopws {
+        return Default::default();
+    }
+    match cfg.container {
+        Some(ref container) => crate::iris::discovery::DiscoveryHints {
+            container: Some(container.clone()),
+            namespace: cfg.namespace.clone(),
+            username: cfg.username.clone(),
+            password: cfg.password.clone(),
+        },
+        None => Default::default(),
+    }
+}
+
+/// [`container_discovery_hints`] for the file the snapshot's connection comes from, when that file
+/// chooses the connection.
+pub fn snapshot_discovery_hints(
+    snap: &crate::iris::config_sources::ConfigSnapshot,
+) -> crate::iris::discovery::DiscoveryHints {
+    match &snap.connection_config {
+        Some((cfg, _, _)) if snap.file_chooses_connection() => container_discovery_hints(cfg),
+        _ => Default::default(),
+    }
+}
+
+/// [`snapshot_discovery_hints`] for the workspace found from `workspace_path`.
+pub fn workspace_discovery_hints(
+    workspace_path: Option<&str>,
+) -> crate::iris::discovery::DiscoveryHints {
+    snapshot_discovery_hints(&snapshot_for(workspace_path, None))
+}
+
 /// Apply workspace config to set up the connection environment.
 ///
 /// If `host` is specified: returns `Some(IrisConnection)` that will be passed directly
 /// to `discover_iris()` as the explicit override.
 ///
-/// If `container` is specified (but not host): sets `IRIS_CONTAINER` (and optionally
-/// `IRIS_NAMESPACE`, `IRIS_USERNAME`, `IRIS_PASSWORD`) so the standard discovery cascade
-/// picks up the container. Returns `None` to let discovery proceed normally.
+/// If `container` is specified (but not host): returns `None` to let discovery proceed, with the
+/// container and account in [`container_discovery_hints`]. The environment is not written.
 ///
 /// If neither is specified: returns `None` — no connection info in the config.
 pub fn workspace_config_to_connection(
@@ -809,17 +931,6 @@ pub fn workspace_config_to_connection(
     namespace_default: &str,
 ) -> Option<IrisConnection> {
     export_tool_lists(cfg);
-
-    // tls_verify is a connection setting, so the config wins over the environment — the opposite
-    // of the two tool-list keys above. Clearing IRIS_INSECURE on the way past matters: the
-    // resolver checks it first, so an inherited IRIS_INSECURE=true would make `tls_verify = true`
-    // a no-op, and the config would say "validate" while the process did not (#127).
-    if let Some(verify) = cfg.tls_verify {
-        std::env::set_var("IRIS_TLS_VERIFY", if verify { "true" } else { "false" });
-        if verify {
-            std::env::remove_var("IRIS_INSECURE");
-        }
-    }
 
     // The two gate keys are NOT exported to the environment (085 FR-001/FR-002). They used to be
     // written to IRIS_WRITE_TOOLS_ENABLED / IRIS_DESTRUCTIVE_TOOLS_ENABLED, and only when the
@@ -833,36 +944,31 @@ pub fn workspace_config_to_connection(
     // host + web_port → explicit HTTP/HTTPS connection (highest priority, no docker needed)
     if let Some(ref host) = cfg.host {
         let port = cfg.web_port.unwrap_or(52773);
-        let raw_scheme = cfg
+        let scheme = cfg
             .scheme
             .clone()
-            .or_else(|| std::env::var("IRIS_SCHEME").ok())
-            .filter(|s| !s.trim_matches('/').is_empty());
-        let scheme = match raw_scheme {
-            None => "http".to_string(),
-            Some(raw) => match checked_scheme(&raw) {
-                Some(s) => s,
-                None => {
-                    // The loopback check below reads `host`; a scheme such as
-                    // `http://elsewhere/#` would carry the URL past it.
-                    tracing::error!(
-                        "scheme {raw:?} in .iris-agentic-dev.toml is not http or https; the file's \
-                         connection is not used"
-                    );
-                    return None;
-                }
-            },
-        };
+            .or_else(|| std::env::var("IRIS_SCHEME").ok());
         let prefix = cfg
             .web_prefix
             .clone()
-            .or_else(|| std::env::var("IRIS_WEB_PREFIX").ok())
-            .map(|p| p.trim_matches('/').to_string())
-            .filter(|p| !p.is_empty());
-        let base_url = match prefix {
-            Some(p) => format!("{}://{}:{}/{}", scheme, host, port, p),
-            None => format!("{}://{}:{}", scheme, host, port),
+            .or_else(|| std::env::var("IRIS_WEB_PREFIX").ok());
+        let endpoint = match crate::iris::endpoint::Endpoint::parse(
+            scheme.as_deref(),
+            host,
+            port,
+            prefix.as_deref(),
+        ) {
+            Ok(e) => e,
+            Err(e) => {
+                // The loopback check below reads the endpoint; a scheme such as
+                // `http://elsewhere/#` would carry the URL past it.
+                tracing::error!(
+                    "INVALID_CONFIG: .iris-agentic-dev.toml: {e}; the file's connection is not used"
+                );
+                return None;
+            }
         };
+        let base_url = endpoint.base_url();
         let namespace = cfg
             .namespace
             .clone()
@@ -870,20 +976,12 @@ pub fn workspace_config_to_connection(
             .unwrap_or_else(|| namespace_default.to_string());
         // The file came with the repository, so its host is the repository's choice: the
         // operator's env credentials go only to this machine or to IRIS_HOST's server.
-        let env_ok = env_credentials_may_go_to(host, host_from_env().as_deref());
+        let launch = crate::iris::connection::launch_endpoint();
+        let env_ok = env_credentials_may_go_to(&endpoint, launch.as_ref());
         let from_env = |key: &str| std::env::var(key).ok().filter(|_| env_ok);
-        let withheld: Vec<&str> = [
-            ("IRIS_USERNAME", &cfg.username),
-            ("IRIS_PASSWORD", &cfg.password),
-            ("IRIS_SERVICE_USERNAME", &None),
-            ("IRIS_SERVICE_PASSWORD", &None),
-        ]
-        .into_iter()
-        .filter(|(key, from_file)| {
-            !env_ok && from_file.is_none() && std::env::var(key).is_ok_and(|v| !v.is_empty())
-        })
-        .map(|(key, _)| key)
-        .collect();
+        let withheld = withheld_env_credentials(cfg, &endpoint, launch.as_ref(), &|key| {
+            std::env::var(key).is_ok_and(|v| !v.is_empty())
+        });
         let username = cfg
             .username
             .clone()
@@ -894,35 +992,43 @@ pub fn workspace_config_to_connection(
             .clone()
             .or_else(|| from_env("IRIS_PASSWORD"))
             .unwrap_or_else(|| "SYS".to_string());
-        // If container is also specified alongside host, update IRIS_CONTAINER so docker
-        // exec tools (iris_execute fallback, iris_test, etc.) target the right container.
-        // Use DiscoverySource::Docker so check_config exposes the container name.
+        // If container is also specified alongside host, the connection carries it so docker exec
+        // tools (iris_execute fallback, iris_test, etc.) target the right container. It travels on
+        // the connection, not in the environment. Use DiscoverySource::Docker so check_config
+        // exposes the container name.
         let source = match cfg.container {
-            Some(ref container) => {
-                std::env::set_var("IRIS_CONTAINER", container);
-                DiscoverySource::Docker {
-                    container_name: container.clone(),
-                }
-            }
+            Some(ref container) => DiscoverySource::Docker {
+                container_name: container.clone(),
+            },
             None => DiscoverySource::EnvVar,
         };
-        let mut conn = IrisConnection::new(base_url, namespace, username, password, source);
+        // The file's own `tls_verify` decides its connection's certificate checks (and arrives
+        // here only when the operator wrote it or trusted the file). Naming the server the launch
+        // settings name gets the launch settings' say too.
+        let tls = match cfg.tls_verify {
+            Some(_) => crate::iris::http::TlsSetting::declared(
+                cfg.tls_verify,
+                crate::iris::http::TlsSource::ConfigFile,
+            ),
+            None if launch.as_ref().is_some_and(|l| l.same_server(&endpoint)) => {
+                crate::iris::http::TlsSetting::from_launch_env()
+            }
+            None => crate::iris::http::TlsSetting::default(),
+        };
+        let mut conn =
+            IrisConnection::new(base_url, namespace, username, password, source).with_tls(tls);
+        conn.member.container = cfg.container.clone();
         if !withheld.is_empty() {
-            let note = format!(
-                "{} not sent to {host}: .iris-agentic-dev.toml names that host, and the \
-                 environment's credentials go only to this machine or to IRIS_HOST's server. Put \
-                 username and password in the file, or set IRIS_HOST={host}.",
-                withheld.join(" and ")
-            );
+            let note = credentials_withheld_note(&withheld, &endpoint);
             tracing::warn!("{note}");
             conn.credentials_withheld = Some(note);
         }
         return Some(conn);
     }
 
-    // container → inject into env so discover_iris() docker step picks it up
+    // container, no host: `container_discovery_hints` hands the container to discovery as data.
+    // Nothing is written to the process environment.
     if let Some(ref container) = cfg.container {
-        std::env::set_var("IRIS_CONTAINER", container);
         let ns = cfg
             .namespace
             .clone()
@@ -938,15 +1044,6 @@ pub fn workspace_config_to_connection(
             .clone()
             .or_else(|| std::env::var("IRIS_PASSWORD").ok())
             .unwrap_or_else(|| "SYS".to_string());
-        if let Some(ref ns_val) = cfg.namespace {
-            std::env::set_var("IRIS_NAMESPACE", ns_val);
-        }
-        if let Some(ref user) = cfg.username {
-            std::env::set_var("IRIS_USERNAME", user);
-        }
-        if let Some(ref pass) = cfg.password {
-            std::env::set_var("IRIS_PASSWORD", pass);
-        }
         if cfg.docker_only || cfg.nopws {
             // docker_only=true or nopws=true: skip HTTP entirely, use docker exec.
             // Return a connection with an unreachable URL — HTTP calls fail fast,
@@ -961,9 +1058,11 @@ pub fn workspace_config_to_connection(
                 },
             );
             conn.ssh_host = cfg.ssh_host.clone();
+            conn.member.ssh_strict = cfg.ssh_strict;
+            conn.member.container = Some(container.clone());
             return Some(conn);
         }
-        return None; // discover_iris() will find the container via IRIS_CONTAINER
+        return None; // discovery finds the container from `container_discovery_hints`
     }
 
     // docker_only=true with no container field — still route to docker exec sentinel so
@@ -996,6 +1095,7 @@ pub fn workspace_config_to_connection(
             },
         );
         conn.ssh_host = cfg.ssh_host.clone();
+        conn.member.ssh_strict = cfg.ssh_strict;
         return Some(conn);
     }
 
@@ -1007,7 +1107,7 @@ pub fn workspace_config_to_connection(
 /// If `explicit` is already set (from CLI flags), returns it unchanged.
 /// Otherwise loads `.iris-agentic-dev.toml` from `workspace_path` and applies it:
 /// - `host` config → returns `Some(IrisConnection)`
-/// - `container` config → sets `IRIS_CONTAINER` env var, returns `None`
+/// - `container` config → returns `None`; [`container_discovery_hints`] carries the container
 /// - no config / no relevant fields → returns `None`
 pub fn apply_workspace_config(
     explicit: Option<IrisConnection>,
@@ -1017,12 +1117,7 @@ pub fn apply_workspace_config(
     if explicit.is_some() {
         return explicit;
     }
-    let (cfg, path) = load_workspace_config_with_path(workspace_path)?;
-    if !chooses(&path) {
-        export_tool_lists(&cfg);
-        return None;
-    }
-    workspace_config_to_connection(&cfg, namespace)
+    apply_workspace_config_with_path(None, workspace_path, namespace).0
 }
 
 /// Generate starter `.iris-agentic-dev.toml` content with inline comments.
@@ -1083,7 +1178,7 @@ mode = "operate"
 [instance.local]
 container = "{local_container}"
 namespace = "{local_namespace}"
-role = "workspace"            # "workspace" or "control-plane": no write gating
+role = "workbench"            # "workbench" (no write gating) or "subject"
 
 # ── Subject instance (e.g. a customer/production IRIS) ──────────────────────
 # Uncomment and fill in to add a subject instance.
@@ -1113,6 +1208,32 @@ mod tests {
     // Serialize tests that mutate global env vars to avoid parallel interference.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
+    /// Points `HOME` at an empty directory for a test, so the loaders do not read the developer's
+    /// own `~/.iris-agentic-dev.toml` (the operator file is always read, spec 141). Hold it under
+    /// `ENV_LOCK`.
+    struct HomeGuard {
+        _dir: tempfile::TempDir,
+        old: Option<std::ffi::OsString>,
+    }
+
+    impl HomeGuard {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let old = std::env::var_os("HOME");
+            std::env::set_var("HOME", dir.path());
+            HomeGuard { _dir: dir, old }
+        }
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match &self.old {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
     #[test]
     fn instance_base_url_https_with_prefix() {
         let inst = InstanceConfig {
@@ -1137,6 +1258,7 @@ mod tests {
     #[test]
     fn workspace_root_env_var_overrides_all() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("OBJECTSCRIPT_WORKSPACE", dir.path().to_str().unwrap());
         let root = workspace_root(None);
@@ -1147,6 +1269,7 @@ mod tests {
     #[test]
     fn workspace_root_env_overrides_arg() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         // When env is set, it takes priority over the arg
         let env_dir = tempfile::tempdir().unwrap();
         let arg_dir = tempfile::tempdir().unwrap();
@@ -1159,6 +1282,7 @@ mod tests {
     #[test]
     fn workspace_root_empty_arg_falls_through() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
         let root = workspace_root(Some(""));
         // Falls through to cwd-walk — just check it doesn't panic and returns something
@@ -1168,6 +1292,7 @@ mod tests {
     #[test]
     fn workspace_root_dot_arg_falls_through() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
         let root = workspace_root(Some("."));
         assert!(root.is_absolute() || root.to_str() == Some("."));
@@ -1178,6 +1303,7 @@ mod tests {
     #[test]
     fn load_config_missing_file_returns_none() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("OBJECTSCRIPT_WORKSPACE", dir.path().to_str().unwrap());
@@ -1189,6 +1315,7 @@ mod tests {
     #[test]
     fn load_config_valid_toml_returns_some() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         let dir = tempfile::tempdir().unwrap();
         let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
         writeln!(
@@ -1207,6 +1334,7 @@ mod tests {
     #[test]
     fn load_config_port_alias_for_web_port() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         let dir = tempfile::tempdir().unwrap();
         let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
         writeln!(
@@ -1228,6 +1356,7 @@ mod tests {
     #[test]
     fn load_config_invalid_toml_returns_none() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         let dir = tempfile::tempdir().unwrap();
         let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
         writeln!(f, "this is not valid toml ={{{{").unwrap();
@@ -1240,6 +1369,7 @@ mod tests {
     #[test]
     fn load_config_legacy_iris_dev_toml() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         let dir = tempfile::tempdir().unwrap();
         let mut f = std::fs::File::create(dir.path().join(".iris-dev.toml")).unwrap();
         writeln!(f, "host = \"myhost\"\nweb_port = 52773").unwrap();
@@ -1267,6 +1397,7 @@ mod tests {
             docker_only: false,
             nopws: false,
             ssh_host: None,
+            ssh_strict: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
             write_tools_enabled: None,
@@ -1277,8 +1408,9 @@ mod tests {
     }
 
     #[test]
-    fn config_with_container_only_returns_none_and_sets_env() {
+    fn config_with_container_only_returns_none_and_hands_the_container_to_discovery() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         std::env::remove_var("IRIS_CONTAINER");
         let cfg = WorkspaceConfig {
             host: None,
@@ -1293,16 +1425,22 @@ mod tests {
             docker_only: false,
             nopws: false,
             ssh_host: None,
+            ssh_strict: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
             write_tools_enabled: None,
             destructive_tools_enabled: None,
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
-        let container_env = std::env::var("IRIS_CONTAINER").ok();
-        std::env::remove_var("IRIS_CONTAINER");
         assert!(conn.is_none(), "container-only config should return None");
-        assert_eq!(container_env.as_deref(), Some("my-iris-container"));
+        assert!(
+            std::env::var("IRIS_CONTAINER").is_err(),
+            "the environment is not written"
+        );
+        assert_eq!(
+            container_discovery_hints(&cfg).container.as_deref(),
+            Some("my-iris-container")
+        );
     }
 
     #[test]
@@ -1320,6 +1458,7 @@ mod tests {
             docker_only: false,
             nopws: false,
             ssh_host: None,
+            ssh_strict: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
             write_tools_enabled: None,
@@ -1332,6 +1471,7 @@ mod tests {
     #[test]
     fn workspace_root_arg_used_when_no_env() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
         let dir = tempfile::tempdir().unwrap();
         let root = workspace_root(Some(dir.path().to_str().unwrap()));
@@ -1341,6 +1481,7 @@ mod tests {
     #[test]
     fn workspace_root_legacy_toml_fallback() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
         let dir = tempfile::tempdir().unwrap();
         std::fs::File::create(dir.path().join(".iris-dev.toml")).unwrap();
@@ -1367,6 +1508,7 @@ mod tests {
             docker_only: false,
             nopws: false,
             ssh_host: None,
+            ssh_strict: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
             write_tools_enabled: None,
@@ -1381,8 +1523,9 @@ mod tests {
     }
 
     #[test]
-    fn config_with_host_and_container_sets_iris_container_env() {
+    fn config_with_host_and_container_puts_the_container_on_the_connection() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         std::env::remove_var("IRIS_CONTAINER");
         let cfg = WorkspaceConfig {
             host: Some("localhost".to_string()),
@@ -1397,25 +1540,26 @@ mod tests {
             docker_only: false,
             nopws: false,
             ssh_host: None,
+            ssh_strict: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
             write_tools_enabled: None,
             destructive_tools_enabled: None,
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
-        let container_env = std::env::var("IRIS_CONTAINER").ok();
-        std::env::remove_var("IRIS_CONTAINER");
-        assert!(conn.is_some(), "host present → connection returned");
+        assert!(std::env::var("IRIS_CONTAINER").is_err());
+        let conn = conn.expect("host present → connection returned");
         assert_eq!(
-            container_env.as_deref(),
+            conn.default_container().as_deref(),
             Some("my-iris-container"),
-            "IRIS_CONTAINER must be set when container+host both specified"
+            "the container must travel on the connection when container+host both specified"
         );
     }
 
     #[test]
-    fn config_container_with_credentials_sets_env_vars() {
+    fn config_container_with_credentials_reaches_discovery_not_the_environment() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         std::env::remove_var("IRIS_CONTAINER");
         std::env::remove_var("IRIS_USERNAME");
         std::env::remove_var("IRIS_PASSWORD");
@@ -1433,28 +1577,27 @@ mod tests {
             docker_only: false,
             nopws: false,
             ssh_host: None,
+            ssh_strict: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
             write_tools_enabled: None,
             destructive_tools_enabled: None,
         };
         let conn = workspace_config_to_connection(&cfg, "USER");
-        let ns_env = std::env::var("IRIS_NAMESPACE").ok();
-        let user_env = std::env::var("IRIS_USERNAME").ok();
-        let pass_env = std::env::var("IRIS_PASSWORD").ok();
-        std::env::remove_var("IRIS_CONTAINER");
-        std::env::remove_var("IRIS_USERNAME");
-        std::env::remove_var("IRIS_PASSWORD");
-        std::env::remove_var("IRIS_NAMESPACE");
         assert!(conn.is_none(), "container-only → no connection");
-        assert_eq!(ns_env.as_deref(), Some("MYNAMESPACE"));
-        assert_eq!(user_env.as_deref(), Some("myuser"));
-        assert_eq!(pass_env.as_deref(), Some("mypass"));
+        for k in ["IRIS_NAMESPACE", "IRIS_USERNAME", "IRIS_PASSWORD"] {
+            assert!(std::env::var(k).is_err(), "{k} must not be written");
+        }
+        let hints = container_discovery_hints(&cfg);
+        assert_eq!(hints.namespace.as_deref(), Some("MYNAMESPACE"));
+        assert_eq!(hints.username.as_deref(), Some("myuser"));
+        assert_eq!(hints.password.as_deref(), Some("mypass"));
     }
 
     #[test]
     fn config_docker_only_returns_unreachable_connection() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         let cfg = WorkspaceConfig {
             host: None,
             web_port: None,
@@ -1468,6 +1611,7 @@ mod tests {
             docker_only: true,
             nopws: false,
             ssh_host: None,
+            ssh_strict: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
             write_tools_enabled: None,
@@ -1505,6 +1649,7 @@ mod tests {
     #[test]
     fn apply_workspace_config_loads_config_when_no_explicit() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
         let dir = tempfile::tempdir().unwrap();
         let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
@@ -1523,6 +1668,7 @@ mod tests {
     #[test]
     fn apply_workspace_config_with_path_returns_path() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         std::env::remove_var("OBJECTSCRIPT_WORKSPACE");
         let dir = tempfile::tempdir().unwrap();
         let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
@@ -1551,6 +1697,7 @@ mod tests {
     fn apply_workspace_config_with_path_returns_none_path_when_no_config_exists() {
         use crate::iris::connection::DiscoverySource;
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         let empty = tempfile::tempdir().unwrap();
         std::env::set_var("OBJECTSCRIPT_WORKSPACE", empty.path().to_str().unwrap());
 
@@ -1583,6 +1730,7 @@ mod tests {
         use crate::iris::connection::DiscoverySource;
         use std::io::Write;
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         let dir = tempfile::tempdir().unwrap();
         let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
         writeln!(
@@ -1664,6 +1812,7 @@ mod tests {
     #[test]
     fn load_config_with_path_missing_file_returns_none() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         let dir = tempfile::tempdir().unwrap();
         // No config file — with_path should return None
         let result = load_workspace_config_with_path(Some(dir.path().to_str().unwrap()));
@@ -1673,6 +1822,7 @@ mod tests {
     #[test]
     fn load_config_with_path_valid_toml_returns_some_with_path() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         let dir = tempfile::tempdir().unwrap();
         use std::io::Write;
         let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
@@ -1689,6 +1839,7 @@ mod tests {
     #[test]
     fn load_config_with_path_legacy_toml_returns_some() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         let dir = tempfile::tempdir().unwrap();
         use std::io::Write;
         // Only legacy .iris-dev.toml exists — exercises the legacy branch in with_path
@@ -1706,6 +1857,7 @@ mod tests {
     #[test]
     fn load_config_with_path_invalid_toml_returns_none() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         let dir = tempfile::tempdir().unwrap();
         use std::io::Write;
         let mut f = std::fs::File::create(dir.path().join(".iris-agentic-dev.toml")).unwrap();
@@ -1862,6 +2014,7 @@ memory-home = "local"
     #[test]
     fn config_load_does_not_export_the_gate_to_the_environment() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         std::env::remove_var("IRIS_WRITE_TOOLS_ENABLED");
         std::env::remove_var("IRIS_DESTRUCTIVE_TOOLS_ENABLED");
         let cfg: WorkspaceConfig = toml::from_str(
@@ -1906,6 +2059,7 @@ memory-home = "local"
     #[test]
     fn apply_explicit_config_file_sets_enabled_tools_env() {
         let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         std::env::remove_var("IRIS_ENABLED_TOOLS");
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(".iris-agentic-dev.toml");
@@ -1922,7 +2076,7 @@ enabled_tools=["iris_query","check_config"]
             conn.is_some(),
             "should build connection from explicit config"
         );
-        assert_eq!(cfg_path.unwrap(), path);
+        assert_eq!(cfg_path.unwrap(), std::fs::canonicalize(&path).unwrap());
         assert_eq!(
             std::env::var("IRIS_ENABLED_TOOLS").unwrap(),
             "iris_query,check_config"
@@ -1933,6 +2087,8 @@ enabled_tools=["iris_query","check_config"]
     #[test]
     fn apply_explicit_config_file_missing_returns_explicit_unchanged() {
         use crate::iris::connection::DiscoverySource;
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _home = HomeGuard::new();
         let explicit = IrisConnection::new(
             "http://cli-host:52773",
             "USER",

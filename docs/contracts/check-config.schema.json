@@ -1,0 +1,230 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "iris-agentic-dev/141/check-config.schema.json",
+  "title": "check_config additions in 1.7.0",
+  "description": "Fields added to the check_config response. All existing fields stay.",
+  "type": "object",
+  "required": [
+    "config_sources",
+    "effective_policy",
+    "compile_time_gate",
+    "set_aside",
+    "identity"
+  ],
+  "$defs": {
+    "tls_setting": {
+      "type": "object",
+      "required": ["tls_verify", "source"],
+      "properties": {
+        "tls_verify": { "type": "boolean" },
+        "source": {
+          "enum": [
+            "default",
+            "launch_env",
+            "config_file",
+            "servers_json",
+            "server_manager"
+          ]
+        }
+      }
+    },
+    "from": {
+      "enum": [
+        "launch",
+        "operator_file",
+        "trusted_file",
+        "workspace_file",
+        "system_mode",
+        "strict_default"
+      ]
+    },
+    "part": {
+      "type": "object",
+      "required": ["value", "from"],
+      "properties": {
+        "value": {},
+        "from": {
+          "oneOf": [
+            { "$ref": "#/$defs/from" },
+            { "type": "array", "items": { "$ref": "#/$defs/from" } }
+          ]
+        },
+        "file": { "type": ["string", "null"] },
+        "detail": { "type": "string" },
+        "set_aside": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "loadedFile": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string" },
+        "loaded": { "type": "boolean" },
+        "kind": { "enum": ["workspace_file", "named_config_file"] },
+        "named_by": {
+          "enum": ["--config", "OBJECTSCRIPT_WORKSPACE", "--workspace", null]
+        },
+        "trust": { "enum": ["trusted", "untrusted", "lapsed", "not_needed"] },
+        "changed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["setting", "was", "now"],
+            "properties": {
+              "setting": { "type": "string" },
+              "was": { "type": ["string", "null"] },
+              "now": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "lift": { "type": "string" }
+      }
+    }
+  },
+  "properties": {
+    "config_sources": {
+      "type": "object",
+      "required": ["operator_file"],
+      "properties": {
+        "operator_file": { "$ref": "#/$defs/loadedFile" },
+        "workspace_file": {
+          "oneOf": [{ "$ref": "#/$defs/loadedFile" }, { "type": "null" }]
+        }
+      }
+    },
+    "effective_policy": {
+      "type": "object",
+      "description": "One entry per pool member plus `default`.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "mcpTemplate",
+          "allow",
+          "dataPolicy",
+          "globalBlocklist",
+          "irisAudit",
+          "writeTools",
+          "destructiveTools",
+          "role",
+          "compileTimeGate"
+        ],
+        "additionalProperties": { "$ref": "#/$defs/part" }
+      }
+    },
+    "compile_time_gate": {
+      "type": "object",
+      "required": ["enabled", "from"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "from": { "$ref": "#/$defs/from" },
+        "file": { "type": ["string", "null"] },
+        "set_aside": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "set_aside": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "setting", "reason", "lift"],
+        "properties": {
+          "id": { "type": "string" },
+          "kind": {
+            "enum": [
+              "untrusted_setting",
+              "operator_only",
+              "credential_withheld",
+              "shadowed_server",
+              "held_for_restart"
+            ]
+          },
+          "setting": { "type": "string" },
+          "server": { "type": ["string", "null"] },
+          "file": { "type": ["string", "null"] },
+          "reason": { "type": "string" },
+          "lift": { "type": "string" }
+        }
+      }
+    },
+    "tls": {
+      "type": "object",
+      "description": "R4b section 2: whether each server's certificate is checked, and what said so. `source` is default (nothing turned checks off), launch_env, config_file, servers_json or server_manager.",
+      "required": ["default", "servers"],
+      "properties": {
+        "default": { "$ref": "#/$defs/tls_setting" },
+        "servers": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/tls_setting" }
+        }
+      }
+    },
+    "discovery": {
+      "type": "object",
+      "description": "R4b section 4: listeners the localhost scan did not send credentials to.",
+      "required": ["skipped"],
+      "properties": {
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["port", "reason"],
+            "properties": {
+              "port": { "type": "integer" },
+              "reason": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "credentials_withheld": {
+      "type": ["string", "null"],
+      "description": "Alias kept for 1.7.x: the reason text of the default server's credential_withheld items, joined."
+    },
+    "audit": {
+      "type": "object",
+      "description": "R4b section 7: the local audit log. `payloads` is `sizes` unless the operator file's audit_payloads or IAD_AUDIT_PAYLOADS says `full`.",
+      "required": ["path", "payloads"],
+      "properties": {
+        "path": { "type": "string" },
+        "payloads": { "enum": ["sizes", "full"] }
+      }
+    },
+    "read_only": {
+      "description": "`strict` when the scratch-class tools are refused (READ_ONLY_STRICT) and unlisted. `read_only_from` names the file or IAD_READ_ONLY that asked.",
+      "enum": ["off", "strict"]
+    },
+    "telemetry_sink": {
+      "description": "telemetry always goes to the local JSONL file; `iris` adds the ^IRISDEV(\"telemetry\") global on the server a call acts on, where that server's writes are on, read-only is not strict and its role is not `subject`. Operator opt-in only: telemetry_sink in the operator file or IAD_TELEMETRY_SINK.",
+      "enum": ["local", "iris"]
+    },
+    "scm_opt_ins": {
+      "type": "object",
+      "description": "the operator opt-ins for source-control actions, one per launch variable. `checkin` is IRIS_SCM_ALLOW_CHECKIN (CheckIn); `disconnect` is IRIS_SCM_ALLOW_DISCONNECT (Disconnect and Reconnect). Neither implies the other.",
+      "required": ["checkin", "disconnect"],
+      "additionalProperties": false,
+      "properties": {
+        "checkin": { "type": "boolean" },
+        "disconnect": { "type": "boolean" }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "description": "The account agent-supplied code runs as on each execution path, per server.",
+      "required": ["service_account", "paths", "servers"],
+      "properties": {
+        "service_account": {
+          "type": "object",
+          "required": ["configured"],
+          "properties": {
+            "configured": { "type": "boolean" },
+            "user": { "type": ["string", "null"] },
+            "source": { "type": ["string", "null"] }
+          }
+        },
+        "os_user_opt_in": { "type": "object" },
+        "paths": { "type": "object" },
+        "servers": { "type": "array" },
+        "tools": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

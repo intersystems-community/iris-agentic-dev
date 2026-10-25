@@ -52,6 +52,7 @@ const BATCH1: &[ParamContract] = &[
     ParamContract {
         tool: "global_kill",
         params: &[
+            ("confirm", "boolean"),
             ("global", "string"),
             ("server", "string"),
             ("confirm_token", "string"),

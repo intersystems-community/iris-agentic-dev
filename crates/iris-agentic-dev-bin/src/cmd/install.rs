@@ -32,8 +32,14 @@ impl InstallCommand {
         }
 
         let lock_content = lock.to_toml();
-        std::fs::write("iris-agentic-dev.lock", &lock_content)
-            .context("failed to write iris-agentic-dev.lock")?;
+        // Through a temp file and a rename: a lock that is a symlink the repository committed is
+        // replaced, not written through (FR-026).
+        iris_agentic_dev_core::iris::private_file::write_atomic(
+            std::path::Path::new("iris-agentic-dev.lock"),
+            lock_content.as_bytes(),
+            0o644,
+        )
+        .context("failed to write iris-agentic-dev.lock")?;
 
         println!(
             "Wrote iris-agentic-dev.lock with {} packages",

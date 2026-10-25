@@ -8,13 +8,15 @@ use iris_agentic_dev_core::iris::iris_audit::{
     build_audit_os, build_event_data, refuse_and_instruct_text, AuditEmitCounter, EVENT_NAME,
     EVENT_SOURCE, EVENT_TYPE, SETUP_CMD,
 };
+use iris_agentic_dev_core::testing::EnvGuard;
 
 // ─── T028: EventData format ────────────────────────────────────────────────
 
 /// Format in MCP mode with no label and no client info.
 #[test]
 fn event_data_mcp_no_label_no_client() {
-    std::env::remove_var("IRIS_AGENT_LABEL");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_AGENT_LABEL");
     let ed = build_event_data("iris_execute", CallerMode::Mcp, None);
     assert!(
         ed.starts_with("tool=iris_execute "),
@@ -34,7 +36,8 @@ fn event_data_mcp_no_label_no_client() {
 /// Format in CLI mode.
 #[test]
 fn event_data_cli_mode() {
-    std::env::remove_var("IRIS_AGENT_LABEL");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_AGENT_LABEL");
     let ed = build_event_data("iris_doc", CallerMode::Cli, None);
     assert!(ed.contains("mode=cli "), "cli mode in event data: {ed}");
 }
@@ -42,7 +45,8 @@ fn event_data_cli_mode() {
 /// When MCP client info is present, the `client=name/version` field appears.
 #[test]
 fn event_data_includes_client_when_peer_present() {
-    std::env::remove_var("IRIS_AGENT_LABEL");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_AGENT_LABEL");
     let peer = Some(("claude-code".to_string(), "2.1.0".to_string()));
     let ed = build_event_data("iris_query", CallerMode::Mcp, peer);
     assert!(
@@ -54,7 +58,8 @@ fn event_data_includes_client_when_peer_present() {
 /// The `ua=` value must match what `user_agent_with_peer` produces for the same inputs.
 #[test]
 fn event_data_ua_byte_identical_to_marker() {
-    std::env::remove_var("IRIS_AGENT_LABEL");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_AGENT_LABEL");
     let peer = Some(("test-client".to_string(), "9.9.9".to_string()));
     let ed = build_event_data("iris_execute", CallerMode::Mcp, peer.clone());
     let expected_ua = iris_agentic_dev_core::iris::connection::user_agent_with_peer(
@@ -70,7 +75,8 @@ fn event_data_ua_byte_identical_to_marker() {
 /// EventData is ASCII-only (DP-446307 guard).
 #[test]
 fn event_data_is_ascii() {
-    std::env::remove_var("IRIS_AGENT_LABEL");
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_AGENT_LABEL");
     let ed = build_event_data("iris_global", CallerMode::Mcp, None);
     assert!(ed.is_ascii(), "EventData must be ASCII-only: {ed:?}");
 }

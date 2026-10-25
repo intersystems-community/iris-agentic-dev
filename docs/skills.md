@@ -205,6 +205,24 @@ new skills and optimize existing ones. Use the `skill` tool:
 | `skill` with `forget`  | Remove a skill from the registry               |
 | `skill_community`      | Browse or install community skills from GitHub |
 
+### Serving skills from a directory
+
+The MCP server's `skill_list`, `skill_search` and `skill_describe` serve the skills embedded in the
+binary. A copy on disk replaces the embedded one when it comes from:
+
+1. `IRIS_AGENTIC_DEV_SKILLS_DIR`, set in the launch settings.
+2. A `skills/skills` directory next to the executable or up to three levels above it, which is how
+   a binary built in a checkout reads that checkout's edits.
+3. `$OBJECTSCRIPT_WORKSPACE/skills/skills` and `<working directory>/skills/skills`, only when you
+   opt in with `IAD_LOCAL_SKILLS=1` or `local_skills = true` in `~/.iris-agentic-dev.toml`. A
+   project file cannot turn this on, and `check_config.skills.ignored_dir` names a directory that
+   was left unread. A project's own text would otherwise arrive under this server's name, ahead of
+   the guardrail skills the server tells the agent to follow.
+
+A served disk copy is labelled `source: "override"` with its `path`, and keeps the embedded tier,
+so no file can mark a bundled skill `internal` to hide it. A skill found only on disk is `local` and
+keeps its own tier.
+
 ---
 
 ## Contributing a skill

@@ -15,7 +15,7 @@
 //! COUNT(*)` to return stale counts seconds after writes.
 
 use iris_agentic_dev_core::iris::connection::{
-    iris_http_client, set_caller_mode, CallerMode, DiscoverySource, IrisConnection,
+    set_caller_mode, CallerMode, DiscoverySource, IrisConnection,
 };
 use iris_agentic_dev_core::iris::iris_audit::{build_audit_os, build_event_data, SETUP_CMD};
 
@@ -47,14 +47,20 @@ fn iris_conn() -> Option<IrisConnection> {
 
 /// Run ObjectScript in USER namespace and return trimmed output.
 async fn run_os(conn: &IrisConnection, code: &str) -> anyhow::Result<String> {
-    let client = iris_http_client(None, true, false)?;
+    let client = iris_agentic_dev_core::iris::http::client_for(
+        &iris_agentic_dev_core::iris::http::TlsSetting::default(),
+        iris_agentic_dev_core::iris::http::ClientKind::Raw,
+    )?;
     let out = conn.execute_via_generator(code, "USER", &client).await?;
     Ok(out.trim().to_string())
 }
 
 /// Run ObjectScript in %SYS namespace (required for Security.Events operations).
 async fn run_os_sys(conn: &IrisConnection, code: &str) -> anyhow::Result<String> {
-    let client = iris_http_client(None, true, false)?;
+    let client = iris_agentic_dev_core::iris::http::client_for(
+        &iris_agentic_dev_core::iris::http::TlsSetting::default(),
+        iris_agentic_dev_core::iris::http::ClientKind::Raw,
+    )?;
     let out = conn.execute_via_generator(code, "%SYS", &client).await?;
     Ok(out.trim().to_string())
 }

@@ -15,7 +15,7 @@
 use iris_agentic_dev_core::tools::{IrisTools, Toolset};
 
 fn tools() -> IrisTools {
-    IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new")
+    IrisTools::for_test_gates_open(None, Toolset::Merged).expect("IrisTools::for_test_gates_open")
 }
 
 async fn call(tools: &IrisTools, tool: &str, args: serde_json::Value) -> serde_json::Value {

@@ -33,7 +33,7 @@ pub struct DocCommand {
     pub action: DocAction,
 
     /// Route this call to a named registered IRIS instance instead of the default connection.
-    #[arg(long)]
+    #[arg(global = true, long)]
     pub server: Option<String>,
 
     #[command(flatten)]
@@ -55,6 +55,7 @@ impl DocCommand {
                 }
 
                 let body = dispatch::dispatch_tool(iris, "iris_doc", args).await?;
+                dispatch::exit_if_refused(&body);
                 if body["success"].as_bool() != Some(true) {
                     let msg = body["error"].as_str().unwrap_or("get failed");
                     eprintln!("error: {}", msg);
@@ -68,16 +69,6 @@ impl DocCommand {
                 }
             }
             DocAction::Put { name, file } => {
-                // iris_doc's own role-gate only fires for a fleet "operate mode" Subject
-                // instance, same gap as iris_execute — see dispatch.rs's doc comment.
-                if !iris.is_write_allowed() {
-                    eprintln!(
-                        "error: write operations are suppressed on production IRIS instances.\n\
-                         Set IRIS_ALLOW_PROD=1 to override."
-                    );
-                    crate::exit(1);
-                }
-
                 let doc_name = ensure_cls_extension(&name);
                 let content = if name == "-" {
                     let mut buf = String::new();
@@ -108,6 +99,7 @@ impl DocCommand {
                 // ElicitationStore, which a fresh IrisTools per call would not provide.
                 let tools = dispatch::build_tools(iris)?;
                 let mut body = dispatch::call(&tools, "iris_doc", args).await?;
+                dispatch::exit_if_refused(&body);
 
                 // SCM checkout dialog: prompt right here, in this same process, and
                 // resume immediately — the only way this can work at all, since the

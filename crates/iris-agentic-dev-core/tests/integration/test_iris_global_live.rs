@@ -33,6 +33,7 @@ fn make_conn() -> Option<(IrisConnection, reqwest::Client)> {
 
 fn make_params(action: &str, global_name: &str) -> IrisGlobalParams {
     IrisGlobalParams {
+        confirm: false,
         action: action.to_string(),
         global_name: global_name.to_string(),
         subscripts: None,
@@ -63,6 +64,7 @@ async fn test_get_defined_and_absent() {
 
     // get — defined
     let p = IrisGlobalParams {
+        confirm: false,
         action: "get".to_string(),
         global_name: "IrisDevTest.GlobalT019".to_string(),
         subscripts: None,
@@ -110,6 +112,7 @@ async fn test_set_and_get_roundtrip() {
 
     // set
     let set_params = IrisGlobalParams {
+        confirm: false,
         action: "set".to_string(),
         global_name: "IrisDevTest.GlobSet".to_string(),
         subscripts: Some(vec!["u1".to_string()]),
@@ -126,6 +129,7 @@ async fn test_set_and_get_roundtrip() {
 
     // get to verify
     let get_params = IrisGlobalParams {
+        confirm: false,
         action: "get".to_string(),
         global_name: "IrisDevTest.GlobSet".to_string(),
         subscripts: Some(vec!["u1".to_string()]),
@@ -163,6 +167,7 @@ async fn test_kill_removes_subtree() {
     // Set three nodes
     for k in &["a", "b", "c"] {
         let p = IrisGlobalParams {
+            confirm: false,
             action: "set".to_string(),
             global_name: "IrisDevTest.GlobKill".to_string(),
             subscripts: Some(vec![k.to_string()]),
@@ -186,6 +191,7 @@ async fn test_kill_removes_subtree() {
     // Verify all three are gone
     for k in &["a", "b", "c"] {
         let get = IrisGlobalParams {
+            confirm: false,
             action: "get".to_string(),
             global_name: "IrisDevTest.GlobKill".to_string(),
             subscripts: Some(vec![k.to_string()]),
@@ -215,6 +221,7 @@ async fn test_list_subscripts() {
     // Set 5 nodes
     for i in 1..=5 {
         let p = IrisGlobalParams {
+            confirm: false,
             action: "set".to_string(),
             global_name: "IrisDevTest.GlobList".to_string(),
             subscripts: Some(vec![format!("k{i}")]),
@@ -240,6 +247,7 @@ async fn test_list_subscripts() {
 
     // list with max_subscripts=2 → truncated
     let list2 = IrisGlobalParams {
+        confirm: false,
         action: "list".to_string(),
         global_name: "IrisDevTest.GlobList".to_string(),
         max_subscripts: Some(2),
@@ -268,7 +276,7 @@ async fn test_list_subscripts() {
 #[ignore]
 async fn test_phi_gate_blocks_papmi() {
     use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, DataPolicy};
-    use iris_agentic_dev_core::policy::gate::dispatch_gate;
+    use iris_agentic_dev_core::testing::gated;
 
     let policy = ConnectionPolicy {
         server_name: "iris-dev-iris".to_string(),
@@ -281,7 +289,7 @@ async fn test_phi_gate_blocks_papmi() {
     };
 
     let params_no_ack = serde_json::json!({"action": "get", "global_name": "PAPMI"});
-    let blocked = dispatch_gate(
+    let blocked = gated::dispatch(
         "iris_global",
         "iris-dev-iris",
         Some(&policy),
@@ -292,7 +300,7 @@ async fn test_phi_gate_blocks_papmi() {
 
     let params_ack =
         serde_json::json!({"action": "get", "global_name": "PAPMI", "acknowledgePhi": true});
-    let allowed = dispatch_gate("iris_global", "iris-dev-iris", Some(&policy), &params_ack);
+    let allowed = gated::dispatch("iris_global", "iris-dev-iris", Some(&policy), &params_ack);
     assert!(
         allowed.is_ok(),
         "PAPMI with ack must pass gate: {:?}",
@@ -306,7 +314,7 @@ async fn test_phi_gate_blocks_papmi() {
 #[ignore]
 async fn test_system_blocklist_blocks_pct_sys_live() {
     use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, DataPolicy};
-    use iris_agentic_dev_core::policy::gate::dispatch_gate;
+    use iris_agentic_dev_core::testing::gated;
 
     let policy = ConnectionPolicy {
         server_name: "iris-dev-iris".to_string(),
@@ -319,7 +327,7 @@ async fn test_system_blocklist_blocks_pct_sys_live() {
     };
 
     let params = serde_json::json!({"action": "get", "global_name": "%SYS"});
-    let result = dispatch_gate("iris_global", "iris-dev-iris", Some(&policy), &params);
+    let result = gated::dispatch("iris_global", "iris-dev-iris", Some(&policy), &params);
     assert!(result.is_err(), "^%SYS must be blocked");
     assert_eq!(result.unwrap_err()["error_code"], "SYSTEM_BLOCKLIST");
 }

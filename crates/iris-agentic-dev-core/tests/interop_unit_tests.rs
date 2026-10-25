@@ -1,4 +1,5 @@
 use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection, SystemMode};
+use iris_agentic_dev_core::testing::EnvGuard;
 use iris_agentic_dev_core::tools::interop::*;
 use iris_agentic_dev_core::tools::{IrisTools, Toolset};
 
@@ -721,7 +722,8 @@ mod env_guard {
     /// `tests/integration/test_gate_enforcement_live.rs`.
     #[test]
     fn write_tools_stay_registered_when_live() {
-        std::env::remove_var("IRIS_ALLOW_PROD");
+        let mut env_guard = EnvGuard::new();
+        env_guard.unset("IRIS_ALLOW_PROD");
         let tools =
             IrisTools::new_with_toolset(Some(conn_with_mode(SystemMode::Live)), Toolset::Merged)
                 .unwrap();
@@ -747,7 +749,8 @@ mod env_guard {
 
     #[test]
     fn write_tools_present_when_development() {
-        std::env::remove_var("IRIS_ALLOW_PROD");
+        let mut env_guard = EnvGuard::new();
+        env_guard.unset("IRIS_ALLOW_PROD");
         let tools = IrisTools::new_with_toolset(
             Some(conn_with_mode(SystemMode::Development)),
             Toolset::Merged,

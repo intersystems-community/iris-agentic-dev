@@ -59,10 +59,15 @@ fn sigterm_after_a_tool_call_exits_cleanly_and_leaves_no_scratch_class_130() {
 
     let dir = tempfile::tempdir().unwrap();
     let mut child = Command::new(&bin)
+        .env("HOME", crate::support_141::home())
+        .env("USERPROFILE", crate::support_141::home())
         .arg("mcp")
         .current_dir(dir.path())
         .env("OBJECTSCRIPT_WORKSPACE", dir.path())
-        .env("IRIS_WRITE_TOOLS_ENABLED", "0")
+        // The scratch class exists only with the opt-in and writes on (spec 141 R5 C16); with
+        // either missing there is nothing to leak and this test would prove nothing.
+        .env("IAD_TELEMETRY_SINK", "iris")
+        .env("IRIS_WRITE_TOOLS_ENABLED", "1")
         .env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "0")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

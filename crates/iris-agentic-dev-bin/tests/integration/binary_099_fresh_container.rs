@@ -9,7 +9,7 @@
 //!   cargo test --test binary_099_fresh_container -- --include-ignored --test-threads=1
 
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 // A relative `IAD_BINARY` — the form CLAUDE.md and every doc comment in this crate tell you to
 // pass — is resolved against the process working directory, which for a workspace member's test
@@ -67,9 +67,9 @@ fn spawn_mcp_no_iris() -> Option<(
     if !bin.exists() {
         return None;
     }
-    let mut cmd = Command::new(&bin);
+    let mut cmd = iris_agentic_dev_core::testing::clean_command(&bin);
     cmd.arg("mcp")
-        .env_remove("IRIS_HOST")
+        .env("IRIS_HOST", "127.0.0.1")
         .env_remove("IRIS_CONTAINER")
         .env("IRIS_WEB_PORT", "9") // unreachable port
         // `IRIS_ADMIN_TOOLS` is the name `admin::admin_writes_enabled()` reads. This line said
@@ -117,9 +117,9 @@ fn test_iris_admin_description_mentions_fresh_container_setup() {
         return;
     }
 
-    let mut cmd = Command::new(&bin);
+    let mut cmd = iris_agentic_dev_core::testing::clean_command(&bin);
     cmd.arg("mcp")
-        .env_remove("IRIS_HOST")
+        .env("IRIS_HOST", "127.0.0.1")
         .env("IRIS_WEB_PORT", "9")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

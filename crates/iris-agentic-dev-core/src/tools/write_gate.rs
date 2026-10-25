@@ -44,6 +44,9 @@ pub const ERR_DESTRUCTIVE_GATE: &str = "DESTRUCTIVE_TOOLS_DISABLED";
 ///
 /// Previously logged while the server started with writes *enabled*. Now a startup rejection.
 pub const ERR_DESTRUCTIVE_REQUIRES_WRITES: &str = "DESTRUCTIVE_REQUIRES_WRITES";
+/// The refusal code of `read_only = "strict"`, for a scratch-class tool and for a closed gate.
+pub const ERR_READ_ONLY_STRICT: &str = "READ_ONLY_STRICT";
+pub const ERR_READ_ONLY_STRICT_WITH_AUDIT: &str = "READ_ONLY_STRICT_WITH_AUDIT";
 
 // ── 1. GateSource ────────────────────────────────────────────────────────────
 
@@ -57,10 +60,15 @@ pub const ERR_DESTRUCTIVE_REQUIRES_WRITES: &str = "DESTRUCTIVE_REQUIRES_WRITES";
 )]
 #[serde(rename_all = "snake_case")]
 pub enum GateSource {
+    /// `read_only = "strict"` (any file) or `IAD_READ_ONLY=strict`: both gates are closed on every
+    /// server, whatever else would have opened them (spec 141 T203, Q18).
+    ReadOnlyStrict,
     /// Operator exported the gate env var before the process began.
     OperatorEnv,
-    /// Declared in `.iris-agentic-dev.toml`.
+    /// Declared in a workspace file the operator trusted, or in the tightening half of one.
     ConfigFile,
+    /// Declared in the operator file, `~/.iris-agentic-dev.toml`.
+    OperatorFile,
     /// `IRIS_ALLOW_PROD` set — the issue #26 override.
     LegacyAllowProd,
     /// Nothing declared; IRIS `SystemMode` decided.
@@ -77,19 +85,28 @@ pub enum GateSource {
     ///
     /// An unparseable config, or the [`GateResolution`] invariant clamp.
     FailClosed,
+    /// A pool member's `[policy.<name>] writeTools` / `destructiveTools` (spec 141, R1 D6).
+    PolicyDeclaration,
+    /// A pool member with no declaration whose `SystemMode` could not be read: write-closed until
+    /// the operator names the member (spec 141, R1 D6, R5 C10).
+    UnprobedMember,
 }
 
 impl GateSource {
     /// The `snake_case` wire value, without going through serde.
     pub fn as_str(&self) -> &'static str {
         match self {
+            GateSource::ReadOnlyStrict => "read_only_strict",
             GateSource::OperatorEnv => "operator_env",
             GateSource::ConfigFile => "config_file",
+            GateSource::OperatorFile => "operator_file",
             GateSource::LegacyAllowProd => "legacy_allow_prod",
             GateSource::InferredSystemMode => "inferred_system_mode",
             GateSource::InferredNamespace => "inferred_namespace",
             GateSource::InferredDefault => "inferred_default",
             GateSource::FailClosed => "fail_closed",
+            GateSource::PolicyDeclaration => "policy_declaration",
+            GateSource::UnprobedMember => "unprobed_member",
         }
     }
 }
@@ -112,6 +129,17 @@ pub struct GateResolution {
 }
 
 impl GateResolution {
+    /// Both gates closed by `read_only = "strict"`: the answer on every server, whatever a file,
+    /// the operator's environment or the legacy override declared (spec 141 T203, Q18).
+    pub fn read_only_strict() -> Self {
+        Self {
+            write_enabled: false,
+            write_source: GateSource::ReadOnlyStrict,
+            destructive_enabled: false,
+            destructive_source: GateSource::ReadOnlyStrict,
+        }
+    }
+
     /// Everything off, attributed to fail-closed. Used when no resolution is available at all.
     pub fn fail_closed() -> Self {
         Self {
@@ -188,6 +216,16 @@ pub fn init_operator_env_gates(gates: OperatorEnvGates) -> bool {
 pub struct DeclaredGates {
     pub write_tools_enabled: Option<bool>,
     pub destructive_tools_enabled: Option<bool>,
+    /// Which file decided each gate; `None` reads as [`GateSource::ConfigFile`].
+    pub write_source: Option<GateSource>,
+    pub destructive_source: Option<GateSource>,
+    /// The default server's address came from a workspace file the operator has not trusted, so a
+    /// looser gate in launch settings does not apply to it (R4a D5, binding rule 2).
+    pub withhold_launch_loosening: bool,
+    /// `read_only = "strict"` in either file, or `IAD_READ_ONLY=strict` in launch settings. It
+    /// only tightens, so any file may set it. Resolution closes both gates on every server before
+    /// it looks at anything else.
+    pub read_only_strict: bool,
 }
 
 impl DeclaredGates {
@@ -195,6 +233,7 @@ impl DeclaredGates {
         Self {
             write_tools_enabled: cfg.write_tools_enabled,
             destructive_tools_enabled: cfg.destructive_tools_enabled,
+            ..Default::default()
         }
     }
 
@@ -231,27 +270,42 @@ pub fn resolve_declared(
     system_mode: SystemMode,
     namespace: &str,
 ) -> GateResolution {
-    let (write_enabled, write_source) = if let Some(w) = operator.write_tools_enabled {
+    if declared.read_only_strict {
+        return GateResolution::read_only_strict();
+    }
+    // A looser launch setting does not follow a server a workspace file chose.
+    let launch_write = operator
+        .write_tools_enabled
+        .filter(|w| !(*w && declared.withhold_launch_loosening));
+    let launch_destructive = operator
+        .destructive_enabled
+        .filter(|d| !(*d && declared.withhold_launch_loosening));
+    let (write_enabled, write_source) = if let Some(w) = launch_write {
         (w, GateSource::OperatorEnv)
     } else if let Some(w) = declared.write_tools_enabled {
-        (w, GateSource::ConfigFile)
+        (w, declared.write_source.unwrap_or(GateSource::ConfigFile))
     } else if operator.allow_prod {
         (true, GateSource::LegacyAllowProd)
     } else {
         match system_mode {
             SystemMode::Live => (false, GateSource::InferredSystemMode),
             SystemMode::Development | SystemMode::Test => (true, GateSource::InferredSystemMode),
-            SystemMode::Unknown => (
+            SystemMode::Unknown | SystemMode::Unset => (
                 !is_production_namespace(namespace),
                 GateSource::InferredNamespace,
             ),
         }
     };
 
-    let (declared_destructive, declared_source) = if let Some(d) = operator.destructive_enabled {
+    let (declared_destructive, declared_source) = if let Some(d) = launch_destructive {
         (d, GateSource::OperatorEnv)
     } else if let Some(d) = declared.destructive_tools_enabled {
-        (d, GateSource::ConfigFile)
+        (
+            d,
+            declared
+                .destructive_source
+                .unwrap_or(GateSource::ConfigFile),
+        )
     } else {
         // Never inferred from SystemMode or namespace — off until declared (spec 073).
         (false, GateSource::InferredDefault)
@@ -273,6 +327,103 @@ pub fn resolve_declared(
         destructive_enabled,
         destructive_source,
     }
+}
+
+/// What decides a pool member's gates besides the operator's environment (spec 141, R1 D6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct MemberDeclaration {
+    /// The default connection's top-level `write_tools_enabled` / `destructive_tools_enabled`, as
+    /// the files declare them. Only a `false` reaches a member: a key that names no server cannot
+    /// raise one.
+    pub top_level: DeclaredGates,
+    /// `[policy.<name>] writeTools`, after the trust filter.
+    pub write_tools: Option<bool>,
+    /// `[policy.<name>] destructiveTools`, after the trust filter.
+    pub destructive_tools: Option<bool>,
+}
+
+/// Resolve the gates of a pool member (spec 141, R1 D6). Pure.
+///
+/// `system_mode` is what a probe of the member answered, or [`SystemMode::Unknown`] when it was
+/// not probed or the probe failed. Precedence, first match wins:
+///
+/// 1. the operator's `IRIS_WRITE_TOOLS_ENABLED=0` closes every member; `=1` and `IRIS_ALLOW_PROD`
+///    raise only the default connection;
+/// 2. a top-level `write_tools_enabled = false` closes every member; `= true` raises none;
+/// 3. `[policy.<name>] writeTools`;
+/// 4. the member's `SystemMode`: Live closes, Development and Test open;
+/// 5. a mode the probe could not read (`Unknown`) closes (`UnprobedMember`), whatever the namespace
+///    says;
+/// 6. an instance whose mode was read and is empty (`Unset`, a fresh install) is judged by the
+///    namespace the call acts in, as the default connection is: a production-looking name closes.
+///
+/// The destructive tier is never inferred and is always a subset of the write gate (FR-018).
+pub fn resolve_member(
+    operator: &OperatorEnvGates,
+    decl: &MemberDeclaration,
+    system_mode: SystemMode,
+    namespace: &str,
+) -> GateResolution {
+    if decl.top_level.read_only_strict {
+        return GateResolution::read_only_strict();
+    }
+    let (write_enabled, write_source) = if operator.write_tools_enabled == Some(false) {
+        (false, GateSource::OperatorEnv)
+    } else if decl.top_level.write_tools_enabled == Some(false) {
+        (
+            false,
+            decl.top_level
+                .write_source
+                .unwrap_or(GateSource::ConfigFile),
+        )
+    } else if let Some(w) = decl.write_tools {
+        (w, GateSource::PolicyDeclaration)
+    } else {
+        match system_mode {
+            SystemMode::Live => (false, GateSource::InferredSystemMode),
+            SystemMode::Development | SystemMode::Test => (true, GateSource::InferredSystemMode),
+            SystemMode::Unset => (
+                !is_production_namespace(namespace),
+                GateSource::InferredNamespace,
+            ),
+            SystemMode::Unknown => (false, GateSource::UnprobedMember),
+        }
+    };
+
+    let (declared_destructive, declared_source) = if operator.destructive_enabled == Some(false) {
+        (false, GateSource::OperatorEnv)
+    } else if decl.top_level.destructive_tools_enabled == Some(false) {
+        (
+            false,
+            decl.top_level
+                .destructive_source
+                .unwrap_or(GateSource::ConfigFile),
+        )
+    } else if let Some(d) = decl.destructive_tools {
+        (d, GateSource::PolicyDeclaration)
+    } else {
+        (false, GateSource::InferredDefault)
+    };
+    let (destructive_enabled, destructive_source) = if declared_destructive && !write_enabled {
+        (false, GateSource::FailClosed)
+    } else {
+        (declared_destructive, declared_source)
+    };
+    GateResolution {
+        write_enabled,
+        write_source,
+        destructive_enabled,
+        destructive_source,
+    }
+}
+
+/// Whether [`resolve_member`] needs to know the member's `SystemMode`: nothing before the
+/// inference step decided the write gate.
+pub fn member_needs_mode(operator: &OperatorEnvGates, decl: &MemberDeclaration) -> bool {
+    !decl.top_level.read_only_strict
+        && operator.write_tools_enabled != Some(false)
+        && decl.top_level.write_tools_enabled != Some(false)
+        && decl.write_tools.is_none()
 }
 
 /// Resolve for a connection that may not exist.
@@ -312,12 +463,16 @@ pub enum GateConfigError {
     /// `destructive_tools_enabled = true` with `write_tools_enabled = false`.
     #[error("DESTRUCTIVE_REQUIRES_WRITES: destructive_tools_enabled = true requires write_tools_enabled = true — the destructive tier is a subset of the write gate and can never take effect with writes off")]
     DestructiveRequiresWrites,
+    /// `read_only = "strict"` (or `IAD_READ_ONLY=strict`) with `irisAudit = true` on any server.
+    #[error("READ_ONLY_STRICT_WITH_AUDIT: read_only = \"strict\" (or IAD_READ_ONLY=strict) cannot be combined with irisAudit = true — the audit emission compiles a class on the server, and strict read-only means iad writes nothing to it. Remove one of the two settings")]
+    ReadOnlyStrictWithAudit,
 }
 
 impl GateConfigError {
     pub fn code(&self) -> &'static str {
         match self {
             GateConfigError::DestructiveRequiresWrites => ERR_DESTRUCTIVE_REQUIRES_WRITES,
+            GateConfigError::ReadOnlyStrictWithAudit => ERR_READ_ONLY_STRICT_WITH_AUDIT,
         }
     }
 }
@@ -360,6 +515,36 @@ pub enum WriteClass {
     Destructive,
 }
 
+/// Where a call's target server comes from (spec 141, R1 D3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetSource {
+    /// The named argument; absent or blank means the default connection.
+    Arg(&'static str),
+    /// Two named arguments, both gated (`compare_*`); the first is the primary.
+    Args(&'static [&'static str]),
+    /// The argument names a pool member. A name that is not a member is an ad-hoc host and the call
+    /// has no IRIS policy to judge (`iris_test_server`).
+    Name(&'static str),
+    /// The server recorded in the `WsSessionPool` entry the `session` argument names.
+    Session,
+    /// The named argument, except that a call with an `elicitation_id` is judged on the server, tool
+    /// and class its pending entry recorded.
+    ArgOrPending(&'static str),
+    /// The default connection; the tool has no `server` parameter.
+    Default,
+}
+
+/// Whether a tool's policy gates apply (spec 141, R1 D7).
+///
+/// `Local` tools do not act on an IRIS server's data or code (the server registry, the skill and
+/// knowledge tools, the docs-site search), so the template, `allow`, `dataPolicy` and role gates
+/// have nothing to judge. The write/destructive gate still applies to them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetKind {
+    Iris,
+    Local,
+}
+
 /// One row of [`CLASSIFICATION`].
 pub struct ToolClass {
     /// Registered tool name, exactly as `tools/list` advertises it.
@@ -374,33 +559,50 @@ pub struct ToolClass {
     /// `iris_query` are the two documented exceptions: their read path is the default call and
     /// their write actions are an explicit, closed set (data-model.md §3).
     pub default: WriteClass,
+    /// Where the target server comes from. Every row names one; the completeness test checks the
+    /// column against the advertised schema.
+    pub target: TargetSource,
+    pub kind: TargetKind,
+    /// The tool can reach `execute_via_generator`, which PUTs, compiles and deletes an
+    /// `IrisDevTmp.*` class on the target (spec 141, R5 C14). That is how iad reads over HTTP,
+    /// since Atelier has no execute endpoint, so a tool that only reads can still write a class to
+    /// the server. `read_only = "strict"` refuses and hides these tools. `readOnlyHint` is not
+    /// derived from it: the scratch class is removed after the call and changes nothing the user
+    /// can observe.
+    pub scratch: bool,
 }
 
-const fn ro(tool: &'static str) -> ToolClass {
-    ToolClass {
-        tool,
-        actions: &[],
-        default: WriteClass::ReadOnly,
+impl ToolClass {
+    /// The tool can compile a scratch class on the target.
+    const fn scratch(mut self) -> Self {
+        self.scratch = true;
+        self
+    }
+
+    /// The tool has no `server` parameter and acts on the default connection.
+    const fn on_default(mut self) -> Self {
+        self.target = TargetSource::Default;
+        self
+    }
+
+    /// The tool does not act on an IRIS server's data or code.
+    const fn local(mut self) -> Self {
+        self.kind = TargetKind::Local;
+        self
+    }
+
+    /// A local tool with no `server` parameter at all.
+    const fn local_default(self) -> Self {
+        self.on_default().local()
+    }
+
+    const fn target(mut self, target: TargetSource) -> Self {
+        self.target = target;
+        self
     }
 }
 
-const fn wr(tool: &'static str) -> ToolClass {
-    ToolClass {
-        tool,
-        actions: &[],
-        default: WriteClass::Write,
-    }
-}
-
-const fn de(tool: &'static str) -> ToolClass {
-    ToolClass {
-        tool,
-        actions: &[],
-        default: WriteClass::Destructive,
-    }
-}
-
-const fn mixed(
+const fn row(
     tool: &'static str,
     actions: &'static [(&'static str, WriteClass)],
     default: WriteClass,
@@ -409,7 +611,30 @@ const fn mixed(
         tool,
         actions,
         default,
+        target: TargetSource::Arg("server"),
+        kind: TargetKind::Iris,
+        scratch: false,
     }
+}
+
+const fn ro(tool: &'static str) -> ToolClass {
+    row(tool, &[], WriteClass::ReadOnly)
+}
+
+const fn wr(tool: &'static str) -> ToolClass {
+    row(tool, &[], WriteClass::Write)
+}
+
+const fn de(tool: &'static str) -> ToolClass {
+    row(tool, &[], WriteClass::Destructive)
+}
+
+const fn mixed(
+    tool: &'static str,
+    actions: &'static [(&'static str, WriteClass)],
+    default: WriteClass,
+) -> ToolClass {
+    row(tool, actions, default)
 }
 
 /// Every registered tool and the gate it requires (FR-007).
@@ -424,43 +649,42 @@ const fn mixed(
 /// `iris_execute_method` — and every tool that was ungated by code reading (FR-013).
 pub const CLASSIFICATION: &[ToolClass] = &[
     // ── read-only ────────────────────────────────────────────────────────────
-    ro("agent_history"),
-    ro("agent_info"),
-    ro("agent_stats"),
-    ro("capability_matrix"),
-    ro("check_config"),
-    ro("compare_document"),
-    ro("compare_namespace"),
-    ro("debug_capture_packet"),
-    ro("debug_get_error_logs"),
-    ro("debug_map_int_to_cls"),
-    ro("debug_source_map"),
-    ro("docs_introspect"),
-    ro("extract_message_map_routing"),
-    ro("find_subclass_implementations"),
-    ro("global_preview"),
-    ro("hl7_schema_inspect"),
-    ro("hl7_schema_list"),
-    ro("iris_business_rule_info"),
-    ro("iris_credential_list"),
-    ro("iris_database_list"),
-    ro("iris_database_stats"),
-    ro("iris_debug"),
-    ro("iris_doc_search"),
+    ro("agent_history").local_default(),
+    ro("agent_info").local_default(),
+    ro("agent_stats").local_default(),
+    ro("capability_matrix").scratch(),
+    ro("check_config").local_default(),
+    ro("compare_document").target(TargetSource::Args(&["server_a", "server_b"])),
+    ro("compare_namespace").target(TargetSource::Args(&["server_a", "server_b"])),
+    ro("debug_capture_packet").on_default(),
+    ro("debug_get_error_logs").on_default(),
+    ro("debug_map_int_to_cls").on_default().scratch(),
+    ro("debug_source_map").on_default().scratch(),
+    ro("docs_introspect").scratch(),
+    ro("extract_message_map_routing").scratch(),
+    ro("find_subclass_implementations").scratch(),
+    ro("global_preview").scratch(),
+    ro("hl7_schema_inspect").scratch(),
+    ro("hl7_schema_list").scratch(),
+    ro("iris_business_rule_info").scratch(),
+    ro("iris_credential_list").on_default(),
+    ro("iris_database_list").scratch(),
+    ro("iris_database_stats").scratch(),
+    ro("iris_debug").scratch(),
+    ro("iris_doc_search").local_default(),
     ro("iris_get_log"),
     ro("iris_info"),
     ro("iris_interop_query"),
-    ro("iris_list_containers"),
+    ro("iris_list_containers").local_default(),
     ro("iris_macro"),
-    ro("iris_message_body"),
-    ro("iris_mirror_status"),
-    ro("iris_namespace_list"),
-    ro("iris_production_diff"),
+    ro("iris_message_body").scratch(),
+    ro("iris_mirror_status").scratch(),
+    ro("iris_namespace_list").scratch(),
+    ro("iris_production_diff").scratch(),
     ro("iris_search"),
-    ro("iris_reload_pool"),
-    ro("iris_servers"),
+    ro("iris_servers").local_default(),
     ro("iris_symbols"),
-    ro("iris_symbols_local"),
+    ro("iris_symbols_local").local(),
     mixed(
         "iris_system_performance",
         &[
@@ -477,57 +701,66 @@ pub const CLASSIFICATION: &[ToolClass] = &[
             ("report", WriteClass::ReadOnly),
         ],
         WriteClass::ReadOnly,
-    ),
-    ro("iris_table_info"),
-    ro("iris_test_server"),
+    )
+    .scratch(),
+    ro("iris_table_info").scratch(),
+    ro("iris_test_server").target(TargetSource::Name("name")),
     // Opening and closing a terminal session mutates nothing. Everything a session can do
     // goes through iris_ws_exec, which is where the gate belongs.
-    ro("iris_ws_close"),
+    ro("iris_ws_close").target(TargetSource::Session),
     ro("iris_ws_open"),
-    ro("journal_search"),
-    ro("kb_recall"),
+    ro("journal_search").scratch(),
+    ro("kb_recall").local_default(),
     ro("mermaid_class"),
     ro("mermaid_production"),
-    ro("my_access"),
+    ro("my_access").scratch(),
     ro("query_audit_log"),
-    ro("resolve_dynamic_dispatch"),
+    ro("resolve_dynamic_dispatch").scratch(),
     ro("resolve_storage"),
-    ro("skill_community_list"),
-    ro("skill_describe"),
-    ro("skill_list"),
-    ro("skill_search"),
-    ro("stream_inspect"),
-    ro("telemetry_export_trace"),
-    ro("telemetry_query"),
+    ro("skill_community_list").local_default(),
+    ro("skill_describe").local_default(),
+    ro("skill_list").local_default(),
+    ro("skill_search").local_default(),
+    ro("stream_inspect").scratch(),
+    ro("telemetry_export_trace").on_default(),
+    ro("telemetry_query").on_default(),
     // ── write ────────────────────────────────────────────────────────────────
-    wr("iris_compile"),
-    wr("iris_execute"),
+    // Scratch: the superclass walk before a compile runs ObjectScript through a scratch class
+    // (FR-015a).
+    wr("iris_compile").scratch(),
+    wr("iris_execute").scratch(),
     // Verified ungated against 1.2.6 with the gate provably active.
-    wr("iris_execute_method"),
+    wr("iris_execute_method").scratch(),
     wr("iris_generate"),
-    wr("iris_generate_class"),
+    // Stores the generated class and compiles it, superclass walk included.
+    wr("iris_generate_class").scratch(),
     wr("iris_generate_test"),
     // Local server registry, same class of state as iris_remove_server.
-    wr("iris_add_server"),
-    wr("iris_import_servers"),
-    wr("iris_production_item"),
-    wr("iris_select_container"),
-    wr("iris_start_sandbox"),
+    wr("iris_add_server").local_default(),
+    wr("iris_import_servers").local_default(),
+    // Swaps the live pool for one built from the files on disk, which activates every server
+    // `iris_add_server`/`iris_import_servers` or an edited file declared since startup. The
+    // registry writers are writes; the call that puts their output to use is one too (spec 141
+    // T219).
+    wr("iris_reload_pool").local_default(),
+    wr("iris_production_item").scratch(),
+    wr("iris_select_container").local_default(),
+    wr("iris_start_sandbox").local_default(),
     // Executes test classes in IRIS, so it runs arbitrary application code.
-    wr("iris_test"),
+    wr("iris_test").scratch(),
     // The complete bypass of the iris_execute gate: open a session, then run anything.
-    wr("iris_ws_exec"),
-    wr("kb_index"),
-    wr("skill_community_install"),
-    wr("skill_optimize"),
-    wr("skill_propose"),
-    wr("skill_share"),
+    wr("iris_ws_exec").target(TargetSource::Session),
+    wr("kb_index").local_default(),
+    wr("skill_community_install").local_default(),
+    wr("skill_optimize").local_default(),
+    wr("skill_propose").local_default(),
+    wr("skill_share").local_default(),
     // ── destructive tier (spec 073, ☠ in docs/tools.md) ──────────────────────
-    de("global_kill"),
-    de("iris_namespace_create"),
+    de("global_kill").scratch(),
+    de("iris_namespace_create").scratch(),
     // Local state, not IRIS — the enforcement test asserts the saved server survives.
-    de("iris_remove_server"),
-    de("skill_forget"),
+    de("iris_remove_server").local_default(),
+    de("skill_forget").local_default(),
     // ── per-action ───────────────────────────────────────────────────────────
     // Mostly listings; the seven create/update/delete actions are the destructive tier.
     mixed(
@@ -554,21 +787,23 @@ pub const CLASSIFICATION: &[ToolClass] = &[
             ("mirror_add_async", WriteClass::Write),
         ],
         WriteClass::Destructive,
-    ),
+    )
+    .scratch(),
     mixed(
         "iris_containers",
         &[("list", WriteClass::ReadOnly)],
         WriteClass::Write,
-    ),
-    // run/start/stop execute test code in IRIS; check/report only read results back.
+    )
+    .local_default(),
+    // run/start/stop execute test code in IRIS. `check` starts the line monitor to see that it
+    // can start and stops it again, so it changes instance state and is a write (spec 141 T219);
+    // only `report`, which reads the counters back, is a read.
     mixed(
         "iris_coverage",
-        &[
-            ("check", WriteClass::ReadOnly),
-            ("report", WriteClass::ReadOnly),
-        ],
+        &[("report", WriteClass::ReadOnly)],
         WriteClass::Write,
-    ),
+    )
+    .scratch(),
     mixed(
         "iris_credential_manage",
         &[
@@ -577,7 +812,9 @@ pub const CLASSIFICATION: &[ToolClass] = &[
             ("list_tables", WriteClass::ReadOnly),
         ],
         WriteClass::Destructive,
-    ),
+    )
+    .on_default()
+    .scratch(),
     // The four write modes are a closed set; every other mode is a read (data-model.md §3).
     mixed(
         "iris_doc",
@@ -588,7 +825,8 @@ pub const CLASSIFICATION: &[ToolClass] = &[
             ("delete_lines", WriteClass::Write),
         ],
         WriteClass::ReadOnly,
-    ),
+    )
+    .target(TargetSource::ArgOrPending("server")),
     // kill is the same operation global_kill performs, so it carries the same tier. Classifying
     // it lower would leave the destructive gate reachable through a dispatcher, which is the
     // shape of the defect this feature exists to remove.
@@ -601,7 +839,8 @@ pub const CLASSIFICATION: &[ToolClass] = &[
             ("kill", WriteClass::Destructive),
         ],
         WriteClass::Write,
-    ),
+    )
+    .scratch(),
     // export reads a table out to XML; the spec's tier list names the other actions.
     mixed(
         "iris_lookup_manage",
@@ -612,12 +851,22 @@ pub const CLASSIFICATION: &[ToolClass] = &[
             ("export", WriteClass::ReadOnly),
         ],
         WriteClass::Destructive,
-    ),
+    )
+    .on_default()
+    .scratch(),
     mixed(
         "iris_lookup_transfer",
-        &[("export", WriteClass::ReadOnly)],
+        &[
+            ("export", WriteClass::ReadOnly),
+            // `%Import` clears a non-empty table first, so an import replaces a whole table: at
+            // least as destructive as the single-row delete `iris_lookup_manage` already gates
+            // there (spec 141 R5 C18).
+            ("import", WriteClass::Destructive),
+        ],
         WriteClass::Write,
-    ),
+    )
+    .on_default()
+    .scratch(),
     mixed(
         "iris_production",
         &[
@@ -626,7 +875,8 @@ pub const CLASSIFICATION: &[ToolClass] = &[
             ("get_autostart", WriteClass::ReadOnly),
         ],
         WriteClass::Write,
-    ),
+    )
+    .scratch(),
     // Reads are the default call; only mode="write" mutates (data-model.md §3).
     mixed(
         "iris_query",
@@ -640,7 +890,9 @@ pub const CLASSIFICATION: &[ToolClass] = &[
             ("menu", WriteClass::ReadOnly),
         ],
         WriteClass::Write,
-    ),
+    )
+    .target(TargetSource::ArgOrPending("server"))
+    .scratch(),
     mixed(
         "kb",
         &[
@@ -649,7 +901,8 @@ pub const CLASSIFICATION: &[ToolClass] = &[
             ("stats", WriteClass::ReadOnly),
         ],
         WriteClass::Write,
-    ),
+    )
+    .local_default(),
     mixed(
         "skill",
         &[
@@ -659,22 +912,50 @@ pub const CLASSIFICATION: &[ToolClass] = &[
             ("forget", WriteClass::Destructive),
         ],
         WriteClass::Write,
-    ),
+    )
+    .local_default(),
     mixed(
         "skill_community",
         &[("list", WriteClass::ReadOnly)],
         WriteClass::Write,
-    ),
+    )
+    .local_default(),
 ];
 
 /// Put `mode` and `action` in the form the handlers read them, trimmed and `to_lowercase`d,
 /// before any gate looks at them. Every gate then reads the value the handler will act on: the
 /// write gate classified `mode: " put"` as read-only and `iris_doc` wrote, and the policy gates
 /// compare exactly (security review, 2026-10-22).
+///
+/// Also trims the server arguments, so the gates and the handler look up the same name, and reads
+/// `confirmed` (the spelling `iris_execute` and `iris_ws_exec` took) as `confirm`, so the role
+/// gate sees one name.
 pub fn normalize_dispatch_args(args: &mut serde_json::Map<String, serde_json::Value>) {
     for key in ["mode", "action"] {
         if let Some(serde_json::Value::String(v)) = args.get_mut(key) {
             *v = v.trim().to_lowercase();
+        }
+    }
+    for key in ["server", "server_a", "server_b"] {
+        if let Some(serde_json::Value::String(v)) = args.get_mut(key) {
+            let trimmed = v.trim();
+            if trimmed.len() != v.len() {
+                *v = trimmed.to_string();
+            }
+        }
+    }
+    if args.get("confirmed").and_then(|v| v.as_bool()) == Some(true) {
+        args.insert("confirm".to_string(), serde_json::Value::Bool(true));
+    }
+    // The two camelCase parameters have snake_case spellings, like every other parameter on the
+    // surface (spec 141 R5 C21). Renamed here so the gates and the handler read one name; the
+    // camelCase spelling wins when a caller sends both.
+    for (snake, camel) in [
+        ("acknowledge_phi", "acknowledgePhi"),
+        ("data_policy", "dataPolicy"),
+    ] {
+        if let Some(v) = args.remove(snake) {
+            args.entry(camel.to_string()).or_insert(v);
         }
     }
 }
@@ -689,6 +970,21 @@ pub fn classify(
     args: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> Option<WriteClass> {
     let entry = CLASSIFICATION.iter().find(|e| e.tool == tool)?;
+    // `force` skips `iris_query`'s read-only SQL check, so a forced read runs what a write runs and
+    // is judged as one (spec 141, T-R4a-U22).
+    if tool == "iris_query"
+        && args
+            .and_then(|a| a.get("force"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    {
+        return Some(WriteClass::Write);
+    }
+    // `Diff` shows a document's difference from the repository and changes nothing; every other
+    // menu id, known or not, is a write (spec 141 T205).
+    if tool == "iris_source_control" && args.is_some_and(is_scm_diff) {
+        return Some(WriteClass::ReadOnly);
+    }
     if !entry.actions.is_empty() {
         if let Some(args) = args {
             // `action` and `mode` are the two argument names the tools use for this; `iris_doc`
@@ -708,7 +1004,91 @@ pub fn classify(
     Some(entry.default)
 }
 
-/// The one gate check, called from `ServerHandler::call_tool` before anything touches IRIS.
+/// Is this `iris_source_control` call `execute` of the menu id `Diff`?
+///
+/// The id is matched exactly as the handler hands it to the provider (`%SourceMenu,<id>`): `Diff`
+/// or `%Diff`, no trimming and no case folding. A spelling the provider might read as something
+/// else stays a write. The action is read the way [`classify`] reads every action.
+fn is_scm_diff(args: &serde_json::Map<String, serde_json::Value>) -> bool {
+    let executes = ["action", "mode"].iter().any(|k| {
+        args.get(*k)
+            .and_then(|v| v.as_str())
+            .is_some_and(|v| v.trim().to_lowercase() == "execute")
+    });
+    executes
+        && args
+            .get("action_id")
+            .and_then(|v| v.as_str())
+            .is_some_and(|id| matches!(id, "Diff" | "%Diff"))
+}
+
+/// Can the tool compile a scratch class on its target? `read_only = "strict"` refuses it and
+/// hides it from `tools/list` (spec 141, R5 C15).
+pub fn is_scratch(tool: &str) -> bool {
+    tool_class(tool).is_some_and(|e| e.scratch)
+}
+
+/// The row of [`CLASSIFICATION`] for a tool.
+pub fn tool_class(tool: &str) -> Option<&'static ToolClass> {
+    CLASSIFICATION.iter().find(|e| e.tool == tool)
+}
+
+/// The categories a call has to be permitted in, for the environment template and `allow`
+/// (spec 141, R1 D7, R4a). One place where an action changes a tool's category; every gate reads
+/// the answer. A template blocks the call when it blocks any of them and `allow` has to list all
+/// of them.
+///
+/// - `iris_global` set/kill, `global_kill` and an `iris_query` write or `force`: `Execute`.
+/// - `iris_doc` write modes (with or without `compile`): `Compile`, because writing class source is
+///   how code reaches the compiler. Reads stay `Docs`, so `allow = ["docs"]` keeps them.
+/// - Any other write or destructive call whose category is `Query`, `Docs`, `Search` or `Debug`:
+///   `Admin`, so `allow = ["query"]` no longer lets a write through.
+/// - `iris_compile` with `force_writable`: `Compile` and `Admin`, since it runs
+///   `%Library.EnsembleMgr.EnableNamespace` as the connection's account.
+///
+/// `class` is the call's class: the classification, or the pending entry's on an elicitation
+/// resume, which carries no `mode`. A tool without a category (`check_config`) has none.
+pub fn effective_category(
+    tool: &str,
+    args: Option<&serde_json::Map<String, serde_json::Value>>,
+    class: WriteClass,
+) -> Vec<crate::iris::workspace_config::ToolCategory> {
+    use crate::iris::workspace_config::ToolCategory;
+    let Some(base) = crate::iris::server_manager::tool_to_category_pub(tool) else {
+        return Vec::new();
+    };
+    let writes = class != WriteClass::ReadOnly;
+    let flag = |key: &str| {
+        args.and_then(|a| a.get(key))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    };
+    let primary = match tool {
+        "global_kill" => ToolCategory::Execute,
+        "iris_global" if writes => ToolCategory::Execute,
+        "iris_query" if writes || flag("force") => ToolCategory::Execute,
+        "iris_doc" if writes => ToolCategory::Compile,
+        _ if writes
+            && matches!(
+                base,
+                ToolCategory::Query
+                    | ToolCategory::Docs
+                    | ToolCategory::Search
+                    | ToolCategory::Debug
+            ) =>
+        {
+            ToolCategory::Admin
+        }
+        _ => base,
+    };
+    let mut categories = vec![primary];
+    if tool == "iris_compile" && flag("force_writable") {
+        categories.push(ToolCategory::Admin);
+    }
+    categories
+}
+
+/// The write/destructive gate for one server, called by the pipeline before anything touches IRIS.
 ///
 /// `Some(refusal)` means the call must not proceed. `None` means it may.
 ///
@@ -716,49 +1096,66 @@ pub fn classify(
 /// is a bug the completeness test should have caught, and the safe reading of a bug is "this
 /// might write".
 ///
-/// # The seam left for spec 074
-///
-/// Spec 074 (write-server allowlist) is deferred, not cancelled: FR-017 deletes
-/// `write_allowed_servers` and `WRITE_SERVER_NOT_ALLOWED` from the docs rather than implementing
-/// them, on the grounds that a documented security key with no reader is worse than no key. When
-/// it is implemented it belongs **here**, between the two checks below, and it needs exactly two
-/// things this signature already carries: the target server, which pooled tools take as the
-/// optional `server` argument in `args` (falling back to the pool default when absent), and the
-/// allowlist, which becomes a field on `GateResolution` resolved alongside the two gates in
-/// `resolve_gates`. Nothing else about this function has to change — no new call site, no new
-/// parameter, and no per-tool guard, which is the property the whole feature is about.
+/// `gates` is the target server's own resolution (spec 141, R1 D6): the default connection's
+/// [`resolve_declared`], or a pool member's [`resolve_member`]. The pipeline calls this once per
+/// server a call acts on.
 pub fn gate_check(
     tool: &str,
     args: Option<&serde_json::Map<String, serde_json::Value>>,
     gates: &GateResolution,
 ) -> Option<Result<CallToolResult, McpError>> {
     let class = classify(tool, args).unwrap_or(WriteClass::Write);
+    gate_for_class(tool, class, gates)
+}
+
+/// [`gate_check`] for a call whose class is already known: the pipeline's, which on an elicitation
+/// resume is the pending entry's and not the (mode-less) resume call's own.
+pub fn gate_for_class(
+    tool: &str,
+    class: WriteClass,
+    gates: &GateResolution,
+) -> Option<Result<CallToolResult, McpError>> {
     match class {
         WriteClass::ReadOnly => None,
         WriteClass::Write | WriteClass::Destructive => {
             // Write is checked first, so a destructive tool with writes off reports the write
             // gate — the more fundamental refusal, and the one whose remedy comes first.
+            // The text says what decided the gate, never how an operator would change it: an agent
+            // that reads the edit makes it (spec 141 FR-039, 2026-10-24). The remedy goes to stderr
+            // and `iris-agentic-dev trust --show`.
             if !gates.write_enabled {
+                if gates.write_source == GateSource::ReadOnlyStrict {
+                    return Some(strict_refusal(tool, "write_tools"));
+                }
+                let why = match gates.write_source {
+                    GateSource::UnprobedMember => {
+                        " This server's SystemMode could not be read, so it starts write-closed \
+                         until the operator declares it."
+                    }
+                    GateSource::PolicyDeclaration => {
+                        " A policy declaration for this server turns writes off."
+                    }
+                    _ => "",
+                };
                 return Some(refusal(
                     ERR_WRITE_GATE,
                     &format!(
-                        "{tool} is write-capable and write tools are disabled (source: {}). \
-                         Set write_tools_enabled = true in .iris-agentic-dev.toml to allow writes.",
+                        "{tool} is write-capable and write tools are disabled (source: {}).{why}",
                         gates.write_source.as_str()
                     ),
                 ));
             }
-            // ── seam: the spec 074 per-server predicate goes here ──
-            // Writes are allowed on this instance; whether they are allowed on *that* server is a
-            // narrower question and is asked second. See the doc comment above.
-
+            // The destructive tier is off until declared, and a declaration can only narrow a
+            // write gate that is on: it is a subset of it.
             if class == WriteClass::Destructive && !gates.destructive_enabled {
+                if gates.destructive_source == GateSource::ReadOnlyStrict {
+                    return Some(strict_refusal(tool, "destructive_tools"));
+                }
                 return Some(refusal(
                     ERR_DESTRUCTIVE_GATE,
                     &format!(
                         "{tool} is a destructive tool and the destructive tier is disabled \
-                         (source: {}). Set destructive_tools_enabled = true in \
-                         .iris-agentic-dev.toml to allow it.",
+                         (source: {}).",
                         gates.destructive_source.as_str()
                     ),
                 ));
@@ -766,6 +1163,23 @@ pub fn gate_check(
             None
         }
     }
+}
+
+/// The refusal of a gate that `read_only = "strict"` closed. It carries `READ_ONLY_STRICT`, the
+/// code the scratch-class refusal uses, so the agent hears one answer for the one setting, and
+/// `gate` says which gate refused: `write_tools` or `destructive_tools`.
+fn strict_refusal(tool: &str, gate: &str) -> Result<CallToolResult, McpError> {
+    crate::tools::err_result(serde_json::json!({
+        "success": false,
+        "error_code": ERR_READ_ONLY_STRICT,
+        "error": format!(
+            "{tool} is refused: read-only mode is strict, so the write and destructive gates are \
+             closed on every server, whatever else declares them open. Reads still work."
+        ),
+        "tool": tool,
+        "gate": gate,
+        "gate_source": GateSource::ReadOnlyStrict.as_str(),
+    }))
 }
 
 /// Returns `true` when the code string contains a literal kill-of-a-global expression:
@@ -1030,6 +1444,89 @@ mod tests {
 
         assert_eq!(wr("iris_compile").default, WriteClass::Write);
         assert_eq!(de("global_kill").default, WriteClass::Destructive);
+    }
+
+    /// The four builder methods are `const fn` too, called only from the table initialiser. Each
+    /// sets exactly the field its name claims and leaves the others alone: `local()` flips the kind
+    /// without moving the target, `on_default()` moves the target without touching the kind.
+    #[test]
+    fn the_builder_methods_set_only_the_field_they_name() {
+        let base = ro("iris_info");
+        assert_eq!(base.target, TargetSource::Arg("server"));
+        assert_eq!(base.kind, TargetKind::Iris);
+        assert!(!base.scratch);
+
+        let scratch = ro("iris_info").scratch();
+        assert!(scratch.scratch);
+        assert_eq!(scratch.kind, TargetKind::Iris);
+
+        let on_default = ro("iris_info").on_default();
+        assert_eq!(on_default.target, TargetSource::Default);
+        assert_eq!(on_default.kind, TargetKind::Iris);
+
+        let local = ro("iris_info").local();
+        assert_eq!(local.kind, TargetKind::Local);
+        assert_eq!(local.target, TargetSource::Arg("server"));
+
+        let local_default = ro("iris_info").local_default();
+        assert_eq!(local_default.kind, TargetKind::Local);
+        assert_eq!(local_default.target, TargetSource::Default);
+
+        let named = ro("iris_info").target(TargetSource::Session);
+        assert_eq!(named.target, TargetSource::Session);
+        assert_eq!(named.kind, TargetKind::Iris);
+    }
+
+    /// A top-level `destructive_tools_enabled = false` closes the destructive tier of every
+    /// member, and the file that declared it is the source reported. A policy section that says
+    /// `destructiveTools = true` does not reopen it; with no recorded source the report falls back
+    /// to the config file.
+    #[test]
+    fn a_top_level_destructive_false_closes_every_member_and_names_its_file() {
+        let operator = OperatorEnvGates::default();
+        let member = |source: Option<GateSource>| MemberDeclaration {
+            top_level: DeclaredGates {
+                destructive_tools_enabled: Some(false),
+                destructive_source: source,
+                ..DeclaredGates::default()
+            },
+            write_tools: Some(true),
+            destructive_tools: Some(true),
+        };
+
+        let with_source = resolve_member(
+            &operator,
+            &member(Some(GateSource::LegacyAllowProd)),
+            SystemMode::Development,
+            "USER",
+        );
+        assert!(with_source.write_enabled, "the write tier is not touched");
+        assert!(!with_source.destructive_enabled);
+        assert_eq!(with_source.destructive_source, GateSource::LegacyAllowProd);
+
+        let without_source =
+            resolve_member(&operator, &member(None), SystemMode::Development, "USER");
+        assert!(!without_source.destructive_enabled);
+        assert_eq!(without_source.destructive_source, GateSource::ConfigFile);
+    }
+
+    /// `confirmed` (the spelling `iris_execute` and `iris_ws_exec` took) is read as `confirm`
+    /// when it is `true`, and only then; a `false` or non-boolean `confirmed` adds nothing, so a
+    /// caller cannot confirm by sending the word.
+    #[test]
+    fn confirmed_true_becomes_confirm_and_nothing_else_does() {
+        let run = |v: serde_json::Value| {
+            let mut args = serde_json::Map::new();
+            args.insert("confirmed".to_string(), v);
+            normalize_dispatch_args(&mut args);
+            args
+        };
+        assert_eq!(
+            run(serde_json::json!(true)).get("confirm"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert!(!run(serde_json::json!(false)).contains_key("confirm"));
+        assert!(!run(serde_json::json!("true")).contains_key("confirm"));
     }
 
     /// `mixed` must pass both the override table and the default through untouched: the overrides

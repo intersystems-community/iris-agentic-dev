@@ -65,7 +65,7 @@ async fn test_iris_symbols_local_error_returns_structured_content() {
         "iris_symbols_local",
         serde_json::json!({
             "query": "*.cls",
-            "workspace_path": "/nonexistent/path/xyz_9999_abc"
+            "workspace_path": "nonexistent_dir_xyz_9999_abc"
         }),
     )
     .await;

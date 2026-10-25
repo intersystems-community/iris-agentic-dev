@@ -187,7 +187,7 @@ After [installing the binary](#install), configure your agent:
 ```bash
 claude mcp add iris-agentic-dev --scope user \
   -e IRIS_HOST=localhost -e IRIS_WEB_PORT=52773 \
-  -e IRIS_USERNAME=_SYSTEM -e IRIS_PASSWORD=SYS -e IRIS_NAMESPACE=USER \
+  -e IRIS_USERNAME=_SYSTEM -e IRIS_PASSWORD="$IRIS_PASSWORD" -e IRIS_NAMESPACE=USER \
   -- iris-agentic-dev mcp
 ```
 
@@ -205,7 +205,7 @@ entry in `~/.claude.json` is:
         "IRIS_HOST": "localhost",
         "IRIS_WEB_PORT": "52773",
         "IRIS_USERNAME": "_SYSTEM",
-        "IRIS_PASSWORD": "SYS",
+        "IRIS_PASSWORD": "<your _SYSTEM password>",
         "IRIS_NAMESPACE": "USER"
       }
     }
@@ -226,7 +226,7 @@ entry in `~/.claude.json` is:
         "IRIS_HOST": "localhost",
         "IRIS_WEB_PORT": "52773",
         "IRIS_USERNAME": "_SYSTEM",
-        "IRIS_PASSWORD": "SYS",
+        "IRIS_PASSWORD": "<your _SYSTEM password>",
         "IRIS_NAMESPACE": "USER"
       }
     }
@@ -267,7 +267,8 @@ host = "localhost"
 web_port = 80        # IIS default for IRIS 2024.1+; use 52773 for pre-2024.1
 namespace = "USER"
 username = "_SYSTEM"
-password = "SYS"
+# No password here: .iris-agentic-dev.toml lives in the project and gets committed.
+# Put it in IRIS_PASSWORD in the MCP launch settings (see the MCP registration above).
 ```
 
 #### Port reference
@@ -324,10 +325,10 @@ built-in web server. Run the ISC Web Gateway container alongside IRIS:
 services:
   iris:
     image: containers.intersystems.com/intersystems/iris:2026.1
-    ports: ["4972:1972"]
+    ports: ["127.0.0.1:4972:1972"]
   webgateway:
     image: containers.intersystems.com/intersystems/webgateway:2026.1
-    ports: ["52773:80"]
+    ports: ["127.0.0.1:52773:80"]
     entrypoint: ["/bin/sh", "/init.sh"]
     volumes: ["./webgateway-init.sh:/init.sh:ro"]
 ```
@@ -368,17 +369,29 @@ Blocked calls return `error_code: "POLICY_GATE"` with the list of allowed catego
 Available categories: `compile`, `execute`, `query`, `search`, `docs`, `source_control`,
 `debug`, `admin`, `skill`, `kb`.
 
+A project's `.iris-agentic-dev.toml` can tighten a policy at once but cannot loosen one (raise the
+write or destructive tier, widen `allow`, set a looser `mcpTemplate` or `dataPolicy`, turn off
+certificate checks) until you run `iris-agentic-dev trust` on it at a terminal. Your own
+`~/.iris-agentic-dev.toml` is always trusted. With no `mcpTemplate` declared, the instance's IRIS
+system mode chooses one, so a Live instance is covered by default. See
+[Connecting: trust and effective policy](./docs/connecting.md#where-configuration-comes-from).
+
 ### Connection discovery order
 
 iris-agentic-dev resolves the IRIS connection in this order — first match wins:
 
 1. CLI flags (`--host`, `--web-port`, `--scheme`)
-2. `.iris-agentic-dev.toml` in the workspace root
+2. The project's `.iris-agentic-dev.toml` (the nearest one walking up from the working directory, or the one `--config` / `OBJECTSCRIPT_WORKSPACE` names), when it names a host or container
 3. Environment variables (`IRIS_HOST`, etc.)
-4. VS Code `settings.json` (`objectscript.conn` / `intersystems.servers`)
-5. VS Code Server Manager keychain (`intersystems.servers` + OS keychain credential)
-6. Running Docker containers (scored by workspace name similarity)
-7. Localhost port scan (52773, 41773, 51773, 8080)
+4. `~/.iris-agentic-dev.toml`, your own file, when there is no project file (`IRIS_HOST` outranks its connection settings)
+5. `IRIS_CONTAINER`, then a scan of localhost ports (52773, 80, 8080, 41773, 51773, 8443, 443)
+6. Running Docker containers
+7. VS Code `settings.json` (`objectscript.conn`)
+8. VS Code Server Manager (`intersystems.servers` + OS keychain credential)
+
+Discovery sends no credential to a listener until it has shown it is IRIS. To skip it, name your
+server with `IRIS_HOST`, `--host` or `container`. Details, and what a project file may and may not
+change, are in [connecting.md](./docs/connecting.md#connection-discovery-order).
 
 ### Environment variables
 
@@ -390,25 +403,79 @@ iris-agentic-dev resolves the IRIS connection in this order — first match wins
 | `IRIS_WEB_PREFIX`       | _(empty)_    | URL path prefix for non-root gateway installs         |
 | `IRIS_USERNAME`         | `_SYSTEM`    | IRIS username                                         |
 | `IRIS_PASSWORD`         | `SYS`        | IRIS password                                         |
-| `IRIS_SERVICE_USERNAME` | _(empty)_    | Least-privilege account for execute/query/write tools |
+| `IRIS_SERVICE_USERNAME` | _(empty)_    | Least-privilege account for the tools that run your code |
 | `IRIS_SERVICE_PASSWORD` | _(empty)_    | Password for `IRIS_SERVICE_USERNAME`                  |
 | `IRIS_NAMESPACE`        | `USER`       | Default namespace                                     |
 | `IRIS_CONTAINER`        | _(empty)_    | Docker container name (required for ✦ tools)          |
 | `IRIS_SERVER_NAME`      | _(empty)_    | Server Manager server name (multiple servers)         |
 | `OBJECTSCRIPT_WORKSPACE`| `$PWD`       | Workspace root for `.iris-agentic-dev.toml` lookup    |
 | `IRIS_ENABLED_TOOLS`    | _(empty)_    | Comma-separated allowlist — expose only these tools   |
+| `IRIS_TLS_VERIFY`       | `true`       | `false` skips certificate checks for the server your launch settings name only; other servers have their own `tls_verify` |
+| `IAD_NO_KEYCHAIN`       | _(unset)_    | `1` skips the OS keychain; passwords go to `servers.json` (owner-only), tied to their address |
+| `IAD_READ_ONLY`         | _(unset)_    | `strict` stops iad writing scratch classes to the server; see [connecting.md](./docs/connecting.md#strict-read-only-no-scratch-classes) |
+| `IAD_HTTP_TOKEN`        | _(unset)_    | Bearer token for `mcp --transport http` (at least 32 bytes); required off loopback |
+
+Every variable, with the config-file equivalents and the settings only your own
+`~/.iris-agentic-dev.toml` may set, is in [connecting.md](./docs/connecting.md#environment-variables).
 
 ### Privilege separation for arbitrary execution
 
-`iris_execute`, `iris_execute_method`, `iris_query` (`mode="write"`), and `iris_global`
-(`set`/`kill`) can run arbitrary ObjectScript/SQL. Under a `%All` account these can edit
-class and routine code — even by indirection — bypassing the SCM lock.
+Nine tools run code the agent wrote: `iris_execute`, `iris_query` (`mode="write"` and
+`force`), `iris_global` (`set`/`kill`), `iris_execute_method`, `global_kill`, `iris_test`,
+`iris_coverage` (`run`/`start`), `iris_ws_open` and `iris_ws_exec`. Under a `%All` account
+they can edit class and routine code, even by indirection, and get around the SCM lock.
 
-Set `IRIS_SERVICE_USERNAME` / `IRIS_SERVICE_PASSWORD` to a least-privilege IRIS account
-(no `%Development` resource, code database mounted read-only). Those four tools then
-authenticate as that account, so code edits fail with `<PROTECT>` at the IRIS privilege
-layer. Code-writing tools (`iris_doc` put, `iris_source_control`, `iris_compile`) keep
-using the primary `IRIS_USERNAME` so audit stays attributed to the real user.
+Set `IRIS_SERVICE_USERNAME` / `IRIS_SERVICE_PASSWORD` to a least-privilege IRIS account.
+Those nine tools then run as that account on every path: Atelier REST, `docker exec`, NoPWS,
+SSH and the WebSocket terminal. If the account cannot be used on a path, the call is refused
+or fails with that account's privilege error. It never runs as the container's OS user
+(`%All`) unless you set `IAD_EXEC_AS_OS_USER=1` in the environment, or `exec_as_os_user = true`
+in `~/.iris-agentic-dev.toml`; a project file cannot.
+
+Every response says who ran the code:
+
+```json
+"identity": {"user": "iadsvc", "source": "service_account_env", "path": "atelier",
+             "verified": true, "server": "default"}
+```
+
+`verified` means the user is what IRIS reported (`$USERNAME`), not what iad sent.
+`check_config` lists the identity each path and each server would use.
+
+**A server named with `server=` uses its own account, not the environment's.** Give it a
+`service_username` in `servers.json` (or `iris_add_server`) or in an `[instance.<name>]` block
+of your own `~/.iris-agentic-dev.toml`; its password goes in the OS keychain. With
+`IRIS_SERVICE_USERNAME` set, a server without one is refused these tools
+(`SERVICE_ACCOUNT_UNCONFIGURED_FOR_SERVER`). A named server never falls back to the default
+connection's `IRIS_CONTAINER`; give it a `container` to allow a docker fallback.
+
+**What the account needs.** The account has to reach `/api/atelier` and the terminal, and
+both check the `%Development` resource, so it needs `%Development:USE`. An account without it
+gets `SERVICE_ACCOUNT_HTTP_DENIED` over HTTP and `SERVICE_ACCOUNT_TERMINAL_DENIED` in a
+terminal. `%Development:USE` also opens the debugger and the rest of the Atelier API to that
+account; what stops it editing code is database permission, so lay the databases out like this:
+
+1. Three databases: application code, application data and a scratch area.
+2. A namespace for the agent whose **default routines database is the scratch database** and
+   whose globals database is the application data. Map the application's packages and
+   routines into it from the code database (`Config.MapPackages`, `Config.MapRoutines`).
+3. Set each database's resource (`SYS.Database.ResourceName`; a new one is `%DB_%DEFAULT`).
+4. A role with `%Development:USE`, `%DB_<code>:R`, `%DB_<data>:RW` and `%DB_<scratch>:RW`,
+   and a user with that role and password authentication.
+
+The compiler writes to the default routines database, so a namespace whose default is
+read-only cannot compile the class iad generates (`ERROR #302`), however `IrisDevTmp` is
+mapped. A class in a mapped application package cannot be saved (`<PROTECT>`); a class in an
+unmapped package lands in the scratch database and can do no more than run as the account.
+
+`iris_coverage` `run` and `start` also need write access to the IRISSYS database
+(`%DB_IRISSYS:RW`): the line monitor's state is system-wide. Without it they answer
+`COVERAGE_PRIVILEGE_DENIED`. Grant it only if you accept that account writing IRISSYS.
+
+Not covered: `iris_query` in `mode="read"` can call a stored procedure as the connection's own
+user. Only IRIS privileges limit that. Code-writing tools (`iris_doc` put,
+`iris_source_control`, `iris_compile`) keep using the primary `IRIS_USERNAME` so audit stays
+attributed to the real user.
 
 ---
 
@@ -489,7 +556,8 @@ run the graded benchmark yourself.
 
 Most tools work over the Atelier REST API and connect to any IRIS instance — no Docker
 required unless noted. Tools marked ✦ require `IRIS_CONTAINER`. Tools marked 🔒 are
-write-gated (suppressed on Live instances unless `IRIS_ALLOW_PROD=1`).
+write-gated: they run only when the target server's write tier is on, which by default it is not on a
+Live instance (see [Write protection](./docs/tools.md#write-protection)).
 
 Tools that can reach patient data or IRIS internals are blocked before they run unless
 you opt in. See [Data safety gates](./docs/tools.md#data-safety-gates) for what is

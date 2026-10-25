@@ -1,6 +1,6 @@
 //! Unified dispatch gate (051-phi-policy-env-gates).
 //!
-//! `dispatch_gate()` is the single pre-dispatch check that runs before every tool call.
+//! `dispatch_gate_for()` is the single pre-dispatch check that runs before every tool call.
 //! Gate evaluation order (fixed):
 //!   [0] Code-edit hard-block (non-configurable; scans the `code` of every tool in
 //!       `CODE_EXEC_TOOLS`, the class/method of iris_execute_method, and iris_query write SQL)
@@ -19,7 +19,7 @@
 //!   NAMESPACE_NOT_FOUND — requested namespace does not exist on this IRIS instance
 //!   DATABASE_NOT_FOUND  — requested database name not found
 
-use crate::iris::workspace_config::ConnectionPolicy;
+use crate::iris::workspace_config::{ConnectionPolicy, ToolCategory};
 
 /// The return type for all gate checks: `Ok(())` = permitted, `Err(json)` = blocked.
 pub type GateResult = Result<(), serde_json::Value>;
@@ -38,21 +38,15 @@ pub type GateResult = Result<(), serde_json::Value>;
 /// `class`/`method` and `query`, and have their own branches below.
 pub const CODE_EXEC_TOOLS: &[&str] = &["iris_execute", "iris_ws_exec"];
 
-/// Run all security gates for a tool call before any IRIS operation executes.
-///
-/// # Parameters
-/// - `tool_name`: the tool being called (e.g. `"iris_execute"`)
-/// - `server_name`: the connection name (for error messages)
-/// - `policy`: the active per-connection policy, or `None` (no gates fire when absent)
-/// - `params`: the full tool call parameters as JSON
-///
-/// # Returns
-/// `Ok(())` if all gates permit the call, or `Err(json)` with a structured error
-/// matching one of the registered error codes.
-pub fn dispatch_gate(
+/// Run all security gates for a tool call before any IRIS operation executes, on the server the
+/// pipeline resolved: its policy, never absent, and the categories the call has to be permitted in
+/// (spec 141, R1 D8). `Ok(())` permits the call; `Err(json)` is a structured refusal carrying one
+/// of the registered error codes.
+pub fn dispatch_gate_for(
     tool_name: &str,
     server_name: &str,
-    policy: Option<&ConnectionPolicy>,
+    policy: &ConnectionPolicy,
+    categories: &[ToolCategory],
     params: &serde_json::Value,
 ) -> GateResult {
     // [0] Code-edit hard-block — non-configurable, fires regardless of policy presence.
@@ -103,21 +97,13 @@ pub fn dispatch_gate(
         }
     }
 
-    // No policy configured is not the same as no policy wanted. Gates [1]–[4] used to vanish
-    // when a connection had no `[policy.<server>]` section, which made the "non-configurable"
-    // system blocklist and the bulk-PHI hard block opt-in — the wrong default on both. Fall back
-    // to `ConnectionPolicy::default()`, whose own field defaults are already the strict ones
-    // (`dataPolicy=block`, `mcpTemplate=dev`, empty custom blocklist on top of the hardcoded set).
-    let default_policy = ConnectionPolicy::default();
-    let policy = policy.unwrap_or(&default_policy);
-
     // [1] Environment template gate
     let template = policy
         .mcp_template
         .as_ref()
         .unwrap_or(&crate::iris::workspace_config::McpTemplate::Dev);
     if let Some(err) =
-        crate::policy::env_gate::check_env_gate(tool_name, template, server_name, params)
+        crate::policy::env_gate::check_env_gate_for(tool_name, template, server_name, categories)
     {
         return Err(err);
     }
@@ -134,12 +120,20 @@ pub fn dispatch_gate(
         .as_ref()
         .unwrap_or(&crate::iris::workspace_config::DataPolicy::Block);
     let action = params.get("action").and_then(|v| v.as_str()).unwrap_or("");
-    for name in [tool_name, action] {
-        if name.is_empty() {
-            continue;
-        }
+    //
+    // `iris_interop_query` is a bulk-data tool for the calls that name a message body (T214), so
+    // the tool name is judged with its arguments.
+    if let Some(err) = crate::policy::data_policy_gate::check_bulk_phi_gate_for_call(
+        tool_name,
+        params,
+        data_policy,
+        server_name,
+    ) {
+        return Err(err);
+    }
+    if !action.is_empty() {
         if let Some(err) =
-            crate::policy::data_policy_gate::check_bulk_phi_gate(name, data_policy, server_name)
+            crate::policy::data_policy_gate::check_bulk_phi_gate(action, data_policy, server_name)
         {
             return Err(err);
         }

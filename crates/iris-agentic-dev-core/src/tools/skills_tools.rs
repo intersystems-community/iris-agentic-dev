@@ -307,10 +307,27 @@ fn default_top_k() -> usize {
     5
 }
 
+/// Where `kb index` reads: a directory already confined to the project, and the project directory
+/// the files in it are confined to as well (a link in the directory can point out of it).
+pub struct KbIndexScope {
+    pub dir: std::path::PathBuf,
+    pub root: std::path::PathBuf,
+}
+
+/// The most files one `kb index` reads. A directory of notes is dozens; a directory holding
+/// thousands is not what the tool is for, and the reply says it stopped.
+pub const KB_INDEX_MAX_FILES: usize = 1000;
+
 pub async fn handle_kb(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: KbParams,
+    index_scope: impl FnOnce(
+        Option<&str>,
+    ) -> Result<
+        KbIndexScope,
+        Result<rmcp::model::CallToolResult, rmcp::ErrorData>,
+    >,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     if !learning_enabled() {
         return err_json(
@@ -323,47 +340,65 @@ pub async fn handle_kb(
 
     match p.action.as_str() {
         "index" => {
-            let path = p.path.as_deref().unwrap_or(".");
-            let workspace =
-                std::env::var("OBJECTSCRIPT_WORKSPACE").unwrap_or_else(|_| ".".to_string());
-            let base = if path == "." {
-                workspace.as_str()
-            } else {
-                path
+            let scope = match index_scope(p.path.as_deref()) {
+                Ok(s) => s,
+                Err(refused) => return refused,
             };
-
             let mut indexed = 0usize;
-            if let Ok(entries) = std::fs::read_dir(base) {
-                for entry in entries.flatten() {
-                    let fp = entry.path();
-                    if fp
+            let mut skipped_outside = 0usize;
+            let mut truncated = false;
+            if let Ok(entries) = std::fs::read_dir(&scope.dir) {
+                let mut files: Vec<std::path::PathBuf> =
+                    entries.flatten().map(|e| e.path()).collect();
+                files.sort();
+                for fp in files {
+                    if !fp
                         .extension()
                         .and_then(|e| e.to_str())
                         .map(|e| e == "md" || e == "txt")
                         .unwrap_or(false)
                     {
-                        if let Ok(content) = std::fs::read_to_string(&fp) {
-                            let fname = fp.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                            let fname = crate::objectscript::os_lit_inner(fname);
-                            let chunk: String = content.chars().take(2000).collect();
-                            let chunk_escaped = crate::objectscript::os_lit_inner(&chunk);
-                            let code = format!(
-                                "set ^KBCHUNKS(\"{fname}\")=\"{chunk_escaped}\" write \"ok\""
+                        continue;
+                    }
+                    // A link that leaves the project is not followed.
+                    let Some(real) = super::host_fs::within(&scope.root, &fp) else {
+                        skipped_outside += 1;
+                        continue;
+                    };
+                    if indexed >= KB_INDEX_MAX_FILES {
+                        truncated = true;
+                        break;
+                    }
+                    if let Ok(content) = std::fs::read_to_string(&real) {
+                        let fname = fp.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                        let fname = crate::objectscript::os_lit_inner(fname);
+                        let chunk: String = content.chars().take(2000).collect();
+                        let chunk_escaped = crate::objectscript::os_lit_inner(&chunk);
+                        let code =
+                            format!("set ^KBCHUNKS(\"{fname}\")=\"{chunk_escaped}\" write \"ok\"");
+                        // Stop rather than keep counting: a partial index reported as a whole
+                        // one sends the caller to `kb recall` expecting hits that are not there.
+                        if let Err(e) = xecute(iris, client, &code, &ns).await {
+                            return err_json(
+                                "IRIS_EXECUTE_ERROR",
+                                &format!("indexing failed after {indexed} chunk(s): {e}"),
                             );
-                            // Stop rather than keep counting: a partial index reported as a whole
-                            // one sends the caller to `kb recall` expecting hits that are not there.
-                            if let Err(e) = xecute(iris, client, &code, &ns).await {
-                                return err_json(
-                                    "IRIS_EXECUTE_ERROR",
-                                    &format!("indexing failed after {indexed} chunk(s): {e}"),
-                                );
-                            }
-                            indexed += 1;
                         }
+                        indexed += 1;
                     }
                 }
             }
-            ok_json(serde_json::json!({"success": true, "indexed": indexed, "path": base}))
+            let mut body = serde_json::json!({
+                "success": true,
+                "indexed": indexed,
+                "path": scope.dir.to_string_lossy(),
+                "skipped_outside": skipped_outside,
+                "truncated": truncated,
+            });
+            if truncated {
+                body["truncated_reason"] = serde_json::json!("file_budget");
+            }
+            ok_json(body)
         }
         "recall" => {
             let query = p.query.as_deref().unwrap_or("").to_lowercase();

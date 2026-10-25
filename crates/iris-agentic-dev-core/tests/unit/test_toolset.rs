@@ -2,6 +2,7 @@
 // Tests for Nostub and Merged toolset configurations.
 // Written FIRST — must FAIL until T017–T033 are implemented.
 
+use iris_agentic_dev_core::testing::EnvGuard;
 use iris_agentic_dev_core::tools::{IrisTools, Toolset};
 
 // ── Toolset::from_str ────────────────────────────────────────────────────────
@@ -308,11 +309,12 @@ static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 fn test_disabled_tools_env_removes_named_tool() {
+    let mut env_guard = EnvGuard::new();
     let _lock = ENV_LOCK.lock().unwrap();
-    std::env::set_var("IRIS_DISABLED_TOOLS", "iris_source_control");
+    env_guard.set("IRIS_DISABLED_TOOLS", "iris_source_control");
     let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
     let names = tools.registered_tool_names();
-    std::env::remove_var("IRIS_DISABLED_TOOLS");
+    env_guard.unset("IRIS_DISABLED_TOOLS");
     assert!(
         !names.contains("iris_source_control"),
         "iris_source_control must be absent when in IRIS_DISABLED_TOOLS"
@@ -321,11 +323,12 @@ fn test_disabled_tools_env_removes_named_tool() {
 
 #[test]
 fn test_disabled_tools_env_removes_multiple_tools() {
+    let mut env_guard = EnvGuard::new();
     let _lock = ENV_LOCK.lock().unwrap();
-    std::env::set_var("IRIS_DISABLED_TOOLS", "iris_admin,iris_credential_manage");
+    env_guard.set("IRIS_DISABLED_TOOLS", "iris_admin,iris_credential_manage");
     let tools = IrisTools::new_with_toolset(None, Toolset::Nostub).expect("IrisTools::new");
     let names = tools.registered_tool_names();
-    std::env::remove_var("IRIS_DISABLED_TOOLS");
+    env_guard.unset("IRIS_DISABLED_TOOLS");
     assert!(!names.contains("iris_admin"), "iris_admin must be absent");
     assert!(
         !names.contains("iris_credential_manage"),
@@ -335,11 +338,12 @@ fn test_disabled_tools_env_removes_multiple_tools() {
 
 #[test]
 fn test_disabled_tools_env_empty_string_removes_nothing() {
+    let mut env_guard = EnvGuard::new();
     let _lock = ENV_LOCK.lock().unwrap();
-    std::env::set_var("IRIS_DISABLED_TOOLS", "");
+    env_guard.set("IRIS_DISABLED_TOOLS", "");
     let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
     let names = tools.registered_tool_names();
-    std::env::remove_var("IRIS_DISABLED_TOOLS");
+    env_guard.unset("IRIS_DISABLED_TOOLS");
     // Core tools must still be present
     assert!(
         names.contains("iris_execute"),
@@ -353,14 +357,15 @@ fn test_disabled_tools_env_empty_string_removes_nothing() {
 
 #[test]
 fn test_disabled_tools_env_ignores_whitespace() {
+    let mut env_guard = EnvGuard::new();
     let _lock = ENV_LOCK.lock().unwrap();
-    std::env::set_var(
+    env_guard.set(
         "IRIS_DISABLED_TOOLS",
         " iris_source_control , iris_compile ",
     );
     let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
     let names = tools.registered_tool_names();
-    std::env::remove_var("IRIS_DISABLED_TOOLS");
+    env_guard.unset("IRIS_DISABLED_TOOLS");
     assert!(
         !names.contains("iris_source_control"),
         "whitespace-padded name must still be removed"
@@ -373,11 +378,12 @@ fn test_disabled_tools_env_ignores_whitespace() {
 
 #[test]
 fn test_disabled_tools_env_unknown_name_is_ignored() {
+    let mut env_guard = EnvGuard::new();
     let _lock = ENV_LOCK.lock().unwrap();
-    std::env::set_var("IRIS_DISABLED_TOOLS", "nonexistent_tool");
+    env_guard.set("IRIS_DISABLED_TOOLS", "nonexistent_tool");
     // Should not panic — remove_route on a name that doesn't exist must be a no-op
     let result = IrisTools::new_with_toolset(None, Toolset::Baseline);
-    std::env::remove_var("IRIS_DISABLED_TOOLS");
+    env_guard.unset("IRIS_DISABLED_TOOLS");
     assert!(
         result.is_ok(),
         "unknown disabled tool name must not cause construction to fail"
@@ -390,11 +396,12 @@ fn test_disabled_tools_env_unknown_name_is_ignored() {
 /// from the active toolset survives.
 #[test]
 fn test_enabled_tools_env_restricts_to_named_subset() {
+    let mut env_guard = EnvGuard::new();
     let _lock = ENV_LOCK.lock().unwrap();
-    std::env::set_var("IRIS_ENABLED_TOOLS", "iris_query,iris_search,iris_symbols");
+    env_guard.set("IRIS_ENABLED_TOOLS", "iris_query,iris_search,iris_symbols");
     let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
     let names = tools.registered_tool_names();
-    std::env::remove_var("IRIS_ENABLED_TOOLS");
+    env_guard.unset("IRIS_ENABLED_TOOLS");
     assert_eq!(
         names,
         std::collections::HashSet::from([
@@ -411,14 +418,15 @@ fn test_enabled_tools_env_restricts_to_named_subset() {
 /// ignored — startup does not fail and the rest of the allowlist still applies.
 #[test]
 fn test_enabled_tools_env_unknown_name_is_ignored() {
+    let mut env_guard = EnvGuard::new();
     let _lock = ENV_LOCK.lock().unwrap();
-    std::env::set_var("IRIS_ENABLED_TOOLS", "iris_query,nonexistent_tool");
+    env_guard.set("IRIS_ENABLED_TOOLS", "iris_query,nonexistent_tool");
     let result = IrisTools::new_with_toolset(None, Toolset::Baseline);
     let names = result
         .as_ref()
         .map(|t| t.registered_tool_names())
         .unwrap_or_default();
-    std::env::remove_var("IRIS_ENABLED_TOOLS");
+    env_guard.unset("IRIS_ENABLED_TOOLS");
     assert!(
         result.is_ok(),
         "unknown enabled-tool name must not cause construction to fail"
@@ -434,11 +442,12 @@ fn test_enabled_tools_env_unknown_name_is_ignored() {
 /// applies as normal) — NOT "expose zero tools."
 #[test]
 fn test_enabled_tools_env_empty_string_means_no_allowlist() {
+    let mut env_guard = EnvGuard::new();
     let _lock = ENV_LOCK.lock().unwrap();
-    std::env::set_var("IRIS_ENABLED_TOOLS", "");
+    env_guard.set("IRIS_ENABLED_TOOLS", "");
     let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
     let names = tools.registered_tool_names();
-    std::env::remove_var("IRIS_ENABLED_TOOLS");
+    env_guard.unset("IRIS_ENABLED_TOOLS");
     assert!(
         names.len() > 1,
         "an empty IRIS_ENABLED_TOOLS must leave the full Baseline toolset intact, got {} tools",
@@ -451,13 +460,14 @@ fn test_enabled_tools_env_empty_string_means_no_allowlist() {
 /// — that tool is absent, not present.
 #[test]
 fn test_disabled_tools_wins_over_enabled_tools_for_same_name() {
+    let mut env_guard = EnvGuard::new();
     let _lock = ENV_LOCK.lock().unwrap();
-    std::env::set_var("IRIS_ENABLED_TOOLS", "iris_query,iris_search");
-    std::env::set_var("IRIS_DISABLED_TOOLS", "iris_query");
+    env_guard.set("IRIS_ENABLED_TOOLS", "iris_query,iris_search");
+    env_guard.set("IRIS_DISABLED_TOOLS", "iris_query");
     let tools = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
     let names = tools.registered_tool_names();
-    std::env::remove_var("IRIS_ENABLED_TOOLS");
-    std::env::remove_var("IRIS_DISABLED_TOOLS");
+    env_guard.unset("IRIS_ENABLED_TOOLS");
+    env_guard.unset("IRIS_DISABLED_TOOLS");
     assert!(
         !names.contains("iris_query"),
         "iris_query is in both lists — the blocklist must win, so it must be absent"
@@ -474,16 +484,17 @@ fn test_disabled_tools_wins_over_enabled_tools_for_same_name() {
 /// toolset already excludes stays excluded even if named in the allowlist.
 #[test]
 fn test_enabled_tools_env_applies_on_top_of_toolset_pruning() {
+    let mut env_guard = EnvGuard::new();
     let _lock = ENV_LOCK.lock().unwrap();
     // iris_debug only exists in Merged (see test_merged_registers_iris_debug) — naming
     // it in the allowlist under Baseline must not resurrect it, since Baseline's own
     // toolset pruning already removed it before the allowlist step runs.
-    std::env::set_var("IRIS_ENABLED_TOOLS", "iris_query,iris_debug");
+    env_guard.set("IRIS_ENABLED_TOOLS", "iris_query,iris_debug");
     let baseline = IrisTools::new_with_toolset(None, Toolset::Baseline).expect("IrisTools::new");
     let baseline_names = baseline.registered_tool_names();
     let merged = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
     let merged_names = merged.registered_tool_names();
-    std::env::remove_var("IRIS_ENABLED_TOOLS");
+    env_guard.unset("IRIS_ENABLED_TOOLS");
     assert_eq!(
         baseline_names,
         std::collections::HashSet::from(["iris_query".to_string()]),

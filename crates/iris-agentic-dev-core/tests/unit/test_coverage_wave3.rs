@@ -10,7 +10,8 @@ mod tests {
     use iris_agentic_dev_core::tools::IrisTools;
 
     fn tools() -> IrisTools {
-        IrisTools::new(None).expect("IrisTools::new")
+        IrisTools::for_test_gates_open(None, iris_agentic_dev_core::tools::Toolset::Baseline)
+            .expect("IrisTools::for_test_gates_open")
     }
 
     fn result_text(r: &rmcp::model::CallToolResult) -> String {
@@ -234,7 +235,26 @@ mod tests {
 
     #[tokio::test]
     async fn iris_message_body_missing_message_id_returns_invalid_params() {
+        // The bulk-PHI gate runs before the handler reads its arguments (spec 141), so the data
+        // policy has to allow reads for the handler's own validation to be reached.
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let cwd = dir.path().join("proj");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::write(
+            home.join(".iris-agentic-dev.toml"),
+            "[policy.default]\ndataPolicy = \"allow\"\n",
+        )
+        .unwrap();
+        let inputs = iris_agentic_dev_core::iris::config_sources::LoadInputs {
+            cwd,
+            home: Some(home),
+            ..Default::default()
+        };
+        let snapshot = iris_agentic_dev_core::iris::config_sources::ConfigSnapshot::load(&inputs);
         let t = tools();
+        t.set_config(inputs, snapshot);
         let res = t
             .call_for_test("iris_message_body", serde_json::json!({}))
             .await

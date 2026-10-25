@@ -25,6 +25,12 @@ tags:
 
 # VSCode ObjectScript Extension — IRIS Setup
 
+Every container below is one you start for yourself. Publish its ports on `127.0.0.1` only, give
+`_SYSTEM` one generated password (step 4 of the `iris-agentic-dev-setup` skill), and leave the
+other predefined accounts expired. If a container with that name already exists, ask before
+running any of these steps against it: it is someone's work, and a password change or a changed
+port binding is not something you can take back.
+
 ## Which Images Have Atelier REST on Port 52773?
 
 | Image                                                          | Has private web server | Atelier REST      | Solution  |
@@ -50,7 +56,7 @@ services:
     image: containers.intersystems.com/intersystems/iris:2026.1
     container_name: iris-enterprise
     ports:
-      - "4972:1972"
+      - "127.0.0.1:4972:1972"
     volumes:
       - ./iris.key:/usr/irissys/mgr/iris.key:ro
     networks:
@@ -60,7 +66,11 @@ services:
     image: containers.intersystems.com/intersystems/webgateway:2026.1
     container_name: iris-enterprise-webgateway
     ports:
-      - "64780:80"
+      - "127.0.0.1:64780:80"
+    environment:
+      # Passed through from the shell that runs `docker compose up`; never a literal here.
+      - ISC_WG_USER
+      - ISC_WG_PASSWORD
     networks:
       - iris-net
     volumes:
@@ -87,8 +97,10 @@ done
 
 # BUG 2 FIX: Add credentials to [LOCAL] server section.
 # Default tries CSPSystem which doesn't exist in fresh enterprise containers.
-# Must add Username/Password so the webgateway can authenticate to IRIS.
-sed -i '/^\[LOCAL\]/a Username=_SYSTEM\nPassword=SYS' /opt/webgateway/bin/CSP.ini
+# Must add Username/Password so the webgateway can authenticate to IRIS. They come from the
+# environment (ISC_WG_USER, ISC_WG_PASSWORD), never from a literal in this file.
+: "${ISC_WG_USER:?set ISC_WG_USER}" "${ISC_WG_PASSWORD:?set ISC_WG_PASSWORD}"
+sed -i "/^\[LOCAL\]/a Username=${ISC_WG_USER}\nPassword=${ISC_WG_PASSWORD}" /opt/webgateway/bin/CSP.ini
 
 # Point LOCAL at the IRIS container (use Docker service name, not localhost)
 sed -i 's/^Ip_Address=127\.0\.0\.1/Ip_Address=iris/' /opt/webgateway/bin/CSP.ini
@@ -118,23 +130,24 @@ apachectl graceful 2>/dev/null || true
 wait
 ```
 
-### After starting: unexpire passwords
+### After starting: set the `_SYSTEM` password
 
-Fresh enterprise containers require a password change on first login. Run once:
+Fresh enterprise containers require a password change on first login. Give `_SYSTEM` a new
+generated password with step 4 of the `iris-agentic-dev-setup` skill (the container is
+`iris-enterprise` here). Do not run `UnExpireUserPasswords` over every account: that leaves
+`SuperUser`, `Admin` and `CSPSystem` with the published `SYS`, which then works for anyone who
+can reach the gateway.
+
+Start the gateway with that password in the environment, so the init script above can read it:
 
 ```bash
-docker exec -i iris-enterprise bash << 'EOF'
-iris session IRIS -U %SYS << 'IRISEOF'
-Do ##class(Security.Users).UnExpireUserPasswords("*")
-halt
-IRISEOF
-EOF
+ISC_WG_USER=_SYSTEM ISC_WG_PASSWORD="$PW" docker compose up -d webgateway
 ```
 
 ### Verify
 
 ```bash
-curl -s -u "_SYSTEM:SYS" "http://localhost:64780/api/atelier/" \
+printf 'user = "_SYSTEM:%s"\n' "$PW" | curl -s -K - "http://localhost:64780/api/atelier/" \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['result']['content']['version'])"
 # → IRIS for UNIX ... 2026.1 ...
 ```
@@ -167,7 +180,7 @@ curl -s -u "_SYSTEM:SYS" "http://localhost:64780/api/atelier/" \
 
 ### Bug 2: Missing credentials in `[LOCAL]`
 
-The webgateway's default `[LOCAL]` server section has no `Username`/`Password`. It tries to connect as `CSPSystem`, which doesn't exist in a fresh enterprise container. Result: `"Connection Validation Failed: 403 Access Denied"` in CSP.log. **Fix: add `Username=_SYSTEM` and `Password=SYS` to the `[LOCAL]` section.**
+The webgateway's default `[LOCAL]` server section has no `Username`/`Password`. It tries to connect as `CSPSystem`, which doesn't exist in a fresh enterprise container. Result: `"Connection Validation Failed: 403 Access Denied"` in CSP.log. **Fix: add `Username` and `Password` to the `[LOCAL]` section, read from `ISC_WG_USER` and `ISC_WG_PASSWORD`.**
 
 ### Bug 3: Wrong Apache directive
 
@@ -180,7 +193,7 @@ docker exec iris-enterprise-webgateway tail -20 /opt/webgateway/logs/CSP.log
 ```
 
 - `"Connection Validation Failed: 403 Forbidden... Access Denied"` → Bug 2 (missing credentials)
-- `"Connection Validation Failed: 403... Password change required"` → need `UnExpireUserPasswords`
+- `"Connection Validation Failed: 403... Password change required"` → the `_SYSTEM` password is still expired; set a new one (step 4 of the `iris-agentic-dev-setup` skill)
 - No request entries at all → Bug 3 (wrong Apache directive, CSP module never fires)
 
 ---
@@ -192,20 +205,14 @@ services:
   iris:
     image: intersystemsdc/iris-community:2026.1
     ports:
-      - "1972:1972"
-      - "52773:52773"
-    environment:
-      - ISC_CPF_MERGE_FILE=/tmp/merge.cpf
-    volumes:
-      - ./merge.cpf:/tmp/merge.cpf:ro
+      - "127.0.0.1:1972:1972"
+      - "127.0.0.1:52773:52773"
 ```
 
-```ini
-# merge.cpf — prevents password expiry prompt
-[Actions]
-ModifyUser:Name=_SYSTEM,ChangePassword=0,PasswordNeverExpires=1
-ModifyUser:Name=SuperUser,ChangePassword=0,PasswordNeverExpires=1
-```
+The first login needs a new `_SYSTEM` password. Run step 4 of the `iris-agentic-dev-setup` skill
+after `docker compose up`. For an unattended container nobody else can reach, `iris-cpf-merge`
+shows how to set a generated password hash at first boot; clearing an expiry without a new hash
+leaves the published default working.
 
 VSCode settings.json uses `"port": 52773` (or the mapped host port).
 
@@ -214,7 +221,7 @@ VSCode settings.json uses `"port": 52773` (or the mapped host port).
 ## Verify Before Opening VSCode
 
 ```bash
-curl -s -u "_SYSTEM:SYS" "http://localhost:52773/api/atelier/" \
+printf 'user = "_SYSTEM:%s"\n' "$PW" | curl -s -K - "http://localhost:52773/api/atelier/" \
   | python3 -c "import sys,json; print(json.load(sys.stdin)['result']['content']['version'])"
 # 404 → web server not running (enterprise without webgateway, or IRIS still starting)
 # 401 → wrong credentials or expired password

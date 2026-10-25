@@ -11,11 +11,7 @@ use std::process::{Command, Stdio};
 // ── Infrastructure ────────────────────────────────────────────────────────────
 
 fn iris_dev_bin() -> std::path::PathBuf {
-    let mut p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    p.pop();
-    p.pop();
-    p.push("target/debug/iris-agentic-dev");
-    p
+    iris_agentic_dev_core::testing::iad_binary_path()
 }
 
 fn iris_available() -> bool {

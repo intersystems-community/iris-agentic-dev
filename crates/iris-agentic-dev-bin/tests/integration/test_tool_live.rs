@@ -7,6 +7,7 @@ fn env_or(key: &str, default: &str) -> String {
 fn iris_dev() -> Command {
     let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
     let mut cmd = Command::new(bin);
+    crate::support_141::isolate(&mut cmd);
     cmd.env("IRIS_HOST", env_or("IRIS_HOST", "localhost"))
         .env("IRIS_WEB_PORT", env_or("IRIS_WEB_PORT", "52780"))
         .env("IRIS_NAMESPACE", env_or("IRIS_NAMESPACE", "USER"))

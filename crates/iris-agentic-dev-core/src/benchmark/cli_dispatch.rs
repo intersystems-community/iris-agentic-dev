@@ -14,6 +14,90 @@ pub struct ToolInvocation {
     pub args_json: String,
 }
 
+/// The tools the benchmark agent may call (spec 141, FR-004, R1 C3). The prompt lists exactly
+/// these, and [`check_invocation`] refuses every other name before a process starts.
+pub const CLI_DISPATCH_TOOLS: &[&str] = &[
+    "iris_compile",
+    "iris_execute",
+    "iris_search",
+    "iris_symbols",
+];
+
+/// Argument names the agent may not send: they choose the server, the namespace or the
+/// confirmation. Matched case-insensitively with `_` and `-` ignored, so `forceWritable` and
+/// `force-writable` are `force_writable`.
+pub const CLI_DISPATCH_REFUSED_ARGS: &[&str] = &[
+    "server",
+    "namespace",
+    "confirm",
+    "confirmed",
+    "force_writable",
+];
+
+/// What the prompt tells the agent each allowed tool does.
+fn tool_blurb(tool: &str) -> &'static str {
+    match tool {
+        "iris_compile" => "compile an ObjectScript class",
+        "iris_execute" => "execute ObjectScript code",
+        "iris_search" => "search for classes and symbols",
+        "iris_symbols" => "inspect class members and structure",
+        _ => "",
+    }
+}
+
+/// `force_writable`, `forceWritable` and `Force-Writable` all fold to `forcewritable`.
+fn fold_arg_name(name: &str) -> String {
+    name.chars()
+        .filter(|c| *c != '_' && *c != '-')
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Whether the benchmark may run `inv`. The check sits in the parent, so a refused call never
+/// starts a process. The `Err` text is what the agent is shown.
+pub fn check_invocation(inv: &ToolInvocation) -> Result<(), String> {
+    if !CLI_DISPATCH_TOOLS.contains(&inv.tool_name.as_str()) {
+        return Err(format!(
+            "`{}` is not available in this benchmark. Use one of: {}.",
+            inv.tool_name,
+            CLI_DISPATCH_TOOLS.join(", ")
+        ));
+    }
+    let args: serde_json::Value = serde_json::from_str(&inv.args_json)
+        .map_err(|e| format!("--args is not valid JSON: {e}"))?;
+    let Some(map) = args.as_object() else {
+        return Err("--args must be a JSON object".to_string());
+    };
+    let refused: Vec<String> = CLI_DISPATCH_REFUSED_ARGS
+        .iter()
+        .map(|n| fold_arg_name(n))
+        .collect();
+    for key in map.keys() {
+        if refused.contains(&fold_arg_name(key)) {
+            return Err(format!(
+                "the argument `{key}` is not accepted: the benchmark chooses the server, the \
+                 namespace and every confirmation."
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Run each invocation through `runner` and return the text the agent is shown for each. A refused
+/// invocation answers with a tool error and never calls `runner`.
+pub fn run_invocations(
+    invocations: &[ToolInvocation],
+    runner: &mut dyn FnMut(&ToolInvocation) -> String,
+) -> Vec<String> {
+    invocations
+        .iter()
+        .map(|inv| match check_invocation(inv) {
+            Ok(()) => format!("Tool `{}` result:\n{}", inv.tool_name, runner(inv)),
+            Err(why) => format!("Tool `{}` refused: {why}", inv.tool_name),
+        })
+        .collect()
+}
+
 /// Configuration for a CLI dispatch benchmark run.
 pub struct CliDispatchConfig {
     /// Path to the `iris-agentic-dev` binary used for subprocess tool calls.
@@ -140,19 +224,19 @@ pub fn build_cli_dispatch_system_prompt(skill_content: &str) -> String {
             .to_string(),
     );
 
-    parts.push(
+    let tool_lines: String = CLI_DISPATCH_TOOLS
+        .iter()
+        .map(|t| format!("- `{t}` — {}\n", tool_blurb(t)))
+        .collect();
+    parts.push(format!(
         "# Available tools\n\n\
         Invoke tools by outputting a line in this exact format:\n\
         ```\n\
         iris-agentic-dev tool <tool_name> --args '<json_args>'\n\
         ```\n\n\
         Available tools:\n\
-        - `iris_compile` — compile an ObjectScript class\n\
-        - `iris_execute` — execute ObjectScript code\n\
-        - `iris_search` — search for classes and symbols\n\
-        - `iris_symbols` — inspect class members and structure\n"
-            .to_string(),
-    );
+        {tool_lines}"
+    ));
 
     parts.push(format!(
         "# Completing the task\n\n\
@@ -169,6 +253,23 @@ pub fn build_cli_dispatch_system_prompt(skill_content: &str) -> String {
     parts.join("\n")
 }
 
+/// An empty directory for a child's cwd, removed when dropped.
+struct ScratchDir(PathBuf);
+
+impl ScratchDir {
+    fn create() -> Option<Self> {
+        let dir = std::env::temp_dir().join(format!("iad-bench-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).ok()?;
+        Some(Self(dir))
+    }
+}
+
+impl Drop for ScratchDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// Executes a single tool invocation as a subprocess.
 ///
 /// Returns combined stdout+stderr as a string. Never panics — all errors
@@ -179,14 +280,32 @@ pub fn run_tool_subprocess(
     invocation: &ToolInvocation,
     env_vars: &[(String, String)],
 ) -> String {
+    // A scratch directory holds no `.iris-agentic-dev.toml`, and an empty environment carries none
+    // of the parent's `IRIS_*` settings, so the child cannot pick up the operator's pool, keychain
+    // servers or `[policy.*]` from wherever the benchmark was started (R1 C3).
+    let scratch = ScratchDir::create();
     let mut cmd = std::process::Command::new(binary);
-    cmd.arg("tool")
+    cmd.env_clear()
+        .arg("tool")
         .arg(&invocation.tool_name)
+        .arg("--toolset")
+        .arg("merged")
         .arg("--args")
         .arg(&invocation.args_json);
+    if let Some(dir) = &scratch {
+        cmd.current_dir(&dir.0);
+    }
+    for key in ["PATH", "HOME"] {
+        if let Some(val) = std::env::var_os(key) {
+            cmd.env(key, val);
+        }
+    }
     for (key, val) in env_vars {
         cmd.env(key, val);
     }
+    // The benchmark compiles, and nothing the agent runs may kill a global.
+    cmd.env("IRIS_WRITE_TOOLS_ENABLED", "1")
+        .env("IRIS_DESTRUCTIVE_TOOLS_ENABLED", "0");
     match cmd.output() {
         Ok(output) => {
             let mut combined = String::new();
@@ -400,11 +519,9 @@ async fn run_cli_dispatch_task_inner(
         }
 
         // Execute tool invocations and collect results
-        let mut tool_results = Vec::new();
-        for inv in &invocations {
-            let result = run_tool_subprocess(&config.binary_path, inv, &config.connection_env);
-            tool_results.push(format!("Tool `{}` result:\n{}", inv.tool_name, result));
-        }
+        let tool_results = run_invocations(&invocations, &mut |inv| {
+            run_tool_subprocess(&config.binary_path, inv, &config.connection_env)
+        });
 
         conversation.push(("assistant".to_string(), response));
         conversation.push(("user".to_string(), tool_results.join("\n\n")));
@@ -832,5 +949,42 @@ mod tests {
         let result = run_tool_subprocess(&false_path, &inv, &[]);
         // Either it ran and produced output (or empty but non-panic), or returned error string
         assert!(result.len() < 10000); // didn't hang/overflow
+    }
+
+    // 141 FR-004: the child sees only what the benchmark gives it, from a directory with no toml.
+    #[cfg(unix)]
+    #[test]
+    fn run_tool_subprocess_runs_with_a_cleared_environment_in_a_scratch_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("fake-iad");
+        std::fs::write(&script, "#!/bin/sh\nenv\npwd\necho \"ARGV $*\"\nls -A\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let inv = ToolInvocation {
+            tool_name: "iris_execute".to_string(),
+            args_json: r#"{"code":"Write 1"}"#.to_string(),
+        };
+        let out = run_tool_subprocess(
+            &script,
+            &inv,
+            &[("IRIS_HOST".to_string(), "bench-host".to_string())],
+        );
+        // cargo sets this in every test process; the child must not inherit it.
+        assert!(!out.contains("CARGO_MANIFEST_DIR"), "env leaked: {out}");
+        assert!(out.contains("IRIS_HOST=bench-host"), "{out}");
+        assert!(out.contains("IRIS_WRITE_TOOLS_ENABLED=1"), "{out}");
+        assert!(out.contains("IRIS_DESTRUCTIVE_TOOLS_ENABLED=0"), "{out}");
+        assert!(
+            out.contains("ARGV tool iris_execute --toolset merged --args"),
+            "{out}"
+        );
+        let cwd = out
+            .lines()
+            .find(|l| l.contains("iad-bench-"))
+            .unwrap_or_else(|| panic!("the child did not run in a scratch directory: {out}"));
+        assert!(
+            !std::path::Path::new(cwd.trim()).exists(),
+            "scratch directory {cwd} was not removed"
+        );
     }
 }

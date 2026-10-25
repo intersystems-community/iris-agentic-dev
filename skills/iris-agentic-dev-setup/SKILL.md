@@ -89,22 +89,36 @@ command -v iris-agentic-dev
 ## 3. Find an IRIS instance before starting one
 
 Most developers already have one running. Starting a second wastes several minutes and then
-confuses auto-discovery.
+confuses auto-discovery. But a container that already exists is the user's, with their work in it,
+so finding one is a reason to ask, not a reason to change anything.
 
 ```bash
 docker ps --filter expose=1972 --format '{{.Names}}\t{{.Image}}\t{{.Ports}}'
 ```
 
-Every row is a candidate. If there is exactly one, use it and go to step 4. If there are
-several, ask the user which one before touching any of them: instances belong to projects, and
-writing to the wrong one is not something you can undo. If there are none, start one:
+Every row is a candidate.
+
+- **Exactly one.** Tell the user which container you found and ask for the credentials of that
+  instance. Do not run step 4 on it. If they say its password is expired, ask before changing it,
+  say that the account that changes is `_SYSTEM` and no other, and only then run step 4's command
+  with that container's name in place of `iris-quickstart`.
+- **Several.** Ask the user which one before touching any of them: instances belong to projects,
+  and writing to the wrong one is not something you can undo.
+- **Never** stop, recreate or re-publish an existing container, even when `docker ps` shows it
+  bound to `0.0.0.0`. Tell the user about that binding and leave it.
+- **None.** Start one. This is the only case where step 4 runs without asking, because a
+  container you just started holds nothing yet:
 
 ```bash
-docker run -d --name iris-quickstart -p 1972:1972 -p 52773:52773 \
+docker run -d --name iris-quickstart -p 127.0.0.1:1972:1972 -p 127.0.0.1:52773:52773 \
   intersystemsdc/iris-community:latest
 ```
 
-Change the host side of both `-p` mappings if those ports are taken.
+The `127.0.0.1:` in front of each port decides who can reach the instance: only this machine.
+Without it Docker publishes on every interface, and on Linux its own firewall rules sit ahead of
+ufw and firewalld, so having a firewall does not help. Remove the prefix only if the user wants
+other machines on the network to log in. Change the host side of both mappings if those ports
+are taken.
 
 This image has no Docker healthcheck, so `docker inspect` reports an empty health status
 forever. Wait on the REST endpoint instead, which is the thing that has to work:
@@ -117,63 +131,94 @@ done
 ```
 
 A 401 means IRIS is up and asking for credentials, which is exactly where step 4 starts. First
-boot takes about a minute.
+boot takes about a minute. The web server answers a little before the instance accepts a
+session, so if step 4 prints `Sign-on and JOB inhibited`, wait ten seconds and run it again.
 
-## 4. Clear the expired password and confirm the port
+## 4. Set a new `_SYSTEM` password and confirm the port
 
 A fresh community container ships `_SYSTEM` / `SYS` already expired. Every REST call returns
-401 until that is cleared, and nothing in the 401 says so.
+401 until that is dealt with, and nothing in the 401 says so. The fix is to give `_SYSTEM` a new
+password. Do not clear the expiry on every account: that leaves `SuperUser`, `Admin` and
+`CSPSystem` with a password that is published in the documentation.
+
+This step applies only to the container step 3 started. Never run it on a container this skill
+did not start; step 3 says what to do with one.
+
+Generate the password on the host and send the ObjectScript on `docker exec -i` stdin, so the
+password is never on a command line, in `docker inspect` or in a file:
 
 ```bash
-docker exec iris-quickstart iris session IRIS -U '%SYS' \
-  '##class(Security.Users).UnExpireUserPasswords("*")'
+PW="$(openssl rand -base64 18)"
+printf 'Set p("Password")="%s",p("ChangePassword")=0\nSet sc=##class(Security.Users).Modify("_SYSTEM",.p)\nWrite $Select(sc:"password changed",1:$System.Status.GetErrorText(sc)),!\nHalt\n' "$PW" \
+  | docker exec -i iris-quickstart iris session IRIS -U %SYS
+echo "_SYSTEM password: $PW"
 ```
 
-Do not assume the web port is 52773. Read the mapping off the container, using the container
-name from step 3:
+`password changed` in the output is the success line. Never send the password through iad: do
+not hand it to `iris_admin`, `iris_credential_manage` or any other tool to set. Those calls need a working
+login, which an expired password does not give, and an iad older than the 1.7.0 fix would carry
+the password in a scratch class's source. Tell the user the password once, in your reply, because
+nothing stores it for them. It passes through this session that one time.
+
+Starting the container with `-e IRIS_PASSWORD=<password>` also sets `_SYSTEM`'s password on the `intersystemsdc` images, but the value then sits in `docker inspect` and in the `docker run` command line, so this skill does not use it.
+
+Do not assume the web port is 52773. Read the mapping off the container, and read the address
+too:
 
 ```bash
-docker port iris-quickstart 52773
+docker port iris-quickstart
 ```
 
-The number after the colon is the web port for every step below. Anything else you may have
-seen, including 1972, is the superserver port and will not answer REST.
+Each line should read `-> 127.0.0.1:<port>`. The number after the colon beside `52773/tcp` is the
+web port for every step below. Anything else you may have seen, including 1972, is the
+superserver port and will not answer REST. An address of `0.0.0.0` means the `docker run` in
+step 3 lost its prefix.
 
-Confirm both at once, substituting the port you just read:
+Confirm both at once, substituting the port you just read. `curl -K -` reads the credential from
+stdin, so the password stays off the process list:
 
 ```bash
-curl -s -u _SYSTEM:SYS -o /dev/null -w '%{http_code}\n' http://localhost:52773/api/atelier/
+printf 'user = "_SYSTEM:%s"\n' "$PW" \
+  | curl -s -K - -o /dev/null -w '%{http_code}\n' http://localhost:52773/api/atelier/
 ```
 
-`200` means ready. `401` means step 4's password command has not taken effect; re-run it and
-check its exit status. Anything else, or no response, means IRIS is not serving yet.
+`200` means ready. `401` means the password command has not taken effect; re-run it and read its
+output. Anything else, or no response, means IRIS is not serving yet. Shell variables do not
+survive between separate tool calls, so run the blocks that use `$PW` in one call, or set `PW=`
+again from the value you gave the user.
 
 ## 5. Register the MCP server
 
 Use the absolute path from step 2. A bare name works only if the host shell's PATH includes it,
 which is not the same PATH your terminal has.
 
-```bash
-claude mcp add iris-dev /usr/local/bin/iris-agentic-dev mcp
-```
-
-If IRIS is not on the default port, or not at `_SYSTEM` / `SYS`, pin it rather than leaving it
-to discovery:
+The password goes into the registration's launch settings, which the host keeps in the user's own
+configuration. It does not go in a workspace file: `.iris-agentic-dev.toml` sits in a project
+directory that gets committed and shared.
 
 ```bash
 claude mcp add iris-dev /usr/local/bin/iris-agentic-dev mcp \
+  --env IRIS_USERNAME=_SYSTEM --env IRIS_PASSWORD="$PW"
+```
+
+If IRIS is not on the default port, pin it rather than leaving it to discovery:
+
+```bash
+claude mcp add iris-dev /usr/local/bin/iris-agentic-dev mcp \
+  --env IRIS_USERNAME=_SYSTEM --env IRIS_PASSWORD="$PW" \
   --env IRIS_WEB_PORT=52773 --env IRIS_CONTAINER=iris-quickstart
 ```
 
 A per-project alternative is a `.iris-agentic-dev.toml` in the workspace, which the server
-re-reads without a restart:
+re-reads without a restart. It names the container and the ports and nothing secret:
 
 ```bash
 iris-agentic-dev init
 ```
 
 Installing the plugin instead of registering by hand gets the server and all the ObjectScript
-skills in one step, which is the better route when the user has not already chosen one:
+skills in one step, which is the better route when the user has not already chosen one. Then
+give the server the password through its launch settings in the same way:
 
 ```bash
 claude plugin marketplace add intersystems-community/iris-agentic-dev
@@ -219,7 +264,7 @@ Probe the server directly. This never touches the active connection, and it sepa
 failures that look identical from the outside:
 
 ```bash
-iris-agentic-dev tool iris_test_server --args '{"host":"localhost","web_port":52773,"username":"_SYSTEM","password":"SYS"}'
+iris-agentic-dev tool iris_test_server --args '{"host":"localhost","web_port":52773,"username":"_SYSTEM","password":"<password>"}'
 ```
 
 Read the two flags independently:
@@ -228,20 +273,21 @@ Read the two flags independently:
   server resolved. Go back to step 5 and pin the port and container.
 - `reachable: true, auth: false` with `Authentication failed (HTTP 401)` — TCP and HTTP both
   worked and the credentials were refused. On a fresh container the first cause to check is the
-  expired default password from step 4, not a typo. The 401 is byte-for-byte identical whether
-  the password is wrong or merely expired, so clear the expiry before you start doubting the
+  expired default password, not a typo. The 401 is byte-for-byte identical whether the password
+  is wrong or merely expired, so confirm that step 4 ran before you start doubting the
   password.
 - `reachable: false` — nothing answered. Check that the container is up
   (`docker ps --filter name=iris-quickstart`), and that you are using the web port from
   `docker port` rather than 1972.
 
-Pass `username` and `password` explicitly on this probe. Omitted, they are not filled in from
+Replace `<password>` with the one step 4 generated. Pass `username` and `password` explicitly on
+this probe. Omitted, they are not filled in from
 the active configuration, and a perfectly healthy server comes back `auth: false`, which sends
 you chasing a credential problem that does not exist.
 
 One error code lies: a 401 during connection setup can surface as `IRIS_UNREACHABLE`. The
 instance is reachable; the credentials were rejected. Treat `IRIS_UNREACHABLE` alongside an
-HTTP 401 as an authentication failure and work step 4, not the network.
+HTTP 401 as an authentication failure and work the credentials (step 4), not the network.
 
 Two more things that look like connection failures:
 

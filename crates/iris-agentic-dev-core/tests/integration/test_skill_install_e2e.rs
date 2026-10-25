@@ -1,6 +1,7 @@
 use iris_agentic_dev_core::skill_install::{
     install_skill, is_managed, InstallOutcome, InstallTarget, SkillPackInstaller,
 };
+use iris_agentic_dev_core::testing::EnvGuard;
 use tempfile::TempDir;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -34,6 +35,7 @@ Use for SQL queries in IRIS.
 // Tests: manifest fetch → skill content fetch → file write → managed_by marker present
 #[tokio::test]
 async fn e2e_install_from_manifest_to_files() {
+    let mut env_guard = EnvGuard::new();
     let server = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -60,7 +62,7 @@ async fn e2e_install_from_manifest_to_files() {
         .mount(&server)
         .await;
 
-    std::env::set_var("GITHUB_RAW_BASE_URL", server.uri());
+    env_guard.set("GITHUB_RAW_BASE_URL", server.uri());
 
     let installer = SkillPackInstaller::new();
     let skill_paths = installer
@@ -106,8 +108,6 @@ async fn e2e_install_from_manifest_to_files() {
             );
         }
     }
-
-    std::env::remove_var("GITHUB_RAW_BASE_URL");
 }
 
 // T019-live: live GitHub — only works after iris-agentic-dev.toml is on main branch

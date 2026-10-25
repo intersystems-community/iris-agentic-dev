@@ -332,16 +332,18 @@ fn blocks_legacy_generator_mode() {
     );
 }
 
+/// `expression` and `call` run nothing at compile time (measured on 2026.2, spec 141 R3), so they
+/// are accepted; the gate used to refuse them with a message that was wrong about why.
 #[test]
-fn blocks_expression_mode() {
+fn accepts_expression_mode() {
     let cls = "Class My.Trick {\nMethod X() As %String [ CodeMode = expression ]\n{\n1+1\n}\n}";
-    assert!(check_compile_time_code_mode(cls, "My.Trick.cls").is_some());
+    assert!(check_compile_time_code_mode(cls, "My.Trick.cls").is_none());
 }
 
 #[test]
-fn blocks_call_mode() {
+fn accepts_call_mode() {
     let cls = "Class My.Trick {\nMethod X() [ CodeMode = call ]\n{\nSomeRoutine\n}\n}";
-    assert!(check_compile_time_code_mode(cls, "My.Trick.cls").is_some());
+    assert!(check_compile_time_code_mode(cls, "My.Trick.cls").is_none());
 }
 
 #[test]

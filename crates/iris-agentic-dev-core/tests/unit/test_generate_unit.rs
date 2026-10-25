@@ -5,6 +5,7 @@ use iris_agentic_dev_core::generate::{
     extract_class_name, validate_cls_syntax, GENERATE_CLASS_SYSTEM, GENERATE_TEST_SYSTEM,
     RETRY_TEMPLATE,
 };
+use iris_agentic_dev_core::testing::EnvGuard;
 
 // ── validate_cls_syntax ──────────────────────────────────────────────────────
 
@@ -235,9 +236,10 @@ static LLM_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[test]
 fn test_llm_client_from_env_none_when_model_unset() {
+    let mut env_guard = EnvGuard::new();
     let _guard = LLM_ENV_LOCK.lock().unwrap();
     use iris_agentic_dev_core::generate::LlmClient;
-    std::env::remove_var("IRIS_GENERATE_CLASS_MODEL");
+    env_guard.unset("IRIS_GENERATE_CLASS_MODEL");
     // OPENAI_API_KEY may or may not be set — without the model var, must return None
     let client = LlmClient::from_env();
     assert!(
@@ -248,11 +250,12 @@ fn test_llm_client_from_env_none_when_model_unset() {
 
 #[test]
 fn test_llm_client_from_env_none_when_api_key_unset() {
+    let mut env_guard = EnvGuard::new();
     let _guard = LLM_ENV_LOCK.lock().unwrap();
     use iris_agentic_dev_core::generate::LlmClient;
-    std::env::set_var("IRIS_GENERATE_CLASS_MODEL", "gpt-4o");
-    std::env::remove_var("OPENAI_API_KEY");
-    std::env::remove_var("ANTHROPIC_API_KEY");
+    env_guard.set("IRIS_GENERATE_CLASS_MODEL", "gpt-4o");
+    env_guard.unset("OPENAI_API_KEY");
+    env_guard.unset("ANTHROPIC_API_KEY");
     let client = LlmClient::from_env();
     // If no API key is available, should return None
     // (model is set but key is missing)
@@ -260,36 +263,33 @@ fn test_llm_client_from_env_none_when_api_key_unset() {
         client.is_none(),
         "should be None when both OPENAI_API_KEY and ANTHROPIC_API_KEY are unset"
     );
-    std::env::remove_var("IRIS_GENERATE_CLASS_MODEL");
 }
 
 #[test]
 fn test_llm_client_from_env_some_when_both_set() {
+    let mut env_guard = EnvGuard::new();
     let _guard = LLM_ENV_LOCK.lock().unwrap();
     use iris_agentic_dev_core::generate::LlmClient;
-    std::env::set_var("IRIS_GENERATE_CLASS_MODEL", "gpt-4o");
-    std::env::set_var("OPENAI_API_KEY", "sk-test-key");
+    env_guard.set("IRIS_GENERATE_CLASS_MODEL", "gpt-4o");
+    env_guard.set("OPENAI_API_KEY", "sk-test-key");
     let client = LlmClient::from_env();
     assert!(
         client.is_some(),
         "should return Some when model and API key are set"
     );
-    std::env::remove_var("IRIS_GENERATE_CLASS_MODEL");
-    std::env::remove_var("OPENAI_API_KEY");
 }
 
 #[test]
 fn test_llm_client_from_env_anthropic_key_accepted() {
+    let mut env_guard = EnvGuard::new();
     let _guard = LLM_ENV_LOCK.lock().unwrap();
     use iris_agentic_dev_core::generate::LlmClient;
-    std::env::set_var("IRIS_GENERATE_CLASS_MODEL", "claude-3-5-sonnet-20241022");
-    std::env::remove_var("OPENAI_API_KEY");
-    std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-test-key");
+    env_guard.set("IRIS_GENERATE_CLASS_MODEL", "claude-3-5-sonnet-20241022");
+    env_guard.unset("OPENAI_API_KEY");
+    env_guard.set("ANTHROPIC_API_KEY", "sk-ant-test-key");
     let client = LlmClient::from_env();
     assert!(
         client.is_some(),
         "should return Some when model and ANTHROPIC_API_KEY are set"
     );
-    std::env::remove_var("IRIS_GENERATE_CLASS_MODEL");
-    std::env::remove_var("ANTHROPIC_API_KEY");
 }

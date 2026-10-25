@@ -138,6 +138,14 @@ pub struct IrisAdminParams {
     /// `journal_search`: time window. At least one of `global_pattern` or `time_range` is required.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub time_range: Option<JournalTimeRange>,
+    /// `journal_search`: return the values of PHI-named globals. The values of system-blocklisted
+    /// globals stay withheld either way.
+    #[serde(
+        default,
+        rename = "acknowledgePhi",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub acknowledge_phi: Option<bool>,
     /// `journal_search`: cap on returned records. Defaults to 100, capped at 1000.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_records: Option<u64>,

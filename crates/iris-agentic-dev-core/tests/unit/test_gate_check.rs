@@ -95,8 +95,8 @@ fn write_tools_are_refused_and_the_refusal_names_the_source() {
          decision from an inferred one: {msg}"
     );
     assert!(
-        msg.contains("write_tools_enabled"),
-        "and it has to name the remedy: {msg}"
+        !msg.contains("write_tools_enabled"),
+        "and it must not name the remedy; that goes to stderr (FR-039): {msg}"
     );
 }
 
@@ -119,8 +119,8 @@ fn destructive_tools_are_refused_when_only_the_tier_is_closed() {
         "the tier defaults to off and the refusal must say so: {msg}"
     );
     assert!(
-        msg.contains("destructive_tools_enabled"),
-        "and name the key that opens it: {msg}"
+        !msg.contains("destructive_tools_enabled"),
+        "and not name the key that opens it; that goes to stderr (FR-039): {msg}"
     );
 }
 

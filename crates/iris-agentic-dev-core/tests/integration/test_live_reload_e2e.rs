@@ -19,7 +19,7 @@ fn iris_host() -> String {
 /// Was hardcoded to "iris-dev-iris" (a personal dev-machine convention) — broke
 /// immediately in CI, where the container is named iris-e2e.
 fn select_container_name() -> String {
-    std::env::var("IRIS_CONTAINER").unwrap_or_else(|_| "iris-dev-iris".to_string())
+    iris_agentic_dev_core::testing::LiveTarget::from_env().container
 }
 
 /// One step of a scripted MCP session.

@@ -233,15 +233,68 @@ fn test_killing_column_not_blocked() {
     assert!(validate_read_only_sql("SELECT KILLING FROM foo").is_ok());
 }
 
-// ── CALL stays a read (033), with its limit stated ───────────────────────────
+// ── Read mode runs SELECT, WITH and EXPLAIN only (141 T213) ──────────────────
 
-/// 033 left CALL out: a procedure may write, but blocking CALL breaks reading through projected
-/// class queries, and `SELECT Pkg.Proc()` calls the same procedure as a function, which no
-/// lexical check can tell from `SELECT LENGTH(x)`. Re-decided 2026-10-22 (spec 140): kept, and
-/// the `iris_query` description says read mode does not stop a procedure with side effects.
+/// 033 and spec 140 left CALL a read. A procedure may write, so read mode now runs only statements
+/// that start with `SELECT`, `WITH` or `EXPLAIN` (IRIS's EXPLAIN plans a statement and executes
+/// nothing). `SELECT Pkg.Proc()` still calls a procedure, which no lexical check can tell from
+/// `SELECT LENGTH(x)`; the `iris_query` description says so.
 #[test]
-fn test_call_not_blocked() {
-    assert!(validate_read_only_sql("CALL MyStoredProc()").is_ok());
+fn test_call_is_refused_in_read_mode() {
+    assert_eq!(
+        validate_read_only_sql("CALL MyStoredProc()"),
+        Err("CALL".to_string())
+    );
+}
+
+#[test]
+fn test_statements_that_are_not_selects_are_refused() {
+    for (sql, word) in [
+        ("TUNE TABLE Sample.Person", "TUNE"),
+        ("BUILD INDEX ON Sample.Person", "BUILD"),
+        ("PURGE QUERIES", "PURGE"),
+        ("SET OPTION SELECTMODE = ODBC", "SET"),
+        ("FREEZE PLANS", "FREEZE"),
+        ("  /* c */ -- c\n call p()", "CALL"),
+        ("Tune table t", "TUNE"),
+        ("'x'", "'x'"),
+        ("(SELECT 1)", "("),
+        ("1", "1"),
+    ] {
+        assert_eq!(validate_read_only_sql(sql), Err(word.to_string()), "{sql}");
+    }
+}
+
+#[test]
+fn test_select_with_and_explain_start_a_read() {
+    for sql in [
+        "SELECT 1",
+        "select 1",
+        "  -- lead\n/* lead */ SELECT 1",
+        "WITH c AS (SELECT 1 AS a) SELECT a FROM c",
+        "EXPLAIN SELECT 1",
+        "SELECT 1;",
+        "SELECT 1 ; -- done",
+        "SELECT ';' AS x",
+        "SELECT 1 AS \"a;b\"",
+    ] {
+        assert!(validate_read_only_sql(sql).is_ok(), "{sql}");
+    }
+}
+
+#[test]
+fn test_a_second_statement_is_refused() {
+    for sql in [
+        "SELECT 1; SELECT 2",
+        "SELECT 1;SELECT 2",
+        "SELECT 1; CALL p()",
+        "SELECT 1; TUNE TABLE t",
+        "SELECT 1 ; /* c */ WITH c AS (SELECT 1) SELECT * FROM c",
+        ";",
+        "; SELECT 1",
+    ] {
+        assert!(validate_read_only_sql(sql).is_err(), "{sql}");
+    }
 }
 
 // ── SC-003: Representative SELECT queries — zero false positives ──────────────
@@ -332,26 +385,31 @@ fn validate_read_only_sql_single_quoted_with_multiple_escapes() {
 
 #[test]
 fn validate_read_only_sql_double_quoted_identifier_at_start() {
-    // Double-quoted identifier before SELECT keyword
-    assert_eq!(validate_read_only_sql("\"CREATE\" SELECT * FROM t"), Ok(()));
+    // A quoted identifier is not a keyword, but it does not start a SELECT either (141 T213).
+    assert_eq!(
+        validate_read_only_sql("\"CREATE\" SELECT * FROM t"),
+        Err("\"CREATE\"".to_string())
+    );
 }
 
 #[test]
 fn validate_read_only_sql_double_quoted_identifiers_multiple() {
-    // Multiple double-quoted identifiers before SELECT
+    // Quoted identifiers are not keywords; the statement still has to start with SELECT.
     assert_eq!(
         validate_read_only_sql("\"INSERT\" \"DELETE\" SELECT id FROM t"),
-        Ok(())
+        Err("\"INSERT\"".to_string())
     );
+    assert!(validate_read_only_sql("SELECT \"INSERT\", \"DELETE\" FROM t").is_ok());
 }
 
 #[test]
 fn validate_read_only_sql_mixed_quotes_before_select() {
-    // Mix of single-quoted and double-quoted before SELECT keyword
+    // A literal first does not start a SELECT.
     assert_eq!(
         validate_read_only_sql("'INSERT_LITERAL' \"CREATE\" SELECT COUNT(*) FROM t"),
-        Ok(())
+        Err("'INSERT_LITERAL'".to_string())
     );
+    assert!(validate_read_only_sql("SELECT 'INSERT_LITERAL', \"CREATE\" FROM t").is_ok());
 }
 
 /// GRANT and REVOKE change privileges; neither is a read. They passed the read-only check (security

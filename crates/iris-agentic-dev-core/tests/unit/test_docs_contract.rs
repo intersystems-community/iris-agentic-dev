@@ -335,6 +335,7 @@ fn router() -> &'static Router {
                     DeclaredGates {
                         write_tools_enabled: Some(true),
                         destructive_tools_enabled: Some(true),
+                        ..Default::default()
                     },
                 )
                 .expect("IrisTools construction must not fail");
@@ -1614,9 +1615,31 @@ fn the_four_parameter_sources_agree_for_every_tool() {
 
         // 2. Advertised but nothing in the handler touches it. `read_keys` and the schema can share
         //    a source once a tool is typed, so this reads the handler body directly.
+        //    `confirm` is the exception, and argued: the pipeline's role gate consumes it before any
+        //    handler runs (spec 141, R1 D5), so for an IRIS-kind tool a handler that never mentions
+        //    it is not a promise without a reader. The tool advertises it so a caller can find it.
+        //    The server argument is the other: the pipeline resolves the target the row names
+        //    (`Arg`, `ArgOrPending`, `Args`, `Name`) before the handler runs and hands it over
+        //    through the accessors, so the handler never names it.
+        let consumed_by_role_gate = |p: &str| {
+            use iris_agentic_dev_core::tools::write_gate::{
+                TargetKind, TargetSource, CLASSIFICATION,
+            };
+            let Some(row) = CLASSIFICATION.iter().find(|r| r.tool == tool.as_str()) else {
+                return false;
+            };
+            let names_it = match row.target {
+                TargetSource::Arg(a) | TargetSource::ArgOrPending(a) | TargetSource::Name(a) => {
+                    a == p
+                }
+                TargetSource::Args(list) => list.contains(&p),
+                TargetSource::Session | TargetSource::Default => false,
+            };
+            names_it || (p == "confirm" && row.kind == TargetKind::Iris)
+        };
         let dead: Vec<&String> = adv
             .difference(&read)
-            .filter(|p| !handler_uses_field(tool, p))
+            .filter(|p| !handler_uses_field(tool, p) && !consumed_by_role_gate(p))
             .collect();
         if !dead.is_empty() {
             problems.push(format!(
@@ -1653,50 +1676,47 @@ fn the_four_parameter_sources_agree_for_every_tool() {
     );
 }
 
-/// The `max_chars` regression guard, docs and source halves.
+/// The `max_chars` guard, docs and source halves.
 ///
 /// `stream_inspect` shipped documented with a `max_chars` parameter that no code read, so a caller
-/// asking for 10 000 characters got the whole stream and no warning. Three places have to agree that
-/// it is gone: the schema must not declare it (`schema_batch7.rs`), the runtime must refuse it
-/// (`params_batch7.rs`), and the two checked here — `docs/tools.md` must not promise it, and no
-/// handler may read it. A guard in one place only would let the name come back through the other two.
+/// asking for 10 000 characters got the whole stream and no warning. Spec 141 (T199) made the cap
+/// real, and this keeps the three halves together: `docs/tools.md` has the row, the params struct
+/// declares the field, and `stream_inspect_impl` reads it. The schema half is
+/// `stream_inspect_declares_exactly_four_parameters` in `tests/binary/schema_batch7.rs`. Removing
+/// the reader while the row stays brings the original bug back, and fails here.
 #[test]
-fn max_chars_is_absent_from_the_docs_and_from_every_handler() {
+fn max_chars_is_documented_declared_and_read() {
     let docs = std::fs::read_to_string(repo_root().join("docs/tools.md")).expect("docs/tools.md");
-    let offenders: Vec<&str> = docs
-        .lines()
-        .filter(|l| l.contains("max_chars"))
-        .take(5)
-        .collect();
     assert!(
-        offenders.is_empty(),
-        "`max_chars` is documented again in docs/tools.md. It was promised for five minor versions \
-         and read by nothing; re-documenting it re-creates the bug unless a handler reads it \
-         first:\n  {}",
-        offenders.join("\n  ")
+        docs.lines()
+            .any(|l| l.starts_with("| `max_chars`") && l.contains("integer")),
+        "docs/tools.md has no `max_chars` row in a parameter table"
     );
 
-    // Prose is allowed — this repository writes about the bug in half a dozen module comments. What
-    // is not allowed is the name appearing as a wire key (`"max_chars"`) or as a struct field
-    // (`max_chars:`), which is what "a handler reads it" would look like.
     let src = iris_agentic_dev_core::testing::rust_sources();
     assert!(
-        !src.contains("\"max_chars\"") && !src.contains("max_chars:"),
-        "`max_chars` is back in crates/*/src as a parameter. If a stream length cap is being added, \
-         it needs a field on `StreamInspectParams` and a docs row in the same change — the original \
-         bug was the docs row arriving alone"
+        src.contains("pub max_chars: Option<u32>"),
+        "`StreamInspectParams` no longer declares `max_chars`"
+    );
+    assert!(
+        src.contains("max_chars: Option<u32>,\n    namespace: &str,"),
+        "`stream_inspect_impl` no longer takes `max_chars`, so nothing reads the declared cap"
+    );
+    assert!(
+        src.contains("tLeft={max_chars}"),
+        "the generated ObjectScript no longer counts the read down from `max_chars`"
     );
     // The docs half is only worth anything if the extractor would have seen the row. Assert the
     // parameter table for `stream_inspect` is still being found, so a renamed heading cannot turn
-    // this test into a check that a file does not contain a word.
+    // this test into a check that a file contains a word.
     let mentions = documented_tool_params()
         .into_iter()
         .filter(|m| m.tools.iter().any(|t| t == "stream_inspect"))
         .count();
     assert!(
-        mentions >= 3,
+        mentions >= 4,
         "only {mentions} documented parameter(s) were found for stream_inspect — the docs table is \
-         no longer being parsed, so the `max_chars` absence check above proves nothing"
+         no longer being parsed, so the `max_chars` row check above proves nothing"
     );
 }
 

@@ -49,8 +49,13 @@ overall = 88
 "src/iris/iris_audit.rs"              = 98
 "src/iris/connection.rs"              = 55
 "src/iris/connection_pool.rs"         = 74
+"src/iris/config_sources.rs"          = 91
 "src/iris/csp_session.rs"             = 91
 "src/iris/discovery.rs"               = 32
+"src/iris/endpoint.rs"                = 91
+"src/iris/http.rs"                    = 81
+"src/iris/operator_hold.rs"           = 94
+"src/iris/private_file.rs"            = 83
 "src/iris/server_manager.rs"          = 55
 "src/iris/servers_config.rs"          = 87
 "src/iris/vscode_config.rs"           = 97
@@ -65,9 +70,11 @@ overall = 88
 # policy/ — pure logic, high coverage expected
 "src/policy/code_edit_gate.rs"        = 98
 "src/policy/data_policy_gate.rs"      = 96
+"src/policy/effective.rs"             = 87
 "src/policy/env_gate.rs"              = 94
 "src/policy/gate.rs"                  = 95
 "src/policy/patterns.rs"              = 98
+"src/policy/refusal.rs"               = 89
 "src/policy/system_blocklist_gate.rs" = 98
 
 # skill_install/ — installer helpers
@@ -79,6 +86,9 @@ overall = 88
 # skills/ — bundled skill registry
 "src/skills/bundled.rs"               = 93
 "src/skills/mod.rs"                   = 58
+
+# sql_lex.rs — the one SQL lexer the validators share (141)
+"src/sql_lex.rs"                      = 98
 
 # testing.rs — helpers the test crates call. Only the branches the current suite happens to
 # take are covered, and the panic/skip paths are deliberately not exercised.
@@ -106,8 +116,10 @@ overall = 88
 "src/tools/doc.rs"                    = 35
 "src/tools/doc_search.rs"             = 63
 "src/tools/error_hints.rs"            = 97
+"src/tools/exec.rs"                   = 76
 "src/tools/execute_session.rs"        = 98
-"src/tools/gate_macro.rs"             = 98
+"src/tools/generate_class.rs"          = 76
+"src/tools/host_fs.rs"                 = 95
 "src/tools/global.rs"                 = 41
 "src/tools/info.rs"                   = 36
 "src/tools/interop.rs"                = 45
@@ -126,7 +138,10 @@ overall = 88
 # so unit-only tops out at 85.61%.
 "src/tools/server_tools.rs"           = 83
 "src/tools/skills_tools.rs"           = 37
+"src/tools/stored_check.rs"           = 75
+"src/tools/superclass_check.rs"       = 86
 "src/tools/symbols_local.rs"          = 57
+"src/tools/target.rs"                 = 78
 "src/tools/write_gate.rs"             = 93
 "src/tools/ws_tools.rs"               = 84
 "src/tools/xdata_flow.rs"             = 58

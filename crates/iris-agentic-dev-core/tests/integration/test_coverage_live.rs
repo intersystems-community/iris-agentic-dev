@@ -5,6 +5,69 @@ use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
 use iris_agentic_dev_core::tools::coverage::{
     handle_iris_coverage, testcoverage_available, IrisCoverageParams,
 };
+use iris_agentic_dev_core::tools::exec::ExecContext;
+use iris_agentic_dev_core::tools::{IrisTools, Toolset};
+
+use super::test_coverage_diag_141_live::{restore_unit_test_root, use_unit_test_root};
+
+/// A context that runs as `iris`' own user (the `iris_coverage` handler takes one).
+fn cx_of(iris: &IrisConnection, client: &reqwest::Client) -> ExecContext {
+    ExecContext::primary(
+        std::sync::Arc::new(iris.clone()),
+        std::sync::Arc::new(client.clone()),
+    )
+}
+
+const TARGET: &str = "Class IadCovLive141.Target Extends %RegisteredObject\n{\n\nClassMethod Add(a As %Integer, b As %Integer) As %Integer\n{\n    Quit a + b\n}\n\n}\n";
+const PROD: &str = "Class IadCovLive141.Prod Extends Ens.Production\n{\n\nXData ProductionDefinition\n{\n<Production Name=\"IadCovLive141.Prod\" TestingEnabled=\"true\" LogGeneralTraceEvents=\"false\">\n  <Description></Description>\n  <ActorPoolSize>1</ActorPoolSize>\n</Production>\n}\n\n}\n";
+const TARGET_TEST: &str = "Class IadCovLive141.TargetTest Extends %UnitTest.TestProduction\n{\n\nParameter PRODUCTION = \"IadCovLive141.Prod\";\n\nMethod TestAdd()\n{\n    Do $$$AssertEquals(##class(IadCovLive141.Target).Add(1, 2), 3, \"1 + 2\")\n}\n\n}\n";
+
+/// The classes these tests measure, compiled in USER (the test is a `%UnitTest.TestProduction`,
+/// which `iris_test` runs through `.Run()` and which needs no directory of its own), and a
+/// `^UnitTestRoot` that exists (a fresh
+/// instance has none and iad does not set it). A container that already has the classes of an
+/// earlier test is no reason to skip: they are put again and deleted at the end.
+async fn fixture(iris: &IrisConnection) -> IrisTools {
+    let tools = IrisTools::for_test_gates_open(Some(iris.clone()), Toolset::Merged).expect("tools");
+    use_unit_test_root(false).await;
+    for (name, content) in [
+        ("IadCovLive141.Target.cls", TARGET),
+        ("IadCovLive141.Prod.cls", PROD),
+        ("IadCovLive141.TargetTest.cls", TARGET_TEST),
+    ] {
+        let r = tools
+            .call_for_test(
+                "iris_doc",
+                serde_json::json!({"mode": "put", "name": name, "content": content, "compile": true, "namespace": "USER"}),
+            )
+            .await
+            .expect("iris_doc answers");
+        assert_ne!(
+            r.is_error,
+            Some(true),
+            "put {name}: {:?}",
+            r.structured_content
+        );
+    }
+    tools
+}
+
+/// The fixture out, and `^UnitTestRoot` as it was. Called before any assertion.
+async fn remove_fixture(tools: &IrisTools) {
+    restore_unit_test_root().await;
+    for name in [
+        "IadCovLive141.TargetTest.cls",
+        "IadCovLive141.Prod.cls",
+        "IadCovLive141.Target.cls",
+    ] {
+        let _ = tools
+            .call_for_test(
+                "iris_doc",
+                serde_json::json!({"mode": "delete", "name": name, "namespace": "USER"}),
+            )
+            .await;
+    }
+}
 
 fn make_conn() -> Option<(IrisConnection, reqwest::Client)> {
     let iris_host = std::env::var("IRIS_HOST").unwrap_or_default();
@@ -37,6 +100,7 @@ async fn live_coverage_check_returns_ok_or_bbsiz_error() {
         return;
     };
     let params = IrisCoverageParams {
+        confirm: false,
         mode: "check".to_string(),
         classes: None,
         package: None,
@@ -46,7 +110,7 @@ async fn live_coverage_check_returns_ok_or_bbsiz_error() {
         cobertura_path: None,
         server: None,
     };
-    let result = handle_iris_coverage(&iris, &client, &params).await;
+    let result = handle_iris_coverage(&cx_of(&iris, &client), &params).await;
     let is_ready = result["ok"].as_bool().unwrap_or(false);
     let err_code = result["error_code"].as_str().unwrap_or("");
     assert!(
@@ -69,6 +133,7 @@ async fn live_coverage_check_testcoverage_hint_when_unavailable() {
         return;
     };
     let params = IrisCoverageParams {
+        confirm: false,
         mode: "check".to_string(),
         classes: None,
         package: None,
@@ -78,7 +143,7 @@ async fn live_coverage_check_testcoverage_hint_when_unavailable() {
         cobertura_path: None,
         server: None,
     };
-    let result = handle_iris_coverage(&iris, &client, &params).await;
+    let result = handle_iris_coverage(&cx_of(&iris, &client), &params).await;
     let tc_avail = result["testcoverage_available"].as_bool().unwrap_or(true);
     if !tc_avail {
         let hint = result["testcoverage_hint"].as_str().unwrap_or("");
@@ -99,12 +164,12 @@ async fn live_testcoverage_available_returns_bool() {
         return;
     };
     // Result is either true or false — we just verify it doesn't panic
-    let available = testcoverage_available(&iris, &client, "USER").await;
+    let available = testcoverage_available(&cx_of(&iris, &client), "USER").await;
     println!("TestCoverage available: {available}");
 }
 
 /// mode=run returns structured result with total_pct, classes, meets_target.
-/// IrisDevTest.SqlPower must be compiled in USER namespace before running.
+/// The target and its TestProduction are put and deleted by the test.
 #[tokio::test]
 #[ignore]
 async fn live_coverage_run_returns_structured_result() {
@@ -112,17 +177,20 @@ async fn live_coverage_run_returns_structured_result() {
         println!("IRIS_HOST not set — skipping");
         return;
     };
+    let tools = fixture(&iris).await;
     let params = IrisCoverageParams {
+        confirm: false,
         mode: "run".to_string(),
-        classes: Some(vec!["IrisDevTest.SqlPower".to_string()]),
+        classes: Some(vec!["IadCovLive141.Target".to_string()]),
         package: None,
-        test_path: Some("IrisDevTest.SqlPowerTest".to_string()),
+        test_path: Some("IadCovLive141.TargetTest".to_string()),
         target_pct: Some(80.0),
         namespace: Some("USER".to_string()),
         cobertura_path: None,
         server: None,
     };
-    let result = handle_iris_coverage(&iris, &client, &params).await;
+    let result = handle_iris_coverage(&cx_of(&iris, &client), &params).await;
+    remove_fixture(&tools).await;
 
     if result["error_code"].as_str() == Some("BBSIZ_NOT_CONFIGURED") {
         println!("BBSIZ_NOT_CONFIGURED — monitor subsystem not available in this build");
@@ -134,16 +202,19 @@ async fn live_coverage_run_returns_structured_result() {
         Some(true),
         "run failed: {result}"
     );
+    // The figure is a number, or null when no line was counted (0 of 0 is not 0%): the test class
+    // this fixture names may not exist on the container, in which case nothing runs.
     assert!(
-        result["total_pct"].is_number(),
-        "missing total_pct: {result}"
+        result["total_pct"].is_number() == (result["total"].as_i64().unwrap_or(0) > 0)
+            && result.get("total_pct").is_some(),
+        "total_pct is a number exactly when lines were counted: {result}"
     );
     assert!(
         result["classes"].is_array(),
         "missing classes array: {result}"
     );
     assert!(
-        result["meets_target"].is_boolean(),
+        result["meets_target"].is_boolean() || result["meets_target"].is_null(),
         "missing meets_target: {result}"
     );
     // testcoverage_available must be present
@@ -158,8 +229,16 @@ async fn live_coverage_run_returns_structured_result() {
     let first = &classes[0];
     assert!(first["class"].is_string(), "missing class name: {first}");
     assert!(first["hit"].is_number(), "missing hit: {first}");
+    assert!(
+        first["hit"].as_i64().unwrap_or(0) > 0,
+        "the test ran Target.Add, so a line was hit: {first}"
+    );
     assert!(first["total"].is_number(), "missing total: {first}");
-    assert!(first["pct"].is_number(), "missing pct: {first}");
+    assert!(
+        first["pct"].is_number() == (first["total"].as_i64().unwrap_or(0) > 0)
+            && first.get("pct").is_some(),
+        "pct is a number exactly when lines were counted: {first}"
+    );
 }
 
 /// mode=run with package param auto-discovers classes.
@@ -170,24 +249,27 @@ async fn live_coverage_run_with_package_param() {
         println!("IRIS_HOST not set — skipping");
         return;
     };
+    let tools = fixture(&iris).await;
     let params = IrisCoverageParams {
+        confirm: false,
         mode: "run".to_string(),
         classes: None,
-        package: Some("IrisDevTest".to_string()),
-        test_path: Some("IrisDevTest.SqlPowerTest".to_string()),
+        package: Some("IadCovLive141".to_string()),
+        test_path: Some("IadCovLive141.TargetTest".to_string()),
         target_pct: None,
         namespace: Some("USER".to_string()),
         cobertura_path: None,
         server: None,
     };
-    let result = handle_iris_coverage(&iris, &client, &params).await;
+    let result = handle_iris_coverage(&cx_of(&iris, &client), &params).await;
+    remove_fixture(&tools).await;
 
     if result["error_code"].as_str() == Some("BBSIZ_NOT_CONFIGURED") {
         println!("BBSIZ_NOT_CONFIGURED — skipping");
         return;
     }
     if result["error_code"].as_str() == Some("NO_CLASSES") {
-        println!("IrisDevTest package not populated — skipping");
+        println!("IadCovLive141 package not populated — skipping");
         return;
     }
 
@@ -197,8 +279,9 @@ async fn live_coverage_run_with_package_param() {
         "run failed: {result}"
     );
     assert!(
-        result["total_pct"].is_number(),
-        "missing total_pct: {result}"
+        result["total_pct"].is_number() == (result["total"].as_i64().unwrap_or(0) > 0)
+            && result.get("total_pct").is_some(),
+        "total_pct is a number exactly when lines were counted: {result}"
     );
 }
 
@@ -210,23 +293,27 @@ async fn live_coverage_run_cobertura_skipped_when_unavailable() {
         println!("IRIS_HOST not set — skipping");
         return;
     };
-    let tc_avail = testcoverage_available(&iris, &client, "USER").await;
+    let tools = fixture(&iris).await;
+    let tc_avail = testcoverage_available(&cx_of(&iris, &client), "USER").await;
     if tc_avail {
         println!("TestCoverage installed — cobertura_skipped won't appear, skipping test");
+        remove_fixture(&tools).await;
         return;
     }
 
     let params = IrisCoverageParams {
+        confirm: false,
         mode: "run".to_string(),
-        classes: Some(vec!["IrisDevTest.SqlPower".to_string()]),
+        classes: Some(vec!["IadCovLive141.Target".to_string()]),
         package: None,
-        test_path: Some("IrisDevTest.SqlPowerTest".to_string()),
+        test_path: Some("IadCovLive141.TargetTest".to_string()),
         target_pct: None,
         namespace: Some("USER".to_string()),
         cobertura_path: Some("/tmp/coverage.xml".to_string()),
         server: None,
     };
-    let result = handle_iris_coverage(&iris, &client, &params).await;
+    let result = handle_iris_coverage(&cx_of(&iris, &client), &params).await;
+    remove_fixture(&tools).await;
 
     if result["error_code"].as_str() == Some("BBSIZ_NOT_CONFIGURED") {
         println!("BBSIZ_NOT_CONFIGURED — skipping");
@@ -247,11 +334,13 @@ async fn live_coverage_start_stop_flow() {
         println!("IRIS_HOST not set — skipping");
         return;
     };
+    let tools = fixture(&iris).await;
 
     // Start
     let start_params = IrisCoverageParams {
+        confirm: false,
         mode: "start".to_string(),
-        classes: Some(vec!["IrisDevTest.SqlPower".to_string()]),
+        classes: Some(vec!["IadCovLive141.Target".to_string()]),
         package: None,
         test_path: None,
         target_pct: None,
@@ -259,12 +348,13 @@ async fn live_coverage_start_stop_flow() {
         cobertura_path: None,
         server: None,
     };
-    let start_result = handle_iris_coverage(&iris, &client, &start_params).await;
+    let start_result = handle_iris_coverage(&cx_of(&iris, &client), &start_params).await;
 
     if start_result["error_code"].as_str() == Some("BBSIZ_NOT_CONFIGURED")
         || start_result["error_code"].as_str() == Some("MONITOR_IN_USE")
     {
         println!("monitor unavailable or in use — skipping start/stop test");
+        remove_fixture(&tools).await;
         return;
     }
 
@@ -280,6 +370,7 @@ async fn live_coverage_start_stop_flow() {
 
     // Stop
     let stop_params = IrisCoverageParams {
+        confirm: false,
         mode: "stop".to_string(),
         classes: None,
         package: None,
@@ -289,7 +380,8 @@ async fn live_coverage_start_stop_flow() {
         cobertura_path: None,
         server: None,
     };
-    let stop_result = handle_iris_coverage(&iris, &client, &stop_params).await;
+    let stop_result = handle_iris_coverage(&cx_of(&iris, &client), &stop_params).await;
+    remove_fixture(&tools).await;
     assert_eq!(
         stop_result["stopped"].as_bool(),
         Some(true),
@@ -306,8 +398,9 @@ async fn live_coverage_run_missing_test_path_returns_error() {
         return;
     };
     let params = IrisCoverageParams {
+        confirm: false,
         mode: "run".to_string(),
-        classes: Some(vec!["IrisDevTest.SqlPower".to_string()]),
+        classes: Some(vec!["IadCovLive141.Target".to_string()]),
         package: None,
         test_path: None,
         target_pct: None,
@@ -315,7 +408,7 @@ async fn live_coverage_run_missing_test_path_returns_error() {
         cobertura_path: None,
         server: None,
     };
-    let result = handle_iris_coverage(&iris, &client, &params).await;
+    let result = handle_iris_coverage(&cx_of(&iris, &client), &params).await;
     assert_eq!(result["error_code"].as_str(), Some("MISSING_PARAM"));
 }
 
@@ -328,16 +421,17 @@ async fn live_coverage_run_no_classes_or_package_returns_error() {
         return;
     };
     let params = IrisCoverageParams {
+        confirm: false,
         mode: "run".to_string(),
         classes: None,
         package: None,
-        test_path: Some("IrisDevTest.SqlPowerTest".to_string()),
+        test_path: Some("IadCovLive141.TargetTest".to_string()),
         target_pct: None,
         namespace: Some("USER".to_string()),
         cobertura_path: None,
         server: None,
     };
-    let result = handle_iris_coverage(&iris, &client, &params).await;
+    let result = handle_iris_coverage(&cx_of(&iris, &client), &params).await;
     assert_eq!(result["error_code"].as_str(), Some("MISSING_PARAM"));
 }
 
@@ -350,6 +444,7 @@ async fn live_coverage_invalid_mode_returns_error() {
         return;
     };
     let params = IrisCoverageParams {
+        confirm: false,
         mode: "bogus".to_string(),
         classes: None,
         package: None,
@@ -359,6 +454,6 @@ async fn live_coverage_invalid_mode_returns_error() {
         cobertura_path: None,
         server: None,
     };
-    let result = handle_iris_coverage(&iris, &client, &params).await;
+    let result = handle_iris_coverage(&cx_of(&iris, &client), &params).await;
     assert_eq!(result["error_code"].as_str(), Some("INVALID_ACTION"));
 }

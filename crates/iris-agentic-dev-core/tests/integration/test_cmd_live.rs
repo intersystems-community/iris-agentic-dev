@@ -283,14 +283,15 @@ fn test_compile_existing_class() {
         None => return,
     };
 
-    // Write a minimal class file to a temp dir, compile it via the CLI
-    let dir = std::env::temp_dir().join("iris-cmd-live-test");
-    std::fs::create_dir_all(&dir).ok();
-    let cls_path = dir.join("CmdLiveTest.cls");
+    // Write a minimal class file into a project directory and compile it from there: a host file
+    // the CLI reads must be inside the project (spec 141 T212), and the working directory is it.
+    let project = tempfile::tempdir().unwrap();
+    let cls_path = project.path().join("CmdLiveTest.cls");
     std::fs::write(&cls_path, "Class CmdLiveTest {}").unwrap();
 
     let output = Command::new(&bin)
         .args(["compile", "-n", "USER", cls_path.to_str().unwrap()])
+        .current_dir(project.path())
         .envs(envs)
         .output()
         .expect("failed to run iris-agentic-dev");

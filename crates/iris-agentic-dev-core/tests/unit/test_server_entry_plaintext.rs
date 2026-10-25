@@ -54,6 +54,7 @@ fn server_entry_credential_some_serializes_to_json() {
         scheme: None,
         web_prefix: None,
         password: Some("secret".to_string()),
+        ..Default::default()
     };
     let json = serde_json::to_string(&entry).expect("serialize should succeed");
     let v: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -77,6 +78,7 @@ fn server_entry_credential_none_omitted_from_serialization() {
         scheme: None,
         web_prefix: None,
         password: None,
+        ..Default::default()
     };
     let json = serde_json::to_string(&entry).expect("serialize should succeed");
     assert!(
@@ -105,6 +107,7 @@ fn server_entry_credential_survives_file_roundtrip() {
             scheme: None,
             web_prefix: None,
             password: Some("SYS".to_string()),
+            ..Default::default()
         },
     );
     let cfg = ServersConfig {

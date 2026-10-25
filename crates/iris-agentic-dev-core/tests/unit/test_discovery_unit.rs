@@ -8,6 +8,7 @@ use iris_agentic_dev_core::iris::connection::DiscoverySource;
 use iris_agentic_dev_core::iris::discovery::{
     emit_unhealthy_message, score_container_name, DiscoveryResult, FailureMode, IrisDiscovery,
 };
+use iris_agentic_dev_core::testing::EnvGuard;
 use std::sync::Mutex;
 
 // Mutex to serialize tests that mutate env vars (avoid race conditions in parallel test runs)
@@ -133,10 +134,10 @@ fn test_auth_401_maps_to_explained_not_not_found() {
 /// The actual behavior is tested via E2E; here we verify the env vars are read.
 #[test]
 fn test_iris_username_env_var_readable() {
-    std::env::set_var("IRIS_USERNAME_TEST_028", "testuser");
+    let mut env_guard = EnvGuard::new();
+    env_guard.set("IRIS_USERNAME_TEST_028", "testuser");
     let val = std::env::var("IRIS_USERNAME_TEST_028").unwrap();
     assert_eq!(val, "testuser");
-    std::env::remove_var("IRIS_USERNAME_TEST_028");
 }
 
 // ── score_container_name (existing tests preserved below) ────────────────────
@@ -932,33 +933,19 @@ fn test_score_container_name_mixed_hyphen_and_underscore_in_same_name() {
 #[tokio::test]
 #[ignore] // May take 2-5 seconds due to probe timeout
 async fn test_discover_iris_with_https_scheme() {
+    let mut env_guard = EnvGuard::new();
     let _guard = DISCOVERY_LOCK.lock().unwrap();
 
     // Save original env vars
-    let saved_host = std::env::var("IRIS_HOST").ok();
-    let saved_scheme = std::env::var("IRIS_SCHEME").ok();
-    let saved_port = std::env::var("IRIS_WEB_PORT").ok();
 
     // Set env vars: unreachable host + https scheme
-    std::env::set_var("IRIS_HOST", "127.0.0.2");
-    std::env::set_var("IRIS_SCHEME", "https");
-    std::env::set_var("IRIS_WEB_PORT", "1"); // Port 1 fails fast on most systems
+    env_guard.set("IRIS_HOST", "127.0.0.2");
+    env_guard.set("IRIS_SCHEME", "https");
+    env_guard.set("IRIS_WEB_PORT", "1"); // Port 1 fails fast on most systems
 
     let result = iris_agentic_dev_core::iris::discovery::discover_iris(None).await;
 
     // Restore env vars
-    match saved_host {
-        Some(v) => std::env::set_var("IRIS_HOST", v),
-        None => std::env::remove_var("IRIS_HOST"),
-    }
-    match saved_scheme {
-        Some(v) => std::env::set_var("IRIS_SCHEME", v),
-        None => std::env::remove_var("IRIS_SCHEME"),
-    }
-    match saved_port {
-        Some(v) => std::env::set_var("IRIS_WEB_PORT", v),
-        None => std::env::remove_var("IRIS_WEB_PORT"),
-    }
 
     // With IRIS_SCHEME set, the function returns Found (L171-185) regardless of probe success
     assert!(
@@ -972,38 +959,17 @@ async fn test_discover_iris_with_https_scheme() {
 #[tokio::test]
 #[ignore] // May take 2-5 seconds due to probe timeout
 async fn test_discover_iris_with_web_prefix() {
+    let mut env_guard = EnvGuard::new();
     let _guard = DISCOVERY_LOCK.lock().unwrap();
 
-    let saved_host = std::env::var("IRIS_HOST").ok();
-    let saved_prefix = std::env::var("IRIS_WEB_PREFIX").ok();
-    let saved_port = std::env::var("IRIS_WEB_PORT").ok();
-    let saved_scheme = std::env::var("IRIS_SCHEME").ok();
-
     // Use http but with a web prefix
-    std::env::set_var("IRIS_HOST", "127.0.0.2");
-    std::env::set_var("IRIS_WEB_PREFIX", "myapp");
-    std::env::set_var("IRIS_WEB_PORT", "1");
+    env_guard.set("IRIS_HOST", "127.0.0.2");
+    env_guard.set("IRIS_WEB_PREFIX", "myapp");
+    env_guard.set("IRIS_WEB_PORT", "1");
     // Remove IRIS_SCHEME to default to http
-    std::env::remove_var("IRIS_SCHEME");
+    env_guard.unset("IRIS_SCHEME");
 
     let result = iris_agentic_dev_core::iris::discovery::discover_iris(None).await;
-
-    match saved_host {
-        Some(v) => std::env::set_var("IRIS_HOST", v),
-        None => std::env::remove_var("IRIS_HOST"),
-    }
-    match saved_prefix {
-        Some(v) => std::env::set_var("IRIS_WEB_PREFIX", v),
-        None => std::env::remove_var("IRIS_WEB_PREFIX"),
-    }
-    match saved_port {
-        Some(v) => std::env::set_var("IRIS_WEB_PORT", v),
-        None => std::env::remove_var("IRIS_WEB_PORT"),
-    }
-    match saved_scheme {
-        Some(v) => std::env::set_var("IRIS_SCHEME", v),
-        None => std::env::remove_var("IRIS_SCHEME"),
-    }
 
     // With IRIS_WEB_PREFIX set, the function returns Found (L171-185)
     assert!(
@@ -1017,36 +983,15 @@ async fn test_discover_iris_with_web_prefix() {
 #[tokio::test]
 #[ignore] // May take 2-5 seconds due to probe timeout
 async fn test_discover_iris_with_scheme_and_prefix() {
+    let mut env_guard = EnvGuard::new();
     let _guard = DISCOVERY_LOCK.lock().unwrap();
 
-    let saved_host = std::env::var("IRIS_HOST").ok();
-    let saved_scheme = std::env::var("IRIS_SCHEME").ok();
-    let saved_prefix = std::env::var("IRIS_WEB_PREFIX").ok();
-    let saved_port = std::env::var("IRIS_WEB_PORT").ok();
-
-    std::env::set_var("IRIS_HOST", "127.0.0.2");
-    std::env::set_var("IRIS_SCHEME", "https");
-    std::env::set_var("IRIS_WEB_PREFIX", "secure/iris");
-    std::env::set_var("IRIS_WEB_PORT", "1");
+    env_guard.set("IRIS_HOST", "127.0.0.2");
+    env_guard.set("IRIS_SCHEME", "https");
+    env_guard.set("IRIS_WEB_PREFIX", "secure/iris");
+    env_guard.set("IRIS_WEB_PORT", "1");
 
     let result = iris_agentic_dev_core::iris::discovery::discover_iris(None).await;
-
-    match saved_host {
-        Some(v) => std::env::set_var("IRIS_HOST", v),
-        None => std::env::remove_var("IRIS_HOST"),
-    }
-    match saved_scheme {
-        Some(v) => std::env::set_var("IRIS_SCHEME", v),
-        None => std::env::remove_var("IRIS_SCHEME"),
-    }
-    match saved_prefix {
-        Some(v) => std::env::set_var("IRIS_WEB_PREFIX", v),
-        None => std::env::remove_var("IRIS_WEB_PREFIX"),
-    }
-    match saved_port {
-        Some(v) => std::env::set_var("IRIS_WEB_PORT", v),
-        None => std::env::remove_var("IRIS_WEB_PORT"),
-    }
 
     assert!(
         matches!(result, IrisDiscovery::Found(_)),
@@ -1061,29 +1006,16 @@ async fn test_discover_iris_with_scheme_and_prefix() {
 #[tokio::test]
 #[ignore] // The probe of 127.0.0.2:1 can take a few seconds
 async fn a_named_server_that_does_not_answer_is_kept_not_replaced() {
+    let mut env_guard = EnvGuard::new();
     let _guard = DISCOVERY_LOCK.lock().unwrap();
-    let keys = [
-        "IRIS_HOST",
-        "IRIS_WEB_PORT",
-        "IRIS_SCHEME",
-        "IRIS_WEB_PREFIX",
-        "IRIS_CONTAINER",
-    ];
-    let saved: Vec<_> = keys.iter().map(|k| (*k, std::env::var(k).ok())).collect();
-    std::env::set_var("IRIS_HOST", "127.0.0.2");
-    std::env::set_var("IRIS_WEB_PORT", "1");
+    env_guard.set("IRIS_HOST", "127.0.0.2");
+    env_guard.set("IRIS_WEB_PORT", "1");
     for k in ["IRIS_SCHEME", "IRIS_WEB_PREFIX", "IRIS_CONTAINER"] {
-        std::env::remove_var(k);
+        env_guard.unset(k);
     }
 
     let result = iris_agentic_dev_core::iris::discovery::discover_iris(None).await;
 
-    for (k, v) in saved {
-        match v {
-            Some(v) => std::env::set_var(k, v),
-            None => std::env::remove_var(k),
-        }
-    }
     match result {
         IrisDiscovery::Found(c) => {
             assert_eq!(c.base_url, "http://127.0.0.2:1", "the named server is kept");

@@ -26,6 +26,7 @@ const BATCH6: &[ParamContract] = &[
     ParamContract {
         tool: "iris_credential_manage",
         params: &[
+            ("confirm", "boolean"),
             ("action", "string"),
             ("id", "string"),
             ("username", "string"),
@@ -37,6 +38,7 @@ const BATCH6: &[ParamContract] = &[
     ParamContract {
         tool: "iris_lookup_manage",
         params: &[
+            ("confirm", "boolean"),
             ("action", "string"),
             ("table", "string"),
             ("key", "string"),
@@ -48,6 +50,7 @@ const BATCH6: &[ParamContract] = &[
     ParamContract {
         tool: "iris_lookup_transfer",
         params: &[
+            ("confirm", "boolean"),
             ("action", "string"),
             ("table", "string"),
             ("xml", "string"),

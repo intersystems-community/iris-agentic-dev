@@ -216,21 +216,24 @@ with IRISContainer.community(version="2025.1").with_name("my-iris") as iris:
 idt container up --name my-iris --image intersystemsdc/iris-community:2025.1
 ```
 
-Attach to a container that is already running, and clear the "Password change
-required" state a fresh container starts in:
+Attach to a container that is already running. It belongs to whoever started it, so ask before
+changing anything about its accounts. A container you just started has its default password
+expired; give `_SYSTEM` a new generated one with step 4 of the `iris-agentic-dev-setup` skill (never
+reset a password to `SYS`), then pass that password in:
 
 ```python
+import os
 from iris_devtester import IRISContainer
 
-c = IRISContainer.attach("my-iris", username="SuperUser", password="SYS")
-c.reset_password(username="SuperUser", new_password="SYS")  # fresh containers only
+c = IRISContainer.attach("my-iris", username="_SYSTEM", password=os.environ["IRIS_PASSWORD"])
 conn = c.get_connection()
 c.execute_objectscript("Write $ZVERSION,!", namespace="USER")
 ```
 
 ```bash
-# Via docker run (manual — requires password fix afterward)
-docker run -d --name my-iris -p 0:1972 \
+# Via docker run (manual — requires a new _SYSTEM password afterward; 127.0.0.1:: picks a
+# random host port and keeps it on this machine)
+docker run -d --name my-iris -p 127.0.0.1::1972 \
   intersystemsdc/iris-community:2025.1 --check-caps false
 ```
 
@@ -238,7 +241,7 @@ Mount the workspace when you plan to load code from disk:
 
 ```bash
 docker run -d --name my-iris \
-  --publish 1972 --publish 52773 \
+  --publish 127.0.0.1::1972 --publish 127.0.0.1::52773 \
   -v "$(pwd):/home/irisowner/dev" \
   intersystemsdc/iris-community:latest --check-caps false
 ```
@@ -247,7 +250,7 @@ A licensed image needs `irepo` auth and a mounted key:
 
 ```bash
 docker run -d --name my-iris \
-  --publish 1972 --publish 52773 \
+  --publish 127.0.0.1::1972 --publish 127.0.0.1::52773 \
   -v "$(pwd):/home/irisowner/dev" \
   -v "$(pwd)/iris.key:/usr/irissys/mgr/iris.key" \
   irepo.intersystems.com/intersystems/iris:2025.1 --check-caps false

@@ -45,10 +45,7 @@ fn live_password() -> String {
 /// literal here meant the only way to keep CI green was to `--skip` this test — which is how a
 /// discovery test stopped covering discovery on the one machine where a regression would matter.
 fn live_container() -> String {
-    std::env::var("IRIS_CONTAINER")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "iris-dev-iris".to_string())
+    iris_agentic_dev_core::testing::LiveTarget::from_env().container
 }
 
 // ── probe_atelier / probe_atelier_with_client against the real container ────

@@ -1,9 +1,14 @@
 pub mod audit_log;
+pub mod config_sources;
 pub mod connection;
 pub mod connection_pool;
 pub mod csp_session;
 pub mod discovery;
+pub mod endpoint;
+pub mod http;
 pub mod iris_audit;
+pub mod operator_hold;
+pub mod private_file;
 pub mod server_manager;
 pub mod servers_config;
 pub mod vscode_config;

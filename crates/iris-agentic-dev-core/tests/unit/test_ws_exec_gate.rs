@@ -9,7 +9,8 @@
 //! the next arbitrary-execution tool cannot ship missing from it the way this one did.
 
 use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, DataPolicy, McpTemplate};
-use iris_agentic_dev_core::policy::gate::{dispatch_gate, CODE_EXEC_TOOLS};
+use iris_agentic_dev_core::policy::gate::CODE_EXEC_TOOLS;
+use iris_agentic_dev_core::testing::gated;
 use iris_agentic_dev_core::testing::{params_type, struct_fields};
 use iris_agentic_dev_core::tools::IrisTools;
 
@@ -27,7 +28,7 @@ fn policy_dev() -> ConnectionPolicy {
 
 fn ws_exec(code: &str) -> Result<(), serde_json::Value> {
     let policy = policy_dev();
-    dispatch_gate(
+    gated::dispatch(
         "iris_ws_exec",
         "iris-dev",
         Some(&policy),
@@ -86,7 +87,7 @@ fn ws_exec_is_blocked_on_the_code_edit_surface() {
 fn ws_exec_and_execute_return_the_same_verdict() {
     let policy = policy_dev();
     for (label, code) in CODE_EDIT_PAYLOADS.iter().chain(BENIGN_PAYLOADS.iter()) {
-        let execute = dispatch_gate(
+        let execute = gated::dispatch(
             "iris_execute",
             "iris-dev",
             Some(&policy),
@@ -130,7 +131,7 @@ fn ws_exec_permits_ordinary_objectscript() {
 #[test]
 fn ws_exec_is_gated_without_a_valid_session() {
     let policy = policy_dev();
-    let err = dispatch_gate(
+    let err = gated::dispatch(
         "iris_ws_exec",
         "iris-dev",
         Some(&policy),

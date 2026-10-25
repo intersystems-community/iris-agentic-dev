@@ -16,9 +16,66 @@ use crate::policy::patterns::{first_match, matches_any, PHI_NAME_PATTERNS};
 /// most needed to cover. Public so `test_data_policy_gate.rs` can assert every entry appears in
 /// [`crate::tools::write_gate::CLASSIFICATION`]; a name typo in a security gate fails open and
 /// looks exactly like a permitted call.
-pub const BULK_PHI_TOOLS: &[&str] = &["journal_search", "iris_message_body"];
+pub const BULK_PHI_TOOLS: &[&str] = &["journal_search", "iris_message_body", "stream_inspect"];
 
-/// Gate [2]: hard-block bulk-PHI tools when dataPolicy is not Allow.
+/// Bulk-data tools that can redact what they return: under `redact` they are admitted, and their
+/// handler returns HL7 v2 redacted and refuses content iad cannot redact (spec 141 R5 C22). Every
+/// other bulk tool stays refused under `redact`: `journal_search` returns a journal record's value,
+/// which is not a message, so there is nothing to redact it with.
+pub const REDACTING_TOOLS: &[&str] = &["iris_message_body", "stream_inspect"];
+
+/// Bulk-data tools whose handler enforces the policy itself, because a refused call still answers
+/// with metadata (`stream_inspect` returns the stream's class, size and line count, FR-030c). The
+/// gate has no IRIS to ask, so refusing here would leave the caller with nothing.
+pub const HANDLER_ENFORCED_TOOLS: &[&str] = &["stream_inspect"];
+
+/// A tool that is a bulk-data tool only for the calls that name a message body: `iris_interop_query`
+/// answers headers, logs and queues from its own tables, and joins `Ens.MessageBody` rows when the
+/// call carries one of these arguments (spec 141 T214). The arguments are the handler's own, read
+/// by name from the call.
+pub const BODY_READ_TOOLS: &[(&str, &[&str])] = &[(
+    "iris_interop_query",
+    &["body_class", "body_where", "body_select"],
+)];
+
+/// True when `tool_name` with `params` reads message bodies: a bulk-data tool, or a tool in
+/// [`BODY_READ_TOOLS`] whose call carries a body argument. An empty `body_select` list selects
+/// nothing and does not count.
+pub fn reads_message_bodies(tool_name: &str, params: &serde_json::Value) -> bool {
+    BODY_READ_TOOLS
+        .iter()
+        .filter(|(tool, _)| *tool == tool_name)
+        .flat_map(|(_, args)| args.iter())
+        .any(|arg| {
+            params
+                .get(arg)
+                .is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()))
+        })
+}
+
+/// [`check_bulk_phi_gate`] for a call: also refuses a call that reads message bodies through a tool
+/// that is not a bulk-data tool otherwise (see [`BODY_READ_TOOLS`]). It is never admitted under
+/// `redact`, since the rows it returns are not HL7 text it could redact.
+pub fn check_bulk_phi_gate_for_call(
+    tool_name: &str,
+    params: &serde_json::Value,
+    policy: &DataPolicy,
+    server_name: &str,
+) -> Option<serde_json::Value> {
+    if *policy != DataPolicy::Allow && reads_message_bodies(tool_name, params) {
+        let mut refusal = bulk_refusal(tool_name, policy, server_name);
+        refusal["message"] = serde_json::json!(format!(
+            "Tool '{tool_name}' reads message bodies when a call names a body_class, body_where \
+             or body_select, and that is blocked unless dataPolicy is 'allow' for server \
+             '{server_name}'. Without those arguments it still lists headers, logs and queues."
+        ));
+        return Some(refusal);
+    }
+    check_bulk_phi_gate(tool_name, policy, server_name)
+}
+
+/// Gate [2]: hard-block bulk-PHI tools when dataPolicy is not Allow, except the tools that redact
+/// under `redact` and the ones whose handler enforces the policy.
 ///
 /// Returns `Some(error_json)` when blocked, `None` when permitted.
 pub fn check_bulk_phi_gate(
@@ -29,17 +86,23 @@ pub fn check_bulk_phi_gate(
     if *policy == DataPolicy::Allow {
         return None;
     }
-    if !BULK_PHI_TOOLS.contains(&tool_name) {
+    if !BULK_PHI_TOOLS.contains(&tool_name) || HANDLER_ENFORCED_TOOLS.contains(&tool_name) {
         return None;
     }
+    if *policy == DataPolicy::Redact && REDACTING_TOOLS.contains(&tool_name) {
+        return None;
+    }
+    Some(bulk_refusal(tool_name, policy, server_name))
+}
 
+fn bulk_refusal(tool_name: &str, policy: &DataPolicy, server_name: &str) -> serde_json::Value {
     let policy_str = match policy {
         DataPolicy::Block => "block",
         DataPolicy::Allow => "allow",
         DataPolicy::Redact => "redact",
     };
 
-    Some(serde_json::json!({
+    serde_json::json!({
         "success": false,
         "error_code": "DATA_POLICY_BLOCKED",
         "data_policy_blocked": true,
@@ -52,10 +115,10 @@ pub fn check_bulk_phi_gate(
             tool_name, policy_str, server_name
         ),
         "remediation": format!(
-            "Set dataPolicy = \"allow\" in [policy.{}] of .iris-agentic-dev.toml",
-            server_name
+            "The data policy of server '{server_name}' is the operator's to change; \
+             the refusal's `refusal.lift.setting` names it."
         ),
-    }))
+    })
 }
 
 /// Gate [4]: block access to a global whose name matches a PHI pattern, unless `acknowledge_phi` is true.

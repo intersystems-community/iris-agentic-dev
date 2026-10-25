@@ -39,6 +39,7 @@ const BATCH3: &[ParamContract] = &[ParamContract {
         ("global_pattern", "string"),
         ("time_range", "object"),
         ("max_records", "integer"),
+        ("acknowledgePhi", "boolean"),
         ("new_password", "string"),
         ("mirror_name", "string"),
         ("primary_host", "string"),

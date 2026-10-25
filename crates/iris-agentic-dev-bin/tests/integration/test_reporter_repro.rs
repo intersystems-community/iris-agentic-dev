@@ -79,6 +79,7 @@ impl Session {
     fn start(workspace: &std::path::Path) -> Self {
         let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
         let mut cmd = Command::new(bin);
+        crate::support_141::isolate(&mut cmd);
         cmd.arg("mcp")
             .current_dir(workspace)
             .env("OBJECTSCRIPT_WORKSPACE", workspace)
@@ -170,6 +171,8 @@ impl Session {
 /// faked, so it skips loudly rather than passing vacuously.
 fn iris_reachable() -> bool {
     let out = Command::new(env!("CARGO_BIN_EXE_iris-agentic-dev"))
+        .env("HOME", crate::support_141::home())
+        .env("USERPROFILE", crate::support_141::home())
         .args(["exec", "write 1,!"])
         .env("IRIS_HOST", env_or("IRIS_HOST", "localhost"))
         .env("IRIS_WEB_PORT", env_or("IRIS_WEB_PORT", "52780"))
@@ -427,6 +430,8 @@ fn repro_3_contradictory_config_starts_with_writes_enabled() {
 
     let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
     let mut child = Command::new(bin)
+        .env("HOME", crate::support_141::home())
+        .env("USERPROFILE", crate::support_141::home())
         .arg("mcp")
         .current_dir(dir.path())
         .env("OBJECTSCRIPT_WORKSPACE", dir.path())

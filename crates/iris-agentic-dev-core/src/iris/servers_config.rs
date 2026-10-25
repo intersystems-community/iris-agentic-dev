@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// A single IRIS server entry in the iad-native config file.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct ServerEntry {
     pub host: String,
     pub port: u16,
@@ -27,6 +27,186 @@ pub struct ServerEntry {
     /// Never returned in any tool response — only read for connection auth.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
+    /// The endpoint `password` was saved for (`scheme://host:port[/prefix]`). The password is used
+    /// only while the entry still points there, so editing the host in this file, or
+    /// re-registering the name at another host, cannot send it somewhere new (spec 141, FR-023).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password_endpoint: Option<String>,
+    /// `"server-manager"` for an entry `iris_import_servers` wrote: its password is the Server
+    /// Manager profile's, read only while the entry's endpoint equals the profile's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential: Option<String>,
+    /// Check this server's certificate? `false` turns it off for this entry only. Absent validates.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_verify: Option<bool>,
+    /// The restricted account the agent's code runs as on this server (spec 141, R2). Its password
+    /// is in the OS keychain under iad's own service, bound to this endpoint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_username: Option<String>,
+    /// Plaintext fallback for the service account's password, under the same rule as `password`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_password: Option<String>,
+    /// The Docker container of this server, the only one a docker exec fallback may use for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container: Option<String>,
+}
+
+/// What `iris_add_server` was asked to register.
+#[derive(Debug, Clone, Default)]
+pub struct NewServer {
+    pub host: String,
+    pub port: u16,
+    pub namespace: String,
+    pub username: String,
+    pub description: Option<String>,
+    pub scheme: Option<String>,
+    pub web_prefix: Option<String>,
+    pub tls_verify: Option<bool>,
+    pub password: Option<String>,
+}
+
+/// What the OS keychain did with a new password.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeychainOutcome {
+    /// No password was given, so the keychain was not asked.
+    NotTried,
+    Stored,
+    /// There is no keychain here (headless host, Remote SSH).
+    Unavailable,
+}
+
+/// The decision `iris_add_server` makes about one entry and its credential.
+#[derive(Debug, Clone)]
+pub struct ServerMerge {
+    pub entry: ServerEntry,
+    /// An earlier password was dropped because the endpoint moved.
+    pub password_cleared: bool,
+    /// Where this call left the password: `"keychain"`, `"file"` or `"none"`.
+    pub credential_store: &'static str,
+    /// The endpoint of an earlier keychain item that the move made stale: delete it.
+    pub stale_keychain: Option<crate::iris::endpoint::Endpoint>,
+    /// The new endpoint is not where the old entry pointed.
+    pub moved: bool,
+}
+
+/// The endpoint of an entry, parsed. A scheme that is not `http` or `https` is an error.
+pub fn entry_endpoint(
+    e: &ServerEntry,
+) -> Result<crate::iris::endpoint::Endpoint, crate::iris::endpoint::InvalidEndpoint> {
+    crate::iris::endpoint::Endpoint::parse(
+        e.scheme.as_deref(),
+        &e.host,
+        e.port,
+        e.web_prefix.as_deref(),
+    )
+}
+
+/// Decide an entry and its credential from the old entry, the new parameters and what the keychain
+/// did (R4b D11). Pure: the caller does the keychain write first and saves the file once, last.
+///
+/// - The endpoint is parsed first; a bad scheme is an error and nothing is saved.
+/// - A moved endpoint drops the old password, plaintext and keychain item alike.
+/// - A password the keychain took leaves none in the entry. One it could not take stays in the
+///   entry, bound to the endpoint it was given for.
+/// - No new password and no move: the stored one stays.
+pub fn merge_server(
+    old: Option<&ServerEntry>,
+    new: &NewServer,
+    keychain: KeychainOutcome,
+) -> Result<ServerMerge, crate::iris::endpoint::InvalidEndpoint> {
+    let mut entry = ServerEntry {
+        host: new.host.clone(),
+        port: new.port,
+        namespace: new.namespace.clone(),
+        username: new.username.clone(),
+        description: new.description.clone(),
+        scheme: new.scheme.clone(),
+        web_prefix: new.web_prefix.clone(),
+        password: None,
+        password_endpoint: None,
+        credential: None,
+        tls_verify: new.tls_verify,
+        ..Default::default()
+    };
+    let endpoint = entry_endpoint(&entry)?;
+    let old_endpoint = old.and_then(|o| entry_endpoint(o).ok());
+    let moved = match (&old_endpoint, old) {
+        (Some(oe), _) => !oe.same_server(&endpoint),
+        (None, Some(_)) => true,
+        (None, None) => false,
+    };
+    let had_password = old.is_some_and(|o| o.password.is_some());
+    let password_cleared = moved && (had_password || old.is_some_and(|o| o.credential.is_some()));
+    let stale_keychain = if moved { old_endpoint } else { None };
+    // A certificate setting the operator wrote by hand stays while the server stays where it is.
+    if entry.tls_verify.is_none() && !moved {
+        entry.tls_verify = old.and_then(|o| o.tls_verify);
+    }
+
+    let credential_store = match (new.password.as_deref(), keychain) {
+        (Some(_), KeychainOutcome::Stored) => "keychain",
+        (Some(pw), _) => {
+            entry.password = Some(pw.to_string());
+            entry.password_endpoint = Some(endpoint.base_url());
+            "file"
+        }
+        (None, _) if !moved => {
+            // Nothing new, nothing moved: what was stored stays.
+            if let Some(o) = old {
+                entry.password = o.password.clone();
+                entry.password_endpoint = o.password_endpoint.clone();
+                entry.credential = o.credential.clone();
+            }
+            if entry.password.is_some() {
+                "file"
+            } else {
+                "none"
+            }
+        }
+        (None, _) => "none",
+    };
+
+    Ok(ServerMerge {
+        entry,
+        password_cleared,
+        credential_store,
+        stale_keychain,
+        moved,
+    })
+}
+
+/// Carry the service-account settings of a registration onto the merged entry (spec 141, R2).
+///
+/// `service_username` and `container` are not secrets and are replaced by what the call gave. The
+/// plaintext service password of an earlier entry stays only while the endpoint has not moved and
+/// the account is the same one; it is bound to the entry's `password_endpoint` like the primary
+/// password, so the binding is carried with it.
+pub fn carry_service_account(
+    merge: &mut ServerMerge,
+    old: Option<&ServerEntry>,
+    service_username: Option<&str>,
+    container: Option<&str>,
+) {
+    let entry = &mut merge.entry;
+    entry.service_username = service_username.map(str::to_string);
+    entry.container = container.map(str::to_string);
+    entry.service_password = None;
+    let kept = old.filter(|o| !merge.moved && o.service_username.as_deref() == service_username);
+    if let Some(o) = kept.filter(|o| o.service_password.is_some()) {
+        entry.service_password = o.service_password.clone();
+        if entry.password_endpoint.is_none() {
+            entry.password_endpoint = o.password_endpoint.clone();
+        }
+    }
+}
+
+/// Is `name` the name of a Server Manager profile? `iris_add_server` refuses such a name: an entry
+/// of that name would be read as the profile.
+pub fn name_conflicts(
+    name: &str,
+    profiles: &[crate::iris::server_manager::ServerManagerProfile],
+) -> bool {
+    profiles.iter().any(|p| p.name.eq_ignore_ascii_case(name))
 }
 
 /// The iad-native servers config file (`~/.config/iris-agentic-dev/servers.json`).
@@ -99,17 +279,13 @@ pub fn load_native_config() -> ServersConfig {
     load_from_path(&native_config_path())
 }
 
-/// Saves the config to the given path using an atomic write (temp file + rename).
+/// Saves the config to the given path using an atomic write (temp file + rename), owner-only:
+/// the file holds passwords on a platform with no keychain (spec 141, FR-023).
 ///
 /// Creates parent directories if they do not exist.
 pub fn save_to_path(cfg: &ServersConfig, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("json.tmp");
     let contents = serde_json::to_string_pretty(cfg)?;
-    std::fs::write(&tmp, contents)?;
-    std::fs::rename(&tmp, path)?;
+    crate::iris::private_file::write_private_atomic(path, contents.as_bytes())?;
     Ok(())
 }
 
@@ -154,7 +330,7 @@ mod tests {
                 description: Some("Dev container".to_string()),
                 scheme: Some("http".to_string()),
                 web_prefix: None,
-                password: None,
+                ..Default::default()
             },
         );
         servers.insert(
@@ -167,7 +343,7 @@ mod tests {
                 description: None,
                 scheme: Some("https".to_string()),
                 web_prefix: None,
-                password: None,
+                ..Default::default()
             },
         );
         ServersConfig {

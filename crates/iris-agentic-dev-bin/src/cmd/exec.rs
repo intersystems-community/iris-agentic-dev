@@ -4,7 +4,7 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use super::connection_args::ConnectionArgs;
-use super::dispatch::dispatch_tool;
+use super::dispatch::{dispatch_tool, exit_if_refused};
 
 /// How the ObjectScript code is supplied.
 pub enum CodeSource {
@@ -75,18 +75,6 @@ impl ExecCommand {
 
         let iris = self.conn.resolve().await?;
 
-        // iris_execute's own role-gate only fires for a fleet "operate mode" Subject
-        // instance — it does not enforce this check for the default connection role, so
-        // this pre-check must stay here rather than being dropped in favor of whatever
-        // the delegated tool call does internally. See dispatch.rs's doc comment.
-        if !iris.is_write_allowed() {
-            eprintln!(
-                "error: write operations are suppressed on production IRIS instances.\n\
-                 Set IRIS_ALLOW_PROD=1 to override."
-            );
-            crate::exit(1);
-        }
-
         let mut args = serde_json::json!({ "code": code, "namespace": namespace });
         if let Some(server) = &self.server {
             args["server"] = serde_json::Value::String(server.clone());
@@ -99,6 +87,7 @@ impl ExecCommand {
         }
 
         let body = dispatch_tool(iris, "iris_execute", args).await?;
+        exit_if_refused(&body);
         let success = body["success"].as_bool().unwrap_or(false);
 
         if let Some(text) = exec_text(&body) {

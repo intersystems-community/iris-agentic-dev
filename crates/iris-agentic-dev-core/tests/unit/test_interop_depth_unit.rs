@@ -238,9 +238,9 @@ fn production_diff_is_query_category() {
 #[test]
 fn message_body_not_blocked_on_live_template() {
     use iris_agentic_dev_core::iris::workspace_config::McpTemplate;
-    use iris_agentic_dev_core::policy::env_gate::check_env_gate;
+    use iris_agentic_dev_core::testing::gated;
     let params = serde_json::json!({});
-    let result = check_env_gate(
+    let result = gated::env(
         "iris_message_body",
         &McpTemplate::Live,
         "test-server",

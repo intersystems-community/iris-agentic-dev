@@ -2,7 +2,9 @@
 //! All operations execute in the %SYS namespace via HTTP ObjectScript execution.
 //! Read operations are always available; write operations require IRIS_ADMIN_TOOLS=1.
 
-use crate::iris::connection::{generator_error_message, is_generator_error, IrisConnection};
+use crate::iris::connection::{
+    generator_error_message, is_generator_error, GeneratorCall, IrisConnection, Secret,
+};
 use crate::objectscript::os_str_expr;
 use rmcp::{model::*, ErrorData as McpError};
 
@@ -41,7 +43,9 @@ pub async fn admin_list_namespaces_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     match iris
         .query(
             "SELECT Name, Globals, Routines FROM Config.Namespaces ORDER BY Name",
@@ -82,7 +86,9 @@ pub async fn admin_list_databases_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     // Use SYS.Database:List query (documented in IRIS class reference)
     let code = r#"Set tRS=##class(%ResultSet).%New("SYS.Database:List")
 Set tSC=tRS.Execute()
@@ -125,7 +131,9 @@ pub async fn admin_list_users_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     // Fetch all to get total_count; password never exposed
     match iris
         .query(
@@ -177,7 +185,9 @@ pub async fn admin_list_roles_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     match iris
         .query(
             "SELECT Name, Description FROM Security.Roles ORDER BY Name",
@@ -222,7 +232,9 @@ pub async fn admin_list_webapps_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     // Try with Type column first; fall back to without if needed
     let resp = iris
         .query(
@@ -326,7 +338,9 @@ pub async fn admin_list_user_roles_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     let un = os_str_expr(username);
     let code = format!(
         r#"Set tSC=##class(Security.Users).Get({un},.props)
@@ -354,7 +368,9 @@ pub async fn admin_get_webapp_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     let p = os_str_expr(path);
     let code = format!(
         r#"Set tSC=##class(Security.Applications).Get({p},.props)
@@ -399,7 +415,9 @@ pub async fn admin_check_permission_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     // Map common permission names to IRIS operation codes
     let perm_upper = permission.to_uppercase();
     let op = match perm_upper.as_str() {
@@ -434,6 +452,54 @@ pub async fn admin_check_permission_impl(
     }
 }
 
+/// `Security.Users.Create` for `iris_admin` create user. The new password is `tIadArgs.%Get(0)`,
+/// handed over in `X-IAD-Args`; it is not in the class source (FR-020).
+#[doc(hidden)]
+pub fn create_user_call(
+    username: &str,
+    password: &str,
+    full_name: Option<&str>,
+    roles: Option<&str>,
+) -> GeneratorCall {
+    let un = os_str_expr(username);
+    let fn_ = os_str_expr(full_name.unwrap_or(""));
+    let ro = os_str_expr(roles.unwrap_or(""));
+    let code = format!(
+        r#"Set props("Password")=tIadArgs.%Get(0)
+Set props("FullName")={fn_}
+Set props("Roles")={ro}
+Set tSC=##class(Security.Users).Create({un},.props)
+Kill props
+If $$$ISERR(tSC) {{ Write "ERROR:USER_EXISTS:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#
+    );
+    GeneratorCall {
+        code,
+        args: vec![Secret::new(password)],
+    }
+}
+
+/// `%SYSTEM.Security.ChangePassword` for `iris_admin` clear password-change flag. The old and new
+/// passwords are `tIadArgs.%Get(0)` and `tIadArgs.%Get(1)`.
+#[doc(hidden)]
+pub fn clear_password_flag_call(
+    username: &str,
+    password: &str,
+    new_password: &str,
+) -> GeneratorCall {
+    let un = os_str_expr(username);
+    let code = format!(
+        r#"ZN "%SYS"
+Set tOld=tIadArgs.%Get(0),tNew=tIadArgs.%Get(1)
+Set sc=##class(%SYSTEM.Security).ChangePassword({un},tNew,tOld,.status)
+Kill tOld,tNew
+If sc {{ Write "OK" }} Else {{ Write "ERROR:"_$System.Status.GetErrorText(status) }}"#
+    );
+    GeneratorCall {
+        code,
+        args: vec![Secret::new(password), Secret::new(new_password)],
+    }
+}
+
 // ── Write: create user ────────────────────────────────────────────────────────
 
 pub async fn admin_create_user_impl(
@@ -450,19 +516,14 @@ pub async fn admin_create_user_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
-    let un = os_str_expr(username);
-    let pw = os_str_expr(password);
-    let fn_ = os_str_expr(full_name.unwrap_or(""));
-    let ro = os_str_expr(roles.unwrap_or(""));
-    let code = format!(
-        r#"Set props("Password")={pw}
-Set props("FullName")={fn_}
-Set props("Roles")={ro}
-Set tSC=##class(Security.Users).Create({un},.props)
-If $$$ISERR(tSC) {{ Write "ERROR:USER_EXISTS:"_$System.Status.GetErrorText(tSC) }} Else {{ Write "OK" }}"#
-    );
-    match iris.execute_via_generator(&code, "%SYS", &client).await {
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
+    let call = create_user_call(username, password, full_name, roles);
+    match iris
+        .execute_via_generator_with_args(&call, "%SYS", &client)
+        .await
+    {
         Ok(out) => {
             let out = out.trim();
             if out == "OK" {
@@ -477,6 +538,41 @@ If $$$ISERR(tSC) {{ Write "ERROR:USER_EXISTS:"_$System.Status.GetErrorText(tSC) 
         }
         Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
     }
+}
+
+/// `Security.Users.Modify` for `iris_admin` update user. A new password is `tIadArgs.%Get(0)`,
+/// handed over in `X-IAD-Args`; with no password the call carries no arguments.
+#[doc(hidden)]
+pub fn update_user_call(
+    username: &str,
+    password: Option<&str>,
+    enabled: Option<bool>,
+    roles: Option<&str>,
+) -> GeneratorCall {
+    let un = os_str_expr(username);
+    let mut set_lines = String::new();
+    let mut args = Vec::new();
+    if let Some(pw) = password {
+        set_lines.push_str("Set props(\"Password\")=tIadArgs.%Get(0)\n");
+        args.push(Secret::new(pw));
+    }
+    if let Some(en) = enabled {
+        set_lines.push_str(&format!(
+            "Set props(\"Enabled\")={}\n",
+            if en { 1 } else { 0 }
+        ));
+    }
+    if let Some(ro) = roles {
+        set_lines.push_str(&format!("Set props(\"Roles\")={}\n", os_str_expr(ro)));
+    }
+    let code = format!(
+        r#"Set tSC=##class(Security.Users).Get({un},.props)
+If $$$ISERR(tSC) {{ Write "ERROR:USER_NOT_FOUND:User not found: "_{un} Quit }}
+{set_lines}Set tSC2=##class(Security.Users).Modify({un},.props)
+Kill props
+If $$$ISERR(tSC2) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC2) }} Else {{ Write "OK" }}"#
+    );
+    GeneratorCall { code, args }
 }
 
 // ── Write: update user ────────────────────────────────────────────────────────
@@ -495,28 +591,14 @@ pub async fn admin_update_user_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
-    let un = os_str_expr(username);
-    let mut set_lines = String::new();
-    if let Some(pw) = password {
-        set_lines.push_str(&format!("Set props(\"Password\")={}\n", os_str_expr(pw)));
-    }
-    if let Some(en) = enabled {
-        set_lines.push_str(&format!(
-            "Set props(\"Enabled\")={}\n",
-            if en { 1 } else { 0 }
-        ));
-    }
-    if let Some(ro) = roles {
-        set_lines.push_str(&format!("Set props(\"Roles\")={}\n", os_str_expr(ro)));
-    }
-    let code = format!(
-        r#"Set tSC=##class(Security.Users).Get({un},.props)
-If $$$ISERR(tSC) {{ Write "ERROR:USER_NOT_FOUND:User not found: "_{un} Quit }}
-{set_lines}Set tSC2=##class(Security.Users).Modify({un},.props)
-If $$$ISERR(tSC2) {{ Write "ERROR:INTEROP_ERROR:"_$System.Status.GetErrorText(tSC2) }} Else {{ Write "OK" }}"#
-    );
-    match iris.execute_via_generator(&code, "%SYS", &client).await {
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
+    let call = update_user_call(username, password, enabled, roles);
+    match iris
+        .execute_via_generator_with_args(&call, "%SYS", &client)
+        .await
+    {
         Ok(out) => {
             let out = out.trim();
             if out == "OK" {
@@ -546,7 +628,9 @@ pub async fn admin_delete_user_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     let un = os_str_expr(username);
     let code = format!(
         r#"If '##class(Security.Users).Exists({un}) {{ Write "ERROR:USER_NOT_FOUND:User not found: "_{un} Quit }}
@@ -585,7 +669,9 @@ pub async fn admin_create_namespace_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     let nm = os_str_expr(name);
     let cd = os_str_expr(code_database);
     let dd = os_str_expr(data_database);
@@ -629,7 +715,9 @@ pub async fn admin_delete_namespace_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     let nm = os_str_expr(name);
     // Deletes namespace definition only — databases are NOT deleted (by design)
     let code = format!(
@@ -671,7 +759,9 @@ pub async fn admin_create_webapp_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     let p = os_str_expr(path);
     let ns = os_str_expr(namespace);
     let dc = os_str_expr(dispatch_class.unwrap_or(""));
@@ -712,7 +802,9 @@ pub async fn admin_delete_webapp_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     let p = os_str_expr(path);
     let code = format!(
         r#"Set tSC=##class(Security.Applications).Get({p},.props)
@@ -1052,16 +1144,14 @@ pub async fn admin_clear_password_change_flag_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
-    let un = os_str_expr(username);
-    let pw = os_str_expr(password);
-    let newpw = os_str_expr(new_password);
-    let code = format!(
-        r#"ZN "%SYS"
-Set sc=##class(%SYSTEM.Security).ChangePassword({un},{newpw},{pw},.status)
-If sc {{ Write "OK" }} Else {{ Write "ERROR:"_$System.Status.GetErrorText(status) }}"#
-    );
-    match iris.execute_via_generator(&code, "%SYS", &client).await {
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
+    let call = clear_password_flag_call(username, password, new_password);
+    match iris
+        .execute_via_generator_with_args(&call, "%SYS", &client)
+        .await
+    {
         Ok(out) => {
             let out = out.trim();
             if out == "OK" {
@@ -1091,7 +1181,9 @@ pub async fn admin_unlock_user_impl(
         Some(i) => i,
         None => return err_json("IRIS_UNREACHABLE", "No IRIS connection"),
     };
-    let client = IrisConnection::http_client().map_err(|_| iris_unreachable())?;
+    let client = iris
+        .client(crate::iris::http::ClientKind::Call)
+        .map_err(|_| iris_unreachable())?;
     let un = os_str_expr(username);
     let code = format!(
         r#"ZN "%SYS"

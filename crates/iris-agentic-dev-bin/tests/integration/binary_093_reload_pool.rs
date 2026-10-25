@@ -9,7 +9,7 @@
 //!   cargo test --test binary_093_reload_pool -- --include-ignored --test-threads=1
 
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 // A relative `IAD_BINARY` — the form CLAUDE.md and every doc comment in this crate tell you to
 // pass — is resolved against the process working directory, which for a workspace member's test
@@ -81,9 +81,9 @@ fn test_iris_reload_pool_in_tools_list() {
         return;
     }
 
-    let mut cmd = Command::new(&bin);
+    let mut cmd = iris_agentic_dev_core::testing::clean_command(&bin);
     cmd.arg("mcp")
-        .env_remove("IRIS_HOST")
+        .env("IRIS_HOST", "127.0.0.1")
         .env("IRIS_WEB_PORT", "9")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -134,9 +134,9 @@ fn test_iris_reload_pool_returns_success_json() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
 
-    let mut cmd = Command::new(&bin);
+    let mut cmd = iris_agentic_dev_core::testing::clean_command(&bin);
     cmd.arg("mcp")
-        .env_remove("IRIS_HOST")
+        .env("IRIS_HOST", "127.0.0.1")
         .env("IRIS_WEB_PORT", "9")
         .env("HOME", tmp.path())
         .stdin(Stdio::piped())
@@ -191,11 +191,11 @@ fn test_iris_reload_pool_returns_success_json() {
 }
 
 // ---------------------------------------------------------------------------
-// T093-B3: iris_reload_pool returns TOML_PARSE_ERROR when config is malformed
+// T093-B3: iris_reload_pool is refused, not run, when the config is malformed
 // ---------------------------------------------------------------------------
 
-/// T093-B3: if `.iris-agentic-dev.toml` has invalid TOML syntax, `iris_reload_pool`
-/// returns `{success: false, error_code: "TOML_PARSE_ERROR"}` and leaves the pool intact.
+/// T093-B3: if `.iris-agentic-dev.toml` has invalid TOML syntax, the write gate fails closed and
+/// `iris_reload_pool`, now a write, is refused with `WRITE_TOOLS_DISABLED`; the pool is untouched.
 #[test]
 #[ignore]
 fn test_iris_reload_pool_returns_toml_parse_error_on_bad_config() {
@@ -210,9 +210,9 @@ fn test_iris_reload_pool_returns_toml_parse_error_on_bad_config() {
     let config = tmp.path().join(".iris-agentic-dev.toml");
     std::fs::write(&config, "this is not valid toml ===\n[broken").expect("write config");
 
-    let mut cmd = Command::new(&bin);
+    let mut cmd = iris_agentic_dev_core::testing::clean_command(&bin);
     cmd.arg("mcp")
-        .env_remove("IRIS_HOST")
+        .env("IRIS_HOST", "127.0.0.1")
         .env("IRIS_WEB_PORT", "9")
         // Override workspace root so the binary sees our bad config.
         .env("OBJECTSCRIPT_WORKSPACE", tmp.path())
@@ -248,6 +248,10 @@ fn test_iris_reload_pool_returns_toml_parse_error_on_bad_config() {
     iris_agentic_dev_core::testing::stop_server(&mut child);
 
     let result = result.expect("T093-B3: no response from iris_reload_pool");
+    // `iris_reload_pool` is a write (spec 141 T219), and a broken configuration file closes the
+    // write gate (fail closed). The tool therefore does not run: it is refused before it could
+    // report `TOML_PARSE_ERROR`, and the running pool is untouched. `check_config` carries the
+    // parse error.
     assert_eq!(
         result["success"].as_bool(),
         Some(false),
@@ -255,11 +259,14 @@ fn test_iris_reload_pool_returns_toml_parse_error_on_bad_config() {
     );
     assert_eq!(
         result["error_code"].as_str(),
-        Some("TOML_PARSE_ERROR"),
-        "T093-B3: error_code must be TOML_PARSE_ERROR, got {result}"
+        Some("WRITE_TOOLS_DISABLED"),
+        "T093-B3: a broken file closes the write gate, got {result}"
     );
     assert!(
-        result["note"].as_str().unwrap_or("").contains("preserved"),
-        "T093-B3: note must mention preserved pool, got {result}"
+        result["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("fail_closed"),
+        "T093-B3: the refusal must say the gate is closed because of the broken file, got {result}"
     );
 }

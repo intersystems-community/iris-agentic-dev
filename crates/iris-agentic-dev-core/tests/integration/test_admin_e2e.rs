@@ -73,9 +73,9 @@ async fn e2e_namespace_list() {
 #[tokio::test]
 #[ignore]
 async fn e2e_journal_search() {
-    use iris_agentic_dev_core::tools::admin_tools::journal_search_impl;
+    use iris_agentic_dev_core::tools::observability::journal_search_impl;
 
-    let (conn, client) = match make_conn() {
+    let (conn, _client) = match make_conn() {
         Some(c) => c,
         None => {
             eprintln!("IRIS_HOST not set — skipping e2e_journal_search");
@@ -83,16 +83,23 @@ async fn e2e_journal_search() {
         }
     };
 
-    let result = journal_search_impl(&conn, &client, None, None, None, 10)
-        .await
-        .expect("journal_search_impl failed");
+    let result = journal_search_impl(
+        Some(&conn),
+        "allow",
+        Some("IadE2eNoSuchGlobal"),
+        None,
+        Some(10),
+        &[],
+        false,
+    )
+    .await
+    .expect("journal_search_impl failed");
     let v = parse_json(result);
-    // Either success=true (entries returned) or a known non-crash error
-    let success = v["success"].as_bool().unwrap_or(false);
-    let err_code = v["error_code"].as_str().unwrap_or("");
+    assert_eq!(v["success"], true, "journal_search must succeed, got: {v}");
+    assert!(v["records"].is_array(), "records must be an array: {v}");
     assert!(
-        success || err_code == "NO_JOURNAL",
-        "journal_search must succeed or return NO_JOURNAL, got: {v}"
+        v["scanned"].is_u64(),
+        "scanned must report the records read: {v}"
     );
 }
 
@@ -372,8 +379,8 @@ async fn e2e_query_audit_log() {
     );
 }
 
-// T112: stream_inspect — nonexistent OID returns a structured response (empty stream or
-// STREAM_NOT_FOUND); must not panic.
+// T112 / spec 141 T199: stream_inspect — an id that holds no stream is STREAM_NOT_FOUND, not an
+// empty stream (`%OpenId` returns a usable empty object for an unknown id; `%ExistsId` tells).
 #[tokio::test]
 #[ignore]
 async fn e2e_stream_inspect_not_found() {
@@ -387,17 +394,14 @@ async fn e2e_stream_inspect_not_found() {
         }
     };
 
-    let result = stream_inspect_impl(&conn, &client, "999999999", "USER")
+    let allow = iris_agentic_dev_core::iris::workspace_config::DataPolicy::Allow;
+    let result = stream_inspect_impl(&conn, &client, "999999999", None, "USER", &allow)
         .await
         .expect("stream_inspect_impl failed");
     let v = parse_json(result);
-    // IRIS opens an empty stream on an unknown numeric OID rather than returning an error,
-    // so either success=true (empty content) or error_code=STREAM_NOT_FOUND are valid.
-    let success = v["success"].as_bool().unwrap_or(false);
-    let err_code = v["error_code"].as_str().unwrap_or("");
-    assert!(
-        success || err_code == "STREAM_NOT_FOUND",
-        "stream_inspect must return success or STREAM_NOT_FOUND, got: {v}"
+    assert_eq!(
+        v["error_code"], "STREAM_NOT_FOUND",
+        "an unknown oid must be reported as not found, got: {v}"
     );
 }
 
@@ -583,7 +587,7 @@ async fn e2e_compare_namespace_self() {
 #[tokio::test]
 #[ignore]
 async fn e2e_import_servers() {
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
 
     // Invoke the binary directly with a tools/call MCP message — no IRIS needed.
     // Respect IRIS_DEV_BIN (set by scripts/coverage.sh) so the instrumented
@@ -639,7 +643,7 @@ async fn e2e_import_servers() {
     // `%APPDATA%` on Windows — so isolating one platform is not mistaken for isolating the test.
     let home = tempfile::TempDir::new().expect("tempdir for isolated home");
 
-    let mut cmd = Command::new(&bin);
+    let mut cmd = iris_agentic_dev_core::testing::clean_command(&bin);
     cmd.args(["mcp"])
         .env("HOME", home.path())
         .env("USERPROFILE", home.path())

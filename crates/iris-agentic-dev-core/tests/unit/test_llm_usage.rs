@@ -9,7 +9,7 @@
 //! mocked or asserted.
 
 use iris_agentic_dev_core::generate::LlmClient;
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use iris_agentic_dev_core::testing::EnvGuard;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -22,40 +22,25 @@ const VARS: &[&str] = &[
     "IRIS_GENERATE_TIMEOUT",
 ];
 
-/// `from_env` reads process-global variables, so the tests take turns and put back what they
-/// found. A leaked `OPENAI_BASE_URL` would point a later test at a dead mock server.
-struct EnvGuard {
-    _lock: MutexGuard<'static, ()>,
-    saved: Vec<(&'static str, Option<String>)>,
-}
-
-impl EnvGuard {
-    fn new(model: &str, base_var: &str, base_url: &str) -> Self {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        let lock = LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let saved = VARS.iter().map(|k| (*k, std::env::var(k).ok())).collect();
-        for k in VARS {
-            std::env::remove_var(k);
-        }
-        std::env::set_var("IRIS_GENERATE_CLASS_MODEL", model);
-        std::env::set_var("ANTHROPIC_API_KEY", "sk-test-key");
-        std::env::set_var(base_var, base_url);
-        EnvGuard { _lock: lock, saved }
+/// `from_env` reads process-global variables, so each test clears the generation variables and
+/// sets its own through the shared guard, which puts back what it found. A leaked
+/// `OPENAI_BASE_URL` would point a later test at a dead mock server.
+fn generation_env(model: &str, base_var: &str, base_url: &str) -> EnvGuard {
+    let mut g = EnvGuard::new();
+    for k in VARS {
+        g.unset(k);
     }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        for (k, v) in &self.saved {
-            match v {
-                Some(val) => std::env::set_var(k, val),
-                None => std::env::remove_var(k),
-            }
-        }
-    }
+    g.set("IRIS_GENERATE_CLASS_MODEL", model);
+    // The key of the provider the base URL belongs to: a provider's key is only ever read for that
+    // provider's models (spec 141 T221).
+    let key_var = if base_var == "OPENAI_BASE_URL" {
+        "OPENAI_API_KEY"
+    } else {
+        "ANTHROPIC_API_KEY"
+    };
+    g.set(key_var, "sk-test-key");
+    g.set(base_var, base_url);
+    g
 }
 
 #[tokio::test]
@@ -72,7 +57,7 @@ async fn anthropic_usage_is_read_from_input_and_output_tokens() {
         .mount(&server)
         .await;
 
-    let _g = EnvGuard::new("claude-3-5-sonnet", "ANTHROPIC_BASE_URL", &server.uri());
+    let mut _g = generation_env("claude-3-5-sonnet", "ANTHROPIC_BASE_URL", &server.uri());
     let client = LlmClient::from_env().expect("client from env");
     let (text, usage) = client
         .complete_with_usage("system", "user")
@@ -102,7 +87,7 @@ async fn a_response_without_usage_still_returns_the_text() {
         .mount(&server)
         .await;
 
-    let _g = EnvGuard::new("claude-3-5-sonnet", "ANTHROPIC_BASE_URL", &server.uri());
+    let mut _g = generation_env("claude-3-5-sonnet", "ANTHROPIC_BASE_URL", &server.uri());
     let client = LlmClient::from_env().expect("client from env");
     let (text, usage) = client
         .complete_with_usage("system", "user")
@@ -122,7 +107,7 @@ async fn an_anthropic_error_status_names_the_status_and_the_body() {
         .mount(&server)
         .await;
 
-    let _g = EnvGuard::new("claude-3-5-sonnet", "ANTHROPIC_BASE_URL", &server.uri());
+    let mut _g = generation_env("claude-3-5-sonnet", "ANTHROPIC_BASE_URL", &server.uri());
     let client = LlmClient::from_env().expect("client from env");
     let err = client
         .complete_with_usage("system", "user")
@@ -151,7 +136,7 @@ async fn an_empty_anthropic_content_array_is_an_error() {
         .mount(&server)
         .await;
 
-    let _g = EnvGuard::new("claude-3-5-sonnet", "ANTHROPIC_BASE_URL", &server.uri());
+    let mut _g = generation_env("claude-3-5-sonnet", "ANTHROPIC_BASE_URL", &server.uri());
     let client = LlmClient::from_env().expect("client from env");
     let err = client
         .complete_with_usage("system", "user")
@@ -176,7 +161,7 @@ async fn openai_usage_is_read_from_prompt_and_completion_tokens() {
         .mount(&server)
         .await;
 
-    let _g = EnvGuard::new("gpt-4o-mini", "OPENAI_BASE_URL", &server.uri());
+    let mut _g = generation_env("gpt-4o-mini", "OPENAI_BASE_URL", &server.uri());
     let client = LlmClient::from_env().expect("client from env");
     let (text, usage) = client
         .complete_with_usage("system", "user")
@@ -197,7 +182,7 @@ async fn an_openai_error_status_names_the_status() {
         .mount(&server)
         .await;
 
-    let _g = EnvGuard::new("gpt-4o-mini", "OPENAI_BASE_URL", &server.uri());
+    let mut _g = generation_env("gpt-4o-mini", "OPENAI_BASE_URL", &server.uri());
     let client = LlmClient::from_env().expect("client from env");
     let err = client
         .complete_with_usage("system", "user")
@@ -221,7 +206,7 @@ async fn an_empty_openai_choices_array_is_an_error() {
         .mount(&server)
         .await;
 
-    let _g = EnvGuard::new("gpt-4o-mini", "OPENAI_BASE_URL", &server.uri());
+    let mut _g = generation_env("gpt-4o-mini", "OPENAI_BASE_URL", &server.uri());
     let client = LlmClient::from_env().expect("client from env");
     assert!(
         client.complete_with_usage("system", "user").await.is_err(),
@@ -234,8 +219,8 @@ async fn an_empty_openai_choices_array_is_an_error() {
 /// back rather than refuse to build the client.
 #[tokio::test]
 async fn the_mock_model_returns_a_class_and_no_usage() {
-    let _g = EnvGuard::new("mock", "OPENAI_BASE_URL", "http://127.0.0.1:1");
-    std::env::set_var("IRIS_GENERATE_TIMEOUT", "not-a-number");
+    let mut _g = generation_env("mock", "OPENAI_BASE_URL", "http://127.0.0.1:1");
+    _g.set("IRIS_GENERATE_TIMEOUT", "not-a-number");
 
     let client = LlmClient::from_env().expect("a bad timeout must not stop the client");
     let (text, usage) = client

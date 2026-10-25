@@ -219,6 +219,10 @@ pub struct IrisSymbolsLocalOk {
     pub count: usize,
     pub query_hint: String,
     pub parse_warnings: Vec<serde_json::Value>,
+    /// The crawl stopped at a budget before it had seen everything.
+    pub truncated: bool,
+    /// `file_budget`, `depth_budget` or `time_budget`; present when `truncated`.
+    pub truncated_reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -288,6 +292,8 @@ pub struct IrisWsOpenOk {
     pub session: String,
     pub server: String,
     pub namespace: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<ExecIdentityReport>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -366,6 +372,17 @@ pub struct IrisAddServerOk {
     pub stored_plaintext: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warning: Option<String>,
+    /// Where this call left the password: `keychain`, `file` (servers.json, owner-only) or `none`.
+    pub credential_store: String,
+    /// Present and `true` when an earlier password was dropped because the endpoint moved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub password_cleared: Option<bool>,
+    /// The restricted account the agent's code runs as on this server, when one was registered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_username: Option<String>,
+    /// Where this call left the service account's password: `keychain`, `file` or `none`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_credential_store: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -587,6 +604,13 @@ pub struct JournalSearchOk {
     pub success: bool,
     pub entries: Vec<JournalEntry>,
     pub returned: u32,
+    /// `true` when the walk stopped before the end of the journal file; `truncated_reason` says why.
+    pub truncated: bool,
+    /// `max_records`, `scan_cap` (200,000 records read) or `time_cap` (20 s); `null` when the
+    /// walk reached the end of the journal or the end of the time range.
+    pub truncated_reason: Option<String>,
+    /// How many journal records the walk read.
+    pub scanned: u64,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -686,10 +710,22 @@ pub enum QueryAuditLogResponse {
 pub struct StreamInspectOk {
     pub success: bool,
     pub oid: String,
-    #[serde(rename = "type")]
-    pub kind: String,
+    /// The class the read went through, for example `%Stream.GlobalCharacter`. Not a claim about
+    /// what the stream holds.
+    pub class: String,
+    /// The whole stream's size in characters.
     pub size: i64,
+    /// Lines in `content`, which is at most `max_chars` characters.
+    pub line_count: usize,
     pub content: String,
+    /// `true` when `content` is a prefix and the stream is longer.
+    pub truncated: bool,
+    /// The cap this read used.
+    pub max_chars: usize,
+    /// `true` when the server's `dataPolicy` is `redact` and the HL7 v2 field mask ran on the
+    /// content. It does not mean the content is de-identified: only the fields listed for the
+    /// masked segments are replaced.
+    pub redacted: bool,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -697,6 +733,10 @@ pub struct StreamInspectOk {
 pub enum StreamInspectResponse {
     Ok(StreamInspectOk),
     Err(ToolError),
+    /// A stream the server's `dataPolicy` withholds (`DATA_POLICY_BLOCKED`, or
+    /// `BODY_NOT_REDACTABLE` under `redact`): `{oid, class, size, line_count,
+    /// content_withheld}` and no content. Free-form JSON, like the other policy refusals.
+    Refused(serde_json::Value),
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -842,6 +882,8 @@ pub enum TelemetryExportTraceResponse {
 pub struct IrisWsExecResponse {
     pub output: String,
     pub session: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<ExecIdentityReport>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -1239,6 +1281,10 @@ pub struct IrisGenerateClassOk {
     pub class_text: String,
     pub compiled: bool,
     pub retried: bool,
+    /// The compile errors IRIS returned for the last attempt; empty when it compiled. Absent on
+    /// the no-IRIS-connection path.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compile_errors: Option<Vec<String>>,
     /// Present only on the no-IRIS-connection path.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
@@ -1380,7 +1426,7 @@ pub struct IrisMessageBodyOk {
 }
 
 /// `iris_message_body`'s wrapper calls the shared cross-tool policy gate
-/// (`crate::policy::gate::dispatch_gate`) *before* the impl function this file otherwise models
+/// (`crate::policy::gate::dispatch_gate_for`) *before* the impl function this file otherwise models
 /// runs at all, and short-circuits with `ok_json(gate)` on a block — a real gap in this file's
 /// first pass at this tool's schema, caught while modeling `iris_execute_method` (which calls
 /// the same gate) in a later batch. The gate's blocked-response shape genuinely varies by which
@@ -1478,7 +1524,7 @@ pub struct IrisExecuteMethodOk {
 }
 
 /// This tool's wrapper calls the shared cross-tool policy gate
-/// (`crate::policy::gate::dispatch_gate`) before `handle_iris_execute_method` runs — the same
+/// (`crate::policy::gate::dispatch_gate_for`) before `handle_iris_execute_method` runs — the same
 /// gate `iris_message_body`/`iris_business_rule_info`/`iris_production_diff` call, hence the
 /// same `GateBlocked` treatment. At least 6 more tools in this codebase call this same gate
 /// (`iris_compile`, `iris_execute`, `iris_query`, `iris_source_control`, `iris_global`) — a
@@ -1745,6 +1791,8 @@ pub struct IrisQueryWriteOk {
     /// the statement (multi-table UPDATE, missing table name) and was skipped rather than run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rows_check_skipped: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<ExecIdentityReport>,
 }
 
 /// `mode="select"` (the default)'s `SQL_WRITE_BLOCKED` case — a destructive keyword was found
@@ -1846,6 +1894,13 @@ pub struct IrisCompileDockerExecOk {
     pub namespace: String,
     pub method: String,
     pub output: String,
+    /// `"off"` when the compile-time gate was switched off for the target server (R4a D9);
+    /// absent when it was on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compile_time_gate: Option<String>,
+    /// Where the switch came from, `<from> <file>`; present with `compile_time_gate`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compile_time_gate_source: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -1861,6 +1916,13 @@ pub struct IrisCompileLocalPathOk {
     /// stops a future change from populating it the way the main compile path already does.
     pub warnings: Vec<serde_json::Value>,
     pub console: Vec<String>,
+    /// `"off"` when the compile-time gate was switched off for the target server (R4a D9);
+    /// absent when it was on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compile_time_gate: Option<String>,
+    /// Where the switch came from, `<from> <file>`; present with `compile_time_gate`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compile_time_gate_source: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -1888,6 +1950,13 @@ pub struct IrisCompileOk {
     pub inline_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_count: Option<usize>,
+    /// `"off"` when the compile-time gate was switched off for the target server (R4a D9);
+    /// absent when it was on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compile_time_gate: Option<String>,
+    /// Where the switch came from, `<from> <file>`; present with `compile_time_gate`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compile_time_gate_source: Option<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -1957,6 +2026,8 @@ pub struct IrisTestOk {
     /// covers check/run/start/stop, none reachable from here).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub coverage: Option<IrisCoverageReportResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<Box<ExecIdentityReport>>,
 }
 
 /// Distinct from `ToolError` — adds a `namespace` field.
@@ -2005,6 +2076,21 @@ pub enum IrisTestResponse {
 // (`session_state`); the docker fallback path carries neither, since it always runs as the
 // primary connection's own identity and has no session support.
 
+/// Who ran the agent's code (spec 141, R2): present on every tool that runs it. `user` is what IRIS
+/// reported (`$USERNAME`, the terminal's `IAD-ID:` marker or the WebSocket probe) when `verified`,
+/// else the user name iad sent.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ExecIdentityReport {
+    pub user: String,
+    /// `service_account_env`, `service_account_server`, `primary` or `os_user_opt_in`.
+    pub source: String,
+    /// `atelier`, `docker_exec_local`, `docker_exec_ssh` or `ws_terminal`.
+    pub path: String,
+    pub verified: bool,
+    /// The pool name of the server it ran on; `default` for the default connection.
+    pub server: String,
+}
+
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct IrisExecuteHttpOk {
     pub success: bool,
@@ -2033,6 +2119,10 @@ pub struct IrisExecuteHttpOk {
     pub translated_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub translation_warning: Option<Vec<String>>,
+    /// Who ran the code. `auth_user` and `service_account_env` repeat part of it and are removed
+    /// in 1.8.0.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<ExecIdentityReport>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -2049,6 +2139,8 @@ pub struct IrisExecuteDockerOk {
     pub translated_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub translation_warning: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<ExecIdentityReport>,
 }
 
 /// The `%ctx` session carrier's own fatal-error path (bad token, restore failure, serialize
@@ -2063,6 +2155,8 @@ pub struct IrisExecuteSessionError {
     pub method: String,
     pub auth_user: String,
     pub service_account_env: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<ExecIdentityReport>,
 }
 
 /// The docker-fallback path's `DOCKER_REQUIRED` case — reported as `HTTP_EXECUTION_FAILED`
@@ -2173,6 +2267,13 @@ pub struct IrisDocWriteOk {
     pub success: bool,
     pub name: String,
     pub open_uri: String,
+    /// `"off"` when the compile-time gate was switched off for the target server (R4a D9);
+    /// absent when it was on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compile_time_gate: Option<String>,
+    /// Where the switch came from, `<from> <file>`; present with `compile_time_gate`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compile_time_gate_source: Option<String>,
     /// `true` if the class had an explicit Storage block that got stripped before writing
     /// (see `allow_storage_regeneration` on the request).
     pub storage_stripped: bool,
@@ -2384,10 +2485,18 @@ pub struct IrisCoverageCheckOk {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct IrisCoverageClassEntry {
     pub class: String,
+    /// The first of the class's routines; `routines` lists them all.
     pub routine: String,
+    /// Every routine the class compiled to (`Pkg.Cls.0`, `Pkg.Cls.1`, ...), counted together.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub routines: Option<Vec<String>>,
     pub hit: i64,
     pub total: i64,
-    pub pct: f64,
+    /// `null` when no lines were counted (0 of 0): that is not 0% coverage.
+    pub pct: Option<f64>,
+    /// Present when `pct` is `null`, saying why.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// mode=run and mode=report success (report's own success is this same shape with the
@@ -2395,13 +2504,21 @@ pub struct IrisCoverageClassEntry {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct IrisCoverageRunOk {
     pub success: bool,
-    pub total_pct: f64,
+    /// `null` when no lines were counted at all.
+    pub total_pct: Option<f64>,
     pub hits: i64,
     pub total: i64,
     pub classes: Vec<IrisCoverageClassEntry>,
-    /// mode=run only, and only when `target_pct` was passed on the request.
+    /// mode=run only, and only when `target_pct` was passed on the request. `null` when there is no
+    /// figure to judge (0 of 0 lines) or the run threw (`partial`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meets_target: Option<bool>,
+    /// mode=run only: a line of the run threw. The figures are what was collected before it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub partial: Option<bool>,
+    /// The text of what threw, when `partial`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_pct: Option<f64>,
     /// mode=run only — always present there, absent on mode=report (no merge step).
@@ -3055,8 +3172,14 @@ pub struct IrisAdminJournalSearchOk {
     pub success: bool,
     pub records: Vec<IrisAdminJournalRecordEntry>,
     pub count: usize,
-    /// `true` if the real match count reached `max_records` (capped at 1000).
+    /// `true` when the walk stopped before the end of the journal file; `truncated_reason` says why.
     pub truncated: bool,
+    /// `max_records` (more records match than were returned, capped at 1000), `scan_cap`
+    /// (200,000 records read) or `time_cap` (20 s); `null` when the walk reached the end of the
+    /// journal or the end of the time range.
+    pub truncated_reason: Option<String>,
+    /// How many journal records the walk read.
+    pub scanned: u64,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -3360,7 +3483,12 @@ pub struct CheckConfigOk {
     pub namespace: String,
     /// Present only for a Docker-discovered connection.
     pub container: Option<String>,
+    /// The file the connection came from. Set only for a file that names a `host` or a `container`.
     pub config_file: Option<String>,
+    /// A configuration file that was read and names neither, so it chose no connection.
+    pub config_file_named_no_target: Option<String>,
+    /// Says why that file is not `config_file`, and what chose the connection instead.
+    pub config_file_warning: Option<String>,
     /// Set when a workspace file named a host other than this machine or `IRIS_HOST`'s server, so
     /// the environment's `IRIS_USERNAME`/`IRIS_PASSWORD` were not sent to it. Says what to do.
     pub credentials_withheld: Option<String>,
@@ -3386,15 +3514,31 @@ pub struct CheckConfigOk {
     /// Where the server watches for `.iris-agentic-dev.toml` hot-reload — write a config
     /// file to this exact path to switch connections mid-session without a restart.
     pub config_watch_path: Option<String>,
-    /// Whether TLS certificate validation is on for IRIS-bound requests — the effective state,
-    /// after `IRIS_INSECURE`, `IRIS_TLS_VERIFY`, and a `tls_verify` config key have all had their
-    /// say (#127). `false` means certificates are not checked at all, which nothing else in the
-    /// output would tell you: a bad cert produces no complaint anywhere.
-    ///
-    /// There is no `tls_verify_source` companion to the two gate fields, because a config-file
-    /// declaration reaches the client by way of `IRIS_TLS_VERIFY`, so by the time this is read the
-    /// two are indistinguishable. Naming a source here would mean guessing one.
+    /// Whether TLS certificate validation is on for the default connection's requests (#127).
+    /// `false` means its certificates are not checked at all, which nothing else in the output
+    /// would tell you: a bad cert produces no complaint anywhere. Each pool member's setting and
+    /// where it came from are under `tls`.
     pub tls_verify: bool,
+    /// `{default: {tls_verify, source}, servers: {<name>: {tls_verify, source}}}`. `source` is
+    /// `default` (nothing turned checks off), `launch_env`, `config_file`, `servers_json` or
+    /// `server_manager`. Spec 141, FR-022.
+    pub tls: serde_json::Value,
+    /// `{skipped: [{port, reason}]}`: listeners the last localhost scan did not send credentials
+    /// to because they showed no sign of being IRIS (spec 141, FR-024).
+    pub discovery: serde_json::Value,
+    /// `"strict"` when the scratch-class tools are refused and unlisted (`read_only = "strict"`
+    /// in any file, or `IAD_READ_ONLY=strict`), else `"off"`.
+    pub read_only: String,
+    /// The file or launch setting that asked for strict; `null` when it is off.
+    pub read_only_from: Option<String>,
+    /// `"local"` (the default) or `"iris"`: telemetry always goes to the local JSONL file, and
+    /// `iris` adds the `^IRISDEV("telemetry")` global where the call's server allows it. Operator
+    /// opt-in only: `telemetry_sink = "iris"` in the operator file or `IAD_TELEMETRY_SINK=iris`.
+    pub telemetry_sink: String,
+    /// `{checkin, disconnect}`: whether the operator turned on `IRIS_SCM_ALLOW_CHECKIN` (CheckIn)
+    /// and `IRIS_SCM_ALLOW_DISCONNECT` (Disconnect and Reconnect). Each is its own switch
+    /// (spec 141 T198).
+    pub scm_opt_ins: serde_json::Value,
     pub objectscript_workspace: Option<String>,
     pub capabilities: CheckConfigCapabilities,
     /// Present only when the last config-file parse attempt failed.
@@ -3405,4 +3549,34 @@ pub struct CheckConfigOk {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback_warning: Option<String>,
     pub server_manager: CheckConfigServerManager,
+    /// Which files were read (spec 141): the operator file, and the workspace-layer file with its
+    /// trust state. Shape: `contracts/check-config.schema.json`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_sources: Option<serde_json::Value>,
+    /// Which skills directory replaced the embedded skills, and whether a working-directory one was
+    /// left unread (spec 141 FR-027): `{override_dir, override_kind, local_skills, ignored_dir}`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skills: Option<serde_json::Value>,
+    /// One entry per server: every policy part with its value, where it came from and the ids of
+    /// the set-aside items that touched it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effective_policy: Option<serde_json::Value>,
+    /// `{enabled, from, file, set_aside}` for the default server's compile-time gate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compile_time_gate: Option<serde_json::Value>,
+    /// Settings iad read and did not act on, each with a stable id, the reason and what lifts it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub set_aside: Option<Vec<serde_json::Value>>,
+    /// Values iad corrected or did not understand, and files that did not parse.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config_errors: Option<Vec<String>>,
+    /// Who the agent's code runs as, per path and per server (spec 141, R2): `service_account`,
+    /// `os_user_opt_in` (with the workspace-file settings iad ignored), `paths`, `servers` and the
+    /// `tools` covered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity: Option<serde_json::Value>,
+    /// The local audit log: its `path`, and whether it keeps payload text (`payloads`: `sizes` or
+    /// `full`). Only the operator can choose `full` (spec 141, FR-028).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audit: Option<serde_json::Value>,
 }

@@ -2,9 +2,10 @@
 
 Most tools work over the Atelier REST API and connect to any IRIS instance — no Docker
 required unless noted. Tools marked ✦ require `IRIS_CONTAINER`. Tools marked 🔒 are
-write-gated (suppressed on Live instances unless `IRIS_ALLOW_PROD=1`). Tools marked ☠
-are destructive-gated — they require `destructive_tools_enabled = true` in addition to
-`write_tools_enabled = true`.
+write-gated: they run when the target server's write tier is on, which by default it is not on a
+Live instance (see [Write protection](#write-protection)). Tools marked ☠ are
+destructive-gated — they require `destructive_tools_enabled = true` in addition to the write
+tier.
 
 `namespace` defaults to `"USER"` on every tool. It is omitted from parameter tables below
 unless there is something non-obvious to say about it.
@@ -13,80 +14,82 @@ unless there is something non-obvious to say about it.
 
 ## Quick reference
 
-| Tool                                                              | Section                   |
-| ----------------------------------------------------------------- | ------------------------- |
-| [`iris_servers`](#iris_servers)                                   | Server Management         |
-| [`iris_add_server`](#iris_add_server)                             | Server Management         |
-| [`iris_remove_server`](#iris_remove_server-) ☠                    | Server Management         |
-| [`iris_reload_pool`](#iris_reload_pool)                           | Server Management         |
-| [`iris_test_server`](#iris_test_server)                           | Server Management         |
-| [`iris_import_servers`](#iris_import_servers)                     | Server Management         |
-| [`iris_doc`](#iris_doc)                                           | Code                      |
-| [`iris_compile`](#iris_compile)                                   | Code                      |
-| [`iris_execute`](#iris_execute)                                   | Code                      |
-| [`iris_execute_method`](#iris_execute_method)                     | Code                      |
-| [`iris_query`](#iris_query)                                       | Code                      |
-| [`iris_test`](#iris_test)                                         | Code                      |
-| [`iris_coverage`](#iris_coverage)                                 | Code                      |
-| [`iris_global`](#iris_global-) 🔒                                 | Code                      |
-| [`iris_source_control`](#iris_source_control-) ✦                  | Code                      |
-| [`iris_symbols`](#iris_symbols)                                   | Search and introspection  |
-| [`iris_symbols_local`](#iris_symbols_local)                       | Search and introspection  |
-| [`docs_introspect`](#docs_introspect)                             | Search and introspection  |
-| [`iris_search`](#iris_search)                                     | Search and introspection  |
-| [`iris_info`](#iris_info)                                         | Search and introspection  |
-| [`iris_macro`](#iris_macro)                                       | Search and introspection  |
-| [`iris_table_info`](#iris_table_info)                             | Search and introspection  |
-| [`resolve_dynamic_dispatch`](#resolve_dynamic_dispatch)           | Search and introspection  |
-| [`extract_message_map_routing`](#extract_message_map_routing)     | Search and introspection  |
-| [`find_subclass_implementations`](#find_subclass_implementations) | Search and introspection  |
-| [`iris_debug`](#iris_debug)                                       | Debugging                 |
-| [`iris_get_log`](#iris_get_log)                                   | Debugging                 |
-| [`check_config`](#check_config)                                   | Debugging                 |
-| [`iris_generate`](#iris_generate)                                 | Generation                |
-| [`iris_generate_class`](#iris_generate_class)                     | Generation                |
-| [`iris_generate_test`](#iris_generate_test)                       | Generation                |
-| [`iris_production`](#iris_production-) ✦                          | Interoperability          |
-| [`iris_interop_query`](#iris_interop_query-) ✦                    | Interoperability          |
-| [`iris_production_item`](#iris_production_item-) 🔒               | Interoperability          |
-| [`iris_production_diff`](#iris_production_diff)                   | Interoperability          |
-| [`iris_message_body`](#iris_message_body)                         | Interoperability          |
-| [`iris_business_rule_info`](#iris_business_rule_info)             | Interoperability          |
-| [`iris_credential_list`](#iris_credential_list)                   | Interoperability          |
-| [`iris_credential_manage`](#iris_credential_manage--) 🔒 ☠        | Interoperability          |
-| [`iris_lookup_manage`](#iris_lookup_manage-) ☠                    | Interoperability          |
-| [`iris_lookup_transfer`](#iris_lookup_transfer)                   | Interoperability          |
-| [`iris_ws_open`](#iris_ws_open)                                   | WebSocket sessions        |
-| [`iris_ws_exec`](#iris_ws_exec)                                   | WebSocket sessions        |
-| [`iris_ws_close`](#iris_ws_close)                                 | WebSocket sessions        |
-| [`global_preview`](#global_preview)                               | Administration            |
-| [`global_kill`](#global_kill--) 🔒 ☠                              | Administration            |
-| [`iris_namespace_list`](#iris_namespace_list)                     | Administration            |
-| [`iris_namespace_create`](#iris_namespace_create--) 🔒 ☠          | Administration            |
-| [`iris_database_list`](#iris_database_list)                       | Administration            |
-| [`iris_mirror_status`](#iris_mirror_status)                       | Administration            |
-| [`iris_system_performance`](#iris_system_performance)             | Administration            |
-| [`iris_database_stats`](#iris_database_stats)                     | Administration            |
-| [`journal_search`](#journal_search)                               | Administration            |
-| [`query_audit_log`](#query_audit_log)                             | Administration            |
-| [`stream_inspect`](#stream_inspect)                               | Administration            |
-| [`my_access`](#my_access)                                         | Administration            |
-| [`capability_matrix`](#capability_matrix)                         | Administration            |
-| [`hl7_schema_list`](#hl7_schema_list)                             | Administration            |
-| [`hl7_schema_inspect`](#hl7_schema_inspect)                       | Administration            |
-| [`mermaid_class`](#mermaid_class)                                 | Administration            |
-| [`mermaid_production`](#mermaid_production)                       | Administration            |
-| [`resolve_storage`](#resolve_storage)                             | Administration            |
-| [`compare_document`](#compare_document)                           | Administration            |
-| [`compare_namespace`](#compare_namespace)                         | Administration            |
-| [`iris_admin`](#iris_admin-) ☠                                    | Administration            |
-| [`iris_containers`](#iris_containers-) ✦                          | Administration            |
-| [`skill`](#skill)                                                 | Skills and knowledge base |
-| [`skill_community`](#skill_community)                             | Skills and knowledge base |
-| [`kb` / `kb_index` / `kb_recall`](#kb--kb_index--kb_recall)       | Skills and knowledge base |
-| [`agent_history` / `agent_stats`](#agent_history--agent_stats)    | Skills and knowledge base |
-| [`telemetry_query`](#telemetry_query)                             | Skills and knowledge base |
-| [`telemetry_export_trace`](#telemetry_export_trace)               | Skills and knowledge base |
+| Tool                                                                                                                      | Section                   |
+| ------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| [`iris_servers`](#iris_servers)                                                                                           | Server Management         |
+| [`iris_add_server`](#iris_add_server)                                                                                     | Server Management         |
+| [`iris_remove_server`](#iris_remove_server-) ☠                                                                            | Server Management         |
+| [`iris_reload_pool`](#iris_reload_pool)                                                                                   | Server Management         |
+| [`iris_test_server`](#iris_test_server)                                                                                   | Server Management         |
+| [`iris_import_servers`](#iris_import_servers)                                                                             | Server Management         |
+| [`iris_doc`](#iris_doc)                                                                                                   | Code                      |
+| [`iris_compile`](#iris_compile)                                                                                           | Code                      |
+| [`iris_execute`](#iris_execute)                                                                                           | Code                      |
+| [`iris_execute_method`](#iris_execute_method)                                                                             | Code                      |
+| [`iris_query`](#iris_query)                                                                                               | Code                      |
+| [`iris_test`](#iris_test)                                                                                                 | Code                      |
+| [`iris_coverage`](#iris_coverage)                                                                                         | Code                      |
+| [`iris_global`](#iris_global-) 🔒                                                                                         | Code                      |
+| [`iris_source_control`](#iris_source_control-) ✦                                                                          | Code                      |
+| [`iris_symbols`](#iris_symbols)                                                                                           | Search and introspection  |
+| [`iris_doc_search`](#iris_doc_search)                                                                                     | Search and introspection  |
+| [`iris_symbols_local`](#iris_symbols_local)                                                                               | Search and introspection  |
+| [`docs_introspect`](#docs_introspect)                                                                                     | Search and introspection  |
+| [`iris_search`](#iris_search)                                                                                             | Search and introspection  |
+| [`iris_info`](#iris_info)                                                                                                 | Search and introspection  |
+| [`iris_macro`](#iris_macro)                                                                                               | Search and introspection  |
+| [`iris_table_info`](#iris_table_info)                                                                                     | Search and introspection  |
+| [`resolve_dynamic_dispatch`](#resolve_dynamic_dispatch)                                                                   | Search and introspection  |
+| [`extract_message_map_routing`](#extract_message_map_routing)                                                             | Search and introspection  |
+| [`find_subclass_implementations`](#find_subclass_implementations)                                                         | Search and introspection  |
+| [`iris_debug`](#iris_debug)                                                                                               | Debugging                 |
+| [`iris_get_log`](#iris_get_log)                                                                                           | Debugging                 |
+| [`check_config`](#check_config)                                                                                           | Debugging                 |
+| [`iris_generate`](#iris_generate)                                                                                         | Generation                |
+| [`iris_generate_class`](#iris_generate_class)                                                                             | Generation                |
+| [`iris_generate_test`](#iris_generate_test)                                                                               | Generation                |
+| [`iris_production`](#iris_production-) ✦                                                                                  | Interoperability          |
+| [`iris_interop_query`](#iris_interop_query-) ✦                                                                            | Interoperability          |
+| [`iris_production_item`](#iris_production_item-) 🔒                                                                       | Interoperability          |
+| [`iris_production_diff`](#iris_production_diff)                                                                           | Interoperability          |
+| [`iris_message_body`](#iris_message_body)                                                                                 | Interoperability          |
+| [`iris_business_rule_info`](#iris_business_rule_info)                                                                     | Interoperability          |
+| [`iris_credential_list`](#iris_credential_list)                                                                           | Interoperability          |
+| [`iris_credential_manage`](#iris_credential_manage--) 🔒 ☠                                                                | Interoperability          |
+| [`iris_lookup_manage`](#iris_lookup_manage-) ☠                                                                            | Interoperability          |
+| [`iris_lookup_transfer`](#iris_lookup_transfer)                                                                           | Interoperability          |
+| [`iris_ws_open`](#iris_ws_open)                                                                                           | WebSocket sessions        |
+| [`iris_ws_exec`](#iris_ws_exec)                                                                                           | WebSocket sessions        |
+| [`iris_ws_close`](#iris_ws_close)                                                                                         | WebSocket sessions        |
+| [`global_preview`](#global_preview)                                                                                       | Administration            |
+| [`global_kill`](#global_kill--) 🔒 ☠                                                                                      | Administration            |
+| [`iris_namespace_list`](#iris_namespace_list)                                                                             | Administration            |
+| [`iris_namespace_create`](#iris_namespace_create--) 🔒 ☠                                                                  | Administration            |
+| [`iris_database_list`](#iris_database_list)                                                                               | Administration            |
+| [`iris_mirror_status`](#iris_mirror_status)                                                                               | Administration            |
+| [`iris_system_performance`](#iris_system_performance)                                                                     | Administration            |
+| [`iris_database_stats`](#iris_database_stats)                                                                             | Administration            |
+| [`journal_search`](#journal_search)                                                                                       | Administration            |
+| [`query_audit_log`](#query_audit_log)                                                                                     | Administration            |
+| [`stream_inspect`](#stream_inspect)                                                                                       | Administration            |
+| [`my_access`](#my_access)                                                                                                 | Administration            |
+| [`capability_matrix`](#capability_matrix)                                                                                 | Administration            |
+| [`hl7_schema_list`](#hl7_schema_list)                                                                                     | Administration            |
+| [`hl7_schema_inspect`](#hl7_schema_inspect)                                                                               | Administration            |
+| [`mermaid_class`](#mermaid_class)                                                                                         | Administration            |
+| [`mermaid_production`](#mermaid_production)                                                                               | Administration            |
+| [`resolve_storage`](#resolve_storage)                                                                                     | Administration            |
+| [`compare_document`](#compare_document)                                                                                   | Administration            |
+| [`compare_namespace`](#compare_namespace)                                                                                 | Administration            |
+| [`iris_admin`](#iris_admin-) ☠                                                                                            | Administration            |
+| [`iris_containers`](#iris_containers-) ✦                                                                                  | Administration            |
+| [`skill`](#skill)                                                                                                         | Skills and knowledge base |
+| [`skill_list` / `skill_search` / `skill_describe` / `skill_forget`](#skill_list-skill_search-skill_describe-skill_forget) | Skills and knowledge base |
+| [`skill_community`](#skill_community)                                                                                     | Skills and knowledge base |
+| [`kb` / `kb_index` / `kb_recall`](#kb--kb_index--kb_recall)                                                               | Skills and knowledge base |
+| [`agent_history` / `agent_stats`](#agent_history--agent_stats)                                                            | Skills and knowledge base |
+| [`telemetry_query`](#telemetry_query)                                                                                     | Skills and knowledge base |
+| [`telemetry_export_trace`](#telemetry_export_trace)                                                                       | Skills and knowledge base |
 
 ---
 
@@ -112,13 +115,27 @@ is rejected with `UNKNOWN_PARAMETER` and the error lists the names it does accep
 1.3.2, 31 tools advertised an open object with no properties at all, so a misspelled or
 invented parameter was dropped in silence — `stream_inspect` was documented with a
 character cap that no code read, and a caller asking for 10,000 characters got the whole
-stream and no warning. The name of that parameter is deliberately absent from this file:
-a guard in the test suite fails if it comes back, because the docs row is what created the
-bug in the first place.
+stream and no warning. The cap is real now (`max_chars`, spec 141): a handler reads it, the
+schema declares it, and a test in each place fails if one of the three goes.
 
 Six tools take no parameters at all and declare an empty property set: `agent_stats`,
 `check_config`, `iris_import_servers`, `iris_reload_pool`, `skill_community_list`,
 `skill_list`.
+
+---
+
+## Parameters every gated tool takes
+
+Two parameters appear on most tools and are described here once instead of in every table.
+
+| Parameter | Type   | Notes                                                                                                                                                                                                                                                                            |
+| --------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server`  | string | Run the call on a named registered server instead of the default. Every limit on the call (gates, policy, role, service account, namespace) is judged against that server, and a name that is not in the pool is refused before any gate runs. Use `iris_servers` to list names. |
+| `confirm` | bool   | Acknowledges a write on a `subject` server (`SUBJECT_CONFIRM_REQUIRED`) or a destructive call that asks for confirmation. It does nothing on other servers. `iris_execute` and `iris_ws_exec` also accept the older spelling `confirmed`.                                        |
+
+`confirm` is an acknowledgement: it lifts a check meant to catch the agent's mistakes, not one
+meant to hold against the agent. See [Refusals](#refusals). `force` is not an acknowledgement; a
+forced call is judged by what it actually runs.
 
 ---
 
@@ -199,6 +216,10 @@ prefix also carry `web_prefix` (the key is absent when there is no prefix). Two 
 behind the same gateway share a host and port, so `base_url` is the field that tells them
 apart.
 
+| Parameter | Type | Default | Notes                               |
+| --------- | ---- | ------- | ----------------------------------- |
+| `probe`   | bool | `false` | Probe every server for reachability |
+
 Default (`probe` omitted or `false`): fast path — `reachable` is `null` per entry, no HTTP
 requests made.
 
@@ -210,22 +231,33 @@ reported healthy on the strength of the gateway root answering.
 
 ### `iris_add_server`
 
-Register a new IRIS instance. Writes server details to
-`~/.config/iris-agentic-dev/servers.json` and stores the password in the OS keychain —
-the password never appears in any config file. Uses the same keychain format as VS Code
-Server Manager, so credentials are shared automatically if both tools are installed.
+Register a new IRIS instance. Writes the server's details to
+`~/.config/iris-agentic-dev/servers.json` and stores the password in the OS keychain, under
+iad's own service (`iris-agentic-dev`). The entry in `servers.json` holds no password when the
+keychain took it. The keychain account includes the server's address, so a password saved for
+one address cannot be found for another. iad never writes to or deletes from the Server Manager's
+keychain service.
 
-| Parameter     | Type   | Default  | Notes                                                       |
-| ------------- | ------ | -------- | ----------------------------------------------------------- |
-| `name`        | string | —        | Referenced by the `server` param of every other tool        |
-| `host`        | string | —        | Hostname or IP                                              |
-| `port`        | number | —        | Web port                                                    |
-| `namespace`   | string | —        | Default namespace for calls to this server                  |
-| `username`    | string | —        | IRIS username                                               |
-| `password`    | string | —        | Goes to the keychain, not to disk                           |
-| `description` | string | none     | Free text                                                   |
-| `scheme`      | string | `"http"` | `"http"` or `"https"`                                       |
-| `web_prefix`  | string | none     | Path prefix the web server is served under, e.g. `/hs20261` |
+| Parameter          | Type   | Default  | Notes                                                                                                                                    |
+| ------------------ | ------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`             | string | —        | Referenced by the `server` param of every other tool. A name that is a Server Manager profile is refused with `NAME_CONFLICT`            |
+| `host`             | string | —        | Hostname or IP                                                                                                                           |
+| `port`             | number | —        | Web port                                                                                                                                 |
+| `namespace`        | string | —        | Default namespace for calls to this server                                                                                               |
+| `username`         | string | —        | IRIS username                                                                                                                            |
+| `password`         | string | —        | Goes to the keychain; on a host with no keychain, to `servers.json` (owner-only), tied to the address                                    |
+| `description`      | string | none     | Free text                                                                                                                                |
+| `scheme`           | string | `"http"` | `"http"` or `"https"`; anything else is `INVALID_PARAMS`                                                                                 |
+| `web_prefix`       | string | none     | Path prefix the web server is served under, e.g. `/hs20261`                                                                              |
+| `container`        | string | none     | The Docker container of this server: the only one a `docker exec` fallback may use for it                                                |
+| `service_username` | string | none     | The restricted account the agent's code runs as on this server; see [Service account](connecting.md#service-account-for-the-agents-code) |
+| `service_password` | string | none     | The service account's password, stored the way `password` is                                                                             |
+
+The response says where the password went: `credential_store` is `keychain`, `file` or `none`,
+and `stored_plaintext: true` with a warning marks the headless fallback. Registering a name again
+at a different address drops the password the old address had (`password_cleared: true`), so a
+moved entry never sends it to a new host; a re-registration at the same address keeps the stored
+password. See [Adding servers](connecting.md#adding-servers-via-iris_add_server).
 
 Pass `web_prefix` when the instance sits behind a shared web gateway and Atelier answers at
 `/<prefix>/api/atelier/` rather than at `/api/atelier/`. HealthShare and multi-instance
@@ -238,24 +270,31 @@ resolve to the same URL. Multi-segment prefixes (`/gw/hs20261`) work.
 `webServer.pathPrefix` is accepted as an alias when reading `servers.json` by hand, so a
 block copied out of VS Code settings loads without renaming the key.
 
-Re-registering an existing name updates that entry in place and keeps its stored password,
-so a forgotten prefix can be added without re-entering the credential.
-
 After adding a server, call `iris_reload_pool` for the new connection to appear in the
 running pool. No restart is needed.
 
 ### `iris_remove_server` ☠
 
-Remove a server from the iad-native config and its keychain entry. Requires
-`destructive_tools_enabled = true`. Cannot remove servers sourced from VS Code settings —
-edit `settings.json` directly for those.
+Remove a server from the iad-native config and iad's own keychain item for it (never the
+Server Manager's). Requires `destructive_tools_enabled = true`. Cannot remove servers sourced
+from VS Code settings, the environment or a fleet file (`REMOVE_NOT_ALLOWED`) — edit those
+sources directly.
+
+| Parameter | Type   | Default | Notes                                      |
+| --------- | ------ | ------- | ------------------------------------------ |
+| `name`    | string | —       | **Required.** Name of the server to remove |
 
 ### `iris_reload_pool`
 
-Hot-reload the connection pool from disk without restarting iad. Re-reads the workspace
-TOML config and the iad-native servers list, then atomically replaces the in-memory pool.
+Hot-reload the connection pool from disk without restarting iad. Re-reads the operator file,
+the workspace file, their trust state and the iad-native servers list, then atomically replaces
+the in-memory pool.
 Returns `{success, servers_loaded, servers, note}`. Parse errors preserve the existing pool
 and return `{success: false, error_code: "TOML_PARSE_ERROR", ...}`.
+
+This is a write: it makes every server declared since startup routable, so it needs the write
+gate open on the default server (`WRITE_TOOLS_DISABLED` otherwise) and is refused under
+`read_only = "strict"`. It is an `admin` call for `allow` lists.
 
 **Background reload**: iad also reloads the pool automatically when the workspace TOML
 changes on disk. The change is detected via file mtime on each call to `iris_servers`,
@@ -266,6 +305,14 @@ is silently swallowed — the existing pool is kept.
 
 Probe an IRIS server for reachability. Returns `reachable`, `auth`, `iris_version`,
 `atelier_version`, and `latency_ms`.
+
+| Parameter  | Type   | Default   | Notes                                               |
+| ---------- | ------ | --------- | --------------------------------------------------- |
+| `name`     | string | —         | A registered server; mutually exclusive with `host` |
+| `host`     | string | —         | Ad-hoc probe of a server not in the pool            |
+| `web_port` | number | `52773`   | Ad-hoc probe only                                   |
+| `username` | string | `_SYSTEM` | Ad-hoc probe only                                   |
+| `password` | string | `""`      | Ad-hoc probe only                                   |
 
 Two modes:
 
@@ -280,9 +327,11 @@ Two modes:
 ### `iris_import_servers`
 
 One-time import of IRIS server definitions from VS Code or Cursor settings into the
-iad-native config. Reads passwords from the existing OS keychain — no re-entry required.
-Reports servers imported, skipped (already present), and those with no keychain entry.
-A profile's `webServer.pathPrefix` is carried across as `web_prefix`.
+iad-native config. It copies no password: each entry is marked `credential = "server-manager"`,
+its password stays in the Server Manager's keychain item, and iad reads that item only while the
+entry's address equals the profile's. Reports servers imported, skipped (already present), and
+those with no keychain entry (`no_keychain`). A profile's `webServer.pathPrefix` is carried
+across as `web_prefix`.
 
 ---
 
@@ -292,25 +341,28 @@ A profile's `webServer.pathPrefix` is carried across as `web_prefix`.
 
 Read, write, delete, insert lines, or list IRIS documents.
 
-| Parameter                    | Type     | Default  | Notes                                                                               |
-| ---------------------------- | -------- | -------- | ----------------------------------------------------------------------------------- |
-| `mode` (alias: `action`)     | string   | `"get"`  | See modes below                                                                     |
-| `name` (alias: `document`)   | string   | —        | Document name, e.g. `"MyApp.MyClass.cls"`                                           |
-| `names`                      | string[] | `[]`     | Batch get/delete                                                                    |
-| `content`                    | string   | —        | Document content for `put`/`insert`                                                 |
-| `compile`                    | bool     | `false`  | Compile after `put`                                                                 |
-| `start`                      | int      | —        | Start line for `get` (fragment) or `delete_lines`                                   |
-| `end`                        | int      | —        | End line for `get` (fragment) or `delete_lines`                                     |
-| `line`                       | int      | —        | Insert-before line for `insert`                                                     |
-| `expected`                   | string   | —        | CAS guard: current content at `start`–`end`; fails with `STALE_CONTENT` if mismatch |
-| `pattern`                    | string   | —        | Glob filter for `list`, e.g. `"MyApp.*.cls"`                                        |
-| `category`                   | string   | —        | `"CLS"` \| `"MAC"` \| `"INT"` \| `"INC"` \| `"ALL"`                                 |
-| `max_results`                | int      | `200`    | Max 1000; for `list`                                                                |
-| `compiled_type`              | string   | `"INT"`  | `"INT"` is the only value; for `compiled` mode. OBJ returns `INVALID_PARAMS`        |
-| `allow_storage_regeneration` | bool     | `false`  | Confirms a `put` that drops a class's existing Storage block                        |
-| `elicitation_id`             | string   | —        | SCM checkout dialog resume ID                                                       |
-| `elicitation_answer`         | string   | —        | SCM checkout dialog answer                                                          |
-| `namespace`                  | string   | `"USER"` |                                                                                     |
+| Parameter                    | Type     | Default  | Notes                                                                                                         |
+| ---------------------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------- |
+| `mode` (alias: `action`)     | string   | `"get"`  | See modes below                                                                                               |
+| `name` (alias: `document`)   | string   | —        | Document name, e.g. `"MyApp.MyClass.cls"`                                                                     |
+| `names`                      | string[] | `[]`     | Batch get/delete                                                                                              |
+| `content`                    | string   | —        | Document content for `put`/`insert`                                                                           |
+| `compile`                    | bool     | `false`  | Compile after `put`                                                                                           |
+| `start`                      | int      | —        | Start line for `get` (fragment) or `delete_lines`                                                             |
+| `end`                        | int      | —        | End line for `get` (fragment) or `delete_lines`                                                               |
+| `line`                       | int      | —        | Insert-before line for `insert`                                                                               |
+| `expected`                   | string   | —        | CAS guard: current content at `start`–`end`; fails with `STALE_CONTENT` if mismatch                           |
+| `pattern`                    | string   | —        | Glob filter for `list`, e.g. `"MyApp.*.cls"`                                                                  |
+| `category`                   | string   | —        | `"CLS"` \| `"MAC"` \| `"INT"` \| `"INC"` \| `"ALL"`                                                           |
+| `max_results`                | int      | `200`    | Max 1000; for `list`                                                                                          |
+| `compiled_type`              | string   | `"INT"`  | `"INT"` is the only value; for `compiled` mode. OBJ returns `INVALID_PARAMS`                                  |
+| `allow_storage_regeneration` | bool     | `false`  | Confirms a `put` that drops a class's existing Storage block                                                  |
+| `elicitation_id`             | string   | —        | SCM checkout dialog resume ID                                                                                 |
+| `elicitation_answer`         | string   | —        | SCM checkout dialog answer                                                                                    |
+| `include_scratch`            | bool     | `false`  | `list`: include iad's own `IrisDevTmp.*` scratch classes (hidden unless the pattern starts with `IrisDevTmp`) |
+| `confirm`                    | bool     | `false`  | Acknowledges a write on a `subject` server                                                                    |
+| `server`                     | string   | —        | Named server; omit for default                                                                                |
+| `namespace`                  | string   | `"USER"` |                                                                                                               |
 
 **Modes:**
 
@@ -351,6 +403,15 @@ can misalign existing rows of a `%Persistent` class. Pass `allow_storage_regener
 when the reset is intended; the response then lists the properties the old storage held. Use
 `mode=insert` or `mode=delete_lines` when the edit does not touch the Storage block.
 
+**Compile-time gate.** A `put` of a `.cls`, `.mac` or `.inc` document is read for constructs IRIS
+runs while the document compiles (preprocessor directives, braced class parameters, projections,
+class XML). A match is refused with `COMPILE_TIME_EXEC_BLOCKED`, as an error result, before
+anything is written; with `compile=true`, the stored `.inc` files the document includes are
+read and checked too, and a class whose out-of-date superclass IRIS would compile with it is
+refused with `COMPILE_SUPERCLASS_STALE` after the write (see `iris_compile`). The switch is the
+target server's; see
+[Compile-time gate](connecting.md#compile-time-gate).
+
 **SCM checkout.** On source-controlled instances, `iris_doc` runs the SCM pre-write
 check before writing. If checkout is required, the tool returns an elicitation dialog
 rather than writing. Resume it with `elicitation_id` + `elicitation_answer`.
@@ -361,15 +422,43 @@ rather than writing. Resume it with `elicitation_id` + `elicitation_answer`.
 
 Compile a class, routine, or wildcard pattern.
 
-| Parameter        | Type   | Default  | Notes                                                           |
-| ---------------- | ------ | -------- | --------------------------------------------------------------- |
-| `target`         | string | —        | **Required.** Class name, routine, or glob like `"MyApp.*.cls"` |
-| `flags`          | string | `"cuk"`  | Compile flags                                                   |
-| `namespace`      | string | `"USER"` |                                                                 |
-| `force_writable` | bool   | `false`  | Override read-only check                                        |
-| `inline`         | bool   | `false`  | Return all errors inline (bypass log store)                     |
+| Parameter        | Type   | Default  | Notes                                                                                                             |
+| ---------------- | ------ | -------- | ----------------------------------------------------------------------------------------------------------------- |
+| `target`         | string | —        | **Required.** Class name, routine, glob like `"MyApp.*.cls"`, or a local source file inside the project directory |
+| `flags`          | string | `"cuk"`  | Compile flags                                                                                                     |
+| `namespace`      | string | `"USER"` |                                                                                                                   |
+| `force_writable` | bool   | `false`  | Override read-only check                                                                                          |
+| `inline`         | bool   | `false`  | Return all errors inline (bypass log store)                                                                       |
+| `confirm`        | bool   | `false`  | Acknowledges a compile on a `subject` server                                                                      |
+| `server`         | string | —        | Named server; omit for default                                                                                    |
 
-Returns errors with line numbers.
+A `target` with a path separator is a file on the machine iad runs on: iad uploads it, then
+compiles it. It must be a `.cls`, `.mac`, `.inc` or `.int` file inside the
+[project directory](#project-directory), and is refused with `HOST_PATH_BLOCKED` before it is read
+when it is not. The compile hook passes an absolute path inside the project, which is allowed.
+
+Returns errors with line numbers. Before IRIS compiles a target by name, iad reads its stored
+source and the `.inc` files it includes and applies the compile-time gate to them. A stored
+document that exists but cannot be read is refused with `STORED_SOURCE_UNREADABLE`; a wildcard
+whose members cannot be listed is refused the same way.
+
+`flags` takes the letters `c`, `d`, `k` and `u` (with `-` to turn one off) and the qualifiers
+`/checkuptodate`, `/display`, `/displayerror`, `/displaylog`, `/keepsource`, `/quiet`, `/silent` and
+`/verbose`. Anything else is refused with `INVALID_PARAMS`. IRIS compiles more than the target when
+told to (`b` and `/subclasses` add every subclass, `r` and `/predecessorclasses` the classes it
+depends on, `y` and `/relatedclasses` the ones it shares SQL with, `/expand` all three), and iad has
+read only the target and its includes; a subclass stored some other way would run its compile-time
+code unread. Name the classes you want compiled, or a wildcard, which iad lists and reads.
+
+IRIS also compiles a target's out-of-date superclasses with it, and those would run their
+compile-time code unread. Before it compiles, iad walks the `Extends` chain of each class (multiple
+inheritance included) on the target server. A superclass outside the library packages that IRIS
+would recompile is refused with `COMPILE_SUPERCLASS_STALE`, which names it: compile that
+superclass first with `iris_compile`, where it is checked like any other class, then compile the
+original target. `iris_doc` with `compile=true` and a local file given as `target` store the class
+first, then run the same check, so the class stays written and nothing is compiled. A walk that
+cannot run is refused with `SUPERCLASS_CHECK_FAILED`. See the
+[compile-time gate](connecting.md#compile-time-gate) for the library packages.
 
 ```text
 iris_compile(target="MyApp.MyClass.cls")
@@ -390,6 +479,8 @@ Run arbitrary ObjectScript and return the output.
 | `translate_sql` | bool   | `true`   | Rewrite `&sql(...)` macros to `%SQL.Statement` on the docker exec path; HTTP runs `&sql` as written |
 | `use_session`   | bool   | `false`  | Enable `%ctx` session carrier (see below)                                                           |
 | `session_state` | string | —        | Token from a prior call; restores `%ctx`                                                            |
+| `confirm`       | bool   | `false`  | Acknowledges a write on a `subject` server (`confirmed` is the older spelling)                      |
+| `server`        | string | —        | Named server; omit for default                                                                      |
 
 ```text
 iris_execute(code="Write $ZVersion")
@@ -398,13 +489,27 @@ iris_execute(code="Set sc = ##class(MyApp.Util).Run() Write sc", namespace="MYAP
 
 **Code-edit guard** — see [Code-edit guard](#code-edit-guard) below.
 
+**Who runs the code** — every response carries an `identity` object,
+`{user, source, path, verified, server}`: the IRIS account the code actually ran as, where that
+account came from (`service_account_env`, `service_account_server`, `primary` or
+`os_user_opt_in`), the path it ran on (`atelier`, `docker_exec_local`, `docker_exec_ssh` or
+`ws_terminal`), and whether `user` is what IRIS reported (`$USERNAME`) rather than what iad sent.
+With `IRIS_SERVICE_USERNAME` set (or a `service_username` on the server named with `server`), the
+code runs as that account on every path, or the call is refused with a `SERVICE_ACCOUNT_*`
+code; it never quietly runs as the connection account. `auth_user` and `service_account_env`
+repeat part of it and go away in 1.8.0. The same `identity` block comes back from `iris_query`
+(`write`/`force`), `iris_global` (`set`/`kill`), `iris_execute_method`, `global_kill`,
+`iris_test`, `iris_coverage` (`run`/`start`), `iris_ws_open` and `iris_ws_exec`. See
+[Service account](connecting.md#service-account-for-the-agents-code) for setup and
+[Troubleshooting](troubleshooting.md#service_account_-errors) for each error.
+
 **Destructive-tier gate** — `iris_execute` requires `write_tools_enabled = true` (it is
 write-gated). Additionally, if the literal code string contains a `Kill ^<global>` pattern
 (any case variant), `destructive_tools_enabled = true` is also required. This check catches
 direct global kills written literally in the code. Indirect operations — `Kill @variable`,
 `Xecute`-dispatched code, or class method calls that internally kill a global — are not
-detected; IRIS-side credentials and the `mcpTemplate` env gate are the appropriate controls
-for those.
+detected; the service account's IRIS privileges and the `mcpTemplate` environment gate are the
+appropriate controls for those.
 
 #### Session state
 
@@ -499,12 +604,14 @@ the docker exec round-trip, with an actionable message pointing to this pattern.
 
 Invoke a `ClassMethod` directly by class, method name, and arguments.
 
-| Parameter   | Type     | Default  | Notes                                   |
-| ----------- | -------- | -------- | --------------------------------------- |
-| `class`     | string   | —        | **Required.** e.g. `"%Library.Integer"` |
-| `method`    | string   | —        | **Required.** e.g. `"IsValid"`          |
-| `args`      | string[] | `[]`     | Positional string arguments             |
-| `namespace` | string   | `"USER"` |                                         |
+| Parameter   | Type     | Default  | Notes                                      |
+| ----------- | -------- | -------- | ------------------------------------------ |
+| `class`     | string   | —        | **Required.** e.g. `"%Library.Integer"`    |
+| `method`    | string   | —        | **Required.** e.g. `"IsValid"`             |
+| `args`      | string[] | `[]`     | Positional string arguments                |
+| `namespace` | string   | `"USER"` |                                            |
+| `confirm`   | bool     | `false`  | Acknowledges a write on a `subject` server |
+| `server`    | string   | —        | Named server; omit for default             |
 
 String-returning methods only (v1). A method that returns an error `%Status` answers
 `success: false`, `error_code: METHOD_RETURNED_ERROR`, with the status text from
@@ -530,6 +637,8 @@ Execute SQL and return rows as JSON.
 | `max_rows_affected` | int      | `1000`   | Write mode only; clamped to [1, 10000]               |
 | `namespace`         | string   | `"USER"` |                                                      |
 | `force`             | bool     | `false`  | Bypass SQL safety validation                         |
+| `confirm`           | bool     | `false`  | Acknowledges a write on a `subject` server           |
+| `server`            | string   | —        | Named server; omit for default                       |
 
 ```text
 # Read
@@ -546,15 +655,21 @@ iris_query(query="UPDATE MyApp.Patient SET Status = 'Archived' WHERE ID = ?",
            parameters=["123"], mode="write")
 ```
 
-**What read mode refuses.** `mode="read"` refuses DML, DDL, `GRANT` and `REVOKE` before IRIS sees
-the query. It sends `SELECT` and `CALL`. A stored procedure that writes or runs ObjectScript still
-runs in read mode, whether it is called with `CALL` or inside a `SELECT` (`SELECT Pkg.Proc()`): no
-check on the query text can tell that call from `SELECT LENGTH(x)`. If read mode has to be safe,
-connect as an IRIS user without `EXECUTE` on such procedures. `force=true` skips the check only when write tools are enabled, and the
-live and test templates then treat the call as a write.
+**What read mode refuses.** `mode="read"` runs one statement that starts with `SELECT`, `WITH` or
+`EXPLAIN`, the first word outside comments. It refuses everything else before IRIS sees the query:
+`CALL`, `TUNE TABLE`, `BUILD INDEX`, `PURGE`, `SET OPTION`, `FREEZE PLANS`, DML, DDL, `GRANT` and
+`REVOKE`, and a second statement after a `;` (`SQL_WRITE_BLOCKED`, a fixed rule: nothing in the call
+or the configuration lifts it, and the message points at `mode="write"`, which the write gate
+judges and which runs `INSERT`, `UPDATE`, `DELETE`, `CALL` and `TRUNCATE`). A stored procedure that
+writes or runs ObjectScript still runs in read mode when a `SELECT` calls it (`SELECT Pkg.Proc()`):
+no check on the query text can tell that call from `SELECT LENGTH(x)`, and read mode runs as the
+connection account, not the service account. If read mode has to be safe, connect as an IRIS user
+without `EXECUTE` on such procedures. `force=true` skips the check only when the target server's
+write tier is on, and the live and test templates then treat the call as a write. `mode="count"`
+takes one `SELECT` (no `;`) and a `table` that is a table name, under the same rules.
 
-**`server`** (optional): route this call to a named registered IRIS instance. If omitted,
-uses the default connection. Use `iris_servers` to list available instances.
+`mode="write"` runs as the service account when one is configured, on the server the call names,
+and returns `identity` like the other code-running tools.
 
 ---
 
@@ -562,19 +677,26 @@ uses the default connection. Use `iris_servers` to list available instances.
 
 Run `%UnitTest` tests and return structured pass/fail results.
 
-| Parameter             | Type     | Default  | Notes                                                                  |
-| --------------------- | -------- | -------- | ---------------------------------------------------------------------- |
-| `pattern`             | string   | —        | **Required.** Package name, e.g. `"App.Tests"`                         |
-| `namespace`           | string   | `"USER"` |                                                                        |
-| `timeout`             | int      | `60`     | Seconds                                                                |
-| `coverage`            | bool     | —        | Also measure line coverage inline                                      |
-| `coverage_classes`    | string[] | —        | Explicit class list for coverage; defaults to all classes in `pattern` |
-| `coverage_target_pct` | float    | —        | Fail if coverage falls below this threshold                            |
+| Parameter             | Type     | Default  | Notes                                                                                                                      |
+| --------------------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `pattern`             | string   | —        | **Required.** Compiled class or package pattern, e.g. `"App.Tests"`. A `..`, a `/` or `\` is refused with `INVALID_PARAMS` |
+| `namespace`           | string   | `"USER"` |                                                                                                                            |
+| `timeout`             | int      | `60`     | Seconds                                                                                                                    |
+| `coverage`            | bool     | —        | Also measure line coverage inline                                                                                          |
+| `coverage_classes`    | string[] | —        | Explicit class list for coverage; defaults to all classes in `pattern`                                                     |
+| `coverage_target_pct` | float    | —        | Fail if coverage falls below this threshold                                                                                |
+| `test_type`           | string   | `"auto"` | `"auto"` \| `"testcase"` \| `"testproduction"`: `auto` detects `%UnitTest.TestProduction` subclasses and uses `.Run()`     |
+| `confirm`             | bool     | `false`  | Acknowledges a run on a `subject` server                                                                                   |
+| `server`              | string   | —        | Named server; omit for default                                                                                             |
 
 ```text
 iris_test(pattern="MyApp.Tests")
 iris_test(pattern="MyApp.Tests", coverage=true, coverage_target_pct=80)
 ```
+
+`iris_test` makes no directory on the IRIS host. It used to create `/tmp/httest/<pattern>/` for a
+pattern with a separator; any local user on that host could write there, and the pattern was
+spliced in without a `..` check. `iris_coverage` takes `test_path` through the same rule.
 
 ---
 
@@ -582,15 +704,17 @@ iris_test(pattern="MyApp.Tests", coverage=true, coverage_target_pct=80)
 
 Standalone line coverage via `%Monitor.System.LineByLine`.
 
-| Parameter        | Type     | Default  | Notes                                                |
-| ---------------- | -------- | -------- | ---------------------------------------------------- |
-| `mode`           | string   | —        | **Required.** See modes below                        |
-| `classes`        | string[] | —        | Classes to monitor; used with `start`/`run`          |
-| `package`        | string   | —        | Package prefix — alternative to explicit `classes`   |
-| `test_path`      | string   | —        | `%UnitTest` package to run; required for `run`       |
-| `target_pct`     | float    | —        | Fail threshold %                                     |
-| `cobertura_path` | string   | —        | Write Cobertura XML here (requires TestCoverage IPM) |
-| `namespace`      | string   | `"USER"` |                                                      |
+| Parameter        | Type     | Default  | Notes                                                                                       |
+| ---------------- | -------- | -------- | ------------------------------------------------------------------------------------------- |
+| `mode`           | string   | —        | **Required.** See modes below                                                               |
+| `classes`        | string[] | —        | Classes to monitor; used with `start`/`run`                                                 |
+| `package`        | string   | —        | Package prefix — alternative to explicit `classes`                                          |
+| `test_path`      | string   | —        | `%UnitTest` class pattern to run (same rule as `iris_test`'s `pattern`); required for `run` |
+| `target_pct`     | float    | —        | Fail threshold %                                                                            |
+| `cobertura_path` | string   | —        | Write Cobertura XML here (requires TestCoverage IPM)                                        |
+| `namespace`      | string   | `"USER"` |                                                                                             |
+| `confirm`        | bool     | `false`  | Acknowledges a run on a `subject` server                                                    |
+| `server`         | string   | —        | Named server; omit for default                                                              |
 
 | Mode     | What it does                                                           |
 | -------- | ---------------------------------------------------------------------- |
@@ -606,9 +730,28 @@ iris_coverage(mode="run", package="MyApp", test_path="MyApp.Tests", target_pct=8
 iris_coverage(mode="run", classes=["MyApp.Service", "MyApp.Util"], test_path="MyApp.Tests")
 ```
 
+Every mode except `report` is a write and needs the write gate open on the target server,
+`check` included: it starts the line monitor to see that it can start, and stops it again.
+`report` only reads the counters back.
+
 Requires `gmheap ≥ 256 MB`. Run `mode=check` first. If `BBSIZ_NOT_CONFIGURED` is
 returned, increase `gmheap` in Management Portal → System Administration →
 Configuration → Additional Settings → Advanced Memory, then restart IRIS.
+
+The line monitor is one per instance and belongs to whoever started it. `check`, `start` and
+`run` refuse with `MONITOR_IN_USE` when one is running, and leave it running; `mode=stop` stops
+it, for a monitor that is yours. A class counts over every routine it compiled to
+(`MyApp.Service.0`, `MyApp.Service.1`, ...), and each entry lists them in `routines`. A class
+with no compiled routine is `COVERAGE_ROUTINE_UNKNOWN`, and nothing runs. A class with 0 of 0
+lines (never loaded during the run, or no executable lines) has `pct: null`, and a `null`
+`total_pct` and `meets_target` when that is all there is: no lines is not 0%. If a line of the
+run throws, the monitor is stopped anyway and the result carries `partial: true` and
+`run_error`, with the coverage gathered before it; `meets_target` is `null` then. The count is
+the executions of each line the monitor lists for the routine.
+
+`run` and `start` run as the service account when one is set. The line monitor's state is
+system-wide, so that account needs read-write access to the IRISSYS database's resource; without
+it they answer `COVERAGE_PRIVILEGE_DENIED`.
 
 ---
 
@@ -626,6 +769,8 @@ Read, write, kill, or list IRIS global nodes. Gated — see [Data safety gates](
 | `max_nodes`      | int      | `100`   | `get` + `subtree`; max 1000                              |
 | `max_subscripts` | int      | `50`    | `list` action; max 500                                   |
 | `acknowledgePhi` | bool     | —       | Required when global name matches a PHI pattern          |
+| `confirm`        | bool     | `false` | Acknowledges a `set` or `kill` on a `subject` server     |
+| `server`         | string   | —       | Named server; omit for default                           |
 | `namespace`      | string   | —       |                                                          |
 
 ```text
@@ -654,9 +799,30 @@ Check lock status, checkout, or execute SCM actions.
 | `action_id`      | string | —        | For `action=execute`: the menu action ID                            |
 | `elicitation_id` | string | —        | Elicitation dialog resume ID                                        |
 | `answer`         | string | —        | Elicitation dialog answer                                           |
+| `confirm`        | bool   | `false`  | Has no effect; see below                                            |
+| `server`         | string | —        | Named server; omit for default                                      |
 | `namespace`      | string | `"USER"` |                                                                     |
 
-CheckIn is opt-in via `IRIS_SCM_ALLOW_CHECKIN=1`.
+CheckIn is opt-in via `IRIS_SCM_ALLOW_CHECKIN=1`. Disconnect and Reconnect are opt-in via
+`IRIS_SCM_ALLOW_DISCONNECT=1`, a separate switch: turning one on leaves the other off. Both apply
+in `action=execute` and in the `menu` listing, and `check_config` reports each under
+`scm_opt_ins`. Source control answers `UserAction` with a code from 0 to 7. 0 means no dialog is needed, 1 a
+yes/no dialog and 7 a prompt for text (`action=execute` can take that one). 6 is the provider
+declining (`SCM_REJECTED`). 2 to 5 need a window this tool cannot open (a web page, a program on
+the client, text in the editor, documents in the editor) and are refused as `SCM_NEEDS_UI`; a
+prompt at a call that cannot take text is `SCM_NEEDS_INPUT`. Any other number is
+`SCM_ACTION_UNKNOWN` and an answer that is not a whole number, or is missing, is
+`SCM_ACTION_UNPARSEABLE`. All four are fixed rules, and `iris_doc` `put` stops on them without
+writing: an unreadable answer is never read as "no dialog needed". The reply is read from a
+labelled record the snippet writes last, so a hook's own output before it does not change the
+answer.
+
+On a `subject` server a source-control write is always refused
+(`SUBJECT_SCM_WRITE_BLOCKED`, a fixed rule); `confirm` does not lift it. Source control runs as
+the connection account so that edits stay attributed to a real user.
+
+`action=execute` with `action_id` `Diff` (or `%Diff`) is a read: it needs no write gate. Every other
+id, including one iad does not know, is a write.
 
 ```text
 iris_source_control(action="status", document="MyApp.MyClass.cls")
@@ -710,17 +876,22 @@ iris_symbols(query="Patient", limit=50)
 
 Search `.cls`/`.mac`/`.inc` files on disk by glob pattern. No IRIS connection required.
 
-| Parameter        | Type     | Default | Notes                                              |
-| ---------------- | -------- | ------- | -------------------------------------------------- |
-| `query`          | string   | —       | **Required.** Search string                        |
-| `workspace_path` | string   | —       | Root path to search; defaults to current workspace |
-| `limit`          | int      | `50`    |                                                    |
-| `kinds`          | string[] | —       | Filter by symbol kind                              |
+| Parameter        | Type     | Default | Notes                                                                                                      |
+| ---------------- | -------- | ------- | ---------------------------------------------------------------------------------------------------------- |
+| `query`          | string   | —       | **Required.** Search string                                                                                |
+| `workspace_path` | string   | —       | Directory to search, inside the [project directory](#project-directory); defaults to the project directory |
+| `limit`          | int      | `50`    |                                                                                                            |
+| `kinds`          | string[] | —       | Filter by symbol kind                                                                                      |
 
 ```text
 iris_symbols_local(query="Patient")
 iris_symbols_local(query="GetStatus", workspace_path="/home/user/myapp")
 ```
+
+The crawl has a budget: 200,000 directory entries, 32 levels and 10 seconds. A crawl that runs out
+stops and returns `truncated: true` with `truncated_reason` set to `file_budget`, `depth_budget` or
+`time_budget`. Stopping at `limit` is not truncation. A path outside the project directory is
+refused with `HOST_PATH_BLOCKED`.
 
 ---
 
@@ -793,6 +964,23 @@ iris_info(what="sa_schema", name="http://www.intersystems.com/deepsee")
 ```
 
 `what=sa_schema` returns the Studio Assist grammar for that XData namespace. It does not list or describe BI cubes: run `%DeepSee.Utils` `%GetCubeList` and `%GetDimensionList` through `iris_execute` for those. A name that is not a URL is refused with `INVALID_PARAMS`, and a URL with no grammar returns `SA_SCHEMA_NOT_FOUND`. While IRIS is still building a grammar (fresh instance, or a cube class compiled since the last build), iad waits up to ten seconds, then returns `SA_SCHEMA_PENDING`.
+
+---
+
+### `iris_doc_search`
+
+Search the InterSystems documentation site (docs.intersystems.com) through its Algolia index.
+This is the one tool that sends text to a third party: the search text the agent wrote goes to
+that service, with no IRIS credentials or data. It belongs to the `docs` category.
+
+| Parameter | Type   | Default | Notes                             |
+| --------- | ------ | ------- | --------------------------------- |
+| `query`   | string | —       | **Required.** Search text         |
+| `version` | string | none    | e.g. `"2025.1"`                   |
+| `product` | string | none    | e.g. `"InterSystems IRIS"`        |
+| `hits`    | int    | `5`     | Most hits to return; capped at 10 |
+
+Returns `{query, total_hits, hits: [{title, url, excerpt, breadcrumbs, version, product}]}`.
 
 ---
 
@@ -936,10 +1124,67 @@ iris_get_log()   # list all stored entries
 
 ### `check_config`
 
-Show active connection state. No parameters.
+Show the active configuration. No parameters, and it always succeeds, so it works when
+everything else does not. It makes no IRIS network call, except one `GET /api/atelier/` with the
+service account (sending no code) when `IRIS_SERVICE_USERNAME` is set, to report whether that
+account can log in. Run this first if anything seems misconfigured.
 
-Returns host, port, namespace, discovery source, container name, config file path, and
-write tool status. Run this first if anything seems misconfigured.
+| Field                                                              | What it says                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server_version`, `connected`, `connection_source`, `iris_version` | Which build is running, and how the default server was found: `connection_source` is `config_file`, `env_vars`, `iris_select_container` or `auto_discovered`                                                                                                                                                                                              |
+| `host`, `port`, `namespace`, `container`, `capabilities`           | The resolved default connection and what it can do (`atelier_rest`, `compile_path`, `private_web_server`, `webgateway_url`)                                                                                                                                                                                                                               |
+| `config_file`, `config_watch_path`, `config_loaded_at`             | The file that chose the connection (a file names one only through `host` or `container`), the path iad watches for a new project file (never the operator file), and when it last loaded. A file that holds neither is `config_file_named_no_target`, with a `config_file_warning` saying so and that `connection_source` names what chose the connection |
+| `config_sources`                                                   | `operator_file` (`path`, `loaded`) and `workspace_file` (`path`, `kind`, `named_by`, `trust`, and `changed`/`lift` when trust lapsed or is missing)                                                                                                                                                                                                       |
+| `effective_policy`                                                 | One entry per server, `default` first: each part (`mcpTemplate`, `allow`, `dataPolicy`, `globalBlocklist`, `irisAudit`, `writeTools`, `destructiveTools`, `role`, `compileTimeGate`) as `{value, from, file?, set_aside?}`, where `from` is `launch`, `operator_file`, `trusted_file`, `workspace_file`, `system_mode` or `strict_default`                |
+| `set_aside`                                                        | Everything iad read and did not act on: `{id, kind, setting, server, file, reason, lift}`; see [Set-aside items](connecting.md#set-aside-items)                                                                                                                                                                                                           |
+| `write_tools_enabled`, `write_tools_source`                        | The default server's write tier and what decided it: `operator_env`, `config_file`, `legacy_allow_prod`, `inferred_system_mode`, `inferred_namespace`, `inferred_default` or `fail_closed`                                                                                                                                                                |
+| `destructive_tools_enabled`, `destructive_tools_source`            | The same for the destructive tier                                                                                                                                                                                                                                                                                                                         |
+| `compile_time_gate`                                                | `{enabled, from, file, set_aside}` for the [compile-time gate](connecting.md#compile-time-gate)                                                                                                                                                                                                                                                           |
+| `identity`                                                         | Who the agent's code would run as: `service_account`, `os_user_opt_in` (`enabled`, `source`, `ignored`), `paths` (`http`, `docker_local`, `docker_ssh`, `ws_terminal`), `servers` and the `tools` covered. `http` reports `login` from one `GET /api/atelier/` that sends no code                                                                         |
+| `tls_verify`, `tls`                                                | The default connection's certificate check, and every server's with its `source` (`default`, `launch_env`, `config_file`, `servers_json`, `server_manager`)                                                                                                                                                                                               |
+| `discovery`                                                        | `skipped`: listeners the localhost scan did not send a credential to, with port and reason                                                                                                                                                                                                                                                                |
+| `credentials_withheld`                                             | The environment credentials kept from a host a project file named, and what to do                                                                                                                                                                                                                                                                         |
+| `read_only`, `read_only_from`                                      | `strict` or `off`, and what asked for it                                                                                                                                                                                                                                                                                                                  |
+| `telemetry_sink`                                                   | `local` (the default) or `iris`: telemetry always goes to the local file, and `iris` adds the IRIS global where the call's server allows it                                                                                                                                                                                                               |
+| `audit`                                                            | The local audit log: its `path` and whether it keeps `payloads` as `sizes` or `full`                                                                                                                                                                                                                                                                      |
+| `skills`                                                           | Where served skills came from: `override_dir`, `override_kind`, `local_skills`, `ignored_dir` (a project's `skills/skills` left unread)                                                                                                                                                                                                                   |
+| `server_manager`                                                   | Whether Server Manager profiles were found and whether each credential resolved                                                                                                                                                                                                                                                                           |
+| `config_errors`                                                    | Values iad corrected or did not understand, and strict read-only combined with `irisAudit`                                                                                                                                                                                                                                                                |
+| `config_parse_error`                                               | Present when a configuration file does not parse; every IRIS tool then answers `CONFIG_INVALID`                                                                                                                                                                                                                                                           |
+| _(failure count)_                                                  | Present when `irisAudit` emission has failed; the field is named in [connecting.md](connecting.md#irisaudit--opt-in-sysaudit-emission)                                                                                                                                                                                                                    |
+| `fallback_warning`                                                 | Present when the connection came from discovery with no configuration file, so the agent may be attached to the wrong instance                                                                                                                                                                                                                            |
+
+A call to a project that has a file with loosening settings it has not trusted shows them here
+before anything is refused:
+
+```json
+{
+  "config_sources": {
+    "operator_file": {
+      "path": "/home/me/.iris-agentic-dev.toml",
+      "loaded": true
+    },
+    "workspace_file": {
+      "path": "/work/app/.iris-agentic-dev.toml",
+      "kind": "workspace_file",
+      "named_by": null,
+      "trust": "untrusted",
+      "lift": "run `iris-agentic-dev trust /work/app/.iris-agentic-dev.toml` in a terminal"
+    }
+  },
+  "set_aside": [
+    {
+      "id": "workspace:write_tools_enabled",
+      "kind": "untrusted_setting",
+      "setting": "write_tools_enabled = true",
+      "server": "default",
+      "file": "/work/app/.iris-agentic-dev.toml",
+      "reason": "the file is not trusted",
+      "lift": "run `iris-agentic-dev trust /work/app/.iris-agentic-dev.toml` in a terminal"
+    }
+  ]
+}
+```
 
 ---
 
@@ -966,14 +1211,20 @@ iris_generate(description="A REST API handler that validates patient demographic
 
 ### `iris_generate_class`
 
-Generate and compile a class from a description. Requires an LLM API key in the
-connection config.
+Generate a class from a description, store it and compile it. Requires an LLM API key in the
+connection config. The generated text is stored under the name it declares, replacing any class of
+that name, and compiled the way `iris_doc` put with `compile` does it: the compile-time gate reads
+the text, the stored `.inc` files it includes are checked, and a superclass IRIS would compile with
+it must be up to date. A refusal comes back as an error result and nothing is compiled. When IRIS
+reports compile errors the model gets them once to fix the class, and the fixed text goes through
+the same checks. The response carries `class_name`, `class_text`, `compiled`, `retried` and
+`compile_errors`.
 
-| Parameter     | Type   | Default  | Notes                             |
-| ------------- | ------ | -------- | --------------------------------- |
-| `description` | string | —        | **Required.**                     |
-| `overwrite`   | bool   | `false`  | Overwrite if class already exists |
-| `namespace`   | string | `"USER"` |                                   |
+| Parameter     | Type   | Default  | Notes                                                                                          |
+| ------------- | ------ | -------- | ---------------------------------------------------------------------------------------------- |
+| `description` | string | —        | **Required.**                                                                                  |
+| `overwrite`   | bool   | `false`  | Accepted and not read: the generated class replaces a stored class of the same name either way |
+| `namespace`   | string | `"USER"` |                                                                                                |
 
 ```text
 iris_generate_class(description="A %Persistent class storing patient visit records with indexes on PatientID and VisitDate")
@@ -1058,6 +1309,17 @@ than quietly widening the query to every severity.
 `search_table` takes `prop` (required), one of `value` or `value_like`, and optional
 `class` and `extent` (default `EnsLib.HL7.SearchTable`).
 
+A call that names `body_class`, `body_where` or `body_select` reads message bodies, so it is a
+bulk-data call: it is refused with `DATA_POLICY_BLOCKED` unless the target server's `dataPolicy`
+is `allow` (`redact` does not admit it, because the rows are not HL7 text iad could redact).
+Without those arguments the tool lists headers, logs and queues under any policy.
+
+`body_where` is one condition, joined to the query as `(…)`. It is read the way IRIS reads SQL:
+quotes, comments and parentheses count only where IRIS counts them. It is refused when it holds a
+comment or `;` outside a quote, a quote that never closes, an unbalanced parenthesis, `UNION`,
+`INTERSECT`, `EXCEPT`, `SELECT`, `INTO`, or a write keyword. A quoted string can hold any of
+those: `Name = 'a;b -- c'` is an ordinary filter.
+
 ```text
 iris_interop_query(what="logs", log_type="error", limit=50)
 iris_interop_query(what="queues")
@@ -1108,23 +1370,50 @@ iris_production_diff(production="MyApp.Production")
 
 ### `iris_message_body`
 
-Read a message body by ID. Gated — see [Data safety gates](#data-safety-gates).
+Read a message body by ID. A bulk-data tool: what it returns depends on the target server's
+`dataPolicy`, see [Data safety gates](#data-safety-gates).
 
-| Parameter        | Type   | Default  | Notes                                |
-| ---------------- | ------ | -------- | ------------------------------------ |
-| `message_id`     | string | —        | **Required.**                        |
-| `max_bytes`      | int    | `65536`  | Max 1 MB (1048576)                   |
-| `acknowledgePhi` | bool   | `false`  | Required when `dataPolicy = "allow"` |
-| `dataPolicy`     | string | `block`  | `block` \| `allow` \| `redact`       |
-| `namespace`      | string | `"USER"` |                                      |
-| `server`         | string | —        | Named server; omit for default       |
+| Parameter        | Type   | Default  | Notes                                                                 |
+| ---------------- | ------ | -------- | --------------------------------------------------------------------- |
+| `message_id`     | string | —        | **Required.** `Ens.MessageHeader` ID                                  |
+| `max_bytes`      | int    | `65536`  | Clamped to 1 MB (1048576)                                             |
+| `acknowledgePhi` | bool   | `false`  | Required with `dataPolicy = "allow"`                                  |
+| `dataPolicy`     | string | none     | `block` \| `redact` \| `allow`; omitted means the server's own policy |
+| `namespace`      | string | `"USER"` |                                                                       |
+| `server`         | string | —        | Named server; omit for default                                        |
 
-The connection's `dataPolicy` is applied before the call's, so passing `allow` here
-cannot widen what `[policy.<server>]` restricted.
+The policy that applies is the stricter of the server's `dataPolicy` and the call's, so passing
+`allow` here cannot widen what a configuration file restricted, and a call that passes none gets
+the server's own (a server set to `redact` answers a call that names no policy with a redacted
+body). The value is read trimmed and in any case (`Allow` is `allow`); any other value is
+`INVALID_PARAMS`. `acknowledge_phi` and `data_policy` are accepted for `acknowledgePhi` and
+`dataPolicy`. The result of the policy:
+
+| Policy   | Result                                                                                                                                                                                                 |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `block`  | `PHI_POLICY_BLOCKED`; nothing of the body is returned                                                                                                                                                  |
+| `redact` | An HL7 v2 body with the identifying fields of PID, NK1, GT1, IN1, IN2 and MSH-3 replaced by `[REDACTED]` (list below); any other content (XML, JSON, plain text) is refused with `BODY_NOT_REDACTABLE` |
+| `allow`  | The body, once the call carries `acknowledgePhi: true` (`PHI_ACK_REQUIRED` otherwise)                                                                                                                  |
+
+`redact` is a field mask, not de-identification. `redacted: true` on a result means the mask ran. It
+replaces these HL7 v2.5 fields with `[REDACTED]` and leaves every other field, segment and line of
+free text (PV1, OBX, NTE and the rest) as stored; an empty field stays empty:
+
+| Segment | Masked fields                                                                                                                                                                            |
+| ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MSH     | MSH-3 sending application                                                                                                                                                                |
+| PID     | PID-2, 3, 4 (ids), 5 name, 6 mother's maiden name, 7 birth date, 8 sex, 9 alias, 11 address, 12 county, 13 and 14 phones, 18 account number, 19 SSN, 20 driver's licence                 |
+| NK1     | NK1-2 name, 4 address, 5 and 6 phones, 12 employee number, 16 birth date, 30 contact name, 31 contact phone, 32 contact address, 33 identifiers, 37 contact SSN                          |
+| GT1     | GT1-2 guarantor number, 3 name, 4 spouse name, 5 address, 6 and 7 phones, 8 birth date, 12 SSN, 16 employer name, 17 employer address, 18 employer phone, 19 employee id, 29 employer id |
+| IN1     | IN1-10 group employee id, 16 insured's name, 18 birth date, 19 address, 36 policy number, 43 sex, 44 employer address, 49 insured's id                                                   |
+| IN2     | IN2-1 insured's employee id, 2 insured's SSN                                                                                                                                             |
+
+A segment is recognised after blanks, `\x0b` (MLLP start) or `\x1c` in front of its name are set
+aside, and a stray `\x0b` or `\x1c` between segments counts as a segment break.
 
 ```text
 iris_message_body(message_id="123456")
-iris_message_body(message_id="123456", acknowledgePhi=true)
+iris_message_body(message_id="123456", dataPolicy="allow", acknowledgePhi=true)
 ```
 
 ---
@@ -1192,6 +1481,9 @@ Read, write, delete, or list Ensemble lookup table entries. Write and delete act
 | `value`     | string | —        | For `action=set`                                                                   |
 | `namespace` | string | `"USER"` |                                                                                    |
 
+A key set to an empty value exists: `get` returns `value: ""`. `get` or `delete` of a key that was
+never set answers `KEY_NOT_FOUND`, and either action on a missing table answers `TABLE_NOT_FOUND`.
+
 ```text
 iris_lookup_manage(action="list_tables")
 iris_lookup_manage(action="list_keys", table="FacilityMap")
@@ -1202,7 +1494,8 @@ iris_lookup_manage(action="get", table="FacilityMap", key="MGH")
 
 ### `iris_lookup_transfer`
 
-Export or import an Ensemble lookup table as XML. Import is 🔒 gated.
+Export or import an Ensemble lookup table as XML. Import replaces the whole table, so it is in
+the destructive tier (☠); export is a read.
 
 | Parameter   | Type   | Default  | Notes                                  |
 | ----------- | ------ | -------- | -------------------------------------- |
@@ -1344,16 +1637,30 @@ Show size, free space, and block stats for a specific database directory.
 
 ### `journal_search`
 
-Search the IRIS journal for global set/kill records in a time range. Bulk-PHI gated —
-requires `dataPolicy = "allow"` on the connection.
+Search the IRIS journal for global set/kill records. A bulk-data tool: it needs
+`dataPolicy = "allow"` on the target server (`DATA_POLICY_BLOCKED` otherwise; `redact` does not
+admit it, since a journal record's value is not a message there is a rule to redact). It returns
+which globals changed and when, never the values.
 
-| Parameter        | Type   | Default | Notes                                |
-| ---------------- | ------ | ------- | ------------------------------------ |
-| `start`          | string | —       | ISO 8601 start timestamp (inclusive) |
-| `end`            | string | —       | ISO 8601 end timestamp (inclusive)   |
-| `global_pattern` | string | —       | Substring to filter global names     |
-| `max_entries`    | number | `100`   | Cap results (1–500)                  |
-| `server`         | string | —       | Named server; omit for default       |
+| Parameter        | Type   | Default | Notes                                       |
+| ---------------- | ------ | ------- | ------------------------------------------- |
+| `start`          | string | —       | ISO 8601 lower bound on the record time     |
+| `end`            | string | —       | ISO 8601 upper bound on the record time     |
+| `global_pattern` | string | —       | Substring the global reference must contain |
+| `max_entries`    | number | `100`   | Cap on returned records; clamped to 1–500   |
+| `server`         | string | —       | Named server; omit for default              |
+
+The answer is `{entries: [{timestamp, type, job_id, global}], returned, truncated,
+truncated_reason, scanned}`. The search walks the current journal file from its newest record
+back, so records come newest first and a search for something recent ends early; a record before
+`start` ends the walk. It reads at most 200,000 records and runs at most 20 seconds, so the answer says how far it got:
+`scanned` is the records read, `truncated` is `true` when the walk stopped before the start of the
+journal or `start`, and `truncated_reason` is `max_records`, `scan_cap` or `time_cap` (`null` when
+the walk finished). **A truncated answer has not seen the rest of the file.** Narrow `start`/`end`
+or `global_pattern`, and read `scanned`. The walk reads records one by one in iad's own code; it
+does not call `%SYS.Journal.File:Search`, which writes one `messages.log` line per record it
+visits and can fill the log of a busy instance. A request that outruns the HTTP timeout anyway
+answers `JOURNAL_SEARCH_TIMEOUT`, naming the journal file and its size.
 
 ### `query_audit_log`
 
@@ -1373,15 +1680,22 @@ matches — `event_type="Login"` will not find `LoginFailure`.
 
 ### `stream_inspect`
 
-Inspect a `%Stream.GlobalBinary` or `%Stream.GlobalCharacter` object by OID.
-Returns the whole stream and its size — there is no length cap, so a large stream
-produces a large response.
+Read the start of a stream by OID. Returns the stream's `class`, its whole `size`, the content,
+`truncated`, the `max_chars` cap the read used, and the line count of what came back. `class` is the
+class the read went through (`%Stream.GlobalCharacter`); character and binary streams share storage,
+so it says nothing about what the stream holds, and the answer makes no text or binary claim. An id
+that holds no stream is `STREAM_NOT_FOUND`, which is not the same as a stream of size 0. The target
+server's `dataPolicy` decides what comes back: `allow` returns the content, `redact` returns HL7 v2
+with the identifying fields masked (not de-identified; see the redact row above) and refuses other
+content (`BODY_NOT_REDACTABLE`), and `block` refuses the content (`DATA_POLICY_BLOCKED`). A refused
+stream still answers with `class`, `size` and `line_count`.
 
-| Parameter   | Type   | Default  | Notes                              |
-| ----------- | ------ | -------- | ---------------------------------- |
-| `oid`       | string | —        | **Required.** Stream OID           |
-| `namespace` | string | `"USER"` | Namespace that contains the stream |
-| `server`    | string | —        | Named server; omit for default     |
+| Parameter   | Type    | Default  | Notes                                                               |
+| ----------- | ------- | -------- | ------------------------------------------------------------------- |
+| `oid`       | string  | —        | **Required.** Stream OID                                            |
+| `max_chars` | integer | `20000`  | Most characters to return from the start, at most `1000000` (min 1) |
+| `namespace` | string  | `"USER"` | Namespace that contains the stream                                  |
+| `server`    | string  | —        | Named server; omit for default                                      |
 
 ### `my_access`
 
@@ -1526,9 +1840,12 @@ iris_admin(action="database_status")
 iris_admin(action="database_status", name="MYAPP")
 ```
 
-**`journal_search`** — scans the IRIS journal for global set/kill records in a time
-window. Gated: requires `dataPolicy = "allow"` because journal records can contain PHI.
-The `global_pattern` substring filter keeps results manageable; `max_records` caps at 1000.
+**`journal_search`** — scans the IRIS journal for global set/kill records, with their values.
+Gated: requires `dataPolicy = "allow"` on the target server because journal records can contain
+PHI, and at least one of `global_pattern` or `time_range`. The `global_pattern` substring filter
+keeps results manageable; `max_records` caps at 1000. A value is returned only if the global is not
+on the system blocklist or the server's `globalBlocklist` (never, `redacted: true`), and, for a
+PHI-named global, only with `acknowledgePhi: true`.
 
 ```text
 iris_admin(action="journal_search",
@@ -1551,12 +1868,24 @@ other is rejected with `UNKNOWN_PARAMETER`:
 
 `global_pattern` is the only name they share.
 
+`iris_admin(action="journal_search")` answers with `records` (`global_ref`, `transaction_id`,
+`operation`, `timestamp`, `value`, `redacted`), `count`, `scanned`, `truncated` and
+`truncated_reason` (`max_records`, `scan_cap` or `time_cap`; `null` when the walk reached the end
+of the journal or passed the end of the time range). It reads at most 200,000 journal records
+and runs at most 20 seconds, so a search of a large journal comes back with `truncated: true`
+and the records found so far; a truncated answer has not seen the rest of the file.
+`global_pattern` is matched as a literal substring of the global reference, not of the value, and
+`*` and `?` in it are stripped.
+
 ---
 
 ### `iris_admin` ☠
 
-List namespaces, databases, users, roles, and web apps. Read actions have no gate.
-Write actions require `IRIS_WRITE_TOOLS_ENABLED=1`.
+List namespaces, databases, users, roles, and web apps. Read actions have no tier gate.
+Write actions need the target server's write tier on. The user, namespace and web application
+actions, `clear_password_change_flag`, `unlock_user` and `fresh_container_setup` also need
+`IRIS_ADMIN_TOOLS=1` in the launch settings, which the handler checks after the tier gate
+(`ADMIN_WRITE_DISABLED`).
 
 **Read actions** (no env gate):
 
@@ -1578,7 +1907,8 @@ Write actions require `IRIS_WRITE_TOOLS_ENABLED=1`.
 
 `action` is the only required parameter, and its 25 values are advertised as an enum, so a
 client can complete them and a value outside the list comes back as `INVALID_ACTION`.
-`server` routes the call to a named registered instance. Every other parameter is optional
+`server` routes the call to a named registered instance; `acknowledgePhi` applies to
+`journal_search` only. Every other parameter is optional
 at the schema level and required by the action that reads it, per the tables here.
 
 The parameter set is closed: a filter typed as `type_filter` or `name_filter` is rejected
@@ -1591,7 +1921,7 @@ a caller could authorize its own bulk journal read by passing `dataPolicy: "allo
 key is no longer part of the schema, so passing it is now an `UNKNOWN_PARAMETER` error
 rather than a no-op. `journal_search` needs `dataPolicy = "allow"` on the connection.
 
-**Write actions** (require `IRIS_WRITE_TOOLS_ENABLED=1`):
+**Write actions** (require the write tier):
 
 | Action                       | Parameters                                                                                                                                                                |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1607,7 +1937,7 @@ rather than a no-op. `journal_search` needs `dataPolicy = "allow"` on the connec
 | `fresh_container_setup`      | `username` (default `_SYSTEM`), `password` (default `SYS`), `new_password` (optional)                                                                                     |
 | `mirror_add_async`           | `mirror_name`, `primary_host` (required); `primary_port` (default 2188), `instance_name` (default `IRIS`), `async_member_type` (0=DR, 1=ReadOnly, 2=ReadWrite; default 0) |
 
-**Destructive actions** (require `IRIS_DESTRUCTIVE_TOOLS_ENABLED=1`):
+**Destructive actions** (require the destructive tier):
 
 | Action            | Parameters                                                                 |
 | ----------------- | -------------------------------------------------------------------------- |
@@ -1714,16 +2044,20 @@ calls.
 | `namespace` | string | `"USER"` | Namespace for the session      |
 | `server`    | string | —        | Named server; omit for default |
 
+The session logs in with the service account's credentials when one is set, and asks IRIS for
+`$USERNAME` once after the prompt; the response carries `identity`. A session whose identity later
+differs from the configured one is refused (`SESSION_IDENTITY_CHANGED`).
+
 ### `iris_ws_exec`
 
 Execute ObjectScript in an existing session. The session context (variables, open
 devices) persists across calls.
 
-| Parameter   | Type    | Default | Notes                                          |
-| ----------- | ------- | ------- | ---------------------------------------------- |
-| `session`   | string  | —       | **Required.** Token from `iris_ws_open`        |
-| `code`      | string  | —       | **Required.** ObjectScript to run              |
-| `confirmed` | boolean | `false` | Confirm execution on a `subject`-role instance |
+| Parameter | Type    | Default | Notes                                                                           |
+| --------- | ------- | ------- | ------------------------------------------------------------------------------- |
+| `session` | string  | —       | **Required.** Token from `iris_ws_open`                                         |
+| `code`    | string  | —       | **Required.** ObjectScript to run                                               |
+| `confirm` | boolean | `false` | Acknowledges the call on a `subject` server (`confirmed` is the older spelling) |
 
 Each line of `code` goes to the terminal as its own input, as a pasted block would; blank
 lines are skipped. A block in braces must sit on one line, as it must at a terminal prompt.
@@ -1735,7 +2069,8 @@ stays open; call `iris_ws_close` to release it.
 (`CODE_EDIT_BLOCKED` — `$system.OBJ`, `%Dictionary.*Definition`, `%RoutineMgr`, direct writes
 to `^oddDEF` and the other code-storage globals), the `mcpTemplate` environment gate, the PHI
 gates, and the destructive tier for a literal `Kill ^<global>`. A refused call sends nothing to
-IRIS, so the session's variables are exactly as they were.
+IRIS, so the session's variables are exactly as they were. The gates judge the server the session
+was opened on.
 
 Through v1.4.1 it ran none of those, so a WebSocket session was a way around all of them
 ([#137](https://github.com/intersystems-community/iris-agentic-dev/issues/137)).
@@ -1777,9 +2112,27 @@ skill(action="forget", name="outdated-skill")
 
 ---
 
+### `skill_list`, `skill_search`, `skill_describe`, `skill_forget`
+
+The same registry as `skill`, one tool per action. `skill_list` and `skill_search` cover the
+skills bundled with the binary (no IRIS needed) and any synthesized ones in `^SKILLS`; each result
+carries `source` (`bundled` or `synthesized`) and `tier`, and the response says how many skills
+each source held, so a zero never means only one place was checked. The bundled copies are what
+the binary embeds. A directory on disk replaces an embedded copy only when it comes from the
+operator; see [skills.md](skills.md#serving-skills-from-a-directory). `skill_forget` is ☠.
+
+| Tool             | Parameter | Type   | Default | Notes                                    |
+| ---------------- | --------- | ------ | ------- | ---------------------------------------- |
+| `skill_list`     | —         | —      | —       | No parameters                            |
+| `skill_search`   | `query`   | string | —       | **Required.** Name, description and tags |
+| `skill_search`   | `top_k`   | int    | `20`    |                                          |
+| `skill_describe` | `name`    | string | —       | **Required.**                            |
+| `skill_forget`   | `name`    | string | —       | **Required.**                            |
+
 ### `skill_community`
 
-Browse or install community skills from subscribed GitHub repos.
+Browse or install community skills from subscribed GitHub repos. `skill_community_list` lists the
+skills loaded from `--subscribe` packages and takes no parameters.
 
 | Parameter | Type   | Default | Notes                                 |
 | --------- | ------ | ------- | ------------------------------------- |
@@ -1819,15 +2172,21 @@ kb(action="index", path="/home/user/myapp/docs")
 kb(action="recall", query="how to handle %Status errors", top_k=5)
 ```
 
+`index` reads the `.md` and `.txt` files directly in one directory, at most 1,000 of them. The
+directory must be inside the [project directory](#project-directory) (the default is the project
+directory itself), or the call is refused with `HOST_PATH_BLOCKED`. A file that is a link out of the
+project is skipped and counted in `skipped_outside`. The reply has `truncated` and, when it is true,
+`truncated_reason: "file_budget"`.
+
 ---
 
 ### `agent_history` / `agent_stats`
 
-Recent tool-call history and learning agent status.
+Recent tool-call history, and learning agent status. `agent_stats` takes no parameters.
 
-| Parameter | Type | Default |
-| --------- | ---- | ------- |
-| `limit`   | int  | `20`    |
+| Tool            | Parameter | Type | Default |
+| --------------- | --------- | ---- | ------- |
+| `agent_history` | `limit`   | int  | `20`    |
 
 ```text
 agent_history(limit=50)
@@ -1838,7 +2197,12 @@ agent_stats()
 
 ### `telemetry_query`
 
-Query the durable telemetry record.
+Query the durable telemetry record. It reads the local file, which holds this machine's records.
+When the operator turned on the IRIS sink (`telemetry_sink = "iris"` or `IAD_TELEMETRY_SINK=iris`;
+see [Telemetry](connecting.md#telemetry)) it reads the IRIS global too, on the server the call
+targets where that server's writes are on, read-only mode is not strict and its role is not
+`subject`, and returns a call that both hold once. `check_config.telemetry_sink` says which is
+set.
 
 | Parameter    | Type   | Default | Notes          |
 | ------------ | ------ | ------- | -------------- |
@@ -1896,7 +2260,7 @@ can act on before calling the tool.
 
 | Annotation         | Set on                                                                                                                                               | What it means                                      |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `read_only_hint`   | 53 tools — all query, inspect, list, history, and comparison tools                                                                                   | The tool makes no changes to IRIS state            |
+| `read_only_hint`   | 52 tools — all query, inspect, list, history, and comparison tools                                                                                   | The tool makes no changes to IRIS state            |
 | `destructive_hint` | 7 tools — `global_kill`, `iris_admin`, `iris_credential_manage`, `iris_lookup_manage`, `iris_namespace_create`, `iris_remove_server`, `skill_forget` | The tool can irreversibly delete or overwrite data |
 
 MCP clients that respect `read_only_hint` can run read-only tools in parallel or in
@@ -1914,58 +2278,75 @@ only further restrict the write tier, never expand it.
 
 ### `write_tools_enabled`
 
-Every write-capable tool returns `WRITE_TOOLS_DISABLED` when this is `false`. Set it in
-`.iris-agentic-dev.toml`:
+Every write-capable tool returns `WRITE_TOOLS_DISABLED` when the target server's write tier is
+off. Declare it in a configuration file:
 
 ```toml
-write_tools_enabled = true
+write_tools_enabled = true      # the default server
 ```
 
-Editing the file changes the gate on the next tool call, in both directions — no restart.
+```toml
+[policy.prod]
+writeTools = false              # one server
+```
 
-Environment variable: `IRIS_WRITE_TOOLS_ENABLED=1`. An operator who exported it before
-starting iad outranks the file; the file wins over everything else. With neither declared,
-IRIS `SystemMode` decides, then the namespace. `check_config` reports which of those decided
-in `write_tools_source`, so an unexpected answer names its own cause.
+Editing a file changes the gate on the next tool call, in both directions — no restart. What
+decides the answer, strongest first:
+
+1. The launch settings: `IRIS_WRITE_TOOLS_ENABLED=1` or `0` (and the legacy `IRIS_ALLOW_PROD=1`).
+   They outrank every file.
+2. The operator file, then the workspace file, combined part by part. A file you have not trusted
+   can turn writes **off** but cannot turn them **on**; its `write_tools_enabled = true` is set
+   aside until you run `iris-agentic-dev trust`. See
+   [Effective policy](connecting.md#effective-policy).
+3. With nothing declared, the server's IRIS system mode: off on Live, on on Development and Test,
+   and for an unset or unreadable mode, off when the namespace looks like production.
+
+`check_config` reports which decided, per server in `effective_policy` and for the default
+server in `write_tools_source`, so an unexpected answer names its own cause. Strict
+read-only mode (`read_only = "strict"`) goes further and refuses every tool that can write a
+scratch class; see [Strict read-only](connecting.md#strict-read-only-no-scratch-classes).
 
 ### `destructive_tools_enabled`
 
-The 7 tools marked ☠ require an additional opt-in. Even with `write_tools_enabled = true`,
-they return `DESTRUCTIVE_TOOLS_DISABLED` unless you also set:
+The tools marked ☠ require an additional opt-in. Even with the write tier on, they return
+`DESTRUCTIVE_TOOLS_DISABLED` unless you also set:
 
 ```toml
-destructive_tools_enabled = true
+destructive_tools_enabled = true      # or [policy.<server>] destructiveTools = true
 ```
 
-Default: `false`, and never inferred — the destructive tier stays off until you declare it.
-Declaring `destructive_tools_enabled = true` with `write_tools_enabled = false` is a
-contradiction, so iad logs `DESTRUCTIVE_REQUIRES_WRITES` and exits 2 rather than serving
-requests with one of the two answers silently discarded.
+Default: `false`, and never inferred — the destructive tier stays off until you declare it, from
+the operator file, a trusted file or `IRIS_DESTRUCTIVE_TOOLS_ENABLED=1`. Declaring it with the
+write tier off is a contradiction, so iad logs `DESTRUCTIVE_REQUIRES_WRITES` and exits 2 rather
+than serving requests with one of the two answers silently discarded.
 
-**Why a separate flag?** A compile-test workflow needs `write_tools_enabled = true`, but
-there's no reason for that same session to be able to kill globals or delete namespaces.
-Enabling the two tiers independently means an agent that can compile can't accidentally wipe
-data even if it constructs a destructive call.
+**Why a separate flag?** A compile-test workflow needs the write tier, but there's no reason for
+that same session to be able to kill globals or delete namespaces. Enabling the two tiers
+independently means an agent that can compile can't accidentally wipe data even if it constructs
+a destructive call.
 
-Environment variable: `IRIS_DESTRUCTIVE_TOOLS_ENABLED=1`
+The tiers are per server. A write allowed on the default server is not allowed on `prod` unless
+`prod`'s own policy and system mode allow it, and each call is judged against the server it runs
+on. (A `compare_document` call that names two servers must pass on both.)
 
-There is no per-server write allowlist. Restricting writes to particular named servers is
-designed in `specs/074-write-server-allowlist/` and not implemented; until it ships, a write
-allowed on this instance is allowed against every server in the pool. Use separate
-workspaces with their own `.iris-agentic-dev.toml` if you need different answers per server.
-
-### Check order for write tool calls
+### Check order for a tool call
 
 ```text
-1. write_tools_enabled        — if false, WRITE_TOOLS_DISABLED
-2. destructive_tools_enabled  — if false and tool is ☠, DESTRUCTIVE_TOOLS_DISABLED
-3. policy.<server>.allow      — category gate (POLICY_GATE)
-4. data safety gates          — PHI, system globals, env template
-5. Execute
+1. configuration valid        — CONFIG_INVALID if a file does not parse
+2. target server resolved     — a server name not in the pool is refused here
+3. write_tools_enabled        — if off, WRITE_TOOLS_DISABLED
+4. destructive_tools_enabled  — if off and the tool is ☠, DESTRUCTIVE_TOOLS_DISABLED
+5. read_only = "strict"       — READ_ONLY_STRICT for a scratch-class tool
+6. parameters and namespace   — UNKNOWN_PARAMETER, INVALID_PARAMS
+7. data safety gates          — environment template, bulk-data tools, system globals,
+                                sensitive-named globals, policy.<server>.allow, server role
+8. execute
 ```
 
-Steps 1 and 2 run once, in `call_tool`, before the request reaches the tool — so a tool
-cannot be added without passing through them. Read-only tools skip steps 1 and 2.
+Steps 1 to 5 run once, in `call_tool`, before the request reaches the tool — so a tool cannot be
+added without passing through them. Read-only tools skip steps 3 and 4. Every refusal in this
+list says which kind it is; see [Refusals](#refusals).
 
 ---
 
@@ -1977,19 +2358,28 @@ PHI is Protected Health Information — the patient-identifying data HIPAA gover
 
 Some tools can reach PHI, and some can reach the globals IRIS uses to store its own code
 and configuration. Those calls are checked before they run and refused by default. Four
-checks run in order; the first one that refuses wins.
+checks run in order; the first one that refuses wins. Each is judged against the **target
+server** of the call, using its [effective policy](connecting.md#effective-policy).
 
-**1. Environment template.** A connection declares what kind of instance it points at via
-`mcpTemplate` in `.iris-agentic-dev.toml` — `dev` (the default) permits everything,
-`test` blocks code execution and compiles, and `live` blocks those plus source control.
-Writes count as execution here: `iris_global` with `action=set` or `kill`, and
+**1. Environment template.** A server's `mcpTemplate` says what kind of instance it is: `dev`
+permits everything, `test` blocks code execution and compiles, and `live` blocks those plus source
+control. When no file declares one, the server's IRIS system mode chooses it (Live and Failover:
+`live`; Test: `test`; Development: `dev`), so a Live instance is protected without any
+configuration. Writes count as execution here: `iris_global` with `action=set` or `kill`, and
 `iris_query` with `mode=write`, are treated as execution even though reads from the same
 tools are not. Error code: `ENV_GATE_BLOCKED`.
 
-**2. Bulk-PHI tools.** `journal_search` and `iris_message_body` return whole records, so
-there is no field to inspect and no safe subset to return. They are refused outright
-unless the connection sets `dataPolicy = "allow"`, with no per-call override. Error code:
-`DATA_POLICY_BLOCKED`.
+**2. Bulk-data tools.** `journal_search`, `iris_message_body` and `stream_inspect` return stored
+message, stream or journal content, so there is no field to inspect before the call. The server's
+`dataPolicy` decides, strictest first: `block` (the default) returns at most the content's
+metadata, `redact` returns the content with sensitive fields replaced or refuses it if iad cannot
+redact it, and `allow` returns it whole. `journal_search` is refused outright unless the policy is
+`allow`, with no per-call override. `iris_message_body` and `stream_inspect` are refused under
+`block`, return HL7 v2 redacted under `redact` and refuse any other content
+(`BODY_NOT_REDACTABLE`), and return the content under `allow`; `stream_inspect` answers a refused
+stream with its class, size and line count. `iris_message_body` also takes a per-call
+`dataPolicy`, but only to tighten. Error codes: `DATA_POLICY_BLOCKED`, `PHI_POLICY_BLOCKED`,
+`BODY_NOT_REDACTABLE`.
 
 **3. System globals.** IRIS keeps compiled classes, routines, roles, users, and
 interoperability config in globals such as `^oddDEF`, `^ROUTINE`, `^%Dictionary*`,
@@ -2007,47 +2397,130 @@ which exempts named patterns from this check on kill operations only. Error code
 not a lock — it exists so nobody pulls a patient record into a chat transcript by
 accident. Error code: `PHI_GATE_BLOCKED`.
 
-`iris_message_body` is gated separately by `dataPolicy` alone: `block` refuses the call
-(`PHI_POLICY_BLOCKED`), `allow` requires `acknowledgePhi: true` (`PHI_ACK_REQUIRED`), and
-`redact` returns the body with the standard HL7 v2 patient fields replaced by `[REDACTED]`
-(PID-3, 5, 7, 8, 11, 18 and MSH-3). Redaction only recognizes HL7 v2 — anything else
-comes back as-is, so `redact` is not a safe default for XML or custom message bodies.
+`iris_message_body` is gated by the stricter of the server's `dataPolicy` and the call's
+`dataPolicy` alone: `block` refuses the call (`PHI_POLICY_BLOCKED`), `allow` requires
+`acknowledgePhi: true` (`PHI_ACK_REQUIRED`), and `redact` returns the body with the standard HL7 v2
+identifying fields replaced by `[REDACTED]`, whatever mix of `\r`, `\n` and `\r\n` ends its segments
+(and whatever blanks, `\x0b` or `\x1c` precede a segment name). Redaction only recognizes HL7 v2, so under `redact` anything
+else (XML, JSON, plain text, custom bodies) is refused with `BODY_NOT_REDACTABLE` rather than
+returned as it is.
+
+---
+
+## Project directory
+
+`iris_compile` (a local file), `kb` index and `iris_symbols_local` read the disk of the machine iad
+runs on. They are held to one directory, the project directory: `OBJECTSCRIPT_WORKSPACE`, else
+`--workspace`, else the directory of the project file (`.iris-agentic-dev.toml`) found by walking up
+from the working directory, else the working directory. It is made canonical.
+
+- A path is allowed when it is inside that directory with symbolic links followed. A link that leads
+  out is refused through its target.
+- A path with a `..` segment is refused even when it lands inside. A relative path is taken from the
+  working directory.
+- When no project directory is known, every host path is refused (`reason: "no_workspace"`). The
+  filesystem root, the home directory and a directory that does not exist do not count as one; set
+  `OBJECTSCRIPT_WORKSPACE` to the project.
+- The refusal is `HOST_PATH_BLOCKED`, a fixed rule, with `reason` set to `outside_workspace`,
+  `parent_reference`, `extension` or `no_workspace`. It comes before the file is read. For a file,
+  the extension is judged first, so the reply does not say whether a file outside the project exists.
+
+## Refusals
+
+A **refusal** is iad declining a call before IRIS runs anything. Every refusal is an error result
+(`isError`) whose body keeps `success: false`, its `error_code` and `error`, and adds a
+`refusal` object that says which kind it is, so the agent knows who can lift it:
+
+```json
+{
+  "success": false,
+  "error_code": "WRITE_TOOLS_DISABLED",
+  "error": "...",
+  "refusal": {
+    "kind": "untrusted_setting",
+    "server": "default",
+    "lift": { "setting": "write_tools_enabled" },
+    "set_aside": "workspace:write_tools_enabled"
+  }
+}
+```
+
+| `refusal.kind`             | Meaning                                                                                                                                                         | Who lifts it, and `lift`                                                         |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `acknowledgement_required` | The call needs the agent to repeat it with an acknowledgement                                                                                                   | The agent: `lift.argument` is `confirm` or `acknowledgePhi`                      |
+| `operator_limit`           | A setting in the operator file, launch settings or a trusted file stands in the way                                                                             | The operator: `lift` is `{setting}`                                              |
+| `untrusted_setting`        | A loosening setting would have lifted it, but the file holding it is not trusted                                                                                | The operator, by trusting the file: `refusal.set_aside` names the set-aside item |
+| `fixed_rule`               | Nothing in configuration or in the call lifts it (the system blocklist, `SQL_WRITE_BLOCKED`, a source-control write on a `subject` server, the code-edit guard) | Nobody; `lift` is `null`                                                         |
+
+A refusal names the setting and never the operator file's path or the edit that lifts it. An agent
+with a file tool that is told "put `write_tools_enabled = true` in `~/.iris-agentic-dev.toml`"
+does so. iad writes that remedy to its own stderr, once per setting per process, and
+`iris-agentic-dev trust --show` lists it for the operator.
+
+`refusal.server` is the target server whose policy refused. Input errors (`UNKNOWN_PARAMETER`,
+`INVALID_PARAMS`, `SERVER_NOT_FOUND`, `CONFIG_INVALID`) and every **IRIS error** (a missing
+privilege, a SQL error) are not refusals and carry no `refusal`. IRIS declining a call is never
+called a refusal.
 
 ---
 
 ## Common error codes
 
-| Code                                  | Meaning                                                                                                        |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `POLICY_GATE`                         | Call blocked by per-connection policy — see `allow` in `.iris-agentic-dev.toml`                                |
-| `ENV_GATE_BLOCKED`                    | Tool not permitted by this connection's `mcpTemplate` — see [gates](#data-safety-gates)                        |
-| `DATA_POLICY_BLOCKED`                 | Bulk-PHI tool called without `dataPolicy = "allow"`                                                            |
-| `SYSTEM_BLOCKLIST`                    | Global is on the system blocklist — not bypassable                                                             |
-| `INVALID_GLOBAL_NAME`                 | `global_name` / `global` is not a global name — no subscripts, extended references, or spaces in the name      |
-| `PHI_GATE_BLOCKED`                    | Global name matches a PHI pattern — pass `acknowledgePhi: true`                                                |
-| `SCOPE_REQUIRED`                      | `iris_search` called without a document scope — pass a `documents` wildcard list                               |
-| `STALE_CONTENT`                       | `iris_doc` insert/delete_lines `expected` field didn't match stored content                                    |
-| `STORAGE_RESET_REQUIRES_CONFIRMATION` | `iris_doc mode=put` would reset an existing Storage block — pass `allow_storage_regeneration: true` to proceed |
-| `CODE_EDIT_BLOCKED`                   | `iris_execute` call matched a code-editing pattern — use `iris_doc` + `iris_compile`                           |
-| `CHECKIN_BLOCKED`                     | SCM CheckIn called without `IRIS_SCM_ALLOW_CHECKIN=1`                                                          |
-| `HTTP_EXECUTION_FAILED`               | Atelier HTTP call failed — check host, port, credentials                                                       |
-| `CONTAINER_UNREACHABLE`               | `docker exec` never reached IRIS — the container is missing or stopped; the message names which                |
-| `IRIS_UNREACHABLE`                    | No IRIS connection discoverable — run `check_config`                                                           |
-| `INTEROP_ERROR`                       | Ensemble/interop HTTP call failed — check production state and container access                                |
-| `SESSION_WS_UNAVAILABLE`              | The instance does not serve the WebSocket terminal endpoint — requires IRIS 2023.2+                            |
-| `SESSION_WS_DISCONNECTED`             | Session token is invalid or already closed — call `iris_ws_open` to get a new token                            |
-| `SESSION_STALE`                       | Session outlived its idle window and was reaped — open a new one                                               |
-| `SESSION_TIMEOUT`                     | IRIS sent no frame within 30 seconds — the statement is still running on the server                            |
-| `CONFIRM_REQUIRED`                    | `global_kill` requires a `confirm_token` from `global_preview`                                                 |
-| `CONFIRM_EXPIRED`                     | Confirmation token is older than 5 minutes — call `global_preview` again                                       |
-| `CONFIRM_MISMATCH`                    | Token was issued for a different global or server                                                              |
-| `WRITE_TOOLS_DISABLED`                | Write tool called without `write_tools_enabled = true` in `.iris-agentic-dev.toml`                             |
-| `DESTRUCTIVE_TOOLS_DISABLED`          | Destructive tool (☠) called without `destructive_tools_enabled = true`                                         |
-| `DESTRUCTIVE_REQUIRES_WRITES`         | `destructive_tools_enabled = true` set while `write_tools_enabled = false` — invalid config                    |
-| `FETCH_FAILED`                        | `compare_document` could not fetch source from one or both servers                                             |
-| `HL7_NOT_AVAILABLE`                   | `EnsLib.HL7.Schema` not installed on this instance                                                             |
-| `SQL_ERROR`                           | `iris_query` statement failed; IRIS's message is in `error`                                                    |
-| `IRIS_RUNTIME_ERROR`                  | `iris_execute` code raised an ObjectScript error; IRIS's text is in `output`                                   |
+| Code                                  | Meaning                                                                                                                                                                                                                                                                                 |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POLICY_GATE`                         | Call blocked by per-connection policy — see `allow` in `.iris-agentic-dev.toml`                                                                                                                                                                                                         |
+| `ENV_GATE_BLOCKED`                    | Tool not permitted by this connection's `mcpTemplate` — see [gates](#data-safety-gates)                                                                                                                                                                                                 |
+| `DATA_POLICY_BLOCKED`                 | Bulk-PHI tool called without `dataPolicy = "allow"`                                                                                                                                                                                                                                     |
+| `SYSTEM_BLOCKLIST`                    | Global is on the system blocklist — not bypassable                                                                                                                                                                                                                                      |
+| `INVALID_GLOBAL_NAME`                 | `global_name` / `global` is not a global name — no subscripts, extended references, or spaces in the name                                                                                                                                                                               |
+| `PHI_GATE_BLOCKED`                    | Global name matches a PHI pattern — pass `acknowledgePhi: true`                                                                                                                                                                                                                         |
+| `SCOPE_REQUIRED`                      | `iris_search` called without a document scope — pass a `documents` wildcard list                                                                                                                                                                                                        |
+| `STALE_CONTENT`                       | `iris_doc` insert/delete_lines `expected` field didn't match stored content                                                                                                                                                                                                             |
+| `STORAGE_RESET_REQUIRES_CONFIRMATION` | `iris_doc mode=put` would reset an existing Storage block — pass `allow_storage_regeneration: true` to proceed                                                                                                                                                                          |
+| `CODE_EDIT_BLOCKED`                   | `iris_execute` call matched a code-editing pattern — use `iris_doc` + `iris_compile`                                                                                                                                                                                                    |
+| `CHECKIN_BLOCKED`                     | SCM CheckIn called without `IRIS_SCM_ALLOW_CHECKIN=1`                                                                                                                                                                                                                                   |
+| `SCM_ADMIN_BLOCKED`                   | SCM Disconnect or Reconnect called without `IRIS_SCM_ALLOW_DISCONNECT=1`                                                                                                                                                                                                                |
+| `SCM_ACTION_UNPARSEABLE`              | `UserAction` answered with something that is not a whole-number action code, or no answer was written                                                                                                                                                                                   |
+| `SCM_ACTION_UNKNOWN`                  | `UserAction` answered with a number outside the documented codes 0 to 7                                                                                                                                                                                                                 |
+| `SCM_NEEDS_UI`                        | `UserAction` asked for a web page, a client program, editor text or editor documents (codes 2 to 5) — do that step in your own source-control client                                                                                                                                    |
+| `SCM_NEEDS_INPUT`                     | `UserAction` asked for typed text (code 7) at a call that cannot take it                                                                                                                                                                                                                |
+| `HTTP_EXECUTION_FAILED`               | Atelier HTTP call failed — check host, port, credentials                                                                                                                                                                                                                                |
+| `CONTAINER_UNREACHABLE`               | `docker exec` never reached IRIS — the container is missing or stopped; the message names which                                                                                                                                                                                         |
+| `IRIS_UNREACHABLE`                    | No IRIS connection discoverable — run `check_config`                                                                                                                                                                                                                                    |
+| `INTEROP_ERROR`                       | Ensemble/interop HTTP call failed — check production state and container access                                                                                                                                                                                                         |
+| `SESSION_WS_UNAVAILABLE`              | The instance does not serve the WebSocket terminal endpoint — requires IRIS 2023.2+                                                                                                                                                                                                     |
+| `SESSION_WS_DISCONNECTED`             | Session token is invalid or already closed — call `iris_ws_open` to get a new token                                                                                                                                                                                                     |
+| `SESSION_STALE`                       | Session outlived its idle window and was reaped — open a new one                                                                                                                                                                                                                        |
+| `SESSION_TIMEOUT`                     | IRIS sent no frame within 30 seconds — the statement is still running on the server                                                                                                                                                                                                     |
+| `CONFIRM_REQUIRED`                    | `global_kill` requires a `confirm_token` from `global_preview`                                                                                                                                                                                                                          |
+| `CONFIRM_EXPIRED`                     | Confirmation token is older than 5 minutes — call `global_preview` again                                                                                                                                                                                                                |
+| `CONFIRM_MISMATCH`                    | Token was issued for a different global or server                                                                                                                                                                                                                                       |
+| `WRITE_TOOLS_DISABLED`                | Write tool called on a server whose write tier is off — see [Write protection](#write-protection)                                                                                                                                                                                       |
+| `DESTRUCTIVE_TOOLS_DISABLED`          | Destructive tool (☠) called on a server whose destructive tier is off                                                                                                                                                                                                                   |
+| `DESTRUCTIVE_REQUIRES_WRITES`         | `destructive_tools_enabled = true` set while `write_tools_enabled = false` — invalid config                                                                                                                                                                                             |
+| `FETCH_FAILED`                        | `compare_document` could not fetch source from one or both servers                                                                                                                                                                                                                      |
+| `HL7_NOT_AVAILABLE`                   | `EnsLib.HL7.Schema` not installed on this instance                                                                                                                                                                                                                                      |
+| `SQL_ERROR`                           | `iris_query` statement failed; IRIS's message is in `error`                                                                                                                                                                                                                             |
+| `IRIS_RUNTIME_ERROR`                  | `iris_execute` code raised an ObjectScript error; IRIS's text is in `output`                                                                                                                                                                                                            |
+| `CONFIG_INVALID`                      | A configuration file or entry does not parse or validate; the message names the file, line and column                                                                                                                                                                                   |
+| `PHI_POLICY_BLOCKED`                  | `iris_message_body` under `dataPolicy = "block"`                                                                                                                                                                                                                                        |
+| `PHI_ACK_REQUIRED`                    | `iris_message_body` under `allow` without `acknowledgePhi: true`                                                                                                                                                                                                                        |
+| `BODY_NOT_REDACTABLE`                 | Content under `dataPolicy = "redact"` that iad cannot redact (anything but HL7 v2)                                                                                                                                                                                                      |
+| `COMPILE_TIME_EXEC_BLOCKED`           | A document would run code while it compiles — see the [compile-time gate](connecting.md#compile-time-gate)                                                                                                                                                                              |
+| `STORED_SOURCE_UNREADABLE`            | `iris_compile` target exists but its stored source cannot be read                                                                                                                                                                                                                       |
+| `COMPILE_SUPERCLASS_STALE`            | A compile would also build an out-of-date superclass outside the library packages; the message names it. Compile it first. A fixed rule                                                                                                                                                 |
+| `HOST_PATH_BLOCKED`                   | `iris_compile`, `kb` index or `iris_symbols_local` was given a host path outside the project directory, with a `..` segment, or (compile) not a `.cls`, `.mac`, `.inc` or `.int` file. `reason` is `outside_workspace`, `parent_reference`, `extension` or `no_workspace`. A fixed rule |
+| `SUPERCLASS_CHECK_FAILED`             | The superclass walk before a compile could not run or did not finish, so nothing was compiled                                                                                                                                                                                           |
+| `SUBJECT_CONFIRM_REQUIRED`            | A write on a `subject` server without `confirm: true`                                                                                                                                                                                                                                   |
+| `SUBJECT_SCM_WRITE_BLOCKED`           | A source-control write on a `subject` server; `confirm` does not lift it                                                                                                                                                                                                                |
+| `READ_ONLY_STRICT`                    | A scratch-class tool called under `read_only = "strict"`                                                                                                                                                                                                                                |
+| `NAME_CONFLICT`                       | `iris_add_server` named an existing Server Manager profile                                                                                                                                                                                                                              |
+| `SERVICE_ACCOUNT_*`                   | The agent's code could not run as the service account: `_UNCONFIGURED_FOR_SERVER`, `_WITHHELD`, `_HTTP_DENIED`, `_TERMINAL_DENIED`, `_LOGIN_FAILED`, `_IDENTITY_MISMATCH`, `_INVALID` — see [Troubleshooting](troubleshooting.md#service_account_-errors)                               |
+| `SESSION_IDENTITY_CHANGED`            | A WebSocket session's identity no longer matches the configured service account                                                                                                                                                                                                         |
+| `DOCKER_TERMINAL_LOGIN_REQUIRED`      | The container's terminal asks for a password, which iad does not send                                                                                                                                                                                                                   |
+| `NO_DOCKER_ROUTE_FOR_SERVER`          | Named in the `no_docker_route` field of an `HTTP_EXECUTION_FAILED` response: a named server's HTTP path failed and it has no `container` of its own                                                                                                                                     |
+| `SSH_HOST_KEY_MISMATCH`               | The SSH host's key changed since it was recorded                                                                                                                                                                                                                                        |
+| `JOURNAL_SEARCH_TIMEOUT`              | `journal_search` outran the HTTP timeout; names the journal file and size                                                                                                                                                                                                               |
 
 `SQL_ERROR` and `IRIS_RUNTIME_ERROR` responses carry a `hint` when iad recognises the error. Seven
 rules match, each reproduced on live IRIS first:

@@ -77,8 +77,10 @@ struct Mcp {
     stdin: ChildStdin,
     reader: BufReader<ChildStdout>,
     next_id: u64,
-    /// Holds the config-file tempdir open for the process's lifetime.
+    /// Holds the workspace tempdir open for the process's lifetime.
     _dir: tempfile::TempDir,
+    /// The home directory the operator file lives in, when the test did not bring its own.
+    _home: Option<tempfile::TempDir>,
 }
 
 impl Drop for Mcp {
@@ -103,8 +105,20 @@ impl Mcp {
     }
 
     fn start_inner(config_toml: &str, home: Option<&std::path::Path>) -> Mcp {
+        // The gate under test is declared in the operator file, `~/.iris-agentic-dev.toml`: a
+        // project file cannot raise a gate until the operator trusts it (spec 141), and the
+        // question here is what the gate does once it is raised, not who may raise it. The workspace
+        // is an empty directory, and `HOME` is a directory of the test's own either way, so the
+        // developer's real operator file is never read.
         let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::write(dir.path().join(".iris-agentic-dev.toml"), config_toml).expect("write toml");
+        let own_home = home.is_none().then(|| tempfile::tempdir().expect("home"));
+        let home = home.or(own_home.as_ref().map(|h| h.path()));
+        std::fs::write(
+            home.expect("a home directory")
+                .join(".iris-agentic-dev.toml"),
+            config_toml,
+        )
+        .expect("write operator file");
 
         let bin = iris_dev_bin();
         assert!(
@@ -169,6 +183,7 @@ impl Mcp {
             reader: BufReader::new(stdout),
             next_id: 1,
             _dir: dir,
+            _home: own_home,
         };
         mcp.request(
             "initialize",

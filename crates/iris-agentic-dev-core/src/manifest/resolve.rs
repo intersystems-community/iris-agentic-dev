@@ -247,30 +247,45 @@ pub async fn resolve_github_version_async(
     Ok(candidates.into_iter().last().unwrap())
 }
 
+#[derive(serde::Serialize)]
 pub struct ResolveLock {
     pub packages: Vec<PackageLock>,
 }
 
+#[derive(serde::Serialize)]
 pub struct PackageLock {
     pub name: String,
     pub version: String,
     pub repository: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub checksum: Option<String>,
 }
 
+/// The file's layout: `[metadata]`, then one `[[package]]` per entry.
+#[derive(serde::Serialize)]
+struct LockFile<'a> {
+    metadata: LockMetadata,
+    /// Absent when empty: an empty array would be written as a plain `package = []` line, ahead of
+    /// `[metadata]`.
+    #[serde(skip_serializing_if = "<[PackageLock]>::is_empty")]
+    package: &'a [PackageLock],
+}
+
+#[derive(serde::Serialize)]
+struct LockMetadata {
+    #[serde(rename = "format-version")]
+    format_version: u32,
+}
+
 impl ResolveLock {
+    /// The lock as TOML. Written by the TOML serialiser, so a name or URL from a manifest cannot
+    /// add lines, tables or comments to it (FR-026).
     pub fn to_toml(&self) -> String {
-        let mut out = String::from("[metadata]\nformat-version = 1\n\n");
-        for pkg in &self.packages {
-            // Bug 11: use proper TOML string quoting, not Rust Debug format ({:?}).
-            out.push_str(&format!(
-                "[[package]]\nname = \"{}\"\nversion = \"{}\"\nrepository = \"{}\"\n\n",
-                pkg.name.replace('\\', "\\\\").replace('"', "\\\""), // splice-ok: TOML escapes with a backslash
-                pkg.version.replace('\\', "\\\\").replace('"', "\\\""), // splice-ok: TOML escapes with a backslash
-                pkg.repository.replace('\\', "\\\\").replace('"', "\\\""), // splice-ok: TOML escapes with a backslash
-            ));
-        }
-        out
+        toml::to_string(&LockFile {
+            metadata: LockMetadata { format_version: 1 },
+            package: &self.packages,
+        })
+        .expect("a lock of strings always serialises")
     }
 }
 
@@ -536,10 +551,12 @@ mod tests {
                 checksum: None,
             }],
         };
-        let toml = lock.to_toml();
-        // Ensure the raw quote is escaped, not left bare
-        assert!(toml.contains("\\\"quote\\\""));
-        assert!(!toml.contains("\"quote\""));
+        let text = lock.to_toml();
+        let parsed: toml::Table = toml::from_str(&text).unwrap();
+        assert_eq!(
+            parsed["package"][0]["name"].as_str(),
+            Some("pkg-with-\"quote\"")
+        );
     }
 
     #[test]

@@ -53,6 +53,15 @@ characters. Injection attempts survive as visible text rather than being silentl
 label like `"team a\r\nX-Evil: 1"` becomes `iris-agentic-dev/1.2.7 (cli; team a X-Evil: 1)`
 in the log — the injected header name is recorded as plain text and cannot split the request.
 
+### Client name and version sanitizing
+
+The client names itself, so its `clientInfo.name` and `clientInfo.version` are cleaned the same
+way before they reach the User-Agent and the audit event. Only ASCII letters, digits and
+`. _ + -` are kept; every other character, including spaces and the `; ( ) / = "` the marker uses
+as separators, becomes `_`. The name is capped at 64 characters and the version at 32. A name that
+cleans to nothing is left out. A client called `Visual Studio Code` therefore appears as
+`Visual_Studio_Code`.
+
 ### Setting the label
 
 ```sh
@@ -143,6 +152,25 @@ Do ##class(%ResultSet).%New("%SYS.Audit.Security:List")
 On busy systems, `DynamicStatementDML` (covers JDBC and `%SQL.Statement` executes) generates
 one record per query. Measure volume in a test environment before enabling on production.
 
+## Who ran the code: the service account and `identity`
+
+By default the code an agent writes runs as the account iad connects with. With a
+[service account](connecting.md#service-account-for-the-agents-code) configured, `iris_execute`,
+`iris_query` writes, `iris_global` set/kill, `iris_execute_method`, `global_kill`, `iris_test`,
+`iris_coverage` run/start and the WebSocket terminal run as that account instead, on every path,
+or the call is refused. Two things follow for attribution:
+
+- `RoutineChange` and `%SQL` audit records carry the service account's username, so agent
+  execution is separable from the human who configured iad without any marker at all. Give the
+  agent an account of its own and the trail is attributable even when `ClientIPAddress` is empty.
+- Every such response carries `identity {user, source, path, verified, server}`. `user` is
+  `$USERNAME` as IRIS reported it when `verified` is true, so it is evidence and not a claim. A
+  `source` of `os_user_opt_in` means the operator allowed the code to run as the container's OS
+  user; see [connecting.md](connecting.md#service-account-for-the-agents-code).
+
+The code store (`iris_doc` put, `iris_compile`, source control) keeps running as the connection
+account on purpose, so the edits source control records are attributed to a real user.
+
 ## opt-in `%SYS.Audit` emission (`irisAudit`)
 
 Set `irisAudit = true` in a `[policy.<server>]` block to make `iris-agentic-dev` emit a
@@ -150,9 +178,14 @@ Set `irisAudit = true` in a `[policy.<server>]` block to make `iris-agentic-dev`
 
 ```toml
 [policy.prod-iris]
-mcpTemplate = "Live"
+mcpTemplate = "live"
 irisAudit = true   # emit %SYS.Audit records for every tool call
 ```
+
+`irisAudit` only adds records, so it counts from any configuration file, a project's included, and
+combines with the other file's setting: it is on if either file turns it on.
+`irisAudit` cannot be combined with `read_only = "strict"`: the emission compiles a class on the
+server, so `iris-agentic-dev mcp` names both settings on stderr and exits 2.
 
 For flat single-server configs (no named server entry), use the `default` catchall key:
 
@@ -202,6 +235,19 @@ While rs.%Next() {
 Note: `%SYS.Audit` has a known replication lag (`DP-449511`) — records are written
 asynchronously and may not appear immediately after the tool call returns.
 
+### The local audit log
+
+Separately from IRIS, iad appends one JSON line per policy-gated call to
+`~/.iris-agentic-dev/audit.jsonl`: the time, tool, server, namespace, whether the call was
+`allowed`, `blocked` or an `error`, which gate blocked it, and the call's parameters. Credential
+fields (any key ending in `password`, `secret`, `token`, `apikey` and similar) are written as
+`[REDACTED]`, and the name of a PHI-named global as `[REDACTED-PHI]`. By default the text the
+caller wrote (`code`, `query`, `sql`, `args`, `content`, `value`) is reduced to its size, because
+that is where the secrets no key name finds end up. To keep the text, the operator sets
+`audit_payloads = true` in `~/.iris-agentic-dev.toml` or `IAD_AUDIT_PAYLOADS=1` in the launch
+settings; a project file cannot. `check_config.audit` shows the path and whether payloads are
+kept as `sizes` or `full`.
+
 ### Trust asymmetry
 
 `RoutineChange` and `%SQL/*` records are **written by IRIS** and cannot be skipped by a
@@ -236,7 +282,9 @@ Distinct credentials mean:
 - `RoutineChange` and `%SQL` audit records carry the agent's username, making the trail
   attributable even when `ClientIPAddress` is empty.
 - Role restrictions (`%DB_<database>_WRITE`, `%Development`) can be removed from the agent
-  account on environments where code compilation should be blocked entirely.
+  account on environments where code compilation should be blocked entirely. A
+  [service account](connecting.md#service-account-for-the-agents-code) is this idea built in:
+  the agent's own code runs as an account whose privileges are the limit.
 
 The marker and `irisAudit` emission add visibility. Credentials and roles add enforcement.
 Use both.
@@ -244,10 +292,12 @@ Use both.
 ### A note on the write and destructive tool gates
 
 The write and destructive gates (`write_tools_enabled`, `destructive_tools_enabled` and their
-per-tool equivalents in `[policy.<server>]`) run inside the agent's own process, evaluated
-against the agent's own config file. A `curl` command, a Postman request, another MCP server,
-or a rebuilt binary ignores them entirely. They cannot enforce "no agents on this environment"
-— only IRIS-side controls can do that.
+per-server equivalents in `[policy.<server>]`) run inside the agent's own process, evaluated
+against your operator file, your launch settings, and any project file you have trusted with
+`iris-agentic-dev trust`. A project file you have not trusted can tighten them and cannot loosen
+them. Even so, they live in the agent's host: a `curl` command, a Postman request, another MCP
+server, or a rebuilt binary ignores them entirely. They cannot enforce "no agents on this
+environment" — only IRIS-side controls can do that.
 
 Their real value is different: per-tool granularity that IRIS resource permissions cannot
 express. You can deny `iris_ws_exec` while allowing `iris_doc` reads, in the same credential

@@ -127,11 +127,26 @@ pub fn parse_execute_output(output: &str) -> Result<String, serde_json::Value> {
     Ok(trimmed.to_string())
 }
 
-/// Parse `get` output: `1|value` (defined) or `0|` (undefined).
+/// Parse `get` output: `1|<base64>;` (defined) or `0|` (undefined). The value is the Base64 of its
+/// UTF-8 bytes, so no CR or trailing space in it reaches the generator's line reader or trim.
+///
+/// The reader returns at most 32,000 characters per line and puts a line feed after each piece, so
+/// a value over about 24 KB arrives with line feeds inside it. Base64 holds none, so they are
+/// dropped. The closing `;` tells a whole value from one the output cut short.
 pub fn parse_get_output(raw: &str) -> serde_json::Value {
-    // After trim the output is like "1|hello-052" or "0|"
+    // After trim the output is like "1|aGk=;" or "0|"
     if let Some(rest) = raw.strip_prefix("1|") {
-        serde_json::json!({"success": true, "defined": true, "value": rest})
+        let joined = rest.replace('\n', "");
+        let Some(encoded) = joined.strip_suffix(';') else {
+            return err_json("IRIS_EXECUTE_ERROR", UNFINISHED_VALUE);
+        };
+        match decode_value(encoded) {
+            Some(value) => serde_json::json!({"success": true, "defined": true, "value": value}),
+            None => err_json(
+                "IRIS_EXECUTE_ERROR",
+                "the get output is not valid Base64 of UTF-8 text",
+            ),
+        }
     } else if let Some(_rest) = raw.strip_prefix("0|") {
         serde_json::json!({"success": true, "defined": false, "value": serde_json::Value::Null})
     } else {
@@ -142,24 +157,52 @@ pub fn parse_get_output(raw: &str) -> serde_json::Value {
     }
 }
 
-/// Parse subtree `get` output: lines of `path|value` followed by `DONE|count|truncated`.
+const UNFINISHED_VALUE: &str = "the get output ended before the value did";
+
+/// Parse subtree `get` output: lines of `path|<base64>;` followed by `DONE|count|truncated`.
+///
+/// The value holds no `|`, so the last one splits the line even when a string subscript contains
+/// one. A value over about 24 KB arrives in pieces of 32,000 characters on separate lines (see
+/// [`parse_get_output`]); a line with no `|` that follows an unfinished node continues it. A node
+/// with no closing `;`, or output with no `DONE`, was cut short and is an error.
 pub fn parse_subtree_output(raw: &str) -> serde_json::Value {
     let mut nodes: Vec<serde_json::Value> = Vec::new();
     let mut count: i64 = 0;
     let mut truncated = false;
+    let mut done = false;
+    // The node being read: its path, and the Base64 gathered so far.
+    let mut open: Option<(&str, String)> = None;
     for line in raw.lines() {
         if line.is_empty() {
             continue;
         }
-        if let Some(rest) = line.strip_prefix("DONE|") {
+        if let (Some((_, encoded)), false) = (open.as_mut(), line.contains('|')) {
+            encoded.push_str(line);
+        } else if open.is_some() {
+            return err_json("IRIS_EXECUTE_ERROR", UNFINISHED_VALUE);
+        } else if let Some(rest) = line.strip_prefix("DONE|") {
+            done = true;
             let parts: Vec<&str> = rest.splitn(2, '|').collect();
             count = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
             truncated = parts.get(1).map(|s| *s == "1").unwrap_or(false);
-        } else if let Some(idx) = line.find('|') {
-            let path = &line[..idx];
-            let value = &line[idx + 1..];
+        } else if let Some(idx) = line.rfind('|') {
+            open = Some((&line[..idx], line[idx + 1..].to_string()));
+        }
+        // A node is whole once its Base64 ends in the `;` terminator.
+        if open.as_ref().is_some_and(|(_, e)| e.ends_with(';')) {
+            let (path, mut encoded) = open.take().expect("checked above");
+            encoded.pop();
+            let Some(value) = decode_value(&encoded) else {
+                return err_json(
+                    "IRIS_EXECUTE_ERROR",
+                    &format!("unexpected subtree get output at {path}"),
+                );
+            };
             nodes.push(serde_json::json!({"path": path, "value": value}));
         }
+    }
+    if open.is_some() || !done {
+        return err_json("IRIS_EXECUTE_ERROR", UNFINISHED_VALUE);
     }
     serde_json::json!({"success": true, "nodes": nodes, "node_count": count, "truncated": truncated})
 }
@@ -204,15 +247,28 @@ pub fn clamp_max_subscripts(v: i64) -> i64 {
 // error in the IRIS class compiler. Strategy: return pipe-delimited or newline-delimited
 // plain text and assemble JSON in Rust.
 
+/// The value a `get` wrote: Base64 of its UTF-8 bytes. `""` is the empty value.
+fn decode_value(encoded: &str) -> Option<String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .ok()?;
+    String::from_utf8(bytes).ok()
+}
+
+/// ObjectScript that writes `val` as Base64 of its UTF-8 bytes, then `;`. A value reaches Rust only
+/// in this form. Decimal code points cost 3.5 times the value in output; Base64 costs 4/3.
+const ENCODE_VALUE: &str = r#"Write $SYSTEM.Encryption.Base64Encode($ZCVT(val,"O","UTF8"),1),";""#;
+
 /// Build ObjectScript for a single-node `get`.
 ///
-/// Returns: `1|value` if defined, `0|` if undefined.
+/// Returns: `1|<base64>;` (the value as Base64 of its UTF-8 bytes) if defined, `0|` if undefined.
 /// No `{`/`}` in output — JSON assembled in Rust.
 pub fn build_get_code(gref: &str) -> String {
     [
         format!(" Set val = $Get({})", gref),
         format!(" Set def = ($Data({}) > 0)", gref),
-        r#" If def  Write "1|"_val,$C(10)"#.to_string(),
+        format!(r#" If def {{ Write "1|" {ENCODE_VALUE} Write $C(10) }}"#),
         r#" If 'def  Write "0|",$C(10)"#.to_string(),
     ]
     .join("\n")
@@ -220,7 +276,8 @@ pub fn build_get_code(gref: &str) -> String {
 
 /// Build ObjectScript for a subtree `get`.
 ///
-/// Returns lines of `path|value`, followed by `DONE|count|truncated`.
+/// Returns lines of `path|<base64>;` (the value encoded as in single `get`), followed by
+/// `DONE|count|truncated`.
 /// No `{`/`}` in output. Single-line For body — avoid dot-continuation inside
 /// Try block where it is unreliable. JSON assembled in Rust.
 pub fn build_subtree_get_code(gref: &str, max_nodes: i64) -> String {
@@ -234,13 +291,13 @@ pub fn build_subtree_get_code(gref: &str, max_nodes: i64) -> String {
         // $Query starts after the base and never returns it, so a node that holds a value and
         // children ($DATA = 11) lost its own value. Emit it first. A node with children only
         // (D=10) has no value to emit.
-        r#" If $Data(@baseRef)#2 Write baseRef_"|"_@baseRef,$C(10) Set count=count+1"#.to_string(),
+        format!(r#" If $Data(@baseRef)#2 {{ Set val=@baseRef Write baseRef_"|" {ENCODE_VALUE} Write $C(10) Set count=count+1 }}"#),
         // A descendant starts with the reference up to its closing parenthesis, plus a comma:
         // `^G("a")` -> `^G("a",`. Comparing against the whole reference (closing parenthesis
         // included) never matched below a subscripted node (#146), and a prefix without the
         // comma would let `^G(10)` through as a descendant of `^G(1)`.
         r#" Set prefix = $Select($Extract(baseRef,$Length(baseRef))=")":$Extract(baseRef,1,$Length(baseRef)-1)_",",1:baseRef_"(")"#.to_string(),
-        r#" For  Set node = $Query(@node)  Quit:node=""  Quit:($Extract(node,1,$Length(prefix))'=prefix)  Quit:(count>=maxNodes)  Quit:(($ZH-startTime)>5)  Write node_"|"_@node,$C(10)  Set count=count+1"#.to_string(),
+        format!(r#" For  Set node = $Query(@node)  Quit:node=""  Quit:($Extract(node,1,$Length(prefix))'=prefix)  Quit:(count>=maxNodes)  Quit:(($ZH-startTime)>5)  Set val=@node Write node_"|" {ENCODE_VALUE} Write $C(10)  Set count=count+1"#),
         // truncated=1 if we hit the node cap; time truncation approximated by same check
         // (a 5s timeout stops the loop before all nodes collected, so count<maxNodes but
         //  we cannot distinguish without extra state — accept that time-truncated results
@@ -255,9 +312,12 @@ pub fn build_subtree_get_code(gref: &str, max_nodes: i64) -> String {
 ///
 /// Returns: `ok` on success. No `{`/`}` in output.
 pub fn build_set_objectscript(gref: &str, value: &str) -> String {
-    let escaped_value = value.replace('"', "\"\"");
     [
-        format!(" Set {} = \"{}\"", gref, escaped_value),
+        format!(
+            " Set {} = {}",
+            gref,
+            crate::objectscript::os_str_expr(value)
+        ),
         r#" Write "ok",$C(10)"#.to_string(),
     ]
     .join("\n")
@@ -314,6 +374,10 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct IrisGlobalParams {
+    /// Confirms the call on a `subject` server, where a write is refused until it is set. No
+    /// effect on other servers.
+    #[serde(default)]
+    pub confirm: bool,
     /// Action: get, set, kill, list
     #[schemars(extend("enum" = ["get", "set", "kill", "list"]))]
     pub action: String,
@@ -536,9 +600,9 @@ mod tests {
 
     #[test]
     fn parse_get_output_defined() {
-        let v = parse_get_output("1|hello");
+        let v = parse_get_output("1|aGk=;");
         assert_eq!(v["defined"], true);
-        assert_eq!(v["value"], "hello");
+        assert_eq!(v["value"], "hi");
     }
 
     #[test]
@@ -558,7 +622,7 @@ mod tests {
 
     #[test]
     fn parse_subtree_output_with_nodes() {
-        let raw = "^Global(\"a\")|val1\n^Global(\"b\")|val2\nDONE|2|0\n";
+        let raw = "^Global(\"a\")|dmFsMQ==;\n^Global(\"b\")|dmFsMg==;\nDONE|2|0\n";
         let v = parse_subtree_output(raw);
         assert_eq!(v["node_count"], 2);
         assert_eq!(v["truncated"], false);
@@ -568,7 +632,7 @@ mod tests {
 
     #[test]
     fn parse_subtree_output_truncated() {
-        let raw = "^G(\"a\")|v\nDONE|1|1\n";
+        let raw = "^G(\"a\")|dg==;\nDONE|1|1\n";
         let v = parse_subtree_output(raw);
         assert_eq!(v["truncated"], true);
     }
@@ -620,6 +684,18 @@ mod tests {
     fn build_set_objectscript_escapes_quotes() {
         let code = build_set_objectscript("^G", r#"say "hi""#);
         assert!(code.contains(r#""""hi"""#) || code.contains("\"\"hi\"\""));
+    }
+
+    #[test]
+    fn build_set_objectscript_keeps_a_newline_on_one_line() {
+        // Spec 141 C3: a newline in `value` must not start a source line in the scratch method.
+        let code = build_set_objectscript("^G", "a\n#execute Set ^IadSentinel=1");
+        let lines: Vec<&str> = code.lines().collect();
+        assert_eq!(lines.len(), 2, "the Set and the Write only: {code}");
+        assert!(
+            code.contains("$CHAR(10)"),
+            "the newline is a $CHAR splice: {code}"
+        );
     }
 
     #[test]

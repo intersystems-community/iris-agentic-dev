@@ -212,22 +212,14 @@ fn kill_allowlist_does_not_exempt_read_operation() {
 
 #[test]
 fn kill_allowlist_does_not_exempt_system_blocklist() {
-    // Even with kill allowlist, system blocklist is still enforced for system globals
-    // The kill allowlist only applies to the custom blocklist check
+    // The kill allowlist exempts custom blocklist patterns only. The built-in list is a fixed rule:
+    // a config that lifted it would make the "no configuration override" claim in its own refusal
+    // false (spec 141 FR-030b).
     let kill_allow = vec!["^oddDEF".to_string()];
-    let r = check_system_blocklist("oddDEF", NO_CUSTOM, &kill_allow, true, "iris-prod");
-    // System blocklist check happens AFTER kill exemption — kill exemption only exempts custom+kill_allow
-    // If oddDEF is in system blocklist and kill_allow, it's still blocked (system blocklist trumps)
-    // Per spec: kill exemption only prevents custom_blocklist block, not system_blocklist
-    // Let's verify the exact semantics from the implementation
-    // The gate order: (1) kill allowlist check -> return None if is_kill && matches_kill_allow
-    // Then (2) system blocklist, (3) custom blocklist
-    // So if oddDEF is in kill_allowlist AND is_kill_op=true → None (permit)
-    // This is intentional — admin operations may need to kill system globals
-    assert!(
-        r.is_none(),
-        "kill allowlist exempts even system globals for kill ops — by design"
-    );
+    let r = check_system_blocklist("oddDEF", NO_CUSTOM, &kill_allow, true, "iris-prod")
+        .expect("a kill allowlist must not lift the built-in blocklist");
+    assert_eq!(r["error_code"], "SYSTEM_BLOCKLIST");
+    assert_eq!(r["custom_pattern"], false);
 }
 
 // ── Error JSON shape ──────────────────────────────────────────────────────────

@@ -153,6 +153,8 @@ fn cli_compile_valid_cls_file() {
     let output = Command::new(&bin)
         .arg("compile")
         .arg(&cls_path)
+        // The project directory is the working directory; a file outside it is refused.
+        .current_dir(dir.path())
         .output()
         .expect("failed to run iris-agentic-dev compile");
 
@@ -190,6 +192,8 @@ fn cli_compile_cls_with_special_chars() {
     let output = Command::new(&bin)
         .arg("compile")
         .arg(&cls_path)
+        // The project directory is the working directory; a file outside it is refused.
+        .current_dir(dir.path())
         .output()
         .expect("failed to run iris-agentic-dev compile");
 
@@ -214,6 +218,7 @@ fn cli_compile_missing_file_exits_nonzero() {
     let output = Command::new(&bin)
         .arg("compile")
         .arg("/tmp/this_file_does_not_exist_iris_dev_test.cls")
+        .current_dir("/tmp")
         .output()
         .expect("failed to run iris-agentic-dev compile");
 
@@ -242,6 +247,7 @@ fn cli_compile_upload_error_not_silently_swallowed() {
     let output = Command::new(&bin)
         .arg("compile")
         .arg(&bad_path)
+        .current_dir(dir.path())
         .output()
         .expect("failed to run iris-agentic-dev compile");
 

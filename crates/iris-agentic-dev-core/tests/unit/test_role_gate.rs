@@ -77,7 +77,7 @@ fn test_iris_execute_subject_with_confirm_proceeds() {
 #[test]
 fn test_iris_compile_workspace_role_no_gate() {
     let result = check_role_gate(
-        &ConnectionRole::Workspace,
+        &ConnectionRole::Workbench,
         "iris_compile",
         false,
         "local",
@@ -87,9 +87,10 @@ fn test_iris_compile_workspace_role_no_gate() {
 }
 
 #[test]
-fn test_iris_compile_control_plane_role_no_gate() {
+fn test_iris_compile_workbench_role_no_gate_after_control_plane_rename() {
+    // `control-plane` reads as `workbench` (spec 141 FR-038); a workbench is never gated.
     let result = check_role_gate(
-        &ConnectionRole::ControlPlane,
+        &ConnectionRole::Workbench,
         "iris_compile",
         false,
         "ctrl",
@@ -186,7 +187,7 @@ fn test_iris_source_control_status_subject_not_blocked() {
 #[test]
 fn test_iris_source_control_commit_workspace_not_blocked() {
     let result = check_role_gate(
-        &ConnectionRole::Workspace,
+        &ConnectionRole::Workbench,
         "iris_source_control:commit",
         false,
         "local",

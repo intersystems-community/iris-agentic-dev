@@ -1,6 +1,7 @@
 // Tests for connection.rs fixes: query() namespace, Debug redaction, container caching, banner stripping.
 
 use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection, SystemMode};
+use iris_agentic_dev_core::testing::EnvGuard;
 
 // 085: the ENV_LOCK that used to serialise these tests is gone with the tests that needed it. The
 // gate is resolved as data by `write_gate::resolve_gates`, so nothing in this file mutates the
@@ -196,13 +197,14 @@ fn test_execute_captures_multiline_without_trailing_newline() {
 // between parallel test threads.
 #[test]
 fn test_execute_iris_container_env_behavior() {
+    let mut env_guard = EnvGuard::new();
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
 
     // Sub-case A: no container set → DOCKER_REQUIRED
-    std::env::remove_var("IRIS_CONTAINER");
+    env_guard.unset("IRIS_CONTAINER");
     let conn = IrisConnection::new(
         "http://localhost:52773",
         "USER",
@@ -221,7 +223,7 @@ fn test_execute_iris_container_env_behavior() {
     // Sub-case B: set env var AFTER construction → execute() must pick it up.
     // If OnceLock cached None at construction time the call would still return
     // DOCKER_REQUIRED. Without the cache it attempts docker exec instead.
-    std::env::remove_var("IRIS_CONTAINER");
+    env_guard.unset("IRIS_CONTAINER");
     let conn2 = IrisConnection::new(
         "http://localhost:52773",
         "USER",
@@ -229,9 +231,9 @@ fn test_execute_iris_container_env_behavior() {
         "SYS",
         DiscoverySource::ExplicitFlag,
     );
-    std::env::set_var("IRIS_CONTAINER", "nonexistent-container-for-test");
+    env_guard.set("IRIS_CONTAINER", "nonexistent-container-for-test");
     let result2 = rt.block_on(conn2.execute("Write 1", "USER"));
-    std::env::remove_var("IRIS_CONTAINER");
+    env_guard.unset("IRIS_CONTAINER");
     // Should be an error (container not found) but NOT "DOCKER_REQUIRED"
     if let Err(e) = result2 {
         assert!(
