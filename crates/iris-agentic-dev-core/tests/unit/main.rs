@@ -177,6 +177,7 @@ mod test_scm_opt_in_141;
 mod test_scm_unit;
 mod test_scratch_cleanup_141;
 mod test_search_unit;
+mod test_server_arg_171;
 mod test_server_entry_plaintext;
 mod test_server_manager;
 mod test_servers_json_web_prefix;
