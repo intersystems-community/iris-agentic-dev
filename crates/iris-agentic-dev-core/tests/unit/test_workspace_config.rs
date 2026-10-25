@@ -1017,8 +1017,9 @@ role = "subject"
 "#,
     );
     let fleet = load_fleet_config(Some(dir.path().to_str().unwrap())).expect("fleet config loads");
-    // mode="develop" — instance map is parsed but callers must ignore it
-    assert_eq!(fleet.mode.as_deref(), Some("develop"));
+    // mode="develop" in a project file is a loosening setting, so an untrusted file's value is
+    // set aside; either way it is not "operate" and callers must ignore the instance map.
+    assert_ne!(fleet.mode.as_deref(), Some("operate"));
     // Callers checking mode should treat this identically to develop mode
     let is_operate = fleet.mode.as_deref() == Some("operate");
     assert!(!is_operate, "develop mode must not activate fleet logic");

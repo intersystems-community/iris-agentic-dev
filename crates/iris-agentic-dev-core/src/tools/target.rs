@@ -1007,6 +1007,30 @@ impl IrisTools {
                 .filter(|s| !s.is_empty())
         };
 
+        // A server argument that is present and blank is a mistake, not the default connection: a
+        // caller that meant to name a server and sent nothing would be judged by the default's
+        // policy and acted on its connection.
+        let server_args: &[&str] = match source {
+            TargetSource::Arg(a) | TargetSource::ArgOrPending(a) => &[a][..],
+            TargetSource::Args(list) => list,
+            _ => &[],
+        };
+        for a in server_args {
+            if args
+                .get(*a)
+                .and_then(Value::as_str)
+                .is_some_and(|v| v.trim().is_empty())
+            {
+                return Err(input_refusal(
+                    "INVALID_PARAMS",
+                    format!(
+                        "`{a}` is empty. Name a registered server (iris_servers lists them), or \
+                         leave `{a}` out to use the default connection."
+                    ),
+                ));
+            }
+        }
+
         // `None` is the default connection.
         let mut keys: Vec<Option<String>> = Vec::new();
         let mut ns_arg: Option<String> = text("namespace").map(str::to_string);
