@@ -454,6 +454,10 @@ jobs:
           # without routing around the gates via iris_execute.
           IRIS_WRITE_TOOLS_ENABLED: "1"
           IRIS_DESTRUCTIVE_TOOLS_ENABLED: "1"
+          # The throwaway IRIS (testing::ThrowawayIris) runs on the matrix image too. The amd64
+          # iris-community:2026.2 image fails its own post-start hook ("Cannot call an
+          # iris.package wrapper ... dbapi.connect") and shuts down; measured on a runner.
+          IAD_THROWAWAY_IMAGE: ${{ matrix.iris_image }}
           # Exposed so tests can skip/adjust for known version-specific behavior
           IRIS_MATRIX_VERSION: ${{ matrix.iris_version }}
 
