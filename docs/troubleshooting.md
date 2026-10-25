@@ -86,8 +86,8 @@ Fixes, in order of likelihood:
    [`CONFIG_INVALID`](#config_invalid).
 
 The same applies to every loosening setting. A project's `tls_verify = false`, `ssh_host`,
-`service_username`, `compile_time_gate = false`, `dataPolicy = "allow"` or `mcpTemplate = "dev"`
-is set aside until you trust the file.
+`service_username`, `compile_time_gate = false`, `dataPolicy = "allow"`, `mcpTemplate = "dev"` or
+a `mode` other than `operate` is set aside until you trust the file.
 
 ---
 

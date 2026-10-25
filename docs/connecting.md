@@ -27,12 +27,12 @@ iris-agentic-dev tool check_config --args '{}'
 iad reads settings from four places, and they are not equal. The difference decides what a
 repository can make your agent do.
 
-| Source                | What it is                                                                                                                                                                                         | Trusted                                                                      |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| **Launch settings**   | The environment variables and flags iad was started with (`IRIS_*`, `IAD_*`, `--host`, `--config`). Approving a project's MCP server in a client means trusting the settings it launches iad with. | Always                                                                       |
-| **Operator file**     | `~/.iris-agentic-dev.toml` in your home directory. Read wherever the project lives, never mistaken for a workspace file.                                                                           | Always                                                                       |
-| **Workspace file**    | The nearest `.iris-agentic-dev.toml` found by walking up from the working directory. The walk stops before your home directory, so it never finds the operator file.                               | Only after you run `iris-agentic-dev trust`                                  |
-| **Named config file** | A file given by `--config`, or a directory or file given by `OBJECTSCRIPT_WORKSPACE` or `--workspace`. Judged exactly like a workspace file.                                                       | Only after you run `iris-agentic-dev trust` (unless it is the operator file) |
+| Source                | What it is                                                                                                                                                                                                                                                                                                                                                                                                | Trusted                                                                      |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Launch settings**   | The environment variables and flags iad was started with (`IRIS_*`, `IAD_*`, `--host`, `--config`). Approving a project's MCP server in a client means trusting the settings it launches iad with.                                                                                                                                                                                                        | Always                                                                       |
+| **Operator file**     | `~/.iris-agentic-dev.toml` in your home directory. Read wherever the project lives, never mistaken for a workspace file.                                                                                                                                                                                                                                                                                  | Always                                                                       |
+| **Workspace file**    | The nearest `.iris-agentic-dev.toml` found by walking up from the working directory. The walk stops after the repository root (the first directory with a `.git`) and before your home directory, so it never finds the operator file and never reads a file above your home, in `/` or in `/tmp`. `/`, `/Users`, `/home`, `/tmp` and any directory that holds your home are never the project directory. | Only after you run `iris-agentic-dev trust`                                  |
+| **Named config file** | A file given by `--config`, or a directory or file given by `OBJECTSCRIPT_WORKSPACE` or `--workspace`. Judged exactly like a workspace file.                                                                                                                                                                                                                                                              | Only after you run `iris-agentic-dev trust` (unless it is the operator file) |
 
 iad reads the operator file every time and at most one workspace-layer file. The workspace-layer
 file is, in order, `--config`, `OBJECTSCRIPT_WORKSPACE`, `--workspace`, then the walk up from the
@@ -68,7 +68,9 @@ go:
 - `tls_verify = false`, on the connection or on an `[instance.<name>]` block;
 - `ssh_host`, which names the machine your code runs on;
 - `service_username`, which names the account your code runs as;
-- `[instance.<name>] role = "workbench"`, which lifts a subject server's confirmation rule.
+- `[instance.<name>] role = "workbench"`, which lifts a subject server's confirmation rule;
+- a `mode` other than `"operate"`, which turns the declared instances and their roles off. A project
+  file that sets `mode = "operate"` is tightening and needs no trust.
 
 Connection details, tool lists, `read_only = "strict"`, `globalBlocklist`, `irisAudit` and
 anything else that only tightens are not loosening settings and need no trust.

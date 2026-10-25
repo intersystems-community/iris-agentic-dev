@@ -503,7 +503,7 @@ fn candidate(inputs: &LoadInputs, home: Option<&Path>) -> Candidate {
 
     let cwd = canon(&inputs.cwd);
     let found = walk(&cwd, home);
-    let watch = if home.is_some_and(|h| cwd == h) || cwd == Path::new("/") {
+    let watch = if home.is_some_and(|h| cwd == h) || is_broad_root(&cwd, home) {
         None
     } else {
         Some(cwd)
@@ -511,13 +511,51 @@ fn candidate(inputs: &LoadInputs, home: Option<&Path>) -> Candidate {
     (found.map(|f| (f, FileKind::Workspace, None)), watch)
 }
 
+/// Is `path` a place that holds other people's work, so it is never a project directory and no
+/// file is read from it (security fix S2, S3)? The filesystem root, the directories that hold
+/// user homes (`/Users`, `/home`), the shared temporary directories (`/tmp` and its macOS and
+/// Windows forms), and any directory that holds `home`.
+///
+/// The test is on the path as given: callers pass canonical paths, so `/tmp` on macOS arrives as
+/// `/private/tmp`, and both are listed.
+pub fn is_broad_root(path: &Path, home: Option<&Path>) -> bool {
+    use std::path::Component;
+    let names: Vec<String> = path
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(n) => Some(n.to_string_lossy().to_ascii_lowercase()),
+            _ => None,
+        })
+        .collect();
+    let names: Vec<&str> = names.iter().map(String::as_str).collect();
+    if matches!(
+        names.as_slice(),
+        [] | ["users"]
+            | ["home"]
+            | ["tmp"]
+            | ["temp"]
+            | ["var"]
+            | ["private"]
+            | ["var", "tmp"]
+            | ["private", "tmp"]
+            | ["private", "var"]
+            | ["private", "var", "tmp"]
+            | ["windows", "temp"]
+    ) {
+        return true;
+    }
+    home.is_some_and(|h| h.starts_with(path))
+}
+
 /// The nearest `.iris-agentic-dev.toml` walking up from `cwd`, falling back to the nearest legacy
-/// `.iris-dev.toml`. The walk stops before `home`, so the operator file is never found by it.
+/// `.iris-dev.toml`. The walk stops before `home`, so the operator file is never found by it. It
+/// also stops after the repository root (a directory with a `.git`), and it never enters a
+/// directory above `home` or a broad root such as `/` or `/tmp` (security fix S2).
 fn walk(cwd: &Path, home: Option<&Path>) -> Option<PathBuf> {
     let mut dir = cwd;
     let mut legacy: Option<PathBuf> = None;
     loop {
-        if home.is_some_and(|h| dir == h) {
+        if home.is_some_and(|h| dir == h) || is_broad_root(dir, home) {
             break;
         }
         let new = dir.join(CONFIG_FILE_NAME);
@@ -527,6 +565,9 @@ fn walk(cwd: &Path, home: Option<&Path>) -> Option<PathBuf> {
         let old = dir.join(LEGACY_FILE_NAME);
         if legacy.is_none() && old.is_file() {
             legacy = Some(old);
+        }
+        if dir.join(".git").exists() {
+            break;
         }
         match dir.parent() {
             Some(p) => dir = p,
@@ -653,6 +694,15 @@ fn instance_address_lines(name: &str, t: &toml::Table) -> Vec<String> {
     v
 }
 
+/// The file's `mode` when it is anything but `operate`. `operate` is what turns the declared
+/// instances and their roles on, so any other value, written in a workspace file, would move an
+/// `operate` fleet to a workbench. The test is the one the role resolution makes: the exact
+/// string `operate`.
+pub fn mode_loosening(table: &toml::Table) -> Option<String> {
+    let m = table.get("mode").and_then(|v| v.as_str())?;
+    (m != "operate").then(|| m.to_string())
+}
+
 /// The loosening settings of a parsed file as sorted, deduplicated canonical lines, each address
 /// the settings apply to included (R4a D2).
 pub fn loosening_settings(table: &toml::Table) -> Vec<String> {
@@ -674,6 +724,9 @@ pub fn loosening_settings(table: &toml::Table) -> Vec<String> {
         if let Some(v) = table.get(k).and_then(str_of).filter(|v| !v.is_empty()) {
             push(k.to_string(), q(&v));
         }
+    }
+    if let Some(m) = mode_loosening(table) {
+        push("mode".to_string(), q(&m));
     }
 
     if let Some(policies) = table.get("policy").and_then(|p| p.as_table()) {
@@ -1251,10 +1304,14 @@ impl ConfigSnapshot {
                 }
             }
         }
-        fleet.mode = ws_fleet
+        // A workspace file's `mode` other than `operate` loosens (it moves an `operate` fleet to a
+        // workbench), so it counts from a trusted file only; `operate` tightens and always counts.
+        // The untrusted one is listed in `set_aside` by `connection_loosening_items`.
+        let ws_mode = ws_fleet
             .as_ref()
             .and_then(|f| f.mode.clone())
-            .or_else(|| op_fleet.as_ref().and_then(|f| f.mode.clone()));
+            .filter(|m| trust.is_trusted() || m == "operate");
+        fleet.mode = ws_mode.or_else(|| op_fleet.as_ref().and_then(|f| f.mode.clone()));
 
         // The workspace layer's connection settings, after the trust filter.
         let chosen = self
@@ -1780,6 +1837,9 @@ fn loosening_pairs_for_connection(table: &toml::Table) -> Vec<(String, String)> 
         if let Some(s) = table.get(k).and_then(str_of).filter(|s| !s.is_empty()) {
             v.push((k.to_string(), format!("{k} = {}", q(&s))));
         }
+    }
+    if let Some(m) = mode_loosening(table) {
+        v.push(("mode".to_string(), format!("mode = {}", q(&m))));
     }
     if let Some(instances) = table.get("instance").and_then(|i| i.as_table()) {
         for (name, i) in instances {

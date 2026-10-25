@@ -50,6 +50,7 @@ mod test_compile_params;
 mod test_config_env_data_141;
 mod test_config_precedence_140;
 mod test_config_sources_141;
+mod test_config_trust_171;
 mod test_connection_fixes;
 mod test_content_skills_130;
 mod test_coverage_diag_141;
