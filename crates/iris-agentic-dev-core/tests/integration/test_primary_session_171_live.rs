@@ -8,10 +8,11 @@
 //! - the cookie store each account's client holds never contains the other account's
 //!   `CSPSESSIONID`, so no request of one carries a session the other opened.
 //!
-//! The control runs the same sequence through clients that share one jar and prints what IRIS did
-//! with it, so a run records the behaviour of the build under test. It asserts nothing: on 2026.2
-//! IRIS answers each account as itself even then, and the unit test
-//! (`test_primary_cookie_store_171`) is what fails without the fix.
+//! The control runs the same sequence through clients that share one jar. On 2025.3 and 2026.2 IRIS
+//! answers each account as itself even then, but it puts both accounts in one CSP session: the
+//! `Set-Cookie` it returns to both names the same session. The control asserts that, so the test
+//! would notice a build that stops doing it, and the last part fails without the fix: each
+//! account's jar holds its own session.
 //!
 //! `lockf -k /tmp/iad-141-iris.lock cargo test --features testing --test integration primary_session_171 -- --ignored --test-threads=1`
 
@@ -85,7 +86,17 @@ async fn two_accounts_on_one_host_never_share_a_csp_session() {
         shared.push(("a", whoami(&shared_a, &conn_a).await));
         shared.push(("b", whoami(&shared_b, &conn_b).await));
     }
-    eprintln!("one shared cookie store (caller, ran as, new sessions): {shared:?}");
+    eprintln!("one shared cookie store (caller, (ran as, cookie set)): {shared:?}");
+    let session_of = |who: &str| -> Option<String> {
+        shared
+            .iter()
+            .find(|(c, _)| *c == who)
+            .and_then(|(_, (_, cookie))| cookie.clone())
+    };
+    assert!(
+        session_of("a").is_some() && session_of("a") == session_of("b"),
+        "premise: with one cookie store IRIS puts both accounts in one CSP session: {shared:?}"
+    );
 
     // The fix: each connection's client holds its own account's store.
     let (client_a, client_b) = (

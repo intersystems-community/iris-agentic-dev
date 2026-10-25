@@ -66,16 +66,27 @@ fn a_new_session_does_not_share_the_terminal_pool() {
 #[test]
 fn what_is_one_operators_stays_shared_and_the_reason_is_documented() {
     // The connection state, pool, clients, registry and config are the operator's account on the
-    // operator's servers; a reload through one session must reach the others. The metadata cache
-    // holds class definitions that account can read anyway. (`for_new_session`'s doc comment says
-    // so.)
+    // operator's servers; a reload through one session must reach the others.
+    // (`for_new_session`'s doc comment says so.)
     let proto = IrisTools::new(None).unwrap();
     let s = proto.for_new_session();
     assert!(Arc::ptr_eq(&proto.connection, &s.connection));
     assert!(Arc::ptr_eq(&proto.pool, &s.pool));
     assert!(Arc::ptr_eq(&proto.client, &s.client));
     assert!(Arc::ptr_eq(&proto.registry, &s.registry));
-    assert!(Arc::ptr_eq(&proto.metadata_cache, &s.metadata_cache));
+}
+
+#[test]
+fn a_new_session_does_not_share_the_metadata_cache() {
+    let proto = IrisTools::new(None).unwrap();
+    let a = proto.for_new_session();
+    let b = proto.for_new_session();
+    a.metadata_cache.lock().unwrap().insert(
+        "find_subclass:x".to_string(),
+        (serde_json::json!({"k": 1}), Instant::now()),
+    );
+    assert!(b.metadata_cache.lock().unwrap().is_empty());
+    assert!(proto.metadata_cache.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

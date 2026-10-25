@@ -2838,6 +2838,9 @@ impl IrisTools {
     /// - the confirmation tokens: a token `global_preview` gave one client must not confirm another
     ///   client's `global_kill`;
     /// - the WebSocket terminal pool: a terminal one client opened is not another's to drive;
+    /// - the metadata cache: its answers came from this session's call, made under this session's
+    ///   target and policy, and a 60 s entry another session wrote would answer this one without
+    ///   asking the server;
     /// - the checkout cache: it records what this session's own SCM checkout probe found, so a
     ///   second session that borrowed it would skip its own pre-write probe on a document it never
     ///   checked.
@@ -2846,8 +2849,7 @@ impl IrisTools {
     /// servers and none of it holds a client's results: the connection state and the pool (a reload
     /// through one session must reach the others, and a second pool would open the keychain again),
     /// the HTTP clients and their CSP sessions (one session per account and server, logged out once
-    /// at exit), the configuration, the skill registry, and the metadata cache (class definitions
-    /// the operator's account can read anyway, keyed by what they describe).
+    /// at exit), the configuration and the skill registry.
     pub fn for_new_session(&self) -> Self {
         self.for_new_session_sweeping(std::time::Duration::from_secs(60))
     }
@@ -2871,6 +2873,7 @@ impl IrisTools {
         session.elicitation_store.spawn_sweeper(sweep_every);
         session.history = Arc::new(std::sync::Mutex::new(VecDeque::with_capacity(50)));
         session.checkout_cache = Arc::new(crate::elicitation::CheckoutCache::new());
+        session.metadata_cache = Arc::new(std::sync::Mutex::new(HashMap::new()));
         session.ws_pool = Arc::new(crate::iris::ws_session::WsSessionPool::new());
         session.confirm_tokens = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
         session
