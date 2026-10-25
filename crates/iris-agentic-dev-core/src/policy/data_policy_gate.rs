@@ -33,9 +33,12 @@ pub const HANDLER_ENFORCED_TOOLS: &[&str] = &["stream_inspect"];
 /// answers headers, logs and queues from its own tables, and joins `Ens.MessageBody` rows when the
 /// call carries one of these arguments (spec 141 T214). The arguments are the handler's own, read
 /// by name from the call.
+///
+/// `search_table` is one of them: a Search Table search returns the indexed field's value
+/// (`PropValue`), which for HL7 is a patient identifier or a name taken from the message body.
 pub const BODY_READ_TOOLS: &[(&str, &[&str])] = &[(
     "iris_interop_query",
-    &["body_class", "body_where", "body_select"],
+    &["body_class", "body_where", "body_select", "search_table"],
 )];
 
 /// True when `tool_name` with `params` reads message bodies: a bulk-data tool, or a tool in
@@ -65,8 +68,8 @@ pub fn check_bulk_phi_gate_for_call(
     if *policy != DataPolicy::Allow && reads_message_bodies(tool_name, params) {
         let mut refusal = bulk_refusal(tool_name, policy, server_name);
         refusal["message"] = serde_json::json!(format!(
-            "Tool '{tool_name}' reads message bodies when a call names a body_class, body_where \
-             or body_select, and that is blocked unless dataPolicy is 'allow' for server \
+            "Tool '{tool_name}' reads message bodies when a call names a body_class, body_where, \
+             body_select or search_table, and that is blocked unless dataPolicy is 'allow' for server \
              '{server_name}'. Without those arguments it still lists headers, logs and queues."
         ));
         return Some(refusal);

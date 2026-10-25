@@ -188,14 +188,15 @@ fn dev_permits_all_tools() {
 // ── unknown tool (no category mapping) ───────────────────────────────────────
 
 #[test]
-fn unknown_tool_not_blocked_in_live() {
+fn unknown_tool_is_blocked_in_live() {
+    // A tool nobody mapped is judged as `execute` and `admin` (1.7.1), not left ungated.
     let r = gated::env(
         "nonexistent_tool_xyz",
         &McpTemplate::Live,
         "iris-prod",
         &serde_json::Value::Null,
     );
-    assert!(r.is_none(), "unknown tool: no category → not blocked");
+    assert!(r.is_some(), "unknown tool: judged as execute → blocked");
 }
 
 // ── Error JSON shape ──────────────────────────────────────────────────────────

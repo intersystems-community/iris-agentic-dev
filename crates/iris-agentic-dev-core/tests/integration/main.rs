@@ -69,6 +69,7 @@ mod test_identity_baseline_141_live;
 mod test_identity_paths_141_live;
 mod test_injection_137_live;
 mod test_interop_depth_live;
+mod test_interop_search_171_live;
 mod test_interop_ui_136_live;
 mod test_iris_admin_observability_live;
 mod test_iris_audit_live;

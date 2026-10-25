@@ -42,6 +42,7 @@ mod test_by_name_tls_171;
 mod test_clean_cwd_141;
 mod test_config_source_141;
 mod test_creds_binary_141;
+mod test_gates_171;
 mod test_generate_class_141;
 mod test_identity_binary_141;
 mod test_install_lock_binary_141;

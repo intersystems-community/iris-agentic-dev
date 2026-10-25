@@ -35,6 +35,7 @@ The HTTP transport's refusals (a missing or wrong token, a bad `Host` or `Origin
 | `STORED_SOURCE_UNREADABLE`                | fixed rule               | a document to be compiled exists but its stored source cannot be read                                                                     |
 | `COMPILE_SUPERCLASS_STALE`                | fixed rule               | a compile would also build an out-of-date superclass outside the library packages (names it)                                              |
 | `HOST_PATH_BLOCKED`                       | fixed rule               | a tool that reads a host path was given one outside the project directory, with `..`, or of a kind it does not take (`reason` says which) |
+| `ROWS_NOT_COUNTABLE`                      | fixed rule               | `iris_query` `mode="write"` was given an `UPDATE`, `DELETE` or `TRUNCATE` whose rows cannot be counted against `max_rows_affected`        |
 | `SUPERCLASS_CHECK_FAILED`                 | not a refusal            | the superclass walk before a compile could not run or did not finish (fails closed)                                                       |
 | `ELICITATION_SERVER_MISMATCH`             | not a refusal            | a resume names a different server than its pending entry                                                                                  |
 | `SERVICE_ACCOUNT_TERMINAL_DENIED`         | operator limit           | the docker/SSH terminal ends the session after the drop: the service account lacks `%Development:USE`                                     |

@@ -523,6 +523,15 @@ irisAudit = true
 | `irisAudit`                      | `true` / `false`                           | Emit a `%SYS.Audit` record per call.                                                                                                            |
 | `execAsOsUser`                   | `true`                                     | Operator-only: run the agent's code as the container's OS user on this server.                                                                  |
 
+`allow` and `mcpTemplate` also judge the tools that change where later calls go or start a
+container: `iris_select_container`, `iris_start_sandbox`, `iris_containers`, `iris_add_server`,
+`iris_remove_server`, `iris_import_servers` and `iris_reload_pool`. They act on no server's data, so
+the **default server's** policy judges them (a call to them names no other server, and what they
+change is what the default's calls will reach). `allow` has to list `admin`, and `live` and `test`
+refuse them as `execute` does. The read-only local tools (skills, the knowledge base,
+`iris_servers`) are not judged by `allow`. A tool that has no category at all is judged as `execute`
+and `admin`; `check_config` lists the tools exempt from that in `ungated_tools`.
+
 Blocked calls return an error whose `error_code` names the gate (`POLICY_GATE` with the allowed
 categories, `ENV_GATE_BLOCKED`, `DATA_POLICY_BLOCKED`, `SYSTEM_BLOCKLIST`) and a `refusal` object
 saying who can lift it; see [Refusals](tools.md#refusals). Available categories: `compile`,
@@ -892,7 +901,9 @@ in `write_gate::CLASSIFICATION` (`iris_table_info`, `global_preview`, `my_access
 `iris_production`, `iris_execute`, `iris_test`, `journal_search` and the rest of the schema,
 interoperability and administration readers). `iris_doc` (reads), `iris_query`, `iris_search`,
 `iris_info`, `iris_servers` and `check_config` stay. Telemetry is kept in the local file.
-`check_config` reports `read_only` and `read_only_from`.
+`check_config` reports `read_only` and `read_only_from`. The command-line commands that compile a
+scratch class obey it too: `iris-agentic-dev capability-matrix` and `iris-agentic-dev benchmark`
+exit 1 with `READ_ONLY_STRICT` before they connect to anything.
 
 Strict also closes the write and destructive gates on every server. It outranks
 `write_tools_enabled = true`, `destructive_tools_enabled = true`, `[policy.<name>] writeTools`,

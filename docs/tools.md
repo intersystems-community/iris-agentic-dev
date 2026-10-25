@@ -667,9 +667,28 @@ connection account, not the service account. If read mode has to be safe, connec
 without `EXECUTE` on such procedures. `force=true` skips the check only when the target server's
 write tier is on, and the live and test templates then treat the call as a write. `mode="count"`
 takes one `SELECT` (no `;`) and a `table` that is a table name, under the same rules.
+`mode="explain"` plans one `SELECT` or `WITH` and is read the same way: a comment before the
+keyword is fine, and a second statement, a write keyword or `SELECT ... INTO` is refused with
+`SQL_WRITE_BLOCKED` before IRIS sees it.
+
+The code-edit gate (`CODE_EDIT_BLOCKED`, a fixed rule) refuses a forced read or a write that names
+a `%Dictionary` class table or `%Library.Routine`. It reads the statement the way IRIS does, so a
+comment or white space between the parts of the name (`%Dictionary/**/.ClassDefinition`) does not
+hide it, and a comment that only mentions the dictionary does not trigger it. A string literal
+that names it still does.
 
 `mode="write"` runs as the service account when one is configured, on the server the call names,
 and returns `identity` like the other code-running tools.
+
+**The row cap.** `max_rows_affected` is always in force in write mode (default 1000). An `UPDATE`,
+`DELETE` or `TRUNCATE TABLE` is counted with a `SELECT COUNT(*)` of its table and `WHERE` before it
+runs, and `ROWS_LIMIT_EXCEEDED` stops it over the cap. A statement whose rows cannot be counted is not
+run: it is refused with `ROWS_NOT_COUNTABLE`, a fixed rule. That covers a `DELETE` or `UPDATE` over
+several tables or a join, a `TRUNCATE` without `TABLE`, and a modifier iad does not know.
+`DELETE table`, with or without `FROM`, and `%NOLOCK`, `%NOJOURN` and the other documented
+modifiers are counted. A statement that starts with anything but a statement word (a leading `;` or `(`) is
+`DDL_NOT_ALLOWED`. Earlier versions ran an uncounted statement and set `rows_check_skipped`; that
+field is gone.
 
 ---
 
@@ -1144,6 +1163,7 @@ account can log in. Run this first if anything seems misconfigured.
 | `tls_verify`, `tls`                                                | The default connection's certificate check, and every server's with its `source` (`default`, `launch_env`, `config_file`, `servers_json`, `server_manager`)                                                                                                                                                                                               |
 | `discovery`                                                        | `skipped`: listeners the localhost scan did not send a credential to, with port and reason                                                                                                                                                                                                                                                                |
 | `credentials_withheld`                                             | The environment credentials kept from a host a project file named, and what to do                                                                                                                                                                                                                                                                         |
+| `ungated_tools`                                                    | The tools no category gate judges, an explicit list (`check_config`, which makes no IRIS call). Every other tool has a category; a tool with none is treated as `execute` and `admin` by the environment template and `allow`, so a tool added without a category is blocked, not open                                                                    |
 | `read_only`, `read_only_from`                                      | `strict` or `off`, and what asked for it                                                                                                                                                                                                                                                                                                                  |
 | `telemetry_sink`                                                   | `local` (the default) or `iris`: telemetry always goes to the local file, and `iris` adds the IRIS global where the call's server allows it                                                                                                                                                                                                               |
 | `audit`                                                            | The local audit log: its `path` and whether it keeps `payloads` as `sizes` or `full`                                                                                                                                                                                                                                                                      |
@@ -1309,8 +1329,9 @@ than quietly widening the query to every severity.
 `search_table` takes `prop` (required), one of `value` or `value_like`, and optional
 `class` and `extent` (default `EnsLib.HL7.SearchTable`).
 
-A call that names `body_class`, `body_where` or `body_select` reads message bodies, so it is a
-bulk-data call: it is refused with `DATA_POLICY_BLOCKED` unless the target server's `dataPolicy`
+A call that names `body_class`, `body_where`, `body_select` or `search_table` reads message
+bodies (a Search Table search returns the indexed field's value, such as a patient identifier taken
+from an HL7 message), so it is a bulk-data call: it is refused with `DATA_POLICY_BLOCKED` unless the target server's `dataPolicy`
 is `allow` (`redact` does not admit it, because the rows are not HL7 text iad could redact).
 Without those arguments the tool lists headers, logs and queues under any policy.
 
@@ -2510,6 +2531,7 @@ called a refusal.
 | `STORED_SOURCE_UNREADABLE`            | `iris_compile` target exists but its stored source cannot be read                                                                                                                                                                                                                       |
 | `COMPILE_SUPERCLASS_STALE`            | A compile would also build an out-of-date superclass outside the library packages; the message names it. Compile it first. A fixed rule                                                                                                                                                 |
 | `HOST_PATH_BLOCKED`                   | `iris_compile`, `kb` index or `iris_symbols_local` was given a host path outside the project directory, with a `..` segment, or (compile) not a `.cls`, `.mac`, `.inc` or `.int` file. `reason` is `outside_workspace`, `parent_reference`, `extension` or `no_workspace`. A fixed rule |
+| `ROWS_NOT_COUNTABLE`                  | `iris_query` `mode="write"` was given an `UPDATE`, `DELETE` or `TRUNCATE` whose rows cannot be counted against `max_rows_affected`, so it was not run. A fixed rule                                                                                                                     |
 | `SUPERCLASS_CHECK_FAILED`             | The superclass walk before a compile could not run or did not finish, so nothing was compiled                                                                                                                                                                                           |
 | `SUBJECT_CONFIRM_REQUIRED`            | A write on a `subject` server without `confirm: true`                                                                                                                                                                                                                                   |
 | `SUBJECT_SCM_WRITE_BLOCKED`           | A source-control write on a `subject` server; `confirm` does not lift it                                                                                                                                                                                                                |

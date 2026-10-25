@@ -1047,7 +1047,8 @@ pub fn tool_class(tool: &str) -> Option<&'static ToolClass> {
 ///   `%Library.EnsembleMgr.EnableNamespace` as the connection's account.
 ///
 /// `class` is the call's class: the classification, or the pending entry's on an elicitation
-/// resume, which carries no `mode`. A tool without a category (`check_config`) has none.
+/// resume, which carries no `mode`. A tool on the exemption list (`check_config`) has none; a tool
+/// that is neither mapped nor exempt gets `Execute` and `Admin`.
 pub fn effective_category(
     tool: &str,
     args: Option<&serde_json::Map<String, serde_json::Value>>,
@@ -1055,7 +1056,15 @@ pub fn effective_category(
 ) -> Vec<crate::iris::workspace_config::ToolCategory> {
     use crate::iris::workspace_config::ToolCategory;
     let Some(base) = crate::iris::server_manager::tool_to_category_pub(tool) else {
-        return Vec::new();
+        // Only a tool on the exemption list goes ungated. A tool nobody mapped is judged as the
+        // strictest thing it could be: it runs code (a template blocks it on `live` and `test`)
+        // and it administers (`allow` has to list both). A registered tool never gets here; a
+        // test walks the registry to keep it so.
+        let name = tool.split(':').next().unwrap_or(tool);
+        if crate::iris::server_manager::INTENTIONALLY_UNCATEGORIZED_TOOLS.contains(&name) {
+            return Vec::new();
+        }
+        return vec![ToolCategory::Execute, ToolCategory::Admin];
     };
     let writes = class != WriteClass::ReadOnly;
     let flag = |key: &str| {

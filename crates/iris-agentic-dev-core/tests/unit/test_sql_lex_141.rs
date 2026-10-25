@@ -139,20 +139,22 @@ fn qualified_name_splitting_does_not_panic_on_odd_input() {
 }
 
 #[test]
-fn only_update_and_delete_get_a_row_count() {
+fn only_update_delete_and_truncate_get_a_row_count() {
     for yes in [
         "UPDATE t SET a = 1",
         "  delete from t",
         "/* c */ DELETE FROM t",
         "-- c\nUPDATE t SET a = 1",
         "DELETE %NOLOCK FROM t",
+        "DELETE t WHERE a = 1",
+        "TRUNCATE TABLE t",
+        "/* c */ truncate table t",
     ] {
         assert!(needs_rows_precheck(yes), "{yes}");
     }
     for no in [
         "INSERT INTO t VALUES (1)",
         "CALL p()",
-        "TRUNCATE TABLE t",
         "DELETED FROM t",
         "'DELETE' FROM t",
         "-- DELETE FROM t",

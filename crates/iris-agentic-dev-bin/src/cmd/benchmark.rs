@@ -68,6 +68,13 @@ impl BenchmarkCommand {
     }
 
     pub async fn run(self) -> Result<()> {
+        // Every task compiles scratch classes on the server, which strict read-only turns off.
+        // The check comes first: nothing is read, discovered or sent before it.
+        if let Some(refusal) = iris_agentic_dev_core::tools::target::cli_strict_refusal("benchmark")
+        {
+            eprintln!("{refusal}");
+            crate::exit(1);
+        }
         if self.suite != "jira" {
             eprintln!(
                 "Error [SUITE_NOT_AVAILABLE]: suite '{}' is not available in v1 — only 'jira' \

@@ -663,7 +663,7 @@ fn check_config_sm_null_policy_when_no_policy_entry() {
 // ── policy_gate — unknown tool ───────────────────────────────────────────────
 
 #[test]
-fn policy_gate_unknown_tool_not_gated() {
+fn policy_gate_unknown_tool_is_gated() {
     use iris_agentic_dev_core::iris::workspace_config::{ConnectionPolicy, ToolCategory};
     use iris_agentic_dev_core::testing::gated;
     let policy = ConnectionPolicy {
@@ -676,9 +676,10 @@ fn policy_gate_unknown_tool_not_gated() {
         iris_audit: false,
     };
     let gate = gated::policy("unknown_future_tool", "prod", Some(&policy));
+    // An unmapped tool is judged as `execute` and `admin` (1.7.1), so `allow = ["query"]` stops it.
     assert!(
-        gate.is_none(),
-        "unknown tool must not be gated (returns None)"
+        gate.is_some(),
+        "an unknown tool must meet allow like any other"
     );
 }
 
