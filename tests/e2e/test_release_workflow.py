@@ -28,6 +28,14 @@ def _job(workflow: dict, name: str) -> dict:
     return jobs[name]
 
 
+def _release_files(workflow: dict) -> str:
+    """The `files:` list of the step that creates the GitHub release."""
+    for step in _job(workflow, "release")["steps"]:
+        if str(step.get("uses", "")).startswith("softprops/action-gh-release@"):
+            return step["with"]["files"]
+    raise AssertionError("the release job no longer creates the GitHub release")
+
+
 def _steps_named(job: dict, needle: str) -> list:
     return [s for s in job["steps"] if needle.lower() in str(s.get("name", "")).lower()]
 
@@ -146,7 +154,7 @@ def test_every_platform_the_extension_downloads_is_built(workflow):
     missing = expected - built
     assert not missing, f"the extension downloads these but the build never makes them: {missing}"
 
-    released = _job(workflow, "release")["steps"][-1]["with"]["files"]
+    released = _release_files(workflow)
     released_names = {line.strip() for line in released.splitlines() if line.strip()}
     not_attached = expected - released_names
     assert not not_attached, f"built but never attached to the release: {not_attached}"
@@ -266,7 +274,7 @@ def test_checksum_signature_is_published(workflow):
     assert "cosign sign-blob" in script and "SHA256SUMS.sigstore.json" in script, (
         "SHA256SUMS is no longer signed"
     )
-    released = job["steps"][-1]["with"]["files"]
+    released = _release_files(workflow)
     assert "SHA256SUMS.sigstore.json" in released, "the SHA256SUMS signature is not attached"
 
 
@@ -296,3 +304,24 @@ def test_release_restores_no_cache(workflow):
             )
         for step in _uses(job, "mlugg/setup-zig"):
             assert step.get("with", {}).get("use-cache") is False, f"'{name}' restores a zig cache"
+
+
+def test_release_is_published_only_after_its_assets(workflow):
+    """Immutable releases refuse an upload to a release that is already published.
+
+    action-gh-release creates the release and then uploads, so the release has to start as a draft
+    and be published by a later step, after every asset and signature is attached.
+    """
+    steps = _job(workflow, "release")["steps"]
+    create = [i for i, s in enumerate(steps) if str(s.get("uses", "")).startswith("softprops/action-gh-release@")]
+    assert create, "the release job no longer creates the GitHub release"
+    assert steps[create[0]]["with"].get("draft") is True, "the release is created published, not as a draft"
+    publish = [i for i, s in enumerate(steps) if "--draft=false" in str(s.get("run", ""))]
+    assert publish and publish[0] > create[0], "nothing publishes the draft after the upload"
+
+
+def test_no_job_pushes_to_master(workflow):
+    """The master rules give no workflow a bypass, so a push from a release job would be refused."""
+    for name, job in workflow["jobs"].items():
+        for step in job.get("steps", []):
+            assert "git push" not in str(step.get("run", "")), f"'{name}' pushes to the repository"
