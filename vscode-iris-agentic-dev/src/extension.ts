@@ -5,7 +5,14 @@ import * as path from 'path';
 import * as serverManager from '@intersystems-community/intersystems-servermanager';
 import { stringifyForLog } from './redact';
 import { resolveServerBinary } from './managedInstall';
-import { mayUseStoredPassword, selectNamedServer, ServerScopes } from './serverSelection';
+import {
+  connPassword,
+  ConnLayers,
+  mayUseStoredPassword,
+  mergeConn,
+  selectNamedServer,
+  ServerScopes,
+} from './serverSelection';
 
 interface ObjectScriptConn {
   active: boolean;
@@ -110,9 +117,13 @@ export class IrisDevMcpProvider
     // Use workspace folder scope to honour .vscode/settings.json (fix #42).
     // Falls back to global scope when no workspace folder is open.
     const wsFolder = vscode.workspace.workspaceFolders?.[0];
-    const conn = vscode.workspace
+    // `get()` would hand back the user's and the workspace's `conn` merged,
+    // and the user's saved password with them. Read the layers apart so the
+    // password can be kept to the user's own host.
+    const connLayers = vscode.workspace
       .getConfiguration('objectscript', wsFolder ?? null)
-      .get<ObjectScriptConn>('conn');
+      .inspect<ObjectScriptConn>('conn') as ConnLayers<ObjectScriptConn> | undefined;
+    const conn = mergeConn(connLayers);
 
     this.log.info(`iris-agentic-dev: objectscript.conn = ${stringifyForLog(conn)}`);
 
@@ -161,6 +172,7 @@ export class IrisDevMcpProvider
     // global (null) scope. Workspace scope alone misses user-level entries
     // when the workspace has no intersystems config of its own.
     let named: NamedServer | null = null;
+    let namedFromWorkspace = false;
     if (conn.server) {
       const scopes = readServerScopes(wsFolder);
       this.log.info(`iris-agentic-dev: user server keys = ${Object.keys(scopes.user ?? {}).join(', ') || '(none)'}`);
@@ -180,6 +192,7 @@ export class IrisDevMcpProvider
         );
       }
       named = selected.server;
+      namedFromWorkspace = !mayUseStoredPassword(selected);
       this.log.info(`iris-agentic-dev: named server resolved (${selected.source}) = ${stringifyForLog(named)}`);
     }
 
@@ -209,7 +222,7 @@ export class IrisDevMcpProvider
       IRIS_WEB_PREFIX: webPrefix ?? undefined,
       IRIS_SCHEME: schemeOverride || webScheme || undefined,
       IRIS_USERNAME: named?.username ?? conn.username ?? undefined,
-      IRIS_PASSWORD: named?.password ?? conn.password ?? undefined,
+      IRIS_PASSWORD: named?.password ?? connPassword(connLayers, namedFromWorkspace) ?? undefined,
       IRIS_NAMESPACE: namespaceOverride || (named?.ns ?? namespace),
       IRIS_ISFS: isIsfs ? 'true' : undefined,
       IRIS_SERVER_NAME: conn.server ?? undefined,
