@@ -201,7 +201,7 @@ fn plugin_lists_exactly_the_core_skills() {
 
 #[test]
 fn install_manifest_lists_core_and_extra_only() {
-    let v: toml::Value = read("iris-agentic-dev.toml").parse().unwrap();
+    let v: toml::Value = toml::from_str(&read("iris-agentic-dev.toml")).unwrap();
     let got: BTreeSet<String> = v["provides"]["skills"]
         .as_array()
         .unwrap()
