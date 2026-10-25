@@ -9,7 +9,7 @@
 #![cfg(unix)]
 
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::Output;
 
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_iris-agentic-dev"))

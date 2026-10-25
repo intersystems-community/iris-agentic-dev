@@ -667,6 +667,15 @@ connection account, not the service account. If read mode has to be safe, connec
 without `EXECUTE` on such procedures. `force=true` skips the check only when the target server's
 write tier is on, and the live and test templates then treat the call as a write. `mode="count"`
 takes one `SELECT` (no `;`) and a `table` that is a table name, under the same rules.
+`mode="explain"` plans one `SELECT` or `WITH` and is read the same way: a comment before the
+keyword is fine, and a second statement, a write keyword or `SELECT ... INTO` is refused with
+`SQL_WRITE_BLOCKED` before IRIS sees it.
+
+The code-edit gate (`CODE_EDIT_BLOCKED`, a fixed rule) refuses a forced read or a write that names
+a `%Dictionary` class table or `%Library.Routine`. It reads the statement the way IRIS does, so a
+comment or white space between the parts of the name (`%Dictionary/**/.ClassDefinition`) does not
+hide it, and a comment that only mentions the dictionary does not trigger it. A string literal
+that names it still does.
 
 `mode="write"` runs as the service account when one is configured, on the server the call names,
 and returns `identity` like the other code-running tools.

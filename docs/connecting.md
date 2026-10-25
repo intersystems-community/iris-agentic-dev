@@ -899,7 +899,9 @@ in `write_gate::CLASSIFICATION` (`iris_table_info`, `global_preview`, `my_access
 `iris_production`, `iris_execute`, `iris_test`, `journal_search` and the rest of the schema,
 interoperability and administration readers). `iris_doc` (reads), `iris_query`, `iris_search`,
 `iris_info`, `iris_servers` and `check_config` stay. Telemetry is kept in the local file.
-`check_config` reports `read_only` and `read_only_from`.
+`check_config` reports `read_only` and `read_only_from`. The command-line commands that compile a
+scratch class obey it too: `iris-agentic-dev capability-matrix` and `iris-agentic-dev benchmark`
+exit 1 with `READ_ONLY_STRICT` before they connect to anything.
 
 Strict also closes the write and destructive gates on every server. It outranks
 `write_tools_enabled = true`, `destructive_tools_enabled = true`, `[policy.<name>] writeTools`,
