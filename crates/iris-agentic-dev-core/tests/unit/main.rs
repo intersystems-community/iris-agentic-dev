@@ -236,6 +236,7 @@ mod test_trace_export;
 mod test_trust_fingerprint_141;
 mod test_unit_env_isolation_141;
 mod test_unittest_job;
+mod test_unmapped_tool_gate_171;
 mod test_user_agent;
 mod test_vscode_password_141;
 mod test_vscode_payload;

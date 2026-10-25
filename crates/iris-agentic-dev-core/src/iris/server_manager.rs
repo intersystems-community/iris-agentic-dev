@@ -942,8 +942,10 @@ pub fn tool_to_category_pub(
 
 /// Tool names deliberately exempt from `ToolCategory` — not an oversight.
 ///
-/// `check_env_gate` and `policy_gate` both do `tool_to_category(tool_name)?`: a `None`
-/// return means "not gated," not "blocked." Before 2026-08, that was true of every tool
+/// `tool_to_category` returns `None` for a tool with no arm. Since 1.7.1 that no longer means
+/// "not gated": `effective_category` treats such a tool as `Execute` and `Admin`, and only a name
+/// on this list is left ungated. `check_config` reports the list. Before 2026-08 a `None` was
+/// "not gated," and it was true of every tool
 /// nobody had gotten around to categorizing — 55 of the 90 real tools, discovered while
 /// scoping a separate feature request. Two of those turned out to be live gaps in the
 /// documented guarantee that `mcpTemplate = "live"`/`"test"` blocks `Execute`: an
@@ -1060,7 +1062,9 @@ fn tool_to_category(tool_name: &str) -> Option<crate::iris::workspace_config::To
         | "iris_generate" | "iris_generate_test" | "iris_macro" | "iris_table_info"
         | "resolve_dynamic_dispatch" => ToolCategory::Docs,
 
-        _ => return None, // unknown tool — not gated
+        // A tool with no arm is not "not gated": `effective_category` gives it the strictest
+        // reading unless it is on `INTENTIONALLY_UNCATEGORIZED_TOOLS`.
+        _ => return None,
     })
 }
 

@@ -5660,6 +5660,9 @@ impl IrisTools {
             },
             "objectscript_workspace": objectscript_workspace,
             "capabilities": capabilities,
+            // Tools no gate judges. Every other tool has a category, and one without is treated
+            // as `execute` and `admin` by the template and `allow`.
+            "ungated_tools": crate::iris::server_manager::INTENTIONALLY_UNCATEGORIZED_TOOLS,
         });
 
         if let Some(ref err) = conn.config_parse_error {

@@ -3537,6 +3537,10 @@ pub struct CheckConfigOk {
     pub scm_opt_ins: serde_json::Value,
     pub objectscript_workspace: Option<String>,
     pub capabilities: CheckConfigCapabilities,
+    /// The tools no category gate judges: the explicit exemption list. Every other tool has a
+    /// category, and a tool with none is judged as `execute` and `admin` by the environment
+    /// template and `allow`.
+    pub ungated_tools: Vec<String>,
     /// Present only when the last config-file parse attempt failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_parse_error: Option<String>,
