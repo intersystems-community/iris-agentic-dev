@@ -143,6 +143,7 @@ mod test_param_rejection;
 mod test_params_schema;
 mod test_perf_monitoring;
 mod test_pipeline_guards_141;
+mod test_pipeline_refusals_171;
 mod test_policy_audit_config;
 mod test_policy_enums_141;
 mod test_policy_gate;

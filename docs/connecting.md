@@ -521,6 +521,15 @@ irisAudit = true
 | `irisAudit`                      | `true` / `false`                           | Emit a `%SYS.Audit` record per call.                                                                                                            |
 | `execAsOsUser`                   | `true`                                     | Operator-only: run the agent's code as the container's OS user on this server.                                                                  |
 
+`allow` and `mcpTemplate` also judge the tools that change where later calls go or start a
+container: `iris_select_container`, `iris_start_sandbox`, `iris_containers`, `iris_add_server`,
+`iris_remove_server`, `iris_import_servers` and `iris_reload_pool`. They act on no server's data, so
+the **default server's** policy judges them (a call to them names no other server, and what they
+change is what the default's calls will reach). `allow` has to list `admin`, and `live` and `test`
+refuse them as `execute` does. The read-only local tools (skills, the knowledge base,
+`iris_servers`) are not judged by `allow`. A tool that has no category at all is judged as `execute`
+and `admin`; `check_config` lists the tools exempt from that in `ungated_tools`.
+
 Blocked calls return an error whose `error_code` names the gate (`POLICY_GATE` with the allowed
 categories, `ENV_GATE_BLOCKED`, `DATA_POLICY_BLOCKED`, `SYSTEM_BLOCKLIST`) and a `refusal` object
 saying who can lift it; see [Refusals](tools.md#refusals). Available categories: `compile`,

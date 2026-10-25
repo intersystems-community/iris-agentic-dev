@@ -2672,6 +2672,24 @@ Write "OK|"_tHdrs_"|"_tLogs_"|"_tSession,!"#,
     }
 }
 
+// ─── refusals that fail to build ────────────────────────────────────────────
+
+thread_local! {
+    static REFUSAL_BUILD_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Make the pipeline's refusal builder fail on this thread until switched off, so a test can
+/// check that a gate which decided to refuse still refuses when building its answer goes wrong.
+/// The builder cannot fail today; this is the only way to reach the branch that handles it. A
+/// test must run on one thread (a current-thread runtime) and switch it off again.
+pub fn fail_refusal_builds(on: bool) {
+    REFUSAL_BUILD_FAILS.with(|c| c.set(on));
+}
+
+pub(crate) fn refusal_build_fails() -> bool {
+    REFUSAL_BUILD_FAILS.with(|c| c.get())
+}
+
 // ─── gate checks without a pipeline ─────────────────────────────────────────
 
 /// The three policy gates called on their own, for unit tests that pin one gate's decision.
