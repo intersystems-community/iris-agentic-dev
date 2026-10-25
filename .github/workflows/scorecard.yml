@@ -1,0 +1,36 @@
+name: OpenSSF Scorecard
+
+# Scores the repository against the OpenSSF Scorecard checks: branch protection, pinned
+# dependencies, token permissions, signed releases, and the rest. The result is published to the
+# public Scorecard API, which is where a downstream consumer (or a security review) looks, and the
+# individual findings go to Security > Code scanning.
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "23 4 * * 1"
+  # Branch-protection changes are not a push, so a re-run is how they show up in the score.
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  analysis:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      # publish_results signs the result with the job's OIDC identity.
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+        with:
+          results_file: scorecard.sarif
+          results_format: sarif
+          publish_results: true
+      - uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          sarif_file: scorecard.sarif
