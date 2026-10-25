@@ -54,23 +54,36 @@ pub async fn fetch_algolia_creds(client: &reqwest::Client) -> Result<AlgoliaCred
     if let Some(c) = CREDS.get() {
         return Ok(c.clone());
     }
+    let creds = read_algolia_creds(client, DOCS_PAGE).await?;
+    Ok(CREDS.get_or_init(|| creds).clone())
+}
+
+/// [`fetch_algolia_creds`] against `page`, without the process-wide cache.
+#[doc(hidden)]
+pub async fn fetch_algolia_creds_at(
+    client: &reqwest::Client,
+    page: &str,
+) -> Result<AlgoliaCreds, String> {
+    read_algolia_creds(client, page).await
+}
+
+async fn read_algolia_creds(client: &reqwest::Client, page: &str) -> Result<AlgoliaCreds, String> {
     let resp = client
-        .get(DOCS_PAGE)
+        .get(page)
         .header("User-Agent", BROWSER_UA)
         .send()
         .await
-        .map_err(|e| format!("could not fetch {DOCS_PAGE}: {e}"))?;
+        .map_err(|e| format!("could not fetch {page}: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("{DOCS_PAGE} returned HTTP {}", resp.status()));
+        return Err(format!("{page} returned HTTP {}", resp.status()));
     }
-    let html = resp
-        .text()
+    // The page is read up to the external cap: it is HTML from a public host.
+    let html = crate::iris::http::external_text(resp)
         .await
-        .map_err(|e| format!("could not read {DOCS_PAGE}: {e}"))?;
-    let creds = parse_algolia_meta(&html).ok_or_else(|| {
-        format!("{DOCS_PAGE} carries no usable ALG-AppID, ALG-Index and ALG-SearchKey meta tags")
-    })?;
-    Ok(CREDS.get_or_init(|| creds).clone())
+        .map_err(|e| format!("could not read {page}: {e}"))?;
+    parse_algolia_meta(&html).ok_or_else(|| {
+        format!("{page} carries no usable ALG-AppID, ALG-Index and ALG-SearchKey meta tags")
+    })
 }
 
 const DEFAULT_HITS: u8 = 5;
@@ -200,7 +213,7 @@ pub async fn handle_iris_doc_search(client: &reqwest::Client, p: &IrisDocSearchP
                     "hits": []
                 });
             }
-            match resp.json::<Value>().await {
+            match crate::iris::http::external_json::<Value>(resp).await {
                 Err(e) => json!({
                     "error": format!("Failed to parse response: {e}"),
                     "hits": []

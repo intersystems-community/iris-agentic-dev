@@ -186,12 +186,15 @@ impl LlmClient {
 
             if !resp.status().is_success() {
                 let status = resp.status();
-                let body = resp.text().await.unwrap_or_default();
+                let body = crate::iris::http::external_text(resp)
+                    .await
+                    .unwrap_or_default();
                 anyhow::bail!("Anthropic API error {}: {}", status, body);
             }
 
-            let parsed: AnthropicResponse =
-                resp.json().await.context("parsing Anthropic response")?;
+            let parsed: AnthropicResponse = crate::iris::http::external_json(resp)
+                .await
+                .context("reading the Anthropic response")?;
             let usage = parsed.usage.map(|u| TokenUsage {
                 input: u.input_tokens,
                 output: u.output_tokens,
@@ -231,11 +234,15 @@ impl LlmClient {
 
         if !resp.status().is_success() {
             let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
+            let body = crate::iris::http::external_text(resp)
+                .await
+                .unwrap_or_default();
             anyhow::bail!("LLM API error {}: {}", status, body);
         }
 
-        let parsed: OpenAiResponse = resp.json().await.context("parsing OpenAI response")?;
+        let parsed: OpenAiResponse = crate::iris::http::external_json(resp)
+            .await
+            .context("reading the OpenAI response")?;
         let usage = parsed.usage.map(|u| TokenUsage {
             input: u.prompt_tokens,
             output: u.completion_tokens,

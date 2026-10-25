@@ -52,7 +52,7 @@ async fn e2e_compare_document_same() {
             server_b: Arc::clone(&iris),
             namespace: "USER".to_string(),
         },
-        &client,
+        (&client, &client),
     )
     .await
     .expect("compare_document_impl failed");
@@ -158,7 +158,7 @@ async fn e2e_compare_namespace_same_server() {
             server_a: Arc::clone(&iris),
             server_b: Arc::clone(&iris),
         },
-        &client,
+        (&client, &client),
     )
     .await
     .expect("compare_namespace_impl failed");
@@ -214,7 +214,7 @@ async fn e2e_compare_document_nonexistent() {
             server_b: Arc::clone(&iris),
             namespace: "USER".to_string(),
         },
-        &client,
+        (&client, &client),
     )
     .await
     .expect("compare_document_impl itself should not error");

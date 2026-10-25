@@ -468,7 +468,8 @@ impl IrisTools {
                     .conn
                     .clone()
                     .ok_or_else(crate::tools::iris_unreachable)?;
-                Ok((conn, Arc::clone(&self.client)))
+                let client = self.conn_client(&conn)?;
+                Ok((conn, client))
             }
         }
     }
@@ -530,12 +531,12 @@ impl IrisTools {
                 user,
                 source,
             } => (conn.clone(), client.clone(), Some(user.clone()), *source),
-            ExecIdentity::Primary => (
-                conn,
-                Arc::clone(&self.client),
-                None,
-                IdentitySource::Primary,
-            ),
+            ExecIdentity::Primary => {
+                let client = self
+                    .conn_client(&conn)
+                    .map_err(|e| exec::ExecError::new("CLIENT_FAILED", e.message.to_string()))?;
+                (conn, client, None, IdentitySource::Primary)
+            }
         };
         Ok(exec::ExecContext {
             ssh_strict: conn.member.ssh_strict,

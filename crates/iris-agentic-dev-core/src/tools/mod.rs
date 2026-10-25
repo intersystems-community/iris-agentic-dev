@@ -2773,7 +2773,7 @@ pub struct IrisTools {
 #[tool_router]
 impl IrisTools {
     pub fn new(iris: Option<IrisConnection>) -> anyhow::Result<Self> {
-        let client = Arc::new(IrisConnection::http_client()?);
+        let client = Arc::new(IrisConnection::startup_client(iris.as_ref())?);
         // No config file on this path, so the gate resolves from the operator's environment and
         // the connection's own SystemMode/namespace.
         let declared = write_gate::DeclaredGates::default();
@@ -2826,22 +2826,39 @@ impl IrisTools {
             strict_toolset: false,
         })
     }
-    /// The tools one MCP session gets in HTTP transport mode (spec 141 T220).
+    /// The tools one MCP session gets in HTTP transport mode (spec 141 T220, 171 S9).
     ///
     /// The transport builds a session's tools by copying a prototype, and a plain `clone` shares
-    /// every `Arc` field. What a client asked for and what came back is that client's: the log
-    /// store (`iris_get_log` with no id lists all of it), the pending SCM dialogs (resumed by id)
-    /// and the call history (`agent_history`, `agent_info`). Those three start empty here, with the
-    /// log store's limits kept.
+    /// every `Arc` field. What a client asked for, earned or opened is that client's, so these
+    /// start empty here, each its own:
+    ///
+    /// - the log store (`iris_get_log` with no id lists all of it), with the original's limits;
+    /// - the pending SCM dialogs (resumed by id), swept by a task of the session's own;
+    /// - the call history (`agent_history`, `agent_info`);
+    /// - the confirmation tokens: a token `global_preview` gave one client must not confirm another
+    ///   client's `global_kill`;
+    /// - the WebSocket terminal pool: a terminal one client opened is not another's to drive;
+    /// - the metadata cache: its answers came from this session's call, made under this session's
+    ///   target and policy, and a 60 s entry another session wrote would answer this one without
+    ///   asking the server;
+    /// - the checkout cache: it records what this session's own SCM checkout probe found, so a
+    ///   second session that borrowed it would skip its own pre-write probe on a document it never
+    ///   checked.
     ///
     /// Everything else stays shared, because one iad process is one operator's account on one set of
     /// servers and none of it holds a client's results: the connection state and the pool (a reload
     /// through one session must reach the others, and a second pool would open the keychain again),
-    /// the HTTP clients and their CSP sessions, the configuration, the skill registry, the
-    /// metadata cache (class definitions the account can read anyway), the checkout cache (a fact
-    /// about documents on the server, not about a client), the WebSocket terminal pool and the
-    /// confirmation tokens (both addressed by an unguessable id the creating client holds).
+    /// the HTTP clients and their CSP sessions (one session per account and server, logged out once
+    /// at exit), the configuration and the skill registry.
     pub fn for_new_session(&self) -> Self {
+        self.for_new_session_sweeping(std::time::Duration::from_secs(60))
+    }
+
+    /// [`Self::for_new_session`] with the interval at which the session's elicitation store is
+    /// swept. A session built outside a tokio runtime has no sweeper; its expired entries are
+    /// still refused on lookup.
+    #[doc(hidden)]
+    pub fn for_new_session_sweeping(&self, sweep_every: std::time::Duration) -> Self {
         let mut session = self.clone();
         let (max_entries, ttl_minutes) = self
             .log_store
@@ -2853,7 +2870,12 @@ impl IrisTools {
             ttl_minutes,
         )));
         session.elicitation_store = Arc::new(ElicitationStore::new());
+        session.elicitation_store.spawn_sweeper(sweep_every);
         session.history = Arc::new(std::sync::Mutex::new(VecDeque::with_capacity(50)));
+        session.checkout_cache = Arc::new(crate::elicitation::CheckoutCache::new());
+        session.metadata_cache = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        session.ws_pool = Arc::new(crate::iris::ws_session::WsSessionPool::new());
+        session.confirm_tokens = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
         session
     }
 
@@ -3073,7 +3095,7 @@ impl IrisTools {
     ) -> anyhow::Result<Self> {
         // Clone config_path for load_pool before it may be moved into conn_state (072).
         let pool_config_path = config_path.clone();
-        let client = Arc::new(IrisConnection::http_client()?);
+        let client = Arc::new(IrisConnection::startup_client(iris.as_ref())?);
         let mut router = Self::tool_router();
 
         // Remove tools from MCP tool list based on toolset (T017–T019, T033, FR-004–011).
@@ -3707,15 +3729,30 @@ impl IrisTools {
     /// The client for the call in scope: the target server's own certificate setting decides
     /// whether its certificate is checked. Outside a call, the client built at startup.
     fn http_client(&self) -> &reqwest::Client {
-        let tls = self
-            .target()
-            .ok()
-            .and_then(|t| t.primary.conn.as_ref().map(|c| c.tls));
-        match tls {
-            Some(tls) => crate::iris::http::call_client_ref(&tls).unwrap_or(&self.client),
+        let conn = self.target().ok().and_then(|t| t.primary.conn.clone());
+        match conn {
+            Some(c) => crate::iris::http::call_client_ref(&c.tls, &c.base_url, &c.username)
+                .unwrap_or(&self.client),
             None => &self.client,
         }
     }
+    /// The client for `conn`: its own certificate setting (never the launch environment's, which
+    /// belongs to the default connection alone) and its account's own CSP session (171 S7, S8).
+    /// Every path that reaches a server by name takes its client from here.
+    pub(crate) fn conn_client(
+        &self,
+        conn: &IrisConnection,
+    ) -> Result<Arc<reqwest::Client>, McpError> {
+        crate::iris::http::call_client_ref(&conn.tls, &conn.base_url, &conn.username)
+            .map(|c| Arc::new(c.clone()))
+            .map_err(|e| {
+                McpError::internal_error(
+                    format!("could not build the HTTP client for {}: {e}", conn.base_url),
+                    None,
+                )
+            })
+    }
+
     fn record_call(&self, tool: &str, success: bool) {
         self.record(tool, success, true);
     }
@@ -3750,7 +3787,15 @@ impl IrisTools {
         } else {
             None
         };
-        let client = Arc::clone(&self.client);
+        // The sink's own client: its server's certificate setting and account session. A client
+        // that cannot be built means no write to IRIS, never one over the startup client's setting.
+        let (iris, client) = match iris {
+            Some(c) => match self.conn_client(&c) {
+                Ok(client) => (Some(c), client),
+                Err(_) => (None, Arc::clone(&self.client)),
+            },
+            None => (None, Arc::clone(&self.client)),
+        };
         let config_dir = telemetry_config_dir();
         // Counted, so an exiting CLI process can wait for it (130 round 4).
         crate::telemetry::DURABLE_WRITES.spawn(async move {
@@ -7242,7 +7287,11 @@ Methods:
         };
         let (iris, client) = match &cx {
             Some(cx) => (cx.conn.clone(), cx.client.clone()),
-            None => (self.target_conn()?, Arc::clone(&self.client)),
+            None => {
+                let iris = self.target_conn()?;
+                let client = self.conn_client(&iris)?;
+                (iris, client)
+            }
         };
         let mut result = global::handle_iris_global(&iris, client.as_ref(), &p, Ok(())).await;
         if let Some(cx) = &cx {
@@ -7288,7 +7337,12 @@ Methods:
         &self,
         Parameters(p): Parameters<doc_search::IrisDocSearchParams>,
     ) -> Result<CallToolResult, McpError> {
-        let result = doc_search::handle_iris_doc_search(&self.client, &p).await;
+        // The docs site is not an IRIS server: its own client, not the one that carries an
+        // account's session.
+        let client = crate::iris::http::external_client().map_err(|e| {
+            McpError::internal_error(format!("could not build an HTTP client: {e}"), None)
+        })?;
+        let result = doc_search::handle_iris_doc_search(&client, &p).await;
         self.record_call("iris_doc_search", result.get("error").is_none());
         if result.get("error").is_some() {
             err_result(result)
@@ -7963,6 +8017,12 @@ Methods:
         // from the target's policy, which defaults to the strict value when unset.
         let effective_data_policy = self.target()?.primary.data_policy_name();
         let iris_opt = target_hold.as_deref();
+        // The mirror actions send their own requests: they use the target's client, not the
+        // startup client (171 S8).
+        let admin_client = match iris_opt {
+            Some(c) => self.conn_client(c)?,
+            None => Arc::clone(&self.client),
+        };
         let result = match action {
             "list_namespaces" => admin::admin_list_namespaces_impl(iris_opt).await,
             "list_databases" => admin::admin_list_databases_impl(iris_opt).await,
@@ -8187,7 +8247,7 @@ Methods:
                     .unwrap_or(0) as u8;
                 admin_tools::iris_mirror_add_async_impl(
                     iris_opt,
-                    &self.client,
+                    &admin_client,
                     mirror_name,
                     primary_host,
                     primary_port,
@@ -8205,7 +8265,7 @@ Methods:
                          this action is irreversible without manual recovery",
                     );
                 }
-                admin_tools::iris_mirror_failover_impl(iris_opt, &self.client).await
+                admin_tools::iris_mirror_failover_impl(iris_opt, &admin_client).await
             }
             _ => err_json(
                 "INVALID_ACTION",
@@ -8909,8 +8969,8 @@ Methods:
 
         let url = conn.atelier_url("/");
         let start = std::time::Instant::now();
-        match self
-            .client
+        let client = self.conn_client(&conn)?;
+        match client
             .get(&url)
             .basic_auth(&conn.username, Some(&conn.password))
             .send()
@@ -9227,6 +9287,7 @@ Methods:
 
         let (server_a, server_b) = self.target_pair()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &server_a.namespace).to_string();
+        let clients = (self.conn_client(&server_a)?, self.conn_client(&server_b)?);
 
         let result = comparison_tools::compare_document_impl(
             comparison_tools::CompareDocumentParams {
@@ -9235,7 +9296,7 @@ Methods:
                 server_b,
                 namespace,
             },
-            &self.client,
+            (&clients.0, &clients.1),
         )
         .await;
         self.record_call("compare_document", result.is_ok());
@@ -9259,6 +9320,7 @@ Methods:
 
         let (server_a, server_b) = self.target_pair()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &server_a.namespace).to_string();
+        let clients = (self.conn_client(&server_a)?, self.conn_client(&server_b)?);
 
         let result = comparison_tools::compare_namespace_impl(
             comparison_tools::CompareNamespaceParams {
@@ -9266,7 +9328,7 @@ Methods:
                 server_a,
                 server_b,
             },
-            &self.client,
+            (&clients.0, &clients.1),
         )
         .await;
         self.record_call("compare_namespace", result.is_ok());
@@ -9299,6 +9361,7 @@ Methods:
         // The preview reads the global, and its token is what global_kill accepts, so the pipeline
         // judges it by the same blocklist and PHI gates as iris_global (137).
         let iris = self.target_conn()?;
+        let client = self.conn_client(&iris)?;
 
         let result = admin_tools::global_preview_impl(
             admin_tools::GlobalPreviewParams {
@@ -9306,7 +9369,7 @@ Methods:
                 server,
                 count,
                 iris,
-                client: Arc::clone(&self.client),
+                client,
             },
             &self.confirm_tokens,
         )
@@ -9377,7 +9440,7 @@ Methods:
         Parameters(_): Parameters<params::batch2::IrisNamespaceListParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = admin_tools::iris_namespace_list_impl(&iris, &self.client).await;
+        let result = admin_tools::iris_namespace_list_impl(&iris, &*self.conn_client(&iris)?).await;
         self.record_call("iris_namespace_list", result.is_ok());
         result
     }
@@ -9392,7 +9455,7 @@ Methods:
         Parameters(_): Parameters<params::batch2::IrisDatabaseListParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = admin_tools::iris_database_list_impl(&iris, &self.client).await;
+        let result = admin_tools::iris_database_list_impl(&iris, &*self.conn_client(&iris)?).await;
         self.record_call("iris_database_list", result.is_ok());
         result
     }
@@ -9428,7 +9491,7 @@ Methods:
         let iris = self.target_conn()?;
         let result = admin_tools::iris_system_performance_impl(
             &iris,
-            &self.client,
+            &*self.conn_client(&iris)?,
             &admin_tools::SysPerfRequest {
                 mode: &mode,
                 run_id: run_id.as_deref(),
@@ -9453,7 +9516,7 @@ Methods:
         Parameters(_): Parameters<params::batch4::IrisMirrorStatusParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = admin_tools::iris_mirror_status_impl(&iris, &self.client).await;
+        let result = admin_tools::iris_mirror_status_impl(&iris, &*self.conn_client(&iris)?).await;
         self.record_call("iris_mirror_status", result.is_ok());
         result
     }
@@ -9478,9 +9541,13 @@ Methods:
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         let iris = self.target_conn()?;
-        let result =
-            admin_tools::iris_namespace_create_impl(&iris, &self.client, &name, db_path.as_deref())
-                .await;
+        let result = admin_tools::iris_namespace_create_impl(
+            &iris,
+            &*self.conn_client(&iris)?,
+            &name,
+            db_path.as_deref(),
+        )
+        .await;
         self.record_call("iris_namespace_create", result.is_ok());
         result
     }
@@ -9498,7 +9565,8 @@ Methods:
         let db = p.get("db").and_then(|v| v.as_str()).map(|s| s.to_string());
         let iris = self.target_conn()?;
         let result =
-            admin_tools::iris_database_stats_impl(&iris, &self.client, db.as_deref()).await;
+            admin_tools::iris_database_stats_impl(&iris, &*self.conn_client(&iris)?, db.as_deref())
+                .await;
         self.record_call("iris_database_stats", result.is_ok());
         result
     }
@@ -9567,7 +9635,7 @@ Methods:
         let iris = self.target_conn()?;
         let result = admin_tools::query_audit_log_impl(
             &iris,
-            &self.client,
+            &*self.conn_client(&iris)?,
             user.as_deref(),
             event_type.as_deref(),
             start.as_deref(),
@@ -9613,7 +9681,7 @@ Methods:
             .unwrap_or_default();
         let result = admin_tools::stream_inspect_impl(
             &iris,
-            &self.client,
+            &*self.conn_client(&iris)?,
             &oid,
             max_chars,
             &namespace,
@@ -9638,7 +9706,7 @@ Methods:
         Parameters(_): Parameters<params::batch4::MyAccessParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = admin_tools::my_access_impl(&iris, &self.client).await;
+        let result = admin_tools::my_access_impl(&iris, &*self.conn_client(&iris)?).await;
         self.record_call("my_access", result.is_ok());
         result
     }
@@ -9659,7 +9727,8 @@ Methods:
             .map(|s| s.to_string());
         let iris = self.target_conn()?;
         let result =
-            admin_tools::capability_matrix_impl(&iris, &self.client, user.as_deref()).await;
+            admin_tools::capability_matrix_impl(&iris, &*self.conn_client(&iris)?, user.as_deref())
+                .await;
         self.record_call("capability_matrix", result.is_ok());
         result
     }
@@ -9682,7 +9751,8 @@ Methods:
             .map(|s| s.to_string());
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
-        let result = admin_tools::hl7_schema_list_impl(&iris, &self.client, &namespace).await;
+        let result =
+            admin_tools::hl7_schema_list_impl(&iris, &*self.conn_client(&iris)?, &namespace).await;
         self.record_call("hl7_schema_list", result.is_ok());
         result
     }
@@ -9714,7 +9784,7 @@ Methods:
         let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
         let result = admin_tools::hl7_schema_inspect_impl(
             &iris,
-            &self.client,
+            &*self.conn_client(&iris)?,
             &schema,
             segment.as_deref(),
             &namespace,
@@ -9748,8 +9818,14 @@ Methods:
             .map(|s| s.to_string());
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
-        let result =
-            admin_tools::mermaid_class_impl(&iris, &self.client, &class, depth, &namespace).await;
+        let result = admin_tools::mermaid_class_impl(
+            &iris,
+            &*self.conn_client(&iris)?,
+            &class,
+            depth,
+            &namespace,
+        )
+        .await;
         self.record_call("mermaid_class", result.is_ok());
         result
     }
@@ -9775,9 +9851,13 @@ Methods:
             .map(|s| s.to_string());
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
-        let result =
-            admin_tools::mermaid_production_impl(&iris, &self.client, &production, &namespace)
-                .await;
+        let result = admin_tools::mermaid_production_impl(
+            &iris,
+            &*self.conn_client(&iris)?,
+            &production,
+            &namespace,
+        )
+        .await;
         self.record_call("mermaid_production", result.is_ok());
         result
     }
@@ -9803,8 +9883,13 @@ Methods:
             .map(|s| s.to_string());
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
-        let result =
-            admin_tools::resolve_storage_impl(&iris, &self.client, &class, &namespace).await;
+        let result = admin_tools::resolve_storage_impl(
+            &iris,
+            &*self.conn_client(&iris)?,
+            &class,
+            &namespace,
+        )
+        .await;
         self.record_call("resolve_storage", result.is_ok());
         result
     }

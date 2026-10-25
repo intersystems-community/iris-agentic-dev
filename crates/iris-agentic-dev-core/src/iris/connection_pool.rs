@@ -520,8 +520,9 @@ fn withheld_item(
 
 /// The password `name`'s `servers.json` entry may use, looking in order at iad's own keychain item
 /// for the entry's endpoint, the Server Manager's secret (only for an entry `iris_import_servers`
-/// wrote, or a 1.6.x import whose endpoint still equals the profile's), and the plaintext password
-/// saved for this endpoint.
+/// wrote, or a 1.6.x import whose endpoint still equals the profile's), the plaintext password
+/// saved for this endpoint, and a password an earlier version saved under the Server Manager's
+/// service, which moves only when the entry records this endpoint for it.
 pub fn native_password_in(
     name: &str,
     entry: &crate::iris::servers_config::ServerEntry,
@@ -594,16 +595,33 @@ pub fn native_password_in(
         };
     }
 
-    // 1.6.x wrote its own passwords under the Server Manager's service. An entry that matches no
-    // profile is iad's: copy the item to iad's account and leave the original where it is.
+    // 1.6.x wrote its own passwords under the Server Manager's service, keyed by name alone. An
+    // entry that matches no profile may own such an item, but a name proves nothing about where
+    // the password may go: it moves to iad's own service only when the entry itself records the
+    // endpoint it was saved for and that is still the entry's endpoint. Any other item is left
+    // where it is, sent nowhere, and reported.
     if profile_here.is_none() {
         if let Some(pw) = legacy_iad_secret(name, &entry.username) {
-            if store_iad_credential(name, &entry.username, &endpoint, &pw).is_ok() {
-                tracing::info!("copied the keychain password of '{name}' to iad's own service");
+            if entry.password_endpoint.as_deref() == Some(endpoint.base_url().as_str()) {
+                if store_iad_credential(name, &entry.username, &endpoint, &pw).is_ok() {
+                    tracing::info!("copied the keychain password of '{name}' to iad's own service");
+                }
+                return NativePassword {
+                    password: pw,
+                    withheld: None,
+                };
             }
             return NativePassword {
-                password: pw,
-                withheld: None,
+                password: String::new(),
+                withheld: Some(withheld_item(
+                    name,
+                    "legacy_keychain",
+                    "keychain password saved by an earlier version",
+                    format!(
+                        "a password saved under this name by an earlier version is not tied to an address, and this entry is {endpoint}; it was not sent"
+                    ),
+                    "run iris_add_server for this name with its password, which saves it for this address",
+                )),
             };
         }
     }

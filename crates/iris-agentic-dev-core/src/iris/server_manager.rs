@@ -631,8 +631,10 @@ pub fn sm_secret_for(
 }
 
 /// A 1.6.x `servers.json` entry kept its password under the Server Manager's service, because iad
-/// wrote there. For an entry that matches no profile, read that item once so an upgrade does not
-/// lose it. The caller copies it to iad's own account; this never deletes it.
+/// wrote there. For an entry that matches no profile, read that item by name. The name says
+/// nothing about where the password may go, so the caller (`native_password_in`) hands it on only
+/// when the entry records the endpoint it was saved for; otherwise it reports the item and sends
+/// it nowhere. This never deletes the item.
 pub fn legacy_iad_secret(name: &str, username: &str) -> Option<String> {
     read_sm_secret(name, username).ok()
 }

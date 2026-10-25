@@ -199,6 +199,64 @@ impl ElicitationStore {
         self.0.lock().unwrap().remove(id);
     }
 
+    /// How many entries the store holds, expired or not.
+    pub fn len(&self) -> usize {
+        self.0.lock().unwrap().len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// A handle that does not keep the store alive, for a test that checks the store is dropped.
+    #[doc(hidden)]
+    pub fn weak_handle(&self) -> std::sync::Weak<Mutex<HashMap<String, PendingElicitation>>> {
+        Arc::downgrade(&self.0)
+    }
+
+    /// Insert an entry that expires at `expires_at`. For a test that needs an expired entry.
+    #[doc(hidden)]
+    pub fn insert_expiring_at(
+        &self,
+        document: impl Into<String>,
+        action: ElicitationAction,
+        expires_at: Instant,
+    ) -> String {
+        let id = Uuid::new_v4().to_string();
+        let entry = PendingElicitation {
+            id: id.clone(),
+            document: document.into(),
+            action,
+            content: None,
+            scm_action_id: None,
+            namespace: "USER".to_string(),
+            expires_at,
+            origin: Origin::current(),
+        };
+        self.0.lock().unwrap().insert(id.clone(), entry);
+        id
+    }
+
+    /// Sweep this store every `every` on the current tokio runtime, until the store is dropped.
+    ///
+    /// The task holds the store weakly: when the session that owns the store ends, the next tick
+    /// finds nothing to sweep and the task ends with it. Returns `false`, and sweeps nothing, when
+    /// called outside a runtime; `lookup` still refuses an expired entry then.
+    pub fn spawn_sweeper(&self, every: Duration) -> bool {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return false;
+        };
+        let weak = Arc::downgrade(&self.0);
+        handle.spawn(async move {
+            loop {
+                tokio::time::sleep(every).await;
+                let Some(inner) = weak.upgrade() else { break };
+                ElicitationStore(inner).sweep();
+            }
+        });
+        true
+    }
+
     /// Remove all expired entries. Returns the count of removed entries.
     pub fn sweep(&self) -> usize {
         let mut store = self.0.lock().unwrap();

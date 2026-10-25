@@ -566,7 +566,7 @@ async fn e2e_compare_namespace_self() {
             server_a: Arc::clone(&server),
             server_b: Arc::clone(&server),
         },
-        &client,
+        (&client, &client),
     )
     .await
     .expect("compare_namespace_impl failed");

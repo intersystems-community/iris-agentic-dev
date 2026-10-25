@@ -88,6 +88,7 @@ mod test_mdx_131_live;
 mod test_mdx_142_samples_bi_live;
 mod test_message_body_redact_141_live;
 mod test_mirror_and_freespace;
+mod test_primary_session_171_live;
 mod test_query_stats_139_live;
 mod test_release_160_live;
 mod test_retry;
