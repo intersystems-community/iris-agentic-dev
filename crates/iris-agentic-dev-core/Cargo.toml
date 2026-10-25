@@ -7,6 +7,9 @@ edition.workspace = true
 autotests = false
 authors.workspace = true
 license.workspace = true
+# Shipped as release binaries, Homebrew and the VS Code extension, never to crates.io. Saying so
+# lets cargo-deny accept the version-less path dependencies between the two workspace crates.
+publish = false
 
 [features]
 testing = []

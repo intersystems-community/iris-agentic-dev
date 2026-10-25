@@ -1,0 +1,76 @@
+# cargo-deny policy for the locked dependency graph. CI runs `cargo deny check` in
+# .github/workflows/audit.yml; run the same locally before a release.
+#
+# cargo audit, in the same workflow, only fails on a vulnerability. This file is where yanked,
+# unsound and unmaintained crates, licenses and registries actually fail a build.
+
+[graph]
+# Every platform the binary ships to. Without a list cargo-deny checks the host only, and the
+# Windows and Linux keychain backends would never be looked at from a macOS checkout.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+]
+# The `testing` feature only exposes test helpers, but CI builds with it, so check what CI builds.
+all-features = true
+
+[advisories]
+# Vulnerabilities always fail. A yanked crate fails too: 4.1.3 of keyring sat in the lockfile
+# yanked, and cargo audit only printed it.
+yanked = "deny"
+# "all" rather than the default "workspace": the unsound tokio (RUSTSEC-2026-0386) was a direct
+# dependency, but the next one may well be transitive.
+unsound = "all"
+unmaintained = "all"
+ignore = [
+    # The zbus serialization crates, pulled in by zbus-secret-service-keyring-store, the Linux
+    # backend keyring v4 uses for the Secret Service API. There is no maintained replacement that
+    # keyring supports yet. Drop these once keyring moves off zbus, or once zbus has a new owner.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained; only reachable via the keyring Linux backend" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained; only reachable via the keyring Linux backend" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained; only reachable via the keyring Linux backend" },
+]
+
+[licenses]
+# The licenses the current graph actually needs, nothing speculative. A new dependency under any
+# other license fails the check and has to be added here on purpose.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+[licenses.private]
+# Both workspace crates are publish = false, which cargo-deny would otherwise skip. They are MIT,
+# and checking them keeps the workspace license in the same allowlist as everything else.
+ignore = false
+
+[bans]
+# Duplicate versions are common (windows-sys, getrandom, rand_core) and mostly not ours to fix.
+# Warn so they show up in the log, rather than block on a transitive crate's release schedule.
+multiple-versions = "warn"
+wildcards = "deny"
+# Workspace path dependencies carry no version, which `wildcards` would otherwise flag.
+allow-wildcard-paths = true
+
+[sources]
+# crates.io only. A git or alternative-registry dependency is a change to how the build is
+# trusted, and should fail here until someone decides it is fine.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

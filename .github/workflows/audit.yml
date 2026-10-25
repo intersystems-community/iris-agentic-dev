@@ -25,8 +25,24 @@ jobs:
       # Installed from its own lockfile so the scanner is not itself a moving target.
       - run: cargo install cargo-audit --locked --version 0.22.2
       # Fails the job on a vulnerability. Unmaintained or yanked crates are printed as warnings and do
-      # not fail it; they are read in the job log.
+      # not fail it; they are read in the job log. The cargo-deny job below is the one that fails on
+      # them.
       - run: cargo audit
+
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # An exact version, because a new cargo-deny release can add a check or change a default, and
+      # that should arrive as a reviewed bump to this line rather than as a red build on Monday.
+      - run: cargo install cargo-deny --locked --version 0.20.2
+      # Advisories (yanked, unsound and unmaintained fail too), licenses, bans and sources, all as
+      # configured in deny.toml.
+      - run: cargo deny --locked check
 
   extension:
     runs-on: ubuntu-latest
@@ -38,5 +54,21 @@ jobs:
         with:
           node-version: "22"
       - run: cd vscode-iris-agentic-dev && npm ci --ignore-scripts
-      # The extension ships its production dependencies; dev tooling is not in the package.
-      - run: cd vscode-iris-agentic-dev && npm audit --omit=dev --audit-level=high
+      # The whole tree, dev dependencies included. The extension ships only its production
+      # dependencies, but vsce and the rest of the dev tooling run in the release job with VSCE_PAT
+      # in the environment, so a compromised dev dependency is a leaked publishing token.
+      - run: cd vscode-iris-agentic-dev && npm audit --audit-level=high
+
+  lint-tooling:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      # prettier and markdownlint-cli2 from the root package-lock.json, which the gates workflow runs
+      # against every checkout. Nothing here ships, but it runs on CI with the repository checked out.
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=high
