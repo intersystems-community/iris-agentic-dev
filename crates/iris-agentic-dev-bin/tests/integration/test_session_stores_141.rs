@@ -41,13 +41,15 @@ fn start(home: &Path) -> Server {
     let port = free_port();
     let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
     let mut cmd = clean_mcp_command(Path::new(bin));
+    // The server under test is the one the environment names, as in CI (`LiveTarget`).
+    let live = iris_agentic_dev_core::testing::LiveTarget::from_env();
     let child = cmd
         .env("HOME", home)
         .env("USERPROFILE", home)
-        .env("IRIS_HOST", "localhost")
-        .env("IRIS_WEB_PORT", "52780")
-        .env("IRIS_USERNAME", "_SYSTEM")
-        .env("IRIS_PASSWORD", "SYS")
+        .env("IRIS_HOST", &live.host)
+        .env("IRIS_WEB_PORT", live.web_port.to_string())
+        .env("IRIS_USERNAME", &live.username)
+        .env("IRIS_PASSWORD", &live.password)
         .env("IAD_HTTP_TOKEN", TOKEN)
         // One document is enough to overflow the inline limit, so the answer goes to the store.
         .env("IRIS_INLINE_INFO", "1")
@@ -176,7 +178,7 @@ impl Session {
 }
 
 #[tokio::test]
-#[ignore = "live: iris-dev-iris on 52780; run behind /tmp/iad-141-iris.lock"]
+#[ignore = "live: the IRIS the environment names; run behind /tmp/iad-141-iris.lock"]
 async fn a_second_http_session_cannot_list_or_fetch_the_first_sessions_log() {
     let home = tempfile::tempdir().unwrap();
     let server = start(home.path());

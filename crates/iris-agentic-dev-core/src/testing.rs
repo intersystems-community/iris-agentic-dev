@@ -565,6 +565,12 @@ impl ThrowawayIris {
                 &format!("127.0.0.1:{THROWAWAY_SUPERSERVER_PORT}:1972"),
                 "-p",
                 &format!("127.0.0.1:{THROWAWAY_WEB_PORT}:52773"),
+                // What the CI job's own IRIS container is started with; a GitHub runner's IRIS
+                // does not come up without them.
+                "--shm-size",
+                "1g",
+                "--ulimit",
+                "nofile=65536:65536",
                 &image,
             ])
             .output()

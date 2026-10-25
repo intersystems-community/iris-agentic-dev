@@ -436,7 +436,7 @@ async fn source_control_still_works_with_an_empty_password() {
 
 /// A TCP relay to `target` that keeps every byte the client sent, so a test can see what a client
 /// said to a real server.
-fn relay_to(target: &'static str) -> (u16, std::sync::Arc<std::sync::Mutex<Vec<u8>>>) {
+fn relay_to(target: String) -> (u16, std::sync::Arc<std::sync::Mutex<Vec<u8>>>) {
     use std::io::{Read, Write};
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind relay");
     let port = listener.local_addr().unwrap().port();
@@ -445,8 +445,9 @@ fn relay_to(target: &'static str) -> (u16, std::sync::Arc<std::sync::Mutex<Vec<u
     std::thread::spawn(move || {
         for client in listener.incoming().flatten() {
             let log = log.clone();
+            let target = target.clone();
             std::thread::spawn(move || {
-                let Ok(server) = std::net::TcpStream::connect(target) else {
+                let Ok(server) = std::net::TcpStream::connect(target.as_str()) else {
                     return;
                 };
                 let (mut c_read, mut s_write) =
@@ -482,14 +483,15 @@ async fn discovery_identifies_the_private_web_server_before_it_sends_a_credentia
     };
     use iris_agentic_dev_core::iris::http::{IdentifyClient, TlsSetting};
 
-    let (port, sent) = relay_to("127.0.0.1:52780");
+    let live = iris_agentic_dev_core::testing::LiveTarget::from_env();
+    let (port, sent) = relay_to(format!("{}:{}", live.host, live.web_port));
     let client = IdentifyClient::new(&TlsSetting::default(), std::time::Duration::from_secs(5))
         .expect("identify client");
     let found = identify_listener(&client, &format!("http://127.0.0.1:{port}")).await;
     assert_eq!(
         found,
         Identification::Iris(Identified::PortalCookie),
-        "iris-dev-iris answers 401 Basic at /api/atelier/, so it is the Portal login page that shows it is IRIS"
+        "IRIS answers 401 Basic at /api/atelier/, so it is the Portal login page that shows it is IRIS"
     );
     let said = String::from_utf8_lossy(&sent.lock().unwrap()).to_ascii_lowercase();
     assert!(said.contains("get /csp/sys/utilhome.csp"), "{said}");
