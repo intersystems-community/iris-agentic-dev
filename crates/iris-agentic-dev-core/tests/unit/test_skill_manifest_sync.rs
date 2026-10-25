@@ -52,9 +52,8 @@ fn skills_on_disk() -> BTreeSet<String> {
 fn skills_in_install_manifest() -> Vec<String> {
     let path = repo_root().join("iris-agentic-dev.toml");
     let raw = std::fs::read_to_string(&path).expect("iris-agentic-dev.toml must exist");
-    let parsed: toml::Value = raw
-        .parse()
-        .expect("iris-agentic-dev.toml must be valid TOML");
+    let parsed: toml::Value =
+        toml::from_str(&raw).expect("iris-agentic-dev.toml must be valid TOML");
 
     parsed
         .get("provides")
