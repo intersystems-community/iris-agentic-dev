@@ -51,7 +51,7 @@ name = "windows_sm_credential"
 path = "examples/windows_sm_credential.rs"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 [dev-dependencies]
 # Runs `testing::isolate_process` before `main` in every test target (spec 141 T183).
