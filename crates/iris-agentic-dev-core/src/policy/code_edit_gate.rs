@@ -833,11 +833,17 @@ fn locate(content: &str, offset: usize) -> (usize, String) {
 /// introspection against `%Dictionary.Compiled*` is unaffected. Returns `Some(error_json)` when
 /// blocked.
 pub fn check_sql_code_edit(sql: &str, server_name: &str) -> Option<serde_json::Value> {
-    // Whitespace-free, like the ObjectScript side. IRIS SQL accepts `%Dictionary . ClassDefinition`
-    // and `"%Dictionary"."ClassDefinition"` for the same table, and matching the raw text meant
-    // either spelling reached the dictionary with the gate reporting nothing.
-    let normalized: String = sql
-        .chars()
+    // The statement's code, read the way IRIS reads it (`sql_lex`): white space and comments are
+    // gone, everything else is kept, literals and delimited identifiers included. IRIS SQL accepts
+    // `%Dictionary . ClassDefinition`, `"%Dictionary"."ClassDefinition"` and
+    // `%Dictionary/**/.ClassDefinition` for the same table, and matching the raw text meant any of
+    // them reached the dictionary with the gate reporting nothing. A literal stays in the text on
+    // purpose: the gate cannot tell data from a name a procedure will read, and a false block
+    // prints a legible error. A comment is not code, so one that merely mentions the dictionary
+    // blocks nothing.
+    let tokens = crate::sql_lex::lex(sql);
+    let normalized: String = crate::sql_lex::code(&tokens)
+        .flat_map(|t| t.text.chars())
         .filter(|c| !c.is_whitespace())
         .flat_map(|c| c.to_uppercase())
         .collect();

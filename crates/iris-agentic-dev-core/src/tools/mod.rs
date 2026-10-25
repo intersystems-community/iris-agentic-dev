@@ -2115,20 +2115,26 @@ async fn iris_query_explain(
     p: &QueryParams,
     namespace: &str,
 ) -> Result<CallToolResult, McpError> {
-    let first_word = p
-        .query
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_uppercase();
-    if p.query.trim().is_empty() {
+    // The statement is read by `sql_lex`, like read mode: a comment before the keyword is not the
+    // keyword, and a second statement, a write keyword or `SELECT ... INTO` is refused here and
+    // not sent to IRIS inside an `EXPLAIN`.
+    let tokens = crate::sql_lex::lex(&p.query);
+    let Some(first) = crate::sql_lex::code(&tokens).next() else {
         return err_json("EMPTY_QUERY", "SQL query is empty.");
-    }
-    if first_word != "SELECT" && first_word != "WITH" {
+    };
+    if !(first.is_word("SELECT") || first.is_word("WITH")) {
         return err_json(
             "EXPLAIN_REQUIRES_SELECT",
             "explain mode only accepts SELECT statements (including WITH/CTE).",
         );
+    }
+    if let Err(kw) = validate_read_only_sql(&p.query) {
+        return err_result(serde_json::json!({
+            "success": false,
+            "error_code": "SQL_WRITE_BLOCKED",
+            "error": format!("'{kw}' is not a read, so explain mode does not send it: it plans one SELECT or WITH."),
+            "blocked_keyword": kw,
+        }));
     }
 
     let query_url = iris.versioned_ns_url(namespace, "/action/query");

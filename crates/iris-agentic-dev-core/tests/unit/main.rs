@@ -200,6 +200,7 @@ mod test_skills_unit_gaps;
 mod test_spawn_pin_guard_141;
 mod test_splice_positional_141;
 mod test_spliced_creds_141;
+mod test_sql_code_edit_lexer_171;
 mod test_sql_lex_141;
 mod test_sql_power_unit;
 mod test_sql_safety;

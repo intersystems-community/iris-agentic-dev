@@ -1016,13 +1016,13 @@ impl IrisTools {
                 true,
             ),
             "iris_query" => {
-                let first = args
-                    .get("query")
-                    .and_then(|v| v.as_str())
-                    .and_then(|q| q.split_whitespace().next())
-                    .unwrap_or("")
-                    .to_uppercase();
-                let read_statement = first.is_empty() || first == "SELECT" || first == "WITH";
+                // The first statement word, read through `sql_lex` like every other SQL check: a
+                // comment before it is not the word, and a `(` or `;` before it is not a read.
+                let tokens =
+                    crate::sql_lex::lex(args.get("query").and_then(|v| v.as_str()).unwrap_or(""));
+                let read_statement = crate::sql_lex::code(&tokens)
+                    .next()
+                    .is_none_or(|t| t.is_word("SELECT") || t.is_word("WITH"));
                 if writes || !read_statement {
                     check_role_gate(
                         &server.role,

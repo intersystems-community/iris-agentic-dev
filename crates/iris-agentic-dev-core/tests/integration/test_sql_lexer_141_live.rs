@@ -331,6 +331,90 @@ fn write_mode_counts_what_it_used_to_skip() {
     drop_tables(&mut mcp);
 }
 
+/// S18: IRIS reads a comment between the parts of a table name as a separator, so
+/// `%Dictionary/**/.ClassDefinition` is `%Dictionary.ClassDefinition`. The code-edit gate has to see
+/// the same table. Explain mode sends one SELECT and nothing else.
+#[test]
+#[ignore = "requires live IRIS (iris-dev-iris) and the built binary"]
+fn the_code_edit_gate_reads_a_dictionary_name_the_way_iris_does() {
+    let Some(_bin) = require_iad_binary() else {
+        return;
+    };
+    let mut mcp = session();
+    let spellings = [
+        "%Dictionary.ClassDefinition",
+        "%Dictionary/**/.ClassDefinition",
+        "%Dictionary./**/ClassDefinition",
+        "%Dictionary -- c\n.ClassDefinition",
+        "\"%Dictionary\"/**/.\"ClassDefinition\"",
+    ];
+
+    // Measured: IRIS takes every one of them as the dictionary's class table (SQLCODE 0 or 100;
+    // an unknown table is -30 and a syntax error -1).
+    for name in spellings {
+        let stmt = format!("SELECT TOP 1 Name FROM {name} WHERE 1 = 0").replace('"', "\"\"");
+        let r = exec(
+            &mut mcp,
+            &format!(
+                "Set tRS=##class(%SQL.Statement).%ExecDirect(,\"{}\") Write \"SQLCODE=\",tRS.%SQLCODE",
+                stmt.replace('\n', "\"_$Char(10)_\"")
+            ),
+        );
+        let out = r["output"].as_str().unwrap_or("");
+        assert!(
+            out.contains("SQLCODE=0") || out.contains("SQLCODE=100"),
+            "IRIS did not take {name:?} as the dictionary table: {r}"
+        );
+    }
+
+    // The gate refuses each, for a forced read and for a write; nothing reached the dictionary.
+    for name in spellings {
+        let write = format!("UPDATE {name} SET Name = Name WHERE 1 = 0");
+        let r = call(
+            &mut mcp,
+            "iris_query",
+            json!({"query": write, "mode": "write"}),
+        );
+        assert_eq!(r["error_code"], "CODE_EDIT_BLOCKED", "{write:?}: {r}");
+        assert_eq!(r["refusal"]["kind"], "fixed_rule", "{write:?}: {r}");
+        let forced = format!("SELECT Name FROM {name} WHERE 1 = 0");
+        let r = call(
+            &mut mcp,
+            "iris_query",
+            json!({"query": forced, "force": true}),
+        );
+        assert_eq!(r["error_code"], "CODE_EDIT_BLOCKED", "{forced:?}: {r}");
+    }
+
+    // A plain read of the compiled dictionary is introspection and stays open, and so does a
+    // comment that only mentions the dictionary.
+    let r = sql(&mut mcp, "SELECT TOP 1 Name FROM %Dictionary.CompiledClass");
+    assert_eq!(r["success"], true, "{r}");
+    let r = call(
+        &mut mcp,
+        "iris_query",
+        json!({
+            "query": "/* not %Dictionary.ClassDefinition */ DELETE FROM IadT141.NoSuchTable WHERE 1 = 0",
+            "mode": "write"
+        }),
+    );
+    assert_ne!(r["error_code"], "CODE_EDIT_BLOCKED", "{r}");
+
+    // Explain mode: a comment before the keyword plans, a second statement is refused unsent.
+    let r = call(
+        &mut mcp,
+        "iris_query",
+        json!({"query": "/* plan */ SELECT 1 AS a", "mode": "explain"}),
+    );
+    assert_eq!(r["success"], true, "{r}");
+    let r = call(
+        &mut mcp,
+        "iris_query",
+        json!({"query": "SELECT 1 AS a; DROP TABLE IadT141.Items", "mode": "explain"}),
+    );
+    assert_eq!(r["error_code"], "SQL_WRITE_BLOCKED", "{r}");
+}
+
 /// `iris_table_info` reads `Schema."Delimited Name"`. (IRIS refuses a dot inside a table name, so
 /// the split at unquoted dots only is pinned in the unit tests; the live part is that a delimited
 /// name survives being unquoted for the lookup and quoted again for the row count.)
