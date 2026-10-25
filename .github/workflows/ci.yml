@@ -401,6 +401,11 @@ jobs:
       #   - test_aihub_139_live / test_query_stats_139_live / test_csp_logout_132: need
       #     `iad-aihub-iris`, an IRISHealth AI Hub EAP build with its own license key. Neither
       #     the image nor the key can be on a runner; they run locally before each release.
+      #   - test_sql_param_audit_141_live: measures whether IRIS's SQL statement audit records a
+      #     bound parameter, against a control literal. 2025.3 Community records no `%SQL` audit
+      #     row from any process with every `%System/%SQL` event on (measured 2026-10-25), so the
+      #     control can never hold on this image and the test fails rather than pass empty. It
+      #     runs locally on 2026.2 before each release.
       #   - test_mdx_142_samples_bi_live: needs a namespace with Samples-BI built
       #     (`IAD_SAMPLES_BI_NS`), which takes a ZPM install and a cube build a runner does not
       #     have; it fails rather than passing empty without one, and runs locally before each release.
@@ -441,7 +446,8 @@ jobs:
             --skip test_aihub_139_live:: \
             --skip test_query_stats_139_live:: \
             --skip test_csp_logout_132:: \
-            --skip test_mdx_142_samples_bi_live::
+            --skip test_mdx_142_samples_bi_live:: \
+            --skip test_sql_param_audit_141_live::
         env:
           IRIS_HOST: ${{ env.IRIS_HOST }}
           IRIS_WEB_PORT: "52773"
