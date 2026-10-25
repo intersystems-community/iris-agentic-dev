@@ -41,6 +41,7 @@ mod test_no_eager_keychain_141;
 mod test_query_live;
 mod test_reporter_repro;
 mod test_session_stores_141;
+mod test_session_stores_171;
 mod test_skill_install_cli;
 mod test_tool_live;
 mod test_transport_141;
