@@ -140,3 +140,38 @@ fn read_only_off_is_not_strict() {
     let o = e.run(&["capability-matrix"], &[]);
     assert!(!text(&o).contains("READ_ONLY_STRICT"), "{}", text(&o));
 }
+
+// ── live ────────────────────────────────────────────────────────────────────────────────────────
+
+fn live(args: &[&str], strict: bool) -> Output {
+    let tmp = tempfile::tempdir().unwrap();
+    let env_or = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
+    let mut c = iris_agentic_dev_core::testing::clean_command(&bin());
+    crate::support_141::isolate(&mut c);
+    c.current_dir(tmp.path())
+        .env("IRIS_HOST", env_or("IRIS_HOST", "localhost"))
+        .env("IRIS_WEB_PORT", env_or("IRIS_WEB_PORT", "52780"))
+        .env("IRIS_USERNAME", env_or("IRIS_USERNAME", "_SYSTEM"))
+        .env("IRIS_PASSWORD", env_or("IRIS_PASSWORD", "SYS"))
+        .args(args);
+    if strict {
+        c.env("IAD_READ_ONLY", "strict");
+    }
+    c.output().unwrap()
+}
+
+/// `capability-matrix` now goes through the pipeline. Against a live server it still answers, and
+/// under strict it compiles nothing: the refusal is the answer, not a probe that ran.
+#[test]
+#[ignore = "requires live IRIS (iris-dev-iris) and the built binary"]
+fn capability_matrix_still_answers_live_and_is_refused_under_strict() {
+    let o = live(&["capability-matrix", "--json"], false);
+    let t = text(&o);
+    assert_eq!(o.status.code(), Some(0), "{t}");
+    let body: serde_json::Value = serde_json::from_str(String::from_utf8_lossy(&o.stdout).trim())
+        .unwrap_or_else(|e| panic!("not JSON ({e}): {t}"));
+    assert_ne!(body["success"], false, "{t}");
+
+    let o = live(&["capability-matrix", "--json"], true);
+    assert_strict_refusal("live, strict", &o);
+}
