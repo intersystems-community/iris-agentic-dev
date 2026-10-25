@@ -274,11 +274,12 @@ pub fn select_server(
 /// a test process never gets here: `IAD_NO_KEYCHAIN` is set for it on load (spec 141 T183), so this
 /// does nothing there.
 ///
-/// Background: `keyring` v4.1.3's `v1::Entry::new` has a bug — the `AtomicBool` guard
-/// that is supposed to call `set_credential_store()` on the first invocation uses
-/// `compare_exchange(false, true) == Ok(true)`, which can never be true (the exchange
-/// returns `Ok(false)` on first success). We work around it by calling the platform
-/// store constructors directly.
+/// Background: this started as a workaround. `keyring` v4.1.3's `v1::Entry::new` never
+/// registered a store, because its guard tested `compare_exchange(false, true) == Ok(true)`,
+/// which cannot be true. v4.2.0 fixed that, but nothing here calls `keyring::v1::Entry`: every
+/// lookup goes through `keyring_core::Entry`, so the store still has to be registered here.
+/// Going through v1 would also be wrong for tests, since its first call would replace the
+/// mock store they inject with the real OS keychain.
 pub fn init_platform_keystore() {
     abort_if_keystore_forbidden();
     if keychain_disabled() {
