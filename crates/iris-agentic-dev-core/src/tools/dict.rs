@@ -27,6 +27,45 @@ pub fn metadata_cache_set(cache: &MetadataCache, key: String, val: serde_json::V
         .insert(key, (val, std::time::Instant::now()));
 }
 
+/// The endpoint and account an answer was read with. Every key carries it: a server name can be
+/// repointed and two accounts can see different dictionaries, so neither may answer for the other.
+fn cache_scope(iris: &IrisConnection) -> String {
+    format!("{}|{}", iris.base_url, iris.username.to_lowercase())
+}
+
+pub fn dispatch_cache_key(iris: &IrisConnection, p: &ResolveDynamicDispatchParams) -> String {
+    format!(
+        "resolve_dynamic_dispatch:{}:{}:{}:{}:{}",
+        p.method_name,
+        p.package_prefix.as_deref().unwrap_or(""),
+        crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace),
+        p.limit.unwrap_or(50),
+        cache_scope(iris)
+    )
+}
+
+pub fn message_map_cache_key(iris: &IrisConnection, p: &ExtractMessageMapParams) -> String {
+    format!(
+        "extract_message_map:{}:{}:{}",
+        p.class_name,
+        crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace),
+        cache_scope(iris)
+    )
+}
+
+pub fn subclass_cache_key(iris: &IrisConnection, p: &FindSubclassImplementationsParams) -> String {
+    let mut sorted = p.base_classes.clone();
+    sorted.sort();
+    format!(
+        "find_subclass:{}:{}:{}:{}:{}",
+        p.method_name,
+        sorted.join(","),
+        crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace),
+        p.limit.unwrap_or(100),
+        cache_scope(iris)
+    )
+}
+
 pub fn confidence_for_count(n: usize) -> f64 {
     match n {
         0 => 0.0,
@@ -75,10 +114,7 @@ pub async fn handle_resolve_dynamic_dispatch(
     let namespace = crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace);
     let prefix = p.package_prefix.as_deref().unwrap_or("");
     let limit = p.limit.unwrap_or(50);
-    let cache_key = format!(
-        "resolve_dynamic_dispatch:{}:{}:{}",
-        p.method_name, prefix, namespace
-    );
+    let cache_key = dispatch_cache_key(iris, &p);
     if let Some(cached) = metadata_cache_get(cache, &cache_key) {
         return ok_json(cached);
     }
@@ -215,7 +251,7 @@ pub async fn handle_extract_message_map_routing(
     cache: &MetadataCache,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     let namespace = crate::tools::resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-    let cache_key = format!("extract_message_map:{}:{}", p.class_name, namespace);
+    let cache_key = message_map_cache_key(iris, &p);
     if let Some(cached) = metadata_cache_get(cache, &cache_key) {
         return ok_json(cached);
     }
@@ -451,16 +487,9 @@ pub async fn handle_find_subclass_implementations(
     let mut sorted = p.base_classes.clone();
     sorted.sort();
     let limit = p.limit.unwrap_or(100);
-    // limit and server belong in the key: a limit-5 call must not be answered from a limit-100
-    // entry, and two instances must not share one another's dictionary.
-    let cache_key = format!(
-        "find_subclass:{}:{}:{}:{}:{}",
-        p.method_name,
-        sorted.join(","),
-        namespace,
-        limit,
-        p.server.as_deref().unwrap_or("")
-    );
+    // A limit-5 call must not be answered from a limit-100 entry, and two instances or accounts
+    // must not share one another's dictionary.
+    let cache_key = subclass_cache_key(iris, &p);
     if let Some(cached) = metadata_cache_get(cache, &cache_key) {
         return ok_json(cached);
     }

@@ -65,6 +65,7 @@ mod test_data_policy_gate;
 mod test_data_policy_gate_141;
 mod test_description_tiers;
 mod test_device_capture_164;
+mod test_dict_cache_keys_171;
 mod test_dict_unit;
 mod test_discovery_probe_unit;
 mod test_discovery_unit;
