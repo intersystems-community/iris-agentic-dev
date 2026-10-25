@@ -316,3 +316,38 @@ fn no_source_string_hands_the_agent_the_operator_file() {
         hits.join("\n")
     );
 }
+
+/// Security fix S4: the description of a tool is read by the agent on every session, so it holds
+/// no instruction to write or trust a configuration file. `check_config` once said to write a
+/// `.iris-agentic-dev.toml` to `config_watch_path`.
+#[test]
+fn no_tool_description_hands_the_agent_a_config_edit() {
+    use iris_agentic_dev_core::tools::{IrisTools, Toolset};
+    let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
+    let catalogue = tools.tool_catalogue();
+    assert!(catalogue.len() > 50, "only {} tools", catalogue.len());
+    let write_recipe =
+        regex::Regex::new(r"(?i)\b(write|create|put|add|edit)\b.{0,40}\.toml").expect("regex");
+    let mut hits = Vec::new();
+    for t in &catalogue {
+        let d = t.description.clone().unwrap_or_default();
+        for needle in [
+            ".iris-agentic-dev.toml",
+            "iris-agentic-dev trust",
+            "operator file",
+            "exact path",
+        ] {
+            if d.contains(needle) {
+                hits.push(format!("{}: names {needle:?}", t.name));
+            }
+        }
+        if write_recipe.is_match(&d) {
+            hits.push(format!("{}: tells the agent to write a .toml file", t.name));
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "tool descriptions that hand the agent a config edit:\n{}",
+        hits.join("\n")
+    );
+}
