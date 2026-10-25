@@ -97,12 +97,13 @@ impl TlsSetting {
     }
 }
 
-/// What a client is for: its timeout and whether it joins the process's CSP session.
+/// What a client is for: its timeout and whether it joins a CSP session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClientKind {
-    /// Tool calls: 30 s, in the shared CSP session.
+    /// Tool calls: 30 s, in the CSP session of the connection's account.
     Call,
-    /// The startup probe: connect in 5 s, answer in 10 s, in the shared CSP session.
+    /// A connection probe: connect in 5 s, answer in 10 s, in the CSP session of the account it
+    /// signs in as.
     Probe,
     /// `iris_search`'s synchronous request: no client timeout (the request sets its own), no cookies.
     Search,
@@ -112,7 +113,7 @@ pub enum ClientKind {
     Batch,
     /// A request whose raw `Set-Cookie` headers are wanted: no timeout, no cookies.
     Raw,
-    /// The logout that ends the shared CSP session at exit: in that session, timeout per request.
+    /// The logout that ends a CSP session at exit: in that session, timeout per request.
     Logout,
     /// A probe of a host the agent named: validates always, no cookies.
     AdHoc,
@@ -134,8 +135,9 @@ fn base_builder(verify: bool) -> reqwest::ClientBuilder {
         .redirect(reqwest::redirect::Policy::none())
 }
 
-/// A client for `kind` that checks (or not) the certificate as `tls` says. Clients that join a
-/// CSP session join the process's shared one.
+/// A client for `kind` that checks (or not) the certificate as `tls` says. A client that joins a CSP
+/// session joins the store of no particular account ([`super::csp_session::shared_cookie_store`]):
+/// use [`super::connection::IrisConnection::client`] for a connection's own.
 pub fn client_for(tls: &TlsSetting, kind: ClientKind) -> anyhow::Result<reqwest::Client> {
     client_with_store(tls, kind, super::csp_session::shared_cookie_store())
 }
