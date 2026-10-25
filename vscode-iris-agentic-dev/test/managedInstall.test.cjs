@@ -771,3 +771,29 @@ test("an accepted update leaves every registration on the newest binary", async 
     env.cleanup();
   }
 });
+
+test("a fixed-name copy rewritten after install is replaced, not launched", async () => {
+  const { getBinaryName } = require("../.test-out/platform.cjs");
+  const binaryName = getBinaryName(process.platform, process.arch);
+  if (!binaryName) return;
+  const env = pinnedSetup(["1.6.4"]);
+  const body = "#!/bin/sh\necho 1.6.4\n";
+  const dir = path.join(env.storage, "iris-agentic-dev-1.6.4");
+  fs.writeFileSync(path.join(dir, binaryName), body, { mode: 0o755 });
+  fs.writeFileSync(path.join(env.storage, "iris-agentic-dev.version"), "1.6.4");
+  const prompts = scriptPrompts(undefined, undefined);
+  try {
+    const ctx = makeContext("1.6.4", env.storage, { [binaryName]: sha256(body) });
+    assert.equal(await resolveServerBinary(ctx), env.stable);
+    assert.equal(fs.readFileSync(env.stable, "utf8"), body);
+
+    // The version marker in bin/ still says 1.6.4; the bytes are not ours.
+    fs.writeFileSync(env.stable, "#!/bin/sh\necho tampered\n", { mode: 0o755 });
+
+    assert.equal(await resolveServerBinary(ctx), env.stable);
+    assert.equal(fs.readFileSync(env.stable, "utf8"), body, "the pinned bytes are back");
+  } finally {
+    prompts.restore();
+    env.cleanup();
+  }
+});
