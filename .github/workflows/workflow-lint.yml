@@ -1,0 +1,55 @@
+name: Workflow lint
+
+# The workflows are code that runs with this repository's tokens and secrets, and until this job
+# nothing checked them. zizmor reads them for security mistakes — unpinned actions, `${{ }}`
+# expanded inside a script, tokens broader than a job needs, caches a release could restore.
+# actionlint reads them for mistakes that only show up when a job runs, and passes every `run:`
+# block through shellcheck.
+#
+# Findings that were read and accepted live in .github/zizmor.yml, each with its reason. A new
+# finding fails this job; the fix is to change the workflow, or to add an entry there that says
+# why the finding does not apply.
+#
+# No `paths:` filter, although only .github/ can change the result. A required check has to report
+# on every pull request, and a filtered workflow reports nothing on one that skips it, which leaves
+# the merge button waiting for a check that never runs. Both jobs finish in well under a minute.
+on:
+  pull_request:
+  push:
+    branches: [master, "fix/**", "release/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  zizmor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - run: pip install --require-hashes -r .github/requirements/lint.txt
+      # --offline: no GitHub API calls, so the result does not depend on a token or on rate limits.
+      # The online audits (known-vulnerable action versions, impostor commits) are worth running
+      # too, but not as a gate that a network blip can turn red.
+      - run: zizmor --offline --format github .github/workflows
+
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Downloaded and checked against a hash written here rather than through the project's
+      # install script, which is `curl | bash` of whatever that URL serves today.
+      - name: Install actionlint 1.7.12
+        run: |
+          curl -fsSLo actionlint.tar.gz \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz" | sha256sum -c -
+          tar -xzf actionlint.tar.gz actionlint
+      # shellcheck is preinstalled on ubuntu-latest; actionlint finds it on PATH.
+      - run: ./actionlint -color

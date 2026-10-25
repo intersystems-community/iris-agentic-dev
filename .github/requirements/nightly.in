@@ -1,0 +1,9 @@
+# The nightly canary job. It runs next to the Bedrock and OpenAI credentials, so every
+# package is pinned by hash in nightly.txt; regenerate with the command at the top of that file.
+pyyaml
+openai
+litellm
+pytest
+anthropic[bedrock]
+iris-devtester
+-r ../../tests/e2e/skill_eval/optimize/requirements.txt

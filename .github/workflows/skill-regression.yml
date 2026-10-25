@@ -21,6 +21,11 @@ on:
     - cron: "0 2 * * *"
   workflow_dispatch:
 
+# Read-only unless a job asks for more. Nothing here writes to the repository, so a build script
+# or test that runs in these jobs holds a token that cannot either.
+permissions:
+  contents: read
+
 jobs:
   canary:
     runs-on: ubuntu-latest
@@ -30,31 +35,30 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
 
+      # Both installs are pinned exactly. This job later holds the Bedrock and OpenAI credentials,
+      # and a package installed here runs in the same runner: an unpinned install would hand them to
+      # whatever version was published that night.
       - name: Install opencode
-        run: npm install -g opencode-ai
+        # Scripts stay on: opencode's postinstall is what links the platform binary in.
+        run: npm install -g opencode-ai@1.19.4
 
       - name: Install Python dependencies
-        run: |
-          pip install \
-            pyyaml \
-            openai \
-            litellm \
-            pytest \
-            'anthropic[bedrock]' \
-            iris-devtester
-          # The routing loop's pinned gepa. Without it the adapter tests skip; IAD_REQUIRE_GEPA
-          # below turns that skip into a failure.
-          pip install -r tests/e2e/skill_eval/optimize/requirements.txt
+        # nightly.txt carries the routing loop's pinned gepa, which the adapter tests need;
+        # IAD_REQUIRE_GEPA below turns their skip into a failure. Regenerate it with the command
+        # at its top after changing nightly.in or tests/e2e/skill_eval/optimize/requirements.txt.
+        run: pip install --require-hashes -r .github/requirements/nightly.txt
 
       - name: Run unit tests for skill_eval harness
         # The cheapest breakage signal in the whole night, and it starts no session. If the
@@ -165,8 +169,8 @@ jobs:
             status=$(curl -s -o /dev/null -w "%{http_code}" \
               -u "$user:$pass" "http://localhost:52773/api/atelier/" 2>/dev/null)
             if [ "$status" = "200" ]; then
-              echo "IRIS_USERNAME=$user" >> $GITHUB_ENV
-              echo "IRIS_PASSWORD=$pass" >> $GITHUB_ENV
+              echo "IRIS_USERNAME=$user" >> "$GITHUB_ENV"
+              echo "IRIS_PASSWORD=$pass" >> "$GITHUB_ENV"
               echo "Credentials: $user"
               exit 0
             fi
@@ -211,7 +215,7 @@ jobs:
 
       - name: Upload canary report
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nightly-canary-${{ github.run_id }}
           # Named for the report, not a glob over the whole results directory: the old

@@ -9,17 +9,24 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Read-only unless a job asks for more. Nothing here writes to the repository, so a build script
+# or test that runs in these jobs holds a token that cannot either.
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3da603d4464771f1a8c3dd4acb41f03bc8107551 # 1.92.0
         with:
           components: clippy, rustfmt
       - name: Install mold linker
         run: sudo apt-get install -y mold
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets -- -D warnings
         env:
@@ -65,10 +72,10 @@ jobs:
       # that does not exist on a runner. This job already built the binary, so it is the only
       # job that can name it. Selected by marker, not by file, so a new marked test is covered
       # by existing.
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
-      - run: pip install pyyaml pytest requests
+      - run: pip install --require-hashes -r .github/requirements/test.txt
       - name: Python tests that need the built binary
         run: |
           IAD_BINARY="$PWD/target/debug/iris-agentic-dev" \
@@ -77,11 +84,13 @@ jobs:
   benchmark-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.11"
-      - run: pip install pyyaml pytest requests
+      - run: pip install --require-hashes -r .github/requirements/test.txt
       - name: Verify the graded corpus loads and the split covers it
         # Loaded the retired 021 harness's task_loader until spec 121 T043 made
         # `tests/e2e/skill_eval/` the one harness. The split load is the interesting half: it
@@ -125,9 +134,11 @@ jobs:
   windows-handshake:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.92.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3da603d4464771f1a8c3dd4acb41f03bc8107551 # 1.92.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo build --locked -p iris-agentic-dev
       - name: MCP handshake smoke test on Windows
         shell: pwsh
@@ -153,7 +164,7 @@ jobs:
         # step is what proves the Windows key-unseal half works.
         shell: pwsh
         run: |
-          python -m pip install --quiet cryptography
+          python -m pip install --quiet cryptography==50.0.2
           $fixture = ".github/scripts/make_sm_credential_fixture.py"
           $password = "ci-test-password"
           python $fixture --self-test
@@ -234,16 +245,18 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.92.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3da603d4464771f1a8c3dd4acb41f03bc8107551 # 1.92.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo build --locked --release -p iris-agentic-dev
-      - uses: azure/login@v3
+      - uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      - uses: azure/artifact-signing-action@v2
+      - uses: azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2.0.0
         with:
           endpoint: https://eus.codesigning.azure.net/
           signing-account-name: iris-agentic-dev
@@ -253,7 +266,7 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
       - name: Upload signed Windows binary
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: iris-agentic-dev-windows-signed
           path: target\release\iris-agentic-dev.exe
@@ -281,9 +294,11 @@ jobs:
             initial_wait_secs: 90
     name: "e2e-tests (IRIS ${{ matrix.iris_version }})"
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.92.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3da603d4464771f1a8c3dd4acb41f03bc8107551 # 1.92.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # Separate cache per IRIS version so a binary built against one version
           # doesn't silently run against another.
@@ -317,7 +332,7 @@ jobs:
                 -u _SYSTEM:SYS "http://$host:52773/api/atelier/" 2>/dev/null || echo "000")
               if [ "$status" = "200" ] || [ "$status" = "401" ]; then
                 echo "IRIS Atelier API ready at $host:52773 (HTTP $status)"
-                echo "IRIS_HOST=$host" >> $GITHUB_ENV
+                echo "IRIS_HOST=$host" >> "$GITHUB_ENV"
                 exit 0
               fi
               echo "  $host: HTTP $status"
@@ -331,23 +346,23 @@ jobs:
           exit 1
       - name: Detect and set IRIS credentials
         run: |
-          HOST=${{ env.IRIS_HOST }}
+          HOST="$IRIS_HOST"
           # IRIS 2025+ community images use SuperUser/SYS for Atelier REST
           for user_pass in "_SYSTEM:SYS" "SuperUser:SYS" "_SYSTEM:sys" "SuperUser:sys"; do
             user="${user_pass%%:*}"
             pass="${user_pass##*:}"
             status=$(curl -s -o /dev/null -w "%{http_code}" -u "$user:$pass" "http://$HOST:52773/api/atelier/" 2>/dev/null)
             if [ "$status" = "200" ]; then
-              echo "IRIS_USERNAME=$user" >> $GITHUB_ENV
-              echo "IRIS_PASSWORD=$pass" >> $GITHUB_ENV
+              echo "IRIS_USERNAME=$user" >> "$GITHUB_ENV"
+              echo "IRIS_PASSWORD=$pass" >> "$GITHUB_ENV"
               echo "Using credentials: $user (HTTP $status)"
               exit 0
             fi
             echo "  $user:$pass — HTTP $status"
           done
           echo "WARNING: Could not authenticate with any known credentials"
-          echo "IRIS_USERNAME=_SYSTEM" >> $GITHUB_ENV
-          echo "IRIS_PASSWORD=SYS" >> $GITHUB_ENV
+          echo "IRIS_USERNAME=_SYSTEM" >> "$GITHUB_ENV"
+          echo "IRIS_PASSWORD=SYS" >> "$GITHUB_ENV"
       - name: Create UnitTest directories in IRIS container
         run: |
           # iris_test uses RunTest which needs pre-existing directories with .cls files
@@ -358,9 +373,9 @@ jobs:
           echo "Created /tmp/httest/IrisDevRunTest/UnitTestSuite.cls in iris-e2e container"
       - name: Configure SCM in USER namespace for SCM e2e tests
         run: |
-          HOST=${{ env.IRIS_HOST }}
-          USER=${{ env.IRIS_USERNAME }}
-          PASS=${{ env.IRIS_PASSWORD }}
+          HOST="$IRIS_HOST"
+          USER="$IRIS_USERNAME"
+          PASS="$IRIS_PASSWORD"
           # Set %Studio.SourceControl.Default as the SCM class for USER namespace.
           # This is IRIS's built-in no-op SCM stub — it implements the full interface
           # (IsEditable, UserAction, OnMenuItem, etc.) without any external VCS dependency.
@@ -415,9 +430,9 @@ jobs:
       # regardless, so serializing test execution costs little in exchange for no flakes.
       - name: Log Atelier API version
         run: |
-          HOST=${{ env.IRIS_HOST }}
-          USER=${{ env.IRIS_USERNAME }}
-          PASS=${{ env.IRIS_PASSWORD }}
+          HOST="$IRIS_HOST"
+          USER="$IRIS_USERNAME"
+          PASS="$IRIS_PASSWORD"
           echo "=== Atelier API info for IRIS ${{ matrix.iris_version }} ==="
           curl -s -u "$USER:$PASS" "http://$HOST:52773/api/atelier/" | head -c 500
       - name: Run full test suite against live IRIS (Rust)
@@ -470,8 +485,10 @@ jobs:
   vscode-extension:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
       - run: cd vscode-iris-agentic-dev && npm ci
@@ -487,13 +504,15 @@ jobs:
   coverage-floors:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3da603d4464771f1a8c3dd4acb41f03bc8107551 # 1.92.0
         with:
           components: llvm-tools
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
+        run: cargo install cargo-llvm-cov --locked --version 0.9.1
       - name: Install mold linker
         run: sudo apt-get install -y mold
       - name: Build binary (required for mcp_handshake and plugin_dispatch tests)
@@ -511,9 +530,12 @@ jobs:
   doc-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: README config path sanity check
         run: |
+          # shellcheck disable=SC2088  # the tildes below are text to grep for, not paths
           # Wrong path: Claude Code MCP config is ~/.claude.json, not ~/.claude/settings.json
           if grep -rn '~/.claude/settings.json' README.md docs/ 2>/dev/null; then
             echo "FAIL: README references ~/.claude/settings.json — correct path is ~/.claude.json"
@@ -522,6 +544,7 @@ jobs:
           echo "OK: no wrong config path found"
 
           # Correct path must be documented
+          # shellcheck disable=SC2088
           if ! grep -q '~/.claude.json' README.md; then
             echo "FAIL: README does not mention ~/.claude.json"
             exit 1
@@ -601,8 +624,8 @@ jobs:
       # docs/connecting.md — where the error codes, config keys, env vars, and tool
       # parameters are documented — had no CI check at all, which is how a per-server
       # allowlist that was never implemented stayed documented for two releases.
-      - uses: dtolnay/rust-toolchain@1.92.0
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@3da603d4464771f1a8c3dd4acb41f03bc8107551 # 1.92.0
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Docs contract (docs/tools.md, docs/connecting.md, iad SKILL.md)
         # test_docs_contract is a module of the aggregated `unit` target now, so it needs
         # the target name plus a filter, and `--features testing` because the aggregate
@@ -613,15 +636,17 @@ jobs:
   cross-compile-check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3da603d4464771f1a8c3dd4acb41f03bc8107551 # 1.92.0
         with:
           targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-musl
-      - uses: mlugg/setup-zig@v2
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: "0.16.0"
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo install cargo-zigbuild
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo install cargo-zigbuild --locked --version 0.24.0
       - run: cargo zigbuild --locked --release --target x86_64-unknown-linux-musl -p iris-agentic-dev
       - run: file target/x86_64-unknown-linux-musl/release/iris-agentic-dev
       - run: |
@@ -630,17 +655,19 @@ jobs:
   docker-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3da603d4464771f1a8c3dd4acb41f03bc8107551 # 1.92.0
         with:
           targets: x86_64-unknown-linux-musl
-      - uses: mlugg/setup-zig@v2
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: "0.16.0"
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Build static musl binary
         run: |
-          cargo install cargo-zigbuild
+          cargo install cargo-zigbuild --locked --version 0.24.0
           cargo zigbuild --locked --release --target x86_64-unknown-linux-musl -p iris-agentic-dev
           mkdir -p bin
           cp target/x86_64-unknown-linux-musl/release/iris-agentic-dev bin/iris-agentic-dev-amd64

@@ -11,6 +11,12 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# Read-only unless a job asks for more. The jobs that publish name the one scope they need, so a
+# dependency's build script or an npm lifecycle script running in any other job holds a token that
+# cannot write to the repository, the release, or the package registry.
+permissions:
+  contents: read
+
 jobs:
   build:
     strategy:
@@ -34,33 +40,45 @@ jobs:
             artifact: iris-agentic-dev-windows-x86_64.exe
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3da603d4464771f1a8c3dd4acb41f03bc8107551 # 1.92.0
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-      - uses: mlugg/setup-zig@v2
+      # No rust-cache here. A release build restores nothing it did not compile itself: a cache
+      # entry is written by whichever earlier run had the same key, and the shipped binary should
+      # not depend on what that run left in target/. A tag build is rare enough to pay full price.
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
         with:
           version: "0.16.0"
-      - run: cargo install cargo-zigbuild
+          use-cache: false
+      # Exact version and --locked: this tool links every shipped binary, so it must not be
+      # whatever crates.io resolved on the morning of the release.
+      - run: cargo install cargo-zigbuild --locked --version 0.24.0
       # --locked is load-bearing, not hygiene. Cargo reconciles a stale lockfile during
       # resolution, which happens before build.rs runs `git describe --dirty` — so drift
       # made every published 1.2.6 asset advertise `1.2.6+v1.2.6-dirty`. Failing here is
       # the point: a release must not silently build from a different dependency graph
       # than the one committed.
-      - run: cargo zigbuild --locked --release --target ${{ matrix.target }} -p iris-agentic-dev
+      - run: cargo zigbuild --locked --release --target "$TARGET" -p iris-agentic-dev
+        env:
+          TARGET: ${{ matrix.target }}
       - name: Stage artifact
         shell: bash
         run: |
-          src="target/${{ matrix.target }}/release/iris-agentic-dev"
+          src="target/${TARGET}/release/iris-agentic-dev"
           [[ -f "${src}.exe" ]] && src="${src}.exe"
-          cp "$src" "${{ matrix.artifact }}"
+          cp "$src" "$ARTIFACT"
+        env:
+          TARGET: ${{ matrix.target }}
+          ARTIFACT: ${{ matrix.artifact }}
       - name: Ad-hoc codesign (macOS only — removes Gatekeeper quarantine hang)
         if: runner.os == 'macOS'
-        run: codesign --force --deep --sign - "${{ matrix.artifact }}"
-      - uses: actions/upload-artifact@v7
+        run: codesign --force --deep --sign - "$ARTIFACT"
+        env:
+          ARTIFACT: ${{ matrix.artifact }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}
@@ -72,10 +90,14 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
+          # No cache in a release: a cache entry is whatever an earlier run with the same key left.
+          package-manager-cache: false
       - name: Check the extension ships this release's binary version
         run: |
           # The extension downloads irisAgenticDev.serverVersion from the
@@ -91,7 +113,7 @@ jobs:
           fi
           echo "serverVersion $declared matches tag $tag"
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: release-assets
           merge-multiple: true
@@ -101,8 +123,10 @@ jobs:
         # for its platform the extension installs nothing, so a VSIX packaged
         # without this step could never auto-install.
         run: node vscode-iris-agentic-dev/scripts/stamp-asset-hashes.cjs release-assets vscode-iris-agentic-dev/package.json
-      - run: cd vscode-iris-agentic-dev && npm ci && npm test && npm run package
-      - uses: actions/upload-artifact@v7
+      # --ignore-scripts: no dependency's install hook runs in the job that produces the .vsix.
+      # The build needs none of them — esbuild ships its platform binary as an optional package.
+      - run: cd vscode-iris-agentic-dev && npm ci --ignore-scripts && npm test && npm run package
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: vsix
           path: vscode-iris-agentic-dev/vscode-iris-agentic-dev-*.vsix
@@ -110,15 +134,19 @@ jobs:
   sbom:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.92.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@3da603d4464771f1a8c3dd4acb41f03bc8107551 # 1.92.0
       - name: Install cargo-cyclonedx
-        run: cargo install cargo-cyclonedx --locked
+        run: cargo install cargo-cyclonedx --locked --version 0.5.9
       - name: Generate the SBOM
+        # The tag name goes through the environment, not `${{ }}`: an expression is pasted into
+        # the script before bash parses it, and a tag can carry `$(…)`.
         run: |
           cargo cyclonedx --format json --override-filename sbom
-          cp crates/iris-agentic-dev-bin/sbom.json "iris-agentic-dev-${{ github.ref_name }}.cdx.json"
-      - uses: actions/upload-artifact@v7
+          cp crates/iris-agentic-dev-bin/sbom.json "iris-agentic-dev-${GITHUB_REF_NAME}.cdx.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sbom
           path: iris-agentic-dev-*.cdx.json
@@ -129,19 +157,24 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           merge-multiple: true
           pattern: "{iris-agentic-dev-*,vsix,sbom}"
       - name: Write release body
+        # The tag reaches the body through @VERSION@ and bash, not `${{ github.ref_name }}` in the
+        # heredoc: an expression is pasted into the script before bash reads it. The version has no
+        # leading `v` because that is the tag metadata-action's semver pattern pushes to GHCR.
         run: |
           cat > release-body.md << 'EOF'
           The VS Code extension auto-installs the binary on first activation — no separate install needed. Install from the [Marketplace](https://marketplace.visualstudio.com/items?itemName=intersystems-community.vscode-iris-agentic-dev) and go.
 
-          **Windows:** The binary downloads correctly but is unsigned, so SmartScreen may block it from running. If that happens, you may be able to work around it using the Docker image — `ghcr.io/intersystems-community/iris-agentic-dev:${{ github.ref_name }}` — see [docs/windows-docker.md](https://github.com/intersystems-community/iris-agentic-dev/blob/master/docs/windows-docker.md).
+          **Windows:** The binary downloads correctly but is unsigned, so SmartScreen may block it from running. If that happens, you may be able to work around it using the Docker image — `ghcr.io/intersystems-community/iris-agentic-dev:@VERSION@` — see [docs/windows-docker.md](https://github.com/intersystems-community/iris-agentic-dev/blob/master/docs/windows-docker.md).
 
           > The `.vsix` below is a fallback for air-gapped or pinned-version installs. Homebrew and manual binary install still work as before.
           EOF
+          body=$(cat release-body.md)
+          printf '%s\n' "${body//@VERSION@/${GITHUB_REF_NAME#v}}" > release-body.md
       - name: Check the VSIX pins match the assets being published
         # The VSIX was packaged from the same artifacts, but a pin that
         # disagrees with a published asset would make every auto-install fail
@@ -165,7 +198,7 @@ jobs:
             iris-agentic-dev-macos-arm64 iris-agentic-dev-macos-x86_64 \
             iris-agentic-dev-windows-x86_64.exe > SHA256SUMS
           cat SHA256SUMS
-      - uses: softprops/action-gh-release@v3
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: |
             iris-agentic-dev-linux-x86_64
@@ -189,12 +222,21 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8
+      # The checkout is for the lockfile. Without it, `npx vsce` found no local install and
+      # fetched the `vsce` package from npm at publish time — the deprecated 2.x line, at
+      # whatever version was current, running with VSCE_PAT in its environment.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: vsix
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
+          # No cache in a release: a cache entry is whatever an earlier run with the same key left.
+          package-manager-cache: false
+      - run: cd vscode-iris-agentic-dev && npm ci --ignore-scripts
       - name: Publish to VS Code Marketplace
         # Not allowed to sink the release, which has already succeeded by now.
         # The most common failure is "version already published" — the
@@ -209,9 +251,11 @@ jobs:
           fi
           # Publish the exact .vsix that was built and attached to the release,
           # rather than rebuilding one that could differ.
-          vsix=$(ls vscode-iris-agentic-dev-*.vsix | head -1)
+          vsix=$(find "$PWD" -maxdepth 1 -name 'vscode-iris-agentic-dev-*.vsix' | head -1)
           echo "Publishing $vsix"
-          npx vsce publish --pat "$VSCE_PAT" --packagePath "$vsix"
+          # --no-install: the lockfile's @vscode/vsce or nothing. The token is not passed as
+          # --pat, which would put it in the process table; vsce reads VSCE_PAT itself.
+          cd vscode-iris-agentic-dev && npx --no-install vsce publish --packagePath "$vsix"
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
 
@@ -222,8 +266,10 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           merge-multiple: true
           pattern: "iris-agentic-dev-linux-*"
@@ -233,14 +279,14 @@ jobs:
           cp iris-agentic-dev-linux-x86_64 bin/iris-agentic-dev-amd64
           cp iris-agentic-dev-linux-aarch64 bin/iris-agentic-dev-arm64
           chmod +x bin/iris-agentic-dev-amd64 bin/iris-agentic-dev-arm64
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@v5
+      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         id: meta
         with:
           images: ghcr.io/intersystems-community/iris-agentic-dev
@@ -249,7 +295,7 @@ jobs:
             type=raw,value=latest
       - name: Build and push
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           push: true
@@ -263,10 +309,10 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: master
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           merge-multiple: true
           pattern: "iris-agentic-dev-*"
