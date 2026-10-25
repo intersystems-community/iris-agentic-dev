@@ -411,9 +411,12 @@ fn rows_precheck_call_returns_none() {
 }
 
 #[test]
-fn rows_precheck_truncate_returns_none() {
+fn rows_precheck_truncate_counts_its_table() {
     use iris_agentic_dev_core::tools::build_rows_precheck_query;
-    assert_eq!(build_rows_precheck_query("TRUNCATE TABLE MyTable"), None);
+    assert_eq!(
+        build_rows_precheck_query("TRUNCATE TABLE MyTable"),
+        Some("SELECT COUNT(*) FROM MyTable".to_string())
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -917,7 +920,7 @@ fn validate_dml_sql_double_quoted_identifier_at_start() {
     // SQL starts with a double-quoted word, then INSERT keyword follows
     assert_eq!(
         validate_dml_sql("\"CREATE\" INSERT INTO t VALUES (1)"),
-        Ok(())
+        Err("UNKNOWN_STATEMENT".to_string())
     );
 }
 
@@ -926,7 +929,7 @@ fn validate_dml_sql_double_quoted_then_dml() {
     // Multiple double-quoted identifiers before DML keyword
     assert_eq!(
         validate_dml_sql("\"DROP\" \"ALTER\" UPDATE t SET x=1"),
-        Ok(())
+        Err("UNKNOWN_STATEMENT".to_string())
     );
 }
 
@@ -935,7 +938,7 @@ fn validate_dml_sql_mixed_quotes_before_keyword() {
     // Mix of single-quoted literals and double-quoted identifiers before DML
     assert_eq!(
         validate_dml_sql("'INSERT_LITERAL' \"CREATE\" DELETE FROM t WHERE id=1"),
-        Ok(())
+        Err("UNKNOWN_STATEMENT".to_string())
     );
 }
 
@@ -946,9 +949,12 @@ fn validate_dml_sql_mixed_quotes_before_keyword() {
 #[test]
 fn validate_dml_sql_special_chars_before_keyword() {
     // SQL starts with special characters like @, # before the keyword
-    // These should be skipped during keyword search; the first alphanumeric word
-    // will be checked. Here we have @ # before INSERT which is a valid DML keyword.
-    assert_eq!(validate_dml_sql("@ # INSERT INTO t VALUES (1)"), Ok(()));
+    // The first token is the statement word. Something before it is not skipped, because the row
+    // count reads the first token and would not see a DELETE that follows one.
+    assert_eq!(
+        validate_dml_sql("@ # INSERT INTO t VALUES (1)"),
+        Err("UNKNOWN_STATEMENT".to_string())
+    );
 }
 
 #[test]
@@ -956,17 +962,17 @@ fn validate_dml_sql_whitespace_and_special_chars() {
     // Whitespace and special characters before DML keyword
     assert_eq!(
         validate_dml_sql("  \t  (((  INSERT INTO t VALUES (1)"),
-        Ok(())
+        Err("UNKNOWN_STATEMENT".to_string())
     );
 }
 
 #[test]
 fn rows_precheck_query_with_semicolon_at_end() {
     use iris_agentic_dev_core::tools::build_rows_precheck_query;
-    // Trailing semicolon shouldn't break parsing
+    // The trailing semicolon is not sent with the count
     let result = build_rows_precheck_query("UPDATE MyTable SET x=1 WHERE y=2;");
     assert_eq!(
         result,
-        Some("SELECT COUNT(*) FROM MyTable WHERE y=2;".to_string())
+        Some("SELECT COUNT(*) FROM MyTable WHERE y=2".to_string())
     );
 }

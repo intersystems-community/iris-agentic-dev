@@ -1787,10 +1787,6 @@ pub struct IrisQueryWriteOk {
     /// anyway because write tools are enabled).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub force_ignored: Option<bool>,
-    /// Present only when the UPDATE/DELETE rows-affected pre-check couldn't confidently parse
-    /// the statement (multi-table UPDATE, missing table name) and was skipped rather than run.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rows_check_skipped: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identity: Option<ExecIdentityReport>,
 }

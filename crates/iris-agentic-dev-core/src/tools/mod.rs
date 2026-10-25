@@ -2008,11 +2008,13 @@ pub fn validate_dml_sql(sql: &str) -> Result<(), String> {
     if code.is_empty() {
         return Err("EMPTY".to_string());
     }
-    let first = code
-        .iter()
-        .find(|t| t.kind == crate::sql_lex::Kind::Word)
-        .map(|t| t.text.to_uppercase())
-        .unwrap_or_default();
+    // The first statement token, whatever it is: `dml_head` reads the same one, so a statement
+    // this accepts is a statement the row count sees. A leading `;` or `(` is not skipped.
+    let first = if code[0].kind == crate::sql_lex::Kind::Word {
+        code[0].text.to_uppercase()
+    } else {
+        String::new()
+    };
     if DDL.contains(&first.as_str()) {
         return Err(first);
     }
@@ -2275,47 +2277,58 @@ async fn iris_query_write(
 
     let max_rows_affected = clamp_max_rows_affected(p.max_rows_affected);
 
-    let mut rows_check_skipped = false;
     if needs_rows_precheck(&p.query) {
-        match build_rows_precheck_query(&p.query) {
-            Some(count_sql) => {
-                let code = format!(
-                    r#"Set st=##class(%SQL.Statement).%New()
+        let Some(count_sql) = build_rows_precheck_query(&p.query) else {
+            // A cap that lets an uncounted statement through is not a cap.
+            return err_result(serde_json::json!({
+                "success": false,
+                "error_code": "ROWS_NOT_COUNTABLE",
+                "error": format!(
+                    "max_rows_affected={max_rows_affected} is in force and this statement's rows cannot be counted before it runs, so it was not run. Write the UPDATE, DELETE or TRUNCATE TABLE against one table (DELETE [FROM] table [WHERE ...], UPDATE table SET ... [WHERE ...], TRUNCATE TABLE table)."
+                ),
+                "limit": max_rows_affected,
+            }));
+        };
+        let code = format!(
+            r#"Set st=##class(%SQL.Statement).%New()
 Set sc=st.%Prepare("{count_sql_lit}")
 If $$$ISERR(sc) {{ Write "ERROR:ROWS_CHECK_FAILED:"_$System.Status.GetErrorText(sc) Quit }}
 Set rs=st.%Execute()
 If rs.%SQLCODE<0 {{ Write "ERROR:ROWS_CHECK_FAILED:"_rs.%Message Quit }}
 If rs.%Next() {{ Write "OK:"_rs.%GetData(1) }} Else {{ Write "OK:0" }}"#,
-                    count_sql_lit = crate::objectscript::os_lit_inner(&count_sql),
-                );
-                match iris.execute_via_generator(&code, namespace, client).await {
-                    Ok(out) => {
-                        let out = out.trim();
-                        if let Some(msg) = out.strip_prefix("ERROR:ROWS_CHECK_FAILED:") {
-                            return err_json("ROWS_CHECK_FAILED", msg);
-                        }
-                        let actual_count: i64 = out
-                            .strip_prefix("OK:")
-                            .and_then(|s| s.parse().ok())
-                            .unwrap_or(0);
-                        if actual_count > max_rows_affected as i64 {
-                            return err_result(serde_json::json!({
-                                "success": false,
-                                "error_code": "ROWS_LIMIT_EXCEEDED",
-                                "error": format!(
-                                    "Statement would affect {actual_count} rows, exceeding max_rows_affected={max_rows_affected}."
-                                ),
-                                "actual_count": actual_count,
-                                "limit": max_rows_affected,
-                            }));
-                        }
-                    }
-                    Err(e) => {
-                        return err_json("ROWS_CHECK_FAILED", &e.to_string());
-                    }
+            count_sql_lit = crate::objectscript::os_lit_inner(&count_sql),
+        );
+        match iris.execute_via_generator(&code, namespace, client).await {
+            Ok(out) => {
+                let out = out.trim();
+                if let Some(msg) = out.strip_prefix("ERROR:ROWS_CHECK_FAILED:") {
+                    return err_json("ROWS_CHECK_FAILED", msg);
+                }
+                // A count that does not parse is a count we do not have.
+                let Some(actual_count) = out
+                    .strip_prefix("OK:")
+                    .and_then(|s| s.trim().parse::<i64>().ok())
+                else {
+                    return err_json(
+                        "ROWS_CHECK_FAILED",
+                        &format!("the row count came back as {out:?}"),
+                    );
+                };
+                if actual_count > max_rows_affected as i64 {
+                    return err_result(serde_json::json!({
+                        "success": false,
+                        "error_code": "ROWS_LIMIT_EXCEEDED",
+                        "error": format!(
+                            "Statement would affect {actual_count} rows, exceeding max_rows_affected={max_rows_affected}."
+                        ),
+                        "actual_count": actual_count,
+                        "limit": max_rows_affected,
+                    }));
                 }
             }
-            None => rows_check_skipped = true,
+            Err(e) => {
+                return err_json("ROWS_CHECK_FAILED", &e.to_string());
+            }
         }
     }
 
@@ -2342,9 +2355,6 @@ Write "OK:"_rs.%ROWCOUNT"#,
             if p.force {
                 resp["force_ignored"] = serde_json::Value::Bool(true);
             }
-            if rows_check_skipped {
-                resp["rows_check_skipped"] = serde_json::Value::Bool(true);
-            }
             ok_json(resp)
         }
         Err(e) => err_json("SQL_ERROR", &e.to_string()),
@@ -2356,6 +2366,7 @@ const DML_MODIFIERS: &[&str] = &[
     "NOCHECK",
     "NOFPLAN",
     "NOINDEX",
+    "NOJOURN",
     "NOLOCK",
     "NOTRIGGER",
     "NOUNIQCHECK",
@@ -2364,12 +2375,16 @@ const DML_MODIFIERS: &[&str] = &[
     "STARTTABLE",
 ];
 
-/// The leading `UPDATE` or `DELETE` of a DML statement, and where its operands start in `code`.
-/// Comments and white space before it do not matter: IRIS skips them.
+/// The leading `UPDATE`, `DELETE` or `TRUNCATE` of a DML statement, and where its operands start in
+/// `code`. Comments and white space before it do not matter: IRIS skips them. This is the one place
+/// that decides which statements `max_rows_affected` counts.
 fn dml_head<'a>(
     code: &[(usize, &'a crate::sql_lex::Token)],
 ) -> Option<(&'a crate::sql_lex::Token, usize)> {
     let (_, verb) = *code.first()?;
+    if verb.is_word("TRUNCATE") {
+        return Some((verb, 1));
+    }
     if !(verb.is_word("UPDATE") || verb.is_word("DELETE")) {
         return None;
     }
@@ -2384,8 +2399,9 @@ fn dml_head<'a>(
     Some((verb, at))
 }
 
-/// True when `dml` is an `UPDATE` or `DELETE`, which `iris_query` `mode="write"` counts before it
-/// runs. Read from the statement's own tokens, so a leading comment or space does not hide it.
+/// True when `dml` is an `UPDATE`, `DELETE` or `TRUNCATE`, which `iris_query` `mode="write"` counts
+/// before it runs. Read from the statement's own tokens, so a leading comment or space does not hide
+/// it.
 pub fn needs_rows_precheck(dml: &str) -> bool {
     let tokens = crate::sql_lex::lex(dml);
     let code: Vec<(usize, &crate::sql_lex::Token)> = tokens
@@ -2396,14 +2412,16 @@ pub fn needs_rows_precheck(dml: &str) -> bool {
     dml_head(&code).is_some()
 }
 
-/// Extracts a `SELECT COUNT(*) FROM <table> [WHERE <clause>]` pre-check query from an
-/// UPDATE or DELETE statement, for the `mode="write"` rows-affected limit guard.
-/// Returns `None` for statement shapes it cannot confidently parse (multi-table UPDATE,
-/// missing table name) — callers must skip the pre-check and set `rows_check_skipped: true`
-/// rather than treating this as an error.
+/// Builds the `SELECT COUNT(*)` that counts the rows an `UPDATE`, `DELETE` or `TRUNCATE TABLE`
+/// statement will touch, for the `mode="write"` rows-affected limit.
 ///
-/// The target is the name after `UPDATE`, or after `DELETE FROM`; the clause is the text after the
-/// first `WHERE` that is outside parentheses, a literal and a comment.
+/// Returns `None` for a statement that is not one of those, and for one that is but whose shape this
+/// cannot read: no table, several tables, an unknown modifier, a join. A caller that has
+/// [`needs_rows_precheck`] true and gets `None` here must refuse the statement, not run it.
+///
+/// The target is the name after `UPDATE`, after `DELETE` (with or without `FROM`) or after
+/// `TRUNCATE TABLE`, with an optional alias; the clause is the text after the first `WHERE` that is
+/// outside parentheses, a literal and a comment.
 pub fn build_rows_precheck_query(dml: &str) -> Option<String> {
     let tokens = crate::sql_lex::lex(dml);
     let code: Vec<(usize, &crate::sql_lex::Token)> = tokens
@@ -2412,13 +2430,56 @@ pub fn build_rows_precheck_query(dml: &str) -> Option<String> {
         .filter(|(_, t)| t.is_code())
         .collect();
     let (verb, mut at) = dml_head(&code)?;
-    if verb.is_word("DELETE") {
-        if !code.get(at)?.1.is_word("FROM") {
+    if verb.is_word("TRUNCATE") {
+        if !code.get(at)?.1.is_word("TABLE") {
             return None;
         }
+        let (table, after) = sql_table_name(&code, at + 1)?;
+        // Nothing but `;` may follow: `TRUNCATE TABLE a, b` is not one table.
+        return code[after..]
+            .iter()
+            .all(|(_, t)| t.is_punct(';'))
+            .then(|| format!("SELECT COUNT(*) FROM {table}"));
+    }
+    if verb.is_word("DELETE") && code.get(at)?.1.is_word("FROM") {
         at += 1;
     }
-    let (table, after) = sql_table_name(&code, at)?;
+    let (table, mut after) = sql_table_name(&code, at)?;
+
+    // An alias, with or without `AS`, goes into the count so the clause can use it.
+    let mut alias = String::new();
+    let has_as = code.get(after).is_some_and(|(_, t)| t.is_word("AS"));
+    if has_as {
+        after += 1;
+    }
+    if let Some((_, t)) = code.get(after) {
+        let is_alias = matches!(
+            t.kind,
+            crate::sql_lex::Kind::Word | crate::sql_lex::Kind::QuotedIdent
+        ) && t.closed
+            && ![
+                "SET", "WHERE", "FROM", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "CROSS",
+            ]
+            .iter()
+            .any(|k| t.is_word(k));
+        if is_alias {
+            alias = format!(" {}{}", if has_as { "AS " } else { "" }, t.text);
+            after += 1;
+        }
+    }
+    if has_as && alias.is_empty() {
+        return None;
+    }
+    let next = code.get(after).map(|(_, t)| *t);
+    let shape_ok = if verb.is_word("UPDATE") {
+        next.is_some_and(|t| t.is_word("SET"))
+    } else {
+        next.is_none_or(|t| t.is_word("WHERE") || t.is_punct(';'))
+    };
+    if !shape_ok {
+        return None;
+    }
+
     let mut depth = 0usize;
     let where_at = code[after..].iter().find_map(|(i, t)| {
         if t.is_punct('(') {
@@ -2429,12 +2490,14 @@ pub fn build_rows_precheck_query(dml: &str) -> Option<String> {
         (depth == 0 && t.is_word("WHERE")).then_some(*i)
     });
     let clause = where_at.map(|i| crate::sql_lex::text(&tokens[i + 1..]));
-    Some(
-        match clause.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
-            Some(w) => format!("SELECT COUNT(*) FROM {table} WHERE {w}"),
-            None => format!("SELECT COUNT(*) FROM {table}"),
-        },
-    )
+    let clause = clause
+        .as_deref()
+        .map(|c| c.trim().trim_end_matches(';').trim())
+        .filter(|c| !c.is_empty());
+    Some(match clause {
+        Some(w) => format!("SELECT COUNT(*) FROM {table}{alias} WHERE {w}"),
+        None => format!("SELECT COUNT(*) FROM {table}{alias}"),
+    })
 }
 
 /// A table name at `code[at..]`: `name`, `%name` or a delimited identifier, joined by dots. Returns

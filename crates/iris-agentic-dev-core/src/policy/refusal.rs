@@ -48,6 +48,7 @@ pub const REFUSAL_CODES: &[&str] = &[
     "SUBJECT_CONFIRM_REQUIRED",
     "SUBJECT_SCM_WRITE_BLOCKED",
     "SQL_WRITE_BLOCKED",
+    "ROWS_NOT_COUNTABLE",
     "CONFIRM_REQUIRED",
     "CONFIRMATION_REQUIRED",
     "ADMIN_WRITE_DISABLED",
@@ -140,6 +141,7 @@ fn describe(code: &str, body: &Value) -> Option<Fixed> {
         "CODE_EDIT_BLOCKED"
         | "SUBJECT_SCM_WRITE_BLOCKED"
         | "SQL_WRITE_BLOCKED"
+        | "ROWS_NOT_COUNTABLE"
         | "COMPILE_SUPERCLASS_STALE"
         | "SCM_ACTION_UNPARSEABLE"
         | "SCM_ACTION_UNKNOWN"

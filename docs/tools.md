@@ -671,6 +671,16 @@ takes one `SELECT` (no `;`) and a `table` that is a table name, under the same r
 `mode="write"` runs as the service account when one is configured, on the server the call names,
 and returns `identity` like the other code-running tools.
 
+**The row cap.** `max_rows_affected` is always in force in write mode (default 1000). An `UPDATE`,
+`DELETE` or `TRUNCATE TABLE` is counted with a `SELECT COUNT(*)` of its table and `WHERE` before it
+runs, and `ROWS_LIMIT_EXCEEDED` stops it over the cap. A statement whose rows cannot be counted is not
+run: it is refused with `ROWS_NOT_COUNTABLE`, a fixed rule. That covers a `DELETE` or `UPDATE` over
+several tables or a join, a `TRUNCATE` without `TABLE`, and a modifier iad does not know.
+`DELETE table`, with or without `FROM`, and `%NOLOCK`, `%NOJOURN` and the other documented
+modifiers are counted. A statement that starts with anything but a statement word (a leading `;` or `(`) is
+`DDL_NOT_ALLOWED`. Earlier versions ran an uncounted statement and set `rows_check_skipped`; that
+field is gone.
+
 ---
 
 ### `iris_test`
@@ -2510,6 +2520,7 @@ called a refusal.
 | `STORED_SOURCE_UNREADABLE`            | `iris_compile` target exists but its stored source cannot be read                                                                                                                                                                                                                       |
 | `COMPILE_SUPERCLASS_STALE`            | A compile would also build an out-of-date superclass outside the library packages; the message names it. Compile it first. A fixed rule                                                                                                                                                 |
 | `HOST_PATH_BLOCKED`                   | `iris_compile`, `kb` index or `iris_symbols_local` was given a host path outside the project directory, with a `..` segment, or (compile) not a `.cls`, `.mac`, `.inc` or `.int` file. `reason` is `outside_workspace`, `parent_reference`, `extension` or `no_workspace`. A fixed rule |
+| `ROWS_NOT_COUNTABLE`                  | `iris_query` `mode="write"` was given an `UPDATE`, `DELETE` or `TRUNCATE` whose rows cannot be counted against `max_rows_affected`, so it was not run. A fixed rule                                                                                                                     |
 | `SUPERCLASS_CHECK_FAILED`             | The superclass walk before a compile could not run or did not finish, so nothing was compiled                                                                                                                                                                                           |
 | `SUBJECT_CONFIRM_REQUIRED`            | A write on a `subject` server without `confirm: true`                                                                                                                                                                                                                                   |
 | `SUBJECT_SCM_WRITE_BLOCKED`           | A source-control write on a `subject` server; `confirm` does not lift it                                                                                                                                                                                                                |

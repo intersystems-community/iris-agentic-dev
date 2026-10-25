@@ -239,6 +239,98 @@ fn write_mode_counts_the_rows_of_its_own_target() {
     drop_tables(&mut mcp);
 }
 
+/// S13: a statement the row count cannot read is refused, not run. A `DELETE` without `FROM`, a
+/// `%NOJOURN` modifier and `TRUNCATE TABLE` are all counted.
+#[test]
+#[ignore = "requires live IRIS (iris-dev-iris) and the built binary"]
+fn write_mode_counts_what_it_used_to_skip() {
+    let Some(_bin) = require_iad_binary() else {
+        return;
+    };
+    let mut mcp = session();
+    make_tables(&mut mcp);
+    let table = format!("{SCHEMA}.Items");
+    let write = |mcp: &mut McpSession, stmt: &str, cap: u32| {
+        call(
+            mcp,
+            "iris_query",
+            json!({"query": stmt, "mode": "write", "max_rows_affected": cap}),
+        )
+    };
+
+    // Over the cap, none of these ran. Each used to run uncounted.
+    for stmt in [
+        format!("DELETE {table}"),
+        format!("DELETE %NOJOURN FROM {table}"),
+        format!("DELETE %NOJOURN {table} WHERE Name <> 'zzz'"),
+        format!("UPDATE %NOJOURN {table} SET Name = 'z'"),
+        format!("TRUNCATE TABLE {table}"),
+        format!("/* c */ truncate table {table};"),
+    ] {
+        let r = write(&mut mcp, &stmt, 1);
+        assert_eq!(r["error_code"], "ROWS_LIMIT_EXCEEDED", "{stmt}: {r}");
+        assert_eq!(r["actual_count"], 3, "{stmt}: {r}");
+        assert_eq!(count(&mut mcp, &table), 3, "{stmt} must not have run");
+    }
+
+    // Under the cap they run, and IRIS takes each spelling the counter reads.
+    let r = write(&mut mcp, &format!("DELETE {table} WHERE Name = 'plain'"), 1);
+    assert_eq!(r["success"], true, "{r}");
+    assert_eq!(r["rows_affected"], 1, "{r}");
+    assert!(r.get("rows_check_skipped").is_none(), "{r}");
+    let r = write(
+        &mut mcp,
+        &format!("DELETE %NOJOURN FROM {table} WHERE Name = 'other'"),
+        1,
+    );
+    assert_eq!(r["success"], true, "{r}");
+    assert_eq!(r["rows_affected"], 1, "{r}");
+    assert_eq!(count(&mut mcp, &table), 1);
+    let r = write(&mut mcp, &format!("TRUNCATE TABLE {table}"), 10);
+    assert_eq!(r["success"], true, "{r}");
+    assert_eq!(count(&mut mcp, &table), 0);
+
+    // The modifiers the counter skips that IRIS takes after DELETE and UPDATE (measured on 2026.2:
+    // `%NOUNIQCHECK` and `%STARTTABLE` are read as a table name, so they are not here).
+    for modifier in [
+        "%NOCHECK",
+        "%NOFPLAN",
+        "%NOINDEX",
+        "%NOJOURN",
+        "%NOLOCK",
+        "%NOTRIGGER",
+        "%PROFILE",
+        "%PROFILE_ALL",
+    ] {
+        for stmt in [
+            format!("DELETE {modifier} FROM {table} WHERE Name = 'none'"),
+            format!("UPDATE {modifier} {table} SET Name = 'z' WHERE Name = 'none'"),
+        ] {
+            let r = write(&mut mcp, &stmt, 1);
+            assert_eq!(r["success"], true, "{stmt}: {r}");
+        }
+    }
+
+    // A statement that cannot be counted is refused as a fixed rule, and does not run.
+    make_tables(&mut mcp);
+    for stmt in [
+        format!("DELETE FROM {table}, {SCHEMA}.\"Odd Name\""),
+        format!("DELETE %BOGUS FROM {table}"),
+        format!("UPDATE {table}, {SCHEMA}.\"Odd Name\" SET Name = 'z'"),
+        format!("TRUNCATE {table}"),
+    ] {
+        let r = write(&mut mcp, &stmt, 10000);
+        assert_eq!(r["error_code"], "ROWS_NOT_COUNTABLE", "{stmt}: {r}");
+        assert_eq!(r["refusal"]["kind"], "fixed_rule", "{stmt}: {r}");
+        assert_eq!(count(&mut mcp, &table), 3, "{stmt} must not have run");
+    }
+    // A leading `;` is not a statement word.
+    let r = write(&mut mcp, &format!("; DELETE FROM {table}"), 10000);
+    assert_eq!(r["error_code"], "DDL_NOT_ALLOWED", "{r}");
+    assert_eq!(count(&mut mcp, &table), 3);
+    drop_tables(&mut mcp);
+}
+
 /// `iris_table_info` reads `Schema."Delimited Name"`. (IRIS refuses a dot inside a table name, so
 /// the split at unquoted dots only is pinned in the unit tests; the live part is that a delimited
 /// name survives being unquoted for the lookup and quoted again for the row count.)

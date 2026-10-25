@@ -151,3 +151,130 @@ fn precheck_empty_returns_none() {
     let q = build_rows_precheck_query("");
     assert!(q.is_none());
 }
+
+// ── S13: a statement that cannot be counted is not run under max_rows_affected ─
+
+use iris_agentic_dev_core::tools::needs_rows_precheck;
+
+fn count_sql(dml: &str) -> Option<String> {
+    build_rows_precheck_query(dml)
+}
+
+#[test]
+fn precheck_counts_a_delete_without_from() {
+    assert_eq!(
+        count_sql("DELETE t WHERE a = 1").as_deref(),
+        Some("SELECT COUNT(*) FROM t WHERE a = 1")
+    );
+    assert_eq!(
+        count_sql("DELETE Sample.Person").as_deref(),
+        Some("SELECT COUNT(*) FROM Sample.Person")
+    );
+    assert_eq!(
+        count_sql("DELETE %NOLOCK t WHERE a = 1").as_deref(),
+        Some("SELECT COUNT(*) FROM t WHERE a = 1")
+    );
+}
+
+#[test]
+fn precheck_reads_every_modifier_iris_takes() {
+    for modifier in [
+        "%NOJOURN",
+        "%NOCHECK",
+        "%NOFPLAN",
+        "%NOINDEX",
+        "%NOLOCK",
+        "%NOTRIGGER",
+        "%NOUNIQCHECK",
+        "%PROFILE",
+        "%PROFILE_ALL",
+        "%STARTTABLE",
+    ] {
+        for stmt in [
+            format!("DELETE {modifier} FROM t WHERE a = 1"),
+            format!("DELETE {modifier} t WHERE a = 1"),
+            format!("UPDATE {modifier} t SET a = 2 WHERE a = 1"),
+            format!("DELETE {modifier} %NOLOCK FROM t WHERE a = 1"),
+        ] {
+            assert_eq!(
+                count_sql(&stmt).as_deref(),
+                Some("SELECT COUNT(*) FROM t WHERE a = 1"),
+                "{stmt}"
+            );
+        }
+    }
+}
+
+#[test]
+fn precheck_counts_truncate_by_its_table() {
+    for (stmt, table) in [
+        ("TRUNCATE TABLE t", "t"),
+        ("truncate  table Sample.Person", "Sample.Person"),
+        ("/* c */ TRUNCATE TABLE \"Odd Name\";", "\"Odd Name\""),
+        ("-- c\nTRUNCATE TABLE %Dictionary.X", "%Dictionary.X"),
+    ] {
+        assert!(needs_rows_precheck(stmt), "{stmt}");
+        assert_eq!(
+            count_sql(stmt),
+            Some(format!("SELECT COUNT(*) FROM {table}")),
+            "{stmt}"
+        );
+    }
+}
+
+#[test]
+fn precheck_keeps_a_table_alias_for_the_count() {
+    assert_eq!(
+        count_sql("DELETE FROM t AS a WHERE a.x = 1").as_deref(),
+        Some("SELECT COUNT(*) FROM t AS a WHERE a.x = 1")
+    );
+    assert_eq!(
+        count_sql("UPDATE t a SET x = 2 WHERE a.x = 1").as_deref(),
+        Some("SELECT COUNT(*) FROM t a WHERE a.x = 1")
+    );
+}
+
+#[test]
+fn precheck_gives_up_on_a_statement_it_cannot_read() {
+    // Each of these needs a count and cannot get one: the caller refuses them.
+    for stmt in [
+        "TRUNCATE TABLE",
+        "TRUNCATE t",
+        "TRUNCATE TABLE a, b",
+        "DELETE",
+        "DELETE FROM",
+        "DELETE FROM t1, t2 WHERE a = 1",
+        "UPDATE t1, t2 SET a = 1",
+        "DELETE %BOGUS FROM t",
+        "DELETE FROM t JOIN u ON 1 = 1",
+        "UPDATE t",
+        "UPDATE t WHERE a = 1",
+        "DELETE FROM t AS",
+    ] {
+        assert!(needs_rows_precheck(stmt), "{stmt} needs a count");
+        assert_eq!(count_sql(stmt), None, "{stmt}");
+    }
+}
+
+#[test]
+fn dml_validation_and_the_count_read_the_same_first_token() {
+    // validate_dml_sql used to skip a leading `;` or `(` and accept the next word, while the
+    // count looked at the first token only, so the statement ran uncounted.
+    for stmt in [
+        "; DELETE FROM t",
+        ";UPDATE t SET a = 1",
+        "( DELETE FROM t",
+        "'x' DELETE FROM t",
+    ] {
+        assert_eq!(
+            validate_dml_sql(stmt),
+            Err("UNKNOWN_STATEMENT".to_string()),
+            "{stmt}"
+        );
+    }
+    // Comments and space before the verb are skipped by both.
+    for stmt in ["/* a */ -- b\n DELETE FROM t", "\n\t UPDATE t SET a = 1"] {
+        assert!(validate_dml_sql(stmt).is_ok(), "{stmt}");
+        assert!(needs_rows_precheck(stmt), "{stmt}");
+    }
+}
