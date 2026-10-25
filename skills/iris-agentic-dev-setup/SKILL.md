@@ -61,7 +61,7 @@ case "$(uname -s)-$(uname -m)" in
   Linux-aarch64) ASSET=iris-agentic-dev-linux-aarch64 ;;
   *) echo "no published binary for $(uname -s)-$(uname -m); build from source" >&2 ;;
 esac
-VERSION=1.6.4
+VERSION=1.7.0
 base="https://github.com/intersystems-community/iris-agentic-dev/releases/download/v$VERSION"
 DL="$(mktemp -d)"
 curl -fsSL "$base/$ASSET" -o "$DL/$ASSET" &&

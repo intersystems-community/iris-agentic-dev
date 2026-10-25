@@ -41,7 +41,7 @@ the release's `SHA256SUMS`. Apple Silicon is shown; the other assets are
 `sha256sum -c --ignore-missing SHA256SUMS`.
 
 ```bash
-base=https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.6.4
+base=https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.7.0
 cd "$(mktemp -d)"
 curl -fsSLO $base/iris-agentic-dev-macos-arm64
 curl -fsSLO $base/SHA256SUMS
@@ -53,7 +53,7 @@ xattr -d com.apple.quarantine /usr/local/bin/iris-agentic-dev 2>/dev/null
 ```
 
 **Windows**: download `iris-agentic-dev-windows-x86_64.exe` and `SHA256SUMS` from the
-[v1.6.4 release](https://github.com/intersystems-community/iris-agentic-dev/releases/tag/v1.6.4),
+[v1.7.0 release](https://github.com/intersystems-community/iris-agentic-dev/releases/tag/v1.7.0),
 compare `(Get-FileHash .\iris-agentic-dev-windows-x86_64.exe).Hash` with the line in
 `SHA256SUMS`, and place it on your PATH.
 
