@@ -7,6 +7,9 @@ edition.workspace = true
 autotests = false
 authors.workspace = true
 license.workspace = true
+# Shipped as release binaries, Homebrew and the VS Code extension, never to crates.io. Saying so
+# lets cargo-deny accept the version-less path dependencies between the two workspace crates.
+publish = false
 
 [features]
 # Carries no code. It exists so this crate's test targets can gate on the same `--features testing`
@@ -42,9 +45,11 @@ hyper = { version = "1", features = ["http1", "server"] }
 http-body-util = "0.1"
 hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
 tower-service = "0.3"
-# `trust` edits the operator file without losing its comments. Already compiled in through `toml`.
+# `trust` edits the operator file without losing its comments. toml 1 no longer builds on toml_edit,
+# but the two share toml_parser, toml_writer and toml_datetime, and the Linux keyring backend
+# already pulls toml_edit 0.25 in through proc-macro-crate, so keep this on the same version.
 toml.workspace = true
-toml_edit = { version = "0.22", default-features = false, features = ["parse", "display"] }
+toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
 
 [[example]]
 name = "windows_sm_credential"

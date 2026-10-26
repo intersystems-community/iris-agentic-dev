@@ -31,10 +31,14 @@ repository = "https://github.com/intersystems-community/iris-agentic-dev"
 
 [workspace.dependencies]
 # MCP server
-rmcp = { version = "3.1.3", features = ["server", "macros", "schemars", "transport-io", "transport-streamable-http-server"] }
+# `~3.1`, not `3.1.3`: from 3.2 on rmcp negotiates protocol versions per SEP-2567, which a client can
+# see (a 2026-07-28 `initialize` gets 2025-11-25 back). That move needs its own change with the
+# handshake tests rewritten for it; a routine `cargo update` or a grouped Dependabot bump must not
+# carry it in.
+rmcp = { version = "~3.1.4", features = ["server", "macros", "schemars", "transport-io", "transport-streamable-http-server"] }
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
-which = "6"
+which = "8"
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 # IRIS HTTP client
@@ -49,13 +53,13 @@ bollard = "0.21"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "1"
-toml = "0.8"
+toml = "1"
 # Semver for manifest
 semver = { version = "1", features = ["serde"] }
 # Error handling + logging
 anyhow = "1"
 regex = "1"
 tempfile = "3"
-thiserror = "1"
+thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

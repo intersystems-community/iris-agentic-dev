@@ -49,9 +49,30 @@ def test_the_rust_job_runs_cargo_audit_against_the_lockfile(workflow):
     assert "--locked" in steps, "cargo-audit itself is installed from its lockfile"
 
 
-def test_the_extension_job_audits_its_production_dependencies(workflow):
-    steps = " ".join(" ".join(_steps(job)) for job in workflow["jobs"].values())
-    assert "npm audit" in steps and "--omit=dev" in steps and "vscode-iris-agentic-dev" in steps
+def test_the_extension_job_audits_its_whole_tree(workflow):
+    # Dev dependencies included: vsce and the rest of the dev tooling run in the release job with
+    # VSCE_PAT in the environment, so an advisory against them matters as much as a shipped one.
+    steps = _steps(workflow["jobs"]["extension"])
+    audits = [s for s in steps if "npm audit" in s]
+    assert audits, "the extension job runs npm audit"
+    for step in audits:
+        assert "vscode-iris-agentic-dev" in step
+        assert "--omit=dev" not in step, "the audit leaves out the tools that run beside VSCE_PAT"
+        assert "--audit-level=high" in step
+
+
+def test_the_root_lint_tooling_is_audited_too(workflow):
+    steps = " ".join(_steps(workflow["jobs"]["lint-tooling"]))
+    assert "npm ci" in steps and "npm audit --audit-level=high" in steps
+
+
+def test_cargo_deny_runs_pinned_against_the_lockfile(workflow):
+    # cargo audit only prints yanked, unsound and unmaintained crates. cargo-deny is what fails on
+    # them, so it has to be there, at an exact version, reading deny.toml.
+    steps = " ".join(_steps(workflow["jobs"]["cargo-deny"]))
+    assert "cargo install cargo-deny --locked --version " in steps
+    assert "cargo deny --locked check" in steps
+    assert os.path.isfile(os.path.join(_ROOT, "deny.toml")), "deny.toml is missing"
 
 
 def test_a_failing_scan_fails_the_job(workflow):
