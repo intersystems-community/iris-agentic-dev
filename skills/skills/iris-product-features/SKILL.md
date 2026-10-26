@@ -69,7 +69,9 @@ tags:
 // This was true before 2026.1. It is FALSE for IRIS 2026.1+.
 ```
 
-The native server runs inside IRIS, so there is no client-side package to install for it.
+The native server runs inside IRIS. A stdio MCP client such as Claude Desktop or opencode reaches
+it through the bridge `iris-mcp-server`, which ships in the IRIS install's `bin` directory and
+connects on the superserver port (1972), not over HTTP. The `iris-ai-hub` skill gives its config.
 Do not suggest `pip install` or an `objectscript-mcp` command for it: there is no published
 package by that name.
 

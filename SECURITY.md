@@ -58,10 +58,17 @@ ask to be told directly if you operate it in a regulated environment.
   regression tests for each safety-gate bypass fixed so far run. Pull requests do not run this job, so a
   change reaches live IRIS in CI only after it is pushed to one of those branches. A release branch must
   be green here before it is merged (`docs/release-checklist.md`).
-- `e2e-tests` skips a short list of live tests that need what a runner cannot have, such as an AI Hub early-access
-  image, an Enterprise image, a namespace with Samples-BI built, VS Code Server Manager credentials, or an
-  LLM API key. The AI Hub and Samples-BI tests are run by hand against a local instance before each
-  release; the others are not run in CI.
+- `e2e-tests` skips a short list of tests, each named with its reason in `.github/workflows/ci.yml`:
+  - tests that need what a runner cannot have: an AI Hub early-access image, an Enterprise image, a
+    namespace with Samples-BI built, VS Code Server Manager credentials or an LLM API key;
+  - two discovery tests that need an environment with no IRIS configured, and Docker discovery tests
+    that need their own containers;
+  - the SQL statement audit test, because IRIS Community 2025.3 writes no `%SQL` audit rows;
+  - tests that run their own in-process mock server, which run in the `test` job instead.
+
+  The AI Hub, Samples-BI and SQL audit tests are run by hand against local instances before each
+  release. The Enterprise, Server Manager, Docker discovery and LLM tests are not run in CI.
+
 - Every pull request, every push to master and a weekly schedule run `cargo audit` against the locked Rust
   dependencies and `npm audit` against the VS Code extension's production dependencies. A known
   vulnerability fails the job.
