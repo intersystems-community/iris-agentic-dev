@@ -10,8 +10,22 @@
 // (stall, or answer 500), and the assertions are about our own ProbeResult.
 
 use iris_agentic_dev_core::tools::server_tools::probe_server;
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpListener;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+
+/// Read the request head before answering. A listener that writes its answer and closes with the
+/// request still unread makes Linux send a reset, and the client may read that reset before the
+/// answer, so the probe would see a transport error instead of the status.
+async fn read_request_head(sock: &mut TcpStream) {
+    let mut seen = Vec::new();
+    let mut buf = [0u8; 1024];
+    while !seen.windows(4).any(|w| w == b"\r\n\r\n") {
+        match sock.read(&mut buf).await {
+            Ok(0) | Err(_) => return,
+            Ok(n) => seen.extend_from_slice(&buf[..n]),
+        }
+    }
+}
 
 /// Bind an ephemeral port on loopback and hand back the port plus the listener.
 async fn bind_loopback() -> (TcpListener, u16) {
@@ -46,6 +60,7 @@ async fn probe_reports_http_status_when_the_server_answers_with_an_error() {
 
     let server = tokio::spawn(async move {
         if let Ok((mut sock, _)) = listener.accept().await {
+            read_request_head(&mut sock).await;
             let _ = sock
                 .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
                 .await;
@@ -79,6 +94,7 @@ async fn probe_reports_auth_failure_on_401() {
 
     let server = tokio::spawn(async move {
         if let Ok((mut sock, _)) = listener.accept().await {
+            read_request_head(&mut sock).await;
             let _ = sock
                 .write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n")
                 .await;
