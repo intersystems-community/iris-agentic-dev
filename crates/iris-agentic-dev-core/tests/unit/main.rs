@@ -36,6 +36,7 @@ mod test_benchmark_task_loading;
 mod test_bundled_skills;
 mod test_cargo_config;
 mod test_changelog;
+mod test_check_ascot;
 mod test_check_config_source_values_141;
 mod test_clean_command_home_141;
 mod test_cli_dispatch_helpers;

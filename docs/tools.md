@@ -24,6 +24,7 @@ unless there is something non-obvious to say about it.
 | [`iris_import_servers`](#iris_import_servers)                                                                             | Server Management         |
 | [`iris_doc`](#iris_doc)                                                                                                   | Code                      |
 | [`iris_compile`](#iris_compile)                                                                                           | Code                      |
+| [`iris_check`](#iris_check)                                                                                               | Code                      |
 | [`iris_execute`](#iris_execute)                                                                                           | Code                      |
 | [`iris_execute_method`](#iris_execute_method)                                                                             | Code                      |
 | [`iris_query`](#iris_query)                                                                                               | Code                      |
@@ -141,7 +142,7 @@ forced call is judged by what it actually runs.
 
 ## Tool catalog size
 
-This server exposes 80 to 84 tools depending on toolset (`IRIS_TOOLSET=baseline|nostub|merged`),
+This server exposes 81 to 85 tools depending on toolset (`IRIS_TOOLSET=baseline|nostub|merged`),
 with full schemas and descriptions: 94 KB to 107 KB of JSON, roughly 26K to 30K tokens, if a
 client loads the whole catalog on every connection. Two independent ways to avoid paying that
 cost, and you don't have to pick just one:
@@ -463,6 +464,31 @@ cannot run is refused with `SUPERCLASS_CHECK_FAILED`. See the
 ```text
 iris_compile(target="MyApp.MyClass.cls")
 iris_compile(target="MyApp.*.cls", flags="cukd")
+```
+
+---
+
+### `iris_check`
+
+Check one ObjectScript file with
+[intersystems-community/ascot](https://github.com/intersystems-community/ascot) without saving or
+compiling it.
+
+| Parameter   | Type   | Default | Notes                                                                                                    |
+| ----------- | ------ | ------- | -------------------------------------------------------------------------------------------------------- |
+| `path`      | string | —       | **Required.** A `.cls`, `.mac`, `.int` or `.inc` file inside the [project directory](#project-directory) |
+| `namespace` | string | —       | Namespace that resolves the file's references; defaults to the connection's                              |
+| `server`    | string | —       | Named server; omit for default                                                                           |
+
+Classes, routines and `.inc` files the file refers to but does not define are read from the target
+server with read-only Atelier requests; nothing runs on IRIS. Without a connection they are
+reported as hints. A path outside the project directory is refused with `HOST_PATH_BLOCKED`.
+
+Returns LSP-style diagnostics (zero-based `range`, `severity`, `code`, `code_description`) with
+`errors`, `warnings` and `hints` counts, and `iris` saying whether a connection answered the lookups.
+
+```text
+iris_check(path="src/MyApp/Service.cls")
 ```
 
 ---
@@ -2260,7 +2286,7 @@ can act on before calling the tool.
 
 | Annotation         | Set on                                                                                                                                               | What it means                                      |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `read_only_hint`   | 52 tools — all query, inspect, list, history, and comparison tools                                                                                   | The tool makes no changes to IRIS state            |
+| `read_only_hint`   | 53 tools — all query, inspect, list, history, and comparison tools                                                                                   | The tool makes no changes to IRIS state            |
 | `destructive_hint` | 7 tools — `global_kill`, `iris_admin`, `iris_credential_manage`, `iris_lookup_manage`, `iris_namespace_create`, `iris_remove_server`, `skill_forget` | The tool can irreversibly delete or overwrite data |
 
 MCP clients that respect `read_only_hint` can run read-only tools in parallel or in

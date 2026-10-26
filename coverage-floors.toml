@@ -110,6 +110,7 @@ overall = 88
 # `overall` floor, which is measured with IRIS up.
 "src/tools/admin.rs"                  = 69
 "src/tools/admin_tools.rs"            = 12
+"src/tools/check.rs"                  = 4
 "src/tools/comparison_tools.rs"       = 11
 "src/tools/coverage.rs"               = 21
 "src/tools/dict.rs"                   = 53
