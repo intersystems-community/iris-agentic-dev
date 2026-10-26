@@ -70,13 +70,13 @@ paths × 2 builds, `--toolset merged`. There is no stored pre-085 GEN/MOD baseli
 against — the archived merged runs are DOC-only at v0.9.1 — so the reference arm was run rather
 than cited. Both arms report `server_version 1.2.6`, so the binary identity is recorded as a path:
 
-| Arm     | `iris_dev_path`                                                  | mean A | mean B |
-| ------- | ---------------------------------------------------------------- | ------ | ------ |
-| pre-085 | `/tmp/iad-clean085/target/debug/iris-agentic-dev` (317ea11)      | 2.1    | 2.7    |
-| branch  | `/Users/tdyar/ws/iris-agentic-dev/target/debug/iris-agentic-dev` | 2.0    | 2.6    |
+| Arm     | `iris_dev_path`                                             | mean A | mean B |
+| ------- | ----------------------------------------------------------- | ------ | ------ |
+| pre-085 | `/tmp/iad-clean085/target/debug/iris-agentic-dev` (317ea11) | 2.1    | 2.7    |
+| branch  | `~/ws/iris-agentic-dev/target/debug/iris-agentic-dev`       | 2.0    | 2.6    |
 
 The harness spawns `iris-dev` from `PATH`, not from the workspace target dir, so each arm ran behind
-a shell shim. Without that, both arms would have measured the `/Users/tdyar/.local/bin/iris-dev`
+a shell shim. Without that, both arms would have measured the `~/.local/bin/iris-dev`
 that happens to be installed (v0.9.10) and neither result would mean anything.
 
 Per task, pre-085 → branch:

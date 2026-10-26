@@ -138,3 +138,69 @@ fn plugin_json_command_matches_installed_binary_name() {
         );
     }
 }
+
+/// The direct-download instructions pin a release tag so the binary a reader checks against
+/// `SHA256SUMS` is the version the docs describe. A pinned tag is one more place the version is
+/// written by hand, so each of these files has to move with the workspace version on a release
+/// bump, and none of them may go back to `releases/latest/download`.
+#[test]
+fn install_docs_pin_the_workspace_version() {
+    let mut root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    root.pop(); // iris-agentic-dev-bin → crates
+    root.pop(); // crates → workspace root
+    let workspace_version = env!("CARGO_PKG_VERSION");
+
+    // Any `vX.Y.Z` in these files is a release pin (URL, link text, or prose naming the
+    // version the commands fetch), and so is the setup skill's `VERSION=X.Y.Z`.
+    let markers = ["v", "VERSION="];
+
+    for rel in [
+        "README.md",
+        "docs/cursor-quickstart.md",
+        "skills/BENCHMARKING.md",
+        "skills/iris-agentic-dev-setup/SKILL.md",
+    ] {
+        let path = root.join(rel);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+
+        assert!(
+            !text.contains("releases/latest/download"),
+            "{rel} downloads from releases/latest; pin a tag so the checksum check means something"
+        );
+        assert!(
+            text.contains("SHA256SUMS"),
+            "{rel} gives a download command but no SHA256SUMS check"
+        );
+
+        let mut pins = Vec::new();
+        for marker in markers {
+            for (at, _) in text.match_indices(marker) {
+                // `v` only counts at the start of a token, not inside `dev1.2` or `nv1.2`.
+                if text[..at]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_ascii_alphanumeric())
+                {
+                    continue;
+                }
+                let rest = &text[at + marker.len()..];
+                let end = rest
+                    .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+                    .unwrap_or(rest.len());
+                let pin = rest[..end].trim_end_matches('.');
+                if pin.contains('.') {
+                    pins.push(pin.to_string());
+                }
+            }
+        }
+        assert!(!pins.is_empty(), "{rel} names no pinned release version");
+        for pin in &pins {
+            assert_eq!(
+                pin, workspace_version,
+                "{rel} pins v{pin} but the workspace is {workspace_version} — update the install \
+                 commands alongside the release bump"
+            );
+        }
+    }
+}

@@ -29,7 +29,7 @@ Test-first inside every phase. Live runs use `--test-threads=1` against iris-dev
 
 ## Phase 5: US4 review draft
 
-- [x] T014 [US4] Update `/Users/tdyar/.claude/jobs/44a6964a/tmp/pr142-review.md` with the verdicts; run `/no-ai-slop` on it; do not post
+- [x] T014 [US4] Update `~/.claude/jobs/44a6964a/tmp/pr142-review.md` with the verdicts; run `/no-ai-slop` on it; do not post
 - [x] T015 [US4] Check draft verdicts against `research.md` row for row
 
 ## Phase 6: Polish

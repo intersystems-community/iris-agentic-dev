@@ -16,7 +16,7 @@ Principle IV) — unit tests first, then a live `#[ignore]`-gated E2E test as th
 
 - **[P]**: Can run in parallel (different files, no dependencies)
 - **[Story]**: US1 / US2 / US3 per spec.md priorities
-- All paths are relative to `/Users/tdyar/ws/iris-agentic-dev`
+- All paths are relative to the repository root
 
 ## Path Conventions
 
@@ -44,7 +44,7 @@ convention — see `test_compile_params`/`interop_unit_tests` entries).
 - [X] T004 [P] Create `crates/iris-agentic-dev-core/src/benchmark/tasks/jira_bugs/` directory
       and copy all 22 primary-suite task JSON files (excluding the 5 `MF-*.json` multi-file
       variants) from
-      `/Users/tdyar/ws/objectscript-coder/bench/eval_tasks/jira_bugs/*.json`, unmodified
+      `~/ws/objectscript-coder/bench/eval_tasks/jira_bugs/*.json`, unmodified
       (per research.md's "Task suite port" decision — Assumption 2 requires content
       preservation).
 

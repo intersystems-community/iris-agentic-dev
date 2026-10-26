@@ -14,7 +14,7 @@ None required.
   "port": 52780,
   "namespace": "USER",
   "container": "iris-dev-iris",
-  "config_file": "/Users/tdyar/ws/myproject/.iris-dev.toml",
+  "config_file": "~/ws/myproject/.iris-dev.toml",
   "config_loaded_at": "2026-05-08T10:23:44Z",
   "iris_version": "IRIS for UNIX 2025.1 (Build 230.2U)",
   "write_tools_enabled": true,
