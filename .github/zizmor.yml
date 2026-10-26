@@ -10,11 +10,6 @@ rules:
       - ci.yml
       - audit.yml
       - gates.yml
-  artipacked:
-    ignore:
-      # update-homebrew-tap commits the new Formula and pushes it to master, which needs the
-      # checkout's credentials. The job uploads no artifacts, so they cannot leak through one.
-      - release.yml
   superfluous-actions:
     ignore:
       # action-gh-release could be `gh release create`, but the upload logic it replaces is not

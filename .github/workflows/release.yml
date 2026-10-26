@@ -18,7 +18,32 @@ permissions:
   contents: read
 
 jobs:
+  # Every other job needs this one, so nothing is built or published from a tag that fails it.
+  # Tag protection (a ruleset on refs/tags/v*) decides who may push a tag; this decides which
+  # commits a tag may point at: one that is already on master, carrying the version it claims.
+  verify-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history, so origin/master is there to compare against.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The tag is on master and names the workspace version
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error::$GITHUB_REF_NAME points at $GITHUB_SHA, which is not on master. Merge first, then tag (docs/release-checklist.md, steps 6 and 7)."
+            exit 1
+          fi
+          declared=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\(.*\)"/\1/p' Cargo.toml)
+          if [ "$declared" != "${GITHUB_REF_NAME#v}" ]; then
+            echo "::error::Cargo.toml declares $declared but the tag is $GITHUB_REF_NAME."
+            exit 1
+          fi
+          echo "$GITHUB_REF_NAME is on master and matches Cargo.toml"
+
   build:
+    needs: verify-tag
     strategy:
       fail-fast: false
       matrix:
@@ -132,6 +157,7 @@ jobs:
           path: vscode-iris-agentic-dev/vscode-iris-agentic-dev-*.vsix
 
   sbom:
+    needs: verify-tag
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -154,8 +180,15 @@ jobs:
   release:
     needs: [build, build-vsix, docker-publish, sbom]
     runs-on: ubuntu-latest
+    # A maintainer approves each job that publishes (Settings > Environments > release), and the
+    # publishing secrets live in this environment rather than in the repository.
+    environment: release
     permissions:
       contents: write
+      # Both for signing: id-token gets the job a short-lived Sigstore certificate naming this
+      # workflow and tag, attestations stores the provenance next to the repository.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -198,8 +231,40 @@ jobs:
             iris-agentic-dev-macos-arm64 iris-agentic-dev-macos-x86_64 \
             iris-agentic-dev-windows-x86_64.exe > SHA256SUMS
           cat SHA256SUMS
+      # Build provenance for every published file: a signed statement that this workflow, at this
+      # commit, produced exactly these bytes. `gh attestation verify` checks it
+      # (docs/verifying-releases.md). Before this, SHA256SUMS sat beside the files it described, so
+      # whoever could replace a binary could replace its checksum too.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            iris-agentic-dev-linux-x86_64
+            iris-agentic-dev-linux-aarch64
+            iris-agentic-dev-macos-arm64
+            iris-agentic-dev-macos-x86_64
+            iris-agentic-dev-windows-x86_64.exe
+            vscode-iris-agentic-dev-*.vsix
+      - uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: |
+            iris-agentic-dev-linux-x86_64
+            iris-agentic-dev-linux-aarch64
+            iris-agentic-dev-macos-arm64
+            iris-agentic-dev-macos-x86_64
+            iris-agentic-dev-windows-x86_64.exe
+          sbom-path: iris-agentic-dev-${{ github.ref_name }}.cdx.json
+      # A keyless signature over SHA256SUMS, for anyone who checks with cosign rather than gh.
+      # The bundle holds the signature and the certificate, which names this workflow file and
+      # the tag; `cosign verify-blob` checks both.
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Sign SHA256SUMS
+        run: cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
+      # Created as a draft, published once every asset is uploaded. Immutable releases forbid
+      # adding assets to a published release, and action-gh-release creates the release before it
+      # uploads; a draft is the one state where both work.
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
+          draft: true
           files: |
             iris-agentic-dev-linux-x86_64
             iris-agentic-dev-linux-aarch64
@@ -209,8 +274,13 @@ jobs:
             vscode-iris-agentic-dev-*.vsix
             iris-agentic-dev-*.cdx.json
             SHA256SUMS
+            SHA256SUMS.sigstore.json
           generate_release_notes: true
           body_path: release-body.md
+      - name: Publish the release
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+        env:
+          GH_TOKEN: ${{ github.token }}
 
   publish-marketplace:
     # Must come after `release`, not alongside it. vsce publish is
@@ -221,6 +291,7 @@ jobs:
     # the gap. rust-analyzer and vscode-objectscript both order it this way.
     needs: release
     runs-on: ubuntu-latest
+    environment: release
     steps:
       # The checkout is for the lockfile. Without it, `npx vsce` found no local install and
       # fetched the `vsce` package from npm at publish time — the deprecated 2.x line, at
@@ -262,9 +333,13 @@ jobs:
   docker-publish:
     needs: build
     runs-on: ubuntu-latest
+    # Pushes `latest`, so it waits for the same approval as the GitHub release.
+    environment: release
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -302,16 +377,34 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64,linux/arm64
+          # BuildKit's own records, stored with the image: the full build provenance and an SBOM
+          # of the image contents.
+          provenance: mode=max
+          sbom: true
+      # GitHub's provenance for the image index, pushed to GHCR beside it, so
+      # `gh attestation verify oci://ghcr.io/...` works the same way it does for the binaries.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/intersystems-community/iris-agentic-dev
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      # Signed by digest, never by tag: a tag can be moved after signing, a digest cannot.
+      - name: Sign the image
+        run: cosign sign --yes "ghcr.io/intersystems-community/iris-agentic-dev@${DIGEST}"
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
 
   update-homebrew-tap:
+    # Writes the Formula to the tap repository only. It used to commit the same file to master
+    # here as well, which needed a token that can push to master; the tap is what `brew` reads.
     needs: release
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
+    environment: release
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: master
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           merge-multiple: true
@@ -371,14 +464,6 @@ jobs:
           with open("Formula/iris-agentic-dev.rb", "w") as f:
             f.write(rb)
           PYEOF
-      - name: Commit Formula to main repo
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/iris-agentic-dev.rb
-          git commit -m "chore: bump Formula to v${VERSION}"
-          git push origin master
       - name: Push formula to homebrew-tap repo
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
