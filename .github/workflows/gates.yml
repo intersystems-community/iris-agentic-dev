@@ -8,14 +8,21 @@ on:
     # This repository's default branch is master, not main. Left as the
     # template's `main`, the push trigger would silently never fire.
     branches: [master, "fix/**", "release/**"]
+# Read-only unless a job asks for more. Nothing here writes to the repository, so a build script
+# or test that runs in these jobs holds a token that cannot either.
+permissions:
+  contents: read
+
 jobs:
   gates:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # setup-node@v7 / node 22 to match ci.yml, release.yml and
       # skill-regression.yml rather than introduce a second node convention.
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
       - name: Install gate tooling

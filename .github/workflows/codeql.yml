@@ -1,0 +1,41 @@
+name: CodeQL
+
+# Static analysis of the Rust server, the TypeScript extension and the workflows themselves.
+# Findings appear under Security > Code scanning and as annotations on the pull request that
+# introduces them. All three languages are analysed from source (`build-mode: none`), so this job
+# does not compile the workspace and stays well under the time of the main CI run.
+on:
+  pull_request:
+  push:
+    branches: [master]
+  schedule:
+    # Weekly, for queries that are added to CodeQL after the code they would flag was merged.
+    - cron: "41 5 * * 2"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Uploading results to code scanning.
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [rust, javascript-typescript, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          # security-extended adds the lower-precision security queries to the default set.
+          queries: security-extended
+      - uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:${{ matrix.language }}

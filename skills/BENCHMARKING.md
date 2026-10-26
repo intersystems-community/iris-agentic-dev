@@ -32,20 +32,30 @@ the prebuilt binary you already use for compile/execute/test:
 # Mac (Homebrew)
 brew tap intersystems-community/tap
 brew install iris-agentic-dev
-
-# Mac direct download (Apple Silicon)
-curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-macos-arm64 \
-  -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
-xattr -d com.apple.quarantine /usr/local/bin/iris-agentic-dev 2>/dev/null
-
-# Linux x86_64
-curl -fsSL https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/iris-agentic-dev-linux-x86_64 \
-  -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
 ```
 
-**Windows**: download `iris-agentic-dev-windows-x86_64.exe` from the
-[releases page](https://github.com/intersystems-community/iris-agentic-dev/releases/latest)
-and place it on your PATH.
+Without Homebrew, download a specific release and install it only if it matches
+the release's `SHA256SUMS`. Apple Silicon is shown; the other assets are
+`iris-agentic-dev-macos-x86_64`, `iris-agentic-dev-linux-x86_64` and
+`iris-agentic-dev-linux-aarch64`, and on Linux the check is
+`sha256sum -c --ignore-missing SHA256SUMS`.
+
+```bash
+base=https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.7.0
+cd "$(mktemp -d)"
+curl -fsSLO $base/iris-agentic-dev-macos-arm64
+curl -fsSLO $base/SHA256SUMS
+shasum -a 256 -c --ignore-missing SHA256SUMS &&
+  install -m 0755 iris-agentic-dev-macos-arm64 /usr/local/bin/iris-agentic-dev
+# After the check passes: browsers set a quarantine flag, and Gatekeeper blocks
+# an ad-hoc-signed binary while it is set. Harmless if there is no flag.
+xattr -d com.apple.quarantine /usr/local/bin/iris-agentic-dev 2>/dev/null
+```
+
+**Windows**: download `iris-agentic-dev-windows-x86_64.exe` and `SHA256SUMS` from the
+[v1.7.0 release](https://github.com/intersystems-community/iris-agentic-dev/releases/tag/v1.7.0),
+compare `(Get-FileHash .\iris-agentic-dev-windows-x86_64.exe).Hash` with the line in
+`SHA256SUMS`, and place it on your PATH.
 
 Already have the binary installed? Check it's new enough:
 

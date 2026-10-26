@@ -97,15 +97,20 @@ printf 'user = "_SYSTEM:%s"\n' "$PW" | curl -s -K - "http://localhost:64773/api/
 
 ## Two Editions, Two Jobs
 
-|                       | `IRISContainer.health()`                     | `IRISContainer.ai_hub()`                                 |
-| --------------------- | -------------------------------------------- | -------------------------------------------------------- |
-| Image                 | `intersystemsdc/irishealth-community:latest` | `docker.iscinternal.com/.../irishealth:2026.2.0AI.159.0` |
-| Port 1972             | ✅ SuperServer                               | ✅ SuperServer                                           |
-| Port 52773            | ✅ FHIR HTTP / web portal                    | ❌ WebServer=0                                           |
-| FHIR R4 endpoint      | ✅ pre-installed                             | ❌ (class exists, no HTTP)                               |
-| `%AI.Agent`, `VECTOR` | ❌                                           | ✅                                                       |
-| License key           | No                                           | No                                                       |
-| Registry              | docker.io                                    | docker.iscinternal.com                                   |
+|                       | `IRISContainer.health()`                     | `IRISContainer.ai_hub()`                              |
+| --------------------- | -------------------------------------------- | ----------------------------------------------------- |
+| Image                 | `intersystemsdc/irishealth-community:latest` | `<registry>/intersystems/irishealth:2026.2.0AI.159.0` |
+| Port 1972             | ✅ SuperServer                               | ✅ SuperServer                                        |
+| Port 52773            | ✅ FHIR HTTP / web portal                    | ❌ WebServer=0                                        |
+| FHIR R4 endpoint      | ✅ pre-installed                             | ❌ (class exists, no HTTP)                            |
+| `%AI.Agent`, `VECTOR` | ❌                                           | ✅                                                    |
+| License key           | No                                           | No                                                    |
+| Registry              | docker.io                                    | not public — see below                                |
+
+AI Hub builds are early-access images and are not published to Docker Hub. `<registry>`
+stands for whichever registry your InterSystems contact gave you access to; released IRIS
+images are on `containers.intersystems.com`. Replace the placeholder before running anything
+below, and ask the user for the image name rather than guessing one.
 
 ---
 
@@ -123,7 +128,7 @@ with IRISContainer.health() as iris:
     # FHIR: R4 v4.0.1 — 148 resource types
 
 # AI Hub — %AI.Agent, %AI.MCP.Service, VECTOR SQL, SuperServer only
-# Requires docker.iscinternal.com registry access
+# Requires pull access to an AI Hub build image (not on Docker Hub)
 with IRISContainer.ai_hub(build="159") as iris:
     conn = iris.get_connection()   # port 1972 only
     # iris.cls("%AI.Agent") accessible
@@ -201,7 +206,7 @@ services:
     # FHIR R4: http://localhost:52773/csp/healthshare/demo/fhir/r4
 
   ai_hub:
-    image: docker.iscinternal.com/docker-intersystems/intersystems/irishealth:2026.2.0AI.159.0
+    image: <registry>/intersystems/irishealth:2026.2.0AI.159.0
     ports: ["127.0.0.1:11972:1972"]
     volumes:
       - type: tmpfs

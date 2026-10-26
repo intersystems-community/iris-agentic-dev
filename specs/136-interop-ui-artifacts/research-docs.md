@@ -248,7 +248,7 @@ Which type BPL calls:
 
 ## F10. What in IntakeBP.cls and Rules.cls has no direct BPL or rule equivalent
 
-Files read, not edited: `/Users/tdyar/ws/grievance-demo/src/Grievance/Process/IntakeBP.cls` (a code-based `Ens.BusinessProcess`) and `/Users/tdyar/ws/grievance-demo/src/Grievance/Rules.cls` (plain classmethods; `Evaluate` returns `{outcome, reasons[], allowedAction}`).
+Files read, not edited: `~/ws/grievance-demo/src/Grievance/Process/IntakeBP.cls` (a code-based `Ens.BusinessProcess`) and `~/ws/grievance-demo/src/Grievance/Rules.cls` (plain classmethods; `Evaluate` returns `{outcome, reasons[], allowedAction}`).
 
 | #   | Construct in the code                                                                                                       | Direct equivalent?                                                                                    | Closest supported construct                                                                                                                                                                                                                                                                                                           |
 | --- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

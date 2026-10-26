@@ -228,14 +228,10 @@ Skills that improve on the leaderboard get merged. Skills with negative lift on 
 
 ## Want the full stack?
 
-The `objectscript-mcp` server adds live IRIS integration — automatic introspection, symbol search, and a learning agent that synthesizes new skills from your session patterns.
-
-```bash
-pip install objectscript-mcp
-objectscript-mcp  # starts MCP server on stdio
-```
-
-See [MCP_SETUP_GUIDE.md](../docs/MCP_SETUP_GUIDE.md) for configuration.
+The skills work on their own. For live IRIS integration (compile, execute, run tests,
+query globals, search code) run them alongside the `iris-agentic-dev` MCP server from
+this repository. See the [install section](../README.md#install) of the main README and
+[docs/connecting.md](../docs/connecting.md) for configuration.
 
 ---
 

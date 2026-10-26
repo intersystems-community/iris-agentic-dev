@@ -47,10 +47,11 @@ brew install iris-agentic-dev
 The tap is `intersystems-community/tap`, which Homebrew resolves to the
 `intersystems-community/homebrew-tap` repository. There is no per-project tap.
 
-Without Homebrew, download the release binary for this machine. There is one per architecture
-and they are not interchangeable: the wrong one gets as far as `chmod` and then fails with
-`cannot execute binary file`, or on an Intel Mac with `Bad CPU type in executable`. So read the
-architecture rather than picking a line:
+Without Homebrew, download the release binary for this machine and check it against the
+release's `SHA256SUMS` before installing it. There is one binary per architecture and they are
+not interchangeable: the wrong one installs and then fails with `cannot execute binary file`,
+or on an Intel Mac with `Bad CPU type in executable`. So read the architecture rather than
+picking a line:
 
 ```bash
 case "$(uname -s)-$(uname -m)" in
@@ -60,25 +61,38 @@ case "$(uname -s)-$(uname -m)" in
   Linux-aarch64) ASSET=iris-agentic-dev-linux-aarch64 ;;
   *) echo "no published binary for $(uname -s)-$(uname -m); build from source" >&2 ;;
 esac
-curl -fsSL "https://github.com/intersystems-community/iris-agentic-dev/releases/latest/download/$ASSET" \
-  -o /usr/local/bin/iris-agentic-dev && chmod +x /usr/local/bin/iris-agentic-dev
+VERSION=1.7.0
+base="https://github.com/intersystems-community/iris-agentic-dev/releases/download/v$VERSION"
+DL="$(mktemp -d)"
+curl -fsSL "$base/$ASSET" -o "$DL/$ASSET" &&
+  curl -fsSL "$base/SHA256SUMS" -o "$DL/SHA256SUMS" &&
+  (cd "$DL" && if command -v sha256sum >/dev/null; then sha256sum -c --ignore-missing SHA256SUMS;
+     else shasum -a 256 -c --ignore-missing SHA256SUMS; fi) &&
+  install -m 0755 "$DL/$ASSET" /usr/local/bin/iris-agentic-dev
 ```
 
-On a Mac, clear the download quarantine flag as well, or the first run is killed by Gatekeeper:
+`VERSION` is the release this skill ships with. When step 1 found a newer release and the user
+agreed to upgrade, set `VERSION` to that release instead; the checksum file comes from the same
+tag. The check prints `<asset>: OK` on success. If it prints `FAILED` or anything else, stop,
+show the user the output, and do not install the file by other means.
+
+On a Mac, once the check has passed, clear the download quarantine flag if one is set. The
+binary has only an ad-hoc signature, so Gatekeeper kills the first run while the flag is there:
 
 ```bash
 xattr -d com.apple.quarantine /usr/local/bin/iris-agentic-dev 2>/dev/null
 ```
 
-If `/usr/local/bin` is not writable, put the binary in any directory on PATH and use that path
+If `/usr/local/bin` is not writable, install into any directory on PATH and use that path
 in step 5. An asset name that does not exist shows up as `curl: (56) ... error: 404` and writes
-no file, so the `&&` stops before `chmod`. Either way, check that
+no file, so the `&&` chain stops before the check. Either way, check that
 `iris-agentic-dev --version` prints a version before moving on.
 
-Windows: download `iris-agentic-dev-windows-x86_64.exe` from the
-[releases page](https://github.com/intersystems-community/iris-agentic-dev/releases/latest) and
-put it somewhere on PATH. The rest of this skill's Docker steps assume a Unix shell; on Windows
-run them from PowerShell with Docker Desktop and adjust quoting.
+Windows: download `iris-agentic-dev-windows-x86_64.exe` and `SHA256SUMS` from the
+[releases page](https://github.com/intersystems-community/iris-agentic-dev/releases), compare
+`(Get-FileHash .\iris-agentic-dev-windows-x86_64.exe).Hash` with that file's line in
+`SHA256SUMS`, and put it somewhere on PATH. The rest of this skill's Docker steps assume a Unix
+shell; on Windows run them from PowerShell with Docker Desktop and adjust quoting.
 
 Then note the absolute path, because step 5 needs it:
 

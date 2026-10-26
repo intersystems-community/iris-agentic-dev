@@ -56,8 +56,8 @@ assert on rather than grepping the human output.
 ### One warning this repo cannot clear
 
 ```console
-$ claude plugin validate --strict /Users/tdyar/ws/iris-agentic-dev/.claude-plugin/plugin.json
-Validating plugin: /Users/tdyar/ws/iris-agentic-dev/CLAUDE.md
+$ claude plugin validate --strict ~/ws/iris-agentic-dev/.claude-plugin/plugin.json
+Validating plugin: ~/ws/iris-agentic-dev/CLAUDE.md
 ⚠ Found 1 warning:
   ❯ root: CLAUDE.md at the plugin root is not loaded as project context. To ship
     context with your plugin, use a skill (skills/<name>/SKILL.md) instead.
@@ -116,7 +116,7 @@ command and `args: ["mcp"]` and no `env` at all:
 
 ```console
 $ claude mcp list
-plugin:probe-e:probe-iad: /Users/tdyar/ws/iris-agentic-dev/target/debug/iris-agentic-dev mcp - ✔ Connected
+plugin:probe-e:probe-iad: ~/ws/iris-agentic-dev/target/debug/iris-agentic-dev mcp - ✔ Connected
 ```
 
 A session calling `check_config` on it, with `iris-dev-iris` running and no
@@ -126,7 +126,7 @@ A session calling `check_config` on it, with `iris-dev-iris` running and no
 {
   "connected": true,
   "connection_source": "config_file",
-  "config_file": "/Users/tdyar/ws/iris-agentic-dev/.iris-agentic-dev.toml",
+  "config_file": "~/ws/iris-agentic-dev/.iris-agentic-dev.toml",
   "container": "iris-dev-iris",
   "host": "localhost",
   "port": 52780,
@@ -157,7 +157,7 @@ Both manifests in place, the MCP command fixed and the `env` block gone, install
 checkout:
 
 ```console
-$ claude plugin marketplace add /Users/tdyar/ws/iris-agentic-dev
+$ claude plugin marketplace add ~/ws/iris-agentic-dev
 ✔ Successfully added marketplace: iris-agentic-dev (declared in user settings)
 
 $ claude plugin install iris-dev@iris-agentic-dev
@@ -275,7 +275,7 @@ what they started, and pin both rather than leaving it to discovery.
 **`claude mcp add` round trip**, run in a temp directory and removed afterwards:
 
 ```text
-$ claude mcp add iad-scratch /Users/tdyar/ws/iris-agentic-dev/target/debug/iris-agentic-dev mcp \
+$ claude mcp add iad-scratch ~/ws/iris-agentic-dev/target/debug/iris-agentic-dev mcp \
     --env IRIS_WEB_PORT=9773 --env IRIS_CONTAINER=iad-quickstart
 Added stdio MCP server iad-scratch with command: .../iris-agentic-dev mcp to local config
 $ claude mcp list

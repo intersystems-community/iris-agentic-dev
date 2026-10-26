@@ -38,7 +38,7 @@ _TASKS_SKILLS_DIR = os.path.join(_REPO_ROOT, "tests", "e2e", "tasks", "skills")
 # The nightly schedule passes no `runs` input, so the workflow default applies.
 _NIGHTLY_RUNS = 5
 
-# Checkout, pip install, npm install -g opencode, IRIS container start + Atelier wait, and the
+# Checkout, pip install, npm install -g opencode-ai, IRIS container start + Atelier wait, and the
 # harness unit tests all run before the canary. Measured at 3m18s in run 34093536537, rounded up
 # hard because a slow runner or a cold npm cache is the normal case, not the exception.
 _SETUP_ALLOWANCE_MIN = 15

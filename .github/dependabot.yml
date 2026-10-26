@@ -1,0 +1,45 @@
+# Version updates for everything this repository pins. Pinning without updates trades one risk for
+# another: a pin keeps a release from picking up a compromised version, and it also keeps it from
+# picking up the fix for a vulnerable one. Dependabot opens the bump as a PR, where CI and the
+# dependency audit run on it like any other change.
+#
+# Weekly, grouped per ecosystem, so the queue is one PR per ecosystem a week rather than one per
+# package. Security updates are not grouped or delayed by this file; they open as soon as an
+# advisory is published (Settings > Code security > Dependabot security updates).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    groups:
+      actions: { patterns: ["*"] }
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    groups:
+      cargo-minor:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /vscode-iris-agentic-dev
+    schedule: { interval: weekly, day: monday }
+    groups:
+      extension-minor:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    groups:
+      lint-tooling: { patterns: ["*"] }
+
+  - package-ecosystem: pip
+    directory: /.github/requirements
+    schedule: { interval: weekly, day: monday }
+    groups:
+      ci-python: { patterns: ["*"] }
+
+  - package-ecosystem: docker
+    directory: /
+    schedule: { interval: weekly, day: monday }

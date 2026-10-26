@@ -30,7 +30,21 @@ def test_nightly_runs_drift_and_no_optimiser():
 
 
 def test_nightly_installs_the_pinned_requirements():
-    assert "tests/e2e/skill_eval/optimize/requirements.txt" in _runs()
+    """The nightly installs the optimiser's pins through the hashed lockfile, not on their own.
+
+    `.github/requirements/nightly.txt` is compiled from nightly.in, which includes this directory's
+    requirements.txt. A pin bumped here but not recompiled into the lockfile would never reach the
+    nightly, so every exact pin must appear in the lockfile at the same version.
+    """
+    repo = Path(runner.menu.REPO)
+    assert "--require-hashes -r .github/requirements/nightly.txt" in _runs()
+    source = (repo / ".github" / "requirements" / "nightly.in").read_text()
+    assert "-r ../../tests/e2e/skill_eval/optimize/requirements.txt" in source
+    lock = (repo / ".github" / "requirements" / "nightly.txt").read_text().lower()
+    reqs = (Path(__file__).parent / "requirements.txt").read_text().splitlines()
+    for pin in (r.split("#")[0].strip() for r in reqs):
+        if "==" in pin:
+            assert pin.lower() in lock, f"{pin} is not in nightly.txt; recompile the lockfile"
 
 
 def test_drift_band_is_committed_and_well_formed():

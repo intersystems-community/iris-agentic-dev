@@ -66,7 +66,6 @@ iad is the MCP hub. These packages integrate with it:
 | iris-pgwire             | PostgreSQL wire protocol                | `pip install iris-pgwire[ai]` + iris-pgwire skill                |
 | iris-ai                 | AI Hub SDK + strategy                   | iris-ai skills/ covers full stack                                |
 | iris-ai-examples        | CareConnect + KG Ticket Resolver demos  | Reference AGENTS.md for full-stack patterns                      |
-| hipporag2-pipeline      | Multi-hop RAG via PPR                   | `pip install hipporag2-pipeline[ai]`                             |
 | ai-hub-eap              | IRIS AI Hub EAP docs + ObjectScript SDK | iris-ai-hub skill, NoPWS containers                              |
 
 For ecosystem integration patterns see `docs/ecosystem-integration.md`.

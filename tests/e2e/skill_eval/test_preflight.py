@@ -365,7 +365,7 @@ def test_preflight_only_with_no_credential_exits_2_and_starts_no_session():
     """The gate the nightly needed. One job answers for all nine shards.
 
     Nine shards each discovering the same missing credential is nine container starts and nine
-    `npm install -g opencode` before anything reports the one fact that mattered.
+    `npm install -g opencode-ai` before anything reports the one fact that mattered.
     """
     proc = _run_cli("--preflight-only", "--skill", "iris-connectivity")
     assert proc.returncode == 2, proc.stdout + proc.stderr

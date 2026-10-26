@@ -46,8 +46,8 @@ For read/write/edit: `d['state']['input']['path']` or `d['state']['input']['file
 ## 1. List recent sessions
 
 ```python
-import sqlite3, json
-db = sqlite3.connect('/Users/tdyar/.local/share/opencode/opencode.db')
+import sqlite3, json, os
+db = sqlite3.connect(os.path.expanduser('~/.local/share/opencode/opencode.db'))
 
 rows = db.execute("""
     SELECT s.id, s.title, s.directory,
@@ -85,10 +85,10 @@ rows = db.execute("""
 ## 3. Read a session's full activity log
 
 ```python
-import sqlite3, json
+import sqlite3, json, os
 
 def read_session(session_id):
-    db = sqlite3.connect('/Users/tdyar/.local/share/opencode/opencode.db')
+    db = sqlite3.connect(os.path.expanduser('~/.local/share/opencode/opencode.db'))
     rows = db.execute("""
         SELECT p.data
         FROM part p JOIN message m ON p.message_id = m.id
@@ -122,10 +122,10 @@ def read_session(session_id):
 ## 4. Search across sessions for a keyword
 
 ```python
-import sqlite3, json, re
+import sqlite3, json, os, re
 
 def search_sessions(keyword, project_dir=None):
-    db = sqlite3.connect('/Users/tdyar/.local/share/opencode/opencode.db')
+    db = sqlite3.connect(os.path.expanduser('~/.local/share/opencode/opencode.db'))
     where = "WHERE s.directory LIKE ?" if project_dir else "WHERE 1=1"
     params = (f'%{project_dir}%',) if project_dir else ()
 

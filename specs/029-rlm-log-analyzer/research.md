@@ -98,7 +98,7 @@ methods are in the call chain." That's a detail=true feature, not P0.
 
 ## What the rlm-iris Implementation Shows
 
-`rlm-iris` (`/Users/tdyar/ws/rlm-iris/`) implements the pattern in ObjectScript with:
+`rlm-iris` (`~/ws/rlm-iris/`) implements the pattern in ObjectScript with:
 
 ```objectscript
 Set src = ##class(RLM.Source.Table).%New("Sales.Order", "Amount")

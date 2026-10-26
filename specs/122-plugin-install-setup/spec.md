@@ -16,7 +16,7 @@ unreachable. Four facts, each checked on 2026-09-22:
    _"I don't know the publish channel for this binary — it's your Rust tool, not a public crate I
    can verify."_ It offered `brew install <your-tap>/iris-agentic-dev` as a placeholder. Steps
    after the install were right, because the skill covers them.
-2. `claude plugin marketplace add /Users/tdyar/ws/iris-agentic-dev` fails:
+2. `claude plugin marketplace add ~/ws/iris-agentic-dev` fails:
    `Marketplace file not found at .claude-plugin/marketplace.json`. The plugin cannot be
    installed by anyone.
 3. `.claude-plugin/plugin.json` sets `mcpServers.iris-dev.command` to `iris-dev`. Homebrew
