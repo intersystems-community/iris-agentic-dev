@@ -106,6 +106,7 @@ mod test_skill_facts_127_live;
 mod test_skill_install_e2e;
 mod test_skill_kb_gate_171_live;
 mod test_skill_symbols_live;
+mod test_skills_store_171_live;
 mod test_sm_e2e;
 mod test_sql_lexer_141_live;
 mod test_sql_param_audit_141_live;

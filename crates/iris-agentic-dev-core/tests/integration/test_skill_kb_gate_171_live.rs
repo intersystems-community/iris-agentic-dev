@@ -172,10 +172,8 @@ fn family() -> Vec<(&'static str, Value)> {
 async fn the_control_puts_a_scratch_class_under_the_dev_template() {
     let r = rig(OPEN).await;
     let before = r.proxy.count();
-    // `agent_info stats` counts `^SKILLS` through a scratch class. (`skill list` would do as a
-    // control but for a separate defect: its generated ObjectScript escapes quotes with
-    // backslashes, so the class does not compile and the call fails after the PUT.)
-    let b = call(&r, "agent_info", json!({"what": "stats"})).await;
+    // `skill list` reads `^SKILLS` through a scratch class on the default server.
+    let b = call(&r, "skill", json!({"action": "list"})).await;
     assert_eq!(b["success"], true, "{b}");
     assert!(
         r.proxy.count() > before,
