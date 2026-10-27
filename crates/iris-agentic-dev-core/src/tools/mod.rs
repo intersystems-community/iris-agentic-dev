@@ -3796,13 +3796,21 @@ impl IrisTools {
         );
     }
     /// The client for the call in scope: the target server's own certificate setting decides
-    /// whether its certificate is checked. Outside a call, the client built at startup.
-    fn http_client(&self) -> &reqwest::Client {
+    /// whether its certificate is checked. Outside a call, the client built at startup. A client
+    /// that cannot be built is an error, as in [`Self::conn_client`]: the startup client belongs
+    /// to the default connection, and using it for another server would send that server's
+    /// requests with the wrong certificate setting and CSP session.
+    fn http_client(&self) -> Result<&reqwest::Client, McpError> {
         let conn = self.target().ok().and_then(|t| t.primary.conn.clone());
         match conn {
             Some(c) => crate::iris::http::call_client_ref(&c.tls, &c.base_url, &c.username)
-                .unwrap_or(&self.client),
-            None => &self.client,
+                .map_err(|e| {
+                    McpError::internal_error(
+                        format!("could not build the HTTP client for {}: {e}", c.base_url),
+                        None,
+                    )
+                }),
+            None => Ok(&self.client),
         }
     }
     /// The client for `conn`: its own certificate setting (never the launch environment's, which
@@ -4203,7 +4211,7 @@ impl IrisTools {
             }
         }
 
-        let client = self.http_client();
+        let client = self.http_client()?;
 
         // Local file path support: a file inside the project is uploaded via Atelier PUT first.
         if let Some(path) = local_file.as_deref() {
@@ -4614,7 +4622,7 @@ impl IrisTools {
         let iris = self.target_conn()?;
         let namespace = self.target_ns(p.namespace.as_deref())?;
         tracing::info!(namespace = %namespace, pattern = %p.pattern, "iris_test");
-        let client = self.http_client();
+        let client = self.http_client()?;
 
         // US3: namespace existence check before running tests.
         let ns_check_code = crate::objectscript::namespace_exists_code(&namespace);
@@ -5157,7 +5165,7 @@ impl IrisTools {
         }
         let namespace = self.target_ns(p.namespace.as_deref())?;
         tracing::info!(namespace = %namespace, "iris_doc");
-        let client = self.http_client();
+        let client = self.http_client()?;
         let result = doc::handle_iris_doc(
             &iris,
             client,
@@ -5189,7 +5197,7 @@ impl IrisTools {
             "explain" => {
                 let iris = self.target_conn()?;
                 let namespace = self.target_ns(p.namespace.as_deref())?;
-                let client = self.http_client();
+                let client = self.http_client()?;
                 let result = iris_query_explain(&iris, client, &p, &namespace).await;
                 self.record_call(
                     "iris_query",
@@ -5200,7 +5208,7 @@ impl IrisTools {
             "count" => {
                 let iris = self.target_conn()?;
                 let namespace = self.target_ns(p.namespace.as_deref())?;
-                let client = self.http_client();
+                let client = self.http_client()?;
                 let result = iris_query_count(&iris, client, &p, &namespace).await;
                 self.record_call(
                     "iris_query",
@@ -5274,7 +5282,7 @@ impl IrisTools {
         };
         let (iris, client) = match &forced {
             Some(cx) => (cx.conn.clone(), cx.client.as_ref()),
-            None => (self.target_conn()?, self.http_client()),
+            None => (self.target_conn()?, self.http_client()?),
         };
         let namespace = self.target_ns(p.namespace.as_deref())?;
         let query_url = iris.versioned_ns_url(&namespace, "/action/query");
@@ -6096,7 +6104,7 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         let (sql, params) = translate_symbols_query(p.limit, &p.query);
         match iris.query(&sql, params, namespace, client).await {
             Ok(resp) => ok_json(serde_json::json!({
@@ -6197,7 +6205,7 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         // Bug 15: use parameterized queries instead of manual string escaping.
         let methods = iris.query(
             "SELECT Name,FormalSpec,ReturnType FROM %Dictionary.CompiledMethod WHERE parent=? ORDER BY Name",
@@ -6261,7 +6269,7 @@ impl IrisTools {
         }
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         let code = crate::objectscript::source_line_code(&p.routine, p.offset);
         match iris.execute_via_generator(&code, namespace, client).await {
             Ok(raw) => {
@@ -6285,7 +6293,7 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(_p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         match iris.query("SELECT TOP 20 ErrorCode,ErrorText,TimeStamp FROM %SYSTEM.Error ORDER BY TimeStamp DESC", vec![], namespace, client).await {
             Ok(resp) => ok_json(serde_json::json!({"success": true, "errors": resp["result"]["content"]})),
             Err(e) => {
@@ -6311,7 +6319,7 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         // FR-012: cap max_entries to prevent runaway queries.
         let max_entries = p.max_entries.min(1000);
         let sql = format!("SELECT TOP {} ErrorCode,ErrorText,TimeStamp FROM %SYSTEM.Error ORDER BY TimeStamp DESC", max_entries);
@@ -6358,7 +6366,7 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         let cls_name = p.cls_name.trim_end_matches(".cls");
         // Build source map by querying %Studio.Debugger for each .INT method
         let code = format!(
@@ -6425,7 +6433,7 @@ impl IrisTools {
             return err_result(nopws::nopws_atelier_required_error());
         }
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         let store = |name: String, text: String| {
             let iris = iris.clone();
             async move {
@@ -6499,7 +6507,7 @@ impl IrisTools {
 
         let introspection_context = if let Some(iris) = self.target_conn_opt()?.as_deref() {
             let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-            let client = self.http_client();
+            let client = self.http_client()?;
             // FR-001/C1: use parameterized query to prevent SQL injection via class_name.
             iris.query(
                 "SELECT Name,FormalSpec,ReturnType FROM %Dictionary.CompiledMethod WHERE parent=? ORDER BY Name",
@@ -6881,7 +6889,7 @@ Methods:
         let iris = self.target_conn()?;
         skills_tools::handle_kb(
             &iris,
-            self.http_client(),
+            self.http_client()?,
             skills_tools::KbParams {
                 action: "index".into(),
                 path: p.workspace_path,
@@ -7004,7 +7012,8 @@ Methods:
         let iris = self.durable_sink_connection();
         let config_dir = telemetry_config_dir();
         let records =
-            crate::telemetry::read_durable(session_id, iris, self.http_client(), &config_dir).await;
+            crate::telemetry::read_durable(session_id, iris, self.http_client()?, &config_dir)
+                .await;
         let (matches, truncated) = crate::telemetry::filter_records(
             &records,
             p.tool_name.as_deref(),
@@ -7046,7 +7055,8 @@ Methods:
         let iris = self.durable_sink_connection();
         let config_dir = telemetry_config_dir();
         let records =
-            crate::telemetry::read_durable(session_id, iris, self.http_client(), &config_dir).await;
+            crate::telemetry::read_durable(session_id, iris, self.http_client()?, &config_dir)
+                .await;
         let (filtered, _truncated) = crate::telemetry::filter_records(
             &records,
             None,
@@ -7089,7 +7099,7 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let result =
-            search::handle_iris_search(&iris, self.http_client(), p, Arc::clone(&self.log_store))
+            search::handle_iris_search(&iris, self.http_client()?, p, Arc::clone(&self.log_store))
                 .await;
         self.record_call("iris_search", result.is_ok());
         result
@@ -7112,7 +7122,8 @@ Methods:
         }
         let iris = self.target_conn()?;
         let result =
-            info::handle_iris_info(&iris, self.http_client(), p, Arc::clone(&self.log_store)).await;
+            info::handle_iris_info(&iris, self.http_client()?, p, Arc::clone(&self.log_store))
+                .await;
         self.record_call("iris_info", result.is_ok());
         result
     }
@@ -7127,7 +7138,7 @@ Methods:
         Parameters(p): Parameters<info::TableInfoParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = info::handle_iris_table_info(&iris, self.http_client(), p).await;
+        let result = info::handle_iris_table_info(&iris, self.http_client()?, p).await;
         self.record_call("iris_table_info", result.is_ok());
         result
     }
@@ -7144,7 +7155,7 @@ Methods:
         let iris = self.target_conn()?;
         let result = dict::handle_resolve_dynamic_dispatch(
             &iris,
-            self.http_client(),
+            self.http_client()?,
             p,
             &self.metadata_cache,
         )
@@ -7165,7 +7176,7 @@ Methods:
         let iris = self.target_conn()?;
         let result = dict::handle_extract_message_map_routing(
             &iris,
-            self.http_client(),
+            self.http_client()?,
             p,
             &self.metadata_cache,
         )
@@ -7186,7 +7197,7 @@ Methods:
         let iris = self.target_conn()?;
         let result = dict::handle_find_subclass_implementations(
             &iris,
-            self.http_client(),
+            self.http_client()?,
             p,
             &self.metadata_cache,
         )
@@ -7205,7 +7216,7 @@ Methods:
         Parameters(p): Parameters<info::MacroParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = info::handle_iris_macro(&iris, self.http_client(), p).await;
+        let result = info::handle_iris_macro(&iris, self.http_client()?, p).await;
         self.record_call("iris_macro", result.is_ok());
         result
     }
@@ -7219,7 +7230,7 @@ Methods:
         Parameters(p): Parameters<info::DebugParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = info::handle_iris_debug(&iris, self.http_client(), p).await;
+        let result = info::handle_iris_debug(&iris, self.http_client()?, p).await;
         self.record_call("iris_debug", result.is_ok());
         result
     }
@@ -7233,7 +7244,7 @@ Methods:
         Parameters(p): Parameters<info::GenerateParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = info::handle_iris_generate(&iris, self.http_client(), p).await;
+        let result = info::handle_iris_generate(&iris, self.http_client()?, p).await;
         self.record_call("iris_generate", result.is_ok());
         result
     }
@@ -7247,7 +7258,7 @@ Methods:
         Parameters(p): Parameters<skills_tools::SkillParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = skills_tools::handle_skill(&iris, self.http_client(), p, &self.history).await;
+        let result = skills_tools::handle_skill(&iris, self.http_client()?, p, &self.history).await;
         self.record_call("skill", result.is_ok());
         result
     }
@@ -7262,7 +7273,7 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let result =
-            skills_tools::handle_skill_community(&iris, self.http_client(), p, &self.registry)
+            skills_tools::handle_skill_community(&iris, self.http_client()?, p, &self.registry)
                 .await;
         self.record_call("skill_community", result.is_ok());
         result
@@ -7279,7 +7290,7 @@ Methods:
         let iris = self.target_conn()?;
         // The scope is resolved only by the action that reads the host, inside `handle_kb`.
         let scope = |path: Option<&str>| self.kb_index_scope("kb", path);
-        let result = skills_tools::handle_kb(&iris, self.http_client(), p, scope).await;
+        let result = skills_tools::handle_kb(&iris, self.http_client()?, p, scope).await;
         self.record_call("kb", result.is_ok());
         result
     }
@@ -7295,7 +7306,7 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let result =
-            skills_tools::handle_agent_info(&iris, self.http_client(), p, &self.history).await;
+            skills_tools::handle_agent_info(&iris, self.http_client()?, p, &self.history).await;
         self.record_call("agent_info", result.is_ok());
         result
     }
@@ -7322,7 +7333,7 @@ Methods:
         }
         let result = scm::handle_iris_source_control(
             &iris,
-            self.http_client(),
+            self.http_client()?,
             p,
             &self.elicitation_store,
             &self.checkout_cache,

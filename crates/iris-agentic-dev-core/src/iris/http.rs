@@ -230,6 +230,10 @@ pub fn call_client_ref(
     static CLIENTS: OnceLock<
         std::sync::Mutex<std::collections::HashMap<String, &'static reqwest::Client>>,
     > = OnceLock::new();
+    #[cfg(feature = "testing")]
+    if crate::testing::client_build_fails() {
+        anyhow::bail!("the client build was made to fail");
+    }
     let key = format!(
         "{}|{}",
         tls.verify,

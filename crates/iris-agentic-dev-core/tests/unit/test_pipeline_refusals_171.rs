@@ -257,3 +257,44 @@ async fn an_uncountable_statement_is_refused_in_every_default_run() {
         .await;
     assert_ne!(body["error_code"], "ROWS_NOT_COUNTABLE", "{body}");
 }
+
+// ── R9 ──────────────────────────────────────────────────────────────────────────────────────────
+
+/// A tool that cannot build the HTTP client for its server answers with that error. It does not
+/// fall back to the client built at startup, whose certificate setting and CSP session belong to
+/// the default connection and not to the server the call named.
+#[tokio::test]
+async fn a_call_that_cannot_build_its_client_errors() {
+    let rig = rig(GATES_OPEN);
+    let calls = [
+        ("iris_table_info", json!({"table": "A.B"})),
+        ("iris_info", json!({"what": "namespace"})),
+        ("iris_query", json!({"query": "SELECT 1"})),
+        (
+            "iris_query",
+            json!({"query": "DELETE FROM t WHERE a = 1", "mode": "write"}),
+        ),
+    ];
+    for (tool, args) in calls {
+        iris_agentic_dev_core::testing::fail_client_builds(true);
+        let out = answer(&rig, tool, args.clone()).await;
+        iris_agentic_dev_core::testing::fail_client_builds(false);
+        let text = match out {
+            Err(e) => e,
+            Ok(body) => body.to_string(),
+        };
+        assert!(
+            text.contains("could not build the HTTP client"),
+            "{tool}: the call went on with another client: {text}"
+        );
+        // The control: with client builds working, the same call reaches the (absent) server.
+        let text = match answer(&rig, tool, args).await {
+            Err(e) => e,
+            Ok(body) => body.to_string(),
+        };
+        assert!(
+            !text.contains("could not build the HTTP client"),
+            "{tool}: {text}"
+        );
+    }
+}

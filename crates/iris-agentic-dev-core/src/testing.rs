@@ -2690,6 +2690,24 @@ pub(crate) fn refusal_build_fails() -> bool {
     REFUSAL_BUILD_FAILS.with(|c| c.get())
 }
 
+// ─── clients that fail to build ─────────────────────────────────────────────
+
+thread_local! {
+    static CLIENT_BUILD_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Make the per-server tool-call client fail to build on this thread until switched off, so a
+/// test can check that a call errors and does not fall back to another server's client. Real
+/// builds fail only when the TLS backend cannot start. A test must run on one thread (a
+/// current-thread runtime) and switch it off again.
+pub fn fail_client_builds(on: bool) {
+    CLIENT_BUILD_FAILS.with(|c| c.set(on));
+}
+
+pub(crate) fn client_build_fails() -> bool {
+    CLIENT_BUILD_FAILS.with(|c| c.get())
+}
+
 // ─── gate checks without a pipeline ─────────────────────────────────────────
 
 /// The three policy gates called on their own, for unit tests that pin one gate's decision.
