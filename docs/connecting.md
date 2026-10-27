@@ -542,6 +542,15 @@ call history (`kb_recall`, `skill_community_list`, `agent_history`, `agent_stats
 are not judged by `allow`. A tool that has no category at all is judged as `execute` and `admin`;
 `check_config` lists the tools exempt from that in `ungated_tools`.
 
+The command-line commands that wrap a tool go through the same checks. The `capability-matrix`
+and `benchmark` subcommands send every step to the default server through the tool pipeline: the lock and the version query as `iris_execute`, each class as `iris_doc` with
+`compile`. The environment template, `allow` (`execute` and `compile`), the write gate and the
+role gate judge each step, so a `live` or `test` template, a narrow `allow` or closed write tools
+refuse `benchmark` with the refusal the MCP server would send, exit 1, before it stores a class. A
+refusal part-way through stops the run, gives the lock back and prints no table of results.
+`benchmark` does not pass `confirm`, so it does not run against a `subject` server. It empties its
+lock global where it used to kill it, so the destructive tier is not needed to release it.
+
 Blocked calls return an error whose `error_code` names the gate (`POLICY_GATE` with the allowed
 categories, `ENV_GATE_BLOCKED`, `DATA_POLICY_BLOCKED`, `SYSTEM_BLOCKLIST`) and a `refusal` object
 saying who can lift it; see [Refusals](tools.md#refusals). Available categories: `compile`,
