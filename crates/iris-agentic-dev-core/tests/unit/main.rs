@@ -81,6 +81,7 @@ mod test_effective_policy_141;
 mod test_elicitation;
 mod test_elicitation_sweep;
 mod test_endpoint_tls_141;
+mod test_enum_config_keys;
 mod test_enum_contract;
 mod test_enum_gate_classes;
 mod test_enum_http_clients;

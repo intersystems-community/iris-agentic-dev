@@ -38,6 +38,194 @@ pub const OPERATOR_ONLY_KEYS: &[&str] = &[
     "telemetry_sink",
 ];
 
+/// What a configuration key does to the limits the operator set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingClass {
+    /// Can widen what the agent may do or where credentials go. A file that is not trusted has it
+    /// set aside ([`loosening_settings`]).
+    Loosening,
+    /// Can only narrow, add audit, or remove tools. Any file may set it.
+    Tightening,
+    /// Says where a server is or how to reach it, or is a switch with no bearing on the limits. The
+    /// reason says why it is neither of the above.
+    Neutral,
+    /// Honoured only from the operator file or launch settings, never from a workspace file.
+    OperatorOnly,
+}
+
+/// One configuration key, its class, and a document that sets it.
+pub struct SettingDecl {
+    /// Dotted; `*` stands for a server name (`policy.*.allow`).
+    pub key: &'static str,
+    pub class: SettingClass,
+    /// Why, in a sentence. For a `Loosening` key: what it widens.
+    pub reason: &'static str,
+    /// A whole TOML document that sets the key to a value that shows its class: for `Loosening`,
+    /// one [`loosening_settings`] reports; for `Tightening` and `Neutral`, one it does not; for
+    /// `OperatorOnly`, one [`operator_only_items`] sets aside.
+    pub example: &'static str,
+}
+
+const fn decl(
+    key: &'static str,
+    class: SettingClass,
+    reason: &'static str,
+    example: &'static str,
+) -> SettingDecl {
+    SettingDecl {
+        key,
+        class,
+        reason,
+        example,
+    }
+}
+
+use SettingClass::{Loosening, Neutral, OperatorOnly, Tightening};
+
+/// Every key a configuration file can carry, and what it does to the limits. The one place a key is
+/// classified: `tests/unit/test_enum_config_keys.rs` reads the serde structs of
+/// `workspace_config.rs` and the keys this module reads off the raw table, compares them with this
+/// list, and runs each example through [`loosening_settings`] and [`operator_only_items`]. A new key
+/// that is not here fails; so does a row whose example is not treated as its class says.
+#[rustfmt::skip]
+pub const SETTINGS: &[SettingDecl] = &[
+    // ── top level ────────────────────────────────────────────────────────────────────────────
+    decl("mode", Loosening, "a file that leaves `operate` moves the fleet off the role gate", "mode = \"dev\"\n"),
+    decl("write_tools_enabled", Loosening, "opens the write gate", "write_tools_enabled = true\n"),
+    decl("destructive_tools_enabled", Loosening, "opens the destructive gate", "destructive_tools_enabled = true\n"),
+    decl("compile_time_gate", Loosening, "false turns the compile-time source gate off", "compile_time_gate = false\n"),
+    decl("tls_verify", Loosening, "false stops checking the server's certificate", "tls_verify = false\n"),
+    decl("ssh_host", Loosening, "sends docker commands, and credentials, to a host the file names", "ssh_host = \"h\"\n"),
+    decl("service_username", Loosening, "names the account agent code runs as", "service_username = \"svc\"\n"),
+    decl("ssh_strict", Tightening, "requires a known SSH host key", "ssh_strict = true\n"),
+    decl("read_only", Tightening, "strict turns the scratch-class tools off", "read_only = \"strict\"\n"),
+    decl("disabled_tools", Tightening, "removes tools", "disabled_tools = [\"iris_execute\"]\n"),
+    decl("enabled_tools", Tightening, "an allowlist can only remove tools", "enabled_tools = [\"iris_info\"]\n"),
+    decl("container", Neutral, "names a container; the address it makes is bound by the trust entry", "container = \"c\"\n"),
+    decl("namespace", Neutral, "default namespace; reaches no further than the account's own rights", "namespace = \"USER\"\n"),
+    decl("host", Neutral, "where the server is; credentials follow the address, which trust records", "host = \"h\"\n"),
+    decl("web_port", Neutral, "where the server is", "web_port = 52773\n"),
+    decl("port", Neutral, "alias of web_port", "port = 52773\n"),
+    decl("web_prefix", Neutral, "where the server is", "web_prefix = \"p\"\n"),
+    decl("scheme", Neutral, "where the server is; https only adds protection", "scheme = \"https\"\n"),
+    decl("username", Neutral, "the primary account; bound to the address like the password", "username = \"u\"\n"),
+    decl("password", Neutral, "the primary account's password; sent only to the address it is bound to", "password = \"p\"\n"),
+    decl("docker_only", Neutral, "chooses docker exec over HTTP for a container the file names", "docker_only = true\n"),
+    decl("nopws", Neutral, "declares an instance has no web server", "nopws = true\n"),
+    // ── operator only ────────────────────────────────────────────────────────────────────────
+    decl("trust", OperatorOnly, "the record that makes a file trusted", "[[trust]]\npath = \"/x\"\n"),
+    decl("exec_as_os_user", OperatorOnly, "agent code runs as the container's OS user", "exec_as_os_user = true\n"),
+    decl("transport.http_token", OperatorOnly, "the bearer token of the HTTP transport", "[transport]\nhttp_token = \"t\"\n"),
+    decl("local_skills", OperatorOnly, "serves skills from the working directory", "local_skills = true\n"),
+    decl("audit_payloads", OperatorOnly, "keeps full payloads in the local audit log", "audit_payloads = true\n"),
+    decl("telemetry_sink", OperatorOnly, "sends telemetry records to IRIS", "telemetry_sink = \"iris\"\n"),
+    decl("policy.*.execAsOsUser", OperatorOnly, "agent code runs as the OS user on this server", "[policy.x]\nexecAsOsUser = true\n"),
+    // ── [policy.<server>] ────────────────────────────────────────────────────────────────────
+    decl("policy.*.writeTools", Loosening, "opens this server's write gate", "[policy.x]\nwriteTools = true\n"),
+    decl("policy.*.destructiveTools", Loosening, "opens this server's destructive gate", "[policy.x]\ndestructiveTools = true\n"),
+    decl("policy.*.compileTimeGate", Loosening, "false turns this server's compile-time gate off", "[policy.x]\ncompileTimeGate = false\n"),
+    decl("policy.*.mcpTemplate", Loosening, "dev or test lets Execute and Compile through", "[policy.x]\nmcpTemplate = \"dev\"\n"),
+    decl("policy.*.allow", Loosening, "lists the categories the server permits", "[policy.x]\nallow = [\"query\"]\n"),
+    decl("policy.*.dataPolicy", Loosening, "allow or redact lets PHI-capable tools run", "[policy.x]\ndataPolicy = \"allow\"\n"),
+    decl("policy.*.dataPolicyKillAllowlist", Loosening, "exempts patterns from the kill blocklist", "[policy.x]\ndataPolicyKillAllowlist = [\"^X\"]\n"),
+    decl("policy.*.globalBlocklist", Tightening, "adds patterns to the blocklist", "[policy.x]\nglobalBlocklist = [\"^X\"]\n"),
+    decl("policy.*.irisAudit", Tightening, "adds an audit record per call", "[policy.x]\nirisAudit = true\n"),
+    // ── [instance.<server>] ──────────────────────────────────────────────────────────────────
+    decl("instance.*.role", Loosening, "workbench lifts the subject server's confirmations", "[instance.x]\nrole = \"workbench\"\n"),
+    decl("instance.*.service_username", Loosening, "names the account agent code runs as", "[instance.x]\nservice_username = \"svc\"\n"),
+    decl("instance.*.ssh_host", Loosening, "sends docker commands, and credentials, to a host the file names", "[instance.x]\nssh_host = \"h\"\n"),
+    decl("instance.*.tls_verify", Loosening, "false stops checking this server's certificate", "[instance.x]\ntls_verify = false\n"),
+    decl("instance.*.container", Neutral, "names a container", "[instance.x]\ncontainer = \"c\"\n"),
+    decl("instance.*.namespace", Neutral, "default namespace", "[instance.x]\nnamespace = \"USER\"\n"),
+    decl("instance.*.host", Neutral, "where the server is", "[instance.x]\nhost = \"h\"\n"),
+    decl("instance.*.web_port", Neutral, "where the server is", "[instance.x]\nweb_port = 1\n"),
+    decl("instance.*.web-port", Neutral, "alias of web_port", "[instance.x]\nweb-port = 1\n"),
+    decl("instance.*.port", Neutral, "alias of web_port", "[instance.x]\nport = 1\n"),
+    decl("instance.*.web_prefix", Neutral, "where the server is", "[instance.x]\nweb_prefix = \"p\"\n"),
+    decl("instance.*.web-prefix", Neutral, "alias of web_prefix", "[instance.x]\nweb-prefix = \"p\"\n"),
+    decl("instance.*.scheme", Neutral, "where the server is", "[instance.x]\nscheme = \"https\"\n"),
+    decl("instance.*.username", Neutral, "the primary account", "[instance.x]\nusername = \"u\"\n"),
+    decl("instance.*.password", Neutral, "the primary account's password, sent only to the address it is bound to", "[instance.x]\npassword = \"p\"\n"),
+    decl("instance.*.service_password", Neutral, "only used with service_username, which is loosening", "[instance.x]\nservice_password = \"p\"\n"),
+    decl("instance.*.memory_home", Neutral, "a label for the instance's memory directory", "[instance.x]\nmemory_home = \"m\"\n"),
+    decl("instance.*.memory-home", Neutral, "alias of memory_home", "[instance.x]\nmemory-home = \"m\"\n"),
+    decl("instance.*.subject", Neutral, "names the subject an instance is studied for; read for display", "[instance.x]\nsubject = \"s\"\n"),
+];
+
+/// Every environment variable the process reads that changes its behaviour (the names of
+/// `testing::BEHAVIOR_ENV_VARS`), and what it does to the limits. Launch settings are trusted
+/// whoever wrote them, so the class here is about the variable, not about a trust decision: a
+/// `Loosening` variable is one an operator sets to widen a limit, which is why nothing in the
+/// product writes the environment (`test_enum_config_keys` scans for it).
+#[rustfmt::skip]
+pub const LAUNCH_SETTINGS: &[(&str, SettingClass, &str)] = &[
+    ("IRIS_HOST", Neutral, "where the default server is"),
+    ("IRIS_WEB_PORT", Neutral, "where the default server is"),
+    ("IRIS_SCHEME", Neutral, "where the default server is"),
+    ("IRIS_WEB_PREFIX", Neutral, "where the default server is"),
+    ("IRIS_NAMESPACE", Neutral, "default namespace"),
+    ("IRIS_USERNAME", Neutral, "the primary account"),
+    ("IRIS_PASSWORD", Neutral, "the primary account's password"),
+    ("IRIS_CONTAINER", Neutral, "names the default server's container"),
+    ("IRIS_SERVICE_USERNAME", Loosening, "names the account agent code runs as"),
+    ("IRIS_SERVICE_PASSWORD", Neutral, "only used with the service username"),
+    ("IRIS_SERVER_NAME", Neutral, "names the default server"),
+    ("IRIS_INSECURE", Loosening, "stops checking the default server's certificate"),
+    ("IRIS_TLS_VERIFY", Loosening, "false stops checking the default server's certificate"),
+    ("IRIS_WRITE_TOOLS_ENABLED", Loosening, "opens the write gate"),
+    ("IRIS_DESTRUCTIVE_TOOLS_ENABLED", Loosening, "opens the destructive gate"),
+    ("IRIS_ALLOW_PROD", Loosening, "lets writes reach a Live instance"),
+    ("IRIS_ADMIN_TOOLS", Loosening, "enables the administration tools"),
+    ("IRIS_SCM_ALLOW_CHECKIN", Loosening, "lets source-control check-in run"),
+    ("IRIS_SCM_ALLOW_DISCONNECT", Loosening, "lets source-control disconnect run"),
+    ("IRIS_ENABLED_TOOLS", Tightening, "an allowlist can only remove tools"),
+    ("IRIS_DISABLED_TOOLS", Tightening, "removes tools"),
+    ("IRIS_TOOLSET", Neutral, "chooses which tool names are registered"),
+    ("IRIS_NO_SKILLS", Tightening, "removes the skill tools"),
+    ("IRIS_LIST_TOOLS_PAGE_SIZE", Neutral, "pagination of tools/list"),
+    ("IRIS_SUPPRESS_TOOL_DESCRIPTION", Neutral, "blanks tool descriptions for an eval run"),
+    ("OBJECTSCRIPT_LEARNING", Neutral, "whether call patterns are recorded in memory"),
+    ("IRIS_AGENTIC_DEV_SKILLS_DIR", Neutral, "where installed skills are read from"),
+    ("IAD_LOCAL_SKILLS", OperatorOnly, "serves skills from the working directory"),
+    ("IAD_EXEC_AS_OS_USER", OperatorOnly, "agent code runs as the container's OS user"),
+    ("IAD_MAX_RESPONSE_BYTES", Loosening, "raises the cap on one IRIS response"),
+    ("OBJECTSCRIPT_SKILLMCP_NAMESPACE", Neutral, "the namespace skills are stored in"),
+    ("OBJECTSCRIPT_WORKSPACE", Neutral, "names the project directory and a named config file"),
+    ("IRIS_AGENT_LABEL", Neutral, "label in the User-Agent"),
+    ("IRIS_INLINE_SEARCH", Neutral, "output size threshold"),
+    ("IRIS_INLINE_COMPILE", Neutral, "output size threshold"),
+    ("IRIS_INLINE_ERROR_LOGS", Neutral, "output size threshold"),
+    ("IRIS_INLINE_INFO", Neutral, "output size threshold"),
+    ("IRIS_LOG_STORE_MAX", Neutral, "size of the in-memory log store"),
+    ("IRIS_LOG_TTL_MINUTES", Neutral, "life of the in-memory log store"),
+    ("IRIS_SEARCH_SYNC_TIMEOUT", Neutral, "a timeout"),
+    ("OBJECTSCRIPT_TEST_TIMEOUT", Neutral, "a timeout"),
+    ("IRIS_GENERATE_TIMEOUT", Neutral, "a timeout"),
+    ("IRIS_GENERATE_CLASS_MODEL", Neutral, "which model generates classes"),
+    ("OPENAI_API_KEY", Neutral, "credential for the model provider"),
+    ("OPENAI_BASE_URL", Neutral, "where the model provider is"),
+    ("ANTHROPIC_API_KEY", Neutral, "credential for the model provider"),
+    ("ANTHROPIC_BASE_URL", Neutral, "where the model provider is"),
+    ("GITHUB_RAW_BASE_URL", Neutral, "where the skill pack is fetched from"),
+    ("GITHUB_API_BASE_URL", Neutral, "where the skill pack is listed from"),
+    ("IAD_CODING_PACK", Neutral, "turns hint references off"),
+    ("IAD_HTTP_TOKEN", OperatorOnly, "the bearer token of the HTTP transport"),
+    ("IAD_AUDIT_PAYLOADS", OperatorOnly, "keeps full payloads in the local audit log"),
+    ("IAD_TELEMETRY_SINK", OperatorOnly, "sends telemetry records to IRIS"),
+    ("IAD_COMPILE_TIME_GATE", Loosening, "off turns the compile-time source gate off"),
+    ("IAD_READ_ONLY", Tightening, "strict turns the scratch-class tools off"),
+    ("GAUNTLET_RUN_ID", Neutral, "eval envelope identity"),
+    ("GAUNTLET_TASK_ID", Neutral, "eval envelope identity"),
+    ("GAUNTLET_CONDITION", Neutral, "eval envelope identity"),
+    ("IAD_NO_KEYCHAIN", Neutral, "keeps passwords out of the OS keychain"),
+    ("IAD_TEST_REAL_KEYCHAIN", Neutral, "test hook: a test run keeps the real keychain"),
+    ("IAD_TEST_KEYSTORE_ABORT", Neutral, "test hook, debug builds only"),
+    ("IAD_TEST_SCAN_PORTS", Neutral, "test hook, debug builds only"),
+    ("IAD_THROWAWAY_IMAGE", Neutral, "test hook: the throwaway container image"),
+    ("IRIS_INFO_MAX_DOCUMENTS", Neutral, "how many documents iris_info lists"),
+    ("IRIS_TELEMETRY_BUFFER_SIZE", Neutral, "size of the in-memory call history"),
+];
+
 /// Does a `read_only` value (the file key or `IAD_READ_ONLY`) ask for strict read-only?
 fn is_strict_value(v: &str) -> bool {
     v.trim().eq_ignore_ascii_case("strict")
