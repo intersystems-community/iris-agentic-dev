@@ -191,6 +191,19 @@ pub fn probe_session(tls: &TlsSetting) -> anyhow::Result<ProbeSession> {
 }
 
 impl ProbeSession {
+    /// Give the sessions the probe opened to `account`, the store of the account the probe signed
+    /// in as, when that store holds none; end them otherwise. A connection's own startup probe
+    /// opens the account's first session this way, so the calls that follow in the same moment
+    /// find a cookie and share one session, and not one each, which are never all ended. A store
+    /// that has a session keeps it: the probe never replaces what a call is using.
+    pub async fn finish(self, tls: &TlsSetting, account: &Arc<CspSessionStore>) {
+        if account.is_empty() {
+            account.adopt(&self.store);
+        } else {
+            self.end(tls).await;
+        }
+    }
+
     /// End every CSP session the probe opened. A failure is not reported: the session times out.
     pub async fn end(self, tls: &TlsSetting) {
         let urls = self.store.logout_urls();

@@ -46,6 +46,33 @@ impl CspSessionStore {
             .collect()
     }
 
+    /// True when this store has seen no CSP session.
+    pub fn is_empty(&self) -> bool {
+        self.sessions.lock().unwrap().is_empty()
+    }
+
+    /// Take over the sessions `other` holds: the cookies it sends to each session's URL, and the
+    /// record of where each lives, so this store's logout ends them.
+    pub fn adopt(&self, other: &CspSessionStore) {
+        let bases: Vec<String> = other.sessions.lock().unwrap().iter().cloned().collect();
+        for base in bases {
+            let Ok(url) = Url::parse(&base) else { continue };
+            let Some(sent) = other.jar.cookies(&url) else {
+                continue;
+            };
+            let Ok(sent) = sent.to_str() else { continue };
+            let headers: Vec<HeaderValue> = sent
+                .split(';')
+                .map(str::trim)
+                .filter(|pair| pair.contains('='))
+                .filter_map(|pair| {
+                    HeaderValue::from_str(&format!("{pair}; Path={}", url.path())).ok()
+                })
+                .collect();
+            self.set_cookies(&mut headers.iter(), &url);
+        }
+    }
+
     fn record(&self, header: &HeaderValue, url: &Url) {
         let Ok(text) = header.to_str() else { return };
         let mut parts = text.split(';').map(str::trim);

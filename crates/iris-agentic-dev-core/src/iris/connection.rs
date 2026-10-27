@@ -791,7 +791,12 @@ impl IrisConnection {
         // Detect SystemMode via SQL against %SYS global (issue #26).
         // One extra round-trip at startup; result cached for session lifetime.
         let mode = self.detect_system_mode(&client).await;
-        session.end(&self.tls).await;
+        session
+            .finish(
+                &self.tls,
+                &super::csp_session::store_for_primary(&self.base_url, &self.username),
+            )
+            .await;
         self.system_mode = mode;
         tracing::info!(
             host = %self.base_url,

@@ -115,3 +115,49 @@ async fn the_connection_probe_is_not_answered_from_the_accounts_session() {
         conn.version
     );
 }
+
+/// The connection's own startup probe opens the account's first session, and the calls that follow
+/// use it. Without that, the first calls of a process, which run together, each open a session
+/// before any cookie is stored, and all but one are never ended (132 B1).
+#[tokio::test]
+async fn the_connection_probe_hands_its_session_to_an_account_that_has_none() {
+    let (port, heads) = listener(true);
+    let base = format!("http://127.0.0.1:{port}");
+    let mut conn = IrisConnection::new(&base, "USER", "handuser", "pw", DiscoverySource::EnvVar);
+    conn.probe().await;
+    assert!(conn.version.is_some(), "the probe was not answered");
+    let urls = store_for_primary(&base, "handuser").logout_urls();
+    assert_eq!(
+        urls.len(),
+        1,
+        "the account's store did not take the probe's session: {urls:?}"
+    );
+    let heads = heads.lock().unwrap();
+    assert!(
+        heads.iter().all(|h| !h.contains("IRISLogout=end")),
+        "the probe ended a session it handed over: {heads:?}"
+    );
+}
+
+/// An account that already has a session keeps it, and the probe's own is ended.
+#[tokio::test]
+async fn the_connection_probe_does_not_replace_the_accounts_session() {
+    let (port, heads) = listener(true);
+    let base = format!("http://127.0.0.1:{port}");
+    seed_session(&base, "keepuser");
+    let before = store_for_primary(&base, "keepuser").logout_urls();
+    let mut conn = IrisConnection::new(&base, "USER", "keepuser", "pw", DiscoverySource::EnvVar);
+    conn.probe().await;
+    assert_eq!(store_for_primary(&base, "keepuser").logout_urls(), before);
+    let heads = heads.lock().unwrap();
+    // The probe's own session was ended, and the request that ended it carried the probe's cookie
+    // (the seeded one has the same name, so only the count of logouts is checked).
+    assert_eq!(
+        heads
+            .iter()
+            .filter(|h| h.contains("IRISLogout=end"))
+            .count(),
+        1,
+        "{heads:?}"
+    );
+}

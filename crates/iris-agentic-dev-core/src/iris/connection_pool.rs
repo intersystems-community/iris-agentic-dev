@@ -190,7 +190,15 @@ impl ConnectionPool {
         let mode = match crate::iris::http::probe_session(&conn.tls) {
             Ok(session) => {
                 let mode = conn.detect_system_mode(&session.client).await;
-                session.end(&conn.tls).await;
+                session
+                    .finish(
+                        &conn.tls,
+                        &crate::iris::csp_session::store_for_primary(
+                            &conn.base_url,
+                            &conn.username,
+                        ),
+                    )
+                    .await;
                 mode
             }
             Err(_) => SystemMode::Unknown,
