@@ -59,6 +59,66 @@ async fn xecute(
     Ok(out)
 }
 
+/// The ObjectScript that lists `^SKILLS` as a JSON array of `{name, description, usage_count}`.
+///
+/// The array is built with `%DynamicArray` and `%DynamicObject`, so a name or description with a
+/// quote, a backslash or a line break is escaped by IRIS and not by this file. The earlier version
+/// concatenated the JSON by hand and wrote `\"` for a quote. ObjectScript has one escape, a doubled
+/// quote, so that class did not compile and every call on an HTTP connection failed.
+pub fn skill_list_code() -> String {
+    "Set arr=##class(%DynamicArray).%New() Set key=\"\" \
+     For { Set key=$Order(^SKILLS(key)) Quit:key=\"\"  Set data=$Get(^SKILLS(key)) \
+     Set o=##class(%DynamicObject).%New() Do o.%Set(\"name\",key,\"string\") \
+     Do o.%Set(\"description\",$Piece(data,\"|\",1),\"string\") \
+     Do o.%Set(\"usage_count\",+$Piece(data,\"|\",3),\"number\") Do arr.%Push(o) } \
+     Write arr.%ToJSON()"
+        .to_string()
+}
+
+/// The ObjectScript that searches `^SKILLS` for `query` (already lower-cased) in a skill's name or
+/// stored text, as a JSON array of `{name, description}`. The needle is spliced as an expression.
+pub fn skill_search_code(query: &str) -> String {
+    format!(
+        "Set arr=##class(%DynamicArray).%New() Set key=\"\" \
+         For {{ Set key=$Order(^SKILLS(key)) Quit:key=\"\"  Set data=$Get(^SKILLS(key)) \
+         If $Find($ZConvert(key_data,\"L\"),{needle})>0 {{ \
+         Set o=##class(%DynamicObject).%New() Do o.%Set(\"name\",key,\"string\") \
+         Do o.%Set(\"description\",$Piece(data,\"|\",1),\"string\") Do arr.%Push(o) }} }} \
+         Write arr.%ToJSON()",
+        needle = crate::objectscript::os_str_expr(query)
+    )
+}
+
+/// The ObjectScript that recalls up to `top_k` chunks of `^KBCHUNKS` whose text holds `query`
+/// (already lower-cased), as a JSON array of `{file, excerpt}` with the first 200 characters.
+/// ObjectScript evaluates an expression strictly left to right, so each side of the exit test is
+/// parenthesized; `key="" || count>=n` is `((key="")||count)>=n`, which does not stop at the end.
+pub fn kb_recall_code(query: &str, top_k: usize) -> String {
+    format!(
+        "Set arr=##class(%DynamicArray).%New() Set key=\"\" Set count=0 \
+         For {{ Set key=$Order(^KBCHUNKS(key)) Quit:((key=\"\")||(count>={top_k}))  \
+         Set data=$Get(^KBCHUNKS(key)) \
+         If $Find($ZConvert(data,\"L\"),{needle})>0 {{ \
+         Set o=##class(%DynamicObject).%New() Do o.%Set(\"file\",key,\"string\") \
+         Do o.%Set(\"excerpt\",$Extract(data,1,200),\"string\") Do arr.%Push(o) \
+         Set count=count+1 }} }} Write arr.%ToJSON()",
+        needle = crate::objectscript::os_str_expr(query),
+        top_k = top_k,
+    )
+}
+
+/// The JSON array an IRIS reader wrote. Output that is not one is an error, not an empty list:
+/// "you have no skills" is what a caller reads when the truth is that the answer was lost.
+fn json_array(raw: &str) -> Result<serde_json::Value, String> {
+    match serde_json::from_str::<serde_json::Value>(raw.trim()) {
+        Ok(v) if v.is_array() => Ok(v),
+        _ => Err(format!(
+            "IRIS did not answer with a JSON array: {}",
+            raw.chars().take(200).collect::<String>()
+        )),
+    }
+}
+
 // ── skill ─────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -88,18 +148,17 @@ pub async fn handle_skill(
 
     match p.action.as_str() {
         "list" => {
-            // Bug 9: use separator variable so empty global yields "[]" not "]".
-            let code = "set key=\"\" set out=\"[\" set sep=\"\" for  { set key=$order(^SKILLS(key)) quit:key=\"\"  set data=$get(^SKILLS(key)) set out=out_sep_\"{\"_\"\\\"name\\\":\\\"\"_key_\"\\\",\\\"description\\\":\\\"\"_$piece(data,\"|\",1)_\"\\\",\\\"usage_count\\\":\"_$piece(data,\"|\",3)_\"}\" set sep=\",\" } set out=out_\"]\" write out";
             // A failure here used to become an empty string, which `from_str` then turned into an
             // empty array reported as `"success": true` — "you have no skills" is what an operator
             // saw when the truth was "IRIS refused the call".
-            let raw = match xecute(iris, client, code, &ns).await {
+            let raw = match xecute(iris, client, &skill_list_code(), &ns).await {
                 Ok(v) => v,
                 Err(e) => return err_json("IRIS_EXECUTE_ERROR", &e.to_string()),
             };
-            let skills: serde_json::Value =
-                serde_json::from_str(&raw).unwrap_or(serde_json::json!([]));
-            ok_json(serde_json::json!({"success": true, "skills": skills}))
+            match json_array(&raw) {
+                Ok(skills) => ok_json(serde_json::json!({"success": true, "skills": skills})),
+                Err(e) => err_json("IRIS_EXECUTE_ERROR", &e),
+            }
         }
         "describe" => {
             let name = p.name.as_deref().unwrap_or("");
@@ -126,18 +185,16 @@ pub async fn handle_skill(
         }
         "search" => {
             let query = p.query.as_deref().unwrap_or("").to_lowercase();
-            // Bug 9: use separator variable so empty results yield "[]" not "]".
-            let code = format!(
-                "set key=\"\" set out=\"[\" set sep=\"\" for {{ set key=$order(^SKILLS(key)) quit:key=\"\"  set data=$get(^SKILLS(key)) if $find($zconvert(key_data,\"L\"),\"{}\")>0 {{ set out=out_sep_\"{{\\\"name\\\":\\\"\"_key_\"\\\",\\\"description\\\":\\\"\"_$piece(data,\"|\",1)_\"\\\"}}\" set sep=\",\" }} }} set out=out_\"]\" write out",
-                crate::objectscript::os_lit_inner(&query)
-            );
-            let raw = match xecute(iris, client, &code, &ns).await {
+            let raw = match xecute(iris, client, &skill_search_code(&query), &ns).await {
                 Ok(v) => v,
                 Err(e) => return err_json("IRIS_EXECUTE_ERROR", &e.to_string()),
             };
-            let results: serde_json::Value =
-                serde_json::from_str(&raw).unwrap_or(serde_json::json!([]));
-            ok_json(serde_json::json!({"success": true, "query": query, "results": results}))
+            match json_array(&raw) {
+                Ok(results) => ok_json(
+                    serde_json::json!({"success": true, "query": query, "results": results}),
+                ),
+                Err(e) => err_json("IRIS_EXECUTE_ERROR", &e),
+            }
         }
         "forget" => {
             let name = p.name.as_deref().unwrap_or("");
@@ -402,20 +459,16 @@ pub async fn handle_kb(
         }
         "recall" => {
             let query = p.query.as_deref().unwrap_or("").to_lowercase();
-            let top_k = p.top_k;
-            // Bug 9: use separator variable so empty results yield "[]" not "]".
-            let code = format!(
-                "set key=\"\" set out=\"[\" set sep=\"\" set count=0 for {{ set key=$order(^KBCHUNKS(key)) quit:(key=\"\" || count>={top_k})  set data=$get(^KBCHUNKS(key)) if $find($zconvert(data,\"L\"),\"{query}\")>0 {{ set out=out_sep_\"{{\\\"file\\\":\\\"\"_key_\"\\\",\\\"excerpt\\\":\\\"\"_$extract(data,1,200)_\"\\\"}}\" set sep=\",\" set count=count+1 }} }} set out=out_\"]\" write out",
-                query = crate::objectscript::os_lit_inner(&query),
-                top_k = top_k,
-            );
-            let raw = match xecute(iris, client, &code, &ns).await {
+            let raw = match xecute(iris, client, &kb_recall_code(&query, p.top_k), &ns).await {
                 Ok(v) => v,
                 Err(e) => return err_json("IRIS_EXECUTE_ERROR", &e.to_string()),
             };
-            let results: serde_json::Value =
-                serde_json::from_str(&raw).unwrap_or(serde_json::json!([]));
-            ok_json(serde_json::json!({"success": true, "query": query, "results": results}))
+            match json_array(&raw) {
+                Ok(results) => ok_json(
+                    serde_json::json!({"success": true, "query": query, "results": results}),
+                ),
+                Err(e) => err_json("IRIS_EXECUTE_ERROR", &e),
+            }
         }
         other => err_json(
             "INVALID_PARAM",
@@ -493,6 +546,48 @@ pub async fn handle_agent_info(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ObjectScript has one escape, a doubled quote. A backslash before a quote ends the literal
+    /// and leaves a syntax error, which is what these three builders produced from v0.5.0 until
+    /// R2c. The live tests (`test_skills_store_171_live`) run them; this keeps the shape out.
+    #[test]
+    fn the_store_readers_never_backslash_a_quote() {
+        let hostile = "a \"quote\" and a \\ and {braces}\n";
+        for code in [
+            skill_list_code(),
+            skill_search_code(hostile),
+            kb_recall_code(hostile, 5),
+        ] {
+            assert!(!code.contains("\\\""), "backslash-quote in: {code}");
+            assert!(
+                !code.contains('\n'),
+                "a line break splits the statement: {code}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_needle_with_a_quote_is_spliced_as_a_doubled_quote_expression() {
+        let code = skill_search_code("say \"hi\"");
+        assert!(code.contains("\"say \"\"hi\"\"\""), "{code}");
+    }
+
+    #[test]
+    fn the_recall_loop_parenthesizes_its_exit_test() {
+        // `key="" || count>=n` reads as `((key="")||count)>=n` because ObjectScript has no
+        // operator precedence, so the loop ran on past the last key into `^KBCHUNKS("")`.
+        let code = kb_recall_code("x", 3);
+        assert!(code.contains("Quit:((key=\"\")||(count>=3))"), "{code}");
+    }
+
+    #[test]
+    fn json_array_refuses_output_that_is_not_an_array() {
+        assert!(json_array("[]").is_ok());
+        assert!(json_array(" [{\"a\":1}]\n").is_ok());
+        assert!(json_array("").is_err());
+        assert!(json_array("ERROR: <SYNTAX>").is_err());
+        assert!(json_array("{\"a\":1}").is_err());
+    }
 
     /// `OBJECTSCRIPT_LEARNING` and `OBJECTSCRIPT_SKILLMCP_NAMESPACE` are process-global, and
     /// `cargo test` runs this module's tests on parallel threads. Without serialization, one
