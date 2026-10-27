@@ -162,6 +162,7 @@ Constitution → Development Workflow → Issue Closure.
 - `docs/troubleshooting.md` — common issues
 - `docs/agent-attribution.md` — caller attribution, User-Agent marker, IRIS audit guide
 - `docs/verifying-releases.md` — checking release provenance and signatures (gh attestation, cosign)
+- `docs/invariants.md` — what to declare when you add a tool, command, config key, HTTP client or session field
 
 ## Active Technologies
 

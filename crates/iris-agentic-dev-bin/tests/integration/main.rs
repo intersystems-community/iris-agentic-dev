@@ -33,6 +33,7 @@ mod test_compile_live;
 mod test_csp_logout_132;
 mod test_doc_cli_examples;
 mod test_doc_live;
+mod test_enum_commands;
 mod test_exec_live;
 mod test_host_paths_141;
 mod test_http_transport;

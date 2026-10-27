@@ -168,6 +168,12 @@ The kind of work a tool does (compile, execute, query, search, docs, source cont
 skill, kb); a server's `allow` list and environment template are written in categories.
 _Avoid_: tool group, permission
 
+**Gate class**:
+A tool's row in `CLASSIFICATION`: the write tier it needs, and whether it acts on an IRIS server (`Iris`:
+the template, `allow`, `dataPolicy` and role gates judge it against a target) or on none (`Local`: only the
+write gate applies, and the row says why). The set of `Local` tools is closed.
+_Avoid_: permission level, tool kind
+
 **Acknowledgement**:
 A flag the agent sets in its own call to lift a check meant to catch mistakes: `confirm` on a
 subject server or on a destructive call, `acknowledgePhi` on a sensitive-named global. It protects nothing from the agent;

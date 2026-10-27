@@ -421,6 +421,10 @@ pub const BEHAVIOR_ENV_VARS: &[&str] = &[
     "IAD_TEST_SCAN_PORTS",
     // 141 throwaway container image (the helper reads it in the test process, so a child never needs it)
     "IAD_THROWAWAY_IMAGE",
+    // how many documents `iris_info` lists before it stops
+    "IRIS_INFO_MAX_DOCUMENTS",
+    // the size of the in-memory call-history buffer
+    "IRIS_TELEMETRY_BUFFER_SIZE",
 ];
 
 /// A `Command` for the binary with every behavior-changing variable removed.

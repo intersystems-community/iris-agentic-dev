@@ -563,6 +563,9 @@ pub struct ToolClass {
     /// column against the advertised schema.
     pub target: TargetSource,
     pub kind: TargetKind,
+    /// Why a `Local` tool touches no IRIS server; empty for an `Iris` row. The builders that make a
+    /// row `Local` take it, so a row cannot be declared Local without saying why.
+    pub local_reason: &'static str,
     /// The tool can reach `execute_via_generator`, which PUTs, compiles and deletes an
     /// `IrisDevTmp.*` class on the target (spec 141, R5 C14). That is how iad reads over HTTP,
     /// since Atelier has no execute endpoint, so a tool that only reads can still write a class to
@@ -585,15 +588,19 @@ impl ToolClass {
         self
     }
 
-    /// The tool does not act on an IRIS server's data or code.
-    const fn local(mut self) -> Self {
+    /// The tool does not act on an IRIS server's data or code. `reason` says what it acts on
+    /// instead; the table is checked for it, and the set of Local tools is a closed list
+    /// (`tests/unit/test_enum_gate_classes.rs`).
+    const fn local(mut self, reason: &'static str) -> Self {
+        assert!(!reason.is_empty(), "a Local row needs a reason");
         self.kind = TargetKind::Local;
+        self.local_reason = reason;
         self
     }
 
     /// A local tool with no `server` parameter at all.
-    const fn local_default(self) -> Self {
-        self.on_default().local()
+    const fn local_default(self, reason: &'static str) -> Self {
+        self.on_default().local(reason)
     }
 
     const fn target(mut self, target: TargetSource) -> Self {
@@ -613,6 +620,7 @@ const fn row(
         default,
         target: TargetSource::Arg("server"),
         kind: TargetKind::Iris,
+        local_reason: "",
         scratch: false,
     }
 }
@@ -649,11 +657,14 @@ const fn mixed(
 /// `iris_execute_method` — and every tool that was ungated by code reading (FR-013).
 pub const CLASSIFICATION: &[ToolClass] = &[
     // ── read-only ────────────────────────────────────────────────────────────
-    ro("agent_history").local_default(),
+    ro("agent_history").local_default("reads this process's in-memory ring of recent tool calls"),
+    // Reaches the generator path: a scratch class on the default server.
     ro("agent_info").on_default().scratch(),
-    ro("agent_stats").local_default(),
+    ro("agent_stats").local_default("counts bundled skills and in-memory calls"),
     ro("capability_matrix").scratch(),
-    ro("check_config").local_default(),
+    ro("check_config").local_default(
+        "reports the loaded configuration; the operator can always ask what is configured",
+    ),
     ro("compare_document").target(TargetSource::Args(&["server_a", "server_b"])),
     ro("compare_namespace").target(TargetSource::Args(&["server_a", "server_b"])),
     ro("debug_capture_packet").on_default(),
@@ -671,20 +682,23 @@ pub const CLASSIFICATION: &[ToolClass] = &[
     ro("iris_database_list").scratch(),
     ro("iris_database_stats").scratch(),
     ro("iris_debug").scratch(),
-    ro("iris_doc_search").local_default(),
+    ro("iris_doc_search")
+        .local_default("searches the public documentation site, not an IRIS server"),
     ro("iris_get_log"),
     ro("iris_info"),
     ro("iris_interop_query"),
-    ro("iris_list_containers").local_default(),
+    ro("iris_list_containers")
+        .local_default("lists Docker containers on the host through the Docker daemon"),
     ro("iris_macro"),
     ro("iris_message_body").scratch(),
     ro("iris_mirror_status").scratch(),
     ro("iris_namespace_list").scratch(),
     ro("iris_production_diff").scratch(),
     ro("iris_search"),
-    ro("iris_servers").local_default(),
+    ro("iris_servers")
+        .local_default("lists the server registry from the launch settings and files on disk"),
     ro("iris_symbols"),
-    ro("iris_symbols_local").local(),
+    ro("iris_symbols_local").local("parses source files under the project directory on the host"),
     mixed(
         "iris_system_performance",
         &[
@@ -710,14 +724,15 @@ pub const CLASSIFICATION: &[ToolClass] = &[
     ro("iris_ws_close").target(TargetSource::Session),
     ro("iris_ws_open"),
     ro("journal_search").scratch(),
-    ro("kb_recall").local_default(),
+    ro("kb_recall").local_default("searches the knowledge-base items held in this process"),
     ro("mermaid_class"),
     ro("mermaid_production"),
     ro("my_access").scratch(),
     ro("query_audit_log"),
     ro("resolve_dynamic_dispatch").scratch(),
     ro("resolve_storage"),
-    ro("skill_community_list").local_default(),
+    ro("skill_community_list")
+        .local_default("lists community skills from a public index, not an IRIS server"),
     // These three read `^SKILLS` through the container's terminal and `skill_forget` kills from it:
     // they run ObjectScript on the default server, so the template, `allow` and the write gate
     // judge them. They compile no scratch class, so strict read-only leaves the three readers
@@ -740,16 +755,20 @@ pub const CLASSIFICATION: &[ToolClass] = &[
     wr("iris_generate_class").scratch(),
     wr("iris_generate_test"),
     // Local server registry, same class of state as iris_remove_server.
-    wr("iris_add_server").local_default(),
-    wr("iris_import_servers").local_default(),
+    wr("iris_add_server")
+        .local_default("writes the local server registry file, not an IRIS server"),
+    wr("iris_import_servers")
+        .local_default("writes the local server registry file, not an IRIS server"),
     // Swaps the live pool for one built from the files on disk, which activates every server
     // `iris_add_server`/`iris_import_servers` or an edited file declared since startup. The
     // registry writers are writes; the call that puts their output to use is one too (spec 141
     // T219).
-    wr("iris_reload_pool").local_default(),
+    wr("iris_reload_pool")
+        .local_default("swaps this process's connection pool for one built from the files on disk"),
     wr("iris_production_item").scratch(),
-    wr("iris_select_container").local_default(),
-    wr("iris_start_sandbox").local_default(),
+    wr("iris_select_container")
+        .local_default("points later default calls at a Docker container; talks to Docker only"),
+    wr("iris_start_sandbox").local_default("starts a throwaway Docker container on the host"),
     // Executes test classes in IRIS, so it runs arbitrary application code.
     wr("iris_test").scratch(),
     // The complete bypass of the iris_execute gate: open a session, then run anything.
@@ -757,15 +776,16 @@ pub const CLASSIFICATION: &[ToolClass] = &[
     // Stores chunks in `^KBCHUNKS` through a scratch class on the default server.
     wr("kb_index").on_default().scratch(),
     // The four stubs answer NOT_IMPLEMENTED and call no server.
-    wr("skill_community_install").local_default(),
-    wr("skill_optimize").local_default(),
-    wr("skill_propose").local_default(),
-    wr("skill_share").local_default(),
+    wr("skill_community_install")
+        .local_default("a stub that answers NOT_IMPLEMENTED and calls no server"),
+    wr("skill_optimize").local_default("a stub that answers NOT_IMPLEMENTED and calls no server"),
+    wr("skill_propose").local_default("a stub that answers NOT_IMPLEMENTED and calls no server"),
+    wr("skill_share").local_default("a stub that answers NOT_IMPLEMENTED and calls no server"),
     // ── destructive tier (spec 073, ☠ in docs/tools.md) ──────────────────────
     de("global_kill").scratch(),
     de("iris_namespace_create").scratch(),
     // Local state, not IRIS — the enforcement test asserts the saved server survives.
-    de("iris_remove_server").local_default(),
+    de("iris_remove_server").local_default("removes an entry from the local server registry file"),
     de("skill_forget").on_default(),
     // ── per-action ───────────────────────────────────────────────────────────
     // Mostly listings; the seven create/update/delete actions are the destructive tier.
@@ -800,7 +820,7 @@ pub const CLASSIFICATION: &[ToolClass] = &[
         &[("list", WriteClass::ReadOnly)],
         WriteClass::Write,
     )
-    .local_default(),
+    .local_default("lists, selects and starts Docker containers; talks to Docker only"),
     // run/start/stop execute test code in IRIS. `check` starts the line monitor to see that it
     // can start and stops it again, so it changes instance state and is a write (spec 141 T219);
     // only `report`, which reads the counters back, is a read.
@@ -1517,11 +1537,11 @@ mod tests {
         assert_eq!(on_default.target, TargetSource::Default);
         assert_eq!(on_default.kind, TargetKind::Iris);
 
-        let local = ro("iris_info").local();
+        let local = ro("iris_info").local("test");
         assert_eq!(local.kind, TargetKind::Local);
         assert_eq!(local.target, TargetSource::Arg("server"));
 
-        let local_default = ro("iris_info").local_default();
+        let local_default = ro("iris_info").local_default("test");
         assert_eq!(local_default.kind, TargetKind::Local);
         assert_eq!(local_default.target, TargetSource::Default);
 
