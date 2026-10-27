@@ -705,9 +705,11 @@ fn message_body_reads_message_id_once_the_phi_gate_lets_the_call_through() {
         "iris_message_body",
         serde_json::json!({"message_id": "1", "acknowledgePhi": true}),
     );
+    // With the acknowledgement the call may succeed (a fixture message 1 can exist) or fail for
+    // another reason; either way it must not be the handler's own parameter check.
     assert_ne!(
-        code_of(&given),
-        "INVALID_PARAMS",
+        given.get("error_code").and_then(|v| v.as_str()),
+        Some("INVALID_PARAMS"),
         "with a message_id the handler gets past its own check: {given}"
     );
 }
