@@ -237,6 +237,17 @@ current set for every tool is in [docs/tools.md](tools.md).
 
 ---
 
+## A redirect, or a timeout from GitHub or the LLM API
+
+No client sends a credential or session cookie along a redirect. A gateway that answers with a 3xx
+(http to https, or a trailing slash added) returns that 3xx as the error: use the final URL. That
+holds for the LLM client too, so an `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` that redirects fails
+with `LLM API error 30x`; point it at the address the redirect leads to.
+
+The clients that read skill manifests, skills and version tags from GitHub connect within 30
+seconds and finish a request within 120. A request that outruns either returns an error and
+nothing is installed or loaded.
+
 ## Verbose HTTP logging
 
 ```bash

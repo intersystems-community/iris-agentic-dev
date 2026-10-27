@@ -227,7 +227,9 @@ Pass `probe: true` to fan out a parallel Atelier REST probe to every server in t
 (5-second timeout each). Each entry then includes `reachable`, `auth`, `latency_ms`,
 `iris_version`, `atelier_version`, and `error`. The probe requests each entry's own
 `base_url`; through 1.4.1 it rebuilt a URL from host and port, so a prefixed instance was
-reported healthy on the strength of the gateway root answering.
+reported healthy on the strength of the gateway root answering. A probe signs in with the
+credential it was given on a session of its own and ends that session afterwards, so it never
+reports `auth: true` for a wrong password because another call has the account's session open.
 
 ### `iris_add_server`
 
@@ -686,7 +688,8 @@ runs, and `ROWS_LIMIT_EXCEEDED` stops it over the cap. A statement whose rows ca
 run: it is refused with `ROWS_NOT_COUNTABLE`, a fixed rule. That covers a `DELETE` or `UPDATE` over
 several tables or a join, a `TRUNCATE` without `TABLE`, and a modifier iad does not know.
 `DELETE table`, with or without `FROM`, and `%NOLOCK`, `%NOJOURN` and the other documented
-modifiers are counted. A statement that starts with anything but a statement word (a leading `;` or `(`) is
+modifiers are counted. `%NOUNIQCHECK` and `%STARTTABLE` are not modifiers to IRIS 2026.2, which
+reads each as a table name, so `DELETE %NOUNIQCHECK FROM t` is refused. A statement that starts with anything but a statement word (a leading `;` or `(`) is
 `DDL_NOT_ALLOWED`. Earlier versions ran an uncounted statement and set `rows_check_skipped`; that
 field is gone.
 
@@ -2529,7 +2532,7 @@ called a refusal.
 | `IRIS_RUNTIME_ERROR`                  | `iris_execute` code raised an ObjectScript error; IRIS's text is in `output`                                                                                                                                                                                                            |
 | `CONFIG_INVALID`                      | A configuration file or entry does not parse or validate; the message names the file, line and column                                                                                                                                                                                   |
 | `PHI_POLICY_BLOCKED`                  | `iris_message_body` under `dataPolicy = "block"`                                                                                                                                                                                                                                        |
-| `PHI_ACK_REQUIRED`                    | `iris_message_body` under `allow` without `acknowledgePhi: true`                                                                                                                                                                                                                        |
+| `PHI_ACK_REQUIRED`                    | `iris_message_body`, or `iris_interop_query` with `search_table`, under `allow` without `acknowledgePhi: true`                                                                                                                                                                          |
 | `BODY_NOT_REDACTABLE`                 | Content under `dataPolicy = "redact"` that iad cannot redact (anything but HL7 v2)                                                                                                                                                                                                      |
 | `COMPILE_TIME_EXEC_BLOCKED`           | A document would run code while it compiles — see the [compile-time gate](connecting.md#compile-time-gate)                                                                                                                                                                              |
 | `STORED_SOURCE_UNREADABLE`            | `iris_compile` target exists but its stored source cannot be read                                                                                                                                                                                                                       |
