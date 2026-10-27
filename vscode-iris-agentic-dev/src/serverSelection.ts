@@ -72,6 +72,15 @@ export interface ConnLayers<T> {
 }
 
 /**
+ * A setting's value as the user set it: the user layer, else the default.
+ * `get()` would let a workspace's `.vscode/settings.json` override it, and
+ * these settings decide whether the connection is encrypted and verified.
+ */
+export function userLevelValue<T>(layers: ConnLayers<T> | undefined): T | undefined {
+  return layers?.globalValue ?? layers?.defaultValue;
+}
+
+/**
  * The effective `objectscript.conn`: the layers merged, workspace over user,
  * as `get()` returns them. Undefined when no layer sets it.
  */

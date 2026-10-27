@@ -12,6 +12,7 @@ import {
   mergeConn,
   selectNamedServer,
   ServerScopes,
+  userLevelValue,
 } from './serverSelection';
 
 interface ObjectScriptConn {
@@ -157,11 +158,14 @@ export class IrisDevMcpProvider
     const namespaceOverride = vscode.workspace.getConfiguration('iris-agentic-dev').get<string>('namespace') || '';
     this.log.info(`iris-agentic-dev: namespaceOverride = ${namespaceOverride || '(none)'}`);
 
-    const schemeOverride = vscode.workspace.getConfiguration('iris-agentic-dev').get<string>('scheme') || '';
+    // scheme and tlsVerify decide whether the connection is encrypted and
+    // verified, so only the user's own value counts (see userLevelValue).
+    const iadConfig = vscode.workspace.getConfiguration('iris-agentic-dev');
+    const schemeOverride = userLevelValue(iadConfig.inspect<string>('scheme')) || '';
     this.log.info(`iris-agentic-dev: schemeOverride = ${schemeOverride || '(none)'}`);
 
     // TLS verification: disabled if iris-agentic-dev.tlsVerify=false OR http.proxyStrictSSL=false.
-    const tlsVerifySetting = vscode.workspace.getConfiguration('iris-agentic-dev').get<boolean>('tlsVerify', true);
+    const tlsVerifySetting = userLevelValue(iadConfig.inspect<boolean>('tlsVerify')) ?? true;
     const proxyStrictSSL = vscode.workspace.getConfiguration('http').get<boolean>('proxyStrictSSL', true);
     const tlsVerify = tlsVerifySetting && proxyStrictSSL;
     this.log.info(`iris-agentic-dev: tlsVerify=${tlsVerify} (iris-agentic-dev.tlsVerify=${tlsVerifySetting}, http.proxyStrictSSL=${proxyStrictSSL})`);

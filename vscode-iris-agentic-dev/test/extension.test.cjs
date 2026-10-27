@@ -35,7 +35,7 @@ const sectionsRead = [];
 // `conn` is one flat object set at the user level. `connScopes` sets the
 // layers apart, as VS Code reports them: `get` returns them merged, `inspect`
 // returns each one.
-function useConfig({ conn, connScopes, user, workspace, iad = {} }) {
+function useConfig({ conn, connScopes, user, workspace, iad = {}, iadLayers = {} }) {
   const layers = connScopes ?? { globalValue: conn };
   const merged = Object.values(layers).some((l) => l !== undefined)
     ? {
@@ -62,7 +62,19 @@ function useConfig({ conn, connScopes, user, workspace, iad = {} }) {
       };
     }
     if (section === "iris-agentic-dev") {
-      return { get: (k, d) => ({ serverPath: fakeBinary, ...iad })[k] ?? d };
+      // `iad` is a flat user-level value. `iadLayers` sets a key's layers
+      // apart, as VS Code reports them: `get` returns the winner (workspace
+      // over user), `inspect` returns each layer.
+      const flat = { serverPath: fakeBinary, ...iad };
+      const merged = (k) => {
+        const l = iadLayers[k];
+        if (!l) return flat[k];
+        return l.workspaceFolderValue ?? l.workspaceValue ?? l.globalValue ?? l.defaultValue ?? flat[k];
+      };
+      return {
+        get: (k, d) => merged(k) ?? d,
+        inspect: (k) => iadLayers[k] ?? (k in flat ? { globalValue: flat[k] } : undefined),
+      };
     }
     return { get: (_k, d) => d };
   };
@@ -92,6 +104,13 @@ test("package.json declares limited support for untrusted workspaces", () => {
 test("serverPath is machine-scoped, so a workspace cannot set it", () => {
   const prop = pkg.contributes.configuration.properties["iris-agentic-dev.serverPath"];
   assert.equal(prop.scope, "machine");
+});
+
+test("scheme and tlsVerify are application-scoped, so a workspace cannot set them", () => {
+  for (const key of ["scheme", "tlsVerify"]) {
+    const prop = pkg.contributes.configuration.properties[`iris-agentic-dev.${key}`];
+    assert.equal(prop.scope, "application", key);
+  }
 });
 
 test("an untrusted workspace starts nothing and reads no workspace connection or servers", async () => {
@@ -320,4 +339,51 @@ test("a conn set only in the workspace has no user-level password to inherit", a
     workspaceValue: { active: true, host: "ci.example", port: 80 },
   });
   assert.equal(def.env.IRIS_PASSWORD, undefined);
+});
+
+// --- scheme and tlsVerify: only the user's own value counts --------------------
+
+async function launchIad(iadLayers) {
+  useConfig({ conn: USER_CONN, iadLayers });
+  const provider = new IrisDevMcpProvider(context());
+  try {
+    const [def] = await provider.provideMcpServerDefinitions(token);
+    return def;
+  } finally {
+    provider.dispose();
+  }
+}
+
+test("a workspace tlsVerify=false does not switch off the user's certificate check", async () => {
+  for (const layer of ["workspaceValue", "workspaceFolderValue"]) {
+    const def = await launchIad({ tlsVerify: { globalValue: true, [layer]: false } });
+    assert.equal(def.env.IRIS_TLS_VERIFY, undefined, layer);
+  }
+});
+
+test("a workspace tlsVerify=false with nothing set by the user leaves the check on", async () => {
+  const def = await launchIad({ tlsVerify: { defaultValue: true, workspaceValue: false } });
+  assert.equal(def.env.IRIS_TLS_VERIFY, undefined);
+});
+
+test("the user's own tlsVerify=false still turns the check off", async () => {
+  const def = await launchIad({ tlsVerify: { defaultValue: true, globalValue: false } });
+  assert.equal(def.env.IRIS_TLS_VERIFY, "false");
+});
+
+test("a workspace scheme=http does not downgrade the user's https", async () => {
+  for (const layer of ["workspaceValue", "workspaceFolderValue"]) {
+    const def = await launchIad({ scheme: { globalValue: "https", [layer]: "http" } });
+    assert.equal(def.env.IRIS_SCHEME, "https", layer);
+  }
+});
+
+test("a workspace scheme with nothing set by the user is ignored", async () => {
+  const def = await launchIad({ scheme: { defaultValue: "", workspaceValue: "http" } });
+  assert.equal(def.env.IRIS_SCHEME, undefined);
+});
+
+test("the user's own scheme is used", async () => {
+  const def = await launchIad({ scheme: { defaultValue: "", globalValue: "http" } });
+  assert.equal(def.env.IRIS_SCHEME, "http");
 });
