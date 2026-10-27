@@ -54,7 +54,7 @@ mod test_doc_live;
 mod test_doc_search_live;
 mod test_e2e;
 mod test_e2e_all_tools;
-//mod test_enum_tools_work_live;
+mod test_enum_tools_work_live;
 mod test_environment_restriction_live;
 mod test_exec_sql_131_live;
 mod test_execute_runs_once_live;
