@@ -83,6 +83,7 @@ mod test_elicitation_sweep;
 mod test_endpoint_tls_141;
 mod test_enum_contract;
 mod test_enum_gate_classes;
+mod test_enum_no_leaks;
 mod test_env_gate;
 mod test_env_guard_141;
 mod test_env_restore_guard_141;
