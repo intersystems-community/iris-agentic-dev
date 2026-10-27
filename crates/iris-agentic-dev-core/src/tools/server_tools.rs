@@ -187,16 +187,15 @@ pub async fn probe_base_url(
     username: &str,
     password: &str,
 ) -> ProbeResult {
-    use crate::iris::http::{client_with_store, ClientKind};
-
-    // The probe joins the CSP session of the account it signs in as on that server, never another
-    // account's (171 S7).
-    let store = crate::iris::csp_session::store_for_primary(base_url, username);
-    let client = match client_with_store(tls, ClientKind::Probe, store) {
-        Ok(c) => c,
+    // The probe tests the credential it was given, so it holds a jar of its own: a session already
+    // open for the same account would answer for a wrong password. It ends the session it opens.
+    let session = match crate::iris::http::probe_session(tls) {
+        Ok(s) => s,
         Err(e) => return unreachable_probe(format!("Failed to build HTTP client: {e}")),
     };
-    probe_with_client(&client, base_url, namespace, username, password).await
+    let result = probe_with_client(&session.client, base_url, namespace, username, password).await;
+    session.end(tls).await;
+    result
 }
 
 async fn probe_with_client(

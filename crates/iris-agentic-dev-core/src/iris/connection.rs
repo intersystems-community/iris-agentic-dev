@@ -757,10 +757,11 @@ impl IrisConnection {
 
     /// Probe this connection: fetch IRIS version, Atelier API level, and SystemMode.
     pub async fn probe(&mut self) {
-        let client = match self.client(super::http::ClientKind::Probe) {
-            Ok(c) => c,
-            Err(_) => return,
+        // A jar of the probe's own, so no answer comes from a session another call opened.
+        let Ok(session) = super::http::probe_session(&self.tls) else {
+            return;
         };
+        let client = session.client.clone();
 
         let url = self.atelier_url("/");
         if let Ok(resp) = client
@@ -790,6 +791,7 @@ impl IrisConnection {
         // Detect SystemMode via SQL against %SYS global (issue #26).
         // One extra round-trip at startup; result cached for session lifetime.
         let mode = self.detect_system_mode(&client).await;
+        session.end(&self.tls).await;
         self.system_mode = mode;
         tracing::info!(
             host = %self.base_url,

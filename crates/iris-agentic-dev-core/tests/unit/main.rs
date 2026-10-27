@@ -157,6 +157,7 @@ mod test_primary_cookie_store_171;
 mod test_private_file_141;
 mod test_probe_host_141;
 mod test_probe_server_offline;
+mod test_probe_session_171;
 mod test_probe_unreachable_141;
 mod test_read_mode_allowlist_141;
 mod test_read_only_strict_141;

@@ -102,8 +102,8 @@ impl TlsSetting {
 pub enum ClientKind {
     /// Tool calls: 30 s, in the CSP session of the connection's account.
     Call,
-    /// A connection probe: connect in 5 s, answer in 10 s, in the CSP session of the account it
-    /// signs in as.
+    /// A connection probe: connect in 5 s, answer in 10 s. Built by [`probe_session`], which gives it
+    /// a CSP jar of its own.
     Probe,
     /// `iris_search`'s synchronous request: no client timeout (the request sets its own), no cookies.
     Search,
@@ -169,6 +169,41 @@ pub fn client_with_store(
             .timeout(Duration::from_secs(10)),
     };
     Ok(b.build()?)
+}
+
+/// A probe's client and the CSP session store that belongs to that probe alone.
+///
+/// IRIS reads `CSPSESSIONID` before `Authorization`, so a probe that joined the store of the account
+/// it signs in as was answered from the session already open for that account, and a wrong password
+/// read as `auth: true`. A probe holds a jar of its own: its requests carry the credential it was
+/// given and nothing else, and [`ProbeSession::end`] logs out any session the probe opened, so the
+/// probe leaves nothing behind for the web app's timeout to reap.
+pub struct ProbeSession {
+    pub client: reqwest::Client,
+    store: Arc<CspSessionStore>,
+}
+
+/// A [`ProbeSession`] whose certificate setting is `tls`.
+pub fn probe_session(tls: &TlsSetting) -> anyhow::Result<ProbeSession> {
+    let store = Arc::new(CspSessionStore::new());
+    let client = client_with_store(tls, ClientKind::Probe, store.clone())?;
+    Ok(ProbeSession { client, store })
+}
+
+impl ProbeSession {
+    /// End every CSP session the probe opened. A failure is not reported: the session times out.
+    pub async fn end(self, tls: &TlsSetting) {
+        let urls = self.store.logout_urls();
+        if urls.is_empty() {
+            return;
+        }
+        let Ok(client) = client_with_store(tls, ClientKind::Logout, self.store.clone()) else {
+            return;
+        };
+        for url in urls {
+            let _ = client.get(url).timeout(Duration::from_secs(3)).send().await;
+        }
+    }
 }
 
 /// A client for a host that is not IRIS (the docs site): it carries no credential of the
