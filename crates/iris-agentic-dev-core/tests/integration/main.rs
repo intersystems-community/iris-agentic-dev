@@ -16,6 +16,7 @@ fn isolate_the_test_process() {
 }
 
 mod enum_rejection;
+mod live_rig_171;
 mod nopws_101;
 mod params_batch1;
 mod params_batch2;
@@ -45,6 +46,7 @@ mod test_coverage_diag_141_live;
 mod test_coverage_dispatch_141_live;
 mod test_coverage_live;
 mod test_creds_141_live;
+mod test_debug_source_map_171_live;
 mod test_delete_callback_oid_live;
 mod test_discovery_docker_live;
 mod test_dispatch_formal_spec_live;
@@ -53,6 +55,7 @@ mod test_doc_live;
 mod test_doc_search_live;
 mod test_e2e;
 mod test_e2e_all_tools;
+mod test_enum_tools_work_live;
 mod test_environment_restriction_live;
 mod test_exec_sql_131_live;
 mod test_execute_runs_once_live;
