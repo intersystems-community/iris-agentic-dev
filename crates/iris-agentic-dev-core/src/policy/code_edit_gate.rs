@@ -728,16 +728,36 @@ pub fn included_documents(content: &str, doc_name: &str) -> Vec<String> {
 /// A SQL comment that mentions a directive after a `CREATE` is a false block, which is the safe
 /// side.
 fn find_ddl_code(sql: &str) -> Option<Hit> {
-    static STATEMENT: OnceLock<Regex> = OnceLock::new();
-    let start = regex(&STATEMENT, r"(?i)\b(?:create|alter)\b")
-        .find(sql)?
-        .start();
+    let start = ddl_start(sql)?;
     find_directive(&blank(&sql[start..], Blank::COMMENTS_AND_STRINGS)).map(|hit| Hit {
         offset: start + hit.offset,
         what: "a preprocessor directive in SQL that creates code",
         remediation: REMEDY_DDL,
         ..hit
     })
+}
+
+/// Where the first `CREATE` or `ALTER` starts in `sql`.
+fn ddl_start(sql: &str) -> Option<usize> {
+    static STATEMENT: OnceLock<Regex> = OnceLock::new();
+    regex(&STATEMENT, r"(?i)\b(?:create|alter)\b")
+        .find(sql)
+        .map(|m| m.start())
+}
+
+/// The first code-dictionary table token in `text`, matched the way the rest of the gate matches:
+/// white space gone, uppercased, in both the plain and the punctuation-flattened form.
+fn first_sql_code_table(text: &str) -> Option<&'static str> {
+    let normalized: String = text
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(|c| c.to_uppercase())
+        .collect();
+    let flattened = flatten_punctuation(&normalized);
+    SQL_CODE_TABLE_TOKENS
+        .iter()
+        .find(|token| normalized.contains(*token) || flattened.contains(*token))
+        .copied()
 }
 
 fn earliest(hits: impl IntoIterator<Item = Option<Hit>>) -> Option<Hit> {
@@ -842,14 +862,17 @@ pub fn check_sql_code_edit(sql: &str, server_name: &str) -> Option<serde_json::V
     // prints a legible error. A comment is not code, so one that merely mentions the dictionary
     // blocks nothing.
     let tokens = crate::sql_lex::lex(sql);
-    let normalized: String = crate::sql_lex::code(&tokens)
+    let lexed: String = crate::sql_lex::code(&tokens)
         .flat_map(|t| t.text.chars())
-        .filter(|c| !c.is_whitespace())
-        .flat_map(|c| c.to_uppercase())
         .collect();
-    let flattened = flatten_punctuation(&normalized);
-    for token in SQL_CODE_TABLE_TOKENS {
-        if normalized.contains(token) || flattened.contains(token) {
+    if let Some(token) = first_sql_code_table(&lexed) {
+        return Some(error(sql, token, server_name));
+    }
+    // DDL with an ObjectScript body: `--` there is two unary minuses, not a comment, so what
+    // follows it runs. The lexer drops it as a SQL comment, so the text from the first CREATE or
+    // ALTER on is read a second time with its comments, and either reading refuses.
+    if let Some(start) = ddl_start(sql) {
+        if let Some(token) = first_sql_code_table(&sql[start..]) {
             return Some(error(sql, token, server_name));
         }
     }
