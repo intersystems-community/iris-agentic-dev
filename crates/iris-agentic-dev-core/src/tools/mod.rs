@@ -2368,6 +2368,8 @@ Write "OK:"_rs.%ROWCOUNT"#,
 }
 
 /// Statement modifiers IRIS accepts between `UPDATE`/`DELETE` and the table (`DELETE %NOLOCK FROM t`).
+/// `%NOUNIQCHECK` and `%STARTTABLE` are not here: IRIS 2026.2 reads both as a table name, so a
+/// count that skipped them would name a different table than the write.
 const DML_MODIFIERS: &[&str] = &[
     "NOCHECK",
     "NOFPLAN",
@@ -2375,10 +2377,8 @@ const DML_MODIFIERS: &[&str] = &[
     "NOJOURN",
     "NOLOCK",
     "NOTRIGGER",
-    "NOUNIQCHECK",
     "PROFILE",
     "PROFILE_ALL",
-    "STARTTABLE",
 ];
 
 /// The leading `UPDATE`, `DELETE` or `TRUNCATE` of a DML statement, and where its operands start in
