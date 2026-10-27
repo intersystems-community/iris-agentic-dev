@@ -196,9 +196,11 @@ async fn an_operator_who_allows_admin_keeps_the_connection_tools() {
 
 #[tokio::test]
 async fn the_tools_that_only_read_local_state_are_not_gated_by_allow() {
-    // Skills, the knowledge base and the server list stay available under a narrow `allow`.
+    // The registry-backed knowledge search and the server list stay available under a narrow
+    // `allow`. The skill tools that run code on the default server do not (R2, in
+    // `test_skill_kb_gate_171`).
     let rig = rig("[policy.default]\nallow = [\"query\"]\n");
-    for tool in ["skill_list", "kb_recall", "check_config", "iris_servers"] {
+    for tool in ["kb_recall", "check_config", "iris_servers"] {
         let args = if tool == "kb_recall" {
             json!({"query": "x"})
         } else {

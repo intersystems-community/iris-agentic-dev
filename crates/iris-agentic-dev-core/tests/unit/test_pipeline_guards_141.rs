@@ -151,7 +151,6 @@ fn a_local_tool_is_one_that_does_not_act_on_an_iris_servers_data() {
     // The set is fixed on purpose: a tool joins it only by a decision, not by a default.
     const LOCAL: &[&str] = &[
         "agent_history",
-        "agent_info",
         "agent_stats",
         "check_config",
         "iris_add_server",
@@ -165,19 +164,11 @@ fn a_local_tool_is_one_that_does_not_act_on_an_iris_servers_data() {
         "iris_servers",
         "iris_start_sandbox",
         "iris_symbols_local",
-        "kb",
-        "kb_index",
         "kb_recall",
-        "skill",
-        "skill_community",
         "skill_community_install",
         "skill_community_list",
-        "skill_describe",
-        "skill_forget",
-        "skill_list",
         "skill_optimize",
         "skill_propose",
-        "skill_search",
         "skill_share",
     ];
     let mut local: Vec<&str> = CLASSIFICATION

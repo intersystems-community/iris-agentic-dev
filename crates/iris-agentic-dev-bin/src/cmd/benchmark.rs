@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use clap::Args;
+use iris_agentic_dev_core::benchmark::target::{BenchTarget, GatedTarget};
 use iris_agentic_dev_core::benchmark::{
-    acquire_lock, cli_dispatch, load_embedded_tasks, release_lock, run_suite, BenchmarkComparison,
-    BenchmarkMode, BenchmarkResult, LockResult,
+    acquire_lock_via, cli_dispatch, load_embedded_tasks, release_lock_via, run_suite_via,
+    BenchmarkComparison, BenchmarkMode, BenchmarkResult, LockResult,
 };
 use iris_agentic_dev_core::generate::LlmClient;
 use iris_agentic_dev_core::iris::{
@@ -68,8 +69,10 @@ impl BenchmarkCommand {
     }
 
     pub async fn run(self) -> Result<()> {
-        // Every task compiles scratch classes on the server, which strict read-only turns off.
-        // The check comes first: nothing is read, discovered or sent before it.
+        // Every task compiles classes on the server and runs code in it. Strict read-only is
+        // checked first: nothing is read, discovered or sent before it. Every step after that goes
+        // through the tool pipeline (`GatedTarget`), so the environment template, `allow`, the write
+        // gate and the role gate answer for each one, as they do for `capability-matrix`.
         if let Some(refusal) = iris_agentic_dev_core::tools::target::cli_strict_refusal("benchmark")
         {
             eprintln!("{refusal}");
@@ -139,18 +142,15 @@ impl BenchmarkCommand {
             }
         };
 
-        let client = iris.client(iris_agentic_dev_core::iris::http::ClientKind::Call)?;
+        let tools = super::dispatch::build_tools(iris)?;
+        let target = GatedTarget::new(&tools);
 
         // FR-013: reject a run against a container already in use by another active run.
         let container_name = self.host.clone().unwrap_or_else(|| self.namespace.clone());
-        let lock = acquire_lock(
-            &iris,
-            &client,
-            &self.namespace,
-            &container_name,
-            self.max_time_s,
-        )
-        .await;
+        let lock =
+            acquire_lock_via(&target, &self.namespace, &container_name, self.max_time_s).await;
+        // A gate that refuses the lock refuses the run: nothing has been compiled.
+        exit_if_refused(&target);
         if lock == LockResult::AlreadyRunning {
             eprintln!(
                 "Error [BENCHMARK_RUN_IN_PROGRESS]: another benchmark run is already in \
@@ -161,31 +161,29 @@ impl BenchmarkCommand {
             crate::exit(1);
         }
 
-        let run_result = self.run_inner(&iris, &client, &skill_content).await;
-        release_lock(&iris, &client, &self.namespace, &container_name).await;
+        let run_result = self.run_inner(&target, &skill_content).await;
+        release_lock_via(&target, &self.namespace, &container_name).await;
+        // A gate that refused a step part-way through refuses the run, and the partial table of
+        // tasks is not printed as a result. The lock is back first.
+        exit_if_refused(&target);
         run_result
     }
 
-    async fn run_inner(
-        &self,
-        iris: &IrisConnection,
-        client: &reqwest::Client,
-        skill_content: &str,
-    ) -> Result<()> {
+    async fn run_inner(&self, target: &GatedTarget<'_>, skill_content: &str) -> Result<()> {
         let tasks = load_embedded_tasks().context("loading benchmark task suite")?;
 
-        let iris_version = iris
-            .execute_via_generator("write $ZVERSION", &self.namespace, client)
+        let iris_version = target
+            .run_objectscript("write $ZVERSION", &self.namespace)
             .await
             .unwrap_or_else(|_| "unknown".to_string());
+        stop_if_refused(target)?;
 
         let mut result: BenchmarkResult = match self.mode.as_str() {
             "mcp" => {
                 let mut r = tokio::time::timeout(
                     std::time::Duration::from_secs(self.max_time_s),
-                    run_suite(
-                        iris,
-                        client,
+                    run_suite_via(
+                        target,
                         &self.namespace,
                         &tasks,
                         skill_content,
@@ -196,10 +194,10 @@ impl BenchmarkCommand {
                 .context("benchmark run timed out")?;
                 r.mode = Some(BenchmarkMode::Mcp);
 
-                if self.baseline {
+                if self.baseline && !target.refused() {
                     let baseline_result = tokio::time::timeout(
                         std::time::Duration::from_secs(self.max_time_s),
-                        run_suite(iris, client, &self.namespace, &tasks, "", &iris_version),
+                        run_suite_via(target, &self.namespace, &tasks, "", &iris_version),
                     )
                     .await
                     .context("baseline run timed out")?;
@@ -235,9 +233,8 @@ impl BenchmarkCommand {
 
                 let mut r = tokio::time::timeout(
                     std::time::Duration::from_secs(self.max_time_s),
-                    cli_dispatch::run_cli_dispatch_suite(
-                        iris,
-                        client,
+                    cli_dispatch::run_cli_dispatch_suite_via(
+                        target,
                         &self.namespace,
                         &tasks,
                         skill_content,
@@ -249,7 +246,7 @@ impl BenchmarkCommand {
                 .await
                 .context("CLI dispatch benchmark run timed out")?;
 
-                if self.baseline {
+                if self.baseline && !target.refused() {
                     let baseline_config = cli_dispatch::CliDispatchConfig {
                         binary_path: cli_dispatch::iris_dev_bin(),
                         max_iterations: self.max_iterations,
@@ -259,9 +256,8 @@ impl BenchmarkCommand {
                     };
                     let baseline_result = tokio::time::timeout(
                         std::time::Duration::from_secs(self.max_time_s),
-                        cli_dispatch::run_cli_dispatch_suite(
-                            iris,
-                            client,
+                        cli_dispatch::run_cli_dispatch_suite_via(
+                            target,
                             &self.namespace,
                             &tasks,
                             "",
@@ -280,6 +276,9 @@ impl BenchmarkCommand {
                 anyhow::bail!("UNKNOWN_MODE: {other}");
             }
         };
+
+        // A refusal part-way through ends the run before anything is printed.
+        stop_if_refused(target)?;
 
         // --compare: load a prior result and compute deltas
         if let Some(compare_path) = &self.compare {
@@ -313,6 +312,23 @@ impl BenchmarkCommand {
             env.push(("IRIS_PASSWORD".to_string(), password.clone()));
         }
         env
+    }
+}
+
+/// End the run, without printing a result, when a gate has refused a step. `run` prints the
+/// refusal and exits once the lock is released.
+fn stop_if_refused(target: &GatedTarget<'_>) -> Result<()> {
+    if target.was_refused() {
+        anyhow::bail!("a gate refused a step of the run");
+    }
+    Ok(())
+}
+
+/// Print a gate's refusal, the body the MCP server would send, and exit 1.
+fn exit_if_refused(target: &GatedTarget<'_>) {
+    if let Some(refusal) = target.take_refusal() {
+        eprintln!("{refusal}");
+        crate::exit(1);
     }
 }
 

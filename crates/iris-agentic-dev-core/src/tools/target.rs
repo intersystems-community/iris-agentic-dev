@@ -95,6 +95,10 @@ pub struct ResolvedCall {
     pub class: WriteClass,
     pub categories: Vec<ToolCategory>,
     pub kind: TargetKind,
+    /// Why the call's server leg is not run, for a tool that falls back to what it holds without
+    /// it ([`write_gate::falls_back_to_bundled`]): the policy refused it or the configuration does
+    /// not parse. `{error_code, kind, lift, server, message}`.
+    pub server_leg_skipped: Option<Value>,
     pub primary: ResolvedServer,
     /// The second server of `compare_*`.
     pub others: Vec<ResolvedServer>,
@@ -259,6 +263,33 @@ pub fn cli_strict_refusal(tool: &str) -> Option<Value> {
         "default",
         &[],
     ))
+}
+
+/// A gate's answer as a JSON body.
+fn result_body(result: &CallToolResult) -> Value {
+    result
+        .structured_content
+        .clone()
+        .or_else(|| {
+            result
+                .content
+                .iter()
+                .find_map(|c| c.as_text())
+                .and_then(|t| serde_json::from_str(&t.text).ok())
+        })
+        .unwrap_or_else(|| json!({}))
+}
+
+/// The part of a refusal (or a configuration error) a caller needs to know why a call's server
+/// leg was not run: the code, the kind and what lifts it when the refusal carries them.
+fn skipped_leg(body: &Value) -> Value {
+    json!({
+        "error_code": body["error_code"],
+        "kind": body["refusal"]["kind"],
+        "lift": body["refusal"]["lift"],
+        "server": body["refusal"]["server"],
+        "message": body["message"].as_str().or_else(|| body["error"].as_str()),
+    })
 }
 
 fn read_only_strict_body(tool: &str, from: &str) -> Value {
@@ -471,6 +502,14 @@ impl IrisTools {
     /// `tokio::spawn`. A handler that calls another IRIS tool must go through the pipeline again.
     pub fn target(&self) -> Result<Arc<ResolvedCall>, McpError> {
         CALL_TARGET.try_with(Arc::clone).map_err(|_| not_resolved())
+    }
+
+    /// Why this call's server leg is skipped (R2b), or `None` when it runs. Outside a pipeline
+    /// scope the leg is not skipped by anything this knows of, and `None` is the answer.
+    pub fn server_leg_skipped(&self) -> Option<Value> {
+        self.target()
+            .ok()
+            .and_then(|t| t.server_leg_skipped.clone())
     }
 
     /// The primary target's connection, or `IRIS_UNREACHABLE`.
@@ -721,9 +760,16 @@ impl IrisTools {
         // answer from the previous load and let one more write through after the operator turned
         // writes off. FR-002 has to hold on the very next call, in both directions.
         self.check_reload().await;
+        // A reader that can answer from what it holds goes on with its server leg skipped.
+        let mut skipped: Option<Value> = None;
         if let Some(invalid) = self.config_invalid(name) {
-            self.record_refused(name);
-            return invalid.map(Into::into).map_err(Into::into);
+            if write_gate::falls_back_to_bundled(name) {
+                let refused = invalid?;
+                skipped = Some(skipped_leg(&result_body(&refused)));
+            } else {
+                self.record_refused(name);
+                return invalid.map(Into::into).map_err(Into::into);
+            }
         }
         let mut args = args;
         if let Some(a) = args.as_mut() {
@@ -732,7 +778,7 @@ impl IrisTools {
         let empty = Map::new();
         let arg_map = args.as_ref().unwrap_or(&empty);
 
-        let resolved = match self.resolve_call(name, arg_map).await {
+        let mut resolved = match self.resolve_call(name, arg_map).await {
             Ok(r) => r,
             Err(Early::Refused(result)) => {
                 self.record_refused(name);
@@ -811,9 +857,24 @@ impl IrisTools {
         // whole argument map, not a handler's subset of it.
         if resolved.kind == TargetKind::Iris {
             let full = Value::Object(arg_map.clone());
-            for server in resolved.servers() {
+            // With the configuration unreadable and the server leg already skipped, nothing here
+            // asks the server anything, so no server's policy has anything to judge.
+            let judge = skipped.is_none();
+            for server in resolved.servers().filter(|_| judge) {
                 if let Some(refusal) = self.policy_refusal_on(server, &resolved, &full) {
                     self.audit_call(name, server, arg_map, "blocked", Some("policy"));
+                    // A reader that falls back to what it holds is not refused: its server leg
+                    // is, and it says so.
+                    if write_gate::falls_back_to_bundled(name) {
+                        match refusal {
+                            Ok(r) => skipped = Some(skipped_leg(&result_body(&r))),
+                            Err(e) => {
+                                self.record_refused(name);
+                                return Err(e.into());
+                            }
+                        }
+                        break;
+                    }
                     self.record_refused(name);
                     return refusal.map(Into::into).map_err(Into::into);
                 }
@@ -831,6 +892,7 @@ impl IrisTools {
             }
         }
         self.audit_call(name, &resolved.primary, arg_map, "allowed", None);
+        resolved.server_leg_skipped = skipped;
 
         // T019: warn once when the connection is docker_only so operators know that HTTP headers
         // (including User-Agent) cannot be set on this transport.
@@ -959,11 +1021,14 @@ impl IrisTools {
         args: &Value,
     ) -> Option<Result<CallToolResult, McpError>> {
         let refuse = |gate: Value| Some(self.refusal_on(server, gate));
+        // The template judges a skill or knowledge-base tool as `execute` too; `allow` judges the
+        // category it has.
+        let template_cats = write_gate::template_categories(&call.tool, &call.categories);
         if let Err(gate) = crate::policy::gate::dispatch_gate_for(
             &call.tool,
             &server.key,
             &server.policy,
-            &call.categories,
+            &template_cats,
             args,
         ) {
             return refuse(gate);
@@ -1220,6 +1285,7 @@ impl IrisTools {
             class,
             categories,
             kind,
+            server_leg_skipped: None,
             primary,
             others: it.collect(),
             config: snap,

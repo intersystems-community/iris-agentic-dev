@@ -357,18 +357,11 @@ impl ConnectionState {
 }
 
 /// Tools that do not talk to IRIS, or exist to repair the connection, so they still answer when the
-/// configuration is broken.
+/// configuration is broken. The skill and knowledge-base tools that run code on the default server
+/// are not here: a file that does not parse leaves their gates unjudged (R2).
 const CONFIG_TOLERANT_TOOLS: &[&str] = &[
     "check_config",
-    "skill",
-    "skill_list",
-    "skill_search",
-    "skill_describe",
-    "skill_community",
     "skill_community_list",
-    "skill_forget",
-    "kb",
-    "kb_index",
     "kb_recall",
     "iris_doc_search",
     "iris_symbols_local",
@@ -6552,10 +6545,43 @@ Methods:
         )
     }
 
+    /// The `sources` and `note` fields of a skill reader's answer. When the policy refused the
+    /// server leg, the `^SKILLS` source says it was not consulted and why, with the refusal's
+    /// code, kind and what lifts it (R2b).
+    fn sources_and_note(
+        &self,
+        bundled_available: usize,
+        synthesized_available: usize,
+        searched: bool,
+    ) -> (serde_json::Value, String) {
+        use crate::skills::bundled;
+        let mut sources = bundled::sources_json(bundled_available, synthesized_available, searched);
+        let mut note = bundled::searched_note(bundled_available, synthesized_available, searched);
+        if let Some(skipped) = self.server_leg_skipped() {
+            let why = skipped["message"]
+                .as_str()
+                .unwrap_or("the server's policy refused it")
+                .to_string();
+            sources["synthesized"]["note"] =
+                serde_json::json!(format!("^SKILLS not consulted: {why}"));
+            sources["synthesized"]["refused"] = skipped;
+            note = format!(
+                "Searched {bundled_available} bundled skills. The server-side (^SKILLS) skills \
+                 were not consulted: {why}"
+            );
+        }
+        (sources, note)
+    }
+
     /// Read every `^SKILLS` entry. Returns `(entries, searched)` — `searched` is
     /// false when there is no IRIS connection or the global could not be read, so
     /// callers can say "I did not look there" instead of implying "nothing there".
     async fn synthesized_skills(&self) -> Result<(Vec<serde_json::Value>, bool), McpError> {
+        // The policy refused this call's server leg (or the configuration does not parse): the
+        // server is not asked, and the answer says it was not (R2b).
+        if self.server_leg_skipped().is_some() {
+            return Ok((Vec::new(), false));
+        }
         let Some(iris) = self.target_conn_opt()? else {
             return Ok((Vec::new(), false));
         };
@@ -6590,12 +6616,14 @@ Methods:
         let (synth, synth_searched) = self.synthesized_skills().await?;
         let merged = bundled::merge_sources(&bundled_skills, &synth);
         let skills: Vec<serde_json::Value> = merged.iter().map(|m| m.to_json()).collect();
+        let (sources, note) =
+            self.sources_and_note(bundled_skills.len(), synth.len(), synth_searched);
 
         ok_json(serde_json::json!({
             "skills": skills,
             "count": skills.len(),
-            "sources": bundled::sources_json(bundled_skills.len(), synth.len(), synth_searched),
-            "note": bundled::searched_note(bundled_skills.len(), synth.len(), synth_searched),
+            "sources": sources,
+            "note": note,
         }))
     }
 
@@ -6642,12 +6670,14 @@ Methods:
         }
 
         // FR-004: never a bare miss — say where we looked.
+        let (sources, note) =
+            self.sources_and_note(bundled_skills.len(), synth.len(), synth_searched);
         err_result(serde_json::json!({
             "success": false,
             "error_code": "NOT_FOUND",
             "error": format!("Skill '{}' not found", p.name),
-            "sources": bundled::sources_json(bundled_skills.len(), synth.len(), synth_searched),
-            "note": bundled::searched_note(bundled_skills.len(), synth.len(), synth_searched),
+            "sources": sources,
+            "note": note,
         }))
     }
 
@@ -6723,12 +6753,14 @@ Methods:
         scored.truncate(p.top_k);
         let results: Vec<serde_json::Value> = scored.into_iter().map(|(v, _)| v).collect();
 
+        let (sources, note) =
+            self.sources_and_note(bundled_skills.len(), synth.len(), synth_searched);
         ok_json(serde_json::json!({
             "query": p.query,
             "results": results,
             "count": results.len(),
-            "sources": bundled::sources_json(bundled_skills.len(), synth.len(), synth_searched),
-            "note": bundled::searched_note(bundled_skills.len(), synth.len(), synth_searched),
+            "sources": sources,
+            "note": note,
         }))
     }
 
