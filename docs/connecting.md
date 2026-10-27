@@ -433,6 +433,11 @@ the server's name, the user and its address (`scheme://host:port/prefix`), so a 
 one address is never found for another. iad reads the Server Manager's service,
 `intersystems-server-credentials`, and never writes to or deletes from it.
 
+A password that iad 1.6.x saved under that service, keyed by the server's name alone, is never used.
+It is not tied to an address, so iad does not send it anywhere or copy it. The name appears in
+`set_aside` as `<name>:legacy_keychain`. Run `iris_add_server` for that name with its password, and
+iad saves it for the address you give.
+
 On macOS the first read of an item by a new binary (after an upgrade, for one) can raise an
 approval dialog from the Keychain. Choose **Always Allow** once. A session with no one at the screen
 cannot answer it, and a call that needs the item waits. On such a host, and in CI, set

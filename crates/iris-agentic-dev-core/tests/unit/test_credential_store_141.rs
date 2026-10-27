@@ -407,22 +407,32 @@ fn a_legacy_keychain_password_is_not_claimed_by_name_alone() {
 }
 
 #[test]
-fn a_legacy_keychain_password_migrates_when_the_recorded_endpoint_matches() {
+fn a_legacy_keychain_password_is_never_claimed_even_when_the_recorded_endpoint_matches() {
     use iris_agentic_dev_core::iris::connection_pool::native_password_in;
     with_mock_store(|| {
         seed_sm("old", "_SYSTEM", SENTINEL);
-        let home = old_entry(
+
+        // `iris_add_server` writes `password_endpoint` for the new host when a service password
+        // falls back to the file, so the recorded endpoint proves nothing about the item.
+        for json in [
             r#"{"host":"home.example","port":52773,"namespace":"USER","username":"_SYSTEM","password_endpoint":"http://home.example:52773"}"#,
-        );
-        let got = native_password_in("old", &home, &[]);
-        assert_eq!(got.password, SENTINEL);
-        assert!(got.withheld.is_none());
-        let here = ep("http", "home.example", 52773);
-        assert_eq!(
-            resolve_iad_credential("old", "_SYSTEM", &here).unwrap(),
-            SENTINEL,
-            "copied to iad's own service, bound to the endpoint"
-        );
+            r#"{"host":"evil.example","port":52773,"namespace":"USER","username":"_SYSTEM","password_endpoint":"http://evil.example:52773","service_username":"iad_svc","service_password":"svc-pw"}"#,
+        ] {
+            let entry = old_entry(json);
+            let got = native_password_in("old", &entry, &[]);
+            assert_eq!(got.password, "", "the legacy item must not be used");
+            let item = got.withheld.expect("a set-aside item");
+            assert_eq!(item.kind, SetAsideKind::CredentialWithheld);
+            assert_eq!(item.id, "old:legacy_keychain");
+            assert!(!format!("{item:?}").contains(SENTINEL));
+
+            let endpoint = iris_agentic_dev_core::iris::servers_config::entry_endpoint(&entry)
+                .expect("endpoint");
+            assert!(
+                resolve_iad_credential("old", "_SYSTEM", &endpoint).is_err(),
+                "the item was not copied to iad's own service"
+            );
+        }
     });
 }
 
