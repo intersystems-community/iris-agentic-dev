@@ -6285,8 +6285,10 @@ impl IrisTools {
         &self,
         Parameters(mut p): Parameters<DebugMapParams>,
     ) -> Result<CallToolResult, McpError> {
+        let mut label = String::new();
         if !p.error_string.is_empty() {
-            if let Some((r, o)) = parse_iris_error_string(&p.error_string) {
+            if let Some((l, r, o)) = parse_iris_error_string(&p.error_string) {
+                label = l;
                 p.routine = r;
                 p.offset = o;
             }
@@ -6294,15 +6296,11 @@ impl IrisTools {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         let client = self.http_client();
-        let code = crate::objectscript::source_line_code(&p.routine, p.offset);
-        match iris.execute_via_generator(&code, namespace, client).await {
-            Ok(raw) => {
-                let (cls_name, cls_line) = parse_source_line(raw.trim());
-                ok_json(
-                    serde_json::json!({"success": true, "mapping_available": cls_name.is_some(), "cls_name": cls_name, "cls_line": cls_line, "routine": p.routine, "offset": p.offset, "raw_error": if p.error_string.is_empty() { serde_json::Value::Null } else { p.error_string.into() }}),
-                )
-            }
-            Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
+        match info::int_to_cls(&iris, namespace, client, &p.routine, &label, p.offset).await {
+            Ok(hit) => ok_json(
+                serde_json::json!({"success": true, "mapping_available": hit.is_some(), "cls_name": hit.as_ref().map(|h| h.class.as_str()), "cls_line": hit.as_ref().map(|h| h.line), "method": hit.as_ref().map(|h| h.method.as_str()), "routine": p.routine, "offset": p.offset, "raw_error": if p.error_string.is_empty() { serde_json::Value::Null } else { p.error_string.into() }}),
+            ),
+            Err(e) => err_json("EXECUTION_FAILED", &e),
         }
     }
 
@@ -10347,27 +10345,20 @@ pub fn normalize_schema_openapi3(schema: &mut serde_json::Map<String, serde_json
     );
 }
 
-fn parse_iris_error_string(s: &str) -> Option<(String, i64)> {
+/// Reads `<ERR>label+offset^routine` (the place IRIS names in a runtime error) into
+/// `(label, routine, offset)`. The label may be empty (`<ERR>+3^Rtn`).
+pub(crate) fn parse_iris_error_string(s: &str) -> Option<(String, String, i64)> {
     use std::sync::OnceLock;
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        regex::Regex::new(r"<[A-Z]+>\s*[^+\s]+\+(\d+)\^([\w.%]+)").expect("valid regex")
+        regex::Regex::new(r"<[A-Z]+>\s*([^+\s^]*)\+(\d+)\^([\w.%]+)").expect("valid regex")
     });
     let caps = re.captures(s)?;
-    Some((caps[2].to_string(), caps[1].parse().ok()?))
-}
-
-fn parse_source_line(raw: &str) -> (Option<String>, Option<i64>) {
-    if raw.is_empty() {
-        return (None, None);
-    }
-    if let Some((cls, line)) = raw.split_once(':') {
-        return (
-            Some(cls.trim_end_matches(".cls").to_string()),
-            line.trim().parse().ok(),
-        );
-    }
-    (None, None)
+    Some((
+        caps[1].to_string(),
+        caps[3].to_string(),
+        caps[2].parse().ok()?,
+    ))
 }
 
 /// Detects whether a class is BPL or DTL and parses its XData flow.
@@ -10473,13 +10464,19 @@ mod tests {
     fn test_parse_iris_error_standard() {
         let s = "<UNDEFINED>x+3^Ens.Director.1";
         let result = parse_iris_error_string(s);
-        assert_eq!(result, Some(("Ens.Director.1".to_string(), 3)));
+        assert_eq!(
+            result,
+            Some(("x".to_string(), "Ens.Director.1".to_string(), 3))
+        );
     }
     #[test]
     fn test_parse_iris_error_divide() {
         let s = "<DIVIDE>x+1^MyApp.Foo.1";
         let result = parse_iris_error_string(s);
-        assert_eq!(result, Some(("MyApp.Foo.1".to_string(), 1)));
+        assert_eq!(
+            result,
+            Some(("x".to_string(), "MyApp.Foo.1".to_string(), 1))
+        );
     }
     #[test]
     fn test_parse_iris_error_no_match() {
@@ -10490,33 +10487,10 @@ mod tests {
     fn test_parse_iris_error_large_offset() {
         let s = "<ERROR>routine+99^Some.Class.INT";
         let result = parse_iris_error_string(s);
-        assert_eq!(result, Some(("Some.Class.INT".to_string(), 99)));
-    }
-
-    // ── parse_source_line ─────────────────────────────────────────────────────
-    #[test]
-    fn test_parse_source_line_with_cls() {
-        let (cls, line) = parse_source_line("MyApp.Foo.cls:42");
-        assert_eq!(cls.as_deref(), Some("MyApp.Foo"));
-        assert_eq!(line, Some(42));
-    }
-    #[test]
-    fn test_parse_source_line_without_cls() {
-        let (cls, line) = parse_source_line("MyApp.Foo:10");
-        assert_eq!(cls.as_deref(), Some("MyApp.Foo"));
-        assert_eq!(line, Some(10));
-    }
-    #[test]
-    fn test_parse_source_line_empty() {
-        let (cls, line) = parse_source_line("");
-        assert!(cls.is_none());
-        assert!(line.is_none());
-    }
-    #[test]
-    fn test_parse_source_line_no_colon() {
-        let (cls, line) = parse_source_line("NoColonHere");
-        assert!(cls.is_none());
-        assert!(line.is_none());
+        assert_eq!(
+            result,
+            Some(("routine".to_string(), "Some.Class.INT".to_string(), 99))
+        );
     }
 
     // ── translate_symbols_query ───────────────────────────────────────────────

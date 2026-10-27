@@ -91,12 +91,23 @@ pub fn namespace_exists_code(ns: &str) -> String {
     format!("write ##class(%SYS.Namespace).Exists({})", os_str_expr(ns))
 }
 
-/// Maps a routine and offset back to its class line (iris_debug).
-pub fn source_line_code(routine: &str, offset: impl std::fmt::Display) -> String {
+/// Maps a spot of a compiled routine back to the class source (iris_debug `map_int`). The spot is
+/// `label+offset` of `routine` (`<DIVIDE>Alpha+2^Pkg.Cls.1`), or line `offset` of the routine when
+/// `label` is empty. Writes `class|method|line`, `line` counted in the method body, or nothing when
+/// the label or the line has no source. `%Studio.Debugger.SourceLine` answers through its `map`
+/// argument, not its return value, which is only a `%Status`.
+pub fn int_to_cls_code(routine: &str, label: &str, offset: i64) -> String {
     format!(
-        "Write ##class(%Studio.Debugger).SourceLine({},{})",
-        os_str_expr(routine),
-        offset
+        "Set tRtn={rtn} Set tLbl={lbl} Set tLn={offset} \
+         If tLbl'=\"\" {{ Set tLn=0 Set tR=##class(%Library.Routine).%OpenId(tRtn_\".INT\") \
+         If $IsObject(tR) {{ Do tR.Rewind() Set tN=0 \
+         While 'tR.AtEnd {{ Set tN=tN+1 Set tTx=tR.ReadLine() \
+         If $Piece($Piece(tTx,\" \"),\"(\")=tLbl {{ Set tLn={offset}+tN Quit }} }} }} }} \
+         If tLn>0 {{ Set tSc=##class(%Studio.Debugger).SourceLine(tRtn,tLn,0,tLn,0,$Namespace,.tMap) \
+         Set tHit=$Get(tMap(\"CLS\",1)) \
+         If tHit'=\"\" {{ Write $ListGet(tHit,1),\"|\",$ListGet(tHit,2),\"|\",$ListGet(tHit,3) }} }}",
+        rtn = os_str_expr(routine),
+        lbl = os_str_expr(label),
     )
 }
 

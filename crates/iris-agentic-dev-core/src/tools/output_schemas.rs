@@ -257,6 +257,7 @@ pub struct DebugMapIntToClsOk {
     pub mapping_available: bool,
     pub cls_name: Option<String>,
     pub cls_line: Option<i64>,
+    pub method: Option<String>,
     pub routine: String,
     pub offset: i64,
     pub raw_error: Option<String>,
@@ -1580,6 +1581,13 @@ pub enum IrisMacroResponse {
 pub struct IrisDebugMapIntOk {
     pub success: bool,
     pub error_string: String,
+    pub mapping_available: bool,
+    /// The class, the method and the line of the method body, `null` when the routine has no
+    /// source for the spot.
+    pub class_name: Option<String>,
+    pub method: Option<String>,
+    pub line: Option<i64>,
+    /// `Method+line^Class`, empty when there is no mapping.
     pub source_location: String,
 }
 

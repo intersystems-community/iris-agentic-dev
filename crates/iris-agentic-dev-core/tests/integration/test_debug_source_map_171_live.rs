@@ -195,3 +195,73 @@ async fn source_map_answers_on_the_throwaway() {
     };
     assert_eq!(scenarios(&Where::throwaway(&t)).await, 3);
 }
+
+async fn map_int_scenarios(at: &Where) -> usize {
+    let r = rig(at, Toolset::Merged).await;
+    drop_class(&r).await;
+    create_class(&r).await;
+
+    // A runtime error in the routine names the class and the line of the method body. The error
+    // text is what IRIS gives: `<DIVIDE>Alpha+2^Smoke171.Map.1`, the second line of Alpha.
+    let alpha = r
+        .call(
+            "iris_debug",
+            json!({"action": "map_int", "error_string": "<DIVIDE>Alpha+2^Smoke171.Map.1"}),
+        )
+        .await;
+    assert_eq!(alpha["success"], true, "{alpha}");
+    assert_eq!(alpha["mapping_available"], true, "{alpha}");
+    assert_eq!(alpha["class_name"], CLASS, "{alpha}");
+    assert_eq!(alpha["method"], "Alpha", "{alpha}");
+    assert_eq!(alpha["line"], 2, "{alpha}");
+    assert_eq!(alpha["source_location"], "Alpha+2^Smoke171.Map", "{alpha}");
+
+    let beta = r
+        .call(
+            "iris_debug",
+            json!({"action": "map_int", "error_string": "<DIVIDE>Beta+1^Smoke171.Map.1"}),
+        )
+        .await;
+    assert_eq!(beta["method"], "Beta", "{beta}");
+    assert_eq!(beta["line"], 1, "{beta}");
+
+    // A label the routine does not have maps to nothing, and says so.
+    let none = r
+        .call(
+            "iris_debug",
+            json!({"action": "map_int", "error_string": "<DIVIDE>NoSuchLabel+1^Smoke171.Map.1"}),
+        )
+        .await;
+    assert_eq!(none["success"], true, "{none}");
+    assert_eq!(none["mapping_available"], false, "{none}");
+    assert_eq!(none["source_location"], "", "{none}");
+
+    // The baseline tool answers the same.
+    let rb = rig(at, Toolset::Baseline).await;
+    let old = rb
+        .call(
+            "debug_map_int_to_cls",
+            json!({"error_string": "<DIVIDE>Alpha+2^Smoke171.Map.1"}),
+        )
+        .await;
+    drop_class(&r).await;
+    assert_eq!(old["mapping_available"], true, "{old}");
+    assert_eq!(old["cls_name"], CLASS, "{old}");
+    assert_eq!(old["cls_line"], 2, "{old}");
+    4
+}
+
+#[tokio::test]
+#[ignore = "requires live IRIS (iris-dev-iris)"]
+async fn map_int_names_the_class_line_on_iris_dev_iris() {
+    assert_eq!(map_int_scenarios(&Where::live()).await, 4);
+}
+
+#[tokio::test]
+#[ignore = "requires Docker (starts the throwaway IRIS)"]
+async fn map_int_names_the_class_line_on_the_throwaway() {
+    let Some(t) = ThrowawayIris::start() else {
+        return;
+    };
+    assert_eq!(map_int_scenarios(&Where::throwaway(&t)).await, 4);
+}
