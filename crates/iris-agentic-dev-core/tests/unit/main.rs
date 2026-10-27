@@ -86,6 +86,7 @@ mod test_enum_contract;
 mod test_enum_gate_classes;
 mod test_enum_http_clients;
 mod test_enum_no_leaks;
+mod test_enum_session_stores;
 mod test_env_gate;
 mod test_env_guard_141;
 mod test_env_restore_guard_141;

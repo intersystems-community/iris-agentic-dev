@@ -2770,6 +2770,45 @@ pub fn derive_capabilities(
     })
 }
 
+/// Whether a field of [`IrisTools`] belongs to one HTTP session or to the whole process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionScope {
+    /// Reset by [`IrisTools::for_new_session`]: what a client asked for, earned or opened is that
+    /// client's, and must not be listed, confirmed, driven or answered from by another.
+    PerSession,
+    /// Shared by every session of the process, for the reason given.
+    Shared(&'static str),
+}
+
+/// Every field of [`IrisTools`] and its scope. `tests/unit/test_enum_session_stores.rs` reads the
+/// struct definition and `for_new_session_sweeping` off the source: a field missing here fails; so
+/// does a `PerSession` field the constructor does not reset and a `Shared` one it does. A field
+/// added to the struct has to be declared, and a cache or store has to say why it is safe to share.
+#[rustfmt::skip]
+pub const SESSION_FIELDS: &[(&str, SessionScope)] = &[
+    ("connection", SessionScope::Shared("one operator's account on one set of servers: a reload through one session must reach the others")),
+    ("config_watcher", SessionScope::Shared("watches the files of the one process; a second watcher would reload twice")),
+    ("config", SessionScope::Shared("the configuration of the process, not of a client")),
+    ("registry", SessionScope::Shared("the skill registry loaded at startup; read-only to a session")),
+    ("client", SessionScope::Shared("the startup client of the default server; carries no client's results")),
+    ("identity_clients", SessionScope::Shared("one HTTP client and CSP session per account and server, logged out once at exit")),
+    ("history", SessionScope::PerSession),
+    ("elicitation_store", SessionScope::PerSession),
+    ("checkout_cache", SessionScope::PerSession),
+    ("log_store", SessionScope::PerSession),
+    ("metadata_cache", SessionScope::PerSession),
+    ("pool", SessionScope::Shared("a reload through one session must reach the others, and a second pool would open the keychain again")),
+    ("ws_pool", SessionScope::PerSession),
+    ("confirm_tokens", SessionScope::PerSession),
+    ("toolset", SessionScope::Shared("a plain value fixed at startup")),
+    ("session", SessionScope::Shared("the process's telemetry identity: one MCP server lifetime")),
+    ("docker_only_attr_warned", SessionScope::Shared("a warn-once flag for the process")),
+    ("iris_audit_counter", SessionScope::Shared("counts audit-emission failures for the process, warning once")),
+    ("tool_router", SessionScope::Shared("the registered tools, fixed at startup")),
+    ("accepted_params", SessionScope::Shared("derived from the router, fixed at startup")),
+    ("strict_toolset", SessionScope::Shared("a plain value fixed at startup")),
+];
+
 #[derive(Clone)]
 pub struct IrisTools {
     /// Active connection state — wraps iris, source, config metadata, write gate.
