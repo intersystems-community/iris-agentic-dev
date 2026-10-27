@@ -650,7 +650,7 @@ const fn mixed(
 pub const CLASSIFICATION: &[ToolClass] = &[
     // ── read-only ────────────────────────────────────────────────────────────
     ro("agent_history").local_default(),
-    ro("agent_info").local_default(),
+    ro("agent_info").on_default().scratch(),
     ro("agent_stats").local_default(),
     ro("capability_matrix").scratch(),
     ro("check_config").local_default(),
@@ -718,9 +718,13 @@ pub const CLASSIFICATION: &[ToolClass] = &[
     ro("resolve_dynamic_dispatch").scratch(),
     ro("resolve_storage"),
     ro("skill_community_list").local_default(),
-    ro("skill_describe").local_default(),
-    ro("skill_list").local_default(),
-    ro("skill_search").local_default(),
+    // These three read `^SKILLS` through the container's terminal and `skill_forget` kills from it:
+    // they run ObjectScript on the default server, so the template, `allow` and the write gate
+    // judge them. They compile no scratch class, so strict read-only leaves the three readers
+    // answering (the bundled guardrail skills stay reachable).
+    ro("skill_describe").on_default(),
+    ro("skill_list").on_default(),
+    ro("skill_search").on_default(),
     ro("stream_inspect").scratch(),
     ro("telemetry_export_trace").on_default(),
     ro("telemetry_query").on_default(),
@@ -750,7 +754,9 @@ pub const CLASSIFICATION: &[ToolClass] = &[
     wr("iris_test").scratch(),
     // The complete bypass of the iris_execute gate: open a session, then run anything.
     wr("iris_ws_exec").target(TargetSource::Session),
-    wr("kb_index").local_default(),
+    // Stores chunks in `^KBCHUNKS` through a scratch class on the default server.
+    wr("kb_index").on_default().scratch(),
+    // The four stubs answer NOT_IMPLEMENTED and call no server.
     wr("skill_community_install").local_default(),
     wr("skill_optimize").local_default(),
     wr("skill_propose").local_default(),
@@ -760,7 +766,7 @@ pub const CLASSIFICATION: &[ToolClass] = &[
     de("iris_namespace_create").scratch(),
     // Local state, not IRIS — the enforcement test asserts the saved server survives.
     de("iris_remove_server").local_default(),
-    de("skill_forget").local_default(),
+    de("skill_forget").on_default(),
     // ── per-action ───────────────────────────────────────────────────────────
     // Mostly listings; the seven create/update/delete actions are the destructive tier.
     mixed(
@@ -902,7 +908,8 @@ pub const CLASSIFICATION: &[ToolClass] = &[
         ],
         WriteClass::Write,
     )
-    .local_default(),
+    .on_default()
+    .scratch(),
     mixed(
         "skill",
         &[
@@ -913,13 +920,15 @@ pub const CLASSIFICATION: &[ToolClass] = &[
         ],
         WriteClass::Write,
     )
-    .local_default(),
+    .on_default()
+    .scratch(),
     mixed(
         "skill_community",
         &[("list", WriteClass::ReadOnly)],
         WriteClass::Write,
     )
-    .local_default(),
+    .on_default()
+    .scratch(),
 ];
 
 /// Put `mode` and `action` in the form the handlers read them, trimmed and `to_lowercase`d,
@@ -1095,6 +1104,31 @@ pub fn effective_category(
         categories.push(ToolCategory::Admin);
     }
     categories
+}
+
+/// The categories the environment template judges a call by: [`effective_category`], and `Execute`
+/// for a skill or knowledge-base tool that runs ObjectScript on the default server.
+///
+/// `skill_list` reads `^SKILLS` through the container's terminal and `kb` stores a chunk through a
+/// scratch class; whatever the action, ObjectScript runs on the server, so a `live` or `test`
+/// template that blocks `Execute` blocks them. `allow` still judges the call by its own category
+/// (`skill`, `kb`): an operator who lists those has asked for these tools, and has not thereby
+/// allowed `execute`. A tool of the family that never calls IRIS is a local row and is not judged.
+pub fn template_categories(
+    tool: &str,
+    categories: &[crate::iris::workspace_config::ToolCategory],
+) -> Vec<crate::iris::workspace_config::ToolCategory> {
+    use crate::iris::workspace_config::ToolCategory;
+    let mut judged = categories.to_vec();
+    let runs_code = tool_class(tool).is_some_and(|r| r.kind == TargetKind::Iris)
+        && matches!(
+            crate::iris::server_manager::tool_to_category_pub(tool),
+            Some(ToolCategory::Skill | ToolCategory::Kb)
+        );
+    if runs_code && !judged.contains(&ToolCategory::Execute) {
+        judged.push(ToolCategory::Execute);
+    }
+    judged
 }
 
 /// The write/destructive gate for one server, called by the pipeline before anything touches IRIS.

@@ -357,18 +357,11 @@ impl ConnectionState {
 }
 
 /// Tools that do not talk to IRIS, or exist to repair the connection, so they still answer when the
-/// configuration is broken.
+/// configuration is broken. The skill and knowledge-base tools that run code on the default server
+/// are not here: a file that does not parse leaves their gates unjudged (R2).
 const CONFIG_TOLERANT_TOOLS: &[&str] = &[
     "check_config",
-    "skill",
-    "skill_list",
-    "skill_search",
-    "skill_describe",
-    "skill_community",
     "skill_community_list",
-    "skill_forget",
-    "kb",
-    "kb_index",
     "kb_recall",
     "iris_doc_search",
     "iris_symbols_local",

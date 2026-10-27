@@ -50,6 +50,26 @@ pub fn rig_launched(
     members: &[(&str, &str)],
     launch_strict: bool,
 ) -> Rig {
+    rig_built(toml, toolset, members, launch_strict, true)
+}
+
+/// [`rig_launched`] with the skill and knowledge-base tools registered (`--no-skills` off).
+pub fn rig_with_skills(
+    toml: &str,
+    toolset: Toolset,
+    members: &[(&str, &str)],
+    launch_strict: bool,
+) -> Rig {
+    rig_built(toml, toolset, members, launch_strict, false)
+}
+
+fn rig_built(
+    toml: &str,
+    toolset: Toolset,
+    members: &[(&str, &str)],
+    launch_strict: bool,
+    no_skills: bool,
+) -> Rig {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     let cwd = dir.path().join("proj");
@@ -70,7 +90,7 @@ pub fn rig_launched(
         toolset,
         None,
         None,
-        true,
+        no_skills,
         declared,
     )
     .unwrap();

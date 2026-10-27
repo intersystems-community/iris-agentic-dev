@@ -959,11 +959,14 @@ impl IrisTools {
         args: &Value,
     ) -> Option<Result<CallToolResult, McpError>> {
         let refuse = |gate: Value| Some(self.refusal_on(server, gate));
+        // The template judges a skill or knowledge-base tool as `execute` too; `allow` judges the
+        // category it has.
+        let template_cats = write_gate::template_categories(&call.tool, &call.categories);
         if let Err(gate) = crate::policy::gate::dispatch_gate_for(
             &call.tool,
             &server.key,
             &server.policy,
-            &call.categories,
+            &template_cats,
             args,
         ) {
             return refuse(gate);
