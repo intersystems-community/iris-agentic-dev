@@ -14661,7 +14661,7 @@ async fn test_iris_debug_map_int_uses_http_path_via_wiremock() {
     let result = tools
         .call_for_test(
             "iris_debug",
-            serde_json::json!({"action": "map_int", "error_string": "<UNDEFINED>x", "namespace": "USER"}),
+            serde_json::json!({"action": "map_int", "error_string": "<UNDEFINED>Method+2^Pkg.Class.1", "namespace": "USER"}),
         )
         .await;
     let v = parse_result(result);

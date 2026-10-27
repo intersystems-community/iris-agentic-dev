@@ -474,6 +474,7 @@ fn body_where_filters_and_refuses_what_leaves_the_expression() {
             "body_class": fixture.body_class,
             "body_where": where_,
             "body_select": ["StringValue"],
+            "acknowledgePhi": true,
             "limit": 3
         })
     };
@@ -546,6 +547,15 @@ fn body_mode_sits_under_the_bulk_data_gate() {
         &mut open,
         "iris_interop_query",
         json!({"what": "messages", "source": fixture.source, "body_class": fixture.body_class, "limit": 2}),
+    );
+    assert_eq!(
+        r["error_code"], "PHI_ACK_REQUIRED",
+        "dataPolicy=allow needs the acknowledgement for body mode: {r}"
+    );
+    let r = call(
+        &mut open,
+        "iris_interop_query",
+        json!({"what": "messages", "source": fixture.source, "body_class": fixture.body_class, "acknowledgePhi": true, "limit": 2}),
     );
     assert_eq!(r["success"], true, "dataPolicy=allow admits body mode: {r}");
 }
