@@ -2149,7 +2149,9 @@ operator; see [skills.md](skills.md#serving-skills-from-a-directory). `skill_for
 
 They read and kill `^SKILLS` through the container's terminal, which is ObjectScript on the default
 server: its template (`live` and `test` refuse them as `execute`), `allow` (`skill`) and write gates
-judge them. They compile no scratch class, so strict read-only leaves `skill_list`, `skill_search`
+judge them. When the policy refuses that read, `skill_list`, `skill_search` and `skill_describe`
+still answer from the bundled skills, with `sources.synthesized.searched = false` and
+`sources.synthesized.refused` giving the refusal's `error_code`, `kind` and `lift`. They compile no scratch class, so strict read-only leaves `skill_list`, `skill_search`
 and `skill_describe` answering and refuses `skill_forget` as a destructive call.
 
 | Tool             | Parameter | Type   | Default | Notes                                    |

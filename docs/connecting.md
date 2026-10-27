@@ -534,13 +534,20 @@ The skill and knowledge-base tools that run ObjectScript on the default server a
 default server's policy too: `skill`, `skill_list`, `skill_describe`, `skill_search`, `skill_forget`,
 `skill_community`, `kb`, `kb_index` and `agent_info`. `allow` has to list `skill` or `kb` (the
 tool's own category), and `live` and `test` refuse them as `execute` does, so a production server
-that blocks `execute` no longer answers `skill_list` from its own `^SKILLS` global. The write and
-destructive gates judge the actions that write (`kb_index`, `skill` with `propose` or `forget`,
-`skill_community` with `install`, `skill_forget`). A configuration file that does not parse closes
-them with the other tools that talk to IRIS. The tools that read only the local registry or the
-call history (`kb_recall`, `skill_community_list`, `agent_history`, `agent_stats`, `iris_servers`)
-are not judged by `allow`. A tool that has no category at all is judged as `execute` and `admin`;
-`check_config` lists the tools exempt from that in `ungated_tools`.
+that blocks `execute` no longer reads its `^SKILLS` global for them. The write and destructive
+gates judge the actions that write (`kb_index`, `skill` with `propose` or `forget`,
+`skill_community` with `install`, `skill_forget`). A configuration file that does not parse
+closes them with the other tools that talk to IRIS. The tools that read only the local registry
+or the call history (`kb_recall`, `skill_community_list`, `agent_history`, `agent_stats`,
+`iris_servers`) are not judged by `allow`. A tool that has no category at all is judged as
+`execute` and `admin`; `check_config` lists the tools exempt from that in `ungated_tools`.
+
+Three of the readers still answer when the policy refuses their server: `skill_list`,
+`skill_search` and `skill_describe` serve the skills bundled in the binary, and the response says
+the server's `^SKILLS` skills were not consulted. `sources.synthesized.searched` is `false`,
+`sources.synthesized.refused` carries the refusal's `error_code`, `kind` and `lift`, and `note`
+says why. This holds for a `live` or `test` template, an `allow` list that omits `skill`, and a
+configuration file that does not parse. The dispatchers, `kb` and `skill_forget` are refused whole.
 
 The command-line commands that wrap a tool go through the same checks. The `capability-matrix`
 and `benchmark` subcommands send every step to the default server through the tool pipeline: the lock and the version query as `iris_execute`, each class as `iris_doc` with
