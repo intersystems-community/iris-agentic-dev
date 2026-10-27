@@ -2123,6 +2123,11 @@ Manage the learning agent skill registry.
 
 `action=forget` is ☠ destructive-gated — requires `destructive_tools_enabled = true`.
 
+Every action runs ObjectScript on the default server through a scratch class, so the default
+server's policy judges the call: `allow` has to list `skill`, `live` and `test` refuse it as
+`execute`, and `read_only = "strict"` hides it. `skill_list`, `skill_search` and `skill_describe`
+(below) are the strict-safe way to read the bundled skills.
+
 ```text
 skill(action="list")
 skill(action="describe", name="objectscript-review")
@@ -2142,6 +2147,11 @@ each source held, so a zero never means only one place was checked. The bundled 
 the binary embeds. A directory on disk replaces an embedded copy only when it comes from the
 operator; see [skills.md](skills.md#serving-skills-from-a-directory). `skill_forget` is ☠.
 
+They read and kill `^SKILLS` through the container's terminal, which is ObjectScript on the default
+server: its template (`live` and `test` refuse them as `execute`), `allow` (`skill`) and write gates
+judge them. They compile no scratch class, so strict read-only leaves `skill_list`, `skill_search`
+and `skill_describe` answering and refuses `skill_forget` as a destructive call.
+
 | Tool             | Parameter | Type   | Default | Notes                                    |
 | ---------------- | --------- | ------ | ------- | ---------------------------------------- |
 | `skill_list`     | —         | —      | —       | No parameters                            |
@@ -2159,6 +2169,10 @@ skills loaded from `--subscribe` packages and takes no parameters.
 | --------- | ------ | ------- | ------------------------------------- |
 | `action`  | string | —       | **Required.** `"list"` \| `"install"` |
 | `package` | string | —       | For `action=install`                  |
+
+The `skill_community` dispatcher (both actions) and `agent_info` run on the default server through
+a scratch class and are judged as `skill` does: its `allow`, template and strict rules. The
+registry-only `skill_community_list` is not.
 
 ---
 
@@ -2198,6 +2212,12 @@ directory must be inside the [project directory](#project-directory) (the defaul
 directory itself), or the call is refused with `HOST_PATH_BLOCKED`. A file that is a link out of the
 project is skipped and counted in `skipped_outside`. The reply has `truncated` and, when it is true,
 `truncated_reason: "file_budget"`.
+
+`kb` (both actions) and `kb_index` store and search `^KBCHUNKS` through a scratch class on the
+default server, so that server's policy judges them: `allow` has to list `kb`, `live` and `test`
+refuse them as `execute`, `kb_index` and `kb action=index` need the write tier, and
+`read_only = "strict"` hides them. `kb_recall` reads only the subscribed packages and the local
+registry; no server judges it.
 
 ---
 

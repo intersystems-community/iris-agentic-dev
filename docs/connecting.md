@@ -528,9 +528,19 @@ container: `iris_select_container`, `iris_start_sandbox`, `iris_containers`, `ir
 `iris_remove_server`, `iris_import_servers` and `iris_reload_pool`. They act on no server's data, so
 the **default server's** policy judges them (a call to them names no other server, and what they
 change is what the default's calls will reach). `allow` has to list `admin`, and `live` and `test`
-refuse them as `execute` does. The read-only local tools (skills, the knowledge base,
-`iris_servers`) are not judged by `allow`. A tool that has no category at all is judged as `execute`
-and `admin`; `check_config` lists the tools exempt from that in `ungated_tools`.
+refuse them as `execute` does.
+
+The skill and knowledge-base tools that run ObjectScript on the default server are judged by the
+default server's policy too: `skill`, `skill_list`, `skill_describe`, `skill_search`, `skill_forget`,
+`skill_community`, `kb`, `kb_index` and `agent_info`. `allow` has to list `skill` or `kb` (the
+tool's own category), and `live` and `test` refuse them as `execute` does, so a production server
+that blocks `execute` no longer answers `skill_list` from its own `^SKILLS` global. The write and
+destructive gates judge the actions that write (`kb_index`, `skill` with `propose` or `forget`,
+`skill_community` with `install`, `skill_forget`). A configuration file that does not parse closes
+them with the other tools that talk to IRIS. The tools that read only the local registry or the
+call history (`kb_recall`, `skill_community_list`, `agent_history`, `agent_stats`, `iris_servers`)
+are not judged by `allow`. A tool that has no category at all is judged as `execute` and `admin`;
+`check_config` lists the tools exempt from that in `ungated_tools`.
 
 Blocked calls return an error whose `error_code` names the gate (`POLICY_GATE` with the allowed
 categories, `ENV_GATE_BLOCKED`, `DATA_POLICY_BLOCKED`, `SYSTEM_BLOCKLIST`) and a `refusal` object
@@ -896,11 +906,14 @@ read_only = "strict"
 
 in any configuration file, or `IAD_READ_ONLY=strict` in the launch settings. It only tightens, so
 a project file may set it and no file can lift another's. Under strict, every tool that can reach a
-scratch class is hidden from `tools/list` and refused with `READ_ONLY_STRICT`: the 37 tools marked
+scratch class is hidden from `tools/list` and refused with `READ_ONLY_STRICT`: the 44 tools marked
 in `write_gate::CLASSIFICATION` (`iris_table_info`, `global_preview`, `my_access`, `iris_global`,
-`iris_production`, `iris_execute`, `iris_test`, `journal_search` and the rest of the schema,
-interoperability and administration readers). `iris_doc` (reads), `iris_query`, `iris_search`,
-`iris_info`, `iris_servers` and `check_config` stay. Telemetry is kept in the local file.
+`iris_production`, `iris_execute`, `iris_test`, `journal_search`, `skill`, `kb`, `kb_index`,
+`skill_community`, `agent_info` and the rest of the schema, interoperability and administration
+readers). `iris_doc` (reads), `iris_query`, `iris_search`, `iris_info`, `iris_servers`,
+`check_config` and the one-tool-per-action skill readers (`skill_list`, `skill_describe`,
+`skill_search`, which read the bundled skills and `^SKILLS` through the container's terminal and
+compile nothing) stay. Telemetry is kept in the local file.
 `check_config` reports `read_only` and `read_only_from`. The command-line commands that compile a
 scratch class obey it too: `iris-agentic-dev capability-matrix` and `iris-agentic-dev benchmark`
 exit 1 with `READ_ONLY_STRICT` before they connect to anything.
