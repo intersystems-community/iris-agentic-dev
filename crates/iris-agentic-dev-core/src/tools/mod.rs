@@ -28,7 +28,8 @@ fn non_blank_env_value(name: &str) -> String {
 }
 
 pub(crate) const DOCKER_REQUIRED_HINT: &str = " Ensure HTTP/Atelier REST is reachable: verify \
-    http://<host>:<port>/api/atelier and set host/web_port in .iris-agentic-dev.toml.";
+    http://<host>:<port>/api/atelier, then select the server with iris_select_container or \
+    register it with iris_add_server.";
 
 /// `CARGO_PKG_VERSION` plus a `+<git-describe>` build-metadata suffix (see
 /// `build.rs`), so `check_config`'s `server_version` can distinguish a local/
@@ -5755,15 +5756,15 @@ impl IrisTools {
                 // Connection is via fallback discovery — remind the user to create a
                 // config in the workspace the IDE pointed us at.
                 response["fallback_warning"] = serde_json::Value::String(format!(
-                    "No .iris-agentic-dev.toml found in OBJECTSCRIPT_WORKSPACE ({ws}). \
-                     Connection established via fallback discovery. Create .iris-agentic-dev.toml \
-                     in that directory to pin the target instance."
+                    "No project configuration found in OBJECTSCRIPT_WORKSPACE ({ws}). \
+                     Connection established via fallback discovery, so it may not be the instance \
+                     you meant. Pin the target with iris_select_container or iris_add_server."
                 ));
             } else {
                 response["fallback_warning"] = serde_json::Value::String(
-                    "No .iris-agentic-dev.toml config file found. Connection established via \
-                     fallback discovery (Docker/Server Manager/port scan). Set OBJECTSCRIPT_WORKSPACE \
-                     or create a .iris-agentic-dev.toml in your project root to pin the target instance."
+                    "No project configuration found. Connection established via fallback \
+                     discovery (Docker/Server Manager/port scan), so it may not be the instance \
+                     you meant. Pin the target with iris_select_container or iris_add_server."
                         .to_string(),
                 );
             }
@@ -9042,7 +9043,7 @@ Methods:
                 "nopws": true,
                 "web_available": false,
                 "nopws_detected": nopws_detected,
-                "suggestion": "NoPWS build: set docker_only = true in .iris-agentic-dev.toml (a connection key, not a tool parameter) or add a webgateway sidecar. Setup instructions: skills/skills/iris-agentic-dev/nopws-setup/SKILL.md in the iris-agentic-dev repo.",
+                "suggestion": "NoPWS build: select a container with iris_select_container (execute and compile work over docker exec) or add a webgateway sidecar. Setup instructions: skills/skills/iris-agentic-dev/nopws-setup/SKILL.md in the iris-agentic-dev repo.",
             });
             if let Some(ev) = nopws_evidence {
                 resp["nopws_evidence"] = serde_json::Value::String(ev);
@@ -10850,8 +10851,8 @@ mod schema_normalization_tests {
             "DOCKER_REQUIRED hint must reference HTTP URL pattern"
         );
         assert!(
-            DOCKER_REQUIRED_HINT.contains(".iris-agentic-dev.toml"),
-            "DOCKER_REQUIRED hint must reference the toml config file"
+            DOCKER_REQUIRED_HINT.contains("iris_select_container"),
+            "DOCKER_REQUIRED hint must point at the tool that selects a server"
         );
         assert!(
             !DOCKER_REQUIRED_HINT.to_lowercase().contains("docker run"),

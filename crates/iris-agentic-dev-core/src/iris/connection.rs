@@ -1554,8 +1554,8 @@ pub fn docker_exec_failure(container: &str, exit_code: Option<i32>, stderr: &str
     let advice = if detail.contains("No such container") {
         format!(
             "docker has no container named '{container}'. Check `docker ps --filter name={container}`, \
-             then point IRIS_CONTAINER (or the `container` key in .iris-agentic-dev.toml) at a \
-             container that is running."
+             then point IRIS_CONTAINER at a container that is running, or select one with \
+             iris_select_container."
         )
     } else if detail.contains("is not running")
         || detail.contains("is paused")
