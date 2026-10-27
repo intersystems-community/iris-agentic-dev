@@ -263,6 +263,51 @@ fn broad_roots_are_not_projects() {
     }
 }
 
+/// Shared and mounted places hold other people's files: the shared user directories, and the mount
+/// roots with the mount points directly under them.
+#[test]
+fn shared_directories_and_mount_roots_are_not_projects() {
+    let home = Path::new("/Users/someone");
+    for broad in [
+        "/Users/Shared",
+        "/users/shared",
+        "/Users/Public",
+        "C:\\Users\\Public",
+        "c:\\users\\public",
+        "/Volumes",
+        "/Volumes/Macintosh HD",
+        "/Volumes/work",
+        "/mnt",
+        "/mnt/c",
+        "/mnt/data",
+        "/media",
+        "/media/alice",
+    ] {
+        assert!(is_broad_root(Path::new(broad), Some(home)), "{broad}");
+        assert!(is_broad_root(Path::new(broad), None), "{broad} (no home)");
+    }
+    // A real project on a mount, more than one level below the mount point, still works, and so do
+    // directories that only share a prefix with a broad root.
+    for ok in [
+        "/Volumes/work/proj",
+        "/Volumes/work/proj/sub",
+        "/mnt/data/proj",
+        "/media/alice/usb/proj",
+        "/Users/Shared/proj",
+        "/Users/Public/proj",
+        "/Volumesx",
+        "/mntx/a",
+        "/srv/Volumes",
+        "/Users/someone/Volumes",
+        "C:\\Users\\Public\\proj",
+        "D:\\work",
+    ] {
+        // `/Users/Shared/proj` and `/Users/Public/proj` are shared places too, but a directory
+        // below them is a project the user made there; only the shared root itself is refused.
+        assert!(!is_broad_root(Path::new(ok), Some(home)), "{ok}");
+    }
+}
+
 #[test]
 fn a_working_directory_that_is_a_broad_root_is_no_project() {
     let tmp = tempfile::tempdir().unwrap();
