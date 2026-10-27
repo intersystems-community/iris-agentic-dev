@@ -149,6 +149,9 @@ async fn call(r: &Rig, tool: &str, args: Value) -> Value {
 
 const OPEN: &str = "write_tools_enabled = true\ndestructive_tools_enabled = true\n";
 
+/// The readers that answer from the bundled skills when the policy refuses their server leg.
+const BUNDLED_READERS: &[&str] = &["skill_list", "skill_describe", "skill_search"];
+
 /// Every call of the family that would put a scratch class on the server, and the terminal ones.
 fn family() -> Vec<(&'static str, Value)> {
     vec![
@@ -191,6 +194,19 @@ async fn skill_list_under_a_live_template_compiles_nothing() {
     let before = r.proxy.count();
     for (tool, args) in family() {
         let b = call(&r, tool, args.clone()).await;
+        if BUNDLED_READERS.contains(&tool) {
+            // Falls back to the bundled skills and says the server's were not consulted (R2b).
+            // (`skill_describe` of a name that is not bundled is a NOT_FOUND that says so.)
+            assert!(
+                b["error_code"].is_null() || b["error_code"] == "NOT_FOUND",
+                "{tool} {args}: {b}"
+            );
+            assert_eq!(
+                b["sources"]["synthesized"]["refused"]["error_code"], "ENV_GATE_BLOCKED",
+                "{tool}: {b}"
+            );
+            continue;
+        }
         assert_eq!(b["error_code"], "ENV_GATE_BLOCKED", "{tool} {args}: {b}");
         assert_eq!(b["blocked_category"], "execute", "{tool}: {b}");
     }
@@ -239,6 +255,13 @@ async fn a_narrow_allow_keeps_them_off_the_server_too() {
     let before = r.proxy.count();
     for (tool, args) in family() {
         let b = call(&r, tool, args.clone()).await;
+        if BUNDLED_READERS.contains(&tool) {
+            assert_eq!(
+                b["sources"]["synthesized"]["refused"]["error_code"], "POLICY_GATE",
+                "{tool}: {b}"
+            );
+            continue;
+        }
         assert_eq!(b["error_code"], "POLICY_GATE", "{tool} {args}: {b}");
     }
     assert_eq!(r.proxy.count(), before);

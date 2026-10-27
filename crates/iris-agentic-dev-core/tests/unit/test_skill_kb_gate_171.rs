@@ -76,6 +76,13 @@ fn local_cases() -> Vec<Case> {
     ]
 }
 
+/// The three readers that serve the bundled skills when the policy refuses their server leg (R2b).
+const DEGRADING: &[&str] = &["skill_list", "skill_describe", "skill_search"];
+
+fn degrades(tool: &str) -> bool {
+    DEGRADING.contains(&tool)
+}
+
 const GATES_OPEN: &str = "write_tools_enabled = true\ndestructive_tools_enabled = true\n";
 
 /// The codes a gate refuses with.
@@ -215,6 +222,9 @@ async fn the_live_and_test_templates_refuse_them() {
         let toml = format!("{GATES_OPEN}[policy.default]\nmcpTemplate = \"{template}\"\n");
         for rig in rigs(&toml) {
             for case in iris_cases() {
+                if degrades(case.tool) {
+                    continue; // `the_readers_serve_the_bundled_skills_when_the_policy_refuses_the_server`
+                }
                 let Some(body) = answer(&rig, case.tool, &case.args).await else {
                     continue;
                 };
@@ -234,6 +244,9 @@ async fn a_narrow_allow_refuses_them() {
     let toml = format!("{GATES_OPEN}[policy.default]\nallow = [\"query\", \"search\"]\n");
     for rig in rigs(&toml) {
         for case in iris_cases() {
+            if degrades(case.tool) {
+                continue; // see the R2b tests below
+            }
             let Some(body) = answer(&rig, case.tool, &case.args).await else {
                 continue;
             };
@@ -405,11 +418,15 @@ async fn the_local_ones_are_not_gated_by_template_allow_or_strict() {
 }
 
 /// An operator file that does not parse closes every tool that talks to IRIS. The family runs code
-/// on the default server, so it is closed with them; the registry-only tools still answer.
+/// on the default server, so it is closed with them; the registry-only tools still answer, and the
+/// three bundled-skill readers serve the bundled skills (R2b).
 #[tokio::test]
 async fn a_file_that_does_not_parse_closes_them_with_the_rest() {
     for rig in rigs("this is = = not toml\n") {
         for case in iris_cases() {
+            if degrades(case.tool) {
+                continue;
+            }
             let Some(body) = answer(&rig, case.tool, &case.args).await else {
                 continue;
             };
@@ -427,5 +444,128 @@ async fn a_file_that_does_not_parse_closes_them_with_the_rest() {
             let body = answer(&rig, tool, &args).await.unwrap();
             assert_ne!(body["error_code"], "CONFIG_INVALID", "{tool}: {body}");
         }
+    }
+}
+
+// ── R2b: the readers fall back to the bundled skills ────────────────────────────────────────────
+
+/// What `skill_list`, `skill_search` and `skill_describe` answer when the policy refuses their
+/// server leg: the bundled skills, and a field that says the server's were not consulted and why.
+fn assert_bundled_only(what: &str, body: &Value, code: &str) {
+    assert!(
+        body["error_code"].is_null() || body["error_code"] == "NOT_FOUND",
+        "{what} failed wholesale: {body}"
+    );
+    let synth = if body["sources"].is_object() {
+        &body["sources"]["synthesized"]
+    } else {
+        &body["skill"] // describe of a bundled skill carries no sources
+    };
+    if body["sources"].is_object() {
+        assert_eq!(synth["searched"], false, "{what}: {body}");
+        assert_eq!(synth["refused"]["error_code"], code, "{what}: {body}");
+        let note = body["note"].as_str().unwrap_or_default();
+        assert!(note.contains("not consulted"), "{what}: note {note:?}");
+    }
+}
+
+#[tokio::test]
+async fn the_readers_serve_the_bundled_skills_when_the_policy_refuses_the_server() {
+    for (toml, code, kind) in [
+        (
+            format!("{GATES_OPEN}[policy.default]\nmcpTemplate = \"live\"\n"),
+            "ENV_GATE_BLOCKED",
+            "operator_limit",
+        ),
+        (
+            format!("{GATES_OPEN}[policy.default]\nallow = [\"query\", \"search\"]\n"),
+            "POLICY_GATE",
+            "operator_limit",
+        ),
+    ] {
+        for rig in rigs(&toml) {
+            let list = answer(&rig, "skill_list", &json!({})).await.unwrap();
+            assert_bundled_only("skill_list", &list, code);
+            assert!(list["count"].as_u64().unwrap_or(0) > 20, "{list}");
+            assert_eq!(
+                list["sources"]["synthesized"]["refused"]["kind"], kind,
+                "{list}"
+            );
+            assert!(
+                list["sources"]["synthesized"]["refused"]["lift"].is_object(),
+                "the reason names what lifts it: {list}"
+            );
+
+            let search = answer(&rig, "skill_search", &json!({"query": "guardrails"}))
+                .await
+                .unwrap();
+            assert_bundled_only("skill_search", &search, code);
+            assert!(search["count"].as_u64().unwrap_or(0) > 0, "{search}");
+
+            // A bundled skill is described with no server at all.
+            let described = answer(
+                &rig,
+                "skill_describe",
+                &json!({"name": "objectscript-guardrails"}),
+            )
+            .await
+            .unwrap();
+            assert_eq!(described["success"], true, "{described}");
+            assert!(
+                described["skill"]["body"].as_str().unwrap_or("").len() > 100,
+                "{described}"
+            );
+
+            // A name that is not bundled is a miss that says the server was not asked.
+            let miss = answer(
+                &rig,
+                "skill_describe",
+                &json!({"name": "no-such-skill-xyz"}),
+            )
+            .await
+            .unwrap();
+            assert_eq!(miss["error_code"], "NOT_FOUND", "{miss}");
+            assert_bundled_only("skill_describe miss", &miss, code);
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_readers_that_fall_back_do_not_loosen_anything_else() {
+    // The fallback is for the three readers alone: the writer, the dispatchers and the generator
+    // tools are still refused.
+    let toml = format!("{GATES_OPEN}[policy.default]\nmcpTemplate = \"live\"\n");
+    for rig in rigs(&toml) {
+        for (tool, args) in [
+            ("skill_forget", json!({"name": "x"})),
+            ("skill", json!({"action": "list"})),
+            ("kb", json!({"action": "recall", "query": "x"})),
+            ("kb_index", json!({})),
+        ] {
+            let body = answer(&rig, tool, &args).await.unwrap();
+            assert_eq!(body["error_code"], "ENV_GATE_BLOCKED", "{tool}: {body}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_file_that_does_not_parse_leaves_the_bundled_skills() {
+    for rig in rigs("this is = = not toml\n") {
+        let list = answer(&rig, "skill_list", &json!({})).await.unwrap();
+        assert_bundled_only("skill_list", &list, "CONFIG_INVALID");
+        assert!(list["count"].as_u64().unwrap_or(0) > 20, "{list}");
+    }
+}
+
+#[tokio::test]
+async fn the_dev_template_still_consults_the_server_leg() {
+    // The control: nothing is skipped when the policy allows the call. (The rig has no container,
+    // so the leg finds nothing, but it was asked: `refused` is absent.)
+    for rig in rigs(GATES_OPEN) {
+        let list = answer(&rig, "skill_list", &json!({})).await.unwrap();
+        assert!(
+            list["sources"]["synthesized"]["refused"].is_null(),
+            "the server leg was skipped under the dev template: {list}"
+        );
     }
 }

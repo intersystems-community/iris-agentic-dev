@@ -76,8 +76,18 @@ fn a_narrow_allow_refuses_the_connection_tools() {
     // The tools that read only the registry stay.
     let b = body(&s.call("kb_recall", &json!({"query": "x"})));
     assert_ne!(b["error_code"], "POLICY_GATE", "{b}");
-    // The skill tools run code on the default server, so `allow` judges them (R2).
+    // The skill tools run code on the default server, so `allow` judges them (R2). A reader that
+    // can answer from the bundled skills does, and says the server's were not consulted (R2b).
     let b = body(&s.call("skill_list", &json!({})));
+    assert_eq!(b["error_code"], Value::Null, "{b}");
+    assert!(b["count"].as_u64().unwrap_or(0) > 20, "{b}");
+    assert_eq!(b["sources"]["synthesized"]["searched"], false, "{b}");
+    assert_eq!(
+        b["sources"]["synthesized"]["refused"]["error_code"], "POLICY_GATE",
+        "{b}"
+    );
+    // The dispatcher has nothing to fall back to.
+    let b = body(&s.call("skill", &json!({"action": "list"})));
     assert_eq!(b["error_code"], "POLICY_GATE", "{b}");
     assert_eq!(b["blocked_category"], "skill", "{b}");
 }
@@ -101,12 +111,10 @@ fn the_live_template_refuses_the_connection_tools() {
 }
 
 const SKILL_KB_CALLS: &[(&str, &str)] = &[
-    ("skill_list", "{}"),
-    ("skill_describe", r#"{"name":"x"}"#),
-    ("skill_search", r#"{"query":"x"}"#),
     ("skill", r#"{"action":"list"}"#),
     ("kb", r#"{"action":"recall","query":"x"}"#),
     ("kb_index", "{}"),
+    ("skill_forget", r#"{"name":"x"}"#),
 ];
 
 #[test]
@@ -119,6 +127,28 @@ fn the_live_template_refuses_the_skill_and_kb_tools() {
         assert_eq!(b["error_code"], "ENV_GATE_BLOCKED", "{tool}: {b}");
         assert_eq!(b["blocked_category"], "execute", "{tool}: {b}");
     }
+    // The three readers serve the bundled skills and say the server's were not consulted.
+    for (tool, args) in [
+        ("skill_list", json!({})),
+        ("skill_search", json!({"query": "guardrails"})),
+    ] {
+        let b = body(&s.call(tool, &args));
+        assert_eq!(b["error_code"], Value::Null, "{tool}: {b}");
+        assert!(b["count"].as_u64().unwrap_or(0) > 0, "{tool}: {b}");
+        assert_eq!(
+            b["sources"]["synthesized"]["refused"]["error_code"], "ENV_GATE_BLOCKED",
+            "{tool}: {b}"
+        );
+        assert_eq!(
+            b["sources"]["synthesized"]["refused"]["kind"], "operator_limit",
+            "{tool}: {b}"
+        );
+    }
+    let b = body(&s.call(
+        "skill_describe",
+        &json!({"name": "objectscript-guardrails"}),
+    ));
+    assert_eq!(b["success"], true, "{b}");
     // The registry-only tools are not judged.
     let b = body(&s.call("kb_recall", &json!({"query": "x"})));
     assert_ne!(b["error_code"], "ENV_GATE_BLOCKED", "{b}");

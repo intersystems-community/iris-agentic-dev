@@ -1131,6 +1131,16 @@ pub fn template_categories(
     judged
 }
 
+/// The skill readers that can answer without their server leg (R2b): `skill_list`,
+/// `skill_describe` and `skill_search` serve the skills bundled in the binary, and read `^SKILLS`
+/// on the default server as well. When the policy refuses that read (the template, `allow`) or
+/// the configuration does not parse, the pipeline lets the call run with the server leg skipped
+/// and the handler says so, instead of refusing a call whose answer needs no server. Every other
+/// tool of the family is refused whole.
+pub fn falls_back_to_bundled(tool: &str) -> bool {
+    matches!(tool, "skill_list" | "skill_describe" | "skill_search")
+}
+
 /// The write/destructive gate for one server, called by the pipeline before anything touches IRIS.
 ///
 /// `Some(refusal)` means the call must not proceed. `None` means it may.
