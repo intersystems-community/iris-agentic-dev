@@ -41,12 +41,30 @@ pub const BODY_READ_TOOLS: &[(&str, &[&str])] = &[(
     &["body_class", "body_where", "body_select", "search_table"],
 )];
 
-/// The arguments of a body-read tool that also need `acknowledgePhi` under `allow`, as an
-/// `iris_message_body` read does: a Search Table search returns the indexed body value itself.
-/// `body_class`, `body_where` and `body_select` read the body table and are admitted under `allow`
-/// without it.
-pub const ACKNOWLEDGED_BODY_READS: &[(&str, &[&str])] =
-    &[("iris_interop_query", &["search_table"])];
+/// Every tool and action that returns message-body content, with the arguments that make a call a
+/// body read. Under `allow` each needs `acknowledgePhi=true`, as an `iris_message_body` read does.
+/// An empty argument list means every call to the tool reads a body.
+///
+/// This is the one list: [`BODY_READ_TOOLS`] and the bulk-data tools that return bodies must be
+/// covered by it (`test_body_read_ack_171` checks both against the registry).
+/// `journal_search` is a bulk-data tool that is not here: it returns a journal record's value, not a
+/// message, and its handler withholds the value of a PHI-named global unless `acknowledgePhi` is set.
+pub const ACKNOWLEDGED_BODY_READS: &[(&str, &[&str])] = &[
+    (
+        "iris_interop_query",
+        &["body_class", "body_where", "body_select", "search_table"],
+    ),
+    ("iris_message_body", &[]),
+    ("stream_inspect", &[]),
+];
+
+/// True when `params` names `arg` with a value: not null, and not an empty list (an empty
+/// `body_select` selects nothing).
+fn names_argument(params: &serde_json::Value, arg: &str) -> bool {
+    params
+        .get(arg)
+        .is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()))
+}
 
 /// Under `allow`, refuse a call that [`ACKNOWLEDGED_BODY_READS`] lists unless `acknowledgePhi` is
 /// the boolean `true`. `params` has been through `normalize_dispatch_args`, so `acknowledge_phi`
@@ -80,20 +98,28 @@ pub fn check_body_read_acknowledged_as(
     let (_, args) = ACKNOWLEDGED_BODY_READS
         .iter()
         .find(|(tool, _)| *tool == tool_name)?;
-    let used = args
-        .iter()
-        .find(|arg| params.get(*arg).is_some_and(|v| !v.is_null()))?;
+    // An empty list is a tool every call of which reads a body.
+    let used = if args.is_empty() {
+        ""
+    } else {
+        *args.iter().find(|arg| names_argument(params, arg))?
+    };
     if acknowledged {
         return None;
     }
+    let what = if used.is_empty() {
+        tool_name.to_string()
+    } else {
+        format!("{tool_name} {used}")
+    };
     Some(serde_json::json!({
         "success": false,
         "error_code": "PHI_ACK_REQUIRED",
         "server_name": server_name,
         "tool_name": tool_name,
         "error": format!(
-            "dataPolicy=allow requires acknowledgePhi=true for {tool_name} {used}: the result \
-             holds indexed message-body values, which may contain PHI."
+            "dataPolicy=allow requires acknowledgePhi=true for {what}: the result holds \
+             message-body content, which may contain PHI."
         ),
     }))
 }
@@ -106,11 +132,7 @@ pub fn reads_message_bodies(tool_name: &str, params: &serde_json::Value) -> bool
         .iter()
         .filter(|(tool, _)| *tool == tool_name)
         .flat_map(|(_, args)| args.iter())
-        .any(|arg| {
-            params
-                .get(arg)
-                .is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()))
-        })
+        .any(|arg| names_argument(params, arg))
 }
 
 /// [`check_bulk_phi_gate`] for a call: also refuses a call that reads message bodies through a tool

@@ -305,7 +305,12 @@ async fn under_allow_the_content_comes_back_as_stored() {
     teardown().await;
     let s = seed().await;
     let (tools, _d) = tools_with("allow");
-    let stream = call(&tools, "stream_inspect", json!({"oid": s.plain_stream})).await;
+    let stream = call(
+        &tools,
+        "stream_inspect",
+        json!({"oid": s.plain_stream, "acknowledgePhi": true}),
+    )
+    .await;
     let body = call(
         &tools,
         "iris_message_body",

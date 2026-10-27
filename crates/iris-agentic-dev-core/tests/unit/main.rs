@@ -34,6 +34,7 @@ mod test_benchmark_gated_171;
 mod test_benchmark_run_task_errors;
 mod test_benchmark_scoring;
 mod test_benchmark_task_loading;
+mod test_body_read_ack_171;
 mod test_bundled_skills;
 mod test_cargo_config;
 mod test_changelog;
