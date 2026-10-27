@@ -145,6 +145,9 @@ struct Listener {
 /// the version, and the `SystemMode` query reads the mode that the environment template depends
 /// on. Both are reads that precede the pipeline by design (the template cannot be judged without
 /// the mode), so they are not what this test counts.
+///
+/// The rule: this test counts only requests past connection setup. Both reads go to the target the
+/// operator configured, and the system mode is needed to pick the template, so they come first.
 fn is_setup(request: &str) -> bool {
     let line = request.lines().next().unwrap_or("");
     line.starts_with("GET /api/atelier/ ") || request.contains("SystemMode")
