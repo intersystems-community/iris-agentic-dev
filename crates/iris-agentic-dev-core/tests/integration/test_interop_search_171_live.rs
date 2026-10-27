@@ -80,7 +80,15 @@ fn a_legitimate_search_still_works_under_allow() {
     let mut env = live_env();
     env.extend(data_reads_allowed_env());
     let mut mcp = McpSession::start(&env);
+    // The values it returns may be PHI, so `allow` alone is not enough: the same acknowledgement
+    // `iris_message_body` asks for, in either spelling.
     let r = call(&mut mcp, search());
-    assert_eq!(r["success"], true, "{r}");
-    assert!(r.get("error_code").is_none(), "{r}");
+    assert_eq!(r["error_code"], "PHI_ACK_REQUIRED", "{r}");
+    for key in ["acknowledgePhi", "acknowledge_phi"] {
+        let mut args = search();
+        args[key] = json!(true);
+        let r = call(&mut mcp, args);
+        assert_eq!(r["success"], true, "{key}: {r}");
+        assert!(r.get("error_code").is_none(), "{key}: {r}");
+    }
 }

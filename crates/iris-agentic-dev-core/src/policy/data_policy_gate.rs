@@ -41,6 +41,63 @@ pub const BODY_READ_TOOLS: &[(&str, &[&str])] = &[(
     &["body_class", "body_where", "body_select", "search_table"],
 )];
 
+/// The arguments of a body-read tool that also need `acknowledgePhi` under `allow`, as an
+/// `iris_message_body` read does: a Search Table search returns the indexed body value itself.
+/// `body_class`, `body_where` and `body_select` read the body table and are admitted under `allow`
+/// without it.
+pub const ACKNOWLEDGED_BODY_READS: &[(&str, &[&str])] =
+    &[("iris_interop_query", &["search_table"])];
+
+/// Under `allow`, refuse a call that [`ACKNOWLEDGED_BODY_READS`] lists unless `acknowledgePhi` is
+/// the boolean `true`. `params` has been through `normalize_dispatch_args`, so `acknowledge_phi`
+/// has already become `acknowledgePhi`. Under `block` and `redact` the bulk-data gate has refused
+/// the call before this runs.
+pub fn check_body_read_acknowledged(
+    tool_name: &str,
+    params: &serde_json::Value,
+    policy: &DataPolicy,
+    server_name: &str,
+) -> Option<serde_json::Value> {
+    let acknowledged = params
+        .get("acknowledgePhi")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    check_body_read_acknowledged_as(tool_name, params, acknowledged, policy, server_name)
+}
+
+/// [`check_body_read_acknowledged`] with the acknowledgement already read, for a handler that has
+/// its own parsed copy of it.
+pub fn check_body_read_acknowledged_as(
+    tool_name: &str,
+    params: &serde_json::Value,
+    acknowledged: bool,
+    policy: &DataPolicy,
+    server_name: &str,
+) -> Option<serde_json::Value> {
+    if *policy != DataPolicy::Allow {
+        return None;
+    }
+    let (_, args) = ACKNOWLEDGED_BODY_READS
+        .iter()
+        .find(|(tool, _)| *tool == tool_name)?;
+    let used = args
+        .iter()
+        .find(|arg| params.get(*arg).is_some_and(|v| !v.is_null()))?;
+    if acknowledged {
+        return None;
+    }
+    Some(serde_json::json!({
+        "success": false,
+        "error_code": "PHI_ACK_REQUIRED",
+        "server_name": server_name,
+        "tool_name": tool_name,
+        "error": format!(
+            "dataPolicy=allow requires acknowledgePhi=true for {tool_name} {used}: the result \
+             holds indexed message-body values, which may contain PHI."
+        ),
+    }))
+}
+
 /// True when `tool_name` with `params` reads message bodies: a bulk-data tool, or a tool in
 /// [`BODY_READ_TOOLS`] whose call carries a body argument. An empty `body_select` list selects
 /// nothing and does not count.

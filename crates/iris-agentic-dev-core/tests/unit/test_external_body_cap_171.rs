@@ -205,3 +205,75 @@ async fn the_compare_tools_encode_the_namespace_in_the_url() {
         );
     }
 }
+
+// ── A host that never answers ───────────────────────────────────────────────────────────────
+
+/// A server that accepts, reads the request and never writes a byte.
+fn silent() -> String {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        let mut held = Vec::new();
+        for stream in l.incoming() {
+            let Ok(mut s) = stream else { return };
+            let mut buf = [0u8; 4096];
+            let _ = s.read(&mut buf);
+            held.push(s);
+        }
+    });
+    format!("http://127.0.0.1:{port}")
+}
+
+/// The longest a request to a host that never answers may take in these tests, with the timeouts
+/// shortened to a few hundred milliseconds. Without any timeout the call would wait for ever.
+const GIVE_UP: std::time::Duration = std::time::Duration::from_secs(20);
+
+#[test]
+fn the_public_host_timeouts_are_thirty_and_one_hundred_twenty_seconds() {
+    assert_eq!(
+        iris_agentic_dev_core::iris::http::PUBLIC_HOST_CONNECT_TIMEOUT,
+        std::time::Duration::from_secs(30)
+    );
+    assert_eq!(
+        iris_agentic_dev_core::iris::http::PUBLIC_HOST_TIMEOUT,
+        std::time::Duration::from_secs(120)
+    );
+}
+
+#[tokio::test]
+async fn the_skill_clients_and_the_version_lookup_give_up_on_a_silent_host() {
+    use iris_agentic_dev_core::manifest::resolve::{resolve_github_version_async, ResolvedSource};
+    use iris_agentic_dev_core::testing::set_public_host_timeouts;
+    let base = silent();
+    let mut g = EnvGuard::new();
+    g.set("GITHUB_RAW_BASE_URL", &base)
+        .set("GITHUB_API_BASE_URL", &base);
+    set_public_host_timeouts(Some(std::time::Duration::from_millis(400)));
+
+    let started = std::time::Instant::now();
+    let installer = iris_agentic_dev_core::skill_install::SkillPackInstaller::new();
+    let r1 = installer.fetch_pack_manifest().await;
+    let r2 = installer.fetch_skill_content("skills/x").await;
+    let mut registry = iris_agentic_dev_core::skills::SkillRegistry::new();
+    let r3 = registry.load_from_github("o/r").await;
+    let req = semver::VersionReq::parse("*").unwrap();
+    let r4 = resolve_github_version_async(
+        &req,
+        &ResolvedSource::GitHub {
+            owner: "o".into(),
+            repo: "r".into(),
+        },
+    )
+    .await;
+    set_public_host_timeouts(None);
+
+    assert!(r1.is_err(), "skill_install manifest");
+    assert!(r2.is_err(), "skill_install content");
+    assert!(r3.is_err(), "skills load_from_github");
+    assert!(r4.is_err(), "manifest resolve");
+    assert!(
+        started.elapsed() < GIVE_UP,
+        "a silent host held a client for {:?}",
+        started.elapsed()
+    );
+}

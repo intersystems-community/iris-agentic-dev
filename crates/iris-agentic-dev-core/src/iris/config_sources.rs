@@ -702,18 +702,26 @@ fn candidate(inputs: &LoadInputs, home: Option<&Path>) -> Candidate {
 /// Is `path` a place that holds other people's work, so it is never a project directory and no
 /// file is read from it (security fix S2, S3)? The filesystem root, the directories that hold
 /// user homes (`/Users`, `/home`), the shared temporary directories (`/tmp` and its macOS and
-/// Windows forms), and any directory that holds `home`.
+/// Windows forms), the shared user directories (`/Users/Shared`, `C:\Users\Public`), the mount roots
+/// (`/Volumes`, `/mnt`, `/media`) and the mount points directly under them (`/Volumes/Backup`,
+/// `/mnt/c`), and any directory that holds `home`. A project on a mount, a level or more below the
+/// mount point (`/Volumes/work/proj`), is a project.
 ///
 /// The test is on the path as given: callers pass canonical paths, so `/tmp` on macOS arrives as
 /// `/private/tmp`, and both are listed.
 pub fn is_broad_root(path: &Path, home: Option<&Path>) -> bool {
     use std::path::Component;
+    // A Windows path read on another platform arrives as one component with backslashes in it, and
+    // a drive (`C:`) is a prefix on Windows and part of that component elsewhere: split on both and
+    // leave the drive out, so `C:\Users\Public` reads the same everywhere.
     let names: Vec<String> = path
         .components()
         .filter_map(|c| match c {
             Component::Normal(n) => Some(n.to_string_lossy().to_ascii_lowercase()),
             _ => None,
         })
+        .flat_map(|n| n.split('\\').map(str::to_string).collect::<Vec<_>>())
+        .filter(|n| !n.is_empty() && !is_drive(n))
         .collect();
     let names: Vec<&str> = names.iter().map(String::as_str).collect();
     if matches!(
@@ -729,10 +737,24 @@ pub fn is_broad_root(path: &Path, home: Option<&Path>) -> bool {
             | ["private", "var"]
             | ["private", "var", "tmp"]
             | ["windows", "temp"]
+            | ["users", "shared"]
+            | ["users", "public"]
+            | ["volumes"]
+            | ["volumes", _]
+            | ["mnt"]
+            | ["mnt", _]
+            | ["media"]
+            | ["media", _]
     ) {
         return true;
     }
     home.is_some_and(|h| h.starts_with(path))
+}
+
+/// `c:`, `D:`: one letter and a colon.
+fn is_drive(name: &str) -> bool {
+    let b = name.as_bytes();
+    b.len() == 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
 }
 
 /// The nearest `.iris-agentic-dev.toml` walking up from `cwd`, falling back to the nearest legacy

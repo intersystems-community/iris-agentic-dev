@@ -187,8 +187,20 @@ impl ConnectionPool {
         }
         // The probe logs in: this is a request, so it reads the member's secrets.
         let conn = member.connection();
-        let mode = match conn.client(crate::iris::http::ClientKind::Probe) {
-            Ok(client) => conn.detect_system_mode(&client).await,
+        let mode = match crate::iris::http::probe_session(&conn.tls) {
+            Ok(session) => {
+                let mode = conn.detect_system_mode(&session.client).await;
+                session
+                    .finish(
+                        &conn.tls,
+                        &crate::iris::csp_session::store_for_primary(
+                            &conn.base_url,
+                            &conn.username,
+                        ),
+                    )
+                    .await;
+                mode
+            }
             Err(_) => SystemMode::Unknown,
         };
         if mode == SystemMode::Unknown {

@@ -131,6 +131,14 @@ pub fn dispatch_gate_for(
     ) {
         return Err(err);
     }
+    if let Some(err) = crate::policy::data_policy_gate::check_body_read_acknowledged(
+        tool_name,
+        params,
+        data_policy,
+        server_name,
+    ) {
+        return Err(err);
+    }
     if !action.is_empty() {
         if let Some(err) =
             crate::policy::data_policy_gate::check_bulk_phi_gate(action, data_policy, server_name)

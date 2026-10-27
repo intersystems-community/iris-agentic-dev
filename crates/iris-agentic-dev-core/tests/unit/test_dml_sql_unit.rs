@@ -185,10 +185,8 @@ fn precheck_reads_every_modifier_iris_takes() {
         "%NOINDEX",
         "%NOLOCK",
         "%NOTRIGGER",
-        "%NOUNIQCHECK",
         "%PROFILE",
         "%PROFILE_ALL",
-        "%STARTTABLE",
     ] {
         for stmt in [
             format!("DELETE {modifier} FROM t WHERE a = 1"),
@@ -202,6 +200,24 @@ fn precheck_reads_every_modifier_iris_takes() {
                 "{stmt}"
             );
         }
+    }
+}
+
+/// IRIS 2026.2 reads `%NOUNIQCHECK` and `%STARTTABLE` after DELETE/UPDATE as a table name, so the
+/// counter must not skip them as modifiers: `DELETE %NOUNIQCHECK FROM t` is refused, and
+/// `DELETE %NOUNIQCHECK t` counts the table IRIS will write, `%NOUNIQCHECK` with the alias `t`.
+#[test]
+fn precheck_reads_the_words_iris_takes_as_a_table_name_as_one() {
+    for modifier in ["%NOUNIQCHECK", "%STARTTABLE", "%nouniqcheck", "%starttable"] {
+        let stmt = format!("DELETE {modifier} FROM t WHERE a = 1");
+        assert!(needs_rows_precheck(&stmt), "{stmt} needs a count");
+        assert_eq!(count_sql(&stmt), None, "{stmt}");
+        let stmt = format!("DELETE {modifier} t WHERE a = 1");
+        assert_eq!(
+            count_sql(&stmt),
+            Some(format!("SELECT COUNT(*) FROM {modifier} t WHERE a = 1")),
+            "{stmt}"
+        );
     }
 }
 

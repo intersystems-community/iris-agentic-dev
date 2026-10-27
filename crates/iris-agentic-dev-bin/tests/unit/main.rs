@@ -26,6 +26,7 @@ mod test_http_guard_141;
 mod test_plugin_manifest_version;
 mod test_plugin_version_check;
 mod test_query_tsv;
+mod test_release_build_171;
 mod test_skill_catalogue_141;
 mod test_tool_dispatch;
 mod test_trust_editor_141;

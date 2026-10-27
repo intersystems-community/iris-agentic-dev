@@ -91,3 +91,45 @@ async fn no_client_follows_a_redirect_with_its_credentials() {
         );
     }
 }
+
+/// S10: the LLM client sends its key in `x-api-key` (or `Authorization`), and `reqwest` strips only
+/// the standard credential headers when a redirect leaves the host, so a followed redirect took the
+/// key to wherever the answer pointed. The base URL can point anywhere (`ANTHROPIC_BASE_URL`,
+/// `OPENAI_BASE_URL`), so a 302 from it is an error and the second host reads nothing.
+#[tokio::test]
+async fn the_llm_client_does_not_follow_a_redirect_with_its_key() {
+    use iris_agentic_dev_core::generate::LlmClient;
+    use iris_agentic_dev_core::testing::EnvGuard;
+    for (model, key_var, base_var) in [
+        (
+            "claude-3-5-sonnet",
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_BASE_URL",
+        ),
+        ("gpt-4o", "OPENAI_API_KEY", "OPENAI_BASE_URL"),
+    ] {
+        let (target_port, target_heads) =
+            listener("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into());
+        let (origin_port, _) = listener(format!(
+            "HTTP/1.1 307 Temporary Redirect\r\nLocation: http://127.0.0.1:{target_port}/v1/x\r\n\
+             Content-Length: 0\r\nConnection: close\r\n\r\n"
+        ));
+        let mut g = EnvGuard::new();
+        g.set("IRIS_GENERATE_CLASS_MODEL", model)
+            .set(key_var, "sk-Zq9-redirect-key")
+            .set(base_var, format!("http://127.0.0.1:{origin_port}"))
+            .unset("IRIS_GENERATE_TIMEOUT");
+        let client = LlmClient::from_env().unwrap();
+        let err = client.complete("s", "u").await.unwrap_err();
+        assert!(
+            format!("{err:#}").contains("307"),
+            "{model}: the redirect was not returned as the answer: {err:#}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert!(
+            target_heads.lock().unwrap().is_empty(),
+            "{model}: the key went to the redirect target: {:?}",
+            target_heads.lock().unwrap()
+        );
+    }
+}

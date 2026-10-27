@@ -378,9 +378,7 @@ impl SkillPackInstaller {
     }
 
     pub async fn fetch_pack_manifest(&self) -> Result<Vec<String>> {
-        let client = reqwest::Client::builder()
-            .user_agent("iris-agentic-dev/0.3.1")
-            .build()?;
+        let client = crate::iris::http::public_host_client("iris-agentic-dev/0.3.1")?;
         let url = format!(
             "{}/intersystems-community/iris-agentic-dev/HEAD/iris-agentic-dev.toml",
             self.raw_base
@@ -392,9 +390,7 @@ impl SkillPackInstaller {
     }
 
     pub async fn fetch_skill_content(&self, skill_path: &str) -> Result<String> {
-        let client = reqwest::Client::builder()
-            .user_agent("iris-agentic-dev/0.3.1")
-            .build()?;
+        let client = crate::iris::http::public_host_client("iris-agentic-dev/0.3.1")?;
         let url = format!(
             "{}/intersystems-community/iris-agentic-dev/HEAD/{}/SKILL.md",
             self.raw_base, skill_path

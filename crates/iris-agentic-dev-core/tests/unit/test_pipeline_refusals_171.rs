@@ -212,3 +212,91 @@ async fn the_tools_that_only_read_local_state_are_not_gated_by_allow() {
         }
     }
 }
+
+// ── R6 ──────────────────────────────────────────────────────────────────────────────────────────
+
+/// `iris_query` `mode="write"` refuses a DML statement it cannot count, whatever `max_rows_affected`
+/// the caller sends, before any request reaches IRIS. Nothing listens at the rig's addresses, so a
+/// statement that got past the refusal would fail with a connection error instead.
+#[tokio::test]
+async fn an_uncountable_statement_is_refused_in_every_default_run() {
+    let rig = rig(GATES_OPEN);
+    let mut client = McpClient::start(rig.tools.clone()).await;
+    for query in [
+        "TRUNCATE t",
+        "TRUNCATE TABLE a, b",
+        "DELETE FROM t1, t2",
+        "DELETE FROM t JOIN u ON 1 = 1",
+        "UPDATE t1, t2 SET a = 1",
+        "UPDATE t (a) VALUES (1)",
+        "DELETE %BOGUS FROM t",
+        "DELETE %NOUNIQCHECK FROM t",
+        "DELETE %STARTTABLE FROM t",
+        "TRUNCATE TABLE %NOCHECK t",
+    ] {
+        // No cap sent, a cap, and `force`, which does not lift it.
+        for extra in [
+            json!({}),
+            json!({"max_rows_affected": 5}),
+            json!({"max_rows_affected": 5, "force": true}),
+        ] {
+            let mut args = json!({"query": query, "mode": "write"});
+            for (k, v) in extra.as_object().unwrap() {
+                args[k] = v.clone();
+            }
+            let body = client.call("iris_query", args).await;
+            assert_eq!(body["error_code"], "ROWS_NOT_COUNTABLE", "{query}: {body}");
+            assert_eq!(body["refusal"]["kind"], "fixed_rule", "{query}: {body}");
+        }
+    }
+    // The control: a statement the counter can read gets past the refusal and fails on the
+    // connection instead.
+    let body = client
+        .call(
+            "iris_query",
+            json!({"query": "DELETE FROM t WHERE a = 1", "mode": "write"}),
+        )
+        .await;
+    assert_ne!(body["error_code"], "ROWS_NOT_COUNTABLE", "{body}");
+}
+
+// ── R9 ──────────────────────────────────────────────────────────────────────────────────────────
+
+/// A tool that cannot build the HTTP client for its server answers with that error. It does not
+/// fall back to the client built at startup, whose certificate setting and CSP session belong to
+/// the default connection and not to the server the call named.
+#[tokio::test]
+async fn a_call_that_cannot_build_its_client_errors() {
+    let rig = rig(GATES_OPEN);
+    let calls = [
+        ("iris_table_info", json!({"table": "A.B"})),
+        ("iris_info", json!({"what": "namespace"})),
+        ("iris_query", json!({"query": "SELECT 1"})),
+        (
+            "iris_query",
+            json!({"query": "DELETE FROM t WHERE a = 1", "mode": "write"}),
+        ),
+    ];
+    for (tool, args) in calls {
+        iris_agentic_dev_core::testing::fail_client_builds(true);
+        let out = answer(&rig, tool, args.clone()).await;
+        iris_agentic_dev_core::testing::fail_client_builds(false);
+        let text = match out {
+            Err(e) => e,
+            Ok(body) => body.to_string(),
+        };
+        assert!(
+            text.contains("could not build the HTTP client"),
+            "{tool}: the call went on with another client: {text}"
+        );
+        // The control: with client builds working, the same call reaches the (absent) server.
+        let text = match answer(&rig, tool, args).await {
+            Err(e) => e,
+            Ok(body) => body.to_string(),
+        };
+        assert!(
+            !text.contains("could not build the HTTP client"),
+            "{tool}: {text}"
+        );
+    }
+}

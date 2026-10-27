@@ -291,7 +291,7 @@ fn write_mode_counts_what_it_used_to_skip() {
     assert_eq!(count(&mut mcp, &table), 0);
 
     // The modifiers the counter skips that IRIS takes after DELETE and UPDATE (measured on 2026.2:
-    // `%NOUNIQCHECK` and `%STARTTABLE` are read as a table name, so they are not here).
+    // `%NOUNIQCHECK` and `%STARTTABLE` are read as a table name, so they are refused below).
     for modifier in [
         "%NOCHECK",
         "%NOFPLAN",
@@ -318,6 +318,8 @@ fn write_mode_counts_what_it_used_to_skip() {
         format!("DELETE %BOGUS FROM {table}"),
         format!("UPDATE {table}, {SCHEMA}.\"Odd Name\" SET Name = 'z'"),
         format!("TRUNCATE {table}"),
+        format!("DELETE %NOUNIQCHECK FROM {table}"),
+        format!("DELETE %STARTTABLE FROM {table}"),
     ] {
         let r = write(&mut mcp, &stmt, 10000);
         assert_eq!(r["error_code"], "ROWS_NOT_COUNTABLE", "{stmt}: {r}");

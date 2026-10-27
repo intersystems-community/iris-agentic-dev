@@ -104,6 +104,15 @@ pub struct IrisInteropQueryParams {
     /// `what=messages`: search an indexed Search Table field instead of the body table.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub search_table: Option<SearchTableParam>,
+    /// Required with `search_table` when the server's `dataPolicy` is `allow`: acknowledges that the
+    /// indexed values returned may contain PHI.
+    #[serde(
+        rename = "acknowledgePhi",
+        alias = "acknowledge_phi",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub acknowledge_phi: Option<bool>,
     /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<String>,

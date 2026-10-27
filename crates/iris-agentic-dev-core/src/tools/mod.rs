@@ -28,7 +28,8 @@ fn non_blank_env_value(name: &str) -> String {
 }
 
 pub(crate) const DOCKER_REQUIRED_HINT: &str = " Ensure HTTP/Atelier REST is reachable: verify \
-    http://<host>:<port>/api/atelier and set host/web_port in .iris-agentic-dev.toml.";
+    http://<host>:<port>/api/atelier, then select the server with iris_select_container or \
+    register it with iris_add_server.";
 
 /// `CARGO_PKG_VERSION` plus a `+<git-describe>` build-metadata suffix (see
 /// `build.rs`), so `check_config`'s `server_version` can distinguish a local/
@@ -2361,6 +2362,8 @@ Write "OK:"_rs.%ROWCOUNT"#,
 }
 
 /// Statement modifiers IRIS accepts between `UPDATE`/`DELETE` and the table (`DELETE %NOLOCK FROM t`).
+/// `%NOUNIQCHECK` and `%STARTTABLE` are not here: IRIS 2026.2 reads both as a table name, so a
+/// count that skipped them would name a different table than the write.
 const DML_MODIFIERS: &[&str] = &[
     "NOCHECK",
     "NOFPLAN",
@@ -2368,10 +2371,8 @@ const DML_MODIFIERS: &[&str] = &[
     "NOJOURN",
     "NOLOCK",
     "NOTRIGGER",
-    "NOUNIQCHECK",
     "PROFILE",
     "PROFILE_ALL",
-    "STARTTABLE",
 ];
 
 /// The leading `UPDATE`, `DELETE` or `TRUNCATE` of a DML statement, and where its operands start in
@@ -3828,13 +3829,21 @@ impl IrisTools {
         );
     }
     /// The client for the call in scope: the target server's own certificate setting decides
-    /// whether its certificate is checked. Outside a call, the client built at startup.
-    fn http_client(&self) -> &reqwest::Client {
+    /// whether its certificate is checked. Outside a call, the client built at startup. A client
+    /// that cannot be built is an error, as in [`Self::conn_client`]: the startup client belongs
+    /// to the default connection, and using it for another server would send that server's
+    /// requests with the wrong certificate setting and CSP session.
+    fn http_client(&self) -> Result<&reqwest::Client, McpError> {
         let conn = self.target().ok().and_then(|t| t.primary.conn.clone());
         match conn {
             Some(c) => crate::iris::http::call_client_ref(&c.tls, &c.base_url, &c.username)
-                .unwrap_or(&self.client),
-            None => &self.client,
+                .map_err(|e| {
+                    McpError::internal_error(
+                        format!("could not build the HTTP client for {}: {e}", c.base_url),
+                        None,
+                    )
+                }),
+            None => Ok(&self.client),
         }
     }
     /// The client for `conn`: its own certificate setting (never the launch environment's, which
@@ -4235,7 +4244,7 @@ impl IrisTools {
             }
         }
 
-        let client = self.http_client();
+        let client = self.http_client()?;
 
         // Local file path support: a file inside the project is uploaded via Atelier PUT first.
         if let Some(path) = local_file.as_deref() {
@@ -4646,7 +4655,7 @@ impl IrisTools {
         let iris = self.target_conn()?;
         let namespace = self.target_ns(p.namespace.as_deref())?;
         tracing::info!(namespace = %namespace, pattern = %p.pattern, "iris_test");
-        let client = self.http_client();
+        let client = self.http_client()?;
 
         // US3: namespace existence check before running tests.
         let ns_check_code = crate::objectscript::namespace_exists_code(&namespace);
@@ -5189,7 +5198,7 @@ impl IrisTools {
         }
         let namespace = self.target_ns(p.namespace.as_deref())?;
         tracing::info!(namespace = %namespace, "iris_doc");
-        let client = self.http_client();
+        let client = self.http_client()?;
         let result = doc::handle_iris_doc(
             &iris,
             client,
@@ -5221,7 +5230,7 @@ impl IrisTools {
             "explain" => {
                 let iris = self.target_conn()?;
                 let namespace = self.target_ns(p.namespace.as_deref())?;
-                let client = self.http_client();
+                let client = self.http_client()?;
                 let result = iris_query_explain(&iris, client, &p, &namespace).await;
                 self.record_call(
                     "iris_query",
@@ -5232,7 +5241,7 @@ impl IrisTools {
             "count" => {
                 let iris = self.target_conn()?;
                 let namespace = self.target_ns(p.namespace.as_deref())?;
-                let client = self.http_client();
+                let client = self.http_client()?;
                 let result = iris_query_count(&iris, client, &p, &namespace).await;
                 self.record_call(
                     "iris_query",
@@ -5306,7 +5315,7 @@ impl IrisTools {
         };
         let (iris, client) = match &forced {
             Some(cx) => (cx.conn.clone(), cx.client.as_ref()),
-            None => (self.target_conn()?, self.http_client()),
+            None => (self.target_conn()?, self.http_client()?),
         };
         let namespace = self.target_ns(p.namespace.as_deref())?;
         let query_url = iris.versioned_ns_url(&namespace, "/action/query");
@@ -5779,15 +5788,15 @@ impl IrisTools {
                 // Connection is via fallback discovery — remind the user to create a
                 // config in the workspace the IDE pointed us at.
                 response["fallback_warning"] = serde_json::Value::String(format!(
-                    "No .iris-agentic-dev.toml found in OBJECTSCRIPT_WORKSPACE ({ws}). \
-                     Connection established via fallback discovery. Create .iris-agentic-dev.toml \
-                     in that directory to pin the target instance."
+                    "No project configuration found in OBJECTSCRIPT_WORKSPACE ({ws}). \
+                     Connection established via fallback discovery, so it may not be the instance \
+                     you meant. Pin the target with iris_select_container or iris_add_server."
                 ));
             } else {
                 response["fallback_warning"] = serde_json::Value::String(
-                    "No .iris-agentic-dev.toml config file found. Connection established via \
-                     fallback discovery (Docker/Server Manager/port scan). Set OBJECTSCRIPT_WORKSPACE \
-                     or create a .iris-agentic-dev.toml in your project root to pin the target instance."
+                    "No project configuration found. Connection established via fallback \
+                     discovery (Docker/Server Manager/port scan), so it may not be the instance \
+                     you meant. Pin the target with iris_select_container or iris_add_server."
                         .to_string(),
                 );
             }
@@ -6128,7 +6137,7 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         let (sql, params) = translate_symbols_query(p.limit, &p.query);
         match iris.query(&sql, params, namespace, client).await {
             Ok(resp) => ok_json(serde_json::json!({
@@ -6229,7 +6238,7 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         // Bug 15: use parameterized queries instead of manual string escaping.
         let methods = iris.query(
             "SELECT Name,FormalSpec,ReturnType FROM %Dictionary.CompiledMethod WHERE parent=? ORDER BY Name",
@@ -6293,7 +6302,7 @@ impl IrisTools {
         }
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         let code = crate::objectscript::source_line_code(&p.routine, p.offset);
         match iris.execute_via_generator(&code, namespace, client).await {
             Ok(raw) => {
@@ -6317,7 +6326,7 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(_p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         match iris.query("SELECT TOP 20 ErrorCode,ErrorText,TimeStamp FROM %SYSTEM.Error ORDER BY TimeStamp DESC", vec![], namespace, client).await {
             Ok(resp) => ok_json(serde_json::json!({"success": true, "errors": resp["result"]["content"]})),
             Err(e) => {
@@ -6343,7 +6352,7 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         // FR-012: cap max_entries to prevent runaway queries.
         let max_entries = p.max_entries.min(1000);
         let sql = format!("SELECT TOP {} ErrorCode,ErrorText,TimeStamp FROM %SYSTEM.Error ORDER BY TimeStamp DESC", max_entries);
@@ -6390,7 +6399,7 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         let cls_name = p.cls_name.trim_end_matches(".cls");
         // Build source map by querying %Studio.Debugger for each .INT method
         let code = format!(
@@ -6457,7 +6466,7 @@ impl IrisTools {
             return err_result(nopws::nopws_atelier_required_error());
         }
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         let store = |name: String, text: String| {
             let iris = iris.clone();
             async move {
@@ -6531,7 +6540,7 @@ impl IrisTools {
 
         let introspection_context = if let Some(iris) = self.target_conn_opt()?.as_deref() {
             let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-            let client = self.http_client();
+            let client = self.http_client()?;
             // FR-001/C1: use parameterized query to prevent SQL injection via class_name.
             iris.query(
                 "SELECT Name,FormalSpec,ReturnType FROM %Dictionary.CompiledMethod WHERE parent=? ORDER BY Name",
@@ -6952,7 +6961,7 @@ Methods:
         let iris = self.target_conn()?;
         skills_tools::handle_kb(
             &iris,
-            self.http_client(),
+            self.http_client()?,
             skills_tools::KbParams {
                 action: "index".into(),
                 path: p.workspace_path,
@@ -7075,7 +7084,8 @@ Methods:
         let iris = self.durable_sink_connection();
         let config_dir = telemetry_config_dir();
         let records =
-            crate::telemetry::read_durable(session_id, iris, self.http_client(), &config_dir).await;
+            crate::telemetry::read_durable(session_id, iris, self.http_client()?, &config_dir)
+                .await;
         let (matches, truncated) = crate::telemetry::filter_records(
             &records,
             p.tool_name.as_deref(),
@@ -7117,7 +7127,8 @@ Methods:
         let iris = self.durable_sink_connection();
         let config_dir = telemetry_config_dir();
         let records =
-            crate::telemetry::read_durable(session_id, iris, self.http_client(), &config_dir).await;
+            crate::telemetry::read_durable(session_id, iris, self.http_client()?, &config_dir)
+                .await;
         let (filtered, _truncated) = crate::telemetry::filter_records(
             &records,
             None,
@@ -7160,7 +7171,7 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let result =
-            search::handle_iris_search(&iris, self.http_client(), p, Arc::clone(&self.log_store))
+            search::handle_iris_search(&iris, self.http_client()?, p, Arc::clone(&self.log_store))
                 .await;
         self.record_call("iris_search", result.is_ok());
         result
@@ -7183,7 +7194,8 @@ Methods:
         }
         let iris = self.target_conn()?;
         let result =
-            info::handle_iris_info(&iris, self.http_client(), p, Arc::clone(&self.log_store)).await;
+            info::handle_iris_info(&iris, self.http_client()?, p, Arc::clone(&self.log_store))
+                .await;
         self.record_call("iris_info", result.is_ok());
         result
     }
@@ -7198,7 +7210,7 @@ Methods:
         Parameters(p): Parameters<info::TableInfoParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = info::handle_iris_table_info(&iris, self.http_client(), p).await;
+        let result = info::handle_iris_table_info(&iris, self.http_client()?, p).await;
         self.record_call("iris_table_info", result.is_ok());
         result
     }
@@ -7215,7 +7227,7 @@ Methods:
         let iris = self.target_conn()?;
         let result = dict::handle_resolve_dynamic_dispatch(
             &iris,
-            self.http_client(),
+            self.http_client()?,
             p,
             &self.metadata_cache,
         )
@@ -7236,7 +7248,7 @@ Methods:
         let iris = self.target_conn()?;
         let result = dict::handle_extract_message_map_routing(
             &iris,
-            self.http_client(),
+            self.http_client()?,
             p,
             &self.metadata_cache,
         )
@@ -7257,7 +7269,7 @@ Methods:
         let iris = self.target_conn()?;
         let result = dict::handle_find_subclass_implementations(
             &iris,
-            self.http_client(),
+            self.http_client()?,
             p,
             &self.metadata_cache,
         )
@@ -7276,7 +7288,7 @@ Methods:
         Parameters(p): Parameters<info::MacroParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = info::handle_iris_macro(&iris, self.http_client(), p).await;
+        let result = info::handle_iris_macro(&iris, self.http_client()?, p).await;
         self.record_call("iris_macro", result.is_ok());
         result
     }
@@ -7290,7 +7302,7 @@ Methods:
         Parameters(p): Parameters<info::DebugParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = info::handle_iris_debug(&iris, self.http_client(), p).await;
+        let result = info::handle_iris_debug(&iris, self.http_client()?, p).await;
         self.record_call("iris_debug", result.is_ok());
         result
     }
@@ -7304,7 +7316,7 @@ Methods:
         Parameters(p): Parameters<info::GenerateParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = info::handle_iris_generate(&iris, self.http_client(), p).await;
+        let result = info::handle_iris_generate(&iris, self.http_client()?, p).await;
         self.record_call("iris_generate", result.is_ok());
         result
     }
@@ -7318,7 +7330,7 @@ Methods:
         Parameters(p): Parameters<skills_tools::SkillParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = skills_tools::handle_skill(&iris, self.http_client(), p, &self.history).await;
+        let result = skills_tools::handle_skill(&iris, self.http_client()?, p, &self.history).await;
         self.record_call("skill", result.is_ok());
         result
     }
@@ -7333,7 +7345,7 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let result =
-            skills_tools::handle_skill_community(&iris, self.http_client(), p, &self.registry)
+            skills_tools::handle_skill_community(&iris, self.http_client()?, p, &self.registry)
                 .await;
         self.record_call("skill_community", result.is_ok());
         result
@@ -7350,7 +7362,7 @@ Methods:
         let iris = self.target_conn()?;
         // The scope is resolved only by the action that reads the host, inside `handle_kb`.
         let scope = |path: Option<&str>| self.kb_index_scope("kb", path);
-        let result = skills_tools::handle_kb(&iris, self.http_client(), p, scope).await;
+        let result = skills_tools::handle_kb(&iris, self.http_client()?, p, scope).await;
         self.record_call("kb", result.is_ok());
         result
     }
@@ -7366,7 +7378,7 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let result =
-            skills_tools::handle_agent_info(&iris, self.http_client(), p, &self.history).await;
+            skills_tools::handle_agent_info(&iris, self.http_client()?, p, &self.history).await;
         self.record_call("agent_info", result.is_ok());
         result
     }
@@ -7393,7 +7405,7 @@ Methods:
         }
         let result = scm::handle_iris_source_control(
             &iris,
-            self.http_client(),
+            self.http_client()?,
             p,
             &self.elicitation_store,
             &self.checkout_cache,
@@ -7632,7 +7644,7 @@ Methods:
     }
 
     #[tool(
-        description = "Interoperability query dispatcher (merged). what (REQUIRED): logs=Event Log entries, queues=message queue depths, messages=message archive (Ens.MessageHeader). Anything else returns INVALID_ACTION. To trace one session, use what=messages with session_id=<n>. Filters: component=<config item> narrows logs and messages; session_id=<n> and since_id=<n> (tails after a watermark) narrow messages. what=messages can also search message CONTENT: (a) body_class=<msg class> + body_where=<SQL fragment on body table> + body_select=[cols] joins the body table server-side (SQL name resolved for you); (b) search_table={prop, value|value_like, class?, extent?} searches an indexed Search Table field (extent default EnsLib.HL7.SearchTable; errors list searchable props). Both (a) and (b) read message content, so they need dataPolicy = allow on the server. Pass namespace=<ns> for a non-default interop namespace. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance.",
+        description = "Interoperability query dispatcher (merged). what (REQUIRED): logs=Event Log entries, queues=message queue depths, messages=message archive (Ens.MessageHeader). Anything else returns INVALID_ACTION. To trace one session, use what=messages with session_id=<n>. Filters: component=<config item> narrows logs and messages; session_id=<n> and since_id=<n> (tails after a watermark) narrow messages. what=messages can also search message CONTENT: (a) body_class=<msg class> + body_where=<SQL fragment on body table> + body_select=[cols] joins the body table server-side (SQL name resolved for you); (b) search_table={prop, value|value_like, class?, extent?} searches an indexed Search Table field (extent default EnsLib.HL7.SearchTable; errors list searchable props). Both (a) and (b) read message content, so they need dataPolicy = allow on the server; (b) also needs acknowledgePhi=true, as iris_message_body does. Pass namespace=<ns> for a non-default interop namespace. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<IrisInteropQueryResponse>()
     )]
@@ -7642,6 +7654,31 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let what = p.get("what").and_then(|v| v.as_str()).unwrap_or("logs");
+        // The policy gate has judged this call already; the handler asks again, as
+        // `iris_message_body` does, so the acknowledgement does not depend on the gate alone.
+        {
+            let target = self.target()?;
+            let policy = target
+                .primary
+                .policy
+                .data_policy
+                .clone()
+                .unwrap_or_default();
+            let acknowledged = p
+                .get("acknowledgePhi")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if let Some(body) = crate::policy::data_policy_gate::check_body_read_acknowledged_as(
+                "iris_interop_query",
+                &p,
+                acknowledged,
+                &policy,
+                &target.primary.key,
+            ) {
+                self.record_call("iris_interop_query", false);
+                return self.refuse(body);
+            }
+        }
         let target_hold = self.target_conn_opt()?;
         let iris_opt = target_hold.as_deref();
         #[allow(unused_variables)]
@@ -9102,7 +9139,7 @@ Methods:
                 "nopws": true,
                 "web_available": false,
                 "nopws_detected": nopws_detected,
-                "suggestion": "NoPWS build: set docker_only = true in .iris-agentic-dev.toml (a connection key, not a tool parameter) or add a webgateway sidecar. Setup instructions: skills/skills/iris-agentic-dev/nopws-setup/SKILL.md in the iris-agentic-dev repo.",
+                "suggestion": "NoPWS build: select a container with iris_select_container (execute and compile work over docker exec) or add a webgateway sidecar. Setup instructions: skills/skills/iris-agentic-dev/nopws-setup/SKILL.md in the iris-agentic-dev repo.",
             });
             if let Some(ev) = nopws_evidence {
                 resp["nopws_evidence"] = serde_json::Value::String(ev);
@@ -10910,8 +10947,8 @@ mod schema_normalization_tests {
             "DOCKER_REQUIRED hint must reference HTTP URL pattern"
         );
         assert!(
-            DOCKER_REQUIRED_HINT.contains(".iris-agentic-dev.toml"),
-            "DOCKER_REQUIRED hint must reference the toml config file"
+            DOCKER_REQUIRED_HINT.contains("iris_select_container"),
+            "DOCKER_REQUIRED hint must point at the tool that selects a server"
         );
         assert!(
             !DOCKER_REQUIRED_HINT.to_lowercase().contains("docker run"),

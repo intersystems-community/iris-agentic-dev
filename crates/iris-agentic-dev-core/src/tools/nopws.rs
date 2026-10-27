@@ -39,9 +39,8 @@ pub fn nopws_atelier_required_error() -> serde_json::Value {
         // sent agents to `skill(action="describe")`, which answered count: 0.
         "error": "NoPWS: this tool requires Atelier REST API. \
                   Set up a webgateway sidecar for Atelier REST access, \
-                  or set docker_only = true in .iris-agentic-dev.toml (a connection key, \
-                  not a tool parameter). Under docker_only, iris_execute and iris_compile \
-                  still work over docker exec. iris_execute cannot run `{}` blocks there; \
+                  or select a container with iris_select_container. On a docker_only \
+                  connection, iris_execute and iris_compile still work over docker exec. iris_execute cannot run `{}` blocks there; \
                   put them in a .mac routine that is already on the server, iris_compile it, \
                   and call it with iris_execute `Do entry^Routine`. \
                   Setup instructions: skills/skills/iris-agentic-dev/nopws-setup/SKILL.md \

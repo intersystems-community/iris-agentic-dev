@@ -82,6 +82,33 @@ fn multibyte_text_around_a_comment_does_not_panic() {
     ));
 }
 
+#[test]
+fn an_objectscript_body_is_read_with_its_dashes() {
+    // In the body of a `CREATE PROCEDURE ... LANGUAGE OBJECTSCRIPT`, `--` is two unary minuses and
+    // not a comment, so the call after it runs. The lexer reads it as a SQL comment and drops it,
+    // and the text-with-comments reading is what still refuses it.
+    for sql in [
+        "CREATE PROCEDURE p() LANGUAGE OBJECTSCRIPT { Set x = --##class(%Dictionary.ClassDefinition).%DeleteId(\"X\")\n }",
+        "CREATE PROCEDURE p() LANGUAGE OBJECTSCRIPT { Set x = -- do ##class(%Library.Routine).%New(\"a.mac\")\n }",
+        "create function f() returns int language objectscript { quit --##class(%Dictionary.MethodDefinition).%DeleteId(\"A||b\") }",
+        "ALTER PROCEDURE p() LANGUAGE OBJECTSCRIPT { Set x = --##class(%Dictionary.ClassDefinition).%DeleteId(\"X\")\n }",
+    ] {
+        assert!(refused(sql), "got past the gate: {sql:?}");
+    }
+}
+
+#[test]
+fn a_dml_comment_is_still_not_a_reference() {
+    // The text-with-comments reading starts at the first CREATE or ALTER, as the directive scan
+    // does, so DML that has no such word and merely has a comment is untouched.
+    for sql in [
+        "UPDATE t SET a = 1 -- %Dictionary.ClassDefinition",
+        "UPDATE t SET Created = 1 /* %Library.Routine */",
+    ] {
+        assert!(!refused(sql), "a comment was read as code: {sql:?}");
+    }
+}
+
 // ── explain mode and the role gate, through the pipeline ────────────────────────────────────────
 
 mod pipeline {

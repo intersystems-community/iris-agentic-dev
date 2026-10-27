@@ -159,8 +159,11 @@ impl LlmClient {
             ));
         }
 
+        // No redirect: the key travels in a header `reqwest` does not strip when a redirect leaves
+        // the host, and the base URL is the operator's to set, so a 3xx is the answer and an error.
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(self.timeout_secs))
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
 
         if self.is_anthropic_model() {

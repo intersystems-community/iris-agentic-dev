@@ -96,8 +96,8 @@ impl std::fmt::Display for SmCredentialError {
                 "OS keychain is unavailable for server '{server_name}' ({detail}). \
                  On headless hosts and Remote SSH sessions the keychain daemon is often \
                  not accessible to out-of-process MCP clients. \
-                 Workaround: add the connection to .iris-agentic-dev.toml with host/port/\
-                 username/password — the file hot-reloads without restarting the server. \
+                 Workaround: register the connection with iris_add_server, or have the \
+                 operator supply IRIS_USERNAME and IRIS_PASSWORD in the server's environment. \
                  credential_status will show 'keychain_unavailable' until resolved."
             ),
         }
@@ -307,7 +307,7 @@ pub fn init_platform_keystore() {
             Ok(store) => keyring_core::set_default_store(store),
             Err(e) => tracing::warn!(
                 "Secret Service keychain init failed (headless host or no D-Bus session?): {e}. \
-                 Credential storage unavailable — use .iris-agentic-dev.toml as fallback."
+                 Credential storage unavailable — use IRIS_USERNAME and IRIS_PASSWORD as fallback."
             ),
         }
     }
@@ -799,8 +799,8 @@ fn vscdb_dpapi_decrypt(ciphertext: &[u8], what: &str) -> Result<Vec<u8>, String>
              This process is running as Windows user: {current_user}\n\
              DPAPI encrypts data to the user who wrote it. If this process runs as a \
              different user than VS Code, it cannot decrypt VS Code's stored secrets.\n\
-             Fix: run VS Code and this tool as the same Windows user, or put the \
-             password directly in .iris-agentic-dev.toml (see docs/connecting.md).",
+             Fix: run VS Code and this tool as the same Windows user, or have the \
+             operator supply the password in IRIS_PASSWORD (see docs/connecting.md).",
             ciphertext.len()
         ));
     }
