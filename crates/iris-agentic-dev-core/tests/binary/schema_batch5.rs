@@ -39,6 +39,7 @@ const BATCH5: &[ParamContract] = &[
             ("body_where", "string"),
             ("body_select", "array"),
             ("search_table", "object"),
+            ("acknowledgePhi", "boolean"),
             ("server", "string"),
         ],
         required: &[],
