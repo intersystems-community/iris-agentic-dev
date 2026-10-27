@@ -3,6 +3,7 @@
 //! and iterates until task complete or a limit is hit.
 //! See specs/080-cli-dispatch-benchmark/.
 
+use crate::benchmark::target::{BenchTarget, Direct};
 use crate::benchmark::{BenchmarkMode, BenchmarkResult, BenchmarkTask, TaskOutcome, TaskResult};
 use crate::generate::LlmClient;
 use std::path::{Path, PathBuf};
@@ -339,6 +340,26 @@ pub async fn run_cli_dispatch_task(
     config: &CliDispatchConfig,
     llm: &LlmClient,
 ) -> TaskResult {
+    run_cli_dispatch_task_via(
+        &Direct { iris, client },
+        namespace,
+        task,
+        skill_content,
+        config,
+        llm,
+    )
+    .await
+}
+
+/// [`run_cli_dispatch_task`] over any [`BenchTarget`].
+pub async fn run_cli_dispatch_task_via<T: BenchTarget>(
+    target: &T,
+    namespace: &str,
+    task: &BenchmarkTask,
+    skill_content: &str,
+    config: &CliDispatchConfig,
+    llm: &LlmClient,
+) -> TaskResult {
     let start = std::time::Instant::now();
 
     if !config.binary_path.exists() {
@@ -359,7 +380,7 @@ pub async fn run_cli_dispatch_task(
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(config.task_timeout_s),
-        run_cli_dispatch_task_inner(iris, client, namespace, task, skill_content, config, llm),
+        run_cli_dispatch_task_inner(target, namespace, task, skill_content, config, llm),
     )
     .await;
 
@@ -380,16 +401,15 @@ pub async fn run_cli_dispatch_task(
     }
 }
 
-async fn run_cli_dispatch_task_inner(
-    iris: &crate::iris::connection::IrisConnection,
-    client: &reqwest::Client,
+async fn run_cli_dispatch_task_inner<T: BenchTarget>(
+    target: &T,
     namespace: &str,
     task: &BenchmarkTask,
     skill_content: &str,
     config: &CliDispatchConfig,
     llm: &LlmClient,
 ) -> TaskResult {
-    use crate::benchmark::{container, extract_class_name};
+    use crate::benchmark::extract_class_name;
 
     let system_prompt = build_cli_dispatch_system_prompt(skill_content);
     let task_prompt = crate::benchmark::llm::build_prompt(task, "");
@@ -411,14 +431,9 @@ async fn run_cli_dispatch_task_inner(
                 };
             }
         };
-        if let Err(e) = container::write_and_compile(
-            iris,
-            client,
-            namespace,
-            &format!("{class_name}.cls"),
-            &file.content,
-        )
-        .await
+        if let Err(e) = target
+            .write_and_compile(namespace, &format!("{class_name}.cls"), &file.content)
+            .await
         {
             return TaskResult {
                 task_id: task.task_id.clone(),
@@ -497,8 +512,7 @@ async fn run_cli_dispatch_task_inner(
         // Check for sentinel (task complete)
         if let Some(fixed_source) = extract_sentinel_class(&response) {
             return finalize_task(
-                iris,
-                client,
+                target,
                 namespace,
                 task,
                 &fixed_source,
@@ -532,8 +546,7 @@ async fn run_cli_dispatch_task_inner(
         let fixed_classes = crate::benchmark::llm::extract_fixed_classes(&last_response.1);
         if !fixed_classes.is_empty() {
             return finalize_task(
-                iris,
-                client,
+                target,
                 namespace,
                 task,
                 &fixed_classes[0],
@@ -566,9 +579,8 @@ async fn run_cli_dispatch_task_inner(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn finalize_task(
-    iris: &crate::iris::connection::IrisConnection,
-    client: &reqwest::Client,
+async fn finalize_task<T: BenchTarget>(
+    target: &T,
     namespace: &str,
     task: &BenchmarkTask,
     fixed_source: &str,
@@ -599,14 +611,9 @@ async fn finalize_task(
         }
     };
 
-    match container::write_and_compile(
-        iris,
-        client,
-        namespace,
-        &format!("{class_name}.cls"),
-        fixed_source,
-    )
-    .await
+    match target
+        .write_and_compile(namespace, &format!("{class_name}.cls"), fixed_source)
+        .await
     {
         Ok(errors) => {
             if !errors.is_empty() && task.success_criteria.compile_success {
@@ -665,14 +672,13 @@ async fn finalize_task(
         }
     };
 
-    if let Err(e) = container::write_and_compile(
-        iris,
-        client,
-        namespace,
-        &format!("{test_class_name}.cls"),
-        &task.test_code.content,
-    )
-    .await
+    if let Err(e) = target
+        .write_and_compile(
+            namespace,
+            &format!("{test_class_name}.cls"),
+            &task.test_code.content,
+        )
+        .await
     {
         return TaskResult {
             task_id: task.task_id.clone(),
@@ -691,7 +697,7 @@ async fn finalize_task(
     }
 
     let (passed, _detail) =
-        match container::run_class_tests(iris, client, namespace, &test_class_name).await {
+        match container::run_class_tests_via(target, namespace, &test_class_name).await {
             Ok(r) => r,
             Err(e) => {
                 return TaskResult {
@@ -746,12 +752,38 @@ pub async fn run_cli_dispatch_suite(
     config: &CliDispatchConfig,
     llm: &LlmClient,
 ) -> BenchmarkResult {
+    run_cli_dispatch_suite_via(
+        &Direct { iris, client },
+        namespace,
+        tasks,
+        skill_content,
+        iris_version,
+        config,
+        llm,
+    )
+    .await
+}
+
+/// [`run_cli_dispatch_suite`] over any [`BenchTarget`]. Like the single-shot suite, it stops at the
+/// task that met a refusal.
+pub async fn run_cli_dispatch_suite_via<T: BenchTarget>(
+    target: &T,
+    namespace: &str,
+    tasks: &[BenchmarkTask],
+    skill_content: &str,
+    iris_version: &str,
+    config: &CliDispatchConfig,
+    llm: &LlmClient,
+) -> BenchmarkResult {
     let start = std::time::Instant::now();
     let mut task_results = Vec::with_capacity(tasks.len());
     for task in tasks {
         task_results.push(
-            run_cli_dispatch_task(iris, client, namespace, task, skill_content, config, llm).await,
+            run_cli_dispatch_task_via(target, namespace, task, skill_content, config, llm).await,
         );
+        if target.refused() {
+            break;
+        }
     }
     let mut result = BenchmarkResult::from_task_results(
         task_results,

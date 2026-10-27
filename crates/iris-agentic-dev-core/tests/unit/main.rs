@@ -30,6 +30,7 @@ mod test_audit_lock_141;
 mod test_audit_log;
 mod test_audit_phi_scrub;
 mod test_benchmark_dispatch_141;
+mod test_benchmark_gated_171;
 mod test_benchmark_run_task_errors;
 mod test_benchmark_scoring;
 mod test_benchmark_task_loading;
