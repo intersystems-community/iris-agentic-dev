@@ -2708,6 +2708,24 @@ pub(crate) fn client_build_fails() -> bool {
     CLIENT_BUILD_FAILS.with(|c| c.get())
 }
 
+// ─── public-host clients with short timeouts ────────────────────────────────
+
+thread_local! {
+    static PUBLIC_HOST_TIMEOUTS: std::cell::Cell<Option<std::time::Duration>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Shorten the connect and total timeouts of the public-host clients (GitHub) on this thread, so a
+/// test can check that a host which never answers is given up on. `None` puts them back. A test
+/// must run on one thread (a current-thread runtime).
+pub fn set_public_host_timeouts(t: Option<std::time::Duration>) {
+    PUBLIC_HOST_TIMEOUTS.with(|c| c.set(t));
+}
+
+pub(crate) fn public_host_timeouts() -> Option<std::time::Duration> {
+    PUBLIC_HOST_TIMEOUTS.with(|c| c.get())
+}
+
 // ─── gate checks without a pipeline ─────────────────────────────────────────
 
 /// The three policy gates called on their own, for unit tests that pin one gate's decision.

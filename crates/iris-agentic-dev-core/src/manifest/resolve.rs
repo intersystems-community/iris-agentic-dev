@@ -201,9 +201,7 @@ pub async fn resolve_github_version_async(
     let api_base = std::env::var("GITHUB_API_BASE_URL")
         .unwrap_or_else(|_| "https://api.github.com".to_string());
     let url = format!("{}/repos/{}/{}/tags?per_page=100", api_base, owner, repo);
-    let client = reqwest::Client::builder()
-        .user_agent("iris-agentic-dev/resolver")
-        .build()?;
+    let client = crate::iris::http::public_host_client("iris-agentic-dev/resolver")?;
 
     let resp = client.get(&url).send().await?;
     if resp.status() == reqwest::StatusCode::NOT_FOUND {

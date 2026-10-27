@@ -206,6 +206,29 @@ impl ProbeSession {
     }
 }
 
+/// How long a client of a public host (GitHub) waits to connect, and in all for one request.
+pub const PUBLIC_HOST_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+pub const PUBLIC_HOST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// A client for a public host (GitHub raw files and API) that is not IRIS: it carries no credential
+/// and no cookie store, and gives up after [`PUBLIC_HOST_CONNECT_TIMEOUT`] to connect and
+/// [`PUBLIC_HOST_TIMEOUT`] in all, so a host that never answers cannot hold a tool call for ever.
+/// `user_agent` names the caller.
+pub fn public_host_client(user_agent: &str) -> anyhow::Result<reqwest::Client> {
+    #[cfg(feature = "testing")]
+    let (connect, total) = match crate::testing::public_host_timeouts() {
+        Some(t) => (t, t),
+        None => (PUBLIC_HOST_CONNECT_TIMEOUT, PUBLIC_HOST_TIMEOUT),
+    };
+    #[cfg(not(feature = "testing"))]
+    let (connect, total) = (PUBLIC_HOST_CONNECT_TIMEOUT, PUBLIC_HOST_TIMEOUT);
+    Ok(reqwest::Client::builder()
+        .user_agent(user_agent)
+        .connect_timeout(connect)
+        .timeout(total)
+        .build()?)
+}
+
 /// A client for a host that is not IRIS (the docs site): it carries no credential of the
 /// operator's and no cookie store, follows at most three redirects and gives up after 30 s. Never
 /// use it for an IRIS server: those get the redirect-free clients above.
