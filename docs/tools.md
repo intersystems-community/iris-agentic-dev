@@ -1306,24 +1306,24 @@ iris_production(action="set_autostart", production="MyApp.Production", enabled=t
 
 Query production logs, queue depths, or message archive.
 
-| Parameter        | Type            | Default           | Notes                                                                                   |
-| ---------------- | --------------- | ----------------- | --------------------------------------------------------------------------------------- |
-| `what`           | string          | `"logs"`          | Enum: `"logs"` \| `"queues"` \| `"messages"`                                            |
-| `component`      | string          | —                 | `logs`: filter by business host name                                                    |
-| `log_type`       | string          | `"error,warning"` | `logs` only; comma-separated, see below                                                 |
-| `limit`          | int             | `50`              | Applies to `logs` and `messages`                                                        |
-| `source`         | string          | —                 | `messages`: filter by source                                                            |
-| `target`         | string          | —                 | `messages`: filter by target                                                            |
-| `message_class`  | string          | —                 | `messages`: filter by message class                                                     |
-| `session_id`     | int \| string   | —                 | `messages`: one session's messages; decimal string accepted                             |
-| `since_id`       | int \| string   | —                 | `messages`: tail after this header ID                                                   |
-| `body_class`     | string          | —                 | `messages`: body class to join, e.g. `Ens.StringContainer`                              |
-| `body_where`     | string          | —                 | `messages`: SQL predicate on the joined body table                                      |
-| `body_select`    | array\<string\> | —                 | `messages`: body-table columns to add to each row                                       |
-| `search_table`   | object          | —                 | `messages`: indexed Search Table search — see below                                     |
-| `acknowledgePhi` | bool            | `false`           | Required with `search_table` when `dataPolicy` is `allow`; `acknowledge_phi` also works |
-| `namespace`      | string          | `"USER"`          |                                                                                         |
-| `server`         | string          | —                 | Named server; omit for default                                                          |
+| Parameter        | Type            | Default           | Notes                                                                                                                                |
+| ---------------- | --------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `what`           | string          | `"logs"`          | Enum: `"logs"` \| `"queues"` \| `"messages"`                                                                                         |
+| `component`      | string          | —                 | `logs`: filter by business host name                                                                                                 |
+| `log_type`       | string          | `"error,warning"` | `logs` only; comma-separated, see below                                                                                              |
+| `limit`          | int             | `50`              | Applies to `logs` and `messages`                                                                                                     |
+| `source`         | string          | —                 | `messages`: filter by source                                                                                                         |
+| `target`         | string          | —                 | `messages`: filter by target                                                                                                         |
+| `message_class`  | string          | —                 | `messages`: filter by message class                                                                                                  |
+| `session_id`     | int \| string   | —                 | `messages`: one session's messages; decimal string accepted                                                                          |
+| `since_id`       | int \| string   | —                 | `messages`: tail after this header ID                                                                                                |
+| `body_class`     | string          | —                 | `messages`: body class to join, e.g. `Ens.StringContainer`                                                                           |
+| `body_where`     | string          | —                 | `messages`: SQL predicate on the joined body table                                                                                   |
+| `body_select`    | array\<string\> | —                 | `messages`: body-table columns to add to each row                                                                                    |
+| `search_table`   | object          | —                 | `messages`: indexed Search Table search — see below                                                                                  |
+| `acknowledgePhi` | bool            | `false`           | Required with `body_class`, `body_where`, `body_select` or `search_table` when `dataPolicy` is `allow`; `acknowledge_phi` also works |
+| `namespace`      | string          | `"USER"`          |                                                                                                                                      |
+| `server`         | string          | —                 | Named server; omit for default                                                                                                       |
 
 `log_type` takes any comma-separated subset of `assert`, `error`, `warning`, `info`, `trace`,
 `alert` — the six values of `Ens.Util.Log.Type`, matched case-insensitively. A name that is not one
@@ -1337,9 +1337,9 @@ A call that names `body_class`, `body_where`, `body_select` or `search_table` re
 bodies (a Search Table search returns the indexed field's value, such as a patient identifier taken
 from an HL7 message), so it is a bulk-data call: it is refused with `DATA_POLICY_BLOCKED` unless the target server's `dataPolicy`
 is `allow` (`redact` does not admit it, because the rows are not HL7 text iad could redact).
-A `search_table` search under `allow` also needs `acknowledgePhi=true`, as `iris_message_body`
-does, and is refused with `PHI_ACK_REQUIRED` without it. `body_class`, `body_where` and
-`body_select` need no acknowledgement. Without those arguments the tool lists headers, logs and
+Under `allow` each of those four also needs `acknowledgePhi=true`, as `iris_message_body` does, and
+is refused with `PHI_ACK_REQUIRED` without it. An empty `body_select` selects nothing and needs no
+acknowledgement. Without those arguments the tool lists headers, logs and
 queues under any policy.
 
 `body_where` is one condition, joined to the query as `(…)`. It is read the way IRIS reads SQL:
@@ -1716,14 +1716,17 @@ that holds no stream is `STREAM_NOT_FOUND`, which is not the same as a stream of
 server's `dataPolicy` decides what comes back: `allow` returns the content, `redact` returns HL7 v2
 with the identifying fields masked (not de-identified; see the redact row above) and refuses other
 content (`BODY_NOT_REDACTABLE`), and `block` refuses the content (`DATA_POLICY_BLOCKED`). A refused
-stream still answers with `class`, `size` and `line_count`.
+stream still answers with `class`, `size` and `line_count`. Under `allow` the call also needs
+`acknowledgePhi=true`, as `iris_message_body` does, and is refused with `PHI_ACK_REQUIRED` without
+it.
 
-| Parameter   | Type    | Default  | Notes                                                               |
-| ----------- | ------- | -------- | ------------------------------------------------------------------- |
-| `oid`       | string  | —        | **Required.** Stream OID                                            |
-| `max_chars` | integer | `20000`  | Most characters to return from the start, at most `1000000` (min 1) |
-| `namespace` | string  | `"USER"` | Namespace that contains the stream                                  |
-| `server`    | string  | —        | Named server; omit for default                                      |
+| Parameter        | Type    | Default  | Notes                                                               |
+| ---------------- | ------- | -------- | ------------------------------------------------------------------- |
+| `oid`            | string  | —        | **Required.** Stream OID                                            |
+| `max_chars`      | integer | `20000`  | Most characters to return from the start, at most `1000000` (min 1) |
+| `namespace`      | string  | `"USER"` | Namespace that contains the stream                                  |
+| `acknowledgePhi` | bool    | `false`  | Required when `dataPolicy` is `allow`; `acknowledge_phi` also works |
+| `server`         | string  | —        | Named server; omit for default                                      |
 
 ### `my_access`
 
@@ -2426,7 +2429,9 @@ metadata, `redact` returns the content with sensitive fields replaced or refuses
 redact it, and `allow` returns it whole. `journal_search` is refused outright unless the policy is
 `allow`, with no per-call override. `iris_message_body` and `stream_inspect` are refused under
 `block`, return HL7 v2 redacted under `redact` and refuse any other content
-(`BODY_NOT_REDACTABLE`), and return the content under `allow`; `stream_inspect` answers a refused
+(`BODY_NOT_REDACTABLE`), and return the content under `allow` once the call carries
+`acknowledgePhi: true` (`PHI_ACK_REQUIRED` otherwise; so does an `iris_interop_query` call that
+names a message body); `stream_inspect` answers a refused
 stream with its class, size and line count. `iris_message_body` also takes a per-call
 `dataPolicy`, but only to tighten. Error codes: `DATA_POLICY_BLOCKED`, `PHI_POLICY_BLOCKED`,
 `BODY_NOT_REDACTABLE`.
@@ -2554,7 +2559,7 @@ called a refusal.
 | `IRIS_RUNTIME_ERROR`                  | `iris_execute` code raised an ObjectScript error; IRIS's text is in `output`                                                                                                                                                                                                            |
 | `CONFIG_INVALID`                      | A configuration file or entry does not parse or validate; the message names the file, line and column                                                                                                                                                                                   |
 | `PHI_POLICY_BLOCKED`                  | `iris_message_body` under `dataPolicy = "block"`                                                                                                                                                                                                                                        |
-| `PHI_ACK_REQUIRED`                    | `iris_message_body`, or `iris_interop_query` with `search_table`, under `allow` without `acknowledgePhi: true`                                                                                                                                                                          |
+| `PHI_ACK_REQUIRED`                    | `iris_message_body`, `stream_inspect`, or `iris_interop_query` with `body_class`, `body_where`, `body_select` or `search_table`, under `allow` without `acknowledgePhi: true`                                                                                                           |
 | `BODY_NOT_REDACTABLE`                 | Content under `dataPolicy = "redact"` that iad cannot redact (anything but HL7 v2)                                                                                                                                                                                                      |
 | `COMPILE_TIME_EXEC_BLOCKED`           | A document would run code while it compiles — see the [compile-time gate](connecting.md#compile-time-gate)                                                                                                                                                                              |
 | `STORED_SOURCE_UNREADABLE`            | `iris_compile` target exists but its stored source cannot be read                                                                                                                                                                                                                       |

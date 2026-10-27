@@ -150,7 +150,9 @@ A tool that returns stored message, stream or journal content. Under block it re
 content's metadata; under redact it returns the content with sensitive fields replaced, or is
 refused if it cannot redact; under allow it returns the content whole. `iris_interop_query` is one
 only for a call that names a message body (`body_class`, `body_where`, `body_select` or
-`search_table`).
+`search_table`). Under allow, each bulk-data tool that returns a message body or stream
+(`iris_message_body`, `stream_inspect`, and that `iris_interop_query` call) also needs
+`acknowledgePhi=true`.
 _Avoid_: bulk-PHI tool
 
 **SQL lexer**:
