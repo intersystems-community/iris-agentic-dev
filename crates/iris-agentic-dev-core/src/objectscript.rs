@@ -100,6 +100,33 @@ pub fn source_line_code(routine: &str, offset: impl std::fmt::Display) -> String
     )
 }
 
+/// Maps every method a compiled class declares to the `.INT` lines generated from it (iris_debug
+/// `source_map`). Writes one JSON object: `{"found":0}` when the class is not on the server, else
+/// `{"found":1,"source_map":{<method>:{"int_name","int_line","lines":[..]}}}` where `lines[n-1]` is
+/// the `.INT` line for line `n` of the method body, as `%Studio.Debugger.INTLine` answers it.
+/// Inherited methods are left out. An argumentless `Quit`/`Continue` with a postcondition is
+/// followed by two spaces, which ObjectScript requires. The JSON is built with `%DynamicObject`, so IRIS escapes it.
+pub fn source_map_code(class_name: &str) -> String {
+    format!(
+        "Set tRes=##class(%DynamicObject).%New() \
+         Set tCc=##class(%Dictionary.CompiledClass).%OpenId({cls}) \
+         If '$IsObject(tCc) {{ Do tRes.%Set(\"found\",0,\"number\") }} Else {{ \
+         Set tMap=##class(%DynamicObject).%New() Set tCn=tCc.Name Set tKey=\"\" \
+         For {{ Set tM=tCc.Methods.GetNext(.tKey) Quit:tKey=\"\"  Continue:tM.Origin'=tCn  \
+         Set tLines=##class(%DynamicArray).%New() Set tInt=\"\" \
+         For tL=1:1:5000 {{ \
+         Set tSc=##class(%Studio.Debugger).INTLine(tCn_\".CLS\",tM.Name,tL,.tIn,.tIl,.tRt) \
+         Quit:('tSc)||(tRt=2)  Do tLines.%Push(+tIl,\"number\") Set:tInt=\"\" tInt=tIn }} \
+         Continue:tLines.%Size()=0  \
+         Set tMo=##class(%DynamicObject).%New() Do tMo.%Set(\"int_name\",tInt,\"string\") \
+         Do tMo.%Set(\"int_line\",tLines.%Get(0),\"number\") Do tMo.%Set(\"lines\",tLines) \
+         Do tMap.%Set(tM.Name,tMo) }} \
+         Do tRes.%Set(\"found\",1,\"number\") Do tRes.%Set(\"source_map\",tMap) }} \
+         Write tRes.%ToJSON()",
+        cls = os_str_expr(class_name)
+    )
+}
+
 /// Reads the registry entry for skill `name`.
 pub fn skill_get_code(name: &str) -> String {
     format!("Write $Get(^SKILLS({}))", os_str_expr(name))

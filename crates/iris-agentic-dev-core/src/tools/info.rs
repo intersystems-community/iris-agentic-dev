@@ -697,6 +697,51 @@ pub struct DebugParams {
     pub server: Option<String>,
 }
 
+/// The `.INT` lines of each method of `cls` (iris_debug `source_map`, and the older
+/// `debug_source_map`). `cls` is a class name, with or without a trailing `.cls`.
+pub async fn source_map(
+    iris: &IrisConnection,
+    ns: &str,
+    client: &reqwest::Client,
+    cls: &str,
+) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+    let cls = cls.strip_suffix(".cls").unwrap_or(cls);
+    if let Err(e) = crate::objectscript::validate_class_name(cls) {
+        return crate::tools::err_result(e);
+    }
+    let output = match iris
+        .execute_via_generator(&crate::objectscript::source_map_code(cls), ns, client)
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => return err_json("EXECUTION_FAILED", &e.to_string()),
+    };
+    let answer: serde_json::Value = match serde_json::from_str(output.trim()) {
+        Ok(v) => v,
+        Err(_) => {
+            return err_json(
+                "EXECUTION_FAILED",
+                &format!(
+                    "IRIS did not answer with JSON: {}",
+                    output.chars().take(200).collect::<String>()
+                ),
+            )
+        }
+    };
+    if answer["found"] != 1 {
+        return err_json(
+            "NOT_FOUND",
+            &format!("Class '{cls}' is not compiled in namespace {ns}"),
+        );
+    }
+    ok_json(serde_json::json!({
+        "success": true,
+        "class": cls,
+        "cls_name": cls,
+        "source_map": answer["source_map"],
+    }))
+}
+
 pub async fn handle_iris_debug(
     iris: &IrisConnection,
     client: &reqwest::Client,
@@ -738,22 +783,7 @@ pub async fn handle_iris_debug(
                 Err(e) => err_json("EXECUTION_FAILED", &e.to_string()),
             }
         }
-        "source_map" => {
-            let cls = p.class_name.as_deref().unwrap_or("");
-            if let Err(e) = crate::objectscript::validate_class_name(cls) {
-                return crate::tools::err_result(e);
-            }
-            let code = format!(
-                "set map=\"\" set line=1 do {{set int=##class(%Studio.Debugger).MapToINT({cls_e},line,.intline) if int=\"\" quit set map=map_line_\"->\"_intline_\",\" set line=line+1 }} while 1 write map",
-                cls_e = crate::objectscript::os_str_expr(cls)
-            );
-            match iris.execute_via_generator(&code, ns, client).await {
-                Ok(output) => ok_json(
-                    serde_json::json!({"success": true, "class": cls, "mapping": output.trim()}),
-                ),
-                Err(e) => err_json("EXECUTION_FAILED", &e.to_string()),
-            }
-        }
+        "source_map" => source_map(iris, ns, client, p.class_name.as_deref().unwrap_or("")).await,
         other => err_json(
             "INVALID_PARAM",
             &format!(

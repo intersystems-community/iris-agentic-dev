@@ -273,8 +273,9 @@ pub enum DebugMapIntToClsResponse {
 pub struct DebugSourceMapOk {
     pub success: bool,
     pub cls_name: String,
-    /// `{method_name: int_line}` map — keys are dynamic (one per compiled method), so this stays
-    /// a free-form object rather than a fixed struct.
+    /// `{method_name: {int_name, int_line, lines}}` — keys are dynamic (one per method the class
+    /// declares), so this stays a free-form object rather than a fixed struct. `lines[n-1]` is the
+    /// `.INT` line for line `n` of the method body; `int_line` is `lines[0]`.
     pub source_map: serde_json::Value,
 }
 

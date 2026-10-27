@@ -6380,7 +6380,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Build a .INT source map for a compiled ObjectScript class via Atelier xecute. Maps .INT routine line offsets back to .CLS source lines for stack trace resolution. No Python required.",
+        description = "Build a .INT source map for a compiled ObjectScript class: for each method the class declares, the .INT routine and the .INT line of every line of the method body, so a stack trace in the routine can be read against the .CLS source. A class that is not compiled is NOT_FOUND.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<DebugSourceMapResponse>()
     )]
@@ -6391,22 +6391,7 @@ impl IrisTools {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
         let client = self.http_client();
-        let cls_name = p.cls_name.trim_end_matches(".cls");
-        // Build source map by querying %Studio.Debugger for each .INT method
-        let code = format!(
-            "set cls=\"{}\" set rtn=$translate(cls,\".\",\".\") set map=\"{{\" set first=1 set method=\"\" for {{ set method=$order(^rIndex(rtn,method)) quit:method=\"\"  set intline=$get(^rIndex(rtn,method)) if 'first {{ set map=map_\",\" }} set map=map_\"\\\"\"_method_\"\\\":\\\"\"_intline_\"\\\"\" set first=0 }} set map=map_\"}}\" write map",
-            crate::objectscript::os_lit_inner(cls_name)
-        );
-        match iris.execute_via_generator(&code, namespace, client).await {
-            Ok(output) => {
-                let map: serde_json::Value =
-                    serde_json::from_str(output.trim()).unwrap_or(serde_json::json!({}));
-                ok_json(
-                    serde_json::json!({"success": true, "cls_name": cls_name, "source_map": map}),
-                )
-            }
-            Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
-        }
+        info::source_map(&iris, namespace, client, &p.cls_name).await
     }
 
     #[tool(
@@ -7282,7 +7267,7 @@ Methods:
     }
 
     #[tool(
-        description = "IRIS debug tools. action=map_int maps a runtime error offset to source line, action=error_logs fetches recent error log entries, action=capture captures current error state, action=source_map builds .INT to .CLS mapping. Skill: objectscript-debugging. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "IRIS debug tools. action=map_int maps a runtime error offset to source line, action=error_logs fetches recent error log entries, action=capture captures current error state, action=source_map (class_name) lists, for each method a class declares, the .INT line of each body line. Skill: objectscript-debugging. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         output_schema = output_schemas::oneof_output_schema::<IrisDebugResponse>()
     )]
     async fn iris_debug(
