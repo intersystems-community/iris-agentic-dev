@@ -1303,23 +1303,24 @@ iris_production(action="set_autostart", production="MyApp.Production", enabled=t
 
 Query production logs, queue depths, or message archive.
 
-| Parameter       | Type            | Default           | Notes                                                       |
-| --------------- | --------------- | ----------------- | ----------------------------------------------------------- |
-| `what`          | string          | `"logs"`          | Enum: `"logs"` \| `"queues"` \| `"messages"`                |
-| `component`     | string          | —                 | `logs`: filter by business host name                        |
-| `log_type`      | string          | `"error,warning"` | `logs` only; comma-separated, see below                     |
-| `limit`         | int             | `50`              | Applies to `logs` and `messages`                            |
-| `source`        | string          | —                 | `messages`: filter by source                                |
-| `target`        | string          | —                 | `messages`: filter by target                                |
-| `message_class` | string          | —                 | `messages`: filter by message class                         |
-| `session_id`    | int \| string   | —                 | `messages`: one session's messages; decimal string accepted |
-| `since_id`      | int \| string   | —                 | `messages`: tail after this header ID                       |
-| `body_class`    | string          | —                 | `messages`: body class to join, e.g. `Ens.StringContainer`  |
-| `body_where`    | string          | —                 | `messages`: SQL predicate on the joined body table          |
-| `body_select`   | array\<string\> | —                 | `messages`: body-table columns to add to each row           |
-| `search_table`  | object          | —                 | `messages`: indexed Search Table search — see below         |
-| `namespace`     | string          | `"USER"`          |                                                             |
-| `server`        | string          | —                 | Named server; omit for default                              |
+| Parameter        | Type            | Default           | Notes                                                                                   |
+| ---------------- | --------------- | ----------------- | --------------------------------------------------------------------------------------- |
+| `what`           | string          | `"logs"`          | Enum: `"logs"` \| `"queues"` \| `"messages"`                                            |
+| `component`      | string          | —                 | `logs`: filter by business host name                                                    |
+| `log_type`       | string          | `"error,warning"` | `logs` only; comma-separated, see below                                                 |
+| `limit`          | int             | `50`              | Applies to `logs` and `messages`                                                        |
+| `source`         | string          | —                 | `messages`: filter by source                                                            |
+| `target`         | string          | —                 | `messages`: filter by target                                                            |
+| `message_class`  | string          | —                 | `messages`: filter by message class                                                     |
+| `session_id`     | int \| string   | —                 | `messages`: one session's messages; decimal string accepted                             |
+| `since_id`       | int \| string   | —                 | `messages`: tail after this header ID                                                   |
+| `body_class`     | string          | —                 | `messages`: body class to join, e.g. `Ens.StringContainer`                              |
+| `body_where`     | string          | —                 | `messages`: SQL predicate on the joined body table                                      |
+| `body_select`    | array\<string\> | —                 | `messages`: body-table columns to add to each row                                       |
+| `search_table`   | object          | —                 | `messages`: indexed Search Table search — see below                                     |
+| `acknowledgePhi` | bool            | `false`           | Required with `search_table` when `dataPolicy` is `allow`; `acknowledge_phi` also works |
+| `namespace`      | string          | `"USER"`          |                                                                                         |
+| `server`         | string          | —                 | Named server; omit for default                                                          |
 
 `log_type` takes any comma-separated subset of `assert`, `error`, `warning`, `info`, `trace`,
 `alert` — the six values of `Ens.Util.Log.Type`, matched case-insensitively. A name that is not one
@@ -1333,7 +1334,10 @@ A call that names `body_class`, `body_where`, `body_select` or `search_table` re
 bodies (a Search Table search returns the indexed field's value, such as a patient identifier taken
 from an HL7 message), so it is a bulk-data call: it is refused with `DATA_POLICY_BLOCKED` unless the target server's `dataPolicy`
 is `allow` (`redact` does not admit it, because the rows are not HL7 text iad could redact).
-Without those arguments the tool lists headers, logs and queues under any policy.
+A `search_table` search under `allow` also needs `acknowledgePhi=true`, as `iris_message_body`
+does, and is refused with `PHI_ACK_REQUIRED` without it. `body_class`, `body_where` and
+`body_select` need no acknowledgement. Without those arguments the tool lists headers, logs and
+queues under any policy.
 
 `body_where` is one condition, joined to the query as `(…)`. It is read the way IRIS reads SQL:
 quotes, comments and parentheses count only where IRIS counts them. It is refused when it holds a

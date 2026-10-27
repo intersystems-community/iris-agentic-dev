@@ -7573,7 +7573,7 @@ Methods:
     }
 
     #[tool(
-        description = "Interoperability query dispatcher (merged). what (REQUIRED): logs=Event Log entries, queues=message queue depths, messages=message archive (Ens.MessageHeader). Anything else returns INVALID_ACTION. To trace one session, use what=messages with session_id=<n>. Filters: component=<config item> narrows logs and messages; session_id=<n> and since_id=<n> (tails after a watermark) narrow messages. what=messages can also search message CONTENT: (a) body_class=<msg class> + body_where=<SQL fragment on body table> + body_select=[cols] joins the body table server-side (SQL name resolved for you); (b) search_table={prop, value|value_like, class?, extent?} searches an indexed Search Table field (extent default EnsLib.HL7.SearchTable; errors list searchable props). Both (a) and (b) read message content, so they need dataPolicy = allow on the server. Pass namespace=<ns> for a non-default interop namespace. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance.",
+        description = "Interoperability query dispatcher (merged). what (REQUIRED): logs=Event Log entries, queues=message queue depths, messages=message archive (Ens.MessageHeader). Anything else returns INVALID_ACTION. To trace one session, use what=messages with session_id=<n>. Filters: component=<config item> narrows logs and messages; session_id=<n> and since_id=<n> (tails after a watermark) narrow messages. what=messages can also search message CONTENT: (a) body_class=<msg class> + body_where=<SQL fragment on body table> + body_select=[cols] joins the body table server-side (SQL name resolved for you); (b) search_table={prop, value|value_like, class?, extent?} searches an indexed Search Table field (extent default EnsLib.HL7.SearchTable; errors list searchable props). Both (a) and (b) read message content, so they need dataPolicy = allow on the server; (b) also needs acknowledgePhi=true, as iris_message_body does. Pass namespace=<ns> for a non-default interop namespace. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<IrisInteropQueryResponse>()
     )]
@@ -7583,6 +7583,31 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let what = p.get("what").and_then(|v| v.as_str()).unwrap_or("logs");
+        // The policy gate has judged this call already; the handler asks again, as
+        // `iris_message_body` does, so the acknowledgement does not depend on the gate alone.
+        {
+            let target = self.target()?;
+            let policy = target
+                .primary
+                .policy
+                .data_policy
+                .clone()
+                .unwrap_or_default();
+            let acknowledged = p
+                .get("acknowledgePhi")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if let Some(body) = crate::policy::data_policy_gate::check_body_read_acknowledged_as(
+                "iris_interop_query",
+                &p,
+                acknowledged,
+                &policy,
+                &target.primary.key,
+            ) {
+                self.record_call("iris_interop_query", false);
+                return self.refuse(body);
+            }
+        }
         let target_hold = self.target_conn_opt()?;
         let iris_opt = target_hold.as_deref();
         #[allow(unused_variables)]
