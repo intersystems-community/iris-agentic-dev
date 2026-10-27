@@ -630,13 +630,12 @@ pub fn sm_secret_for(
     sm_secret_for_in(&user_profiles(), name, username, endpoint)
 }
 
-/// A 1.6.x `servers.json` entry kept its password under the Server Manager's service, because iad
-/// wrote there. For an entry that matches no profile, read that item by name. The name says
-/// nothing about where the password may go, so the caller (`native_password_in`) hands it on only
-/// when the entry records the endpoint it was saved for; otherwise it reports the item and sends
-/// it nowhere. This never deletes the item.
-pub fn legacy_iad_secret(name: &str, username: &str) -> Option<String> {
-    read_sm_secret(name, username).ok()
+/// Whether a 1.6.x password for `name` sits under the Server Manager's service. 1.6.x kept its own
+/// passwords there, keyed by name alone, and a name proves nothing about where a password may go,
+/// so the value is never handed out: the answer is only whether the item exists, so the caller can
+/// report it. This never deletes the item.
+pub fn legacy_iad_item_exists(name: &str, username: &str) -> bool {
+    read_sm_secret(name, username).is_ok()
 }
 
 // ── Windows vscdb credential fallback ────────────────────────────────────────
