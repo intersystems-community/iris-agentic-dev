@@ -70,7 +70,8 @@
         "iris-agentic-dev.tlsVerify": {
           "type": "boolean",
           "default": true,
-          "description": "Verify TLS certificates when connecting to IRIS over HTTPS. Set to false for self-signed certificates. Also disabled automatically when http.proxyStrictSSL is false."
+          "description": "Verify TLS certificates when connecting to IRIS over HTTPS. Set to false for self-signed certificates. Also disabled automatically when http.proxyStrictSSL is false. Application scope: it can be set in user settings but not in a workspace's .vscode/settings.json, so a cloned repository cannot switch certificate checking off.",
+          "scope": "application"
         },
         "iris-agentic-dev.namespace": {
           "type": "string",
@@ -90,7 +91,8 @@
             "Force HTTP.",
             "Force HTTPS. Use with iris-agentic-dev.tlsVerify: false for self-signed certificates."
           ],
-          "description": "HTTP scheme override for the IRIS web server connection. Leave empty to auto-detect."
+          "description": "HTTP scheme override for the IRIS web server connection. Leave empty to auto-detect. Application scope: it can be set in user settings but not in a workspace's .vscode/settings.json, so a cloned repository cannot downgrade the connection to plain http.",
+          "scope": "application"
         },
         "iris-agentic-dev.toolset": {
           "type": "string",

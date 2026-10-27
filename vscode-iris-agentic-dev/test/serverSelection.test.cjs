@@ -60,6 +60,22 @@ test("the user-level password needs the same host, port and server", () => {
   assert.equal(pw({ ns: "X" }, true), undefined, "never to a server defined only in the workspace");
 });
 
+test("the user-level password goes only to the user's own username", () => {
+  const withUser = { ...USER, username: "alice" };
+  const pw = (user, ws) => connPassword({ globalValue: user, workspaceValue: ws }, false);
+  assert.equal(pw(withUser, { username: "bob" }), undefined, "another account on the user's server");
+  assert.equal(pw(withUser, { username: "alice" }), "user-secret");
+  assert.equal(pw(withUser, { username: " ALICE " }), "user-secret", "compared without case or padding");
+  assert.equal(pw(withUser, { ns: "X" }), "user-secret", "workspace leaves the username alone");
+  assert.equal(pw(USER, { username: "bob" }), undefined, "user level has no username");
+  assert.equal(pw(USER, { ns: "X" }), "user-secret", "unset on both sides is equal");
+  assert.equal(pw(withUser, { username: "" }), undefined, "an empty workspace username is not the user's");
+  assert.equal(
+    connPassword({ globalValue: withUser, workspaceFolderValue: { username: "bob" } }, false),
+    undefined
+  );
+});
+
 test("defaults count: an unset host and port are localhost:52773 on both sides", () => {
   const user = { active: true, password: "user-secret" };
   assert.equal(connPassword({ globalValue: user, workspaceValue: { host: "localhost", port: 52773 } }, false), "user-secret");
