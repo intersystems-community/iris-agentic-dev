@@ -387,3 +387,44 @@ test("the user's own scheme is used", async () => {
   const def = await launchIad({ scheme: { defaultValue: "", globalValue: "http" } });
   assert.equal(def.env.IRIS_SCHEME, "http");
 });
+
+// --- the user-level password goes only to the user's own username --------------
+
+const USER_CONN_ALICE = { ...USER_CONN };
+
+test("a workspace that changes only the username does not inherit the password", async () => {
+  const { def, out } = await launch({
+    globalValue: USER_CONN_ALICE,
+    workspaceValue: { username: "bob" },
+  });
+  assert.equal(def.env.IRIS_USERNAME, "bob");
+  assert.equal(def.env.IRIS_PASSWORD, undefined);
+  assert.equal(out.env.IRIS_PASSWORD, undefined);
+  assert.equal(vscode.__shown.inputBox.length, 1, "the user is asked instead");
+  assert.match(vscode.__shown.inputBox[0].prompt, /bob@iris\.corp\.example/);
+});
+
+test("a workspace that repeats the user's username keeps the password", async () => {
+  const { def } = await launch({
+    globalValue: USER_CONN_ALICE,
+    workspaceValue: { username: "alice" },
+  });
+  assert.equal(def.env.IRIS_PASSWORD, "user-level-secret");
+});
+
+test("a username that differs only in case keeps the password", async () => {
+  const { def } = await launch({
+    globalValue: USER_CONN_ALICE,
+    workspaceFolderValue: { username: "Alice" },
+  });
+  assert.equal(def.env.IRIS_PASSWORD, "user-level-secret");
+});
+
+test("a workspace username with no user-level username gets no password", async () => {
+  const { username: _u, ...noUser } = USER_CONN_ALICE;
+  const { def } = await launch({
+    globalValue: noUser,
+    workspaceValue: { username: "bob" },
+  });
+  assert.equal(def.env.IRIS_PASSWORD, undefined);
+});

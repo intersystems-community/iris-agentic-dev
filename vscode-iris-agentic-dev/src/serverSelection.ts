@@ -60,6 +60,7 @@ export interface ConnLike {
   host?: string;
   port?: number;
   server?: string;
+  username?: string;
   password?: string;
 }
 
@@ -103,7 +104,8 @@ function sameTarget(a: ConnLike, b: ConnLike): boolean {
   return (
     host(a) === host(b) &&
     (a.port ?? DEFAULT_PORT) === (b.port ?? DEFAULT_PORT) &&
-    (a.server ?? "") === (b.server ?? "")
+    (a.server ?? "") === (b.server ?? "") &&
+    (a.username ?? "").trim().toLowerCase() === (b.username ?? "").trim().toLowerCase()
   );
 }
 
@@ -118,8 +120,8 @@ function sameTarget(a: ConnLike, b: ConnLike): boolean {
  * - a password written in the workspace's `conn` belongs to that file and
  *   goes where the file says (the same terms as a workspace server
  *   definition that carries its own password);
- * - the user-level password goes only when the effective host, port and
- *   server name equal the user-level ones, and never to a server defined
+ * - the user-level password goes only when the effective host, port,
+ *   server name and username equal the user-level ones, and never to a server defined
  *   only in the workspace (`namedFromWorkspace`).
  *
  * Anything else gets no password; the caller asks the user.
