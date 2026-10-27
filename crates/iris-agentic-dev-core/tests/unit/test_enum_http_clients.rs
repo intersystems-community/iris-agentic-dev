@@ -84,24 +84,10 @@ const THE_BUILDER: &[&str] = &["iris-agentic-dev-core/src/iris/http.rs"];
 /// no IRIS credential. This list may only shrink: a file leaves it when it takes
 /// `iris::http::external_client`, and a name is added only for a host that is demonstrably not one
 /// of ours.
-const OWN_CLIENT: &[(&str, &str)] = &[
-    (
-        "iris-agentic-dev-core/src/generate.rs",
-        "calls the model provider's API with the operator's API key",
-    ),
-    (
-        "iris-agentic-dev-core/src/manifest/resolve.rs",
-        "fetches package manifests from GitHub",
-    ),
-    (
-        "iris-agentic-dev-core/src/skills/mod.rs",
-        "fetches the skill pack from GitHub",
-    ),
-    (
-        "iris-agentic-dev-core/src/skill_install/mod.rs",
-        "fetches the skill pack from GitHub",
-    ),
-];
+const OWN_CLIENT: &[(&str, &str)] = &[(
+    "iris-agentic-dev-core/src/generate.rs",
+    "calls the model provider's API with the operator's API key",
+)];
 
 fn builder_hits() -> Vec<(String, &'static str)> {
     let mut hits = Vec::new();
