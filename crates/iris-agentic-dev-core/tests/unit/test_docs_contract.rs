@@ -1682,7 +1682,7 @@ fn the_four_parameter_sources_agree_for_every_tool() {
 /// asking for 10 000 characters got the whole stream and no warning. Spec 141 (T199) made the cap
 /// real, and this keeps the three halves together: `docs/tools.md` has the row, the params struct
 /// declares the field, and `stream_inspect_impl` reads it. The schema half is
-/// `stream_inspect_declares_exactly_four_parameters` in `tests/binary/schema_batch7.rs`. Removing
+/// `stream_inspect_declares_exactly_five_parameters` in `tests/binary/schema_batch7.rs`. Removing
 /// the reader while the row stays brings the original bug back, and fails here.
 #[test]
 fn max_chars_is_documented_declared_and_read() {

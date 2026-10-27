@@ -1,4 +1,4 @@
-//! Spec 141 T214: `iris_interop_query` body mode reads message bodies, so it sits under the
+//! Spec 141 T214 (and the 1.7.1 acknowledgement): `iris_interop_query` body mode reads message bodies, so it sits under the
 //! bulk-data gate. `body_class` joins the body table, `body_where` filters on it and `body_select`
 //! returns its columns: any of the three makes the call a body read, whatever `what` says.
 //!
@@ -49,13 +49,16 @@ fn header_reads() -> Vec<Value> {
         json!({"what": "logs", "component": "x"}),
         json!({"what": "queues"}),
         json!({"what": "messages", "search_table": null}),
+        // An empty column list selects nothing from the body table.
+        json!({"what": "messages", "body_select": []}),
     ]
 }
 
-/// A Search Table search returns indexed body values, so under `allow` it needs the same
-/// `acknowledgePhi` an `iris_message_body` read does. Any other body read does not (yet).
-fn needs_ack(args: &Value) -> bool {
-    args.get("search_table").is_some_and(|v| !v.is_null())
+/// Every body read returns message content (a Search Table search the indexed value, the others a
+/// column of the body table), so under `allow` each needs the same `acknowledgePhi` an
+/// `iris_message_body` read does.
+fn needs_ack(_args: &Value) -> bool {
+    true
 }
 
 /// `args` with the acknowledgement in the spelling `key`.
@@ -232,11 +235,11 @@ async fn the_mcp_tail_refuses_body_reads_too() {
     );
 }
 
-/// Under `allow`, a Search Table search without the acknowledgement is refused with
+/// Under `allow`, a body read without the acknowledgement is refused with
 /// `PHI_ACK_REQUIRED` before the handler runs, whichever tail it comes in on and in either
 /// spelling of the argument; with it, the call reaches the handler (a connection error here).
 #[tokio::test]
-async fn under_allow_a_search_table_search_needs_the_acknowledgement() {
+async fn under_allow_a_body_read_needs_the_acknowledgement() {
     let rig = rig_with(ALLOW, Toolset::Merged, &[]);
     let mut client = McpClient::start(rig.tools.clone()).await;
     for args in body_reads().into_iter().filter(needs_ack) {
@@ -285,13 +288,14 @@ async fn under_allow_a_search_table_search_needs_the_acknowledgement() {
 /// refuses first, and an acknowledgement does not lift that.
 #[test]
 fn an_acknowledgement_does_not_lift_the_data_policy() {
-    let a = acknowledged(
-        &json!({"what": "messages", "search_table": {"prop": "P", "value": "v"}}),
-        "acknowledgePhi",
-    );
-    for p in [DataPolicy::Block, DataPolicy::Redact] {
-        let e = gated::dispatch("iris_interop_query", "prod", Some(&policy(p.clone())), &a)
-            .expect_err(&format!("{p:?}"));
-        assert_eq!(e["error_code"], "DATA_POLICY_BLOCKED", "{p:?}: {e}");
+    for args in body_reads() {
+        for key in ["acknowledgePhi", "acknowledge_phi"] {
+            let a = acknowledged(&args, key);
+            for p in [DataPolicy::Block, DataPolicy::Redact] {
+                let e = gated::dispatch("iris_interop_query", "prod", Some(&policy(p.clone())), &a)
+                    .expect_err(&format!("{p:?} {a}"));
+                assert_eq!(e["error_code"], "DATA_POLICY_BLOCKED", "{p:?} {a}: {e}");
+            }
+        }
     }
 }

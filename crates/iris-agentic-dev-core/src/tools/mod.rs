@@ -7644,7 +7644,7 @@ Methods:
     }
 
     #[tool(
-        description = "Interoperability query dispatcher (merged). what (REQUIRED): logs=Event Log entries, queues=message queue depths, messages=message archive (Ens.MessageHeader). Anything else returns INVALID_ACTION. To trace one session, use what=messages with session_id=<n>. Filters: component=<config item> narrows logs and messages; session_id=<n> and since_id=<n> (tails after a watermark) narrow messages. what=messages can also search message CONTENT: (a) body_class=<msg class> + body_where=<SQL fragment on body table> + body_select=[cols] joins the body table server-side (SQL name resolved for you); (b) search_table={prop, value|value_like, class?, extent?} searches an indexed Search Table field (extent default EnsLib.HL7.SearchTable; errors list searchable props). Both (a) and (b) read message content, so they need dataPolicy = allow on the server; (b) also needs acknowledgePhi=true, as iris_message_body does. Pass namespace=<ns> for a non-default interop namespace. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance.",
+        description = "Interoperability query dispatcher (merged). what (REQUIRED): logs=Event Log entries, queues=message queue depths, messages=message archive (Ens.MessageHeader). Anything else returns INVALID_ACTION. To trace one session, use what=messages with session_id=<n>. Filters: component=<config item> narrows logs and messages; session_id=<n> and since_id=<n> (tails after a watermark) narrow messages. what=messages can also search message CONTENT: (a) body_class=<msg class> + body_where=<SQL fragment on body table> + body_select=[cols] joins the body table server-side (SQL name resolved for you); (b) search_table={prop, value|value_like, class?, extent?} searches an indexed Search Table field (extent default EnsLib.HL7.SearchTable; errors list searchable props). Both (a) and (b) read message content, so they need dataPolicy = allow on the server and acknowledgePhi=true, as iris_message_body does. Pass namespace=<ns> for a non-default interop namespace. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<IrisInteropQueryResponse>()
     )]
@@ -9828,7 +9828,7 @@ Methods:
     }
 
     #[tool(
-        description = "Inspect the content of an IRIS stream object by OID. oid: the stream OID (integer string). namespace: optional namespace (defaults to the connection namespace, IRIS_NAMESPACE). server: optional registered instance name. max_chars: most characters to return from the start (default 20000, at most 1000000). Returns {content, class, size, truncated, max_chars, line_count, oid}: size is the whole stream, truncated says content is a prefix, class is the class the read went through and says nothing about what the stream holds. An id that holds no stream is STREAM_NOT_FOUND. The server's dataPolicy decides what comes back: allow returns the content, redact returns HL7 v2 with the identifying fields of PID, NK1, GT1, IN1, IN2 and MSH-3 replaced by [REDACTED] (redacted: true means that mask ran, not that the content is de-identified: other segments and free text come back as stored) and refuses other content (BODY_NOT_REDACTABLE), block refuses the content (DATA_POLICY_BLOCKED). A refused stream still answers with class, size and line_count. Skill: iris-agentic-dev.",
+        description = "Inspect the content of an IRIS stream object by OID. oid: the stream OID (integer string). namespace: optional namespace (defaults to the connection namespace, IRIS_NAMESPACE). server: optional registered instance name. max_chars: most characters to return from the start (default 20000, at most 1000000). Returns {content, class, size, truncated, max_chars, line_count, oid}: size is the whole stream, truncated says content is a prefix, class is the class the read went through and says nothing about what the stream holds. An id that holds no stream is STREAM_NOT_FOUND. The server's dataPolicy decides what comes back: allow returns the content, redact returns HL7 v2 with the identifying fields of PID, NK1, GT1, IN1, IN2 and MSH-3 replaced by [REDACTED] (redacted: true means that mask ran, not that the content is de-identified: other segments and free text come back as stored) and refuses other content (BODY_NOT_REDACTABLE), block refuses the content (DATA_POLICY_BLOCKED). A refused stream still answers with class, size and line_count. allow also requires acknowledgePhi=true (without it the call is refused with PHI_ACK_REQUIRED). Skill: iris-agentic-dev.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<StreamInspectResponse>()    )]
     async fn stream_inspect(
@@ -9859,6 +9859,22 @@ Methods:
             .data_policy
             .clone()
             .unwrap_or_default();
+        // The policy gate has judged this call already; the handler asks again, as
+        // `iris_message_body` does, so the acknowledgement does not depend on the gate alone.
+        let acknowledged = p
+            .get("acknowledgePhi")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if let Some(body) = crate::policy::data_policy_gate::check_body_read_acknowledged_as(
+            "stream_inspect",
+            &p,
+            acknowledged,
+            &policy,
+            &self.target()?.primary.key,
+        ) {
+            self.record_call("stream_inspect", false);
+            return self.refuse(body);
+        }
         let result = admin_tools::stream_inspect_impl(
             &iris,
             &*self.conn_client(&iris)?,
