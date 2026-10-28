@@ -470,9 +470,9 @@ iris_compile(target="MyApp.*.cls", flags="cukd")
 
 ### `iris_check`
 
-Check one ObjectScript file with
-[intersystems-community/ascot](https://github.com/intersystems-community/ascot) without saving or
-compiling it.
+Check an ObjectScript file before compilation, powered by
+[intersystems-community/ascot](https://github.com/intersystems-community/ascot), a static analyzer
+and flow-sensitive type checker.
 
 | Parameter   | Type   | Default | Notes                                                                                                    |
 | ----------- | ------ | ------- | -------------------------------------------------------------------------------------------------------- |
