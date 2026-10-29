@@ -685,6 +685,7 @@ pub const CLASSIFICATION: &[ToolClass] = &[
     ro("iris_servers").local_default(),
     ro("iris_symbols"),
     ro("iris_symbols_local").local(),
+    ro("iris_check"),
     mixed(
         "iris_system_performance",
         &[

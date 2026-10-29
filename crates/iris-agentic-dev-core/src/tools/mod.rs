@@ -95,6 +95,7 @@ pub use crate::iris::connection::{mcp_peer, MCP_PEER};
 
 pub mod admin;
 pub mod admin_tools;
+pub mod check;
 pub mod comparison_tools;
 pub mod coverage;
 pub mod dict;
@@ -140,16 +141,16 @@ pub use scm::{ScmAction, ScmParams};
 /// happened and how it's now derived instead of hand-maintained.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Toolset {
-    /// 84 tools — 93 total `#[tool]` methods minus the 9 that are Merged-tier-only
+    /// 85 tools — 94 total `#[tool]` methods minus the 9 that are Merged-tier-only
     /// dispatchers (iris_admin, iris_debug, iris_containers, iris_get_log, iris_global,
     /// iris_execute_method, iris_message_body, iris_business_rule_info,
     /// iris_production_diff — added by later specs and deliberately scoped to Merged
     /// rather than the original tool surface). Default when `IRIS_TOOLSET` is unset.
     Baseline,
-    /// 80 tools — Baseline (84) minus the 4 stub tools (skill_propose/skill_optimize/
+    /// 81 tools — Baseline (85) minus the 4 stub tools (skill_propose/skill_optimize/
     /// skill_share/skill_community_install).
     Nostub,
-    /// 81 tools — 93 total minus the 4 stubs minus 8 tools replaced by 2 consolidated
+    /// 82 tools — 94 total minus the 4 stubs minus 8 tools replaced by 2 consolidated
     /// dispatchers (4 debug_* tools → iris_debug; agent_info/iris_list_containers/
     /// iris_select_container/iris_start_sandbox → iris_containers). The 9
     /// Merged-tier-only dispatchers from Baseline's note above are present here, which
@@ -6070,6 +6071,23 @@ impl IrisTools {
     }
 
     #[tool(
+        description = "Check an ObjectScript document before compilation, powered by intersystems-community/ascot. ascot (https://github.com/intersystems-community/ascot) is a static analyzer and flow-sensitive type checker; it reports undefined labels and macros, unknown classes, methods and properties, wrong argument counts, unreachable code. name: the document with its extension (Pkg.Class.cls, Routine.mac, .int, .inc). source: the document's text, to check code before saving it; omitted, the document is read as stored in the target namespace. What the document refers to but does not define (superclasses, called classes and routines, included .inc files) is resolved against the target namespace through this connection with read-only Atelier requests; no code runs on IRIS. Without a connection those references are reported as hints, not checked, and the response says so in `note`. Returns LSP-style diagnostics: zero-based range, severity (Error, Warning, Information, Hint), a fixed code and its docs.rs page. Skill: objectscript-tdd. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<check::IrisCheckResponse>()
+    )]
+    async fn iris_check(
+        &self,
+        Parameters(p): Parameters<check::CheckParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let result =
+            check::handle_iris_check(self, &p.name, p.source.as_deref(), p.namespace.as_deref())
+                .await;
+        self.record_call("iris_check", result.is_ok());
+        result
+    }
+
+    #[tool(
         description = "Introspect an ObjectScript class — returns methods, properties, and type information. Methods include FormalSpec as a structured array of {name, type, byref, output, default} objects and a ReturnType field. For BPL and DTL classes, an xdata_flow field describes the process steps (BPL: kind=bpl, steps array with Call/Code/If/Other entries, has_dynamic_dispatch flag; DTL: kind=dtl, source_class, target_class, subtransforms, assign_count). Skill: objectscript-navigation. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         annotations(read_only_hint = true),
         output_schema = schema_for_output::<DocsIntrospectResponse>()
@@ -9915,10 +9933,10 @@ impl ServerHandler for IrisTools {
             .await
     }
 
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         // Cap to 2025-11-25: the 2026-07-28 draft requires per-tool cache metadata that
         // clients using that version will reject when absent. Pin until we opt into caching.
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_protocol_version(ProtocolVersion::V_2025_11_25)
             .with_server_info(Implementation::new(
                 "iris-agentic-dev".to_string(),
@@ -11756,6 +11774,7 @@ impl IrisTools {
             };
         }
         dispatch!("iris_compile", CompileParams, iris_compile);
+        dispatch!("iris_check", check::CheckParams, iris_check);
         dispatch!("iris_execute", ExecuteParams, iris_execute);
         dispatch!("iris_test", TestParams, iris_test);
         dispatch!("iris_query", QueryParams, iris_query);

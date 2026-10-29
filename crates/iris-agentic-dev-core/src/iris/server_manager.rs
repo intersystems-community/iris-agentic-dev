@@ -973,6 +973,7 @@ fn tool_to_category(tool_name: &str) -> Option<crate::iris::workspace_config::To
         "iris_execute" => ToolCategory::Execute,
         "iris_query" => ToolCategory::Query,
         "iris_search" | "iris_symbols" | "iris_symbols_local" => ToolCategory::Search,
+        "iris_check" => ToolCategory::Docs,
         "docs_introspect" | "iris_doc" => ToolCategory::Docs,
         "iris_source_control" => ToolCategory::SourceControl,
         "debug_capture_packet"

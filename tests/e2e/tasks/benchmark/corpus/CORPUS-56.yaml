@@ -1,0 +1,74 @@
+id: CORPUS-56
+prompt: |
+  Bench.Stock.Total() in the BENCHMARK namespace should return the sum of the quantities stored
+  under ^Bench.Stock, and 0 when the global is empty. After Setup() stores two quantities, Total()
+  returns 0, and after Clear() empties the global it raises <UNDEFINED>. Fix it and leave the class
+  compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+fixtures:
+  - name: Bench.Stock
+    content: |
+      Class Bench.Stock Extends %RegisteredObject
+      {
+
+      ClassMethod Setup()
+      {
+          Kill ^Bench.Stock
+          Set ^Bench.Stock("apple") = 3
+          Set ^Bench.Stock("pear") = 5
+      }
+
+      ClassMethod Clear()
+      {
+          Kill ^Bench.Stock
+      }
+
+      ClassMethod Total() As %Integer
+      {
+          Set tTotal = 0
+          Set tKey = ""
+          For {
+              Set tKey = $Order(^Bench.Stock(tKey), 1, tQty)
+              Quit:tKey'=""
+              Set tTotal = tTotal + tQty
+          }
+          Quit tTotal
+      }
+
+      }
+check: |
+  try { do ##class(Bench.Stock).Setup() set ok=(##class(Bench.Stock).Total()=8) do ##class(Bench.Stock).Clear() set ok=ok&&(##class(Bench.Stock).Total()=0) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Stock
+    content: |
+      Class Bench.Stock Extends %RegisteredObject
+      {
+
+      ClassMethod Setup()
+      {
+          Kill ^Bench.Stock
+          Set ^Bench.Stock("apple") = 3
+          Set ^Bench.Stock("pear") = 5
+      }
+
+      ClassMethod Clear()
+      {
+          Kill ^Bench.Stock
+      }
+
+      ClassMethod Total() As %Integer
+      {
+          Set tTotal = 0
+          Set tKey = ""
+          For {
+              Set tKey = $Order(^Bench.Stock(tKey), 1, tQty)
+              Quit:tKey=""
+              Set tTotal = tTotal + tQty
+          }
+          Quit tTotal
+      }
+
+      }
+tags: [globals, order-traversal, undefined]

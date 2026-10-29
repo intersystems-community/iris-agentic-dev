@@ -1,0 +1,45 @@
+id: CORPUS-52
+prompt: |
+  Bench.Payload.Build(pName, pQty) in the BENCHMARK namespace should return a %DynamicObject with
+  a name member and a qty member, so that Qty(pName, pQty) can read qty back. Qty("x", 3) raises
+  <INVALID OREF>. Fix it and leave the class compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+fixtures:
+  - name: Bench.Payload
+    content: |
+      Class Bench.Payload Extends %RegisteredObject
+      {
+
+      ClassMethod Build(pName As %String, pQty As %Integer) As %DynamicObject
+      {
+          Quit "{""name"":"""_pName_""",""qty"":"_pQty_"}"
+      }
+
+      ClassMethod Qty(pName As %String, pQty As %Integer) As %Integer
+      {
+          Quit ..Build(pName, pQty).%Get("qty")
+      }
+
+      }
+check: |
+  try { set ok=((##class(Bench.Payload).Qty("x",3)=3)&&(##class(Bench.Payload).Build("x",3).%Get("name")="x")) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Payload
+    content: |
+      Class Bench.Payload Extends %RegisteredObject
+      {
+
+      ClassMethod Build(pName As %String, pQty As %Integer) As %DynamicObject
+      {
+          Quit {"name": (pName), "qty": (pQty)}
+      }
+
+      ClassMethod Qty(pName As %String, pQty As %Integer) As %Integer
+      {
+          Quit ..Build(pName, pQty).%Get("qty")
+      }
+
+      }
+tags: [json, dynamic-objects, types]
