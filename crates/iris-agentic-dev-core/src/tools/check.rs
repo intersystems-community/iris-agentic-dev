@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::output_schemas::ToolError;
-use super::{err_json, iris_unreachable, nopws, ok_json, IrisTools};
+use super::{err_json, nopws, ok_json, IrisTools};
 use crate::iris::connection::IrisConnection;
 
 /// Parameters of `iris_check`.
@@ -145,7 +145,7 @@ pub(crate) async fn handle_iris_check(
         });
     let iris = atelier.is_some();
     if source.is_none() && !iris {
-        return Err(iris_unreachable());
+        return Err(super::iris_unreachable());
     }
     let (doc, source) = (name.to_string(), source.map(str::to_string));
     // ascot is synchronous and its lookups block on the runtime, so it runs off the worker threads.
