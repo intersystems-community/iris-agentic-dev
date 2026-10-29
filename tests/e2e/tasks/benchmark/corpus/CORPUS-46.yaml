@@ -1,0 +1,47 @@
+id: CORPUS-46
+prompt: |
+  Bench.Find.FirstOver(pList, pMin) in the BENCHMARK namespace should return the first number in
+  the %List pList that is greater than pMin, and an empty string when there is none. It raises
+  <COMMAND> as soon as it finds one. Fix it and leave the class compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+fixtures:
+  - name: Bench.Find
+    content: |
+      Class Bench.Find Extends %RegisteredObject
+      {
+
+      ClassMethod FirstOver(pList As %List, pMin As %Integer) As %Integer
+      {
+          For i = 1:1:$ListLength(pList) {
+              Set tItem = $List(pList, i)
+              If tItem > pMin {
+                  Quit tItem
+              }
+          }
+          Quit ""
+      }
+
+      }
+check: |
+  try { set ok=((##class(Bench.Find).FirstOver($ListBuild(1,5,9),3)=5)&&(##class(Bench.Find).FirstOver($ListBuild(1,2),3)="")) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Find
+    content: |
+      Class Bench.Find Extends %RegisteredObject
+      {
+
+      ClassMethod FirstOver(pList As %List, pMin As %Integer) As %Integer
+      {
+          For i = 1:1:$ListLength(pList) {
+              Set tItem = $List(pList, i)
+              If tItem > pMin {
+                  Return tItem
+              }
+          }
+          Quit ""
+      }
+
+      }
+tags: [loops, control-flow]
