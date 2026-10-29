@@ -6071,7 +6071,8 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Check an ObjectScript file before compilation, powered by intersystems-community/ascot. ascot (https://github.com/intersystems-community/ascot) is a static analyzer and flow-sensitive type checker; it reports undefined labels and macros, unknown classes, methods and properties, wrong argument counts, unreachable code. path: a .cls, .mac, .int or .inc file inside the project directory. What the file refers to but does not define (superclasses, called classes and routines, included .inc files) is resolved against the target namespace through this connection with read-only Atelier requests; no code runs on IRIS. Without a connection those references are reported as hints, not checked. Returns LSP-style diagnostics: zero-based range, severity (Error, Warning, Information, Hint), a fixed code and its docs.rs page. Skill: objectscript-tdd. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "Check an ObjectScript document before compilation, powered by intersystems-community/ascot. ascot (https://github.com/intersystems-community/ascot) is a static analyzer and flow-sensitive type checker; it reports undefined labels and macros, unknown classes, methods and properties, wrong argument counts, unreachable code. name: the document with its extension (Pkg.Class.cls, Routine.mac, .int, .inc). source: the document's text, to check code before saving it; omitted, the document is read as stored in the target namespace. What the document refers to but does not define (superclasses, called classes and routines, included .inc files) is resolved against the target namespace through this connection with read-only Atelier requests; no code runs on IRIS. Without a connection those references are reported as hints, not checked, and the response says so in `note`. Returns LSP-style diagnostics: zero-based range, severity (Error, Warning, Information, Hint), a fixed code and its docs.rs page. Skill: objectscript-tdd. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<check::IrisCheckResponse>()
     )]
@@ -6079,7 +6080,9 @@ impl IrisTools {
         &self,
         Parameters(p): Parameters<check::CheckParams>,
     ) -> Result<CallToolResult, McpError> {
-        let result = check::handle_iris_check(self, &p.path, p.namespace.as_deref()).await;
+        let result =
+            check::handle_iris_check(self, &p.name, p.source.as_deref(), p.namespace.as_deref())
+                .await;
         self.record_call("iris_check", result.is_ok());
         result
     }

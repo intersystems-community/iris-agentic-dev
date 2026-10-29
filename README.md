@@ -597,7 +597,7 @@ blocked and how to permit it.
 | `iris_execute_method` | Invoke a `ClassMethod` directly by class+method+args, no boilerplate.                            |
 | `iris_query`          | Execute SQL, return rows as JSON. `mode=explain\|count\|write` for plans, counts, and gated DML. |
 | `iris_test`           | Run `%UnitTest` tests, return structured pass/fail results.                                      |
-| `iris_check`          | Check one file with [ascot](https://github.com/intersystems-community/ascot) without compiling it.  |
+| `iris_check`          | Check one document with [ascot](https://github.com/intersystems-community/ascot), no compile.      |
 | `iris_global`         | Read, write, kill, or list IRIS global nodes. Patient-data and system globals are gated.         |
 | `iris_coverage`       | Measure ObjectScript line coverage via `%Monitor.System.LineByLine`.                            |
 | `iris_source_control` ✦ | Check lock status, checkout, execute SCM actions.                                             |

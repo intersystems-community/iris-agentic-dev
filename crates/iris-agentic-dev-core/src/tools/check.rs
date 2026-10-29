@@ -17,16 +17,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::output_schemas::ToolError;
-use super::{err_json, host_fs, nopws, ok_json, IrisTools};
+use super::{err_json, iris_unreachable, nopws, ok_json, IrisTools};
 use crate::iris::connection::IrisConnection;
 
 /// Parameters of `iris_check`.
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CheckParams {
-    /// A `.cls`, `.mac`, `.int` or `.inc` file inside the project directory.
-    pub path: String,
-    /// Namespace that resolves the file's references. Omit to use the connection's.
+    /// The document to check, with its extension: `Pkg.Class.cls`, `Routine.mac`, `.int` or `.inc`.
+    pub name: String,
+    /// The document's text, to check code before saving it. Omit to check the document as stored
+    /// in the target namespace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    /// Namespace that resolves the document's references. Omit to use the connection's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
     /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
@@ -44,9 +48,12 @@ pub enum IrisCheckResponse {
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct CheckOk {
     pub success: bool,
-    pub path: String,
-    /// Whether a connection resolved the file's references; without one they are hints.
+    pub name: String,
+    /// Whether a connection resolved the document's references; without one they are hints.
     pub iris: bool,
+    /// Present when `iris` is false: what was not checked, and how to connect.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     pub namespace: String,
     pub diagnostics: Vec<Diagnostic>,
     pub errors: usize,
@@ -113,21 +120,18 @@ pub fn check(uri: &str, text: &str, atelier: Option<IadAtelier>) -> Vec<Diagnost
 
 pub(crate) async fn handle_iris_check(
     tools: &IrisTools,
-    path: &str,
+    name: &str,
+    source: Option<&str>,
     namespace: Option<&str>,
 ) -> Result<CallToolResult, McpError> {
-    // Judged before it is read: inside the project directory, with one of the compile extensions.
-    let file = {
-        let (root, cwd) = tools.host_path_context();
-        let exts = host_fs::COMPILE_EXTENSIONS;
-        match host_fs::confine_file(root.as_deref(), &cwd, path, exts) {
-            Ok(canonical) => canonical,
-            Err(host_fs::PathRefusal::NotFound) => {
-                return err_json("FILE_NOT_FOUND", &format!("Local file not found: {path}"))
-            }
-            Err(why) => return tools.refuse(host_fs::refusal_body("iris_check", path, &why, exts)),
-        }
-    };
+    // The extension decides how ascot parses the document, so an unknown one is refused up front.
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
+    if !matches!(ext.as_deref(), Some("cls" | "mac" | "int" | "inc")) {
+        return err_json(
+            "INVALID_PARAMS",
+            &format!("name must end in .cls, .mac, .int or .inc, got {name}"),
+        );
+    }
     let namespace = tools.target_ns(namespace)?;
     // Lookups go through the target connection when it speaks Atelier (a docker-only one cannot).
     let atelier = tools
@@ -140,22 +144,47 @@ pub(crate) async fn handle_iris_check(
             handle: tokio::runtime::Handle::current(),
         });
     let iris = atelier.is_some();
+    if source.is_none() && !iris {
+        return Err(iris_unreachable());
+    }
+    let (doc, source) = (name.to_string(), source.map(str::to_string));
     // ascot is synchronous and its lookups block on the runtime, so it runs off the worker threads.
     let diagnostics = match tokio::task::spawn_blocking(move || {
-        std::fs::read_to_string(&file).map(|text| check(&file.to_string_lossy(), &text, atelier))
+        // Without `source` the document comes from the server, through the same request ascot uses.
+        let text = match source {
+            Some(text) => Some(text),
+            None => match atelier.as_ref().map(|a| a.get_doc(&doc)) {
+                Some(Ok(text)) => text,
+                Some(Err(e)) => return Err(e),
+                None => None,
+            },
+        };
+        Ok(text.map(|text| check(&doc, &text, atelier)))
     })
     .await
     .map_err(|e| McpError::internal_error(format!("check: {e}"), None))?
     {
-        Ok(diagnostics) => diagnostics,
-        Err(e) => return err_json("FILE_READ_FAILED", &format!("cannot read {path}: {e}")),
+        Ok(Some(diagnostics)) => diagnostics,
+        Ok(None) => {
+            return err_json(
+                "DOCUMENT_NOT_FOUND",
+                &format!("no document {name} in {namespace}"),
+            )
+        }
+        Err(e) => return err_json("IRIS_UNREACHABLE", &e),
     };
     use DiagnosticSeverity as S;
     let n = |s: S| diagnostics.iter().filter(|d| d.severity == s).count();
     let ok = CheckOk {
         success: true,
-        path: path.to_string(),
+        name: name.to_string(),
         iris,
+        note: (!iris).then(|| {
+            "No IRIS connection, so what this document refers to but does not define was not \
+             checked and appears as hints. Set IRIS_HOST and IRIS_WEB_PORT (or a project \
+             .iris-agentic-dev.toml) to check it."
+                .to_string()
+        }),
         namespace,
         errors: n(S::Error),
         warnings: n(S::Warning),

@@ -470,25 +470,29 @@ iris_compile(target="MyApp.*.cls", flags="cukd")
 
 ### `iris_check`
 
-Check an ObjectScript file before compilation, powered by
+Check an ObjectScript document before compilation, powered by
 [intersystems-community/ascot](https://github.com/intersystems-community/ascot), a static analyzer
 and flow-sensitive type checker.
 
-| Parameter   | Type   | Default | Notes                                                                                                    |
-| ----------- | ------ | ------- | -------------------------------------------------------------------------------------------------------- |
-| `path`      | string | —       | **Required.** A `.cls`, `.mac`, `.int` or `.inc` file inside the [project directory](#project-directory) |
-| `namespace` | string | —       | Namespace that resolves the file's references; defaults to the connection's                              |
-| `server`    | string | —       | Named server; omit for default                                                                           |
+| Parameter   | Type   | Default | Notes                                                                                         |
+| ----------- | ------ | ------- | --------------------------------------------------------------------------------------------- |
+| `name`      | string | —       | **Required.** The document with its extension: `Pkg.Class.cls`, `Routine.mac`, `.int`, `.inc` |
+| `source`    | string | —       | The document's text, to check code before saving it; omit to check it as stored on the server |
+| `namespace` | string | —       | Namespace that resolves the document's references; defaults to the connection's               |
+| `server`    | string | —       | Named server; omit for default                                                                |
 
-Classes, routines and `.inc` files the file refers to but does not define are read from the target
-server with read-only Atelier requests; nothing runs on IRIS. Without a connection they are
-reported as hints. A path outside the project directory is refused with `HOST_PATH_BLOCKED`.
+Classes, routines and `.inc` files the document refers to but does not define are read from the
+target server with read-only Atelier requests; nothing runs on IRIS. Without a connection they are
+reported as hints and the response carries a `note` saying so; without a connection and without
+`source` there is nothing to check, and the call is refused with `IRIS_UNREACHABLE`. A `name` the
+server does not hold answers `DOCUMENT_NOT_FOUND`.
 
 Returns LSP-style diagnostics (zero-based `range`, `severity`, `code`, `code_description`) with
 `errors`, `warnings` and `hints` counts, and `iris` saying whether a connection answered the lookups.
 
 ```text
-iris_check(path="src/MyApp/Service.cls")
+iris_check(name="MyApp.Service.cls")
+iris_check(name="MyApp.Service.cls", source="Class MyApp.Service ...")
 ```
 
 ---
