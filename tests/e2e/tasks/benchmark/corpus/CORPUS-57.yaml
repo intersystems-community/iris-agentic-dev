@@ -1,0 +1,59 @@
+id: CORPUS-57
+prompt: |
+  Bench.Guard in the BENCHMARK namespace does not compile. Save(pName) should return the error
+  %Status from Validate(pName) when there is one, so Save("") is an error, and $$$OK otherwise, so
+  Save("x") succeeds. Find the error, fix it, and leave the class compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+fixtures:
+  - name: Bench.Guard
+    content: |
+      Class Bench.Guard Extends %RegisteredObject
+      {
+
+      ClassMethod Save(pName As %String) As %Status
+      {
+          Set tSC = ..Validate(pName)
+          If $$$ISERROR(tSC) {
+              Quit tSC
+          }
+          Quit $$$OK
+      }
+
+      ClassMethod Validate(pName As %String) As %Status
+      {
+          If pName = "" {
+              Quit $$$ERROR($$$GeneralError, "name required")
+          }
+          Quit $$$OK
+      }
+
+      }
+check: |
+  try { set ok=($system.Status.IsError(##class(Bench.Guard).Save(""))&&$system.Status.IsOK(##class(Bench.Guard).Save("x"))) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Guard
+    content: |
+      Class Bench.Guard Extends %RegisteredObject
+      {
+
+      ClassMethod Save(pName As %String) As %Status
+      {
+          Set tSC = ..Validate(pName)
+          If $$$ISERR(tSC) {
+              Quit tSC
+          }
+          Quit $$$OK
+      }
+
+      ClassMethod Validate(pName As %String) As %Status
+      {
+          If pName = "" {
+              Quit $$$ERROR($$$GeneralError, "name required")
+          }
+          Quit $$$OK
+      }
+
+      }
+tags: [macros, compile-error, status-handling]
