@@ -45,7 +45,7 @@ base64 = "0.22"
 aes-gcm = "0.10"
 similar = "2"
 # 0.4.0 is the first release with the host `Atelier` interface `tools/check.rs` implements.
-ascot = "0.4.0"
+ascot = "0.4.2"
 
 
 # Platform keychain store crates — already in the dep tree via keyring v4.

@@ -142,9 +142,9 @@ dependencies = [
 
 [[package]]
 name = "ascot"
-version = "0.4.0"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8f8fc7e9fedc35098f78cdcd9d73f605c83c77304b25e1113130b230e4a1d8e"
+checksum = "2d5e2a69f218843b9c5e0cbb18be6bcefe66725f8a1c55c4dcd3e0f7a7d16258"
 dependencies = [
  "base64 0.23.1",
  "clap",
@@ -3465,9 +3465,9 @@ dependencies = [
 
 [[package]]
 name = "tygr-objectscript"
-version = "0.4.0"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "491ffcdb514fd5e20eeb4bdb78d2f23afa30bbaf88bdc06db29a215070a8558f"
+checksum = "d699c80c6d8d0801b812b22dd6a15ba4568b48665f7d23f049d403c8758f302d"
 dependencies = [
  "either",
  "tygr",
@@ -3535,6 +3535,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ureq-proto",
+ "url",
  "utf8-zero",
  "webpki-roots",
 ]
