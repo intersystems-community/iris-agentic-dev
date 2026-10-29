@@ -88,9 +88,9 @@
 #
 # - **CORPUS-43 to CORPUS-57 are holdout from the day they were written (2026-10-29).** Each plants
 #   a defect the IRIS compiler accepts and the program trips on at runtime, drawn from the
-#   runtime-proven tests of `objectscript-typecheck-corpus`; CORPUS-57 is the one control the
-#   compiler also catches, a misspelled macro. Written to measure `iris_check` (PR #166); none
-#   involves a routine.
+#   runtime-proven tests of `objectscript-typecheck-corpus`; CORPUS-57, a misspelled macro the
+#   compiler also catches, was asked for in the PR review. Written to measure `iris_check` (PR #166);
+#   none involves a routine.
 #
 # One caveat that the split cannot fix and the report has to carry instead: I wrote the 42 corpus
 # tasks knowing what iad's 81 tools can do. Authoring is not tuning — no description, prompt or skill
