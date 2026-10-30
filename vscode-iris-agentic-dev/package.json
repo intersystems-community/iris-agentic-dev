@@ -116,7 +116,7 @@
     "package": "npm run compile && vsce package --no-dependencies"
   },
   "dependencies": {
-    "which": "^6.0.1"
+    "which": "^7.0.0"
   },
   "devDependencies": {
     "@intersystems-community/intersystems-servermanager": "^3.8.0",
