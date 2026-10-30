@@ -120,7 +120,7 @@
   },
   "devDependencies": {
     "@intersystems-community/intersystems-servermanager": "^3.8.0",
-    "@types/node": "^20",
+    "@types/node": "^26",
     "@types/vscode": "^1.99.0",
     "@types/which": "^3.0.4",
     "@vscode/vsce": "^3.9.2",
