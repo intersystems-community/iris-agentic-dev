@@ -42,7 +42,7 @@ quick-xml = "0.41"
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots", "connect", "handshake"], default-features = false }
 futures-util = { version = "0.3", features = ["sink"] }
 base64 = "0.22"
-aes-gcm = "0.10"
+aes-gcm = "0.11"
 similar = "2"
 
 
