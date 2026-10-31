@@ -132,10 +132,12 @@ set; `check_config.read_only_from` says which. Under strict, iad writes nothing 
 every tool that runs its ObjectScript through a scratch class in the `IrisDevTmp` package is off,
 and the write and destructive gates are closed on every server, whatever opens them elsewhere (a
 write such as `iris_doc` put answers `READ_ONLY_STRICT` with `gate: "write_tools"`). `iris_doc`
-reads, `iris_query`, `iris_search`, `iris_info`, `iris_servers` and `check_config` still work. To use the others, remove the setting (any file may set strict, and
+reads (not `mode=compiled`), `iris_query`, `iris_search`, `iris_info`, `iris_servers`,
+`check_config` and the skill readers (from the bundled skills) still work. To use the others, remove the setting (any file may set strict, and
 a project file cannot unset it from the operator file). Strict together with `irisAudit = true` is
 a configuration error, because the audit emission compiles a class: `iris-agentic-dev mcp` names
-both settings on stderr and exits 2. See
+both settings on stderr and exits 2, and `iris-agentic-dev tool` refuses every IRIS tool with
+`READ_ONLY_STRICT_WITH_AUDIT`. See
 [Strict read-only](connecting.md#strict-read-only-no-scratch-classes).
 
 ---

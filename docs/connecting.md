@@ -931,10 +931,13 @@ scratch class is hidden from `tools/list` and refused with `READ_ONLY_STRICT`: t
 in `write_gate::CLASSIFICATION` (`iris_table_info`, `global_preview`, `my_access`, `iris_global`,
 `iris_production`, `iris_execute`, `iris_test`, `journal_search`, `skill`, `kb`, `kb_index`,
 `skill_community`, `agent_info` and the rest of the schema, interoperability and administration
-readers). `iris_doc` (reads), `iris_query`, `iris_search`, `iris_info`, `iris_servers`,
+readers). `iris_doc` reads stay, except `mode=compiled`, which reads the `.INT` routine through a
+scratch class and is refused. `iris_query`, `iris_search`, `iris_info`, `iris_servers`,
 `check_config` and the one-tool-per-action skill readers (`skill_list`, `skill_describe`,
-`skill_search`, which read the bundled skills and `^SKILLS` through the container's terminal and
-compile nothing) stay. Telemetry is kept in the local file.
+`skill_search`) stay; under strict the readers answer from the bundled skills and do not read
+`^SKILLS`, which they would do through the container's terminal. Telemetry is kept in the local
+file. A call that would compile and that strict does not know about is refused by the scratch-class
+runner before anything is sent (`READ_ONLY_STRICT (scratch-class runner)` in the error).
 `check_config` reports `read_only` and `read_only_from`. The command-line commands that compile a
 scratch class obey it too: `iris-agentic-dev capability-matrix` and `iris-agentic-dev benchmark`
 exit 1 with `READ_ONLY_STRICT` before they connect to anything.
@@ -948,6 +951,8 @@ call is refused with `READ_ONLY_STRICT`, and `check_config` shows both gates clo
 Strict together with `irisAudit = true` on any server is a configuration error
 (`READ_ONLY_STRICT_WITH_AUDIT`): the audit emission compiles a class on the server. `iris-agentic-dev mcp`
 names both settings on stderr and exits 2, and `check_config` lists the error under `config_errors`.
+`iris-agentic-dev tool`, and a session whose file only became readable after it started, refuse every
+tool that talks to IRIS with `READ_ONLY_STRICT_WITH_AUDIT`, naming where each setting is set.
 
 ### Telemetry
 
