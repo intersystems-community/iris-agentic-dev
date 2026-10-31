@@ -118,6 +118,7 @@ mod test_sql_power_live;
 mod test_sql_safety_e2e;
 mod test_sql_translate_e2e;
 mod test_stream_inspect_141_live;
+mod test_strict_sweep_171_live;
 mod test_superclass_141_live;
 mod test_system_mode_bodies_141_live;
 mod test_system_mode_live;

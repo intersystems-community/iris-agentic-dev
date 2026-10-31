@@ -176,6 +176,7 @@ mod test_refusal_text_141;
 mod test_release_160_issues;
 mod test_release_branch_ci;
 mod test_reload_pool;
+mod test_request_watch_171;
 mod test_resolve_identity_141;
 mod test_role_gate;
 mod test_role_gate_handlers;

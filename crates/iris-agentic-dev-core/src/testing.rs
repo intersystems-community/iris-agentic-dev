@@ -2791,3 +2791,54 @@ pub mod gated {
         crate::iris::server_manager::policy_gate_for(tool, server, policy?, &categories(tool, None))
     }
 }
+
+// ── the request watch ───────────────────────────────────────────────────────────────────────────
+
+/// How many request URLs the watch keeps; older ones are dropped first.
+const REQUESTS_KEPT: usize = 8192;
+
+static REQUESTS: std::sync::Mutex<std::collections::VecDeque<String>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+
+/// Called by every IRIS HTTP client of a test build for each request it sends (`iris/http.rs`).
+pub fn record_request(url: &reqwest::Url) {
+    let mut line = format!(
+        "{}:{}{}",
+        url.host_str().unwrap_or(""),
+        url.port_or_known_default().unwrap_or(0),
+        url.path()
+    );
+    if let Some(q) = url.query() {
+        line.push('?');
+        line.push_str(q);
+    }
+    let mut kept = REQUESTS.lock().unwrap_or_else(|e| e.into_inner());
+    if kept.len() >= REQUESTS_KEPT {
+        kept.pop_front();
+    }
+    kept.push_back(line);
+}
+
+/// Every request URL seen since the last take, as `host:port/path?query`, oldest first. The watch is
+/// process-wide, so a test that reads it runs serially or filters for the host it used.
+pub fn take_requests() -> Vec<String> {
+    std::mem::take(&mut *REQUESTS.lock().unwrap_or_else(|e| e.into_inner()))
+        .into_iter()
+        .collect()
+}
+
+/// Forget what the watch has seen.
+pub fn clear_requests() {
+    REQUESTS.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+/// What the watch holds, left in place: for a test that runs alongside others and looks only for
+/// the URLs it sent.
+pub fn seen_requests() -> Vec<String> {
+    REQUESTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .cloned()
+        .collect()
+}

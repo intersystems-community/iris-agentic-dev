@@ -123,7 +123,11 @@ pub enum ClientKind {
 }
 
 fn base_builder(verify: bool) -> reqwest::ClientBuilder {
-    reqwest::Client::builder()
+    let b = reqwest::Client::builder();
+    // Test builds watch every request an IRIS client sends (`testing::take_requests`).
+    #[cfg(feature = "testing")]
+    let b = b.cookie_provider(Arc::new(observer::Watched(None)));
+    b
         // Identifies agent traffic in Web Gateway / IIS / Apache access logs and to
         // `%request.CgiEnvs("HTTP_USER_AGENT")` (FR-001, FR-009 of the attribution spec).
         .user_agent(user_agent(caller_mode()))
@@ -152,15 +156,16 @@ pub fn client_with_store(
 ) -> anyhow::Result<reqwest::Client> {
     let b = base_builder(tls.verify);
     let b = match kind {
-        ClientKind::Call => b.timeout(Duration::from_secs(30)).cookie_provider(store),
-        ClientKind::Probe => b
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(10))
-            .cookie_provider(store),
+        ClientKind::Call => jar(b.timeout(Duration::from_secs(30)), store),
+        ClientKind::Probe => jar(
+            b.connect_timeout(Duration::from_secs(5))
+                .timeout(Duration::from_secs(10)),
+            store,
+        ),
         ClientKind::Scan => b.timeout(Duration::from_secs(2)),
         ClientKind::Search | ClientKind::Raw => b,
         ClientKind::Batch => b.timeout(Duration::from_secs(5)),
-        ClientKind::Logout => b.cookie_provider(store),
+        ClientKind::Logout => jar(b, store),
         ClientKind::AdHoc => base_builder(true)
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(10)),
@@ -169,6 +174,42 @@ pub fn client_with_store(
             .timeout(Duration::from_secs(10)),
     };
     Ok(b.build()?)
+}
+
+/// `b` with `store` as its CSP cookie jar. Test builds wrap the jar so the request is still seen.
+fn jar(b: reqwest::ClientBuilder, store: Arc<CspSessionStore>) -> reqwest::ClientBuilder {
+    #[cfg(feature = "testing")]
+    return b.cookie_provider(Arc::new(observer::Watched(Some(store))));
+    #[cfg(not(feature = "testing"))]
+    b.cookie_provider(store)
+}
+
+/// The request watch of test builds. reqwest asks a client's cookie provider for the cookies of
+/// every request it sends, with the request's URL, so a provider on every IRIS client sees every
+/// request: the ones with a CSP jar delegate to it, the others hold no cookies, as before. It sees
+/// the URL and not the method. It is not compiled into a release build.
+#[cfg(feature = "testing")]
+mod observer {
+    use super::CspSessionStore;
+    use reqwest::cookie::CookieStore;
+    use reqwest::header::HeaderValue;
+    use reqwest::Url;
+    use std::sync::Arc;
+
+    pub struct Watched(pub Option<Arc<CspSessionStore>>);
+
+    impl CookieStore for Watched {
+        fn set_cookies(&self, headers: &mut dyn Iterator<Item = &HeaderValue>, url: &Url) {
+            if let Some(store) = &self.0 {
+                store.set_cookies(headers, url);
+            }
+        }
+
+        fn cookies(&self, url: &Url) -> Option<HeaderValue> {
+            crate::testing::record_request(url);
+            self.0.as_ref().and_then(|store| store.cookies(url))
+        }
+    }
 }
 
 /// A probe's client and the CSP session store that belongs to that probe alone.
