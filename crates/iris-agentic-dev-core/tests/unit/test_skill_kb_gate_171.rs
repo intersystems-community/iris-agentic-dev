@@ -569,3 +569,105 @@ async fn the_dev_template_still_consults_the_server_leg() {
         );
     }
 }
+
+// ── S17: strict read-only skips the readers' server leg too ─────────────────────────────────────
+
+/// Strict means iad runs nothing of its own on the server. The three readers would read `^SKILLS`
+/// through the container's terminal; under strict they serve the bundled skills and say why the
+/// server's were not consulted, the way a refused policy gate makes them.
+#[tokio::test]
+async fn strict_serves_the_bundled_skills_without_the_server_leg() {
+    for rig in [Toolset::Baseline, Toolset::Merged].map(|t| {
+        rig_with_skills(
+            "read_only = \"strict\"\n",
+            t,
+            &[("prod", UNROUTABLE)],
+            false,
+        )
+    }) {
+        let list = answer(&rig, "skill_list", &json!({})).await.unwrap();
+        assert_bundled_only("skill_list", &list, "READ_ONLY_STRICT");
+        assert!(list["count"].as_u64().unwrap_or(0) > 20, "{list}");
+        assert_eq!(
+            list["sources"]["synthesized"]["refused"]["kind"], "operator_limit",
+            "{list}"
+        );
+        let note = list["note"].as_str().unwrap_or_default();
+        assert!(
+            !note.contains("scratch class"),
+            "the reader compiles nothing, so the note must not say it does: {note}"
+        );
+
+        let search = answer(&rig, "skill_search", &json!({"query": "guardrails"}))
+            .await
+            .unwrap();
+        assert_bundled_only("skill_search", &search, "READ_ONLY_STRICT");
+        assert!(search["count"].as_u64().unwrap_or(0) > 0, "{search}");
+
+        let described = answer(
+            &rig,
+            "skill_describe",
+            &json!({"name": "objectscript-guardrails"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(described["success"], true, "{described}");
+
+        let miss = answer(
+            &rig,
+            "skill_describe",
+            &json!({"name": "no-such-skill-xyz"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(miss["error_code"], "NOT_FOUND", "{miss}");
+        assert_bundled_only("skill_describe miss", &miss, "READ_ONLY_STRICT");
+
+        // The other spelling of the same reads compiles a scratch class and has no bundled
+        // answer, so strict still refuses it whole.
+        for (tool, args) in [
+            ("skill", json!({"action": "list"})),
+            ("skill", json!({"action": "describe", "name": "x"})),
+            ("skill", json!({"action": "search", "query": "x"})),
+        ] {
+            let body = answer(&rig, tool, &args).await.unwrap();
+            assert_eq!(
+                body["error_code"], "READ_ONLY_STRICT",
+                "{tool} {args}: {body}"
+            );
+        }
+    }
+}
+
+/// Strict from the launch settings (`IAD_READ_ONLY=strict`) is the same strict.
+#[tokio::test]
+async fn launch_strict_serves_the_bundled_skills_too() {
+    let rig = rig_with_skills(GATES_OPEN, Toolset::Merged, &[("prod", UNROUTABLE)], true);
+    let list = answer(&rig, "skill_list", &json!({})).await.unwrap();
+    assert_bundled_only("skill_list", &list, "READ_ONLY_STRICT");
+}
+
+/// A reader whose server leg the policy refused is one call, so the audit log holds one line for
+/// it: the refusal. It used to hold that and an `allowed` line after it.
+#[tokio::test]
+async fn a_reader_that_falls_back_is_audited_once() {
+    let home = tempfile::tempdir().unwrap();
+    let _h = iris_agentic_dev_core::testing::EnvGuard::with("HOME", home.path());
+    let log = home.path().join(".iris-agentic-dev").join("audit.jsonl");
+    let name = format!("audit-once-{}", std::process::id());
+    let toml = format!("{GATES_OPEN}[policy.default]\nallow = [\"query\"]\n");
+    let rig = rig_with_skills(&toml, Toolset::Merged, &[("prod", UNROUTABLE)], false);
+    let miss = answer(&rig, "skill_describe", &json!({"name": name}))
+        .await
+        .unwrap();
+    assert_bundled_only("skill_describe", &miss, "POLICY_GATE");
+    let text = std::fs::read_to_string(&log).unwrap_or_default();
+    let mine: Vec<Value> = text
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|e| e["tool"] == "skill_describe" && e["params"]["name"] == name.as_str())
+        .collect();
+    assert_eq!(mine.len(), 1, "one call, one audit line: {mine:?}");
+    assert_eq!(mine[0]["status"], "blocked", "{mine:?}");
+    assert_eq!(mine[0]["gate"], "policy", "{mine:?}");
+}

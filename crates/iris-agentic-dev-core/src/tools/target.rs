@@ -305,6 +305,22 @@ fn read_only_strict_body(tool: &str, from: &str) -> Value {
     })
 }
 
+/// Why a bundled-skill reader's server leg was skipped under strict read-only. It compiles nothing:
+/// it would read `^SKILLS` through the container's terminal.
+fn strict_reader_body(tool: &str, from: &str) -> Value {
+    json!({
+        "success": false,
+        "error_code": write_gate::ERR_READ_ONLY_STRICT,
+        "error": format!(
+            "{tool} would read the server's ^SKILLS through the container's terminal, and \
+             read-only mode is strict ({from}), so iad runs nothing on the server and only the \
+             bundled skills were searched."
+        ),
+        "tool": tool,
+        "read_only_from": from,
+    })
+}
+
 /// Two URLs name one instance when scheme, host, port and prefix agree; `localhost`, `127.0.0.1`
 /// and `::1` are one host.
 pub fn same_instance(a: &str, b: &str) -> bool {
@@ -808,6 +824,11 @@ impl IrisTools {
         // Strict read-only (R5 C15): a tool that can compile a scratch class on the server is
         // refused, whatever its write class. It comes after the write gate so a caller with writes
         // off hears about that first, and before the usability checks below.
+        //
+        // The three readers that can answer from the bundled skills would otherwise read `^SKILLS`
+        // through the container's terminal, which is code iad runs on the server too. Strict skips
+        // that leg the way a refused policy gate does, and the answer says why (S17).
+        let mut audited_blocked = false;
         if let Some(from) = resolved.config.read_only_source() {
             if write_gate::is_scratch(name) {
                 self.record_call(name, false);
@@ -815,6 +836,19 @@ impl IrisTools {
                     .refusal_on(&resolved.primary, read_only_strict_body(name, &from))
                     .map(Into::into)
                     .map_err(Into::into);
+            }
+            if write_gate::falls_back_to_bundled(name) && skipped.is_none() {
+                let refused =
+                    self.refusal_on(&resolved.primary, strict_reader_body(name, &from))?;
+                skipped = Some(skipped_leg(&result_body(&refused)));
+                self.audit_call(
+                    name,
+                    &resolved.primary,
+                    arg_map,
+                    "blocked",
+                    Some("read_only"),
+                );
+                audited_blocked = true;
             }
         }
 
@@ -864,8 +898,9 @@ impl IrisTools {
                 if let Some(refusal) = self.policy_refusal_on(server, &resolved, &full) {
                     self.audit_call(name, server, arg_map, "blocked", Some("policy"));
                     // A reader that falls back to what it holds is not refused: its server leg
-                    // is, and it says so.
+                    // is, and it says so. It is one call, so its one audit line is the refusal.
                     if write_gate::falls_back_to_bundled(name) {
+                        audited_blocked = true;
                         match refusal {
                             Ok(r) => skipped = Some(skipped_leg(&result_body(&r))),
                             Err(e) => {
@@ -891,7 +926,9 @@ impl IrisTools {
                 return refusal.map(Into::into).map_err(Into::into);
             }
         }
-        self.audit_call(name, &resolved.primary, arg_map, "allowed", None);
+        if !audited_blocked {
+            self.audit_call(name, &resolved.primary, arg_map, "allowed", None);
+        }
         resolved.server_leg_skipped = skipped;
 
         // T019: warn once when the connection is docker_only so operators know that HTTP headers
