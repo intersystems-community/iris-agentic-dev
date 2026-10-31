@@ -2859,3 +2859,21 @@ pub fn ignore_scratch_call_rule(on: bool) {
 pub(crate) fn scratch_call_rule_ignored() -> bool {
     IGNORE_SCRATCH_CALL_RULE.with(|c| c.get())
 }
+
+// ── refusals of the scratch-class runner ────────────────────────────────────────────────────────
+
+static RUNNER_REFUSALS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Called when the scratch-class runner refuses a call under strict read-only that the pipeline let
+/// through (`IrisConnection::execute_generator_with`).
+pub(crate) fn record_runner_refusal(tool: &str) {
+    RUNNER_REFUSALS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(tool.to_string());
+}
+
+/// The tools the scratch-class runner refused since the last take, in order.
+pub fn take_runner_refusals() -> Vec<String> {
+    std::mem::take(&mut *RUNNER_REFUSALS.lock().unwrap_or_else(|e| e.into_inner()))
+}

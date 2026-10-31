@@ -150,11 +150,15 @@ tokio::task_local! {
     pub(crate) static CALL_TARGET: Arc<ResolvedCall>;
 }
 
-/// The file or launch setting that made the call in progress strict read-only, or `None` when it is
-/// not strict or no call is in progress.
-pub(crate) fn call_read_only_source() -> Option<String> {
+/// The tool of the call in progress and the file or launch setting that made it strict read-only,
+/// or `None` when it is not strict or no call is in progress.
+pub(crate) fn call_read_only_source() -> Option<(String, String)> {
     CALL_TARGET
-        .try_with(|t| t.config.read_only_source())
+        .try_with(|t| {
+            t.config
+                .read_only_source()
+                .map(|from| (t.tool.clone(), from))
+        })
         .ok()
         .flatten()
 }

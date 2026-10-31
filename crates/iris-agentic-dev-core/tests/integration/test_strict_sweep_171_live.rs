@@ -18,7 +18,9 @@ use super::test_enum_tools_work_live::cases;
 use iris_agentic_dev_core::iris::config_sources::{ConfigSnapshot, LoadInputs, CONFIG_FILE_NAME};
 use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
 use iris_agentic_dev_core::skills::SkillRegistry;
-use iris_agentic_dev_core::testing::{clear_requests, take_requests, LiveTarget};
+use iris_agentic_dev_core::testing::{
+    clear_requests, take_requests, take_runner_refusals, LiveTarget,
+};
 use iris_agentic_dev_core::tools::{IrisTools, Toolset};
 use serde_json::{json, Value};
 
@@ -159,6 +161,10 @@ async fn no_read_only_call_compiles_anything_under_strict() {
     let mut swept = 0;
     let mut refused = 0;
     let mut failures = vec![];
+    // Calls the pipeline let through and the scratch-class runner refused: a mode missing from
+    // `write_gate::SCRATCH_MODES`, which now errors under strict instead of compiling.
+    let _ = take_runner_refusals();
+    let mut by_runner = vec![];
     for toolset in [Toolset::Baseline, Toolset::Merged] {
         let r = rig(STRICT, toolset).await;
         let names = r.tools.registered_tool_names();
@@ -169,6 +175,9 @@ async fn no_read_only_call_compiles_anything_under_strict() {
             let b = call(&r, case.tool, case.args.clone()).await;
             let lines = r.requests();
             swept += 1;
+            if !take_runner_refusals().is_empty() {
+                by_runner.push(format!("{toolset:?} {} {}", case.tool, case.args));
+            }
             if b["error_code"] == "READ_ONLY_STRICT" {
                 refused += 1;
             }
@@ -181,6 +190,11 @@ async fn no_read_only_call_compiles_anything_under_strict() {
             }
         }
     }
+    eprintln!(
+        "refused by the scratch-class runner, not the pipeline ({}):\n{}",
+        by_runner.len(),
+        by_runner.join("\n")
+    );
     assert!(swept > 100, "only {swept} calls were swept");
     assert!(refused > 20, "only {refused} calls were refused by strict");
     assert!(

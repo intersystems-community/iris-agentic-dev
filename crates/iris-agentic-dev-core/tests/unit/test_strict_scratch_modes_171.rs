@@ -87,6 +87,7 @@ async fn strict_leaves_the_other_iris_doc_reads() {
 async fn the_runner_refuses_under_strict_when_a_row_is_wrong() {
     let rig = rig_with_skills(STRICT, Toolset::Merged, &[("prod", UNROUTABLE)], false);
     iris_agentic_dev_core::testing::ignore_scratch_call_rule(true);
+    let _ = iris_agentic_dev_core::testing::take_runner_refusals();
     let b = call(
         &rig,
         "iris_doc",
@@ -95,7 +96,12 @@ async fn the_runner_refuses_under_strict_when_a_row_is_wrong() {
     .await;
     iris_agentic_dev_core::testing::ignore_scratch_call_rule(false);
     let text = b.to_string();
-    assert!(text.contains("READ_ONLY_STRICT"), "{b}");
+    assert!(
+        text.contains("READ_ONLY_STRICT (scratch-class runner)"),
+        "the refusal does not say it came from the runner: {b}"
+    );
+    let refused = iris_agentic_dev_core::testing::take_runner_refusals();
+    assert!(refused.iter().any(|t| t == "iris_doc"), "{refused:?}");
     assert!(
         !text.contains("error sending request") && b["went_past_the_gates"].is_null(),
         "the runner sent a request under strict: {b}"

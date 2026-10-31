@@ -894,11 +894,20 @@ impl IrisConnection {
     ) -> anyhow::Result<(String, Option<String>)> {
         // Strict read-only means iad compiles nothing on the server. The pipeline refuses every call
         // it knows compiles; this refuses one it does not know, before any request is sent (S17).
-        if let Some(from) = crate::tools::target::call_read_only_source() {
+        // Its refusal names the runner, so it reads apart from the pipeline's: one here means a
+        // mode is missing from `write_gate::SCRATCH_MODES`.
+        if let Some((tool, from)) = crate::tools::target::call_read_only_source() {
+            tracing::warn!(
+                tool = %tool,
+                "scratch-class runner refused a call under strict read-only; the pipeline did not \
+                 know this call compiles (add its mode to write_gate::SCRATCH_MODES)"
+            );
+            #[cfg(feature = "testing")]
+            crate::testing::record_runner_refusal(&tool);
             anyhow::bail!(
-                "READ_ONLY_STRICT: this call would compile a scratch class on the server, and \
-                 read-only mode is strict ({from}), so iad sent nothing. Tools that compile \
-                 nothing still work."
+                "READ_ONLY_STRICT (scratch-class runner): {tool} would compile a scratch class on \
+                 the server, and read-only mode is strict ({from}), so iad sent nothing. Tools \
+                 that compile nothing still work."
             );
         }
         let delays = [
