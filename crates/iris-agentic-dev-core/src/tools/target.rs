@@ -150,6 +150,15 @@ tokio::task_local! {
     pub(crate) static CALL_TARGET: Arc<ResolvedCall>;
 }
 
+/// The file or launch setting that made the call in progress strict read-only, or `None` when it is
+/// not strict or no call is in progress.
+pub(crate) fn call_read_only_source() -> Option<String> {
+    CALL_TARGET
+        .try_with(|t| t.config.read_only_source())
+        .ok()
+        .flatten()
+}
+
 /// The tool, server and class of the call in progress, for an elicitation entry it opens.
 pub fn current_origin() -> Option<Origin> {
     CALL_TARGET
@@ -830,7 +839,7 @@ impl IrisTools {
         // that leg the way a refused policy gate does, and the answer says why (S17).
         let mut audited_blocked = false;
         if let Some(from) = resolved.config.read_only_source() {
-            if write_gate::is_scratch(name) {
+            if write_gate::is_scratch_call(name, Some(arg_map)) {
                 self.record_call(name, false);
                 return self
                     .refusal_on(&resolved.primary, read_only_strict_body(name, &from))

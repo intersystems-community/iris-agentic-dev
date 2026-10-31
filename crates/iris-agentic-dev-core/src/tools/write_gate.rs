@@ -1057,6 +1057,33 @@ pub fn is_scratch(tool: &str) -> bool {
     tool_class(tool).is_some_and(|e| e.scratch)
 }
 
+/// Can this call compile a scratch class on its target? A tool whose row is marked scratch always
+/// can. A tool whose row is not can in the modes listed here, which reach the scratch-class runner
+/// while the tool's other modes do not: `iris_doc mode=compiled` reads the INT routine through a
+/// generated class (S17, found by the live strict sweep). `args` are the normalized arguments.
+pub fn is_scratch_call(
+    tool: &str,
+    args: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> bool {
+    if is_scratch(tool) {
+        return true;
+    }
+    #[cfg(feature = "testing")]
+    if crate::testing::scratch_call_rule_ignored() {
+        return false;
+    }
+    let mode = args
+        .and_then(|a| a.get("mode"))
+        .and_then(|v| v.as_str())
+        .map(|m| m.trim().to_lowercase());
+    SCRATCH_MODES
+        .iter()
+        .any(|(t, m)| *t == tool && mode.as_deref() == Some(*m))
+}
+
+/// The modes of a tool whose row is not marked scratch that compile a scratch class anyway.
+pub const SCRATCH_MODES: &[(&str, &str)] = &[("iris_doc", "compiled")];
+
 /// The row of [`CLASSIFICATION`] for a tool.
 pub fn tool_class(tool: &str) -> Option<&'static ToolClass> {
     CLASSIFICATION.iter().find(|e| e.tool == tool)

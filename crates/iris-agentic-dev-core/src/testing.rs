@@ -2842,3 +2842,20 @@ pub fn seen_requests() -> Vec<String> {
         .cloned()
         .collect()
 }
+
+// ── the per-call scratch rule, switched off ─────────────────────────────────────────────────────
+
+thread_local! {
+    static IGNORE_SCRATCH_CALL_RULE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Make strict read-only judge a call by its tool's row alone on this thread, as if a mode that
+/// compiles were missing from `write_gate::is_scratch_call`, so a test can reach the scratch-class
+/// runner's own refusal. A test must run on one thread and switch it off again.
+pub fn ignore_scratch_call_rule(on: bool) {
+    IGNORE_SCRATCH_CALL_RULE.with(|c| c.set(on));
+}
+
+pub(crate) fn scratch_call_rule_ignored() -> bool {
+    IGNORE_SCRATCH_CALL_RULE.with(|c| c.get())
+}

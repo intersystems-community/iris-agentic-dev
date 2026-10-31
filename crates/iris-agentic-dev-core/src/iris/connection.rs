@@ -889,6 +889,15 @@ impl IrisConnection {
         prefix: &str,
         args: &[Secret],
     ) -> anyhow::Result<(String, Option<String>)> {
+        // Strict read-only means iad compiles nothing on the server. The pipeline refuses every call
+        // it knows compiles; this refuses one it does not know, before any request is sent (S17).
+        if let Some(from) = crate::tools::target::call_read_only_source() {
+            anyhow::bail!(
+                "READ_ONLY_STRICT: this call would compile a scratch class on the server, and \
+                 read-only mode is strict ({from}), so iad sent nothing. Tools that compile \
+                 nothing still work."
+            );
+        }
         let delays = [
             std::time::Duration::from_millis(100),
             std::time::Duration::from_millis(200),

@@ -425,3 +425,25 @@ fn benchmark_under_a_live_template_stores_nothing_on_the_server() {
     );
     assert_eq!(iris.lock(), lock_before, "the control left the lock held");
 }
+
+// ── S17: a read-only tool's mode that compiles ─────────────────────────────────────────────────
+
+#[test]
+fn strict_refuses_iris_doc_compiled_from_the_tool_command() {
+    // `iris_doc mode=compiled` reads the INT routine through a scratch class; its row is not
+    // marked scratch, so strict used to let it compile.
+    for (what, e, env) in [
+        ("operator file", Env::new(STRICT, None), vec![]),
+        (
+            "launch",
+            Env::new("", None),
+            vec![("IAD_READ_ONLY", "strict")],
+        ),
+    ] {
+        for mode in ["compiled", " Compiled "] {
+            let args = format!(r#"{{"mode":"{mode}","name":"%Library.String.cls"}}"#);
+            let o = e.run(&["tool", "iris_doc", "--args", &args], &env);
+            assert_strict_refusal(&format!("{what} {mode:?}"), &o);
+        }
+    }
+}
