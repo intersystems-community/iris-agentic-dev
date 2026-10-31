@@ -36,9 +36,9 @@ const FORBIDDEN_TEXT: &[&str] = &["not JSON", "<SYNTAX>", "<UNDEFINED>", "ERROR 
 /// a forbidden code, or `text` for a forbidden text. Each row says why the answer is right.
 const EXPECTED_ERRORS: &[(&str, &str, &str, &str)] = &[];
 
-struct Case {
-    tool: &'static str,
-    args: Value,
+pub(crate) struct Case {
+    pub tool: &'static str,
+    pub args: Value,
 }
 
 fn c(tool: &'static str, args: Value) -> Case {
@@ -47,7 +47,7 @@ fn c(tool: &'static str, args: Value) -> Case {
 
 /// Real arguments for every read-only call. Names that exist on a stock `iris-community` are used:
 /// `%Library.String`, `%Dictionary.ClassDefinition`, the `USER` namespace, `_SYSTEM`.
-fn cases() -> Vec<Case> {
+pub(crate) fn cases() -> Vec<Case> {
     vec![
         c("agent_history", json!({})),
         c("agent_info", json!({"what": "stats"})),

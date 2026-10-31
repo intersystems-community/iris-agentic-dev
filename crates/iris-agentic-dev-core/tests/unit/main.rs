@@ -227,6 +227,7 @@ mod test_ssh_spawn_171;
 mod test_stored_check_141;
 mod test_stored_source_141;
 mod test_stream_inspect_141;
+mod test_strict_audit_171;
 mod test_strict_gates_141;
 mod test_structured_content;
 mod test_superclass_check_141;

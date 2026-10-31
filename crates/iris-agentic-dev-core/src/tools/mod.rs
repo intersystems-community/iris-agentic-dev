@@ -3535,6 +3535,17 @@ impl IrisTools {
             return None;
         }
         let snap = self.snapshot();
+        // Strict read-only with `irisAudit = true` (S17). The MCP server exits on it at startup;
+        // the CLI, a session whose file only became readable later, and anything else that built
+        // a session on it refuse here, before the audit record that would compile a class.
+        if let Some(conflict) = snap.strict_audit_conflict() {
+            return Some(err_result(serde_json::json!({
+                "success": false,
+                "error_code": write_gate::ERR_READ_ONLY_STRICT_WITH_AUDIT,
+                "error": conflict,
+                "read_only_from": snap.read_only_source(),
+            })));
+        }
         let e = snap.errors.first()?;
         Some(err_result(serde_json::json!({
             "success": false,
@@ -3974,7 +3985,19 @@ impl IrisTools {
         // T037: Opt-in %SYS.Audit emission when irisAudit = true on the connection policy.
         // Checked BEFORE the should_write guard so env-var connections (policy=None or no
         // audit_log path) can still emit when irisAudit=true on a [policy.*] section.
-        if policy.map(|p| p.iris_audit).unwrap_or(false) {
+        //
+        // Never under strict read-only (S17): the emission compiles a class on the server. The
+        // combination is refused for every tool that talks to IRIS and reported by check_config,
+        // so this only holds back the record of a tool that answers whatever the configuration
+        // says; its line still goes to the local audit log.
+        let strict = self.snapshot().read_only_strict();
+        if strict && policy.is_some_and(|p| p.iris_audit) {
+            tracing::warn!(
+                "iris_audit: not emitted for {tool}: read_only = \"strict\" is set, and the \
+                 emission compiles a class on the server"
+            );
+        }
+        if !strict && policy.map(|p| p.iris_audit).unwrap_or(false) {
             use crate::iris::connection::{caller_mode, mcp_peer};
             use crate::iris::iris_audit::{
                 build_audit_os, build_event_data, refuse_and_instruct_text,

@@ -1864,6 +1864,48 @@ impl ConfigSnapshot {
             })
     }
 
+    /// Strict read-only and `irisAudit = true` together, said with where each one is set: the
+    /// files or launch setting, and the servers whose policy audits. `None` when they are not both
+    /// in effect.
+    pub fn strict_audit_conflict(&self) -> Option<String> {
+        let strict_from = self.read_only_source()?;
+        let file_of = |src: crate::policy::effective::PartSource| -> String {
+            use crate::policy::effective::PartSource::*;
+            let path = match src {
+                OperatorFile => self.operator_path.clone(),
+                TrustedFile | WorkspaceFile => {
+                    self.workspace_layer.as_ref().map(|f| f.path.clone())
+                }
+                _ => None,
+            };
+            path.map(|p| p.display().to_string())
+                .unwrap_or_else(|| src.as_str().to_string())
+        };
+        let audited: Vec<String> = self
+            .policies
+            .iter()
+            .filter(|(_, p)| p.audit.value)
+            .map(|(server, p)| {
+                let files: Vec<String> = std::iter::once(p.audit.from)
+                    .chain(p.audit.also_from.iter().copied())
+                    .map(file_of)
+                    .collect();
+                format!("[policy.{server}] in {}", files.join(" and "))
+            })
+            .collect();
+        if audited.is_empty() {
+            return None;
+        }
+        Some(format!(
+            "read_only = \"strict\" ({strict_from}) cannot be combined with irisAudit = true \
+             ({}). Writing each audit record compiles a class on the server, and strict read-only \
+             means iad runs nothing there, so every tool that talks to IRIS is refused. Remove one \
+             of the two settings: drop read_only = \"strict\" (or IAD_READ_ONLY), or set \
+             irisAudit = false.",
+            audited.join("; ")
+        ))
+    }
+
     /// Does the file in `connection_config` choose the connection? Only a file that names a host or
     /// a container can (T194). The operator file yields to `IRIS_HOST`; a workspace-layer file does
     /// not (spec 140).
