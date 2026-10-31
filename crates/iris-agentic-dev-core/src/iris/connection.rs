@@ -764,6 +764,7 @@ impl IrisConnection {
         let client = session.client.clone();
 
         let url = self.atelier_url("/");
+        let mut signed_in = false;
         if let Ok(resp) = client
             .get(&url)
             .basic_auth(&self.username, Some(&self.password))
@@ -771,6 +772,7 @@ impl IrisConnection {
             .await
         {
             let status = resp.status();
+            signed_in = status.is_success();
             if status.is_success() {
                 if let Ok(body) = crate::iris::http::capped_json::<serde_json::Value>(resp).await {
                     tracing::debug!("Atelier root response: {}", body);
@@ -795,6 +797,7 @@ impl IrisConnection {
             .finish(
                 &self.tls,
                 &super::csp_session::store_for_primary(&self.base_url, &self.username),
+                signed_in,
             )
             .await;
         self.system_mode = mode;

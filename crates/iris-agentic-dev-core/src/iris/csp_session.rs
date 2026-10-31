@@ -54,23 +54,48 @@ impl CspSessionStore {
     /// Take over the sessions `other` holds: the cookies it sends to each session's URL, and the
     /// record of where each lives, so this store's logout ends them.
     pub fn adopt(&self, other: &CspSessionStore) {
-        let bases: Vec<String> = other.sessions.lock().unwrap().iter().cloned().collect();
-        for base in bases {
-            let Ok(url) = Url::parse(&base) else { continue };
-            let Some(sent) = other.jar.cookies(&url) else {
-                continue;
-            };
-            let Ok(sent) = sent.to_str() else { continue };
-            let headers: Vec<HeaderValue> = sent
-                .split(';')
-                .map(str::trim)
-                .filter(|pair| pair.contains('='))
-                .filter_map(|pair| {
-                    HeaderValue::from_str(&format!("{pair}; Path={}", url.path())).ok()
-                })
-                .collect();
+        for (_, url, headers) in other.handover() {
             self.set_cookies(&mut headers.iter(), &url);
         }
+    }
+
+    /// [`Self::adopt`] when this store has seen no CSP session, as one step: the check and the
+    /// handover hold this store's session record, so no session another call opens in between is
+    /// joined by a second one. `true` when it adopted.
+    pub fn adopt_if_empty(&self, other: &CspSessionStore) -> bool {
+        let handover = other.handover();
+        let mut mine = self.sessions.lock().unwrap();
+        if !mine.is_empty() {
+            return false;
+        }
+        for (base, url, headers) in handover {
+            self.jar.set_cookies(&mut headers.iter(), &url);
+            mine.insert(base);
+        }
+        true
+    }
+
+    /// Each session `self` holds, as its record, its URL and the `Set-Cookie` headers that give
+    /// another store the cookies `self` sends there.
+    fn handover(&self) -> Vec<(String, Url, Vec<HeaderValue>)> {
+        let bases: Vec<String> = self.sessions.lock().unwrap().iter().cloned().collect();
+        bases
+            .into_iter()
+            .filter_map(|base| {
+                let url = Url::parse(&base).ok()?;
+                let sent = self.jar.cookies(&url)?;
+                let sent = sent.to_str().ok()?.to_string();
+                let headers = sent
+                    .split(';')
+                    .map(str::trim)
+                    .filter(|pair| pair.contains('='))
+                    .filter_map(|pair| {
+                        HeaderValue::from_str(&format!("{pair}; Path={}", url.path())).ok()
+                    })
+                    .collect();
+                Some((base, url, headers))
+            })
+            .collect()
     }
 
     fn record(&self, header: &HeaderValue, url: &Url) {

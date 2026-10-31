@@ -233,16 +233,23 @@ pub fn probe_session(tls: &TlsSetting) -> anyhow::Result<ProbeSession> {
 
 impl ProbeSession {
     /// Give the sessions the probe opened to `account`, the store of the account the probe signed
-    /// in as, when that store holds none; end them otherwise. A connection's own startup probe
-    /// opens the account's first session this way, so the calls that follow in the same moment
-    /// find a cookie and share one session, and not one each, which are never all ended. A store
-    /// that has a session keeps it: the probe never replaces what a call is using.
-    pub async fn finish(self, tls: &TlsSetting, account: &Arc<CspSessionStore>) {
-        if account.is_empty() {
-            account.adopt(&self.store);
-        } else {
-            self.end(tls).await;
+    /// in as, when the sign-in worked and that store holds none; end them otherwise. A connection's
+    /// own startup probe opens the account's first session this way, so the calls that follow in
+    /// the same moment find a cookie and share one session, and not one each, which are never all
+    /// ended. A store that has a session keeps it: the probe never replaces what a call is using.
+    /// A sign-in that failed hands over nothing: a session IRIS opened for a refused credential is
+    /// not the account's. The check and the handover are one step ([`CspSessionStore::adopt_if_empty`]).
+    pub async fn finish(self, tls: &TlsSetting, account: &Arc<CspSessionStore>, signed_in: bool) {
+        if signed_in && account.adopt_if_empty(&self.store) {
+            return;
         }
+        self.end(tls).await;
+    }
+
+    /// The probe's own store, for a test that puts a session in it.
+    #[cfg(feature = "testing")]
+    pub fn store(&self) -> &Arc<CspSessionStore> {
+        &self.store
     }
 
     /// End every CSP session the probe opened. A failure is not reported: the session times out.

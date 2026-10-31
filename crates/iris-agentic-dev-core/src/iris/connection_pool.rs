@@ -197,6 +197,8 @@ impl ConnectionPool {
                             &conn.base_url,
                             &conn.username,
                         ),
+                        // The mode query answers only an account that signed in.
+                        mode != SystemMode::Unknown,
                     )
                     .await;
                 mode
