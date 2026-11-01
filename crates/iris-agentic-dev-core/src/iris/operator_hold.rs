@@ -370,6 +370,16 @@ fn opt_ins(h: &mut Hold, incoming: &Table, servers: &[String]) {
             h.hold(&key, format!("{key} = true"), &[p]);
         }
     }
+    // `operate` is what turns the declared instances and their roles on. Leaving it, by another
+    // value or by removing the key, makes a subject server a workbench.
+    let operate = |t: &Table| str_at(t, &segs(&["mode"])).as_deref() == Some("operate");
+    if operate(h.applied) && !operate(incoming) {
+        let setting = match incoming.get("mode") {
+            Some(v) => format!("mode = {v}"),
+            None => "mode = \"operate\" removed".to_string(),
+        };
+        h.hold("mode", setting, &[segs(&["mode"])]);
+    }
     let token = segs(&["transport", "http_token"]);
     if str_at(h.applied, &token).is_some() && str_at(incoming, &token).is_none() {
         h.hold(

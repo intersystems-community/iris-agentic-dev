@@ -421,6 +421,10 @@ pub const BEHAVIOR_ENV_VARS: &[&str] = &[
     "IAD_TEST_SCAN_PORTS",
     // 141 throwaway container image (the helper reads it in the test process, so a child never needs it)
     "IAD_THROWAWAY_IMAGE",
+    // how many documents `iris_info` lists before it stops
+    "IRIS_INFO_MAX_DOCUMENTS",
+    // the size of the in-memory call-history buffer
+    "IRIS_TELEMETRY_BUFFER_SIZE",
 ];
 
 /// A `Command` for the binary with every behavior-changing variable removed.
@@ -2672,6 +2676,60 @@ Write "OK|"_tHdrs_"|"_tLogs_"|"_tSession,!"#,
     }
 }
 
+// ─── refusals that fail to build ────────────────────────────────────────────
+
+thread_local! {
+    static REFUSAL_BUILD_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Make the pipeline's refusal builder fail on this thread until switched off, so a test can
+/// check that a gate which decided to refuse still refuses when building its answer goes wrong.
+/// The builder cannot fail today; this is the only way to reach the branch that handles it. A
+/// test must run on one thread (a current-thread runtime) and switch it off again.
+pub fn fail_refusal_builds(on: bool) {
+    REFUSAL_BUILD_FAILS.with(|c| c.set(on));
+}
+
+pub(crate) fn refusal_build_fails() -> bool {
+    REFUSAL_BUILD_FAILS.with(|c| c.get())
+}
+
+// ─── clients that fail to build ─────────────────────────────────────────────
+
+thread_local! {
+    static CLIENT_BUILD_FAILS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Make the per-server tool-call client fail to build on this thread until switched off, so a
+/// test can check that a call errors and does not fall back to another server's client. Real
+/// builds fail only when the TLS backend cannot start. A test must run on one thread (a
+/// current-thread runtime) and switch it off again.
+pub fn fail_client_builds(on: bool) {
+    CLIENT_BUILD_FAILS.with(|c| c.set(on));
+}
+
+pub(crate) fn client_build_fails() -> bool {
+    CLIENT_BUILD_FAILS.with(|c| c.get())
+}
+
+// ─── public-host clients with short timeouts ────────────────────────────────
+
+thread_local! {
+    static PUBLIC_HOST_TIMEOUTS: std::cell::Cell<Option<std::time::Duration>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Shorten the connect and total timeouts of the public-host clients (GitHub) on this thread, so a
+/// test can check that a host which never answers is given up on. `None` puts them back. A test
+/// must run on one thread (a current-thread runtime).
+pub fn set_public_host_timeouts(t: Option<std::time::Duration>) {
+    PUBLIC_HOST_TIMEOUTS.with(|c| c.set(t));
+}
+
+pub(crate) fn public_host_timeouts() -> Option<std::time::Duration> {
+    PUBLIC_HOST_TIMEOUTS.with(|c| c.get())
+}
+
 // ─── gate checks without a pipeline ─────────────────────────────────────────
 
 /// The three policy gates called on their own, for unit tests that pin one gate's decision.
@@ -2732,4 +2790,90 @@ pub mod gated {
     ) -> Option<serde_json::Value> {
         crate::iris::server_manager::policy_gate_for(tool, server, policy?, &categories(tool, None))
     }
+}
+
+// ── the request watch ───────────────────────────────────────────────────────────────────────────
+
+/// How many request URLs the watch keeps; older ones are dropped first.
+const REQUESTS_KEPT: usize = 8192;
+
+static REQUESTS: std::sync::Mutex<std::collections::VecDeque<String>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+
+/// Called by every IRIS HTTP client of a test build for each request it sends (`iris/http.rs`).
+pub fn record_request(url: &reqwest::Url) {
+    let mut line = format!(
+        "{}:{}{}",
+        url.host_str().unwrap_or(""),
+        url.port_or_known_default().unwrap_or(0),
+        url.path()
+    );
+    if let Some(q) = url.query() {
+        line.push('?');
+        line.push_str(q);
+    }
+    let mut kept = REQUESTS.lock().unwrap_or_else(|e| e.into_inner());
+    if kept.len() >= REQUESTS_KEPT {
+        kept.pop_front();
+    }
+    kept.push_back(line);
+}
+
+/// Every request URL seen since the last take, as `host:port/path?query`, oldest first. The watch is
+/// process-wide, so a test that reads it runs serially or filters for the host it used.
+pub fn take_requests() -> Vec<String> {
+    std::mem::take(&mut *REQUESTS.lock().unwrap_or_else(|e| e.into_inner()))
+        .into_iter()
+        .collect()
+}
+
+/// Forget what the watch has seen.
+pub fn clear_requests() {
+    REQUESTS.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+/// What the watch holds, left in place: for a test that runs alongside others and looks only for
+/// the URLs it sent.
+pub fn seen_requests() -> Vec<String> {
+    REQUESTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .cloned()
+        .collect()
+}
+
+// ── the per-call scratch rule, switched off ─────────────────────────────────────────────────────
+
+thread_local! {
+    static IGNORE_SCRATCH_CALL_RULE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Make strict read-only judge a call by its tool's row alone on this thread, as if a mode that
+/// compiles were missing from `write_gate::is_scratch_call`, so a test can reach the scratch-class
+/// runner's own refusal. A test must run on one thread and switch it off again.
+pub fn ignore_scratch_call_rule(on: bool) {
+    IGNORE_SCRATCH_CALL_RULE.with(|c| c.set(on));
+}
+
+pub(crate) fn scratch_call_rule_ignored() -> bool {
+    IGNORE_SCRATCH_CALL_RULE.with(|c| c.get())
+}
+
+// ── refusals of the scratch-class runner ────────────────────────────────────────────────────────
+
+static RUNNER_REFUSALS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Called when the scratch-class runner refuses a call under strict read-only that the pipeline let
+/// through (`IrisConnection::execute_generator_with`).
+pub(crate) fn record_runner_refusal(tool: &str) {
+    RUNNER_REFUSALS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(tool.to_string());
+}
+
+/// The tools the scratch-class runner refused since the last take, in order.
+pub fn take_runner_refusals() -> Vec<String> {
+    std::mem::take(&mut *RUNNER_REFUSALS.lock().unwrap_or_else(|e| e.into_inner()))
 }

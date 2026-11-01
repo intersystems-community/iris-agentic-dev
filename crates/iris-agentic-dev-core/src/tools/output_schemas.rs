@@ -257,6 +257,7 @@ pub struct DebugMapIntToClsOk {
     pub mapping_available: bool,
     pub cls_name: Option<String>,
     pub cls_line: Option<i64>,
+    pub method: Option<String>,
     pub routine: String,
     pub offset: i64,
     pub raw_error: Option<String>,
@@ -273,8 +274,9 @@ pub enum DebugMapIntToClsResponse {
 pub struct DebugSourceMapOk {
     pub success: bool,
     pub cls_name: String,
-    /// `{method_name: int_line}` map — keys are dynamic (one per compiled method), so this stays
-    /// a free-form object rather than a fixed struct.
+    /// `{method_name: {int_name, int_line, lines}}` — keys are dynamic (one per method the class
+    /// declares), so this stays a free-form object rather than a fixed struct. `lines[n-1]` is the
+    /// `.INT` line for line `n` of the method body; `int_line` is `lines[0]`.
     pub source_map: serde_json::Value,
 }
 
@@ -1579,6 +1581,13 @@ pub enum IrisMacroResponse {
 pub struct IrisDebugMapIntOk {
     pub success: bool,
     pub error_string: String,
+    pub mapping_available: bool,
+    /// The class, the method and the line of the method body, `null` when the routine has no
+    /// source for the spot.
+    pub class_name: Option<String>,
+    pub method: Option<String>,
+    pub line: Option<i64>,
+    /// `Method+line^Class`, empty when there is no mapping.
     pub source_location: String,
 }
 
@@ -1787,10 +1796,6 @@ pub struct IrisQueryWriteOk {
     /// anyway because write tools are enabled).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub force_ignored: Option<bool>,
-    /// Present only when the UPDATE/DELETE rows-affected pre-check couldn't confidently parse
-    /// the statement (multi-table UPDATE, missing table name) and was skipped rather than run.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rows_check_skipped: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identity: Option<ExecIdentityReport>,
 }
@@ -3541,6 +3546,10 @@ pub struct CheckConfigOk {
     pub scm_opt_ins: serde_json::Value,
     pub objectscript_workspace: Option<String>,
     pub capabilities: CheckConfigCapabilities,
+    /// The tools no category gate judges: the explicit exemption list. Every other tool has a
+    /// category, and a tool with none is judged as `execute` and `admin` by the environment
+    /// template and `allow`.
+    pub ungated_tools: Vec<String>,
     /// Present only when the last config-file parse attempt failed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub config_parse_error: Option<String>,

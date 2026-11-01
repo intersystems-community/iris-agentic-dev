@@ -239,6 +239,184 @@ fn write_mode_counts_the_rows_of_its_own_target() {
     drop_tables(&mut mcp);
 }
 
+/// S13: a statement the row count cannot read is refused, not run. A `DELETE` without `FROM`, a
+/// `%NOJOURN` modifier and `TRUNCATE TABLE` are all counted.
+#[test]
+#[ignore = "requires live IRIS (iris-dev-iris) and the built binary"]
+fn write_mode_counts_what_it_used_to_skip() {
+    let Some(_bin) = require_iad_binary() else {
+        return;
+    };
+    let mut mcp = session();
+    make_tables(&mut mcp);
+    let table = format!("{SCHEMA}.Items");
+    let write = |mcp: &mut McpSession, stmt: &str, cap: u32| {
+        call(
+            mcp,
+            "iris_query",
+            json!({"query": stmt, "mode": "write", "max_rows_affected": cap}),
+        )
+    };
+
+    // Over the cap, none of these ran. Each used to run uncounted.
+    for stmt in [
+        format!("DELETE {table}"),
+        format!("DELETE %NOJOURN FROM {table}"),
+        format!("DELETE %NOJOURN {table} WHERE Name <> 'zzz'"),
+        format!("UPDATE %NOJOURN {table} SET Name = 'z'"),
+        format!("TRUNCATE TABLE {table}"),
+        format!("/* c */ truncate table {table};"),
+    ] {
+        let r = write(&mut mcp, &stmt, 1);
+        assert_eq!(r["error_code"], "ROWS_LIMIT_EXCEEDED", "{stmt}: {r}");
+        assert_eq!(r["actual_count"], 3, "{stmt}: {r}");
+        assert_eq!(count(&mut mcp, &table), 3, "{stmt} must not have run");
+    }
+
+    // Under the cap they run, and IRIS takes each spelling the counter reads.
+    let r = write(&mut mcp, &format!("DELETE {table} WHERE Name = 'plain'"), 1);
+    assert_eq!(r["success"], true, "{r}");
+    assert_eq!(r["rows_affected"], 1, "{r}");
+    assert!(r.get("rows_check_skipped").is_none(), "{r}");
+    let r = write(
+        &mut mcp,
+        &format!("DELETE %NOJOURN FROM {table} WHERE Name = 'other'"),
+        1,
+    );
+    assert_eq!(r["success"], true, "{r}");
+    assert_eq!(r["rows_affected"], 1, "{r}");
+    assert_eq!(count(&mut mcp, &table), 1);
+    let r = write(&mut mcp, &format!("TRUNCATE TABLE {table}"), 10);
+    assert_eq!(r["success"], true, "{r}");
+    assert_eq!(count(&mut mcp, &table), 0);
+
+    // The modifiers the counter skips that IRIS takes after DELETE and UPDATE (measured on 2026.2:
+    // `%NOUNIQCHECK` and `%STARTTABLE` are read as a table name, so they are refused below).
+    for modifier in [
+        "%NOCHECK",
+        "%NOFPLAN",
+        "%NOINDEX",
+        "%NOJOURN",
+        "%NOLOCK",
+        "%NOTRIGGER",
+        "%PROFILE",
+        "%PROFILE_ALL",
+    ] {
+        for stmt in [
+            format!("DELETE {modifier} FROM {table} WHERE Name = 'none'"),
+            format!("UPDATE {modifier} {table} SET Name = 'z' WHERE Name = 'none'"),
+        ] {
+            let r = write(&mut mcp, &stmt, 1);
+            assert_eq!(r["success"], true, "{stmt}: {r}");
+        }
+    }
+
+    // A statement that cannot be counted is refused as a fixed rule, and does not run.
+    make_tables(&mut mcp);
+    for stmt in [
+        format!("DELETE FROM {table}, {SCHEMA}.\"Odd Name\""),
+        format!("DELETE %BOGUS FROM {table}"),
+        format!("UPDATE {table}, {SCHEMA}.\"Odd Name\" SET Name = 'z'"),
+        format!("TRUNCATE {table}"),
+        format!("DELETE %NOUNIQCHECK FROM {table}"),
+        format!("DELETE %STARTTABLE FROM {table}"),
+    ] {
+        let r = write(&mut mcp, &stmt, 10000);
+        assert_eq!(r["error_code"], "ROWS_NOT_COUNTABLE", "{stmt}: {r}");
+        assert_eq!(r["refusal"]["kind"], "fixed_rule", "{stmt}: {r}");
+        assert_eq!(count(&mut mcp, &table), 3, "{stmt} must not have run");
+    }
+    // A leading `;` is not a statement word.
+    let r = write(&mut mcp, &format!("; DELETE FROM {table}"), 10000);
+    assert_eq!(r["error_code"], "DDL_NOT_ALLOWED", "{r}");
+    assert_eq!(count(&mut mcp, &table), 3);
+    drop_tables(&mut mcp);
+}
+
+/// S18: IRIS reads a comment between the parts of a table name as a separator, so
+/// `%Dictionary/**/.ClassDefinition` is `%Dictionary.ClassDefinition`. The code-edit gate has to see
+/// the same table. Explain mode sends one SELECT and nothing else.
+#[test]
+#[ignore = "requires live IRIS (iris-dev-iris) and the built binary"]
+fn the_code_edit_gate_reads_a_dictionary_name_the_way_iris_does() {
+    let Some(_bin) = require_iad_binary() else {
+        return;
+    };
+    let mut mcp = session();
+    let spellings = [
+        "%Dictionary.ClassDefinition",
+        "%Dictionary/**/.ClassDefinition",
+        "%Dictionary./**/ClassDefinition",
+        "%Dictionary -- c\n.ClassDefinition",
+        "\"%Dictionary\"/**/.\"ClassDefinition\"",
+    ];
+
+    // Measured: IRIS takes every one of them as the dictionary's class table (SQLCODE 0 or 100;
+    // an unknown table is -30 and a syntax error -1).
+    for name in spellings {
+        let stmt = format!("SELECT TOP 1 Name FROM {name} WHERE 1 = 0").replace('"', "\"\"");
+        let r = exec(
+            &mut mcp,
+            &format!(
+                "Set tRS=##class(%SQL.Statement).%ExecDirect(,\"{}\") Write \"SQLCODE=\",tRS.%SQLCODE",
+                stmt.replace('\n', "\"_$Char(10)_\"")
+            ),
+        );
+        let out = r["output"].as_str().unwrap_or("");
+        assert!(
+            out.contains("SQLCODE=0") || out.contains("SQLCODE=100"),
+            "IRIS did not take {name:?} as the dictionary table: {r}"
+        );
+    }
+
+    // The gate refuses each, for a forced read and for a write; nothing reached the dictionary.
+    for name in spellings {
+        let write = format!("UPDATE {name} SET Name = Name WHERE 1 = 0");
+        let r = call(
+            &mut mcp,
+            "iris_query",
+            json!({"query": write, "mode": "write"}),
+        );
+        assert_eq!(r["error_code"], "CODE_EDIT_BLOCKED", "{write:?}: {r}");
+        assert_eq!(r["refusal"]["kind"], "fixed_rule", "{write:?}: {r}");
+        let forced = format!("SELECT Name FROM {name} WHERE 1 = 0");
+        let r = call(
+            &mut mcp,
+            "iris_query",
+            json!({"query": forced, "force": true}),
+        );
+        assert_eq!(r["error_code"], "CODE_EDIT_BLOCKED", "{forced:?}: {r}");
+    }
+
+    // A plain read of the compiled dictionary is introspection and stays open, and so does a
+    // comment that only mentions the dictionary.
+    let r = sql(&mut mcp, "SELECT TOP 1 Name FROM %Dictionary.CompiledClass");
+    assert_eq!(r["success"], true, "{r}");
+    let r = call(
+        &mut mcp,
+        "iris_query",
+        json!({
+            "query": "/* not %Dictionary.ClassDefinition */ DELETE FROM IadT141.NoSuchTable WHERE 1 = 0",
+            "mode": "write"
+        }),
+    );
+    assert_ne!(r["error_code"], "CODE_EDIT_BLOCKED", "{r}");
+
+    // Explain mode: a comment before the keyword plans, a second statement is refused unsent.
+    let r = call(
+        &mut mcp,
+        "iris_query",
+        json!({"query": "/* plan */ SELECT 1 AS a", "mode": "explain"}),
+    );
+    assert_eq!(r["success"], true, "{r}");
+    let r = call(
+        &mut mcp,
+        "iris_query",
+        json!({"query": "SELECT 1 AS a; DROP TABLE IadT141.Items", "mode": "explain"}),
+    );
+    assert_eq!(r["error_code"], "SQL_WRITE_BLOCKED", "{r}");
+}
+
 /// `iris_table_info` reads `Schema."Delimited Name"`. (IRIS refuses a dot inside a table name, so
 /// the split at unquoted dots only is pinned in the unit tests; the live part is that a delimited
 /// name survives being unquoted for the lookup and quoted again for the row count.)
@@ -296,6 +474,7 @@ fn body_where_filters_and_refuses_what_leaves_the_expression() {
             "body_class": fixture.body_class,
             "body_where": where_,
             "body_select": ["StringValue"],
+            "acknowledgePhi": true,
             "limit": 3
         })
     };
@@ -368,6 +547,15 @@ fn body_mode_sits_under_the_bulk_data_gate() {
         &mut open,
         "iris_interop_query",
         json!({"what": "messages", "source": fixture.source, "body_class": fixture.body_class, "limit": 2}),
+    );
+    assert_eq!(
+        r["error_code"], "PHI_ACK_REQUIRED",
+        "dataPolicy=allow needs the acknowledgement for body mode: {r}"
+    );
+    let r = call(
+        &mut open,
+        "iris_interop_query",
+        json!({"what": "messages", "source": fixture.source, "body_class": fixture.body_class, "acknowledgePhi": true, "limit": 2}),
     );
     assert_eq!(r["success"], true, "dataPolicy=allow admits body mode: {r}");
 }

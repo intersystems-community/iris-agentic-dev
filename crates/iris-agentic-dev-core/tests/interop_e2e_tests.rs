@@ -477,7 +477,7 @@ fn test_message_content_search() {
     // 1. body-class join finds exactly the needle row.
     let r = call(
         "iris_interop_query",
-        serde_json::json!({"what":"messages","namespace":ns,
+        serde_json::json!({"what":"messages","namespace":ns,"acknowledgePhi":true,
             "body_class":"Ens.StringContainer",
             "body_where": format!("StringValue = '{needle}'"),
             "body_select":["StringValue"]}),
@@ -490,7 +490,7 @@ fn test_message_content_search() {
     // 2. body_where without body_class → error listing real classes.
     let r = call(
         "iris_interop_query",
-        serde_json::json!({"what":"messages","namespace":ns,"body_where":"X=1"}),
+        serde_json::json!({"what":"messages","namespace":ns,"acknowledgePhi":true,"body_where":"X=1"}),
     );
     assert_eq!(r["error_code"], "INVALID_PARAMS", "{r}");
     assert!(
@@ -504,7 +504,7 @@ fn test_message_content_search() {
     // 3. unknown body class → BODY_CLASS_NOT_FOUND.
     let r = call(
         "iris_interop_query",
-        serde_json::json!({"what":"messages","namespace":ns,
+        serde_json::json!({"what":"messages","namespace":ns,"acknowledgePhi":true,
             "body_class":"No.Such.Class","body_where":"X=1"}),
     );
     assert_eq!(r["error_code"], "BODY_CLASS_NOT_FOUND", "{r}");
@@ -512,7 +512,7 @@ fn test_message_content_search() {
     // 4. unknown search-table prop → SEARCH_PROP_NOT_FOUND with available props.
     let r = call(
         "iris_interop_query",
-        serde_json::json!({"what":"messages","namespace":ns,
+        serde_json::json!({"what":"messages","namespace":ns,"acknowledgePhi":true,
             "search_table":{"prop":"NoSuchProp","value":"x"}}),
     );
     assert_eq!(r["error_code"], "SEARCH_PROP_NOT_FOUND", "{r}");
@@ -520,7 +520,7 @@ fn test_message_content_search() {
     // 5. valid prop with no match → success + back-indexed hint.
     let r = call(
         "iris_interop_query",
-        serde_json::json!({"what":"messages","namespace":ns,
+        serde_json::json!({"what":"messages","namespace":ns,"acknowledgePhi":true,
             "search_table":{"prop":"MSHControlID","value":"e2e-no-such-value"}}),
     );
     // MSHControlID may not be registered; either success(count=0) or SEARCH_PROP_NOT_FOUND is acceptable.

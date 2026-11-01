@@ -33,10 +33,96 @@ pub const HANDLER_ENFORCED_TOOLS: &[&str] = &["stream_inspect"];
 /// answers headers, logs and queues from its own tables, and joins `Ens.MessageBody` rows when the
 /// call carries one of these arguments (spec 141 T214). The arguments are the handler's own, read
 /// by name from the call.
+///
+/// `search_table` is one of them: a Search Table search returns the indexed field's value
+/// (`PropValue`), which for HL7 is a patient identifier or a name taken from the message body.
 pub const BODY_READ_TOOLS: &[(&str, &[&str])] = &[(
     "iris_interop_query",
-    &["body_class", "body_where", "body_select"],
+    &["body_class", "body_where", "body_select", "search_table"],
 )];
+
+/// Every tool and action that returns message-body content, with the arguments that make a call a
+/// body read. Under `allow` each needs `acknowledgePhi=true`, as an `iris_message_body` read does.
+/// An empty argument list means every call to the tool reads a body.
+///
+/// This is the one list: [`BODY_READ_TOOLS`] and the bulk-data tools that return bodies must be
+/// covered by it (`test_body_read_ack_171` checks both against the registry).
+/// `journal_search` is a bulk-data tool that is not here: it returns a journal record's value, not a
+/// message, and its handler withholds the value of a PHI-named global unless `acknowledgePhi` is set.
+pub const ACKNOWLEDGED_BODY_READS: &[(&str, &[&str])] = &[
+    (
+        "iris_interop_query",
+        &["body_class", "body_where", "body_select", "search_table"],
+    ),
+    ("iris_message_body", &[]),
+    ("stream_inspect", &[]),
+];
+
+/// True when `params` names `arg` with a value: not null, and not an empty list (an empty
+/// `body_select` selects nothing).
+fn names_argument(params: &serde_json::Value, arg: &str) -> bool {
+    params
+        .get(arg)
+        .is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()))
+}
+
+/// Under `allow`, refuse a call that [`ACKNOWLEDGED_BODY_READS`] lists unless `acknowledgePhi` is
+/// the boolean `true`. `params` has been through `normalize_dispatch_args`, so `acknowledge_phi`
+/// has already become `acknowledgePhi`. Under `block` and `redact` the bulk-data gate has refused
+/// the call before this runs.
+pub fn check_body_read_acknowledged(
+    tool_name: &str,
+    params: &serde_json::Value,
+    policy: &DataPolicy,
+    server_name: &str,
+) -> Option<serde_json::Value> {
+    let acknowledged = params
+        .get("acknowledgePhi")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    check_body_read_acknowledged_as(tool_name, params, acknowledged, policy, server_name)
+}
+
+/// [`check_body_read_acknowledged`] with the acknowledgement already read, for a handler that has
+/// its own parsed copy of it.
+pub fn check_body_read_acknowledged_as(
+    tool_name: &str,
+    params: &serde_json::Value,
+    acknowledged: bool,
+    policy: &DataPolicy,
+    server_name: &str,
+) -> Option<serde_json::Value> {
+    if *policy != DataPolicy::Allow {
+        return None;
+    }
+    let (_, args) = ACKNOWLEDGED_BODY_READS
+        .iter()
+        .find(|(tool, _)| *tool == tool_name)?;
+    // An empty list is a tool every call of which reads a body.
+    let used = if args.is_empty() {
+        ""
+    } else {
+        *args.iter().find(|arg| names_argument(params, arg))?
+    };
+    if acknowledged {
+        return None;
+    }
+    let what = if used.is_empty() {
+        tool_name.to_string()
+    } else {
+        format!("{tool_name} {used}")
+    };
+    Some(serde_json::json!({
+        "success": false,
+        "error_code": "PHI_ACK_REQUIRED",
+        "server_name": server_name,
+        "tool_name": tool_name,
+        "error": format!(
+            "dataPolicy=allow requires acknowledgePhi=true for {what}: the result holds \
+             message-body content, which may contain PHI."
+        ),
+    }))
+}
 
 /// True when `tool_name` with `params` reads message bodies: a bulk-data tool, or a tool in
 /// [`BODY_READ_TOOLS`] whose call carries a body argument. An empty `body_select` list selects
@@ -46,11 +132,7 @@ pub fn reads_message_bodies(tool_name: &str, params: &serde_json::Value) -> bool
         .iter()
         .filter(|(tool, _)| *tool == tool_name)
         .flat_map(|(_, args)| args.iter())
-        .any(|arg| {
-            params
-                .get(arg)
-                .is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()))
-        })
+        .any(|arg| names_argument(params, arg))
 }
 
 /// [`check_bulk_phi_gate`] for a call: also refuses a call that reads message bodies through a tool
@@ -65,8 +147,8 @@ pub fn check_bulk_phi_gate_for_call(
     if *policy != DataPolicy::Allow && reads_message_bodies(tool_name, params) {
         let mut refusal = bulk_refusal(tool_name, policy, server_name);
         refusal["message"] = serde_json::json!(format!(
-            "Tool '{tool_name}' reads message bodies when a call names a body_class, body_where \
-             or body_select, and that is blocked unless dataPolicy is 'allow' for server \
+            "Tool '{tool_name}' reads message bodies when a call names a body_class, body_where, \
+             body_select or search_table, and that is blocked unless dataPolicy is 'allow' for server \
              '{server_name}'. Without those arguments it still lists headers, logs and queues."
         ));
         return Some(refusal);

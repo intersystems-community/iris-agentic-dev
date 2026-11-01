@@ -370,6 +370,85 @@ fn a_plaintext_password_is_used_only_at_the_endpoint_it_was_saved_for() {
     });
 }
 
+// ── S6: a 1.6.x password under the Server Manager's service ──────────────────────────────────
+
+#[test]
+fn a_legacy_keychain_password_is_not_claimed_by_name_alone() {
+    use iris_agentic_dev_core::iris::connection_pool::native_password_in;
+    with_mock_store(|| {
+        // No profile is called "stale"; a leftover item sits under the Server Manager's service.
+        seed_sm("stale", "_SYSTEM", SENTINEL);
+
+        // An entry registered under that name and aimed anywhere records no endpoint the item
+        // was saved for: nothing is sent, nothing is copied, and the operator is told.
+        let aimed = old_entry(
+            r#"{"host":"evil.example","port":52773,"namespace":"USER","username":"_SYSTEM"}"#,
+        );
+        let got = native_password_in("stale", &aimed, &[]);
+        assert_eq!(got.password, "");
+        let item = got.withheld.expect("a set-aside item");
+        assert_eq!(item.kind, SetAsideKind::CredentialWithheld);
+        assert_eq!(item.id, "stale:legacy_keychain");
+        assert!(!format!("{item:?}").contains(SENTINEL));
+        let evil = ep("http", "evil.example", 52773);
+        assert!(
+            resolve_iad_credential("stale", "_SYSTEM", &evil).is_err(),
+            "the item was not copied to iad's own service"
+        );
+
+        // An entry that records another endpoint for its saved password is withheld too.
+        let elsewhere = old_entry(
+            r#"{"host":"evil.example","port":52773,"namespace":"USER","username":"_SYSTEM","password_endpoint":"http://home.example:52773"}"#,
+        );
+        let got = native_password_in("stale", &elsewhere, &[]);
+        assert_eq!(got.password, "");
+        assert_eq!(got.withheld.expect("reported").id, "stale:legacy_keychain");
+    });
+}
+
+#[test]
+fn a_legacy_keychain_password_is_never_claimed_even_when_the_recorded_endpoint_matches() {
+    use iris_agentic_dev_core::iris::connection_pool::native_password_in;
+    with_mock_store(|| {
+        seed_sm("old", "_SYSTEM", SENTINEL);
+
+        // `iris_add_server` writes `password_endpoint` for the new host when a service password
+        // falls back to the file, so the recorded endpoint proves nothing about the item.
+        for json in [
+            r#"{"host":"home.example","port":52773,"namespace":"USER","username":"_SYSTEM","password_endpoint":"http://home.example:52773"}"#,
+            r#"{"host":"evil.example","port":52773,"namespace":"USER","username":"_SYSTEM","password_endpoint":"http://evil.example:52773","service_username":"iad_svc","service_password":"svc-pw"}"#,
+        ] {
+            let entry = old_entry(json);
+            let got = native_password_in("old", &entry, &[]);
+            assert_eq!(got.password, "", "the legacy item must not be used");
+            let item = got.withheld.expect("a set-aside item");
+            assert_eq!(item.kind, SetAsideKind::CredentialWithheld);
+            assert_eq!(item.id, "old:legacy_keychain");
+            assert!(!format!("{item:?}").contains(SENTINEL));
+
+            let endpoint = iris_agentic_dev_core::iris::servers_config::entry_endpoint(&entry)
+                .expect("endpoint");
+            assert!(
+                resolve_iad_credential("old", "_SYSTEM", &endpoint).is_err(),
+                "the item was not copied to iad's own service"
+            );
+        }
+    });
+}
+
+#[test]
+fn an_entry_with_no_legacy_item_reports_nothing() {
+    use iris_agentic_dev_core::iris::connection_pool::native_password_in;
+    with_mock_store(|| {
+        let bare = old_entry(
+            r#"{"host":"evil.example","port":52773,"namespace":"USER","username":"_SYSTEM"}"#,
+        );
+        let got = native_password_in("nothing", &bare, &[]);
+        assert_eq!(got.password, "");
+        assert!(got.withheld.is_none());
+    });
+}
+
 // ── T-R4b-U10: .vscode named servers ─────────────────────────────────────────────────────────
 
 fn settings(

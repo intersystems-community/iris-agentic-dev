@@ -199,7 +199,7 @@ pub async fn probe_atelier_with_client(
         } else {
             tracing::warn!(
                 "IRIS at {}:{} returned 401 — check credentials. \
-                 Verify IRIS_USERNAME/IRIS_PASSWORD or set username/password in .iris-agentic-dev.toml.",
+                 Verify IRIS_USERNAME/IRIS_PASSWORD or the connection's username and password.",
                 host,
                 port
             );

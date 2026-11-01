@@ -28,7 +28,8 @@ fn non_blank_env_value(name: &str) -> String {
 }
 
 pub(crate) const DOCKER_REQUIRED_HINT: &str = " Ensure HTTP/Atelier REST is reachable: verify \
-    http://<host>:<port>/api/atelier and set host/web_port in .iris-agentic-dev.toml.";
+    http://<host>:<port>/api/atelier, then select the server with iris_select_container or \
+    register it with iris_add_server.";
 
 /// `CARGO_PKG_VERSION` plus a `+<git-describe>` build-metadata suffix (see
 /// `build.rs`), so `check_config`'s `server_version` can distinguish a local/
@@ -357,18 +358,11 @@ impl ConnectionState {
 }
 
 /// Tools that do not talk to IRIS, or exist to repair the connection, so they still answer when the
-/// configuration is broken.
+/// configuration is broken. The skill and knowledge-base tools that run code on the default server
+/// are not here: a file that does not parse leaves their gates unjudged (R2).
 const CONFIG_TOLERANT_TOOLS: &[&str] = &[
     "check_config",
-    "skill",
-    "skill_list",
-    "skill_search",
-    "skill_describe",
-    "skill_community",
     "skill_community_list",
-    "skill_forget",
-    "kb",
-    "kb_index",
     "kb_recall",
     "iris_doc_search",
     "iris_symbols_local",
@@ -2008,11 +2002,13 @@ pub fn validate_dml_sql(sql: &str) -> Result<(), String> {
     if code.is_empty() {
         return Err("EMPTY".to_string());
     }
-    let first = code
-        .iter()
-        .find(|t| t.kind == crate::sql_lex::Kind::Word)
-        .map(|t| t.text.to_uppercase())
-        .unwrap_or_default();
+    // The first statement token, whatever it is: `dml_head` reads the same one, so a statement
+    // this accepts is a statement the row count sees. A leading `;` or `(` is not skipped.
+    let first = if code[0].kind == crate::sql_lex::Kind::Word {
+        code[0].text.to_uppercase()
+    } else {
+        String::new()
+    };
     if DDL.contains(&first.as_str()) {
         return Err(first);
     }
@@ -2113,20 +2109,26 @@ async fn iris_query_explain(
     p: &QueryParams,
     namespace: &str,
 ) -> Result<CallToolResult, McpError> {
-    let first_word = p
-        .query
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_uppercase();
-    if p.query.trim().is_empty() {
+    // The statement is read by `sql_lex`, like read mode: a comment before the keyword is not the
+    // keyword, and a second statement, a write keyword or `SELECT ... INTO` is refused here and
+    // not sent to IRIS inside an `EXPLAIN`.
+    let tokens = crate::sql_lex::lex(&p.query);
+    let Some(first) = crate::sql_lex::code(&tokens).next() else {
         return err_json("EMPTY_QUERY", "SQL query is empty.");
-    }
-    if first_word != "SELECT" && first_word != "WITH" {
+    };
+    if !(first.is_word("SELECT") || first.is_word("WITH")) {
         return err_json(
             "EXPLAIN_REQUIRES_SELECT",
             "explain mode only accepts SELECT statements (including WITH/CTE).",
         );
+    }
+    if let Err(kw) = validate_read_only_sql(&p.query) {
+        return err_result(serde_json::json!({
+            "success": false,
+            "error_code": "SQL_WRITE_BLOCKED",
+            "error": format!("'{kw}' is not a read, so explain mode does not send it: it plans one SELECT or WITH."),
+            "blocked_keyword": kw,
+        }));
     }
 
     let query_url = iris.versioned_ns_url(namespace, "/action/query");
@@ -2275,47 +2277,58 @@ async fn iris_query_write(
 
     let max_rows_affected = clamp_max_rows_affected(p.max_rows_affected);
 
-    let mut rows_check_skipped = false;
     if needs_rows_precheck(&p.query) {
-        match build_rows_precheck_query(&p.query) {
-            Some(count_sql) => {
-                let code = format!(
-                    r#"Set st=##class(%SQL.Statement).%New()
+        let Some(count_sql) = build_rows_precheck_query(&p.query) else {
+            // A cap that lets an uncounted statement through is not a cap.
+            return err_result(serde_json::json!({
+                "success": false,
+                "error_code": "ROWS_NOT_COUNTABLE",
+                "error": format!(
+                    "max_rows_affected={max_rows_affected} is in force and this statement's rows cannot be counted before it runs, so it was not run. Write the UPDATE, DELETE or TRUNCATE TABLE against one table (DELETE [FROM] table [WHERE ...], UPDATE table SET ... [WHERE ...], TRUNCATE TABLE table)."
+                ),
+                "limit": max_rows_affected,
+            }));
+        };
+        let code = format!(
+            r#"Set st=##class(%SQL.Statement).%New()
 Set sc=st.%Prepare("{count_sql_lit}")
 If $$$ISERR(sc) {{ Write "ERROR:ROWS_CHECK_FAILED:"_$System.Status.GetErrorText(sc) Quit }}
 Set rs=st.%Execute()
 If rs.%SQLCODE<0 {{ Write "ERROR:ROWS_CHECK_FAILED:"_rs.%Message Quit }}
 If rs.%Next() {{ Write "OK:"_rs.%GetData(1) }} Else {{ Write "OK:0" }}"#,
-                    count_sql_lit = crate::objectscript::os_lit_inner(&count_sql),
-                );
-                match iris.execute_via_generator(&code, namespace, client).await {
-                    Ok(out) => {
-                        let out = out.trim();
-                        if let Some(msg) = out.strip_prefix("ERROR:ROWS_CHECK_FAILED:") {
-                            return err_json("ROWS_CHECK_FAILED", msg);
-                        }
-                        let actual_count: i64 = out
-                            .strip_prefix("OK:")
-                            .and_then(|s| s.parse().ok())
-                            .unwrap_or(0);
-                        if actual_count > max_rows_affected as i64 {
-                            return err_result(serde_json::json!({
-                                "success": false,
-                                "error_code": "ROWS_LIMIT_EXCEEDED",
-                                "error": format!(
-                                    "Statement would affect {actual_count} rows, exceeding max_rows_affected={max_rows_affected}."
-                                ),
-                                "actual_count": actual_count,
-                                "limit": max_rows_affected,
-                            }));
-                        }
-                    }
-                    Err(e) => {
-                        return err_json("ROWS_CHECK_FAILED", &e.to_string());
-                    }
+            count_sql_lit = crate::objectscript::os_lit_inner(&count_sql),
+        );
+        match iris.execute_via_generator(&code, namespace, client).await {
+            Ok(out) => {
+                let out = out.trim();
+                if let Some(msg) = out.strip_prefix("ERROR:ROWS_CHECK_FAILED:") {
+                    return err_json("ROWS_CHECK_FAILED", msg);
+                }
+                // A count that does not parse is a count we do not have.
+                let Some(actual_count) = out
+                    .strip_prefix("OK:")
+                    .and_then(|s| s.trim().parse::<i64>().ok())
+                else {
+                    return err_json(
+                        "ROWS_CHECK_FAILED",
+                        &format!("the row count came back as {out:?}"),
+                    );
+                };
+                if actual_count > max_rows_affected as i64 {
+                    return err_result(serde_json::json!({
+                        "success": false,
+                        "error_code": "ROWS_LIMIT_EXCEEDED",
+                        "error": format!(
+                            "Statement would affect {actual_count} rows, exceeding max_rows_affected={max_rows_affected}."
+                        ),
+                        "actual_count": actual_count,
+                        "limit": max_rows_affected,
+                    }));
                 }
             }
-            None => rows_check_skipped = true,
+            Err(e) => {
+                return err_json("ROWS_CHECK_FAILED", &e.to_string());
+            }
         }
     }
 
@@ -2342,9 +2355,6 @@ Write "OK:"_rs.%ROWCOUNT"#,
             if p.force {
                 resp["force_ignored"] = serde_json::Value::Bool(true);
             }
-            if rows_check_skipped {
-                resp["rows_check_skipped"] = serde_json::Value::Bool(true);
-            }
             ok_json(resp)
         }
         Err(e) => err_json("SQL_ERROR", &e.to_string()),
@@ -2352,24 +2362,29 @@ Write "OK:"_rs.%ROWCOUNT"#,
 }
 
 /// Statement modifiers IRIS accepts between `UPDATE`/`DELETE` and the table (`DELETE %NOLOCK FROM t`).
+/// `%NOUNIQCHECK` and `%STARTTABLE` are not here: IRIS 2026.2 reads both as a table name, so a
+/// count that skipped them would name a different table than the write.
 const DML_MODIFIERS: &[&str] = &[
     "NOCHECK",
     "NOFPLAN",
     "NOINDEX",
+    "NOJOURN",
     "NOLOCK",
     "NOTRIGGER",
-    "NOUNIQCHECK",
     "PROFILE",
     "PROFILE_ALL",
-    "STARTTABLE",
 ];
 
-/// The leading `UPDATE` or `DELETE` of a DML statement, and where its operands start in `code`.
-/// Comments and white space before it do not matter: IRIS skips them.
+/// The leading `UPDATE`, `DELETE` or `TRUNCATE` of a DML statement, and where its operands start in
+/// `code`. Comments and white space before it do not matter: IRIS skips them. This is the one place
+/// that decides which statements `max_rows_affected` counts.
 fn dml_head<'a>(
     code: &[(usize, &'a crate::sql_lex::Token)],
 ) -> Option<(&'a crate::sql_lex::Token, usize)> {
     let (_, verb) = *code.first()?;
+    if verb.is_word("TRUNCATE") {
+        return Some((verb, 1));
+    }
     if !(verb.is_word("UPDATE") || verb.is_word("DELETE")) {
         return None;
     }
@@ -2384,8 +2399,9 @@ fn dml_head<'a>(
     Some((verb, at))
 }
 
-/// True when `dml` is an `UPDATE` or `DELETE`, which `iris_query` `mode="write"` counts before it
-/// runs. Read from the statement's own tokens, so a leading comment or space does not hide it.
+/// True when `dml` is an `UPDATE`, `DELETE` or `TRUNCATE`, which `iris_query` `mode="write"` counts
+/// before it runs. Read from the statement's own tokens, so a leading comment or space does not hide
+/// it.
 pub fn needs_rows_precheck(dml: &str) -> bool {
     let tokens = crate::sql_lex::lex(dml);
     let code: Vec<(usize, &crate::sql_lex::Token)> = tokens
@@ -2396,14 +2412,16 @@ pub fn needs_rows_precheck(dml: &str) -> bool {
     dml_head(&code).is_some()
 }
 
-/// Extracts a `SELECT COUNT(*) FROM <table> [WHERE <clause>]` pre-check query from an
-/// UPDATE or DELETE statement, for the `mode="write"` rows-affected limit guard.
-/// Returns `None` for statement shapes it cannot confidently parse (multi-table UPDATE,
-/// missing table name) — callers must skip the pre-check and set `rows_check_skipped: true`
-/// rather than treating this as an error.
+/// Builds the `SELECT COUNT(*)` that counts the rows an `UPDATE`, `DELETE` or `TRUNCATE TABLE`
+/// statement will touch, for the `mode="write"` rows-affected limit.
 ///
-/// The target is the name after `UPDATE`, or after `DELETE FROM`; the clause is the text after the
-/// first `WHERE` that is outside parentheses, a literal and a comment.
+/// Returns `None` for a statement that is not one of those, and for one that is but whose shape this
+/// cannot read: no table, several tables, an unknown modifier, a join. A caller that has
+/// [`needs_rows_precheck`] true and gets `None` here must refuse the statement, not run it.
+///
+/// The target is the name after `UPDATE`, after `DELETE` (with or without `FROM`) or after
+/// `TRUNCATE TABLE`, with an optional alias; the clause is the text after the first `WHERE` that is
+/// outside parentheses, a literal and a comment.
 pub fn build_rows_precheck_query(dml: &str) -> Option<String> {
     let tokens = crate::sql_lex::lex(dml);
     let code: Vec<(usize, &crate::sql_lex::Token)> = tokens
@@ -2412,13 +2430,56 @@ pub fn build_rows_precheck_query(dml: &str) -> Option<String> {
         .filter(|(_, t)| t.is_code())
         .collect();
     let (verb, mut at) = dml_head(&code)?;
-    if verb.is_word("DELETE") {
-        if !code.get(at)?.1.is_word("FROM") {
+    if verb.is_word("TRUNCATE") {
+        if !code.get(at)?.1.is_word("TABLE") {
             return None;
         }
+        let (table, after) = sql_table_name(&code, at + 1)?;
+        // Nothing but `;` may follow: `TRUNCATE TABLE a, b` is not one table.
+        return code[after..]
+            .iter()
+            .all(|(_, t)| t.is_punct(';'))
+            .then(|| format!("SELECT COUNT(*) FROM {table}"));
+    }
+    if verb.is_word("DELETE") && code.get(at)?.1.is_word("FROM") {
         at += 1;
     }
-    let (table, after) = sql_table_name(&code, at)?;
+    let (table, mut after) = sql_table_name(&code, at)?;
+
+    // An alias, with or without `AS`, goes into the count so the clause can use it.
+    let mut alias = String::new();
+    let has_as = code.get(after).is_some_and(|(_, t)| t.is_word("AS"));
+    if has_as {
+        after += 1;
+    }
+    if let Some((_, t)) = code.get(after) {
+        let is_alias = matches!(
+            t.kind,
+            crate::sql_lex::Kind::Word | crate::sql_lex::Kind::QuotedIdent
+        ) && t.closed
+            && ![
+                "SET", "WHERE", "FROM", "JOIN", "INNER", "LEFT", "RIGHT", "FULL", "CROSS",
+            ]
+            .iter()
+            .any(|k| t.is_word(k));
+        if is_alias {
+            alias = format!(" {}{}", if has_as { "AS " } else { "" }, t.text);
+            after += 1;
+        }
+    }
+    if has_as && alias.is_empty() {
+        return None;
+    }
+    let next = code.get(after).map(|(_, t)| *t);
+    let shape_ok = if verb.is_word("UPDATE") {
+        next.is_some_and(|t| t.is_word("SET"))
+    } else {
+        next.is_none_or(|t| t.is_word("WHERE") || t.is_punct(';'))
+    };
+    if !shape_ok {
+        return None;
+    }
+
     let mut depth = 0usize;
     let where_at = code[after..].iter().find_map(|(i, t)| {
         if t.is_punct('(') {
@@ -2429,12 +2490,14 @@ pub fn build_rows_precheck_query(dml: &str) -> Option<String> {
         (depth == 0 && t.is_word("WHERE")).then_some(*i)
     });
     let clause = where_at.map(|i| crate::sql_lex::text(&tokens[i + 1..]));
-    Some(
-        match clause.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
-            Some(w) => format!("SELECT COUNT(*) FROM {table} WHERE {w}"),
-            None => format!("SELECT COUNT(*) FROM {table}"),
-        },
-    )
+    let clause = clause
+        .as_deref()
+        .map(|c| c.trim().trim_end_matches(';').trim())
+        .filter(|c| !c.is_empty());
+    Some(match clause {
+        Some(w) => format!("SELECT COUNT(*) FROM {table}{alias} WHERE {w}"),
+        None => format!("SELECT COUNT(*) FROM {table}{alias}"),
+    })
 }
 
 /// A table name at `code[at..]`: `name`, `%name` or a delimited identifier, joined by dots. Returns
@@ -2701,6 +2764,45 @@ pub fn derive_capabilities(
     })
 }
 
+/// Whether a field of [`IrisTools`] belongs to one HTTP session or to the whole process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionScope {
+    /// Reset by [`IrisTools::for_new_session`]: what a client asked for, earned or opened is that
+    /// client's, and must not be listed, confirmed, driven or answered from by another.
+    PerSession,
+    /// Shared by every session of the process, for the reason given.
+    Shared(&'static str),
+}
+
+/// Every field of [`IrisTools`] and its scope. `tests/unit/test_enum_session_stores.rs` reads the
+/// struct definition and `for_new_session_sweeping` off the source: a field missing here fails; so
+/// does a `PerSession` field the constructor does not reset and a `Shared` one it does. A field
+/// added to the struct has to be declared, and a cache or store has to say why it is safe to share.
+#[rustfmt::skip]
+pub const SESSION_FIELDS: &[(&str, SessionScope)] = &[
+    ("connection", SessionScope::Shared("one operator's account on one set of servers: a reload through one session must reach the others")),
+    ("config_watcher", SessionScope::Shared("watches the files of the one process; a second watcher would reload twice")),
+    ("config", SessionScope::Shared("the configuration of the process, not of a client")),
+    ("registry", SessionScope::Shared("the skill registry loaded at startup; read-only to a session")),
+    ("client", SessionScope::Shared("the startup client of the default server; carries no client's results")),
+    ("identity_clients", SessionScope::Shared("one HTTP client and CSP session per account and server, logged out once at exit")),
+    ("history", SessionScope::PerSession),
+    ("elicitation_store", SessionScope::PerSession),
+    ("checkout_cache", SessionScope::PerSession),
+    ("log_store", SessionScope::PerSession),
+    ("metadata_cache", SessionScope::PerSession),
+    ("pool", SessionScope::Shared("a reload through one session must reach the others, and a second pool would open the keychain again")),
+    ("ws_pool", SessionScope::PerSession),
+    ("confirm_tokens", SessionScope::PerSession),
+    ("toolset", SessionScope::Shared("a plain value fixed at startup")),
+    ("session", SessionScope::Shared("the process's telemetry identity: one MCP server lifetime")),
+    ("docker_only_attr_warned", SessionScope::Shared("a warn-once flag for the process")),
+    ("iris_audit_counter", SessionScope::Shared("counts audit-emission failures for the process, warning once")),
+    ("tool_router", SessionScope::Shared("the registered tools, fixed at startup")),
+    ("accepted_params", SessionScope::Shared("derived from the router, fixed at startup")),
+    ("strict_toolset", SessionScope::Shared("a plain value fixed at startup")),
+];
+
 #[derive(Clone)]
 pub struct IrisTools {
     /// Active connection state — wraps iris, source, config metadata, write gate.
@@ -2773,7 +2875,7 @@ pub struct IrisTools {
 #[tool_router]
 impl IrisTools {
     pub fn new(iris: Option<IrisConnection>) -> anyhow::Result<Self> {
-        let client = Arc::new(IrisConnection::http_client()?);
+        let client = Arc::new(IrisConnection::startup_client(iris.as_ref())?);
         // No config file on this path, so the gate resolves from the operator's environment and
         // the connection's own SystemMode/namespace.
         let declared = write_gate::DeclaredGates::default();
@@ -2826,22 +2928,39 @@ impl IrisTools {
             strict_toolset: false,
         })
     }
-    /// The tools one MCP session gets in HTTP transport mode (spec 141 T220).
+    /// The tools one MCP session gets in HTTP transport mode (spec 141 T220, 171 S9).
     ///
     /// The transport builds a session's tools by copying a prototype, and a plain `clone` shares
-    /// every `Arc` field. What a client asked for and what came back is that client's: the log
-    /// store (`iris_get_log` with no id lists all of it), the pending SCM dialogs (resumed by id)
-    /// and the call history (`agent_history`, `agent_info`). Those three start empty here, with the
-    /// log store's limits kept.
+    /// every `Arc` field. What a client asked for, earned or opened is that client's, so these
+    /// start empty here, each its own:
+    ///
+    /// - the log store (`iris_get_log` with no id lists all of it), with the original's limits;
+    /// - the pending SCM dialogs (resumed by id), swept by a task of the session's own;
+    /// - the call history (`agent_history`, `agent_info`);
+    /// - the confirmation tokens: a token `global_preview` gave one client must not confirm another
+    ///   client's `global_kill`;
+    /// - the WebSocket terminal pool: a terminal one client opened is not another's to drive;
+    /// - the metadata cache: its answers came from this session's call, made under this session's
+    ///   target and policy, and a 60 s entry another session wrote would answer this one without
+    ///   asking the server;
+    /// - the checkout cache: it records what this session's own SCM checkout probe found, so a
+    ///   second session that borrowed it would skip its own pre-write probe on a document it never
+    ///   checked.
     ///
     /// Everything else stays shared, because one iad process is one operator's account on one set of
     /// servers and none of it holds a client's results: the connection state and the pool (a reload
     /// through one session must reach the others, and a second pool would open the keychain again),
-    /// the HTTP clients and their CSP sessions, the configuration, the skill registry, the
-    /// metadata cache (class definitions the account can read anyway), the checkout cache (a fact
-    /// about documents on the server, not about a client), the WebSocket terminal pool and the
-    /// confirmation tokens (both addressed by an unguessable id the creating client holds).
+    /// the HTTP clients and their CSP sessions (one session per account and server, logged out once
+    /// at exit), the configuration and the skill registry.
     pub fn for_new_session(&self) -> Self {
+        self.for_new_session_sweeping(std::time::Duration::from_secs(60))
+    }
+
+    /// [`Self::for_new_session`] with the interval at which the session's elicitation store is
+    /// swept. A session built outside a tokio runtime has no sweeper; its expired entries are
+    /// still refused on lookup.
+    #[doc(hidden)]
+    pub fn for_new_session_sweeping(&self, sweep_every: std::time::Duration) -> Self {
         let mut session = self.clone();
         let (max_entries, ttl_minutes) = self
             .log_store
@@ -2853,7 +2972,12 @@ impl IrisTools {
             ttl_minutes,
         )));
         session.elicitation_store = Arc::new(ElicitationStore::new());
+        session.elicitation_store.spawn_sweeper(sweep_every);
         session.history = Arc::new(std::sync::Mutex::new(VecDeque::with_capacity(50)));
+        session.checkout_cache = Arc::new(crate::elicitation::CheckoutCache::new());
+        session.metadata_cache = Arc::new(std::sync::Mutex::new(HashMap::new()));
+        session.ws_pool = Arc::new(crate::iris::ws_session::WsSessionPool::new());
+        session.confirm_tokens = Arc::new(tokio::sync::Mutex::new(HashMap::new()));
         session
     }
 
@@ -3073,7 +3197,7 @@ impl IrisTools {
     ) -> anyhow::Result<Self> {
         // Clone config_path for load_pool before it may be moved into conn_state (072).
         let pool_config_path = config_path.clone();
-        let client = Arc::new(IrisConnection::http_client()?);
+        let client = Arc::new(IrisConnection::startup_client(iris.as_ref())?);
         let mut router = Self::tool_router();
 
         // Remove tools from MCP tool list based on toolset (T017–T019, T033, FR-004–011).
@@ -3411,6 +3535,17 @@ impl IrisTools {
             return None;
         }
         let snap = self.snapshot();
+        // Strict read-only with `irisAudit = true` (S17). The MCP server exits on it at startup;
+        // the CLI, a session whose file only became readable later, and anything else that built
+        // a session on it refuse here, before the audit record that would compile a class.
+        if let Some(conflict) = snap.strict_audit_conflict() {
+            return Some(err_result(serde_json::json!({
+                "success": false,
+                "error_code": write_gate::ERR_READ_ONLY_STRICT_WITH_AUDIT,
+                "error": conflict,
+                "read_only_from": snap.read_only_source(),
+            })));
+        }
         let e = snap.errors.first()?;
         Some(err_result(serde_json::json!({
             "success": false,
@@ -3705,17 +3840,40 @@ impl IrisTools {
         );
     }
     /// The client for the call in scope: the target server's own certificate setting decides
-    /// whether its certificate is checked. Outside a call, the client built at startup.
-    fn http_client(&self) -> &reqwest::Client {
-        let tls = self
-            .target()
-            .ok()
-            .and_then(|t| t.primary.conn.as_ref().map(|c| c.tls));
-        match tls {
-            Some(tls) => crate::iris::http::call_client_ref(&tls).unwrap_or(&self.client),
-            None => &self.client,
+    /// whether its certificate is checked. Outside a call, the client built at startup. A client
+    /// that cannot be built is an error, as in [`Self::conn_client`]: the startup client belongs
+    /// to the default connection, and using it for another server would send that server's
+    /// requests with the wrong certificate setting and CSP session.
+    fn http_client(&self) -> Result<&reqwest::Client, McpError> {
+        let conn = self.target().ok().and_then(|t| t.primary.conn.clone());
+        match conn {
+            Some(c) => crate::iris::http::call_client_ref(&c.tls, &c.base_url, &c.username)
+                .map_err(|e| {
+                    McpError::internal_error(
+                        format!("could not build the HTTP client for {}: {e}", c.base_url),
+                        None,
+                    )
+                }),
+            None => Ok(&self.client),
         }
     }
+    /// The client for `conn`: its own certificate setting (never the launch environment's, which
+    /// belongs to the default connection alone) and its account's own CSP session (171 S7, S8).
+    /// Every path that reaches a server by name takes its client from here.
+    pub(crate) fn conn_client(
+        &self,
+        conn: &IrisConnection,
+    ) -> Result<Arc<reqwest::Client>, McpError> {
+        crate::iris::http::call_client_ref(&conn.tls, &conn.base_url, &conn.username)
+            .map(|c| Arc::new(c.clone()))
+            .map_err(|e| {
+                McpError::internal_error(
+                    format!("could not build the HTTP client for {}: {e}", conn.base_url),
+                    None,
+                )
+            })
+    }
+
     fn record_call(&self, tool: &str, success: bool) {
         self.record(tool, success, true);
     }
@@ -3750,7 +3908,15 @@ impl IrisTools {
         } else {
             None
         };
-        let client = Arc::clone(&self.client);
+        // The sink's own client: its server's certificate setting and account session. A client
+        // that cannot be built means no write to IRIS, never one over the startup client's setting.
+        let (iris, client) = match iris {
+            Some(c) => match self.conn_client(&c) {
+                Ok(client) => (Some(c), client),
+                Err(_) => (None, Arc::clone(&self.client)),
+            },
+            None => (None, Arc::clone(&self.client)),
+        };
         let config_dir = telemetry_config_dir();
         // Counted, so an exiting CLI process can wait for it (130 round 4).
         crate::telemetry::DURABLE_WRITES.spawn(async move {
@@ -3819,7 +3985,19 @@ impl IrisTools {
         // T037: Opt-in %SYS.Audit emission when irisAudit = true on the connection policy.
         // Checked BEFORE the should_write guard so env-var connections (policy=None or no
         // audit_log path) can still emit when irisAudit=true on a [policy.*] section.
-        if policy.map(|p| p.iris_audit).unwrap_or(false) {
+        //
+        // Never under strict read-only (S17): the emission compiles a class on the server. The
+        // combination is refused for every tool that talks to IRIS and reported by check_config,
+        // so this only holds back the record of a tool that answers whatever the configuration
+        // says; its line still goes to the local audit log.
+        let strict = self.snapshot().read_only_strict();
+        if strict && policy.is_some_and(|p| p.iris_audit) {
+            tracing::warn!(
+                "iris_audit: not emitted for {tool}: read_only = \"strict\" is set, and the \
+                 emission compiles a class on the server"
+            );
+        }
+        if !strict && policy.map(|p| p.iris_audit).unwrap_or(false) {
             use crate::iris::connection::{caller_mode, mcp_peer};
             use crate::iris::iris_audit::{
                 build_audit_os, build_event_data, refuse_and_instruct_text,
@@ -4089,7 +4267,7 @@ impl IrisTools {
             }
         }
 
-        let client = self.http_client();
+        let client = self.http_client()?;
 
         // Local file path support: a file inside the project is uploaded via Atelier PUT first.
         if let Some(path) = local_file.as_deref() {
@@ -4500,7 +4678,7 @@ impl IrisTools {
         let iris = self.target_conn()?;
         let namespace = self.target_ns(p.namespace.as_deref())?;
         tracing::info!(namespace = %namespace, pattern = %p.pattern, "iris_test");
-        let client = self.http_client();
+        let client = self.http_client()?;
 
         // US3: namespace existence check before running tests.
         let ns_check_code = crate::objectscript::namespace_exists_code(&namespace);
@@ -4865,7 +5043,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Execute arbitrary ObjectScript code on IRIS and return stdout. Two execution paths: (1) HTTP primary — wraps code in a temporary class method body (CodeMode=objectgenerator), compiles it via Atelier REST, runs it, deletes the class. Block syntax (`{}`) works here because class method bodies support it. (2) docker exec fallback — used when IRIS_CONTAINER env var is set and HTTP fails, or when the connection sets `docker_only = true` in `.iris-agentic-dev.toml` (a config-file key, not a parameter of this tool — passing docker_only in the tool arguments does nothing). This path pipes code into `iris session` stdin, which is a line-by-line terminal interpreter. Block syntax (`{}`) is NOT supported in terminal mode — `If cond { ... }` causes a `<SYNTAX>` error. Use classic terminal-compatible form instead: `If cond Write x`. For complex multi-line scripts that require `{}` on a docker exec path, write a .mac routine with `iris_doc` (mode=put) and compile it with `iris_compile`, then call `iris_execute Do entry^RoutineName`. That needs Atelier REST for `iris_doc`; under `docker_only` the routine must already be on the server. The destructive gate covers tool calls, not the code this tool runs: only a literal `Kill ^global` is checked, so for a hard limit connect as an IRIS user without delete privileges. &sql(...) embedded SQL runs natively on the HTTP path. The docker exec path has no &sql, so there it is translated to %SQL.Statement calls (set translate_sql: false to disable), and the response includes sql_translated: true and translated_code. Example: code='write $ZVERSION,!' returns the IRIS version string. Classes in Security.*, Config.* and SYS.* (web applications, users, roles, namespaces, databases) exist only in %SYS: pass namespace: \"%SYS\" for them. Skill: objectscript-tdd for the compile-execute-fix loop. Session state: set use_session: true to enable the %ctx carrier (%DynamicObject). Store values in %ctx.key between calls — scalars, %DynamicObject, and %Persistent objects (stored as OID stubs and re-opened on restore). The response includes session_state (opaque Base64 token); pass it back as session_state on the next call to restore %ctx. Nothing is written to IRIS — the token is held by the client. Error codes: SESSION_INVALID (bad token), SESSION_RESTORE_FAILED (missing class or bad OID), SESSION_SERIALIZE_FAILED (serialization error), TERMINAL_SYNTAX_UNSUPPORTED (block syntax on docker exec path). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "Execute arbitrary ObjectScript code on IRIS and return stdout. Two execution paths: (1) HTTP primary — wraps code in a temporary class method body (CodeMode=objectgenerator), compiles it via Atelier REST, runs it, deletes the class. Block syntax (`{}`) works here because class method bodies support it. (2) docker exec fallback — used when IRIS_CONTAINER env var is set and HTTP fails, or when the connection is configured `docker_only` (a connection setting, not a parameter of this tool — passing docker_only in the tool arguments does nothing). This path pipes code into `iris session` stdin, which is a line-by-line terminal interpreter. Block syntax (`{}`) is NOT supported in terminal mode — `If cond { ... }` causes a `<SYNTAX>` error. Use classic terminal-compatible form instead: `If cond Write x`. For complex multi-line scripts that require `{}` on a docker exec path, write a .mac routine with `iris_doc` (mode=put) and compile it with `iris_compile`, then call `iris_execute Do entry^RoutineName`. That needs Atelier REST for `iris_doc`; under `docker_only` the routine must already be on the server. The destructive gate covers tool calls, not the code this tool runs: only a literal `Kill ^global` is checked, so for a hard limit connect as an IRIS user without delete privileges. &sql(...) embedded SQL runs natively on the HTTP path. The docker exec path has no &sql, so there it is translated to %SQL.Statement calls (set translate_sql: false to disable), and the response includes sql_translated: true and translated_code. Example: code='write $ZVERSION,!' returns the IRIS version string. Classes in Security.*, Config.* and SYS.* (web applications, users, roles, namespaces, databases) exist only in %SYS: pass namespace: \"%SYS\" for them. Skill: objectscript-tdd for the compile-execute-fix loop. Session state: set use_session: true to enable the %ctx carrier (%DynamicObject). Store values in %ctx.key between calls — scalars, %DynamicObject, and %Persistent objects (stored as OID stubs and re-opened on restore). The response includes session_state (opaque Base64 token); pass it back as session_state on the next call to restore %ctx. Nothing is written to IRIS — the token is held by the client. Error codes: SESSION_INVALID (bad token), SESSION_RESTORE_FAILED (missing class or bad OID), SESSION_SERIALIZE_FAILED (serialization error), TERMINAL_SYNTAX_UNSUPPORTED (block syntax on docker exec path). `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         output_schema = output_schemas::oneof_output_schema::<IrisExecuteResponse>()
     )]
     async fn iris_execute(
@@ -5043,7 +5221,7 @@ impl IrisTools {
         }
         let namespace = self.target_ns(p.namespace.as_deref())?;
         tracing::info!(namespace = %namespace, "iris_doc");
-        let client = self.http_client();
+        let client = self.http_client()?;
         let result = doc::handle_iris_doc(
             &iris,
             client,
@@ -5075,7 +5253,7 @@ impl IrisTools {
             "explain" => {
                 let iris = self.target_conn()?;
                 let namespace = self.target_ns(p.namespace.as_deref())?;
-                let client = self.http_client();
+                let client = self.http_client()?;
                 let result = iris_query_explain(&iris, client, &p, &namespace).await;
                 self.record_call(
                     "iris_query",
@@ -5086,7 +5264,7 @@ impl IrisTools {
             "count" => {
                 let iris = self.target_conn()?;
                 let namespace = self.target_ns(p.namespace.as_deref())?;
-                let client = self.http_client();
+                let client = self.http_client()?;
                 let result = iris_query_count(&iris, client, &p, &namespace).await;
                 self.record_call(
                     "iris_query",
@@ -5160,7 +5338,7 @@ impl IrisTools {
         };
         let (iris, client) = match &forced {
             Some(cx) => (cx.conn.clone(), cx.client.as_ref()),
-            None => (self.target_conn()?, self.http_client()),
+            None => (self.target_conn()?, self.http_client()?),
         };
         let namespace = self.target_ns(p.namespace.as_deref())?;
         let query_url = iris.versioned_ns_url(&namespace, "/action/query");
@@ -5408,7 +5586,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active, (4) confirm which build of this MCP server is actually running (server_version) when multiple installs/forks may be registered. To switch connection mid-session without restart: call check_config first to get config_watch_path (null when there is no project directory to watch), then write a .iris-agentic-dev.toml to that exact path, then call any tool — the reload fires automatically. A project file cannot raise the write or destructive gate, turn on data reads or loosen a policy until the operator runs `iris-agentic-dev trust` on it in a terminal and restarts iad; a change to the operator's own configuration that loosens a setting waits for the next start, and one that tightens applies at once; check_config lists what it set aside or held (set_aside), where each policy part came from (effective_policy, config_sources) and the compile-time gate (compile_time_gate). Fields: server_version, connected, connection_source (config_file|env_vars|iris_select_container|auto_discovered), host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled, write_tools_source, destructive_tools_enabled, destructive_tools_source, tls_verify, capabilities. The two *_source fields say what decided each gate (read_only_strict|operator_env|config_file|legacy_allow_prod|inferred_system_mode|inferred_namespace|inferred_default|fail_closed), so a gate you did not ask for is one field lookup rather than a guess. Skill: iris-agentic-dev.",
+        description = "Return the active IRIS connection state without making any IRIS network calls. Always succeeds — never returns IRIS_UNREACHABLE. Use to: (1) diagnose connection issues, (2) verify hot-reload completed, (3) confirm which container/host is active, (4) confirm which build of this MCP server is actually running (server_version) when multiple installs/forks may be registered. To switch connection mid-session without restart, use iris_select_container or iris_add_server; config_watch_path is the project directory iad watches for a project file (null when there is none), and a change there reloads on the next tool call. A project file cannot raise the write or destructive gate, turn on data reads or loosen a policy until the operator has trusted it and restarted iad; a change to the operator's own configuration that loosens a setting waits for the next start, and one that tightens applies at once; check_config lists what it set aside or held (set_aside), where each policy part came from (effective_policy, config_sources) and the compile-time gate (compile_time_gate). Fields: server_version, connected, connection_source (config_file|env_vars|iris_select_container|auto_discovered), host, port, namespace, container, config_file, config_watch_path, config_loaded_at, iris_version, write_tools_enabled, write_tools_source, destructive_tools_enabled, destructive_tools_source, tls_verify, capabilities. The two *_source fields say what decided each gate (read_only_strict|operator_env|config_file|legacy_allow_prod|inferred_system_mode|inferred_namespace|inferred_default|fail_closed), so a gate you did not ask for is one field lookup rather than a guess. Skill: iris-agentic-dev.",
         annotations(read_only_hint = true),
         output_schema = schema_for_output::<CheckConfigOk>()    )]
     async fn check_config(
@@ -5597,6 +5775,9 @@ impl IrisTools {
             },
             "objectscript_workspace": objectscript_workspace,
             "capabilities": capabilities,
+            // Tools no gate judges. Every other tool has a category, and one without is treated
+            // as `execute` and `admin` by the template and `allow`.
+            "ungated_tools": crate::iris::server_manager::INTENTIONALLY_UNCATEGORIZED_TOOLS,
         });
 
         if let Some(ref err) = conn.config_parse_error {
@@ -5630,15 +5811,15 @@ impl IrisTools {
                 // Connection is via fallback discovery — remind the user to create a
                 // config in the workspace the IDE pointed us at.
                 response["fallback_warning"] = serde_json::Value::String(format!(
-                    "No .iris-agentic-dev.toml found in OBJECTSCRIPT_WORKSPACE ({ws}). \
-                     Connection established via fallback discovery. Create .iris-agentic-dev.toml \
-                     in that directory to pin the target instance."
+                    "No project configuration found in OBJECTSCRIPT_WORKSPACE ({ws}). \
+                     Connection established via fallback discovery, so it may not be the instance \
+                     you meant. Pin the target with iris_select_container or iris_add_server."
                 ));
             } else {
                 response["fallback_warning"] = serde_json::Value::String(
-                    "No .iris-agentic-dev.toml config file found. Connection established via \
-                     fallback discovery (Docker/Server Manager/port scan). Set OBJECTSCRIPT_WORKSPACE \
-                     or create a .iris-agentic-dev.toml in your project root to pin the target instance."
+                    "No project configuration found. Connection established via fallback \
+                     discovery (Docker/Server Manager/port scan), so it may not be the instance \
+                     you meant. Pin the target with iris_select_container or iris_add_server."
                         .to_string(),
                 );
             }
@@ -5979,7 +6160,7 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         let (sql, params) = translate_symbols_query(p.limit, &p.query);
         match iris.query(&sql, params, namespace, client).await {
             Ok(resp) => ok_json(serde_json::json!({
@@ -6080,7 +6261,7 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         // Bug 15: use parameterized queries instead of manual string escaping.
         let methods = iris.query(
             "SELECT Name,FormalSpec,ReturnType FROM %Dictionary.CompiledMethod WHERE parent=? ORDER BY Name",
@@ -6136,24 +6317,22 @@ impl IrisTools {
         &self,
         Parameters(mut p): Parameters<DebugMapParams>,
     ) -> Result<CallToolResult, McpError> {
+        let mut label = String::new();
         if !p.error_string.is_empty() {
-            if let Some((r, o)) = parse_iris_error_string(&p.error_string) {
+            if let Some((l, r, o)) = parse_iris_error_string(&p.error_string) {
+                label = l;
                 p.routine = r;
                 p.offset = o;
             }
         }
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
-        let code = crate::objectscript::source_line_code(&p.routine, p.offset);
-        match iris.execute_via_generator(&code, namespace, client).await {
-            Ok(raw) => {
-                let (cls_name, cls_line) = parse_source_line(raw.trim());
-                ok_json(
-                    serde_json::json!({"success": true, "mapping_available": cls_name.is_some(), "cls_name": cls_name, "cls_line": cls_line, "routine": p.routine, "offset": p.offset, "raw_error": if p.error_string.is_empty() { serde_json::Value::Null } else { p.error_string.into() }}),
-                )
-            }
-            Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
+        let client = self.http_client()?;
+        match info::int_to_cls(&iris, namespace, client, &p.routine, &label, p.offset).await {
+            Ok(hit) => ok_json(
+                serde_json::json!({"success": true, "mapping_available": hit.is_some(), "cls_name": hit.as_ref().map(|h| h.class.as_str()), "cls_line": hit.as_ref().map(|h| h.line), "method": hit.as_ref().map(|h| h.method.as_str()), "routine": p.routine, "offset": p.offset, "raw_error": if p.error_string.is_empty() { serde_json::Value::Null } else { p.error_string.into() }}),
+            ),
+            Err(e) => err_json("EXECUTION_FAILED", &e),
         }
     }
 
@@ -6168,7 +6347,7 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(_p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         match iris.query("SELECT TOP 20 ErrorCode,ErrorText,TimeStamp FROM %SYSTEM.Error ORDER BY TimeStamp DESC", vec![], namespace, client).await {
             Ok(resp) => ok_json(serde_json::json!({"success": true, "errors": resp["result"]["content"]})),
             Err(e) => {
@@ -6194,7 +6373,7 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         // FR-012: cap max_entries to prevent runaway queries.
         let max_entries = p.max_entries.min(1000);
         let sql = format!("SELECT TOP {} ErrorCode,ErrorText,TimeStamp FROM %SYSTEM.Error ORDER BY TimeStamp DESC", max_entries);
@@ -6231,7 +6410,7 @@ impl IrisTools {
     }
 
     #[tool(
-        description = "Build a .INT source map for a compiled ObjectScript class via Atelier xecute. Maps .INT routine line offsets back to .CLS source lines for stack trace resolution. No Python required.",
+        description = "Build a .INT source map for a compiled ObjectScript class: for each method the class declares, the .INT routine and the .INT line of every line of the method body, so a stack trace in the routine can be read against the .CLS source. A class that is not compiled is NOT_FOUND.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<DebugSourceMapResponse>()
     )]
@@ -6241,23 +6420,8 @@ impl IrisTools {
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
-        let cls_name = p.cls_name.trim_end_matches(".cls");
-        // Build source map by querying %Studio.Debugger for each .INT method
-        let code = format!(
-            "set cls=\"{}\" set rtn=$translate(cls,\".\",\".\") set map=\"{{\" set first=1 set method=\"\" for {{ set method=$order(^rIndex(rtn,method)) quit:method=\"\"  set intline=$get(^rIndex(rtn,method)) if 'first {{ set map=map_\",\" }} set map=map_\"\\\"\"_method_\"\\\":\\\"\"_intline_\"\\\"\" set first=0 }} set map=map_\"}}\" write map",
-            crate::objectscript::os_lit_inner(cls_name)
-        );
-        match iris.execute_via_generator(&code, namespace, client).await {
-            Ok(output) => {
-                let map: serde_json::Value =
-                    serde_json::from_str(output.trim()).unwrap_or(serde_json::json!({}));
-                ok_json(
-                    serde_json::json!({"success": true, "cls_name": cls_name, "source_map": map}),
-                )
-            }
-            Err(e) => err_json("IRIS_UNREACHABLE", &e.to_string()),
-        }
+        let client = self.http_client()?;
+        info::source_map(&iris, namespace, client, &p.cls_name).await
     }
 
     #[tool(
@@ -6308,7 +6472,7 @@ impl IrisTools {
             return err_result(nopws::nopws_atelier_required_error());
         }
         let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-        let client = self.http_client();
+        let client = self.http_client()?;
         let store = |name: String, text: String| {
             let iris = iris.clone();
             async move {
@@ -6382,7 +6546,7 @@ impl IrisTools {
 
         let introspection_context = if let Some(iris) = self.target_conn_opt()?.as_deref() {
             let namespace = resolve_namespace(p.namespace.as_deref(), &iris.namespace);
-            let client = self.http_client();
+            let client = self.http_client()?;
             // FR-001/C1: use parameterized query to prevent SQL injection via class_name.
             iris.query(
                 "SELECT Name,FormalSpec,ReturnType FROM %Dictionary.CompiledMethod WHERE parent=? ORDER BY Name",
@@ -6435,10 +6599,43 @@ Methods:
         )
     }
 
+    /// The `sources` and `note` fields of a skill reader's answer. When the policy refused the
+    /// server leg, the `^SKILLS` source says it was not consulted and why, with the refusal's
+    /// code, kind and what lifts it (R2b).
+    fn sources_and_note(
+        &self,
+        bundled_available: usize,
+        synthesized_available: usize,
+        searched: bool,
+    ) -> (serde_json::Value, String) {
+        use crate::skills::bundled;
+        let mut sources = bundled::sources_json(bundled_available, synthesized_available, searched);
+        let mut note = bundled::searched_note(bundled_available, synthesized_available, searched);
+        if let Some(skipped) = self.server_leg_skipped() {
+            let why = skipped["message"]
+                .as_str()
+                .unwrap_or("the server's policy refused it")
+                .to_string();
+            sources["synthesized"]["note"] =
+                serde_json::json!(format!("^SKILLS not consulted: {why}"));
+            sources["synthesized"]["refused"] = skipped;
+            note = format!(
+                "Searched {bundled_available} bundled skills. The server-side (^SKILLS) skills \
+                 were not consulted: {why}"
+            );
+        }
+        (sources, note)
+    }
+
     /// Read every `^SKILLS` entry. Returns `(entries, searched)` — `searched` is
     /// false when there is no IRIS connection or the global could not be read, so
     /// callers can say "I did not look there" instead of implying "nothing there".
     async fn synthesized_skills(&self) -> Result<(Vec<serde_json::Value>, bool), McpError> {
+        // The policy refused this call's server leg (or the configuration does not parse): the
+        // server is not asked, and the answer says it was not (R2b).
+        if self.server_leg_skipped().is_some() {
+            return Ok((Vec::new(), false));
+        }
         let Some(iris) = self.target_conn_opt()? else {
             return Ok((Vec::new(), false));
         };
@@ -6473,12 +6670,14 @@ Methods:
         let (synth, synth_searched) = self.synthesized_skills().await?;
         let merged = bundled::merge_sources(&bundled_skills, &synth);
         let skills: Vec<serde_json::Value> = merged.iter().map(|m| m.to_json()).collect();
+        let (sources, note) =
+            self.sources_and_note(bundled_skills.len(), synth.len(), synth_searched);
 
         ok_json(serde_json::json!({
             "skills": skills,
             "count": skills.len(),
-            "sources": bundled::sources_json(bundled_skills.len(), synth.len(), synth_searched),
-            "note": bundled::searched_note(bundled_skills.len(), synth.len(), synth_searched),
+            "sources": sources,
+            "note": note,
         }))
     }
 
@@ -6525,12 +6724,14 @@ Methods:
         }
 
         // FR-004: never a bare miss — say where we looked.
+        let (sources, note) =
+            self.sources_and_note(bundled_skills.len(), synth.len(), synth_searched);
         err_result(serde_json::json!({
             "success": false,
             "error_code": "NOT_FOUND",
             "error": format!("Skill '{}' not found", p.name),
-            "sources": bundled::sources_json(bundled_skills.len(), synth.len(), synth_searched),
-            "note": bundled::searched_note(bundled_skills.len(), synth.len(), synth_searched),
+            "sources": sources,
+            "note": note,
         }))
     }
 
@@ -6606,12 +6807,14 @@ Methods:
         scored.truncate(p.top_k);
         let results: Vec<serde_json::Value> = scored.into_iter().map(|(v, _)| v).collect();
 
+        let (sources, note) =
+            self.sources_and_note(bundled_skills.len(), synth.len(), synth_searched);
         ok_json(serde_json::json!({
             "query": p.query,
             "results": results,
             "count": results.len(),
-            "sources": bundled::sources_json(bundled_skills.len(), synth.len(), synth_searched),
-            "note": bundled::searched_note(bundled_skills.len(), synth.len(), synth_searched),
+            "sources": sources,
+            "note": note,
         }))
     }
 
@@ -6764,7 +6967,7 @@ Methods:
         let iris = self.target_conn()?;
         skills_tools::handle_kb(
             &iris,
-            self.http_client(),
+            self.http_client()?,
             skills_tools::KbParams {
                 action: "index".into(),
                 path: p.workspace_path,
@@ -6887,7 +7090,8 @@ Methods:
         let iris = self.durable_sink_connection();
         let config_dir = telemetry_config_dir();
         let records =
-            crate::telemetry::read_durable(session_id, iris, self.http_client(), &config_dir).await;
+            crate::telemetry::read_durable(session_id, iris, self.http_client()?, &config_dir)
+                .await;
         let (matches, truncated) = crate::telemetry::filter_records(
             &records,
             p.tool_name.as_deref(),
@@ -6929,7 +7133,8 @@ Methods:
         let iris = self.durable_sink_connection();
         let config_dir = telemetry_config_dir();
         let records =
-            crate::telemetry::read_durable(session_id, iris, self.http_client(), &config_dir).await;
+            crate::telemetry::read_durable(session_id, iris, self.http_client()?, &config_dir)
+                .await;
         let (filtered, _truncated) = crate::telemetry::filter_records(
             &records,
             None,
@@ -6972,7 +7177,7 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let result =
-            search::handle_iris_search(&iris, self.http_client(), p, Arc::clone(&self.log_store))
+            search::handle_iris_search(&iris, self.http_client()?, p, Arc::clone(&self.log_store))
                 .await;
         self.record_call("iris_search", result.is_ok());
         result
@@ -6995,7 +7200,8 @@ Methods:
         }
         let iris = self.target_conn()?;
         let result =
-            info::handle_iris_info(&iris, self.http_client(), p, Arc::clone(&self.log_store)).await;
+            info::handle_iris_info(&iris, self.http_client()?, p, Arc::clone(&self.log_store))
+                .await;
         self.record_call("iris_info", result.is_ok());
         result
     }
@@ -7010,7 +7216,7 @@ Methods:
         Parameters(p): Parameters<info::TableInfoParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = info::handle_iris_table_info(&iris, self.http_client(), p).await;
+        let result = info::handle_iris_table_info(&iris, self.http_client()?, p).await;
         self.record_call("iris_table_info", result.is_ok());
         result
     }
@@ -7027,7 +7233,7 @@ Methods:
         let iris = self.target_conn()?;
         let result = dict::handle_resolve_dynamic_dispatch(
             &iris,
-            self.http_client(),
+            self.http_client()?,
             p,
             &self.metadata_cache,
         )
@@ -7048,7 +7254,7 @@ Methods:
         let iris = self.target_conn()?;
         let result = dict::handle_extract_message_map_routing(
             &iris,
-            self.http_client(),
+            self.http_client()?,
             p,
             &self.metadata_cache,
         )
@@ -7069,7 +7275,7 @@ Methods:
         let iris = self.target_conn()?;
         let result = dict::handle_find_subclass_implementations(
             &iris,
-            self.http_client(),
+            self.http_client()?,
             p,
             &self.metadata_cache,
         )
@@ -7088,13 +7294,13 @@ Methods:
         Parameters(p): Parameters<info::MacroParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = info::handle_iris_macro(&iris, self.http_client(), p).await;
+        let result = info::handle_iris_macro(&iris, self.http_client()?, p).await;
         self.record_call("iris_macro", result.is_ok());
         result
     }
 
     #[tool(
-        description = "IRIS debug tools. action=map_int maps a runtime error offset to source line, action=error_logs fetches recent error log entries, action=capture captures current error state, action=source_map builds .INT to .CLS mapping. Skill: objectscript-debugging. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        description = "IRIS debug tools. action=map_int maps a runtime error offset to source line, action=error_logs fetches recent error log entries, action=capture captures current error state, action=source_map (class_name) lists, for each method a class declares, the .INT line of each body line. Skill: objectscript-debugging. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
         output_schema = output_schemas::oneof_output_schema::<IrisDebugResponse>()
     )]
     async fn iris_debug(
@@ -7102,7 +7308,7 @@ Methods:
         Parameters(p): Parameters<info::DebugParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = info::handle_iris_debug(&iris, self.http_client(), p).await;
+        let result = info::handle_iris_debug(&iris, self.http_client()?, p).await;
         self.record_call("iris_debug", result.is_ok());
         result
     }
@@ -7116,7 +7322,7 @@ Methods:
         Parameters(p): Parameters<info::GenerateParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = info::handle_iris_generate(&iris, self.http_client(), p).await;
+        let result = info::handle_iris_generate(&iris, self.http_client()?, p).await;
         self.record_call("iris_generate", result.is_ok());
         result
     }
@@ -7130,7 +7336,7 @@ Methods:
         Parameters(p): Parameters<skills_tools::SkillParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = skills_tools::handle_skill(&iris, self.http_client(), p, &self.history).await;
+        let result = skills_tools::handle_skill(&iris, self.http_client()?, p, &self.history).await;
         self.record_call("skill", result.is_ok());
         result
     }
@@ -7145,7 +7351,7 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let result =
-            skills_tools::handle_skill_community(&iris, self.http_client(), p, &self.registry)
+            skills_tools::handle_skill_community(&iris, self.http_client()?, p, &self.registry)
                 .await;
         self.record_call("skill_community", result.is_ok());
         result
@@ -7162,7 +7368,7 @@ Methods:
         let iris = self.target_conn()?;
         // The scope is resolved only by the action that reads the host, inside `handle_kb`.
         let scope = |path: Option<&str>| self.kb_index_scope("kb", path);
-        let result = skills_tools::handle_kb(&iris, self.http_client(), p, scope).await;
+        let result = skills_tools::handle_kb(&iris, self.http_client()?, p, scope).await;
         self.record_call("kb", result.is_ok());
         result
     }
@@ -7178,7 +7384,7 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
         let result =
-            skills_tools::handle_agent_info(&iris, self.http_client(), p, &self.history).await;
+            skills_tools::handle_agent_info(&iris, self.http_client()?, p, &self.history).await;
         self.record_call("agent_info", result.is_ok());
         result
     }
@@ -7205,7 +7411,7 @@ Methods:
         }
         let result = scm::handle_iris_source_control(
             &iris,
-            self.http_client(),
+            self.http_client()?,
             p,
             &self.elicitation_store,
             &self.checkout_cache,
@@ -7242,7 +7448,11 @@ Methods:
         };
         let (iris, client) = match &cx {
             Some(cx) => (cx.conn.clone(), cx.client.clone()),
-            None => (self.target_conn()?, Arc::clone(&self.client)),
+            None => {
+                let iris = self.target_conn()?;
+                let client = self.conn_client(&iris)?;
+                (iris, client)
+            }
         };
         let mut result = global::handle_iris_global(&iris, client.as_ref(), &p, Ok(())).await;
         if let Some(cx) = &cx {
@@ -7288,7 +7498,12 @@ Methods:
         &self,
         Parameters(p): Parameters<doc_search::IrisDocSearchParams>,
     ) -> Result<CallToolResult, McpError> {
-        let result = doc_search::handle_iris_doc_search(&self.client, &p).await;
+        // The docs site is not an IRIS server: its own client, not the one that carries an
+        // account's session.
+        let client = crate::iris::http::external_client().map_err(|e| {
+            McpError::internal_error(format!("could not build an HTTP client: {e}"), None)
+        })?;
+        let result = doc_search::handle_iris_doc_search(&client, &p).await;
         self.record_call("iris_doc_search", result.get("error").is_none());
         if result.get("error").is_some() {
             err_result(result)
@@ -7435,7 +7650,7 @@ Methods:
     }
 
     #[tool(
-        description = "Interoperability query dispatcher (merged). what (REQUIRED): logs=Event Log entries, queues=message queue depths, messages=message archive (Ens.MessageHeader). Anything else returns INVALID_ACTION. To trace one session, use what=messages with session_id=<n>. Filters: component=<config item> narrows logs and messages; session_id=<n> and since_id=<n> (tails after a watermark) narrow messages. what=messages can also search message CONTENT: (a) body_class=<msg class> + body_where=<SQL fragment on body table> + body_select=[cols] joins the body table server-side (SQL name resolved for you); (b) search_table={prop, value|value_like, class?, extent?} searches an indexed Search Table field (extent default EnsLib.HL7.SearchTable; errors list searchable props). Pass namespace=<ns> for a non-default interop namespace. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance.",
+        description = "Interoperability query dispatcher (merged). what (REQUIRED): logs=Event Log entries, queues=message queue depths, messages=message archive (Ens.MessageHeader). Anything else returns INVALID_ACTION. To trace one session, use what=messages with session_id=<n>. Filters: component=<config item> narrows logs and messages; session_id=<n> and since_id=<n> (tails after a watermark) narrow messages. what=messages can also search message CONTENT: (a) body_class=<msg class> + body_where=<SQL fragment on body table> + body_select=[cols] joins the body table server-side (SQL name resolved for you); (b) search_table={prop, value|value_like, class?, extent?} searches an indexed Search Table field (extent default EnsLib.HL7.SearchTable; errors list searchable props). Both (a) and (b) read message content, so they need dataPolicy = allow on the server and acknowledgePhi=true, as iris_message_body does. Pass namespace=<ns> for a non-default interop namespace. Skill: ensemble-production. `server` (optional): name of a registered IRIS instance.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<IrisInteropQueryResponse>()
     )]
@@ -7445,6 +7660,31 @@ Methods:
     ) -> Result<CallToolResult, McpError> {
         let p = serde_json::to_value(&params).unwrap_or(serde_json::Value::Null);
         let what = p.get("what").and_then(|v| v.as_str()).unwrap_or("logs");
+        // The policy gate has judged this call already; the handler asks again, as
+        // `iris_message_body` does, so the acknowledgement does not depend on the gate alone.
+        {
+            let target = self.target()?;
+            let policy = target
+                .primary
+                .policy
+                .data_policy
+                .clone()
+                .unwrap_or_default();
+            let acknowledged = p
+                .get("acknowledgePhi")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if let Some(body) = crate::policy::data_policy_gate::check_body_read_acknowledged_as(
+                "iris_interop_query",
+                &p,
+                acknowledged,
+                &policy,
+                &target.primary.key,
+            ) {
+                self.record_call("iris_interop_query", false);
+                return self.refuse(body);
+            }
+        }
         let target_hold = self.target_conn_opt()?;
         let iris_opt = target_hold.as_deref();
         #[allow(unused_variables)]
@@ -7963,6 +8203,12 @@ Methods:
         // from the target's policy, which defaults to the strict value when unset.
         let effective_data_policy = self.target()?.primary.data_policy_name();
         let iris_opt = target_hold.as_deref();
+        // The mirror actions send their own requests: they use the target's client, not the
+        // startup client (171 S8).
+        let admin_client = match iris_opt {
+            Some(c) => self.conn_client(c)?,
+            None => Arc::clone(&self.client),
+        };
         let result = match action {
             "list_namespaces" => admin::admin_list_namespaces_impl(iris_opt).await,
             "list_databases" => admin::admin_list_databases_impl(iris_opt).await,
@@ -8187,7 +8433,7 @@ Methods:
                     .unwrap_or(0) as u8;
                 admin_tools::iris_mirror_add_async_impl(
                     iris_opt,
-                    &self.client,
+                    &admin_client,
                     mirror_name,
                     primary_host,
                     primary_port,
@@ -8205,7 +8451,7 @@ Methods:
                          this action is irreversible without manual recovery",
                     );
                 }
-                admin_tools::iris_mirror_failover_impl(iris_opt, &self.client).await
+                admin_tools::iris_mirror_failover_impl(iris_opt, &admin_client).await
             }
             _ => err_json(
                 "INVALID_ACTION",
@@ -8899,7 +9145,7 @@ Methods:
                 "nopws": true,
                 "web_available": false,
                 "nopws_detected": nopws_detected,
-                "suggestion": "NoPWS build: set docker_only = true in .iris-agentic-dev.toml (a connection key, not a tool parameter) or add a webgateway sidecar. Setup instructions: skills/skills/iris-agentic-dev/nopws-setup/SKILL.md in the iris-agentic-dev repo.",
+                "suggestion": "NoPWS build: select a container with iris_select_container (execute and compile work over docker exec) or add a webgateway sidecar. Setup instructions: skills/skills/iris-agentic-dev/nopws-setup/SKILL.md in the iris-agentic-dev repo.",
             });
             if let Some(ev) = nopws_evidence {
                 resp["nopws_evidence"] = serde_json::Value::String(ev);
@@ -8909,8 +9155,8 @@ Methods:
 
         let url = conn.atelier_url("/");
         let start = std::time::Instant::now();
-        match self
-            .client
+        let client = self.conn_client(&conn)?;
+        match client
             .get(&url)
             .basic_auth(&conn.username, Some(&conn.password))
             .send()
@@ -9227,6 +9473,7 @@ Methods:
 
         let (server_a, server_b) = self.target_pair()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &server_a.namespace).to_string();
+        let clients = (self.conn_client(&server_a)?, self.conn_client(&server_b)?);
 
         let result = comparison_tools::compare_document_impl(
             comparison_tools::CompareDocumentParams {
@@ -9235,7 +9482,7 @@ Methods:
                 server_b,
                 namespace,
             },
-            &self.client,
+            (&clients.0, &clients.1),
         )
         .await;
         self.record_call("compare_document", result.is_ok());
@@ -9259,6 +9506,7 @@ Methods:
 
         let (server_a, server_b) = self.target_pair()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &server_a.namespace).to_string();
+        let clients = (self.conn_client(&server_a)?, self.conn_client(&server_b)?);
 
         let result = comparison_tools::compare_namespace_impl(
             comparison_tools::CompareNamespaceParams {
@@ -9266,7 +9514,7 @@ Methods:
                 server_a,
                 server_b,
             },
-            &self.client,
+            (&clients.0, &clients.1),
         )
         .await;
         self.record_call("compare_namespace", result.is_ok());
@@ -9299,6 +9547,7 @@ Methods:
         // The preview reads the global, and its token is what global_kill accepts, so the pipeline
         // judges it by the same blocklist and PHI gates as iris_global (137).
         let iris = self.target_conn()?;
+        let client = self.conn_client(&iris)?;
 
         let result = admin_tools::global_preview_impl(
             admin_tools::GlobalPreviewParams {
@@ -9306,7 +9555,7 @@ Methods:
                 server,
                 count,
                 iris,
-                client: Arc::clone(&self.client),
+                client,
             },
             &self.confirm_tokens,
         )
@@ -9377,7 +9626,7 @@ Methods:
         Parameters(_): Parameters<params::batch2::IrisNamespaceListParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = admin_tools::iris_namespace_list_impl(&iris, &self.client).await;
+        let result = admin_tools::iris_namespace_list_impl(&iris, &*self.conn_client(&iris)?).await;
         self.record_call("iris_namespace_list", result.is_ok());
         result
     }
@@ -9392,7 +9641,7 @@ Methods:
         Parameters(_): Parameters<params::batch2::IrisDatabaseListParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = admin_tools::iris_database_list_impl(&iris, &self.client).await;
+        let result = admin_tools::iris_database_list_impl(&iris, &*self.conn_client(&iris)?).await;
         self.record_call("iris_database_list", result.is_ok());
         result
     }
@@ -9428,7 +9677,7 @@ Methods:
         let iris = self.target_conn()?;
         let result = admin_tools::iris_system_performance_impl(
             &iris,
-            &self.client,
+            &*self.conn_client(&iris)?,
             &admin_tools::SysPerfRequest {
                 mode: &mode,
                 run_id: run_id.as_deref(),
@@ -9453,7 +9702,7 @@ Methods:
         Parameters(_): Parameters<params::batch4::IrisMirrorStatusParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = admin_tools::iris_mirror_status_impl(&iris, &self.client).await;
+        let result = admin_tools::iris_mirror_status_impl(&iris, &*self.conn_client(&iris)?).await;
         self.record_call("iris_mirror_status", result.is_ok());
         result
     }
@@ -9478,9 +9727,13 @@ Methods:
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         let iris = self.target_conn()?;
-        let result =
-            admin_tools::iris_namespace_create_impl(&iris, &self.client, &name, db_path.as_deref())
-                .await;
+        let result = admin_tools::iris_namespace_create_impl(
+            &iris,
+            &*self.conn_client(&iris)?,
+            &name,
+            db_path.as_deref(),
+        )
+        .await;
         self.record_call("iris_namespace_create", result.is_ok());
         result
     }
@@ -9498,7 +9751,8 @@ Methods:
         let db = p.get("db").and_then(|v| v.as_str()).map(|s| s.to_string());
         let iris = self.target_conn()?;
         let result =
-            admin_tools::iris_database_stats_impl(&iris, &self.client, db.as_deref()).await;
+            admin_tools::iris_database_stats_impl(&iris, &*self.conn_client(&iris)?, db.as_deref())
+                .await;
         self.record_call("iris_database_stats", result.is_ok());
         result
     }
@@ -9567,7 +9821,7 @@ Methods:
         let iris = self.target_conn()?;
         let result = admin_tools::query_audit_log_impl(
             &iris,
-            &self.client,
+            &*self.conn_client(&iris)?,
             user.as_deref(),
             event_type.as_deref(),
             start.as_deref(),
@@ -9580,7 +9834,7 @@ Methods:
     }
 
     #[tool(
-        description = "Inspect the content of an IRIS stream object by OID. oid: the stream OID (integer string). namespace: optional namespace (defaults to the connection namespace, IRIS_NAMESPACE). server: optional registered instance name. max_chars: most characters to return from the start (default 20000, at most 1000000). Returns {content, class, size, truncated, max_chars, line_count, oid}: size is the whole stream, truncated says content is a prefix, class is the class the read went through and says nothing about what the stream holds. An id that holds no stream is STREAM_NOT_FOUND. The server's dataPolicy decides what comes back: allow returns the content, redact returns HL7 v2 with the identifying fields of PID, NK1, GT1, IN1, IN2 and MSH-3 replaced by [REDACTED] (redacted: true means that mask ran, not that the content is de-identified: other segments and free text come back as stored) and refuses other content (BODY_NOT_REDACTABLE), block refuses the content (DATA_POLICY_BLOCKED). A refused stream still answers with class, size and line_count. Skill: iris-agentic-dev.",
+        description = "Inspect the content of an IRIS stream object by OID. oid: the stream OID (integer string). namespace: optional namespace (defaults to the connection namespace, IRIS_NAMESPACE). server: optional registered instance name. max_chars: most characters to return from the start (default 20000, at most 1000000). Returns {content, class, size, truncated, max_chars, line_count, oid}: size is the whole stream, truncated says content is a prefix, class is the class the read went through and says nothing about what the stream holds. An id that holds no stream is STREAM_NOT_FOUND. The server's dataPolicy decides what comes back: allow returns the content, redact returns HL7 v2 with the identifying fields of PID, NK1, GT1, IN1, IN2 and MSH-3 replaced by [REDACTED] (redacted: true means that mask ran, not that the content is de-identified: other segments and free text come back as stored) and refuses other content (BODY_NOT_REDACTABLE), block refuses the content (DATA_POLICY_BLOCKED). A refused stream still answers with class, size and line_count. allow also requires acknowledgePhi=true (without it the call is refused with PHI_ACK_REQUIRED). Skill: iris-agentic-dev.",
         annotations(read_only_hint = true),
         output_schema = output_schemas::oneof_output_schema::<StreamInspectResponse>()    )]
     async fn stream_inspect(
@@ -9611,9 +9865,25 @@ Methods:
             .data_policy
             .clone()
             .unwrap_or_default();
+        // The policy gate has judged this call already; the handler asks again, as
+        // `iris_message_body` does, so the acknowledgement does not depend on the gate alone.
+        let acknowledged = p
+            .get("acknowledgePhi")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if let Some(body) = crate::policy::data_policy_gate::check_body_read_acknowledged_as(
+            "stream_inspect",
+            &p,
+            acknowledged,
+            &policy,
+            &self.target()?.primary.key,
+        ) {
+            self.record_call("stream_inspect", false);
+            return self.refuse(body);
+        }
         let result = admin_tools::stream_inspect_impl(
             &iris,
-            &self.client,
+            &*self.conn_client(&iris)?,
             &oid,
             max_chars,
             &namespace,
@@ -9638,7 +9908,7 @@ Methods:
         Parameters(_): Parameters<params::batch4::MyAccessParams>,
     ) -> Result<CallToolResult, McpError> {
         let iris = self.target_conn()?;
-        let result = admin_tools::my_access_impl(&iris, &self.client).await;
+        let result = admin_tools::my_access_impl(&iris, &*self.conn_client(&iris)?).await;
         self.record_call("my_access", result.is_ok());
         result
     }
@@ -9659,7 +9929,8 @@ Methods:
             .map(|s| s.to_string());
         let iris = self.target_conn()?;
         let result =
-            admin_tools::capability_matrix_impl(&iris, &self.client, user.as_deref()).await;
+            admin_tools::capability_matrix_impl(&iris, &*self.conn_client(&iris)?, user.as_deref())
+                .await;
         self.record_call("capability_matrix", result.is_ok());
         result
     }
@@ -9682,7 +9953,8 @@ Methods:
             .map(|s| s.to_string());
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
-        let result = admin_tools::hl7_schema_list_impl(&iris, &self.client, &namespace).await;
+        let result =
+            admin_tools::hl7_schema_list_impl(&iris, &*self.conn_client(&iris)?, &namespace).await;
         self.record_call("hl7_schema_list", result.is_ok());
         result
     }
@@ -9714,7 +9986,7 @@ Methods:
         let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
         let result = admin_tools::hl7_schema_inspect_impl(
             &iris,
-            &self.client,
+            &*self.conn_client(&iris)?,
             &schema,
             segment.as_deref(),
             &namespace,
@@ -9748,8 +10020,14 @@ Methods:
             .map(|s| s.to_string());
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
-        let result =
-            admin_tools::mermaid_class_impl(&iris, &self.client, &class, depth, &namespace).await;
+        let result = admin_tools::mermaid_class_impl(
+            &iris,
+            &*self.conn_client(&iris)?,
+            &class,
+            depth,
+            &namespace,
+        )
+        .await;
         self.record_call("mermaid_class", result.is_ok());
         result
     }
@@ -9775,9 +10053,13 @@ Methods:
             .map(|s| s.to_string());
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
-        let result =
-            admin_tools::mermaid_production_impl(&iris, &self.client, &production, &namespace)
-                .await;
+        let result = admin_tools::mermaid_production_impl(
+            &iris,
+            &*self.conn_client(&iris)?,
+            &production,
+            &namespace,
+        )
+        .await;
         self.record_call("mermaid_production", result.is_ok());
         result
     }
@@ -9803,8 +10085,13 @@ Methods:
             .map(|s| s.to_string());
         let iris = self.target_conn()?;
         let namespace = resolve_namespace(requested_ns.as_deref(), &iris.namespace).to_string();
-        let result =
-            admin_tools::resolve_storage_impl(&iris, &self.client, &class, &namespace).await;
+        let result = admin_tools::resolve_storage_impl(
+            &iris,
+            &*self.conn_client(&iris)?,
+            &class,
+            &namespace,
+        )
+        .await;
         self.record_call("resolve_storage", result.is_ok());
         result
     }
@@ -10134,27 +10421,20 @@ pub fn normalize_schema_openapi3(schema: &mut serde_json::Map<String, serde_json
     );
 }
 
-fn parse_iris_error_string(s: &str) -> Option<(String, i64)> {
+/// Reads `<ERR>label+offset^routine` (the place IRIS names in a runtime error) into
+/// `(label, routine, offset)`. The label may be empty (`<ERR>+3^Rtn`).
+pub(crate) fn parse_iris_error_string(s: &str) -> Option<(String, String, i64)> {
     use std::sync::OnceLock;
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        regex::Regex::new(r"<[A-Z]+>\s*[^+\s]+\+(\d+)\^([\w.%]+)").expect("valid regex")
+        regex::Regex::new(r"<[A-Z]+>\s*([^+\s^]*)\+(\d+)\^([\w.%]+)").expect("valid regex")
     });
     let caps = re.captures(s)?;
-    Some((caps[2].to_string(), caps[1].parse().ok()?))
-}
-
-fn parse_source_line(raw: &str) -> (Option<String>, Option<i64>) {
-    if raw.is_empty() {
-        return (None, None);
-    }
-    if let Some((cls, line)) = raw.split_once(':') {
-        return (
-            Some(cls.trim_end_matches(".cls").to_string()),
-            line.trim().parse().ok(),
-        );
-    }
-    (None, None)
+    Some((
+        caps[1].to_string(),
+        caps[3].to_string(),
+        caps[2].parse().ok()?,
+    ))
 }
 
 /// Detects whether a class is BPL or DTL and parses its XData flow.
@@ -10260,13 +10540,19 @@ mod tests {
     fn test_parse_iris_error_standard() {
         let s = "<UNDEFINED>x+3^Ens.Director.1";
         let result = parse_iris_error_string(s);
-        assert_eq!(result, Some(("Ens.Director.1".to_string(), 3)));
+        assert_eq!(
+            result,
+            Some(("x".to_string(), "Ens.Director.1".to_string(), 3))
+        );
     }
     #[test]
     fn test_parse_iris_error_divide() {
         let s = "<DIVIDE>x+1^MyApp.Foo.1";
         let result = parse_iris_error_string(s);
-        assert_eq!(result, Some(("MyApp.Foo.1".to_string(), 1)));
+        assert_eq!(
+            result,
+            Some(("x".to_string(), "MyApp.Foo.1".to_string(), 1))
+        );
     }
     #[test]
     fn test_parse_iris_error_no_match() {
@@ -10277,33 +10563,10 @@ mod tests {
     fn test_parse_iris_error_large_offset() {
         let s = "<ERROR>routine+99^Some.Class.INT";
         let result = parse_iris_error_string(s);
-        assert_eq!(result, Some(("Some.Class.INT".to_string(), 99)));
-    }
-
-    // ── parse_source_line ─────────────────────────────────────────────────────
-    #[test]
-    fn test_parse_source_line_with_cls() {
-        let (cls, line) = parse_source_line("MyApp.Foo.cls:42");
-        assert_eq!(cls.as_deref(), Some("MyApp.Foo"));
-        assert_eq!(line, Some(42));
-    }
-    #[test]
-    fn test_parse_source_line_without_cls() {
-        let (cls, line) = parse_source_line("MyApp.Foo:10");
-        assert_eq!(cls.as_deref(), Some("MyApp.Foo"));
-        assert_eq!(line, Some(10));
-    }
-    #[test]
-    fn test_parse_source_line_empty() {
-        let (cls, line) = parse_source_line("");
-        assert!(cls.is_none());
-        assert!(line.is_none());
-    }
-    #[test]
-    fn test_parse_source_line_no_colon() {
-        let (cls, line) = parse_source_line("NoColonHere");
-        assert!(cls.is_none());
-        assert!(line.is_none());
+        assert_eq!(
+            result,
+            Some(("routine".to_string(), "Some.Class.INT".to_string(), 99))
+        );
     }
 
     // ── translate_symbols_query ───────────────────────────────────────────────
@@ -10682,8 +10945,8 @@ mod schema_normalization_tests {
             "DOCKER_REQUIRED hint must reference HTTP URL pattern"
         );
         assert!(
-            DOCKER_REQUIRED_HINT.contains(".iris-agentic-dev.toml"),
-            "DOCKER_REQUIRED hint must reference the toml config file"
+            DOCKER_REQUIRED_HINT.contains("iris_select_container"),
+            "DOCKER_REQUIRED hint must point at the tool that selects a server"
         );
         assert!(
             !DOCKER_REQUIRED_HINT.to_lowercase().contains("docker run"),

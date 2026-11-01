@@ -83,9 +83,23 @@ pub async fn run_class_tests(
     namespace: &str,
     class_name: &str,
 ) -> anyhow::Result<(bool, String)> {
+    run_class_tests_via(
+        &super::target::Direct { iris, client },
+        namespace,
+        class_name,
+    )
+    .await
+}
+
+/// [`run_class_tests`] over any [`BenchTarget`](super::target::BenchTarget).
+pub async fn run_class_tests_via<T: super::target::BenchTarget>(
+    target: &T,
+    namespace: &str,
+    class_name: &str,
+) -> anyhow::Result<(bool, String)> {
     let resolved = resolve_class_name(class_name);
     let code = build_run_all_code(&resolved);
-    let output = iris.execute_via_generator(&code, namespace, client).await?;
+    let output = target.run_objectscript(&code, namespace).await?;
     Ok(parse_run_all_output(&output))
 }
 

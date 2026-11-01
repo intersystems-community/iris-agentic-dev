@@ -198,6 +198,7 @@ fn effect_of(line: &str) -> String {
         "tls_verify" => "certificates are not validated".into(),
         "ssh_host" => "docker commands run on that SSH host".into(),
         "service_username" => "agent code runs as that service account".into(),
+        "mode" => "declared instances and their roles stop applying (a workbench)".into(),
         "connection" => "the server the settings here apply to".into(),
         "connection.namespace" | "connection.container" => "where on that server they apply".into(),
         k if k.starts_with("policy.") => {

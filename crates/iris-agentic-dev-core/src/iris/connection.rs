@@ -704,9 +704,15 @@ impl IrisConnection {
         super::endpoint::Endpoint::from_base_url(&self.base_url)
     }
 
-    /// A client for `kind` that checks this server's certificate as its own setting says.
+    /// A client for `kind` that checks this server's certificate as its own setting says, and
+    /// whose CSP session is this connection's account's own: another account on the same host
+    /// never shares it (171 S7).
     pub fn client(&self, kind: super::http::ClientKind) -> anyhow::Result<reqwest::Client> {
-        super::http::client_for(&self.tls, kind)
+        super::http::client_with_store(
+            &self.tls,
+            kind,
+            super::csp_session::store_for_primary(&self.base_url, &self.username),
+        )
     }
 
     /// Returns true if write-capable calls are allowed against *this* connection, judged from the
@@ -751,12 +757,14 @@ impl IrisConnection {
 
     /// Probe this connection: fetch IRIS version, Atelier API level, and SystemMode.
     pub async fn probe(&mut self) {
-        let client = match self.client(super::http::ClientKind::Probe) {
-            Ok(c) => c,
-            Err(_) => return,
+        // A jar of the probe's own, so no answer comes from a session another call opened.
+        let Ok(session) = super::http::probe_session(&self.tls) else {
+            return;
         };
+        let client = session.client.clone();
 
         let url = self.atelier_url("/");
+        let mut signed_in = false;
         if let Ok(resp) = client
             .get(&url)
             .basic_auth(&self.username, Some(&self.password))
@@ -764,6 +772,7 @@ impl IrisConnection {
             .await
         {
             let status = resp.status();
+            signed_in = status.is_success();
             if status.is_success() {
                 if let Ok(body) = crate::iris::http::capped_json::<serde_json::Value>(resp).await {
                     tracing::debug!("Atelier root response: {}", body);
@@ -784,6 +793,13 @@ impl IrisConnection {
         // Detect SystemMode via SQL against %SYS global (issue #26).
         // One extra round-trip at startup; result cached for session lifetime.
         let mode = self.detect_system_mode(&client).await;
+        session
+            .finish(
+                &self.tls,
+                &super::csp_session::store_for_primary(&self.base_url, &self.username),
+                signed_in,
+            )
+            .await;
         self.system_mode = mode;
         tracing::info!(
             host = %self.base_url,
@@ -876,6 +892,24 @@ impl IrisConnection {
         prefix: &str,
         args: &[Secret],
     ) -> anyhow::Result<(String, Option<String>)> {
+        // Strict read-only means iad compiles nothing on the server. The pipeline refuses every call
+        // it knows compiles; this refuses one it does not know, before any request is sent (S17).
+        // Its refusal names the runner, so it reads apart from the pipeline's: one here means a
+        // mode is missing from `write_gate::SCRATCH_MODES`.
+        if let Some((tool, from)) = crate::tools::target::call_read_only_source() {
+            tracing::warn!(
+                tool = %tool,
+                "scratch-class runner refused a call under strict read-only; the pipeline did not \
+                 know this call compiles (add its mode to write_gate::SCRATCH_MODES)"
+            );
+            #[cfg(feature = "testing")]
+            crate::testing::record_runner_refusal(&tool);
+            anyhow::bail!(
+                "READ_ONLY_STRICT (scratch-class runner): {tool} would compile a scratch class on \
+                 the server, and read-only mode is strict ({from}), so iad sent nothing. Tools \
+                 that compile nothing still work."
+            );
+        }
         let delays = [
             std::time::Duration::from_millis(100),
             std::time::Duration::from_millis(200),
@@ -1488,6 +1522,15 @@ impl IrisConnection {
         )
     }
 
+    /// The client the tools hold from startup: the connection's own (its certificate setting and
+    /// its account's CSP session), or, with none, the launch environment's [`Self::http_client`].
+    pub fn startup_client(conn: Option<&IrisConnection>) -> anyhow::Result<reqwest::Client> {
+        match conn {
+            Some(c) => c.client(super::http::ClientKind::Call),
+            None => Self::http_client(),
+        }
+    }
+
     /// A tool-call client for a connection whose certificate setting is `tls`, with the cookie jar
     /// of identity `key` (`csp_session::store_for_identity`). A service account's requests must not
     /// carry the primary's CSP cookie: IRIS reads the cookie before the `Authorization` header and
@@ -1537,8 +1580,8 @@ pub fn docker_exec_failure(container: &str, exit_code: Option<i32>, stderr: &str
     let advice = if detail.contains("No such container") {
         format!(
             "docker has no container named '{container}'. Check `docker ps --filter name={container}`, \
-             then point IRIS_CONTAINER (or the `container` key in .iris-agentic-dev.toml) at a \
-             container that is running."
+             then point IRIS_CONTAINER at a container that is running, or select one with \
+             iris_select_container."
         )
     } else if detail.contains("is not running")
         || detail.contains("is paused")
@@ -1774,6 +1817,7 @@ fn note_scratch_left(doc_name: &str, namespace: &str, why: &str) {
 /// its own thread with its own runtime and client, and the drop waits for it.
 struct ScratchGuard {
     url: String,
+    base_url: String,
     username: String,
     password: String,
     doc_name: String,
@@ -1789,6 +1833,7 @@ impl ScratchGuard {
                 namespace,
                 &format!("/doc/{}", urlencoding::encode(doc_name)),
             ),
+            base_url: conn.base_url.clone(),
             username: conn.username.clone(),
             password: conn.password.clone(),
             doc_name: doc_name.to_string(),
@@ -1821,6 +1866,7 @@ impl Drop for ScratchGuard {
             return;
         }
         let url = std::mem::take(&mut self.url);
+        let base_url = std::mem::take(&mut self.base_url);
         let user = std::mem::take(&mut self.username);
         let pass = std::mem::take(&mut self.password);
         let doc = std::mem::take(&mut self.doc_name);
@@ -1834,8 +1880,12 @@ impl Drop for ScratchGuard {
                 return;
             };
             rt.block_on(async move {
-                let Ok(client) = super::http::client_for(&tls, super::http::ClientKind::Call)
-                else {
+                // The account's own CSP store, so the delete joins its session and opens no new one.
+                let Ok(client) = super::http::client_with_store(
+                    &tls,
+                    super::http::ClientKind::Call,
+                    super::csp_session::store_for_primary(&base_url, &user),
+                ) else {
                     return;
                 };
                 let sent = client

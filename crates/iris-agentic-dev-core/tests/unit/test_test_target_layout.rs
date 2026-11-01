@@ -178,7 +178,8 @@ fn bin_crate_declares_the_testing_feature_its_targets_require() {
     let manifest = std::fs::read_to_string(bin_root().join("Cargo.toml")).expect("read Cargo.toml");
 
     assert!(
-        manifest.contains("[features]") && manifest.contains("testing = []"),
+        manifest.contains("[features]")
+            && manifest.contains("testing = [\"iris-agentic-dev-core/testing\"]"),
         "iris-agentic-dev-bin's test targets declare required-features = [\"testing\"], but the \
          crate has no `testing` feature. Cargo would resolve that to \"never build these targets\" \
          and `cargo test` would report ok having run none of them."

@@ -697,6 +697,92 @@ pub struct DebugParams {
     pub server: Option<String>,
 }
 
+/// Where a spot of a compiled routine came from: the class, its method, and the line of the
+/// method body.
+pub struct ClsLocation {
+    pub class: String,
+    pub method: String,
+    pub line: i64,
+}
+
+/// Maps `label+offset` of `routine` (or line `offset` when `label` is empty) back to the class
+/// source. `Ok(None)` when the routine has no source for that spot.
+pub async fn int_to_cls(
+    iris: &IrisConnection,
+    ns: &str,
+    client: &reqwest::Client,
+    routine: &str,
+    label: &str,
+    offset: i64,
+) -> Result<Option<ClsLocation>, String> {
+    let code = crate::objectscript::int_to_cls_code(routine, label, offset);
+    let out = iris
+        .execute_via_generator(&code, ns, client)
+        .await
+        .map_err(|e| e.to_string())?;
+    let out = out.trim();
+    if out.is_empty() {
+        return Ok(None);
+    }
+    let parts: Vec<&str> = out.split('|').collect();
+    match parts.as_slice() {
+        [class, method, line] => match line.parse() {
+            Ok(line) => Ok(Some(ClsLocation {
+                class: class.to_string(),
+                method: method.to_string(),
+                line,
+            })),
+            Err(_) => Err(format!("IRIS answered with an unreadable location: {out}")),
+        },
+        _ => Err(format!("IRIS answered with an unreadable location: {out}")),
+    }
+}
+
+/// The `.INT` lines of each method of `cls` (iris_debug `source_map`, and the older
+/// `debug_source_map`). `cls` is a class name, with or without a trailing `.cls`.
+pub async fn source_map(
+    iris: &IrisConnection,
+    ns: &str,
+    client: &reqwest::Client,
+    cls: &str,
+) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+    let cls = cls.strip_suffix(".cls").unwrap_or(cls);
+    if let Err(e) = crate::objectscript::validate_class_name(cls) {
+        return crate::tools::err_result(e);
+    }
+    let output = match iris
+        .execute_via_generator(&crate::objectscript::source_map_code(cls), ns, client)
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => return err_json("EXECUTION_FAILED", &e.to_string()),
+    };
+    let answer: serde_json::Value = match serde_json::from_str(output.trim()) {
+        Ok(v) => v,
+        Err(_) => {
+            return err_json(
+                "EXECUTION_FAILED",
+                &format!(
+                    "IRIS did not answer with JSON: {}",
+                    output.chars().take(200).collect::<String>()
+                ),
+            )
+        }
+    };
+    if answer["found"] != 1 {
+        return err_json(
+            "NOT_FOUND",
+            &format!("Class '{cls}' is not compiled in namespace {ns}"),
+        );
+    }
+    ok_json(serde_json::json!({
+        "success": true,
+        "class": cls,
+        "cls_name": cls,
+        "source_map": answer["source_map"],
+    }))
+}
+
 pub async fn handle_iris_debug(
     iris: &IrisConnection,
     client: &reqwest::Client,
@@ -708,15 +794,25 @@ pub async fn handle_iris_debug(
     match p.action.as_str() {
         "map_int" => {
             let err = p.error_string.as_deref().unwrap_or("");
-            let code = format!(
-                "set err={} set routine=$piece($piece(err,\"^\",2),\".\",1) set offset=$piece(err,\"+\",2) set offset=$piece(offset,\"^\",1) write ##class(%Studio.Debugger).SourceLine(routine,+offset)",
-                crate::objectscript::os_str_expr(err)
-            );
-            match iris.execute_via_generator(&code, ns, client).await {
-                Ok(output) => ok_json(
-                    serde_json::json!({"success": true, "error_string": err, "source_location": output.trim()}),
-                ),
-                Err(e) => err_json("EXECUTION_FAILED", &e.to_string()),
+            let Some((label, routine, offset)) = crate::tools::parse_iris_error_string(err) else {
+                return err_json(
+                    "INVALID_PARAMS",
+                    "error_string must name the place of a runtime error, like <DIVIDE>Method+2^Pkg.Class.1",
+                );
+            };
+            match int_to_cls(iris, ns, client, &routine, &label, offset).await {
+                Ok(hit) => ok_json(serde_json::json!({
+                    "success": true,
+                    "error_string": err,
+                    "mapping_available": hit.is_some(),
+                    "class_name": hit.as_ref().map(|h| h.class.as_str()),
+                    "method": hit.as_ref().map(|h| h.method.as_str()),
+                    "line": hit.as_ref().map(|h| h.line),
+                    "source_location": hit
+                        .map(|h| format!("{}+{}^{}", h.method, h.line, h.class))
+                        .unwrap_or_default(),
+                })),
+                Err(e) => err_json("EXECUTION_FAILED", &e),
             }
         }
         "error_logs" => {
@@ -738,22 +834,7 @@ pub async fn handle_iris_debug(
                 Err(e) => err_json("EXECUTION_FAILED", &e.to_string()),
             }
         }
-        "source_map" => {
-            let cls = p.class_name.as_deref().unwrap_or("");
-            if let Err(e) = crate::objectscript::validate_class_name(cls) {
-                return crate::tools::err_result(e);
-            }
-            let code = format!(
-                "set map=\"\" set line=1 do {{set int=##class(%Studio.Debugger).MapToINT({cls_e},line,.intline) if int=\"\" quit set map=map_line_\"->\"_intline_\",\" set line=line+1 }} while 1 write map",
-                cls_e = crate::objectscript::os_str_expr(cls)
-            );
-            match iris.execute_via_generator(&code, ns, client).await {
-                Ok(output) => ok_json(
-                    serde_json::json!({"success": true, "class": cls, "mapping": output.trim()}),
-                ),
-                Err(e) => err_json("EXECUTION_FAILED", &e.to_string()),
-            }
-        }
+        "source_map" => source_map(iris, ns, client, p.class_name.as_deref().unwrap_or("")).await,
         other => err_json(
             "INVALID_PARAM",
             &format!(

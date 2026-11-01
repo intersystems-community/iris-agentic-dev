@@ -97,12 +97,13 @@ impl TlsSetting {
     }
 }
 
-/// What a client is for: its timeout and whether it joins the process's CSP session.
+/// What a client is for: its timeout and whether it joins a CSP session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClientKind {
-    /// Tool calls: 30 s, in the shared CSP session.
+    /// Tool calls: 30 s, in the CSP session of the connection's account.
     Call,
-    /// The startup probe: connect in 5 s, answer in 10 s, in the shared CSP session.
+    /// A connection probe: connect in 5 s, answer in 10 s. Built by [`probe_session`], which gives it
+    /// a CSP jar of its own.
     Probe,
     /// `iris_search`'s synchronous request: no client timeout (the request sets its own), no cookies.
     Search,
@@ -112,26 +113,35 @@ pub enum ClientKind {
     Batch,
     /// A request whose raw `Set-Cookie` headers are wanted: no timeout, no cookies.
     Raw,
-    /// The logout that ends the shared CSP session at exit: in that session, timeout per request.
+    /// The logout that ends a CSP session at exit: in that session, timeout per request.
     Logout,
-    /// A probe of a host the agent named: validates always, no cookies, no redirects.
+    /// A probe of a host the agent named: validates always, no cookies.
     AdHoc,
     /// One credentialed request to a connection's own server (the service account's login probe):
-    /// that server's certificate setting, no cookies, no redirects, 10 s.
+    /// that server's certificate setting, no cookies, 10 s.
     OwnProbe,
 }
 
 fn base_builder(verify: bool) -> reqwest::ClientBuilder {
-    reqwest::Client::builder()
+    let b = reqwest::Client::builder();
+    // Test builds watch every request an IRIS client sends (`testing::take_requests`).
+    #[cfg(feature = "testing")]
+    let b = b.cookie_provider(Arc::new(observer::Watched(None)));
+    b
         // Identifies agent traffic in Web Gateway / IIS / Apache access logs and to
         // `%request.CgiEnvs("HTTP_USER_AGENT")` (FR-001, FR-009 of the attribution spec).
         .user_agent(user_agent(caller_mode()))
         .danger_accept_invalid_certs(!verify)
         .tcp_keepalive(Duration::from_secs(20))
+        // No client follows a redirect: each one carries a credential or a session cookie, and a
+        // redirect from a server to another host or port would take them along (171 S10). The 3xx
+        // comes back as the answer, and the caller reports it.
+        .redirect(reqwest::redirect::Policy::none())
 }
 
-/// A client for `kind` that checks (or not) the certificate as `tls` says. Clients that join a
-/// CSP session join the process's shared one.
+/// A client for `kind` that checks (or not) the certificate as `tls` says. A client that joins a CSP
+/// session joins the store of no particular account ([`super::csp_session::shared_cookie_store`]):
+/// use [`super::connection::IrisConnection::client`] for a connection's own.
 pub fn client_for(tls: &TlsSetting, kind: ClientKind) -> anyhow::Result<reqwest::Client> {
     client_with_store(tls, kind, super::csp_session::shared_cookie_store())
 }
@@ -146,38 +156,185 @@ pub fn client_with_store(
 ) -> anyhow::Result<reqwest::Client> {
     let b = base_builder(tls.verify);
     let b = match kind {
-        ClientKind::Call => b.timeout(Duration::from_secs(30)).cookie_provider(store),
-        ClientKind::Probe => b
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(10))
-            .cookie_provider(store),
+        ClientKind::Call => jar(b.timeout(Duration::from_secs(30)), store),
+        ClientKind::Probe => jar(
+            b.connect_timeout(Duration::from_secs(5))
+                .timeout(Duration::from_secs(10)),
+            store,
+        ),
         ClientKind::Scan => b.timeout(Duration::from_secs(2)),
         ClientKind::Search | ClientKind::Raw => b,
         ClientKind::Batch => b.timeout(Duration::from_secs(5)),
-        ClientKind::Logout => b.cookie_provider(store),
+        ClientKind::Logout => jar(b, store),
         ClientKind::AdHoc => base_builder(true)
             .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(10))
-            .redirect(reqwest::redirect::Policy::none()),
+            .timeout(Duration::from_secs(10)),
         ClientKind::OwnProbe => b
             .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(10))
-            .redirect(reqwest::redirect::Policy::none()),
+            .timeout(Duration::from_secs(10)),
     };
     Ok(b.build()?)
 }
 
-/// The tool-call client for a connection whose setting is `tls`, for callers that need a borrow
-/// (`IrisTools::http_client`). Two exist for the life of the process, one per answer.
-pub fn call_client_ref(tls: &TlsSetting) -> anyhow::Result<&'static reqwest::Client> {
-    static CHECKED: OnceLock<reqwest::Client> = OnceLock::new();
-    static UNCHECKED: OnceLock<reqwest::Client> = OnceLock::new();
-    let cell = if tls.verify { &CHECKED } else { &UNCHECKED };
-    if let Some(c) = cell.get() {
+/// `b` with `store` as its CSP cookie jar. Test builds wrap the jar so the request is still seen.
+fn jar(b: reqwest::ClientBuilder, store: Arc<CspSessionStore>) -> reqwest::ClientBuilder {
+    #[cfg(feature = "testing")]
+    return b.cookie_provider(Arc::new(observer::Watched(Some(store))));
+    #[cfg(not(feature = "testing"))]
+    b.cookie_provider(store)
+}
+
+/// The request watch of test builds. reqwest asks a client's cookie provider for the cookies of
+/// every request it sends, with the request's URL, so a provider on every IRIS client sees every
+/// request: the ones with a CSP jar delegate to it, the others hold no cookies, as before. It sees
+/// the URL and not the method. It is not compiled into a release build.
+#[cfg(feature = "testing")]
+mod observer {
+    use super::CspSessionStore;
+    use reqwest::cookie::CookieStore;
+    use reqwest::header::HeaderValue;
+    use reqwest::Url;
+    use std::sync::Arc;
+
+    pub struct Watched(pub Option<Arc<CspSessionStore>>);
+
+    impl CookieStore for Watched {
+        fn set_cookies(&self, headers: &mut dyn Iterator<Item = &HeaderValue>, url: &Url) {
+            if let Some(store) = &self.0 {
+                store.set_cookies(headers, url);
+            }
+        }
+
+        fn cookies(&self, url: &Url) -> Option<HeaderValue> {
+            crate::testing::record_request(url);
+            self.0.as_ref().and_then(|store| store.cookies(url))
+        }
+    }
+}
+
+/// A probe's client and the CSP session store that belongs to that probe alone.
+///
+/// IRIS reads `CSPSESSIONID` before `Authorization`, so a probe that joined the store of the account
+/// it signs in as was answered from the session already open for that account, and a wrong password
+/// read as `auth: true`. A probe holds a jar of its own: its requests carry the credential it was
+/// given and nothing else, and [`ProbeSession::end`] logs out any session the probe opened, so the
+/// probe leaves nothing behind for the web app's timeout to reap.
+pub struct ProbeSession {
+    pub client: reqwest::Client,
+    store: Arc<CspSessionStore>,
+}
+
+/// A [`ProbeSession`] whose certificate setting is `tls`.
+pub fn probe_session(tls: &TlsSetting) -> anyhow::Result<ProbeSession> {
+    let store = Arc::new(CspSessionStore::new());
+    let client = client_with_store(tls, ClientKind::Probe, store.clone())?;
+    Ok(ProbeSession { client, store })
+}
+
+impl ProbeSession {
+    /// Give the sessions the probe opened to `account`, the store of the account the probe signed
+    /// in as, when the sign-in worked and that store holds none; end them otherwise. A connection's
+    /// own startup probe opens the account's first session this way, so the calls that follow in
+    /// the same moment find a cookie and share one session, and not one each, which are never all
+    /// ended. A store that has a session keeps it: the probe never replaces what a call is using.
+    /// A sign-in that failed hands over nothing: a session IRIS opened for a refused credential is
+    /// not the account's. The check and the handover are one step ([`CspSessionStore::adopt_if_empty`]).
+    pub async fn finish(self, tls: &TlsSetting, account: &Arc<CspSessionStore>, signed_in: bool) {
+        if signed_in && account.adopt_if_empty(&self.store) {
+            return;
+        }
+        self.end(tls).await;
+    }
+
+    /// The probe's own store, for a test that puts a session in it.
+    #[cfg(feature = "testing")]
+    pub fn store(&self) -> &Arc<CspSessionStore> {
+        &self.store
+    }
+
+    /// End every CSP session the probe opened. A failure is not reported: the session times out.
+    pub async fn end(self, tls: &TlsSetting) {
+        let urls = self.store.logout_urls();
+        if urls.is_empty() {
+            return;
+        }
+        let Ok(client) = client_with_store(tls, ClientKind::Logout, self.store.clone()) else {
+            return;
+        };
+        for url in urls {
+            let _ = client.get(url).timeout(Duration::from_secs(3)).send().await;
+        }
+    }
+}
+
+/// How long a client of a public host (GitHub) waits to connect, and in all for one request.
+pub const PUBLIC_HOST_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+pub const PUBLIC_HOST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// A client for a public host (GitHub raw files and API) that is not IRIS: it carries no credential
+/// and no cookie store, and gives up after [`PUBLIC_HOST_CONNECT_TIMEOUT`] to connect and
+/// [`PUBLIC_HOST_TIMEOUT`] in all, so a host that never answers cannot hold a tool call for ever.
+/// `user_agent` names the caller.
+pub fn public_host_client(user_agent: &str) -> anyhow::Result<reqwest::Client> {
+    #[cfg(feature = "testing")]
+    let (connect, total) = match crate::testing::public_host_timeouts() {
+        Some(t) => (t, t),
+        None => (PUBLIC_HOST_CONNECT_TIMEOUT, PUBLIC_HOST_TIMEOUT),
+    };
+    #[cfg(not(feature = "testing"))]
+    let (connect, total) = (PUBLIC_HOST_CONNECT_TIMEOUT, PUBLIC_HOST_TIMEOUT);
+    Ok(reqwest::Client::builder()
+        .user_agent(user_agent)
+        .connect_timeout(connect)
+        .timeout(total)
+        .build()?)
+}
+
+/// A client for a host that is not IRIS (the docs site): it carries no credential of the
+/// operator's and no cookie store, follows at most three redirects and gives up after 30 s. Never
+/// use it for an IRIS server: those get the redirect-free clients above.
+pub fn external_client() -> anyhow::Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .user_agent(user_agent(caller_mode()))
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::limited(3))
+        .build()?)
+}
+
+/// The tool-call client for the account `username` on the server at `base_url`, whose certificate
+/// setting is `tls`, for callers that need a borrow (`IrisTools::http_client`). One is built per
+/// (answer, server, account) the first time it is asked for and kept for the life of the process:
+/// the set is bounded by the servers and accounts the operator configured, and each holds that
+/// account's own CSP cookie store (171 S7).
+pub fn call_client_ref(
+    tls: &TlsSetting,
+    base_url: &str,
+    username: &str,
+) -> anyhow::Result<&'static reqwest::Client> {
+    static CLIENTS: OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, &'static reqwest::Client>>,
+    > = OnceLock::new();
+    #[cfg(feature = "testing")]
+    if crate::testing::client_build_fails() {
+        anyhow::bail!("the client build was made to fail");
+    }
+    let key = format!(
+        "{}|{}",
+        tls.verify,
+        super::csp_session::primary_identity_key(base_url, username)
+    );
+    let mut clients = CLIENTS.get_or_init(Default::default).lock().unwrap();
+    if let Some(c) = clients.get(&key) {
         return Ok(c);
     }
-    let client = client_for(tls, ClientKind::Call)?;
-    Ok(cell.get_or_init(|| client))
+    let client = client_with_store(
+        tls,
+        ClientKind::Call,
+        super::csp_session::store_for_primary(base_url, username),
+    )?;
+    let client: &'static reqwest::Client = Box::leak(Box::new(client));
+    clients.insert(key, client);
+    Ok(client)
 }
 
 // ── Identification ──────────────────────────────────────────────────────────────────────────
@@ -201,10 +358,7 @@ pub struct IdentifyClient(reqwest::Client);
 impl IdentifyClient {
     pub fn new(tls: &TlsSetting, timeout: Duration) -> anyhow::Result<Self> {
         Ok(IdentifyClient(
-            base_builder(tls.verify)
-                .timeout(timeout)
-                .redirect(reqwest::redirect::Policy::none())
-                .build()?,
+            base_builder(tls.verify).timeout(timeout).build()?,
         ))
     }
 
@@ -288,6 +442,10 @@ impl std::error::Error for ResponseTooLarge {}
 #[derive(Debug)]
 pub enum BodyError {
     TooLarge(ResponseTooLarge),
+    /// A body from a host that is not IRIS passed [`MAX_EXTERNAL_BODY_BYTES`].
+    ExternalTooLarge {
+        limit: usize,
+    },
     Transport(reqwest::Error),
     /// The body was read and is not the JSON asked for.
     Json(serde_json::Error),
@@ -297,6 +455,10 @@ impl std::fmt::Display for BodyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BodyError::TooLarge(e) => e.fmt(f),
+            BodyError::ExternalTooLarge { limit } => write!(
+                f,
+                "the response was larger than {limit} bytes, the most iad reads from a host that is not IRIS"
+            ),
             BodyError::Transport(e) => e.fmt(f),
             BodyError::Json(e) => e.fmt(f),
         }
@@ -322,24 +484,50 @@ fn note_oversize(e: &ResponseTooLarge) {
 
 /// The whole body, or [`BodyError::TooLarge`] as soon as it is known to pass the cap: from the
 /// declared length before a byte is read, or from the bytes read so far when there is none.
-pub async fn capped_bytes(mut resp: reqwest::Response) -> Result<Vec<u8>, BodyError> {
+pub async fn capped_bytes(resp: reqwest::Response) -> Result<Vec<u8>, BodyError> {
     let limit = max_response_bytes();
-    let too_large = || {
-        let e = ResponseTooLarge { limit };
-        note_oversize(&e);
-        BodyError::TooLarge(e)
-    };
+    read_up_to(resp, limit).await.map_err(|e| match e {
+        BodyError::ExternalTooLarge { limit } => {
+            let e = ResponseTooLarge { limit };
+            note_oversize(&e);
+            BodyError::TooLarge(e)
+        }
+        other => other,
+    })
+}
+
+/// The body up to `limit` bytes; [`BodyError::ExternalTooLarge`] (naming `limit`) beyond it.
+async fn read_up_to(mut resp: reqwest::Response, limit: usize) -> Result<Vec<u8>, BodyError> {
     if resp.content_length().is_some_and(|n| n > limit as u64) {
-        return Err(too_large());
+        return Err(BodyError::ExternalTooLarge { limit });
     }
     let mut body = Vec::new();
     while let Some(chunk) = resp.chunk().await.map_err(BodyError::Transport)? {
         if body.len() + chunk.len() > limit {
-            return Err(too_large());
+            return Err(BodyError::ExternalTooLarge { limit });
         }
         body.extend_from_slice(&chunk);
     }
     Ok(body)
+}
+
+/// The most bytes iad reads from one answer of a host that is not IRIS: an LLM API, GitHub, the
+/// docs site (171 S11). The answers are a JSON reply, a manifest or a skill file, all far below
+/// this; a host that sends more is broken or hostile, and the read would otherwise fill memory.
+pub const MAX_EXTERNAL_BODY_BYTES: usize = 8 * 1024 * 1024;
+
+/// [`reqwest::Response::text`] for a host that is not IRIS, with [`MAX_EXTERNAL_BODY_BYTES`].
+pub async fn external_text(resp: reqwest::Response) -> Result<String, BodyError> {
+    let bytes = read_up_to(resp, MAX_EXTERNAL_BODY_BYTES).await?;
+    Ok(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// [`reqwest::Response::json`] for a host that is not IRIS, with [`MAX_EXTERNAL_BODY_BYTES`].
+pub async fn external_json<T: serde::de::DeserializeOwned>(
+    resp: reqwest::Response,
+) -> Result<T, BodyError> {
+    let bytes = read_up_to(resp, MAX_EXTERNAL_BODY_BYTES).await?;
+    serde_json::from_slice(&bytes).map_err(BodyError::Json)
 }
 
 /// [`reqwest::Response::text`] with the cap. Invalid UTF-8 is replaced, as `text` does.

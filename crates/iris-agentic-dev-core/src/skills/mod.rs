@@ -62,9 +62,7 @@ impl SkillRegistry {
     }
 
     pub async fn load_from_github(&mut self, owner_repo: &str) -> Result<()> {
-        let client = Client::builder()
-            .user_agent("iris-agentic-dev/0.3.1")
-            .build()?;
+        let client = crate::iris::http::public_host_client("iris-agentic-dev/0.3.1")?;
 
         let (owner, repo) = owner_repo
             .split_once('/')
@@ -164,7 +162,7 @@ async fn fetch_text(url: &str, client: &Client) -> Result<String> {
     if !resp.status().is_success() {
         anyhow::bail!("HTTP {} fetching {}", resp.status(), url);
     }
-    Ok(resp.text().await?)
+    Ok(crate::iris::http::external_text(resp).await?)
 }
 
 fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {

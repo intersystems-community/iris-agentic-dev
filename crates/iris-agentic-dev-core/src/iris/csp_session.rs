@@ -1,14 +1,17 @@
-//! One CSP cookie store per process, and the logout that ends its sessions (132 B1).
+//! One CSP cookie store per identity, and the logout that ends their sessions (132 B1, 171 S7).
 //!
 //! Each `reqwest::Client` built with `.cookie_store(true)` gets a jar of its own, so the probe,
 //! `client` and `exec_client` each opened a CSP session on `/api/atelier`, and none was ever ended.
 //! A session holds its slot for the web app's timeout (3600 s by default): ten `iad exec` calls
 //! left twenty sessions on 139, and two ladder tasks ran its key into `<LICENSE LIMIT EXCEEDED>`.
 //!
-//! Every IRIS client now takes [`shared_cookie_store`], so a process holds one session per web
-//! application. The store keeps the path of each `CSPSESSIONID-*` cookie IRIS sets, and
-//! [`logout_blocking`] sends `?IRISLogout=end` to each one on the way out. IRIS ends the session
-//! named by the cookie and answers 401, so the reply is not checked.
+//! Every client of a connection takes the store of its (endpoint, user) ([`store_for_primary`]), so
+//! a process holds one session per web application and account, and two accounts on one host never
+//! share a cookie: IRIS reads `CSPSESSIONID` before `Authorization`, so a shared jar would run the
+//! second account's call in the first account's session. [`shared_cookie_store`] is left for a
+//! client that belongs to no connection. Each store keeps the path of each `CSPSESSIONID-*` cookie
+//! IRIS sets, and [`logout_blocking`] sends `?IRISLogout=end` to each one on the way out. IRIS ends
+//! the session named by the cookie and answers 401, so the reply is not checked.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, LazyLock, Mutex};
@@ -40,6 +43,58 @@ impl CspSessionStore {
             .unwrap()
             .iter()
             .map(|base| format!("{base}?IRISLogout=end"))
+            .collect()
+    }
+
+    /// True when this store has seen no CSP session.
+    pub fn is_empty(&self) -> bool {
+        self.sessions.lock().unwrap().is_empty()
+    }
+
+    /// Take over the sessions `other` holds: the cookies it sends to each session's URL, and the
+    /// record of where each lives, so this store's logout ends them.
+    pub fn adopt(&self, other: &CspSessionStore) {
+        for (_, url, headers) in other.handover() {
+            self.set_cookies(&mut headers.iter(), &url);
+        }
+    }
+
+    /// [`Self::adopt`] when this store has seen no CSP session, as one step: the check and the
+    /// handover hold this store's session record, so no session another call opens in between is
+    /// joined by a second one. `true` when it adopted.
+    pub fn adopt_if_empty(&self, other: &CspSessionStore) -> bool {
+        let handover = other.handover();
+        let mut mine = self.sessions.lock().unwrap();
+        if !mine.is_empty() {
+            return false;
+        }
+        for (base, url, headers) in handover {
+            self.jar.set_cookies(&mut headers.iter(), &url);
+            mine.insert(base);
+        }
+        true
+    }
+
+    /// Each session `self` holds, as its record, its URL and the `Set-Cookie` headers that give
+    /// another store the cookies `self` sends there.
+    fn handover(&self) -> Vec<(String, Url, Vec<HeaderValue>)> {
+        let bases: Vec<String> = self.sessions.lock().unwrap().iter().cloned().collect();
+        bases
+            .into_iter()
+            .filter_map(|base| {
+                let url = Url::parse(&base).ok()?;
+                let sent = self.jar.cookies(&url)?;
+                let sent = sent.to_str().ok()?.to_string();
+                let headers = sent
+                    .split(';')
+                    .map(str::trim)
+                    .filter(|pair| pair.contains('='))
+                    .filter_map(|pair| {
+                        HeaderValue::from_str(&format!("{pair}; Path={}", url.path())).ok()
+                    })
+                    .collect();
+                Some((base, url, headers))
+            })
             .collect()
     }
 
@@ -101,7 +156,7 @@ static SHARED: LazyLock<Arc<CspSessionStore>> = LazyLock::new(|| Arc::new(CspSes
 static IDENTITY_STORES: LazyLock<Mutex<std::collections::BTreeMap<String, Arc<CspSessionStore>>>> =
     LazyLock::new(Default::default);
 
-/// The store every client of the primary identity in this process shares.
+/// The store of a client that belongs to no connection (and so holds no account's session).
 pub fn shared_cookie_store() -> Arc<CspSessionStore> {
     SHARED.clone()
 }
@@ -148,6 +203,23 @@ pub fn store_for_identity(key: &str) -> Arc<CspSessionStore> {
         .entry(key.to_string())
         .or_default()
         .clone()
+}
+
+/// The registry key of the primary account `username` at `base_url`: scheme, host, port and prefix
+/// as the connection holds them, and the user without regard to case.
+pub fn primary_identity_key(base_url: &str, username: &str) -> String {
+    format!(
+        "primary|{}|{}",
+        base_url.trim_end_matches('/').to_ascii_lowercase(),
+        username.to_ascii_lowercase()
+    )
+}
+
+/// The store every client of the account `username` on the server at `base_url` shares (171 S7).
+/// Two accounts on one host get two stores, and a service account has a third, so no request
+/// carries a session another account opened.
+pub fn store_for_primary(base_url: &str, username: &str) -> Arc<CspSessionStore> {
+    store_for_identity(&primary_identity_key(base_url, username))
 }
 
 /// The `?IRISLogout=end` URL of every CSP session any registered store has seen.

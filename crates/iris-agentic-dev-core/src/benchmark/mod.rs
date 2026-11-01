@@ -6,6 +6,9 @@ pub mod cli_dispatch;
 pub mod container;
 pub mod llm;
 pub mod schema_tasks;
+pub mod target;
+
+use target::{BenchTarget, Direct};
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -310,8 +313,18 @@ pub async fn run_task(
     task: &BenchmarkTask,
     skill_content: &str,
 ) -> TaskResult {
+    run_task_via(&Direct { iris, client }, namespace, task, skill_content).await
+}
+
+/// [`run_task`] over any [`BenchTarget`]: the `benchmark` command passes the gated one.
+pub async fn run_task_via<T: BenchTarget>(
+    target: &T,
+    namespace: &str,
+    task: &BenchmarkTask,
+    skill_content: &str,
+) -> TaskResult {
     let start = std::time::Instant::now();
-    let result = run_task_inner(iris, client, namespace, task, skill_content).await;
+    let result = run_task_inner(target, namespace, task, skill_content).await;
     let elapsed_s = start.elapsed().as_secs_f64();
     match result {
         Ok(outcome) => TaskResult {
@@ -337,9 +350,8 @@ pub async fn run_task(
     }
 }
 
-async fn run_task_inner(
-    iris: &crate::iris::connection::IrisConnection,
-    client: &reqwest::Client,
+async fn run_task_inner<T: BenchTarget>(
+    target: &T,
     namespace: &str,
     task: &BenchmarkTask,
     skill_content: &str,
@@ -350,28 +362,18 @@ async fn run_task_inner(
     for file in &task.initial_code.files {
         let class_name = extract_class_name(&file.content)
             .ok_or_else(|| anyhow::anyhow!("no Class declaration found in {}", file.path))?;
-        container::write_and_compile(
-            iris,
-            client,
-            namespace,
-            &format!("{class_name}.cls"),
-            &file.content,
-        )
-        .await?;
+        target
+            .write_and_compile(namespace, &format!("{class_name}.cls"), &file.content)
+            .await?;
     }
 
     let fixed_classes = llm::propose_fix(task, skill_content).await?;
     for fixed in &fixed_classes {
         let class_name = extract_class_name(fixed)
             .ok_or_else(|| anyhow::anyhow!("LLM fix contained no Class declaration"))?;
-        let errors = container::write_and_compile(
-            iris,
-            client,
-            namespace,
-            &format!("{class_name}.cls"),
-            fixed,
-        )
-        .await?;
+        let errors = target
+            .write_and_compile(namespace, &format!("{class_name}.cls"), fixed)
+            .await?;
         if !errors.is_empty() && task.success_criteria.compile_success {
             return Ok(TaskOutcome::Fail);
         }
@@ -379,16 +381,15 @@ async fn run_task_inner(
 
     let test_class_name = extract_class_name(&task.test_code.content)
         .ok_or_else(|| anyhow::anyhow!("no Class declaration found in test_code"))?;
-    container::write_and_compile(
-        iris,
-        client,
-        namespace,
-        &format!("{test_class_name}.cls"),
-        &task.test_code.content,
-    )
-    .await?;
+    target
+        .write_and_compile(
+            namespace,
+            &format!("{test_class_name}.cls"),
+            &task.test_code.content,
+        )
+        .await?;
     let (passed, _detail) =
-        container::run_class_tests(iris, client, namespace, &test_class_name).await?;
+        container::run_class_tests_via(target, namespace, &test_class_name).await?;
     if passed == task.success_criteria.tests_pass {
         Ok(TaskOutcome::Pass)
     } else {
@@ -407,10 +408,32 @@ pub async fn run_suite(
     skill_content: &str,
     iris_version: &str,
 ) -> BenchmarkResult {
+    run_suite_via(
+        &Direct { iris, client },
+        namespace,
+        tasks,
+        skill_content,
+        iris_version,
+    )
+    .await
+}
+
+/// [`run_suite`] over any [`BenchTarget`]. The suite stops at the task that met a refusal: the
+/// tasks after it would meet the same gate, and a table of errored tasks is not a result.
+pub async fn run_suite_via<T: BenchTarget>(
+    target: &T,
+    namespace: &str,
+    tasks: &[BenchmarkTask],
+    skill_content: &str,
+    iris_version: &str,
+) -> BenchmarkResult {
     let start = std::time::Instant::now();
     let mut task_results = Vec::with_capacity(tasks.len());
     for task in tasks {
-        task_results.push(run_task(iris, client, namespace, task, skill_content).await);
+        task_results.push(run_task_via(target, namespace, task, skill_content).await);
+        if target.refused() {
+            break;
+        }
     }
     BenchmarkResult::from_task_results(
         task_results,
@@ -450,14 +473,27 @@ pub async fn acquire_lock(
     container_name: &str,
     max_age_secs: u64,
 ) -> LockResult {
+    acquire_lock_via(
+        &Direct { iris, client },
+        namespace,
+        container_name,
+        max_age_secs,
+    )
+    .await
+}
+
+/// [`acquire_lock`] over any [`BenchTarget`].
+pub async fn acquire_lock_via<T: BenchTarget>(
+    target: &T,
+    namespace: &str,
+    container_name: &str,
+    max_age_secs: u64,
+) -> LockResult {
     let safe_lit = crate::objectscript::os_lit_inner(container_name);
     let read_code = format!(
         "set ts=$Get(^IRISDEV(\"telemetry\",\"benchmark_lock\",\"{safe_lit}\"))\nwrite ts,!"
     );
-    let existing = iris
-        .execute_via_generator(&read_code, namespace, client)
-        .await
-        .ok();
+    let existing = target.run_objectscript(&read_code, namespace).await.ok();
     let age_secs = existing.and_then(|out| {
         let trimmed = out.trim();
         if trimmed.is_empty() {
@@ -477,9 +513,7 @@ pub async fn acquire_lock(
         let now = chrono::Utc::now().to_rfc3339();
         let write_code =
             format!("set ^IRISDEV(\"telemetry\",\"benchmark_lock\",\"{safe_lit}\")=\"{now}\"\n");
-        let _ = iris
-            .execute_via_generator(&write_code, namespace, client)
-            .await;
+        let _ = target.run_objectscript(&write_code, namespace).await;
     }
     decision
 }
@@ -491,9 +525,18 @@ pub async fn release_lock(
     namespace: &str,
     container_name: &str,
 ) {
+    release_lock_via(&Direct { iris, client }, namespace, container_name).await
+}
+
+/// [`release_lock`] over any [`BenchTarget`].
+///
+/// The lock is emptied, not killed: a literal `Kill ^IRISDEV(...)` is a destructive call to the
+/// gates, and a run that is allowed to write classes should not need the destructive tier to give
+/// its lock back. [`acquire_lock_via`] reads an empty value as no lock.
+pub async fn release_lock_via<T: BenchTarget>(target: &T, namespace: &str, container_name: &str) {
     let safe_lit = crate::objectscript::os_lit_inner(container_name);
-    let code = format!("kill ^IRISDEV(\"telemetry\",\"benchmark_lock\",\"{safe_lit}\")\n");
-    let _ = iris.execute_via_generator(&code, namespace, client).await;
+    let code = format!("set ^IRISDEV(\"telemetry\",\"benchmark_lock\",\"{safe_lit}\")=\"\"\n");
+    let _ = target.run_objectscript(&code, namespace).await;
 }
 
 #[cfg(test)]

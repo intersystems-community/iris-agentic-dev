@@ -4,7 +4,6 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import which from "which";
-import * as crypto from "crypto";
 import { downloadBinary } from "./download";
 import {
   getAssetSha256,
@@ -15,6 +14,7 @@ import {
 import {
   applyRegistrations,
   installStableBinary,
+  matchesPin,
   PinnedEntry,
   registrationFiles,
   scanRegistrations,
@@ -23,25 +23,6 @@ import {
 /** Seams for tests; the extension itself always uses the defaults. */
 export interface InstallDeps {
   download: typeof downloadBinary;
-}
-
-function sha256File(file: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash("sha256");
-    fs.createReadStream(file)
-      .on("data", (chunk) => hash.update(chunk))
-      .on("error", reject)
-      .on("end", () => resolve(hash.digest("hex")));
-  });
-}
-
-/** True when `file` exists and hashes to `expected`. Never throws. */
-async function matchesPin(file: string, expected: string): Promise<boolean> {
-  try {
-    return (await sha256File(file)) === expected;
-  } catch {
-    return false;
-  }
 }
 
 // `iris-agentic-dev --version` prints "iris-agentic-dev 0.9.6".
@@ -220,7 +201,7 @@ async function _resolve(
           await fs.promises.unlink(binaryPath + ".old").catch(() => {});
         }
         log.info(`iris-agentic-dev: using cached binary v${version}: ${binaryPath}`);
-        return publish(context, binaryPath, storageDir, version, log);
+        return publish(context, binaryPath, storageDir, version, pinned, log);
       } catch {
         // Not executable despite the version marker — fall through to download
       }
@@ -287,7 +268,7 @@ async function _resolve(
     await fs.promises.mkdir(storageDir, { recursive: true });
     await fs.promises.writeFile(versionFile, version, "utf8");
     log.info(`iris-agentic-dev: installed v${version} at ${binaryPath}`);
-    return publish(context, binaryPath, storageDir, version, log);
+    return publish(context, binaryPath, storageDir, version, pinned, log);
   }
 
   // Download failed — fall back to a cached copy, but only one that matches
@@ -314,7 +295,7 @@ async function _resolve(
       log.warn(
         `iris-agentic-dev: falling back to cached binary v${cachedVersion || version}: ${binaryPath}`
       );
-      return publish(context, binaryPath, storageDir, version, log);
+      return publish(context, binaryPath, storageDir, version, pinned, log);
     } catch {
       // not executable; fall through
     }
@@ -338,18 +319,21 @@ async function publish(
   binaryPath: string,
   storageDir: string,
   version: string,
+  pinned: string,
   log: vscode.LogOutputChannel
 ): Promise<string> {
   const stable = await installStableBinary(
     binaryPath,
     storageDir,
     version,
-    process.platform
+    process.platform,
+    pinned
   );
   if (!stable) {
     log.warn(
       `iris-agentic-dev: could not update ${path.join(storageDir, "bin")} ` +
-        "(a running copy may be locked); will retry on next activation."
+        "(a running copy may be locked, or it did not match the pinned SHA-256); " +
+        "launching the verified copy in the version directory. Will retry on next activation."
     );
     return binaryPath;
   }

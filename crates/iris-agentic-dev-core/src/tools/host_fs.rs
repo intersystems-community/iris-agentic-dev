@@ -8,8 +8,9 @@
 //! directory of the workspace file the walk up from the working directory finds, the working
 //! directory. It is made canonical. When none of those is a usable place there is no project
 //! directory and every host path is refused (the stricter reading): a directory that does not
-//! exist, the filesystem root, and the home directory (it holds the operator file and every
-//! other project) are not usable.
+//! exist, a broad root (the filesystem root, `/Users`, `/home`, `/tmp`, any directory that holds the
+//! home directory) and the home directory itself (it holds the operator file and every other
+//! project) are not usable.
 //!
 //! **A path is allowed** when, with symlinks resolved, it is inside the project directory. A
 //! path with a `..` segment is refused whether or not it lands inside, a link that leaves the
@@ -58,14 +59,16 @@ impl PathRefusal {
 /// The project directory a load works in, or `None` when there is none (see the module comment).
 pub fn project_root(inputs: &LoadInputs) -> Option<PathBuf> {
     let root = std::fs::canonicalize(crate::iris::config_sources::workspace_root(inputs)).ok()?;
-    if !root.is_dir() || root.parent().is_none() {
+    if !root.is_dir() {
         return None;
     }
     let home = inputs
         .home
         .as_deref()
         .and_then(|h| std::fs::canonicalize(h).ok());
-    if home.as_deref() == Some(root.as_path()) {
+    if home.as_deref() == Some(root.as_path())
+        || crate::iris::config_sources::is_broad_root(&root, home.as_deref())
+    {
         return None;
     }
     Some(root)

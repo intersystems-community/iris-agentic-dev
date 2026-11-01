@@ -95,6 +95,10 @@ pub struct ResolvedCall {
     pub class: WriteClass,
     pub categories: Vec<ToolCategory>,
     pub kind: TargetKind,
+    /// Why the call's server leg is not run, for a tool that falls back to what it holds without
+    /// it ([`write_gate::falls_back_to_bundled`]): the policy refused it or the configuration does
+    /// not parse. `{error_code, kind, lift, server, message}`.
+    pub server_leg_skipped: Option<Value>,
     pub primary: ResolvedServer,
     /// The second server of `compare_*`.
     pub others: Vec<ResolvedServer>,
@@ -144,6 +148,19 @@ impl ResolvedCall {
 tokio::task_local! {
     /// The call in progress. Set by `dispatch_gated` around the tail.
     pub(crate) static CALL_TARGET: Arc<ResolvedCall>;
+}
+
+/// The tool of the call in progress and the file or launch setting that made it strict read-only,
+/// or `None` when it is not strict or no call is in progress.
+pub(crate) fn call_read_only_source() -> Option<(String, String)> {
+    CALL_TARGET
+        .try_with(|t| {
+            t.config
+                .read_only_source()
+                .map(|from| (t.tool.clone(), from))
+        })
+        .ok()
+        .flatten()
 }
 
 /// The tool, server and class of the call in progress, for an elicitation entry it opens.
@@ -244,6 +261,50 @@ fn input_refusal(code: &str, message: String) -> Early {
 
 /// The body of the `READ_ONLY_STRICT` refusal. `from` names the file or launch setting that asked
 /// for strict read-only.
+/// The refusal a one-shot command gets under `read_only = "strict"`, or `None` when strict is off.
+///
+/// The CLI commands that compile a scratch class (`capability-matrix`, `benchmark`) do not go
+/// through the MCP server's pipeline, so they ask the same configuration the pipeline would: the
+/// operator file, the project file and `IAD_READ_ONLY`, read the way `for_cli` reads them. The body
+/// is the one the MCP server returns for a scratch-class tool, with its `refusal` object.
+pub fn cli_strict_refusal(tool: &str) -> Option<Value> {
+    let inputs = crate::iris::config_sources::LoadInputs::from_process(None, None);
+    let snapshot = crate::iris::config_sources::ConfigSnapshot::load(&inputs);
+    let from = snapshot.read_only_source()?;
+    Some(crate::policy::refusal::classify_refusal(
+        read_only_strict_body(tool, &from),
+        "default",
+        &[],
+    ))
+}
+
+/// A gate's answer as a JSON body.
+fn result_body(result: &CallToolResult) -> Value {
+    result
+        .structured_content
+        .clone()
+        .or_else(|| {
+            result
+                .content
+                .iter()
+                .find_map(|c| c.as_text())
+                .and_then(|t| serde_json::from_str(&t.text).ok())
+        })
+        .unwrap_or_else(|| json!({}))
+}
+
+/// The part of a refusal (or a configuration error) a caller needs to know why a call's server
+/// leg was not run: the code, the kind and what lifts it when the refusal carries them.
+fn skipped_leg(body: &Value) -> Value {
+    json!({
+        "error_code": body["error_code"],
+        "kind": body["refusal"]["kind"],
+        "lift": body["refusal"]["lift"],
+        "server": body["refusal"]["server"],
+        "message": body["message"].as_str().or_else(|| body["error"].as_str()),
+    })
+}
+
 fn read_only_strict_body(tool: &str, from: &str) -> Value {
     json!({
         "success": false,
@@ -251,6 +312,22 @@ fn read_only_strict_body(tool: &str, from: &str) -> Value {
         "error": format!(
             "{tool} runs through a scratch class that iad compiles on the server, and read-only \
              mode is strict ({from}), so it is off. Tools that compile nothing still work."
+        ),
+        "tool": tool,
+        "read_only_from": from,
+    })
+}
+
+/// Why a bundled-skill reader's server leg was skipped under strict read-only. It compiles nothing:
+/// it would read `^SKILLS` through the container's terminal.
+fn strict_reader_body(tool: &str, from: &str) -> Value {
+    json!({
+        "success": false,
+        "error_code": write_gate::ERR_READ_ONLY_STRICT,
+        "error": format!(
+            "{tool} would read the server's ^SKILLS through the container's terminal, and \
+             read-only mode is strict ({from}), so iad runs nothing on the server and only the \
+             bundled skills were searched."
         ),
         "tool": tool,
         "read_only_from": from,
@@ -393,6 +470,24 @@ fn refusal_reason(code: &str, server: &str, withheld: Option<&str>) -> String {
     }
 }
 
+/// The tools that change where later calls go, or start a container, and so meet `allow` and the
+/// environment template although they act on no server's data. They are the `Admin` tools that are
+/// local to the process: the read-only local tools (skills, the knowledge base, `iris_servers`)
+/// stay open under a narrow `allow`.
+const CONNECTION_TOOLS: &[&str] = &[
+    "iris_select_container",
+    "iris_start_sandbox",
+    "iris_containers",
+    "iris_add_server",
+    "iris_remove_server",
+    "iris_import_servers",
+    "iris_reload_pool",
+];
+
+fn is_connection_tool(tool: &str) -> bool {
+    CONNECTION_TOOLS.contains(&tool)
+}
+
 /// Categories the environment template can block. A server whose template nothing declared needs
 /// its system mode read before a call in one of them can be judged.
 fn template_matters(categories: &[ToolCategory]) -> bool {
@@ -438,6 +533,14 @@ impl IrisTools {
         CALL_TARGET.try_with(Arc::clone).map_err(|_| not_resolved())
     }
 
+    /// Why this call's server leg is skipped (R2b), or `None` when it runs. Outside a pipeline
+    /// scope the leg is not skipped by anything this knows of, and `None` is the answer.
+    pub fn server_leg_skipped(&self) -> Option<Value> {
+        self.target()
+            .ok()
+            .and_then(|t| t.server_leg_skipped.clone())
+    }
+
     /// The primary target's connection, or `IRIS_UNREACHABLE`.
     pub fn target_conn(&self) -> Result<Arc<IrisConnection>, McpError> {
         let t = self.target()?;
@@ -468,7 +571,8 @@ impl IrisTools {
                     .conn
                     .clone()
                     .ok_or_else(crate::tools::iris_unreachable)?;
-                Ok((conn, Arc::clone(&self.client)))
+                let client = self.conn_client(&conn)?;
+                Ok((conn, client))
             }
         }
     }
@@ -530,12 +634,12 @@ impl IrisTools {
                 user,
                 source,
             } => (conn.clone(), client.clone(), Some(user.clone()), *source),
-            ExecIdentity::Primary => (
-                conn,
-                Arc::clone(&self.client),
-                None,
-                IdentitySource::Primary,
-            ),
+            ExecIdentity::Primary => {
+                let client = self
+                    .conn_client(&conn)
+                    .map_err(|e| exec::ExecError::new("CLIENT_FAILED", e.message.to_string()))?;
+                (conn, client, None, IdentitySource::Primary)
+            }
         };
         Ok(exec::ExecContext {
             ssh_strict: conn.member.ssh_strict,
@@ -685,9 +789,16 @@ impl IrisTools {
         // answer from the previous load and let one more write through after the operator turned
         // writes off. FR-002 has to hold on the very next call, in both directions.
         self.check_reload().await;
+        // A reader that can answer from what it holds goes on with its server leg skipped.
+        let mut skipped: Option<Value> = None;
         if let Some(invalid) = self.config_invalid(name) {
-            self.record_refused(name);
-            return invalid.map(Into::into).map_err(Into::into);
+            if write_gate::falls_back_to_bundled(name) {
+                let refused = invalid?;
+                skipped = Some(skipped_leg(&result_body(&refused)));
+            } else {
+                self.record_refused(name);
+                return invalid.map(Into::into).map_err(Into::into);
+            }
         }
         let mut args = args;
         if let Some(a) = args.as_mut() {
@@ -696,7 +807,7 @@ impl IrisTools {
         let empty = Map::new();
         let arg_map = args.as_ref().unwrap_or(&empty);
 
-        let resolved = match self.resolve_call(name, arg_map).await {
+        let mut resolved = match self.resolve_call(name, arg_map).await {
             Ok(r) => r,
             Err(Early::Refused(result)) => {
                 self.record_refused(name);
@@ -709,24 +820,48 @@ impl IrisTools {
         // usability ones below. A caller with writes disabled who also misspells a key on
         // `global_kill` is told the gate refused, not that they made a typo.
         for server in resolved.servers() {
-            if let Some(Ok(refusal)) =
-                write_gate::gate_for_class(name, resolved.class, &server.gates)
-            {
-                self.record_refused(name);
-                return Ok(self.classify_on(server, refusal).into());
+            match write_gate::gate_for_class(name, resolved.class, &server.gates) {
+                Some(Ok(refusal)) => {
+                    self.record_refused(name);
+                    return Ok(self.classify_on(server, refusal).into());
+                }
+                // A gate that refused and then failed while saying so has still refused.
+                Some(Err(e)) => {
+                    self.record_refused(name);
+                    return Err(e.into());
+                }
+                None => {}
             }
         }
 
         // Strict read-only (R5 C15): a tool that can compile a scratch class on the server is
         // refused, whatever its write class. It comes after the write gate so a caller with writes
         // off hears about that first, and before the usability checks below.
+        //
+        // The three readers that can answer from the bundled skills would otherwise read `^SKILLS`
+        // through the container's terminal, which is code iad runs on the server too. Strict skips
+        // that leg the way a refused policy gate does, and the answer says why (S17).
+        let mut audited_blocked = false;
         if let Some(from) = resolved.config.read_only_source() {
-            if write_gate::is_scratch(name) {
+            if write_gate::is_scratch_call(name, Some(arg_map)) {
                 self.record_call(name, false);
                 return self
                     .refusal_on(&resolved.primary, read_only_strict_body(name, &from))
                     .map(Into::into)
                     .map_err(Into::into);
+            }
+            if write_gate::falls_back_to_bundled(name) && skipped.is_none() {
+                let refused =
+                    self.refusal_on(&resolved.primary, strict_reader_body(name, &from))?;
+                skipped = Some(skipped_leg(&result_body(&refused)));
+                self.audit_call(
+                    name,
+                    &resolved.primary,
+                    arg_map,
+                    "blocked",
+                    Some("read_only"),
+                );
+                audited_blocked = true;
             }
         }
 
@@ -769,15 +904,45 @@ impl IrisTools {
         // whole argument map, not a handler's subset of it.
         if resolved.kind == TargetKind::Iris {
             let full = Value::Object(arg_map.clone());
-            for server in resolved.servers() {
+            // With the configuration unreadable and the server leg already skipped, nothing here
+            // asks the server anything, so no server's policy has anything to judge.
+            let judge = skipped.is_none();
+            for server in resolved.servers().filter(|_| judge) {
                 if let Some(refusal) = self.policy_refusal_on(server, &resolved, &full) {
                     self.audit_call(name, server, arg_map, "blocked", Some("policy"));
+                    // A reader that falls back to what it holds is not refused: its server leg
+                    // is, and it says so. It is one call, so its one audit line is the refusal.
+                    if write_gate::falls_back_to_bundled(name) {
+                        audited_blocked = true;
+                        match refusal {
+                            Ok(r) => skipped = Some(skipped_leg(&result_body(&r))),
+                            Err(e) => {
+                                self.record_refused(name);
+                                return Err(e.into());
+                            }
+                        }
+                        break;
+                    }
                     self.record_refused(name);
-                    return Ok(refusal.into());
+                    return refusal.map(Into::into).map_err(Into::into);
                 }
             }
+        } else if is_connection_tool(name) {
+            // A tool that changes where later calls go or starts a container acts on no server's
+            // data, so the data gates do not apply. `allow` and the environment template do: the
+            // default server's policy judges it, because the call names no other server and what
+            // it changes is what that server's calls will reach.
+            let server = &resolved.primary;
+            if let Some(refusal) = self.connection_tool_refusal(server, &resolved) {
+                self.audit_call(name, server, arg_map, "blocked", Some("policy"));
+                self.record_refused(name);
+                return refusal.map(Into::into).map_err(Into::into);
+            }
         }
-        self.audit_call(name, &resolved.primary, arg_map, "allowed", None);
+        if !audited_blocked {
+            self.audit_call(name, &resolved.primary, arg_map, "allowed", None);
+        }
+        resolved.server_leg_skipped = skipped;
 
         // T019: warn once when the connection is docker_only so operators know that HTTP headers
         // (including User-Agent) cannot be set on this transport.
@@ -867,6 +1032,13 @@ impl IrisTools {
         server: &ResolvedServer,
         gate: Value,
     ) -> Result<CallToolResult, McpError> {
+        #[cfg(feature = "testing")]
+        if crate::testing::refusal_build_fails() {
+            return Err(McpError::internal_error(
+                "the call was refused, and the refusal could not be built",
+                None,
+            ));
+        }
         let body = match gate {
             Value::Object(mut o) => {
                 o.entry("server_name").or_insert(json!(server.key));
@@ -889,18 +1061,24 @@ impl IrisTools {
 
     /// The policy gates of one server, as a refusal result: environment template, bulk PHI, system
     /// blocklist, PHI names, `allow`, then the role gate.
+    ///
+    /// `Some(Err(_))` is a refusal whose body could not be built. The call does not run: a gate
+    /// that decided to refuse and then failed while saying so has still refused.
     fn policy_refusal_on(
         &self,
         server: &ResolvedServer,
         call: &ResolvedCall,
         args: &Value,
-    ) -> Option<CallToolResult> {
-        let refuse = |gate: Value| self.refusal_on(server, gate).ok();
+    ) -> Option<Result<CallToolResult, McpError>> {
+        let refuse = |gate: Value| Some(self.refusal_on(server, gate));
+        // The template judges a skill or knowledge-base tool as `execute` too; `allow` judges the
+        // category it has.
+        let template_cats = write_gate::template_categories(&call.tool, &call.categories);
         if let Err(gate) = crate::policy::gate::dispatch_gate_for(
             &call.tool,
             &server.key,
             &server.policy,
-            &call.categories,
+            &template_cats,
             args,
         ) {
             return refuse(gate);
@@ -914,6 +1092,38 @@ impl IrisTools {
             return refuse(gate);
         }
         self.role_refusal(server, call, args).and_then(refuse)
+    }
+
+    /// The environment template and `allow` for a connection tool, on the default server. The
+    /// template judges the tool as `Execute` as well as `Admin`: it starts a container or points
+    /// later calls at another server, so `live` and `test` refuse it.
+    fn connection_tool_refusal(
+        &self,
+        server: &ResolvedServer,
+        call: &ResolvedCall,
+    ) -> Option<Result<CallToolResult, McpError>> {
+        let refuse = |gate: Value| Some(self.refusal_on(server, gate));
+        let mut judged = call.categories.clone();
+        if !judged.contains(&ToolCategory::Execute) {
+            judged.push(ToolCategory::Execute);
+        }
+        let template = server
+            .policy
+            .mcp_template
+            .clone()
+            .unwrap_or(crate::iris::workspace_config::McpTemplate::Dev);
+        if let Some(gate) =
+            crate::policy::env_gate::check_env_gate_for(&call.tool, &template, &server.key, &judged)
+        {
+            return refuse(gate);
+        }
+        crate::iris::server_manager::policy_gate_for(
+            &call.tool,
+            &server.key,
+            &server.policy,
+            &call.categories,
+        )
+        .and_then(refuse)
     }
 
     /// The role gate (R1 D5): a write or destructive call on a subject server needs `confirm`; a
@@ -939,13 +1149,13 @@ impl IrisTools {
                 true,
             ),
             "iris_query" => {
-                let first = args
-                    .get("query")
-                    .and_then(|v| v.as_str())
-                    .and_then(|q| q.split_whitespace().next())
-                    .unwrap_or("")
-                    .to_uppercase();
-                let read_statement = first.is_empty() || first == "SELECT" || first == "WITH";
+                // The first statement word, read through `sql_lex` like every other SQL check: a
+                // comment before it is not the word, and a `(` or `;` before it is not a read.
+                let tokens =
+                    crate::sql_lex::lex(args.get("query").and_then(|v| v.as_str()).unwrap_or(""));
+                let read_statement = crate::sql_lex::code(&tokens)
+                    .next()
+                    .is_none_or(|t| t.is_word("SELECT") || t.is_word("WITH"));
                 if writes || !read_statement {
                     check_role_gate(
                         &server.role,
@@ -1006,6 +1216,30 @@ impl IrisTools {
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
         };
+
+        // A server argument that is present and blank is a mistake, not the default connection: a
+        // caller that meant to name a server and sent nothing would be judged by the default's
+        // policy and acted on its connection.
+        let server_args: &[&str] = match source {
+            TargetSource::Arg(a) | TargetSource::ArgOrPending(a) => &[a][..],
+            TargetSource::Args(list) => list,
+            _ => &[],
+        };
+        for a in server_args {
+            if args
+                .get(*a)
+                .and_then(Value::as_str)
+                .is_some_and(|v| v.trim().is_empty())
+            {
+                return Err(input_refusal(
+                    "INVALID_PARAMS",
+                    format!(
+                        "`{a}` is empty. Name a registered server (iris_servers lists them), or \
+                         leave `{a}` out to use the default connection."
+                    ),
+                ));
+            }
+        }
 
         // `None` is the default connection.
         let mut keys: Vec<Option<String>> = Vec::new();
@@ -1101,6 +1335,7 @@ impl IrisTools {
             class,
             categories,
             kind,
+            server_leg_skipped: None,
             primary,
             others: it.collect(),
             config: snap,

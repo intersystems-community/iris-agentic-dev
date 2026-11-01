@@ -329,7 +329,9 @@ selects logs, queues, or messages).
 
 3. **Search messages** — `iris_interop_query(what="messages", ...)` to trace a transaction
    by `source`, `target`, `message_class`, `session_id`, or body content (`body_class` +
-   `body_where`). Fastest way to follow a failed transaction end-to-end.
+   `body_where`, or `search_table`). Body content is PHI-gated: on a server with
+   `dataPolicy = "allow"` add `acknowledgePhi=true` or the call returns `PHI_ACK_REQUIRED`.
+   Fastest way to follow a failed transaction end-to-end.
 
 4. **Check logs** — `iris_interop_query(what="logs", component="FileRouter",
 log_type="error,warning")`.

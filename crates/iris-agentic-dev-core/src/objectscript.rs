@@ -91,12 +91,50 @@ pub fn namespace_exists_code(ns: &str) -> String {
     format!("write ##class(%SYS.Namespace).Exists({})", os_str_expr(ns))
 }
 
-/// Maps a routine and offset back to its class line (iris_debug).
-pub fn source_line_code(routine: &str, offset: impl std::fmt::Display) -> String {
+/// Maps a spot of a compiled routine back to the class source (iris_debug `map_int`). The spot is
+/// `label+offset` of `routine` (`<DIVIDE>Alpha+2^Pkg.Cls.1`), or line `offset` of the routine when
+/// `label` is empty. Writes `class|method|line`, `line` counted in the method body, or nothing when
+/// the label or the line has no source. `%Studio.Debugger.SourceLine` answers through its `map`
+/// argument, not its return value, which is only a `%Status`.
+pub fn int_to_cls_code(routine: &str, label: &str, offset: i64) -> String {
     format!(
-        "Write ##class(%Studio.Debugger).SourceLine({},{})",
-        os_str_expr(routine),
-        offset
+        "Set tRtn={rtn} Set tLbl={lbl} Set tLn={offset} \
+         If tLbl'=\"\" {{ Set tLn=0 Set tR=##class(%Library.Routine).%OpenId(tRtn_\".INT\") \
+         If $IsObject(tR) {{ Do tR.Rewind() Set tN=0 \
+         While 'tR.AtEnd {{ Set tN=tN+1 Set tTx=tR.ReadLine() \
+         If $Piece($Piece(tTx,\" \"),\"(\")=tLbl {{ Set tLn={offset}+tN Quit }} }} }} }} \
+         If tLn>0 {{ Set tSc=##class(%Studio.Debugger).SourceLine(tRtn,tLn,0,tLn,0,$Namespace,.tMap) \
+         Set tHit=$Get(tMap(\"CLS\",1)) \
+         If tHit'=\"\" {{ Write $ListGet(tHit,1),\"|\",$ListGet(tHit,2),\"|\",$ListGet(tHit,3) }} }}",
+        rtn = os_str_expr(routine),
+        lbl = os_str_expr(label),
+    )
+}
+
+/// Maps every method a compiled class declares to the `.INT` lines generated from it (iris_debug
+/// `source_map`). Writes one JSON object: `{"found":0}` when the class is not on the server, else
+/// `{"found":1,"source_map":{<method>:{"int_name","int_line","lines":[..]}}}` where `lines[n-1]` is
+/// the `.INT` line for line `n` of the method body, as `%Studio.Debugger.INTLine` answers it.
+/// Inherited methods are left out. An argumentless `Quit`/`Continue` with a postcondition is
+/// followed by two spaces, which ObjectScript requires. The JSON is built with `%DynamicObject`, so IRIS escapes it.
+pub fn source_map_code(class_name: &str) -> String {
+    format!(
+        "Set tRes=##class(%DynamicObject).%New() \
+         Set tCc=##class(%Dictionary.CompiledClass).%OpenId({cls}) \
+         If '$IsObject(tCc) {{ Do tRes.%Set(\"found\",0,\"number\") }} Else {{ \
+         Set tMap=##class(%DynamicObject).%New() Set tCn=tCc.Name Set tKey=\"\" \
+         For {{ Set tM=tCc.Methods.GetNext(.tKey) Quit:tKey=\"\"  Continue:tM.Origin'=tCn  \
+         Set tLines=##class(%DynamicArray).%New() Set tInt=\"\" \
+         For tL=1:1:5000 {{ \
+         Set tSc=##class(%Studio.Debugger).INTLine(tCn_\".CLS\",tM.Name,tL,.tIn,.tIl,.tRt) \
+         Quit:('tSc)||(tRt=2)  Do tLines.%Push(+tIl,\"number\") Set:tInt=\"\" tInt=tIn }} \
+         Continue:tLines.%Size()=0  \
+         Set tMo=##class(%DynamicObject).%New() Do tMo.%Set(\"int_name\",tInt,\"string\") \
+         Do tMo.%Set(\"int_line\",tLines.%Get(0),\"number\") Do tMo.%Set(\"lines\",tLines) \
+         Do tMap.%Set(tM.Name,tMo) }} \
+         Do tRes.%Set(\"found\",1,\"number\") Do tRes.%Set(\"source_map\",tMap) }} \
+         Write tRes.%ToJSON()",
+        cls = os_str_expr(class_name)
     )
 }
 

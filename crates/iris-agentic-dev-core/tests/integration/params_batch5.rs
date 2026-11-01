@@ -409,6 +409,7 @@ fn body_class_where_and_select_join_the_body_table() {
         &mut mcp,
         serde_json::json!({
             "what": "messages",
+            "acknowledgePhi": true,
             "source": fixture.source,
             "body_class": fixture.body_class,
             "body_where": "1=1",
@@ -439,6 +440,7 @@ fn body_class_where_and_select_join_the_body_table() {
         &mut mcp,
         serde_json::json!({
             "what": "messages",
+            "acknowledgePhi": true,
             "source": fixture.source,
             "body_class": fixture.body_class,
             "body_where": "1=0",
@@ -462,12 +464,16 @@ fn search_table_filter_reaches_the_search_table_lookup() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
-    let mut mcp = McpSession::start(&live_env());
+    // A Search Table search reads indexed body fields, so it needs data reads allowed.
+    let mut env = live_env();
+    env.extend(iris_agentic_dev_core::testing::data_reads_allowed_env());
+    let mut mcp = McpSession::start(&env);
 
     let default_extent = interop(
         &mut mcp,
         serde_json::json!({
             "what": "messages",
+            "acknowledgePhi": true,
             "search_table": {"prop": "IADP113NoSuchProp", "value": "x"},
             "limit": 2
         }),
@@ -483,6 +489,7 @@ fn search_table_filter_reaches_the_search_table_lookup() {
         &mut mcp,
         serde_json::json!({
             "what": "messages",
+            "acknowledgePhi": true,
             // `value` is not optional in practice: the handler requires exactly one of
             // `value`/`value_like` and refuses with INVALID_PARAMS before the property lookup, so
             // the extent can only be observed on a filter that carries one.
@@ -509,7 +516,7 @@ fn search_table_filter_reaches_the_search_table_lookup() {
     ] {
         let refused = interop(
             &mut mcp,
-            serde_json::json!({"what": "messages", "search_table": filter, "limit": 2}),
+            serde_json::json!({"what": "messages", "acknowledgePhi": true, "search_table": filter, "limit": 2}),
         );
         assert_eq!(code_of(&refused), "INVALID_PARAMS");
         assert!(
@@ -522,6 +529,7 @@ fn search_table_filter_reaches_the_search_table_lookup() {
         &mut mcp,
         serde_json::json!({
             "what": "messages",
+            "acknowledgePhi": true,
             "search_table": {"prop": "IADP113NoSuchProp", "value_like": "x%"},
             "limit": 2
         }),
@@ -679,7 +687,12 @@ fn message_body_reads_message_id_once_the_phi_gate_lets_the_call_through() {
     let mut env = live_env();
     env.extend(iris_agentic_dev_core::testing::data_reads_allowed_env());
     let mut mcp = McpSession::start(&env);
-    let missing = call(&mut mcp, "iris_message_body", serde_json::json!({}));
+    // The acknowledgement is asked for before the handler reads `message_id`.
+    let missing = call(
+        &mut mcp,
+        "iris_message_body",
+        serde_json::json!({"acknowledgePhi": true}),
+    );
     assert_eq!(code_of(&missing), "INVALID_PARAMS");
     assert!(
         error_of(&missing).contains("message_id is required"),
@@ -690,11 +703,13 @@ fn message_body_reads_message_id_once_the_phi_gate_lets_the_call_through() {
     let given = call(
         &mut mcp,
         "iris_message_body",
-        serde_json::json!({"message_id": "1"}),
+        serde_json::json!({"message_id": "1", "acknowledgePhi": true}),
     );
+    // With the acknowledgement the call may succeed (a fixture message 1 can exist) or fail for
+    // another reason; either way it must not be the handler's own parameter check.
     assert_ne!(
-        code_of(&given),
-        "INVALID_PARAMS",
+        given.get("error_code").and_then(|v| v.as_str()),
+        Some("INVALID_PARAMS"),
         "with a message_id the handler gets past its own check: {given}"
     );
 }
@@ -766,12 +781,15 @@ fn wrongly_typed_values_are_refused() {
         (
             "iris_message_body",
             "u32",
-            serde_json::json!({"message_id": "1", "max_bytes": "100"}),
+            serde_json::json!({"message_id": "1", "max_bytes": "100", "acknowledgePhi": true}),
         ),
         (
-            "iris_message_body",
+            // The policy gate reads `acknowledgePhi` before the parameters are parsed, and a string
+            // is no acknowledgement, so `iris_message_body` answers `PHI_ACK_REQUIRED` first (the
+            // gate tests cover that). `iris_global` has the same slot with no gate ahead of it.
+            "iris_global",
             "bool",
-            serde_json::json!({"message_id": "1", "acknowledgePhi": "true"}),
+            serde_json::json!({"action": "get", "global_name": "IadP113", "acknowledgePhi": "true"}),
         ),
         (
             "iris_production_item",
@@ -781,7 +799,7 @@ fn wrongly_typed_values_are_refused() {
         (
             "iris_interop_query",
             "sequence",
-            serde_json::json!({"what": "messages", "body_select": "StringValue"}),
+            serde_json::json!({"what": "messages", "body_select": "StringValue", "acknowledgePhi": true}),
         ),
     ] {
         let answer = mcp.call(tool, &args);

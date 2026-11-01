@@ -15,38 +15,39 @@ fn iris_dev() -> Command {
     cmd
 }
 
-fn write_valid_cls(name: &str) -> tempfile::NamedTempFile {
-    let tmp = tempfile::Builder::new().suffix(".cls").tempfile().unwrap();
-    std::fs::write(
-        tmp.path(),
-        format!(
-            "Class {} {{\nClassMethod Test() {{\n write 1,!\n}}\n}}\n",
-            name
-        ),
-    )
-    .unwrap();
-    tmp
+/// A project directory of its own holding one `.cls` file. The system temporary directory is not
+/// a project directory (it is a broad root), so the file cannot sit directly in it.
+fn project_with(body: String) -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = std::fs::canonicalize(dir.path()).unwrap().join("T.cls");
+    std::fs::write(&path, body).unwrap();
+    (dir, path)
+}
+
+fn write_valid_cls(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    project_with(format!(
+        "Class {} {{\nClassMethod Test() {{\n write 1,!\n}}\n}}\n",
+        name
+    ))
 }
 
 fn unique_class_name(base: &str) -> String {
     format!("{}{}", base, std::process::id())
 }
 
-fn write_invalid_cls() -> tempfile::NamedTempFile {
-    let tmp = tempfile::Builder::new().suffix(".cls").tempfile().unwrap();
-    std::fs::write(tmp.path(), "this is not valid objectscript!!!\n").unwrap();
-    tmp
+fn write_invalid_cls() -> (tempfile::TempDir, std::path::PathBuf) {
+    project_with("this is not valid objectscript!!!\n".to_string())
 }
 
 #[test]
 #[ignore]
 fn test_compile_valid_file_exits_zero() {
     let name = unique_class_name("IrisDevTmp.CompileTest063x");
-    let cls = write_valid_cls(&name);
+    let (_dir, cls) = write_valid_cls(&name);
     let out = iris_dev()
-        .args(["compile", cls.path().to_str().unwrap()])
+        .args(["compile", cls.to_str().unwrap()])
         // The file is compiled only from inside the project directory, which is the working one.
-        .current_dir(cls.path().parent().unwrap())
+        .current_dir(cls.parent().unwrap())
         .output()
         .expect("failed to run iris-agentic-dev");
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -61,11 +62,11 @@ fn test_compile_valid_file_exits_zero() {
 #[test]
 #[ignore]
 fn test_compile_invalid_file_exits_nonzero() {
-    let cls = write_invalid_cls();
+    let (_dir, cls) = write_invalid_cls();
     let out = iris_dev()
-        .args(["compile", cls.path().to_str().unwrap()])
+        .args(["compile", cls.to_str().unwrap()])
         // The file is compiled only from inside the project directory, which is the working one.
-        .current_dir(cls.path().parent().unwrap())
+        .current_dir(cls.parent().unwrap())
         .output()
         .expect("failed to run iris-agentic-dev");
     let stdout = String::from_utf8_lossy(&out.stdout);

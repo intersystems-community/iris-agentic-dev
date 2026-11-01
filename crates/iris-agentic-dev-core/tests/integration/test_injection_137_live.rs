@@ -233,7 +233,16 @@ async fn injection_137_a03_interop_body_where() {
     // On a server that allows data reads, the fragment check is what refuses it.
     let mut env = live_env();
     env.extend(iris_agentic_dev_core::testing::data_reads_allowed_env());
-    case_in("iris_interop_query", args, Some("INVALID_PARAMS"), &env).await;
+    // `allow` also asks for the acknowledgement before the fragment is read.
+    let mut acknowledged = args;
+    acknowledged["acknowledgePhi"] = json!(true);
+    case_in(
+        "iris_interop_query",
+        acknowledged,
+        Some("INVALID_PARAMS"),
+        &env,
+    )
+    .await;
 }
 
 /// A12: the journal route through iris_admin. Under the default `dataPolicy = "block"` the bulk-PHI
