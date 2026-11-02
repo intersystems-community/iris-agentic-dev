@@ -64,7 +64,7 @@ pub struct CheckOk {
 /// iad's connection as the two requests ascot asks for.
 pub struct IadAtelier {
     conn: Arc<IrisConnection>,
-    client: reqwest::Client,
+    http: reqwest::Client,
     namespace: String,
     handle: tokio::runtime::Handle,
 }
@@ -74,7 +74,7 @@ impl Atelier for IadAtelier {
         let params = params.iter().map(|p| Value::from(*p)).collect();
         let body = self
             .handle
-            .block_on(self.conn.query(sql, params, &self.namespace, &self.client))
+            .block_on(self.conn.query(sql, params, &self.namespace, &self.http))
             .map_err(|e| format!("query in {}: {e}", self.namespace))?;
         match body.pointer("/result/content") {
             Some(rows) if rows.is_array() => Ok(rows.to_string()),
@@ -88,7 +88,7 @@ impl Atelier for IadAtelier {
         let err = |e: &dyn std::fmt::Display| format!("GET {url}: {e}");
         self.handle.block_on(async {
             let resp = self
-                .client
+                .http
                 .get(&url)
                 .basic_auth(&self.conn.username, Some(&self.conn.password))
                 .send()
@@ -140,7 +140,7 @@ pub(crate) async fn handle_iris_check(
     {
         Some(conn) => Some(IadAtelier {
             conn,
-            client: tools.http_client()?.clone(),
+            http: tools.http_client()?.clone(),
             namespace: namespace.clone(),
             handle: tokio::runtime::Handle::current(),
         }),
@@ -184,8 +184,8 @@ pub(crate) async fn handle_iris_check(
         iris,
         note: (!iris).then(|| {
             "No IRIS connection, so what this document refers to but does not define was not \
-             checked and appears as hints. Set IRIS_HOST and IRIS_WEB_PORT (or a project \
-             .iris-agentic-dev.toml) to check it."
+             checked and appears as hints. Set the IRIS_HOST and IRIS_WEB_PORT environment \
+             variables, or register a server with iris_add_server, to check it."
                 .to_string()
         }),
         namespace,

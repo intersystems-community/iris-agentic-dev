@@ -10,6 +10,8 @@ use tracing_subscriber::EnvFilter;
     version,
     about = "CLI and package manager for InterSystems IRIS developer ecosystem",
     long_about = None,
+    // Source formatting: a dependency turning on clap's `wrap_help` must not rewrap this help.
+    term_width = 0,
 )]
 struct Cli {
     #[command(subcommand)]
