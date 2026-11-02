@@ -122,7 +122,12 @@ sha256sum -c --ignore-missing SHA256SUMS &&
   install -m 0755 iris-agentic-dev-linux-x86_64 /usr/local/bin/iris-agentic-dev
 ```
 
-**Windows**: download `iris-agentic-dev-windows-x86_64.exe` and `SHA256SUMS` from the
+**Windows (winget)**: `winget install InterSystemsCommunity.IrisAgenticDev` puts
+`iris-agentic-dev` on your PATH. The package is waiting for review in Microsoft's winget
+repository; until it is accepted, `winget` answers "No package found" and the manual install
+below is the way in.
+
+**Windows (manual)**: download `iris-agentic-dev-windows-x86_64.exe` and `SHA256SUMS` from the
 [v1.7.1 release](https://github.com/intersystems-community/iris-agentic-dev/releases/tag/v1.7.1),
 check that `(Get-FileHash .\iris-agentic-dev-windows-x86_64.exe).Hash` matches the
 line for that file in `SHA256SUMS` (the comparison is case-insensitive), and place
