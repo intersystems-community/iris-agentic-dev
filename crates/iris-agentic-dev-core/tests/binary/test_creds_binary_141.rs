@@ -21,21 +21,24 @@ const SENTINEL: &str = "Zq9-SENTINEL-pw";
 
 // ── Listeners ───────────────────────────────────────────────────────────────────────────────
 
-type TlsConfig = Arc<tokio_rustls::rustls::ServerConfig>;
+pub(crate) type TlsConfig = Arc<tokio_rustls::rustls::ServerConfig>;
 
 /// A listener that records every request head it can read and answers `reply(path)`.
-struct Recorder {
-    port: u16,
+pub(crate) struct Recorder {
+    pub(crate) port: u16,
     heads: Arc<Mutex<Vec<String>>>,
     stop: Arc<AtomicBool>,
 }
 
 impl Recorder {
-    fn plain(reply: impl Fn(&str) -> String + Send + Sync + 'static) -> Recorder {
+    pub(crate) fn plain(reply: impl Fn(&str) -> String + Send + Sync + 'static) -> Recorder {
         Self::start(None, reply)
     }
 
-    fn tls(config: TlsConfig, reply: impl Fn(&str) -> String + Send + Sync + 'static) -> Recorder {
+    pub(crate) fn tls(
+        config: TlsConfig,
+        reply: impl Fn(&str) -> String + Send + Sync + 'static,
+    ) -> Recorder {
         Self::start(Some(config), reply)
     }
 
@@ -64,7 +67,7 @@ impl Recorder {
         Recorder { port, heads, stop }
     }
 
-    fn heads(&self) -> Vec<String> {
+    pub(crate) fn heads(&self) -> Vec<String> {
         self.heads.lock().unwrap().clone()
     }
 }
@@ -149,11 +152,11 @@ fn response(status: &str, headers: &[&str], body: &str) -> String {
     r
 }
 
-fn basic_401(_path: &str) -> String {
+pub(crate) fn basic_401(_path: &str) -> String {
     response("401 Unauthorized", &["WWW-Authenticate: Basic"], "")
 }
 
-fn not_found(_: &str) -> String {
+pub(crate) fn not_found(_: &str) -> String {
     response("404 Not Found", &["Content-Type: application/json"], "{}")
 }
 
@@ -174,21 +177,21 @@ fn basic_credentials(head: &str) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-fn text_body(answer: &Value) -> Value {
+pub(crate) fn text_body(answer: &Value) -> Value {
     let text = answer["result"]["content"][0]["text"]
         .as_str()
         .unwrap_or_else(|| panic!("no text content: {}", answer_text(answer)));
     serde_json::from_str(text).unwrap_or_else(|e| panic!("not JSON ({e}): {text}"))
 }
 
-fn env(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+pub(crate) fn env(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
     pairs
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect()
 }
 
-fn home_env(home: &Path, more: &[(&str, &str)]) -> Vec<(String, String)> {
+pub(crate) fn home_env(home: &Path, more: &[(&str, &str)]) -> Vec<(String, String)> {
     let mut v = env(&[
         ("HOME", home.to_str().unwrap()),
         ("USERPROFILE", home.to_str().unwrap()),
@@ -297,7 +300,7 @@ fn discovery_sends_no_credential_to_a_listener_that_is_not_iris() {
 
 /// A self-signed certificate for 127.0.0.1, made by `openssl` into `dir`. The test fails, not
 /// skips, when `openssl` is missing: no key is committed to the repository.
-fn self_signed_config(dir: &Path) -> TlsConfig {
+pub(crate) fn self_signed_config(dir: &Path) -> TlsConfig {
     use tokio_rustls::rustls::pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
     let (cert, key) = (dir.join("cert.pem"), dir.join("key.pem"));
     let out = std::process::Command::new("openssl")

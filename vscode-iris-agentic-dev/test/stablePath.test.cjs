@@ -27,6 +27,14 @@ const {
   registrationFiles,
 } = require("../.test-out/stablePath.cjs");
 
+/** The SHA-256 the extension would pin for a seeded binary. */
+function pinOf(file) {
+  return require("node:crypto")
+    .createHash("sha256")
+    .update(fs.readFileSync(file))
+    .digest("hex");
+}
+
 function tmpdir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "iad-stable-"));
 }
@@ -92,11 +100,11 @@ test("an update replaces the fixed-name copy with the newest binary", async () =
     const v163 = seedVersion(storage, "1.6.3");
     const v164 = seedVersion(storage, "1.6.4");
 
-    const first = await installStableBinary(v163, storage, "1.6.3", process.platform);
+    const first = await installStableBinary(v163, storage, "1.6.3", process.platform, pinOf(v163));
     assert.equal(first, stableBinaryPath(storage, process.platform));
     assert.match(fs.readFileSync(first, "utf8"), /1\.6\.3/);
 
-    const second = await installStableBinary(v164, storage, "1.6.4", process.platform);
+    const second = await installStableBinary(v164, storage, "1.6.4", process.platform, pinOf(v164));
     assert.equal(second, first, "the path must not change across updates");
     assert.match(fs.readFileSync(second, "utf8"), /1\.6\.4/);
     if (process.platform !== "win32") {
@@ -112,13 +120,13 @@ test("Windows: a running fixed-name .exe is moved aside, not overwritten", async
   try {
     const v163 = seedVersion(storage, "1.6.3", "win32");
     const v164 = seedVersion(storage, "1.6.4", "win32");
-    const stable = await installStableBinary(v163, storage, "1.6.3", "win32");
+    const stable = await installStableBinary(v163, storage, "1.6.3", "win32", pinOf(v163));
 
     // Claude Code is running the 1.6.3 copy.
     const locked = new Set([stable]);
     const ops = windowsLockOps(locked);
 
-    const result = await installStableBinary(v164, storage, "1.6.4", "win32", ops);
+    const result = await installStableBinary(v164, storage, "1.6.4", "win32", pinOf(v164), ops);
     assert.equal(result, stable);
     assert.match(fs.readFileSync(stable, "utf8"), /1\.6\.4/);
 
@@ -133,12 +141,12 @@ test("Windows: a running fixed-name .exe is moved aside, not overwritten", async
 
     // Next activation, still running: cleanup fails quietly.
     assert.equal(
-      await installStableBinary(v164, storage, "1.6.4", "win32", ops),
+      await installStableBinary(v164, storage, "1.6.4", "win32", pinOf(v164), ops),
       stable
     );
     // Once the old process exits, the next activation removes it.
     locked.clear();
-    await installStableBinary(v164, storage, "1.6.4", "win32", ops);
+    await installStableBinary(v164, storage, "1.6.4", "win32", pinOf(v164), ops);
     assert.deepEqual(
       fs.readdirSync(binDir).filter((f) => f.includes(".old")),
       []
@@ -153,7 +161,7 @@ test("Windows: when even the rename is refused, it returns null and retries next
   try {
     const v163 = seedVersion(storage, "1.6.3", "win32");
     const v164 = seedVersion(storage, "1.6.4", "win32");
-    const stable = await installStableBinary(v163, storage, "1.6.3", "win32");
+    const stable = await installStableBinary(v163, storage, "1.6.3", "win32", pinOf(v163));
 
     const refuseAll = {
       rename: async (_from, to) => {
@@ -161,7 +169,7 @@ test("Windows: when even the rename is refused, it returns null and retries next
       },
       unlink: async (p) => fs.promises.unlink(p),
     };
-    const result = await installStableBinary(v164, storage, "1.6.4", "win32", refuseAll);
+    const result = await installStableBinary(v164, storage, "1.6.4", "win32", pinOf(v164), refuseAll);
     assert.equal(result, null);
     assert.match(fs.readFileSync(stable, "utf8"), /1\.6\.3/, "old copy untouched");
     assert.deepEqual(
@@ -171,8 +179,91 @@ test("Windows: when even the rename is refused, it returns null and retries next
     );
 
     // Lock gone: the next activation finishes the job.
-    assert.equal(await installStableBinary(v164, storage, "1.6.4", "win32"), stable);
+    assert.equal(await installStableBinary(v164, storage, "1.6.4", "win32", pinOf(v164)), stable);
     assert.match(fs.readFileSync(stable, "utf8"), /1\.6\.4/);
+  } finally {
+    fs.rmSync(storage, { recursive: true, force: true });
+  }
+});
+
+// --- the fixed-name copy is checked against the pin ------------------------
+
+const crypto = require("node:crypto");
+const sha256 = (file) =>
+  crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+
+test("a fixed-name copy whose marker matches but whose bytes do not is replaced", async () => {
+  const storage = tmpdir();
+  try {
+    const v164 = seedVersion(storage, "1.6.4");
+    const pin = sha256(v164);
+    const stable = await installStableBinary(v164, storage, "1.6.4", process.platform, pin);
+    assert.equal(fs.readFileSync(stable, "utf8"), fs.readFileSync(v164, "utf8"));
+
+    // Something rewrote bin/ in place. The version marker still says 1.6.4.
+    fs.writeFileSync(stable, "#!/bin/sh\necho tampered\n", { mode: 0o755 });
+
+    const again = await installStableBinary(v164, storage, "1.6.4", process.platform, pin);
+    assert.equal(again, stable);
+    assert.equal(sha256(stable), pin, "the tampered copy is gone; the verified one is in place");
+  } finally {
+    fs.rmSync(storage, { recursive: true, force: true });
+  }
+});
+
+test("an intact fixed-name copy is returned as it is, not copied again", async () => {
+  const storage = tmpdir();
+  try {
+    const v164 = seedVersion(storage, "1.6.4");
+    const pin = sha256(v164);
+    const stable = await installStableBinary(v164, storage, "1.6.4", process.platform, pin);
+    const before = fs.statSync(stable);
+    assert.equal(await installStableBinary(v164, storage, "1.6.4", process.platform, pin), stable);
+    const after = fs.statSync(stable);
+    assert.equal(after.ino, before.ino, "same file, no swap");
+    assert.equal(after.mtimeMs, before.mtimeMs);
+  } finally {
+    fs.rmSync(storage, { recursive: true, force: true });
+  }
+});
+
+test("a tampered fixed-name copy that cannot be replaced is never returned", async () => {
+  const storage = tmpdir();
+  try {
+    const v164 = seedVersion(storage, "1.6.4", "win32");
+    const pin = sha256(v164);
+    const stable = await installStableBinary(v164, storage, "1.6.4", "win32", pin);
+    fs.writeFileSync(stable, "tampered");
+    // Neither delete nor rename is allowed (a running .exe, a read-only bin/).
+    const refuseAll = {
+      rename: async (_from, to) => {
+        throw Object.assign(new Error(`EPERM '${to}'`), { code: "EPERM" });
+      },
+      unlink: async (p) => {
+        throw Object.assign(new Error(`EBUSY '${p}'`), { code: "EBUSY" });
+      },
+    };
+    const result = await installStableBinary(v164, storage, "1.6.4", "win32", pin, refuseAll);
+    assert.equal(result, null, "the caller falls back to the verified managed copy");
+  } finally {
+    fs.rmSync(storage, { recursive: true, force: true });
+  }
+});
+
+test("a source that does not match the pin is not published", async () => {
+  const storage = tmpdir();
+  try {
+    const v164 = seedVersion(storage, "1.6.4");
+    const result = await installStableBinary(
+      v164, storage, "1.6.4", process.platform, "0".repeat(64)
+    );
+    assert.equal(result, null);
+    assert.equal(fs.existsSync(stableBinaryPath(storage, process.platform)), false);
+    assert.deepEqual(
+      fs.readdirSync(path.join(storage, "bin")).filter((f) => f.includes(".new")),
+      [],
+      "no temp copy left behind"
+    );
   } finally {
     fs.rmSync(storage, { recursive: true, force: true });
   }

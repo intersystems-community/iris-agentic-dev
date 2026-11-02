@@ -1,3 +1,4 @@
+import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -22,6 +23,28 @@ export function stableBinaryPath(storageDir: string, platform: string): string {
   return path.join(storageDir, STABLE_DIR, name);
 }
 
+function sha256File(file: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    fs.createReadStream(file)
+      .on("data", (chunk) => hash.update(chunk))
+      .on("error", reject)
+      .on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+/** True when `file` exists and hashes to `expected`. Never throws. */
+export async function matchesPin(
+  file: string,
+  expected: string,
+): Promise<boolean> {
+  try {
+    return (await sha256File(file)) === expected.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
 /** The two operations whose behaviour differs on Windows when a binary is running. */
 export interface SwapOps {
   rename(from: string, to: string): Promise<void>;
@@ -37,6 +60,15 @@ const realOps: SwapOps = {
  * Makes the fixed-name copy match `sourcePath` (the binary for `version`) and
  * returns its path, or null if the copy could not be put in place this time.
  *
+ * Other clients run whatever sits at the returned path, so a copy is returned
+ * only after its bytes hash to `pinnedSha256`, the hash this extension carries
+ * for the release asset. A matching version marker is not enough: the marker
+ * says what was written, not what is there now. A copy that fails the check is
+ * deleted (or, if the delete is refused, moved aside) and replaced from
+ * `sourcePath`; if it cannot be replaced, null is returned and the caller
+ * launches the verified managed copy instead. The new copy is hashed before
+ * it takes the fixed name, so `sourcePath` is checked too.
+ *
  * Windows will not replace or delete a running .exe, but it will rename one.
  * So when the plain swap is refused, the running copy is moved aside to
  * `.old-<time>` (the process keeps running from there) and the new one takes
@@ -49,6 +81,7 @@ export async function installStableBinary(
   storageDir: string,
   version: string,
   platform: string,
+  pinnedSha256: string,
   ops: SwapOps = realOps,
 ): Promise<string | null> {
   const stable = stableBinaryPath(storageDir, platform);
@@ -68,13 +101,23 @@ export async function installStableBinary(
       .readFile(marker, "utf8")
       .then((s) => s.trim())
       .catch(() => "");
-    if (current === version && fs.existsSync(stable)) return stable;
+    if (current === version && fs.existsSync(stable)) {
+      if (await matchesPin(stable, pinnedSha256)) return stable;
+      // Not what was installed. Remove it; if the delete is refused (a locked
+      // .exe), the swap below moves it aside instead.
+      await ops.unlink(stable).catch(() => {});
+      await fs.promises.unlink(marker).catch(() => {});
+    }
 
     // A per-process temp name: two VS Code windows activating together must
     // not write into the same file.
     const tmp = `${stable}.new-${process.pid}`;
     await fs.promises.copyFile(sourcePath, tmp);
     if (platform !== "win32") await fs.promises.chmod(tmp, 0o755);
+    if (!(await matchesPin(tmp, pinnedSha256))) {
+      await ops.unlink(tmp).catch(() => {});
+      return null;
+    }
     try {
       await ops.rename(tmp, stable);
     } catch {

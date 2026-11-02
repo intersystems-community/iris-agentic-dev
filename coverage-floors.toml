@@ -38,6 +38,7 @@ overall = 88
 "src/benchmark/llm.rs"                = 85
 "src/benchmark/mod.rs"                = 52
 "src/benchmark/schema_tasks.rs"        = 86
+"src/benchmark/target.rs"             = 65
 
 # top-level modules
 "src/elicitation.rs"                  = 97

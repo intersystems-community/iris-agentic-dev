@@ -316,3 +316,84 @@ fn no_source_string_hands_the_agent_the_operator_file() {
         hits.join("\n")
     );
 }
+
+/// Security fix S4: a response text tells the agent what to do next, so none of them says to set,
+/// add, create or edit something in the project file. The strings that did (a fallback warning, a
+/// NoPWS hint, a keychain workaround) sent an agent with a file-write tool to edit the file. The
+/// scan reads each string literal of the source with its line continuations joined, so an
+/// instruction that wraps onto the next line is still seen.
+#[test]
+fn no_response_text_tells_the_agent_to_edit_the_project_file() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = Vec::new();
+    rust_sources(&src, &mut files);
+    assert!(files.len() > 50, "the scan found no sources under {src:?}");
+    let instruction = regex::Regex::new(
+        r"(?i)\b(set|add|create|put|edit|write|use|point|put)\b[^;]{0,120}?\.iris-agentic-dev\.toml",
+    )
+    .expect("regex");
+    let continuation = regex::Regex::new(r"\\\n\s*").expect("regex");
+    let mut hits = Vec::new();
+    for f in &files {
+        let rel = f
+            .strip_prefix(&src)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        if MAY_NAME_THE_OPERATOR_FILE.contains(&rel.as_str()) {
+            continue;
+        }
+        let text = std::fs::read_to_string(f).unwrap();
+        let code = text.split("#[cfg(test)]").next().unwrap();
+        let code: String = code
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let code = continuation.replace_all(&code, "");
+        for m in instruction.find_iter(&code) {
+            hits.push(format!("{rel}: {}", m.as_str().replace('\n', " ")));
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "these response texts tell the agent to edit the project file; point at iris_select_container, \
+         iris_add_server, the operator, or an environment variable instead:\n{}",
+        hits.join("\n")
+    );
+}
+
+/// Security fix S4: the description of a tool is read by the agent on every session, so it holds
+/// no instruction to write or trust a configuration file. `check_config` once said to write a
+/// `.iris-agentic-dev.toml` to `config_watch_path`.
+#[test]
+fn no_tool_description_hands_the_agent_a_config_edit() {
+    use iris_agentic_dev_core::tools::{IrisTools, Toolset};
+    let tools = IrisTools::new_with_toolset(None, Toolset::Merged).expect("IrisTools::new");
+    let catalogue = tools.tool_catalogue();
+    assert!(catalogue.len() > 50, "only {} tools", catalogue.len());
+    let write_recipe =
+        regex::Regex::new(r"(?i)\b(write|create|put|add|edit)\b.{0,40}\.toml").expect("regex");
+    let mut hits = Vec::new();
+    for t in &catalogue {
+        let d = t.description.clone().unwrap_or_default();
+        for needle in [
+            ".iris-agentic-dev.toml",
+            "iris-agentic-dev trust",
+            "operator file",
+            "exact path",
+        ] {
+            if d.contains(needle) {
+                hits.push(format!("{}: names {needle:?}", t.name));
+            }
+        }
+        if write_recipe.is_match(&d) {
+            hits.push(format!("{}: tells the agent to write a .toml file", t.name));
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "tool descriptions that hand the agent a config edit:\n{}",
+        hits.join("\n")
+    );
+}

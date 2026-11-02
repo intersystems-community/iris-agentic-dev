@@ -27,12 +27,12 @@ iris-agentic-dev tool check_config --args '{}'
 iad reads settings from four places, and they are not equal. The difference decides what a
 repository can make your agent do.
 
-| Source                | What it is                                                                                                                                                                                         | Trusted                                                                      |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| **Launch settings**   | The environment variables and flags iad was started with (`IRIS_*`, `IAD_*`, `--host`, `--config`). Approving a project's MCP server in a client means trusting the settings it launches iad with. | Always                                                                       |
-| **Operator file**     | `~/.iris-agentic-dev.toml` in your home directory. Read wherever the project lives, never mistaken for a workspace file.                                                                           | Always                                                                       |
-| **Workspace file**    | The nearest `.iris-agentic-dev.toml` found by walking up from the working directory. The walk stops before your home directory, so it never finds the operator file.                               | Only after you run `iris-agentic-dev trust`                                  |
-| **Named config file** | A file given by `--config`, or a directory or file given by `OBJECTSCRIPT_WORKSPACE` or `--workspace`. Judged exactly like a workspace file.                                                       | Only after you run `iris-agentic-dev trust` (unless it is the operator file) |
+| Source                | What it is                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Trusted                                                                      |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Launch settings**   | The environment variables and flags iad was started with (`IRIS_*`, `IAD_*`, `--host`, `--config`). Approving a project's MCP server in a client means trusting the settings it launches iad with.                                                                                                                                                                                                                                                                                                                                                                                                                                            | Always                                                                       |
+| **Operator file**     | `~/.iris-agentic-dev.toml` in your home directory. Read wherever the project lives, never mistaken for a workspace file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Always                                                                       |
+| **Workspace file**    | The nearest `.iris-agentic-dev.toml` found by walking up from the working directory. The walk stops after the repository root (the first directory with a `.git`) and before your home directory, so it never finds the operator file and never reads a file above your home, in `/` or in `/tmp`. `/`, `/Users`, `/home`, `/tmp`, `/Users/Shared`, `C:\Users\Public`, the mount roots `/Volumes`, `/mnt` and `/media` with the mount points directly under them (`/Volumes/Backup`, `/mnt/c`), and any directory that holds your home are never the project directory. A project further down a mount, such as `/Volumes/work/proj`, is one. | Only after you run `iris-agentic-dev trust`                                  |
+| **Named config file** | A file given by `--config`, or a directory or file given by `OBJECTSCRIPT_WORKSPACE` or `--workspace`. Judged exactly like a workspace file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Only after you run `iris-agentic-dev trust` (unless it is the operator file) |
 
 iad reads the operator file every time and at most one workspace-layer file. The workspace-layer
 file is, in order, `--config`, `OBJECTSCRIPT_WORKSPACE`, `--workspace`, then the walk up from the
@@ -68,7 +68,9 @@ go:
 - `tls_verify = false`, on the connection or on an `[instance.<name>]` block;
 - `ssh_host`, which names the machine your code runs on;
 - `service_username`, which names the account your code runs as;
-- `[instance.<name>] role = "workbench"`, which lifts a subject server's confirmation rule.
+- `[instance.<name>] role = "workbench"`, which lifts a subject server's confirmation rule;
+- a `mode` other than `"operate"`, which turns the declared instances and their roles off. A project
+  file that sets `mode = "operate"` is tightening and needs no trust.
 
 Connection details, tool lists, `read_only = "strict"`, `globalBlocklist`, `irisAudit` and
 anything else that only tightens are not loosening settings and need no trust.
@@ -431,6 +433,11 @@ the server's name, the user and its address (`scheme://host:port/prefix`), so a 
 one address is never found for another. iad reads the Server Manager's service,
 `intersystems-server-credentials`, and never writes to or deletes from it.
 
+A password that iad 1.6.x saved under that service, keyed by the server's name alone, is never used.
+It is not tied to an address, so iad does not send it anywhere or copy it. The name appears in
+`set_aside` as `<name>:legacy_keychain`. Run `iris_add_server` for that name with its password, and
+iad saves it for the address you give.
+
 On macOS the first read of an item by a new binary (after an upgrade, for one) can raise an
 approval dialog from the Keychain. Choose **Always Allow** once. A session with no one at the screen
 cannot answer it, and a call that needs the item waits. On such a host, and in CI, set
@@ -509,17 +516,52 @@ globalBlocklist = ["^AppHealthData"]
 irisAudit = true
 ```
 
-| Key                              | Values                                     | What it does                                                                                                                                    |
-| -------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `allow`                          | list of categories                         | Only these tool categories run. Omit it to permit every category.                                                                               |
-| `mcpTemplate`                    | `"dev"`, `"test"`, `"live"`                | Which categories the environment blocks; see [Effective policy](#effective-policy). Omit it and the server's system mode chooses.               |
-| `dataPolicy`                     | `"block"` (default), `"redact"`, `"allow"` | What the bulk-data tools (`journal_search`, `iris_message_body`, `stream_inspect`, and `iris_interop_query` calls that name a body) may return. |
-| `globalBlocklist`                | list of global names or patterns           | Globals writes and kills may not touch, added to the built-in list. It never stops a read.                                                      |
-| `dataPolicyKillAllowlist`        | list of patterns                           | Globals a kill may touch although the built-in list would stop it. Custom patterns only.                                                        |
-| `writeTools`, `destructiveTools` | `true` / `false`                           | The write and destructive tiers for this server only.                                                                                           |
-| `compileTimeGate`                | `true` / `false`                           | The compile-time gate for this server; see [Compile-time gate](#compile-time-gate).                                                             |
-| `irisAudit`                      | `true` / `false`                           | Emit a `%SYS.Audit` record per call.                                                                                                            |
-| `execAsOsUser`                   | `true`                                     | Operator-only: run the agent's code as the container's OS user on this server.                                                                  |
+| Key                              | Values                                     | What it does                                                                                                                                                                                                 |
+| -------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `allow`                          | list of categories                         | Only these tool categories run. Omit it to permit every category.                                                                                                                                            |
+| `mcpTemplate`                    | `"dev"`, `"test"`, `"live"`                | Which categories the environment blocks; see [Effective policy](#effective-policy). Omit it and the server's system mode chooses.                                                                            |
+| `dataPolicy`                     | `"block"` (default), `"redact"`, `"allow"` | What the bulk-data tools (`journal_search`, `iris_message_body`, `stream_inspect`, and `iris_interop_query` calls that name a body) may return. Under `allow` each needs `acknowledgePhi: true` on the call. |
+| `globalBlocklist`                | list of global names or patterns           | Globals writes and kills may not touch, added to the built-in list. It never stops a read.                                                                                                                   |
+| `dataPolicyKillAllowlist`        | list of patterns                           | Globals a kill may touch although the built-in list would stop it. Custom patterns only.                                                                                                                     |
+| `writeTools`, `destructiveTools` | `true` / `false`                           | The write and destructive tiers for this server only.                                                                                                                                                        |
+| `compileTimeGate`                | `true` / `false`                           | The compile-time gate for this server; see [Compile-time gate](#compile-time-gate).                                                                                                                          |
+| `irisAudit`                      | `true` / `false`                           | Emit a `%SYS.Audit` record per call.                                                                                                                                                                         |
+| `execAsOsUser`                   | `true`                                     | Operator-only: run the agent's code as the container's OS user on this server.                                                                                                                               |
+
+`allow` and `mcpTemplate` also judge the tools that change where later calls go or start a
+container: `iris_select_container`, `iris_start_sandbox`, `iris_containers`, `iris_add_server`,
+`iris_remove_server`, `iris_import_servers` and `iris_reload_pool`. They act on no server's data, so
+the **default server's** policy judges them (a call to them names no other server, and what they
+change is what the default's calls will reach). `allow` has to list `admin`, and `live` and `test`
+refuse them as `execute` does.
+
+The skill and knowledge-base tools that run ObjectScript on the default server are judged by the
+default server's policy too: `skill`, `skill_list`, `skill_describe`, `skill_search`, `skill_forget`,
+`skill_community`, `kb`, `kb_index` and `agent_info`. `allow` has to list `skill` or `kb` (the
+tool's own category), and `live` and `test` refuse them as `execute` does, so a production server
+that blocks `execute` no longer reads its `^SKILLS` global for them. The write and destructive
+gates judge the actions that write (`kb_index`, `skill` with `propose` or `forget`,
+`skill_community` with `install`, `skill_forget`). A configuration file that does not parse
+closes them with the other tools that talk to IRIS. The tools that read only the local registry
+or the call history (`kb_recall`, `skill_community_list`, `agent_history`, `agent_stats`,
+`iris_servers`) are not judged by `allow`. A tool that has no category at all is judged as
+`execute` and `admin`; `check_config` lists the tools exempt from that in `ungated_tools`.
+
+Three of the readers still answer when the policy refuses their server: `skill_list`,
+`skill_search` and `skill_describe` serve the skills bundled in the binary, and the response says
+the server's `^SKILLS` skills were not consulted. `sources.synthesized.searched` is `false`,
+`sources.synthesized.refused` carries the refusal's `error_code`, `kind` and `lift`, and `note`
+says why. This holds for a `live` or `test` template, an `allow` list that omits `skill`, and a
+configuration file that does not parse. The dispatchers, `kb` and `skill_forget` are refused whole.
+
+The command-line commands that wrap a tool go through the same checks. The `capability-matrix`
+and `benchmark` subcommands send every step to the default server through the tool pipeline: the lock and the version query as `iris_execute`, each class as `iris_doc` with
+`compile`. The environment template, `allow` (`execute` and `compile`), the write gate and the
+role gate judge each step, so a `live` or `test` template, a narrow `allow` or closed write tools
+refuse `benchmark` with the refusal the MCP server would send, exit 1, before it stores a class. A
+refusal part-way through stops the run, gives the lock back and prints no table of results.
+`benchmark` does not pass `confirm`, so it does not run against a `subject` server. It empties its
+lock global where it used to kill it, so the destructive tier is not needed to release it.
 
 Blocked calls return an error whose `error_code` names the gate (`POLICY_GATE` with the allowed
 categories, `ENV_GATE_BLOCKED`, `DATA_POLICY_BLOCKED`, `SYSTEM_BLOCKLIST`) and a `refusal` object
@@ -885,12 +927,20 @@ read_only = "strict"
 
 in any configuration file, or `IAD_READ_ONLY=strict` in the launch settings. It only tightens, so
 a project file may set it and no file can lift another's. Under strict, every tool that can reach a
-scratch class is hidden from `tools/list` and refused with `READ_ONLY_STRICT`: the 37 tools marked
+scratch class is hidden from `tools/list` and refused with `READ_ONLY_STRICT`: the 44 tools marked
 in `write_gate::CLASSIFICATION` (`iris_table_info`, `global_preview`, `my_access`, `iris_global`,
-`iris_production`, `iris_execute`, `iris_test`, `journal_search` and the rest of the schema,
-interoperability and administration readers). `iris_doc` (reads), `iris_query`, `iris_search`,
-`iris_info`, `iris_servers` and `check_config` stay. Telemetry is kept in the local file.
-`check_config` reports `read_only` and `read_only_from`.
+`iris_production`, `iris_execute`, `iris_test`, `journal_search`, `skill`, `kb`, `kb_index`,
+`skill_community`, `agent_info` and the rest of the schema, interoperability and administration
+readers). `iris_doc` reads stay, except `mode=compiled`, which reads the `.INT` routine through a
+scratch class and is refused. `iris_query`, `iris_search`, `iris_info`, `iris_servers`,
+`check_config` and the one-tool-per-action skill readers (`skill_list`, `skill_describe`,
+`skill_search`) stay; under strict the readers answer from the bundled skills and do not read
+`^SKILLS`, which they would do through the container's terminal. Telemetry is kept in the local
+file. A call that would compile and that strict does not know about is refused by the scratch-class
+runner before anything is sent (`READ_ONLY_STRICT (scratch-class runner)` in the error).
+`check_config` reports `read_only` and `read_only_from`. The command-line commands that compile a
+scratch class obey it too: `iris-agentic-dev capability-matrix` and `iris-agentic-dev benchmark`
+exit 1 with `READ_ONLY_STRICT` before they connect to anything.
 
 Strict also closes the write and destructive gates on every server. It outranks
 `write_tools_enabled = true`, `destructive_tools_enabled = true`, `[policy.<name>] writeTools`,
@@ -901,6 +951,8 @@ call is refused with `READ_ONLY_STRICT`, and `check_config` shows both gates clo
 Strict together with `irisAudit = true` on any server is a configuration error
 (`READ_ONLY_STRICT_WITH_AUDIT`): the audit emission compiles a class on the server. `iris-agentic-dev mcp`
 names both settings on stderr and exits 2, and `check_config` lists the error under `config_errors`.
+`iris-agentic-dev tool`, and a session whose file only became readable after it started, refuse every
+tool that talks to IRIS with `READ_ONLY_STRICT_WITH_AUDIT`, naming where each setting is set.
 
 ### Telemetry
 

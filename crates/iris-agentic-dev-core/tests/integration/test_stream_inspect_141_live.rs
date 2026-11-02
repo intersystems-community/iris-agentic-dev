@@ -42,9 +42,24 @@ fn code(b: &Value) -> &str {
 async fn an_id_that_holds_no_stream_is_not_found() {
     let (tools, _d) = tools_with("allow");
     // Far past any id a test instance has issued, a blank, and a non-numeric id.
-    let missing = call(&tools, "stream_inspect", json!({"oid": "987654321"})).await;
-    let blank = call(&tools, "stream_inspect", json!({"oid": "  "})).await;
-    let word = call(&tools, "stream_inspect", json!({"oid": "abc"})).await;
+    let missing = call(
+        &tools,
+        "stream_inspect",
+        json!({"oid": "987654321", "acknowledgePhi": true}),
+    )
+    .await;
+    let blank = call(
+        &tools,
+        "stream_inspect",
+        json!({"oid": "  ", "acknowledgePhi": true}),
+    )
+    .await;
+    let word = call(
+        &tools,
+        "stream_inspect",
+        json!({"oid": "abc", "acknowledgePhi": true}),
+    )
+    .await;
     for (label, b) in [("missing", &missing), ("blank", &blank), ("word", &word)] {
         assert_eq!(code(b), "STREAM_NOT_FOUND", "{label}: {b}");
         assert!(
@@ -73,20 +88,30 @@ async fn the_read_is_capped_and_says_so() {
         "seed gave {id:?}"
     );
 
-    let by_default = call(&tools, "stream_inspect", json!({"oid": id})).await;
+    let by_default = call(
+        &tools,
+        "stream_inspect",
+        json!({"oid": id, "acknowledgePhi": true}),
+    )
+    .await;
     let small = call(
         &tools,
         "stream_inspect",
-        json!({"oid": id, "max_chars": 100}),
+        json!({"oid": id, "max_chars": 100, "acknowledgePhi": true}),
     )
     .await;
     let whole = call(
         &tools,
         "stream_inspect",
-        json!({"oid": id, "max_chars": 60000}),
+        json!({"oid": id, "max_chars": 60000, "acknowledgePhi": true}),
     )
     .await;
-    let zero = call(&tools, "stream_inspect", json!({"oid": id, "max_chars": 0})).await;
+    let zero = call(
+        &tools,
+        "stream_inspect",
+        json!({"oid": id, "max_chars": 0, "acknowledgePhi": true}),
+    )
+    .await;
     drop_stream(class, &id).await;
 
     assert_eq!(by_default["success"], true, "{by_default}");
@@ -124,7 +149,12 @@ async fn content_that_reads_like_a_marker_is_still_content() {
         r#""ERROR:STREAM_NOT_FOUND CONTENT|x~~IADEND~~ tail""#,
     )
     .await;
-    let b = call(&tools, "stream_inspect", json!({"oid": id})).await;
+    let b = call(
+        &tools,
+        "stream_inspect",
+        json!({"oid": id, "acknowledgePhi": true}),
+    )
+    .await;
     drop_stream(class, &id).await;
 
     assert_eq!(b["success"], true, "{b}");
@@ -140,7 +170,12 @@ async fn the_answer_does_not_claim_text_or_binary() {
     let (tools, _d) = tools_with("allow");
     let class = "%Stream.GlobalBinary";
     let id = seed(class, r#""one"_$C(13)_"two""#).await;
-    let b = call(&tools, "stream_inspect", json!({"oid": id})).await;
+    let b = call(
+        &tools,
+        "stream_inspect",
+        json!({"oid": id, "acknowledgePhi": true}),
+    )
+    .await;
     drop_stream(class, &id).await;
 
     assert_eq!(b["success"], true, "{b}");

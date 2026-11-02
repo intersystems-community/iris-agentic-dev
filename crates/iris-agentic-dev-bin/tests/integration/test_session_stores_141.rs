@@ -16,11 +16,11 @@ use std::time::{Duration, Instant};
 use iris_agentic_dev_core::testing::{clean_mcp_command, stop_server};
 use serde_json::{json, Value};
 
-const TOKEN: &str = "0123456789abcdef0123456789abcdef-sessions";
+pub(crate) const TOKEN: &str = "0123456789abcdef0123456789abcdef-sessions";
 
-struct Server {
+pub(crate) struct Server {
     child: Child,
-    port: u16,
+    pub(crate) port: u16,
 }
 
 impl Drop for Server {
@@ -38,21 +38,40 @@ fn free_port() -> u16 {
 }
 
 fn start(home: &Path) -> Server {
+    start_with(home, &[])
+}
+
+/// [`start`] with more launch settings.
+pub(crate) fn start_with(home: &Path, extra_env: &[(&str, &str)]) -> Server {
+    // The server under test is the one the environment names, as in CI (`LiveTarget`).
+    let live = iris_agentic_dev_core::testing::LiveTarget::from_env();
+    start_at(
+        home,
+        (&live.host, live.web_port, &live.username, &live.password),
+        extra_env,
+    )
+}
+
+/// [`start`] against the IRIS at `(host, web port, user, password)`, with more launch settings.
+pub(crate) fn start_at(
+    home: &Path,
+    iris: (&str, u16, &str, &str),
+    extra_env: &[(&str, &str)],
+) -> Server {
     let port = free_port();
     let bin = env!("CARGO_BIN_EXE_iris-agentic-dev");
     let mut cmd = clean_mcp_command(Path::new(bin));
-    // The server under test is the one the environment names, as in CI (`LiveTarget`).
-    let live = iris_agentic_dev_core::testing::LiveTarget::from_env();
     let child = cmd
         .env("HOME", home)
         .env("USERPROFILE", home)
-        .env("IRIS_HOST", &live.host)
-        .env("IRIS_WEB_PORT", live.web_port.to_string())
-        .env("IRIS_USERNAME", &live.username)
-        .env("IRIS_PASSWORD", &live.password)
+        .env("IRIS_HOST", iris.0)
+        .env("IRIS_WEB_PORT", iris.1.to_string())
+        .env("IRIS_USERNAME", iris.2)
+        .env("IRIS_PASSWORD", iris.3)
         .env("IAD_HTTP_TOKEN", TOKEN)
         // One document is enough to overflow the inline limit, so the answer goes to the store.
         .env("IRIS_INLINE_INFO", "1")
+        .envs(extra_env.iter().copied())
         .current_dir(home)
         .args([
             "--transport",
@@ -82,10 +101,10 @@ fn start(home: &Path) -> Server {
 }
 
 /// One MCP session over streamable HTTP.
-struct Session {
+pub(crate) struct Session {
     http: reqwest::Client,
     url: String,
-    id: String,
+    pub(crate) id: String,
     next: u64,
 }
 
@@ -107,7 +126,7 @@ fn message_with_id(body: &str, id: u64) -> Value {
 }
 
 impl Session {
-    async fn open(port: u16, name: &str) -> Session {
+    pub(crate) async fn open(port: u16, name: &str) -> Session {
         let http = reqwest::Client::new();
         let url = format!("http://127.0.0.1:{port}/mcp");
         let init = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
@@ -152,7 +171,7 @@ impl Session {
     }
 
     /// `tools/call`, answered with the tool's own JSON body.
-    async fn call(&mut self, tool: &str, args: Value) -> Value {
+    pub(crate) async fn call(&mut self, tool: &str, args: Value) -> Value {
         let id = self.next;
         self.next += 1;
         let resp = self

@@ -8,8 +8,8 @@
 //!
 //! `stream_inspect` is why the whole feature exists. It shipped documented with a `max_chars`
 //! parameter that no code read, so a caller asking for 10,000 characters silently got the entire
-//! stream. Spec 141 T199 made the cap real. `stream_inspect_declares_exactly_four_parameters` is the
-//! standing guard: the tool takes `oid`, `max_chars`, `namespace` and `server`, and if a fifth
+//! stream. Spec 141 T199 made the cap real. `stream_inspect_declares_exactly_five_parameters` is the
+//! standing guard: the tool takes `oid`, `max_chars`, `namespace`, `acknowledgePhi` and `server`, and if a fifth
 //! appears in the schema it must be because a handler reads it.
 
 use iris_agentic_dev_core::testing::{
@@ -67,6 +67,7 @@ const BATCH7: &[ParamContract] = &[
             ("oid", "string"),
             ("max_chars", "integer"),
             ("namespace", "string"),
+            ("acknowledgePhi", "boolean"),
             ("server", "string"),
         ],
         required: &[],
@@ -97,7 +98,7 @@ fn batch7_handlers_read_their_contract() {
 /// `max_chars_is_documented_declared_and_read` in `tests/unit/test_docs_contract.rs`.
 #[test]
 #[ignore = "spawns the built binary; run with --include-ignored"]
-fn stream_inspect_declares_exactly_four_parameters() {
+fn stream_inspect_declares_exactly_five_parameters() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
@@ -109,8 +110,8 @@ fn stream_inspect_declares_exactly_four_parameters() {
     let names: Vec<&str> = props.iter().map(String::as_str).collect();
     assert_eq!(
         names,
-        ["max_chars", "namespace", "oid", "server"],
-        "`stream_inspect` reads exactly these four keys. A fifth here means a parameter was added to \
+        ["acknowledgePhi", "max_chars", "namespace", "oid", "server"],
+        "`stream_inspect` reads exactly these five keys. A sixth here means a parameter was added to \
          the schema without a handler reading it — the `max_chars` bug returning."
     );
 }

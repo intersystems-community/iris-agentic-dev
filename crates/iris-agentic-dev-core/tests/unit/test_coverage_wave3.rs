@@ -236,7 +236,8 @@ mod tests {
     #[tokio::test]
     async fn iris_message_body_missing_message_id_returns_invalid_params() {
         // The bulk-PHI gate runs before the handler reads its arguments (spec 141), so the data
-        // policy has to allow reads for the handler's own validation to be reached.
+        // policy has to allow reads, and the call has to acknowledge them, for the handler's own validation
+        // to be reached.
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().join("home");
         let cwd = dir.path().join("proj");
@@ -256,7 +257,10 @@ mod tests {
         let t = tools();
         t.set_config(inputs, snapshot);
         let res = t
-            .call_for_test("iris_message_body", serde_json::json!({}))
+            .call_for_test(
+                "iris_message_body",
+                serde_json::json!({"acknowledgePhi": true}),
+            )
             .await
             .expect("call_for_test");
         let text = result_text(&res);

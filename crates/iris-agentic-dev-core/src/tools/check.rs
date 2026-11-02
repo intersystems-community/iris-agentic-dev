@@ -134,15 +134,18 @@ pub(crate) async fn handle_iris_check(
     }
     let namespace = tools.target_ns(namespace)?;
     // Lookups go through the target connection when it speaks Atelier (a docker-only one cannot).
-    let atelier = tools
+    let atelier = match tools
         .target_conn_opt()?
         .filter(|conn| !nopws::atelier_unavailable(conn))
-        .map(|conn| IadAtelier {
+    {
+        Some(conn) => Some(IadAtelier {
             conn,
-            client: tools.http_client().clone(),
+            client: tools.http_client()?.clone(),
             namespace: namespace.clone(),
             handle: tokio::runtime::Handle::current(),
-        });
+        }),
+        None => None,
+    };
     let iris = atelier.is_some();
     if source.is_none() && !iris {
         return Err(super::iris_unreachable());

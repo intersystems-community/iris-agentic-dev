@@ -96,8 +96,8 @@ impl std::fmt::Display for SmCredentialError {
                 "OS keychain is unavailable for server '{server_name}' ({detail}). \
                  On headless hosts and Remote SSH sessions the keychain daemon is often \
                  not accessible to out-of-process MCP clients. \
-                 Workaround: add the connection to .iris-agentic-dev.toml with host/port/\
-                 username/password — the file hot-reloads without restarting the server. \
+                 Workaround: register the connection with iris_add_server, or have the \
+                 operator supply IRIS_USERNAME and IRIS_PASSWORD in the server's environment. \
                  credential_status will show 'keychain_unavailable' until resolved."
             ),
         }
@@ -307,7 +307,7 @@ pub fn init_platform_keystore() {
             Ok(store) => keyring_core::set_default_store(store),
             Err(e) => tracing::warn!(
                 "Secret Service keychain init failed (headless host or no D-Bus session?): {e}. \
-                 Credential storage unavailable — use .iris-agentic-dev.toml as fallback."
+                 Credential storage unavailable — use IRIS_USERNAME and IRIS_PASSWORD as fallback."
             ),
         }
     }
@@ -630,11 +630,12 @@ pub fn sm_secret_for(
     sm_secret_for_in(&user_profiles(), name, username, endpoint)
 }
 
-/// A 1.6.x `servers.json` entry kept its password under the Server Manager's service, because iad
-/// wrote there. For an entry that matches no profile, read that item once so an upgrade does not
-/// lose it. The caller copies it to iad's own account; this never deletes it.
-pub fn legacy_iad_secret(name: &str, username: &str) -> Option<String> {
-    read_sm_secret(name, username).ok()
+/// Whether a 1.6.x password for `name` sits under the Server Manager's service. 1.6.x kept its own
+/// passwords there, keyed by name alone, and a name proves nothing about where a password may go,
+/// so the value is never handed out: the answer is only whether the item exists, so the caller can
+/// report it. This never deletes the item.
+pub fn legacy_iad_item_exists(name: &str, username: &str) -> bool {
+    read_sm_secret(name, username).is_ok()
 }
 
 // ── Windows vscdb credential fallback ────────────────────────────────────────
@@ -798,8 +799,8 @@ fn vscdb_dpapi_decrypt(ciphertext: &[u8], what: &str) -> Result<Vec<u8>, String>
              This process is running as Windows user: {current_user}\n\
              DPAPI encrypts data to the user who wrote it. If this process runs as a \
              different user than VS Code, it cannot decrypt VS Code's stored secrets.\n\
-             Fix: run VS Code and this tool as the same Windows user, or put the \
-             password directly in .iris-agentic-dev.toml (see docs/connecting.md).",
+             Fix: run VS Code and this tool as the same Windows user, or have the \
+             operator supply the password in IRIS_PASSWORD (see docs/connecting.md).",
             ciphertext.len()
         ));
     }
@@ -942,8 +943,10 @@ pub fn tool_to_category_pub(
 
 /// Tool names deliberately exempt from `ToolCategory` — not an oversight.
 ///
-/// `check_env_gate` and `policy_gate` both do `tool_to_category(tool_name)?`: a `None`
-/// return means "not gated," not "blocked." Before 2026-08, that was true of every tool
+/// `tool_to_category` returns `None` for a tool with no arm. Since 1.7.1 that no longer means
+/// "not gated": `effective_category` treats such a tool as `Execute` and `Admin`, and only a name
+/// on this list is left ungated. `check_config` reports the list. Before 2026-08 a `None` was
+/// "not gated," and it was true of every tool
 /// nobody had gotten around to categorizing — 55 of the 90 real tools, discovered while
 /// scoping a separate feature request. Two of those turned out to be live gaps in the
 /// documented guarantee that `mcpTemplate = "live"`/`"test"` blocks `Execute`: an
@@ -1061,7 +1064,9 @@ fn tool_to_category(tool_name: &str) -> Option<crate::iris::workspace_config::To
         | "iris_generate" | "iris_generate_test" | "iris_macro" | "iris_table_info"
         | "resolve_dynamic_dispatch" => ToolCategory::Docs,
 
-        _ => return None, // unknown tool — not gated
+        // A tool with no arm is not "not gated": `effective_category` gives it the strictest
+        // reading unless it is on `INTENTIONALLY_UNCATEGORIZED_TOOLS`.
+        _ => return None,
     })
 }
 

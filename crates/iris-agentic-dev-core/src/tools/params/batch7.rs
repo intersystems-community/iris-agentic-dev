@@ -5,7 +5,7 @@
 //!
 //! `stream_inspect` shipped documented with a `max_chars` that no code read, which is the bug that
 //! named this feature. 113 removed the promise; spec 141 (T199) made it real: the struct below
-//! declares it, `stream_inspect_impl` reads it, and `stream_inspect_declares_exactly_four_parameters`
+//! declares it, `stream_inspect_impl` reads it, and `stream_inspect_declares_exactly_five_parameters`
 //! in `tests/binary/schema_batch7.rs` is what keeps the declaration and the reader together.
 //!
 //! Nothing is `required`. `mermaid_class.class` and `hl7_schema_inspect.schema` come closest — both
@@ -100,7 +100,7 @@ pub struct ResolveStorageParams {
 ///
 /// Four fields. `max_chars` is the one this feature was named for: it was documented for five minor
 /// versions with nothing reading it. The handler reads it now (`stream_inspect_impl`), and
-/// `stream_inspect_declares_exactly_four_parameters` in `tests/binary/schema_batch7.rs` and
+/// `stream_inspect_declares_exactly_five_parameters` in `tests/binary/schema_batch7.rs` and
 /// `tests/integration/test_stream_inspect_141_live.rs` hold that it does.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -115,6 +115,15 @@ pub struct StreamInspectParams {
     /// Namespace holding the stream. Omit to use the connection's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
+    /// Required when the server's `dataPolicy` is `allow`: acknowledges that the stream's content
+    /// may contain PHI.
+    #[serde(
+        rename = "acknowledgePhi",
+        alias = "acknowledge_phi",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub acknowledge_phi: Option<bool>,
     /// Route this call to a named registered IRIS instance. If omitted, uses the default connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<String>,

@@ -811,8 +811,8 @@ impl ExecContext {
                 }
                 return Err(ExecError::new(
                     crate::tools::nopws::NOPWS_NO_CONTAINER,
-                    "docker_only or nopws=true requires a container name. Set IRIS_CONTAINER env \
-                     var or add container = \"<name>\" to .iris-agentic-dev.toml.",
+                    "docker_only or nopws=true requires a container name. Set the IRIS_CONTAINER env \
+                     var or select a container with iris_select_container.",
                 ));
             }
             _ => {}

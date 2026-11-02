@@ -1527,7 +1527,7 @@ dependencies = [
 
 [[package]]
 name = "iris-agentic-dev"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1555,7 +1555,7 @@ dependencies = [
 
 [[package]]
 name = "iris-agentic-dev-core"
-version = "1.7.0"
+version = "1.7.1"
 dependencies = [
  "aes-gcm",
  "anyhow",

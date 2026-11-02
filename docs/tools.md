@@ -129,10 +129,10 @@ Six tools take no parameters at all and declare an empty property set: `agent_st
 
 Two parameters appear on most tools and are described here once instead of in every table.
 
-| Parameter | Type   | Notes                                                                                                                                                                                                                                                                            |
-| --------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server`  | string | Run the call on a named registered server instead of the default. Every limit on the call (gates, policy, role, service account, namespace) is judged against that server, and a name that is not in the pool is refused before any gate runs. Use `iris_servers` to list names. |
-| `confirm` | bool   | Acknowledges a write on a `subject` server (`SUBJECT_CONFIRM_REQUIRED`) or a destructive call that asks for confirmation. It does nothing on other servers. `iris_execute` and `iris_ws_exec` also accept the older spelling `confirmed`.                                        |
+| Parameter | Type   | Notes                                                                                                                                                                                                                                                                                                                                                                                  |
+| --------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server`  | string | Run the call on a named registered server instead of the default. Every limit on the call (gates, policy, role, service account, namespace) is judged against that server, and a name that is not in the pool is refused before any gate runs. An empty or whitespace-only `server` is `INVALID_PARAMS`; leave the parameter out to use the default. Use `iris_servers` to list names. |
+| `confirm` | bool   | Acknowledges a write on a `subject` server (`SUBJECT_CONFIRM_REQUIRED`) or a destructive call that asks for confirmation. It does nothing on other servers. `iris_execute` and `iris_ws_exec` also accept the older spelling `confirmed`.                                                                                                                                              |
 
 `confirm` is an acknowledgement: it lifts a check meant to catch the agent's mistakes, not one
 meant to hold against the agent. See [Refusals](#refusals). `force` is not an acknowledgement; a
@@ -228,7 +228,9 @@ Pass `probe: true` to fan out a parallel Atelier REST probe to every server in t
 (5-second timeout each). Each entry then includes `reachable`, `auth`, `latency_ms`,
 `iris_version`, `atelier_version`, and `error`. The probe requests each entry's own
 `base_url`; through 1.4.1 it rebuilt a URL from host and port, so a prefixed instance was
-reported healthy on the strength of the gateway root answering.
+reported healthy on the strength of the gateway root answering. A probe signs in with the
+credential it was given on a session of its own and ends that session afterwards, so it never
+reports `auth: true` for a wrong password because another call has the account's session open.
 
 ### `iris_add_server`
 
@@ -697,9 +699,29 @@ connection account, not the service account. If read mode has to be safe, connec
 without `EXECUTE` on such procedures. `force=true` skips the check only when the target server's
 write tier is on, and the live and test templates then treat the call as a write. `mode="count"`
 takes one `SELECT` (no `;`) and a `table` that is a table name, under the same rules.
+`mode="explain"` plans one `SELECT` or `WITH` and is read the same way: a comment before the
+keyword is fine, and a second statement, a write keyword or `SELECT ... INTO` is refused with
+`SQL_WRITE_BLOCKED` before IRIS sees it.
+
+The code-edit gate (`CODE_EDIT_BLOCKED`, a fixed rule) refuses a forced read or a write that names
+a `%Dictionary` class table or `%Library.Routine`. It reads the statement the way IRIS does, so a
+comment or white space between the parts of the name (`%Dictionary/**/.ClassDefinition`) does not
+hide it, and a comment that only mentions the dictionary does not trigger it. A string literal
+that names it still does.
 
 `mode="write"` runs as the service account when one is configured, on the server the call names,
 and returns `identity` like the other code-running tools.
+
+**The row cap.** `max_rows_affected` is always in force in write mode (default 1000). An `UPDATE`,
+`DELETE` or `TRUNCATE TABLE` is counted with a `SELECT COUNT(*)` of its table and `WHERE` before it
+runs, and `ROWS_LIMIT_EXCEEDED` stops it over the cap. A statement whose rows cannot be counted is not
+run: it is refused with `ROWS_NOT_COUNTABLE`, a fixed rule. That covers a `DELETE` or `UPDATE` over
+several tables or a join, a `TRUNCATE` without `TABLE`, and a modifier iad does not know.
+`DELETE table`, with or without `FROM`, and `%NOLOCK`, `%NOJOURN` and the other documented
+modifiers are counted. `%NOUNIQCHECK` and `%STARTTABLE` are not modifiers to IRIS 2026.2, which
+reads each as a table name, so `DELETE %NOUNIQCHECK FROM t` is refused. A statement that starts with anything but a statement word (a leading `;` or `(`) is
+`DDL_NOT_ALLOWED`. Earlier versions ran an uncounted statement and set `rows_check_skipped`; that
+field is gone.
 
 ---
 
@@ -1174,6 +1196,7 @@ account can log in. Run this first if anything seems misconfigured.
 | `tls_verify`, `tls`                                                | The default connection's certificate check, and every server's with its `source` (`default`, `launch_env`, `config_file`, `servers_json`, `server_manager`)                                                                                                                                                                                               |
 | `discovery`                                                        | `skipped`: listeners the localhost scan did not send a credential to, with port and reason                                                                                                                                                                                                                                                                |
 | `credentials_withheld`                                             | The environment credentials kept from a host a project file named, and what to do                                                                                                                                                                                                                                                                         |
+| `ungated_tools`                                                    | The tools no category gate judges, an explicit list (`check_config`, which makes no IRIS call). Every other tool has a category; a tool with none is treated as `execute` and `admin` by the environment template and `allow`, so a tool added without a category is blocked, not open                                                                    |
 | `read_only`, `read_only_from`                                      | `strict` or `off`, and what asked for it                                                                                                                                                                                                                                                                                                                  |
 | `telemetry_sink`                                                   | `local` (the default) or `iris`: telemetry always goes to the local file, and `iris` adds the IRIS global where the call's server allows it                                                                                                                                                                                                               |
 | `audit`                                                            | The local audit log: its `path` and whether it keeps `payloads` as `sizes` or `full`                                                                                                                                                                                                                                                                      |
@@ -1313,23 +1336,24 @@ iris_production(action="set_autostart", production="MyApp.Production", enabled=t
 
 Query production logs, queue depths, or message archive.
 
-| Parameter       | Type            | Default           | Notes                                                       |
-| --------------- | --------------- | ----------------- | ----------------------------------------------------------- |
-| `what`          | string          | `"logs"`          | Enum: `"logs"` \| `"queues"` \| `"messages"`                |
-| `component`     | string          | —                 | `logs`: filter by business host name                        |
-| `log_type`      | string          | `"error,warning"` | `logs` only; comma-separated, see below                     |
-| `limit`         | int             | `50`              | Applies to `logs` and `messages`                            |
-| `source`        | string          | —                 | `messages`: filter by source                                |
-| `target`        | string          | —                 | `messages`: filter by target                                |
-| `message_class` | string          | —                 | `messages`: filter by message class                         |
-| `session_id`    | int \| string   | —                 | `messages`: one session's messages; decimal string accepted |
-| `since_id`      | int \| string   | —                 | `messages`: tail after this header ID                       |
-| `body_class`    | string          | —                 | `messages`: body class to join, e.g. `Ens.StringContainer`  |
-| `body_where`    | string          | —                 | `messages`: SQL predicate on the joined body table          |
-| `body_select`   | array\<string\> | —                 | `messages`: body-table columns to add to each row           |
-| `search_table`  | object          | —                 | `messages`: indexed Search Table search — see below         |
-| `namespace`     | string          | `"USER"`          |                                                             |
-| `server`        | string          | —                 | Named server; omit for default                              |
+| Parameter        | Type            | Default           | Notes                                                                                                                                |
+| ---------------- | --------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `what`           | string          | `"logs"`          | Enum: `"logs"` \| `"queues"` \| `"messages"`                                                                                         |
+| `component`      | string          | —                 | `logs`: filter by business host name                                                                                                 |
+| `log_type`       | string          | `"error,warning"` | `logs` only; comma-separated, see below                                                                                              |
+| `limit`          | int             | `50`              | Applies to `logs` and `messages`                                                                                                     |
+| `source`         | string          | —                 | `messages`: filter by source                                                                                                         |
+| `target`         | string          | —                 | `messages`: filter by target                                                                                                         |
+| `message_class`  | string          | —                 | `messages`: filter by message class                                                                                                  |
+| `session_id`     | int \| string   | —                 | `messages`: one session's messages; decimal string accepted                                                                          |
+| `since_id`       | int \| string   | —                 | `messages`: tail after this header ID                                                                                                |
+| `body_class`     | string          | —                 | `messages`: body class to join, e.g. `Ens.StringContainer`                                                                           |
+| `body_where`     | string          | —                 | `messages`: SQL predicate on the joined body table                                                                                   |
+| `body_select`    | array\<string\> | —                 | `messages`: body-table columns to add to each row                                                                                    |
+| `search_table`   | object          | —                 | `messages`: indexed Search Table search — see below                                                                                  |
+| `acknowledgePhi` | bool            | `false`           | Required with `body_class`, `body_where`, `body_select` or `search_table` when `dataPolicy` is `allow`; `acknowledge_phi` also works |
+| `namespace`      | string          | `"USER"`          |                                                                                                                                      |
+| `server`         | string          | —                 | Named server; omit for default                                                                                                       |
 
 `log_type` takes any comma-separated subset of `assert`, `error`, `warning`, `info`, `trace`,
 `alert` — the six values of `Ens.Util.Log.Type`, matched case-insensitively. A name that is not one
@@ -1339,10 +1363,14 @@ than quietly widening the query to every severity.
 `search_table` takes `prop` (required), one of `value` or `value_like`, and optional
 `class` and `extent` (default `EnsLib.HL7.SearchTable`).
 
-A call that names `body_class`, `body_where` or `body_select` reads message bodies, so it is a
-bulk-data call: it is refused with `DATA_POLICY_BLOCKED` unless the target server's `dataPolicy`
+A call that names `body_class`, `body_where`, `body_select` or `search_table` reads message
+bodies (a Search Table search returns the indexed field's value, such as a patient identifier taken
+from an HL7 message), so it is a bulk-data call: it is refused with `DATA_POLICY_BLOCKED` unless the target server's `dataPolicy`
 is `allow` (`redact` does not admit it, because the rows are not HL7 text iad could redact).
-Without those arguments the tool lists headers, logs and queues under any policy.
+Under `allow` each of those four also needs `acknowledgePhi=true`, as `iris_message_body` does, and
+is refused with `PHI_ACK_REQUIRED` without it. An empty `body_select` selects nothing and needs no
+acknowledgement. Without those arguments the tool lists headers, logs and
+queues under any policy.
 
 `body_where` is one condition, joined to the query as `(…)`. It is read the way IRIS reads SQL:
 quotes, comments and parentheses count only where IRIS counts them. It is refused when it holds a
@@ -1718,14 +1746,17 @@ that holds no stream is `STREAM_NOT_FOUND`, which is not the same as a stream of
 server's `dataPolicy` decides what comes back: `allow` returns the content, `redact` returns HL7 v2
 with the identifying fields masked (not de-identified; see the redact row above) and refuses other
 content (`BODY_NOT_REDACTABLE`), and `block` refuses the content (`DATA_POLICY_BLOCKED`). A refused
-stream still answers with `class`, `size` and `line_count`.
+stream still answers with `class`, `size` and `line_count`. Under `allow` the call also needs
+`acknowledgePhi=true`, as `iris_message_body` does, and is refused with `PHI_ACK_REQUIRED` without
+it.
 
-| Parameter   | Type    | Default  | Notes                                                               |
-| ----------- | ------- | -------- | ------------------------------------------------------------------- |
-| `oid`       | string  | —        | **Required.** Stream OID                                            |
-| `max_chars` | integer | `20000`  | Most characters to return from the start, at most `1000000` (min 1) |
-| `namespace` | string  | `"USER"` | Namespace that contains the stream                                  |
-| `server`    | string  | —        | Named server; omit for default                                      |
+| Parameter        | Type    | Default  | Notes                                                               |
+| ---------------- | ------- | -------- | ------------------------------------------------------------------- |
+| `oid`            | string  | —        | **Required.** Stream OID                                            |
+| `max_chars`      | integer | `20000`  | Most characters to return from the start, at most `1000000` (min 1) |
+| `namespace`      | string  | `"USER"` | Namespace that contains the stream                                  |
+| `acknowledgePhi` | bool    | `false`  | Required when `dataPolicy` is `allow`; `acknowledge_phi` also works |
+| `server`         | string  | —        | Named server; omit for default                                      |
 
 ### `my_access`
 
@@ -2132,6 +2163,11 @@ Manage the learning agent skill registry.
 
 `action=forget` is ☠ destructive-gated — requires `destructive_tools_enabled = true`.
 
+Every action runs ObjectScript on the default server through a scratch class, so the default
+server's policy judges the call: `allow` has to list `skill`, `live` and `test` refuse it as
+`execute`, and `read_only = "strict"` hides it. `skill_list`, `skill_search` and `skill_describe`
+(below) are the strict-safe way to read the bundled skills.
+
 ```text
 skill(action="list")
 skill(action="describe", name="objectscript-review")
@@ -2151,6 +2187,13 @@ each source held, so a zero never means only one place was checked. The bundled 
 the binary embeds. A directory on disk replaces an embedded copy only when it comes from the
 operator; see [skills.md](skills.md#serving-skills-from-a-directory). `skill_forget` is ☠.
 
+They read and kill `^SKILLS` through the container's terminal, which is ObjectScript on the default
+server: its template (`live` and `test` refuse them as `execute`), `allow` (`skill`) and write gates
+judge them. When the policy refuses that read, `skill_list`, `skill_search` and `skill_describe`
+still answer from the bundled skills, with `sources.synthesized.searched = false` and
+`sources.synthesized.refused` giving the refusal's `error_code`, `kind` and `lift`. They compile no scratch class, so strict read-only leaves `skill_list`, `skill_search`
+and `skill_describe` answering and refuses `skill_forget` as a destructive call.
+
 | Tool             | Parameter | Type   | Default | Notes                                    |
 | ---------------- | --------- | ------ | ------- | ---------------------------------------- |
 | `skill_list`     | —         | —      | —       | No parameters                            |
@@ -2168,6 +2211,10 @@ skills loaded from `--subscribe` packages and takes no parameters.
 | --------- | ------ | ------- | ------------------------------------- |
 | `action`  | string | —       | **Required.** `"list"` \| `"install"` |
 | `package` | string | —       | For `action=install`                  |
+
+The `skill_community` dispatcher (both actions) and `agent_info` run on the default server through
+a scratch class and are judged as `skill` does: its `allow`, template and strict rules. The
+registry-only `skill_community_list` is not.
 
 ---
 
@@ -2207,6 +2254,12 @@ directory must be inside the [project directory](#project-directory) (the defaul
 directory itself), or the call is refused with `HOST_PATH_BLOCKED`. A file that is a link out of the
 project is skipped and counted in `skipped_outside`. The reply has `truncated` and, when it is true,
 `truncated_reason: "file_budget"`.
+
+`kb` (both actions) and `kb_index` store and search `^KBCHUNKS` through a scratch class on the
+default server, so that server's policy judges them: `allow` has to list `kb`, `live` and `test`
+refuse them as `execute`, `kb_index` and `kb action=index` need the write tier, and
+`read_only = "strict"` hides them. `kb_recall` reads only the subscribed packages and the local
+registry; no server judges it.
 
 ---
 
@@ -2406,7 +2459,9 @@ metadata, `redact` returns the content with sensitive fields replaced or refuses
 redact it, and `allow` returns it whole. `journal_search` is refused outright unless the policy is
 `allow`, with no per-call override. `iris_message_body` and `stream_inspect` are refused under
 `block`, return HL7 v2 redacted under `redact` and refuse any other content
-(`BODY_NOT_REDACTABLE`), and return the content under `allow`; `stream_inspect` answers a refused
+(`BODY_NOT_REDACTABLE`), and return the content under `allow` once the call carries
+`acknowledgePhi: true` (`PHI_ACK_REQUIRED` otherwise; so does an `iris_interop_query` call that
+names a message body); `stream_inspect` answers a refused
 stream with its class, size and line count. `iris_message_body` also takes a per-call
 `dataPolicy`, but only to tighten. Error codes: `DATA_POLICY_BLOCKED`, `PHI_POLICY_BLOCKED`,
 `BODY_NOT_REDACTABLE`.
@@ -2534,12 +2589,13 @@ called a refusal.
 | `IRIS_RUNTIME_ERROR`                  | `iris_execute` code raised an ObjectScript error; IRIS's text is in `output`                                                                                                                                                                                                            |
 | `CONFIG_INVALID`                      | A configuration file or entry does not parse or validate; the message names the file, line and column                                                                                                                                                                                   |
 | `PHI_POLICY_BLOCKED`                  | `iris_message_body` under `dataPolicy = "block"`                                                                                                                                                                                                                                        |
-| `PHI_ACK_REQUIRED`                    | `iris_message_body` under `allow` without `acknowledgePhi: true`                                                                                                                                                                                                                        |
+| `PHI_ACK_REQUIRED`                    | `iris_message_body`, `stream_inspect`, or `iris_interop_query` with `body_class`, `body_where`, `body_select` or `search_table`, under `allow` without `acknowledgePhi: true`                                                                                                           |
 | `BODY_NOT_REDACTABLE`                 | Content under `dataPolicy = "redact"` that iad cannot redact (anything but HL7 v2)                                                                                                                                                                                                      |
 | `COMPILE_TIME_EXEC_BLOCKED`           | A document would run code while it compiles — see the [compile-time gate](connecting.md#compile-time-gate)                                                                                                                                                                              |
 | `STORED_SOURCE_UNREADABLE`            | `iris_compile` target exists but its stored source cannot be read                                                                                                                                                                                                                       |
 | `COMPILE_SUPERCLASS_STALE`            | A compile would also build an out-of-date superclass outside the library packages; the message names it. Compile it first. A fixed rule                                                                                                                                                 |
 | `HOST_PATH_BLOCKED`                   | `iris_compile`, `kb` index or `iris_symbols_local` was given a host path outside the project directory, with a `..` segment, or (compile) not a `.cls`, `.mac`, `.inc` or `.int` file. `reason` is `outside_workspace`, `parent_reference`, `extension` or `no_workspace`. A fixed rule |
+| `ROWS_NOT_COUNTABLE`                  | `iris_query` `mode="write"` was given an `UPDATE`, `DELETE` or `TRUNCATE` whose rows cannot be counted against `max_rows_affected`, so it was not run. A fixed rule                                                                                                                     |
 | `SUPERCLASS_CHECK_FAILED`             | The superclass walk before a compile could not run or did not finish, so nothing was compiled                                                                                                                                                                                           |
 | `SUBJECT_CONFIRM_REQUIRED`            | A write on a `subject` server without `confirm: true`                                                                                                                                                                                                                                   |
 | `SUBJECT_SCM_WRITE_BLOCKED`           | A source-control write on a `subject` server; `confirm` does not lift it                                                                                                                                                                                                                |

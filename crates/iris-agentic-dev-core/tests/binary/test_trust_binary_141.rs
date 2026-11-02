@@ -629,3 +629,80 @@ fn an_untrusted_template_that_tightens_what_the_system_mode_implies_applies() {
     assert_eq!(r["error_code"], "ENV_GATE_BLOCKED", "{r}");
     assert_eq!(r["refusal"]["kind"], "untrusted_setting", "{r}");
 }
+
+// Security fix S1: a workspace file's `mode` is a loosening setting.
+const OPERATE_FLEET: &str = r#"
+mode = "operate"
+
+[instance.prod]
+host = "127.0.0.1"
+web_port = 1
+role = "subject"
+
+[policy.prod]
+writeTools = true
+mcpTemplate = "dev"
+"#;
+
+#[test]
+#[ignore = "spawns the built binary; run with --include-ignored"]
+fn a_workspace_mode_dev_leaves_the_role_gate_on() {
+    let env = Env::new("mode = \"dev\"\nnamespace = \"USER\"\n");
+    env.write_operator(OPERATE_FLEET);
+    let mut s = env.start();
+
+    let cfg = s.body("check_config", json!({}));
+    assert_eq!(
+        cfg["effective_policy"]["prod"]["role"]["value"], "subject",
+        "{cfg}"
+    );
+    let item = cfg["set_aside"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["id"] == "workspace:mode")
+        .unwrap_or_else(|| panic!("no workspace:mode in set_aside: {}", cfg["set_aside"]));
+    assert_eq!(item["kind"], "untrusted_setting", "{item}");
+    assert_eq!(item["setting"], "mode = \"dev\"", "{item}");
+    assert!(
+        item["lift"]
+            .as_str()
+            .unwrap()
+            .contains("iris-agentic-dev trust"),
+        "{item}"
+    );
+
+    // The write on the subject server still needs `confirm`, in both spellings of the argument.
+    let r = s.body(
+        "iris_execute",
+        json!({"code": "Set ^T171=1", "server": "prod"}),
+    );
+    assert_eq!(r["error_code"], "SUBJECT_CONFIRM_REQUIRED", "{r}");
+    for key in ["confirm", "confirmed"] {
+        let mut args = json!({"code": "Set ^T171=1", "server": "prod"});
+        args[key] = json!(false);
+        let r = s.body("iris_execute", args);
+        assert_eq!(r["error_code"], "SUBJECT_CONFIRM_REQUIRED", "{key}: {r}");
+    }
+}
+
+#[test]
+#[ignore = "spawns the built binary; run with --include-ignored"]
+fn a_workspace_mode_operate_still_applies_without_trust() {
+    // Tightening from a project file needs no trust: the fleet it declares is the one in force.
+    let env = Env::new(OPERATE_FLEET);
+    let mut s = env.start();
+    let cfg = s.body("check_config", json!({}));
+    assert_eq!(
+        cfg["effective_policy"]["prod"]["role"]["value"], "subject",
+        "{cfg}"
+    );
+    assert!(
+        !cfg["set_aside"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["id"] == "workspace:mode"),
+        "{cfg}"
+    );
+}

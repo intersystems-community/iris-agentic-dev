@@ -154,3 +154,21 @@ fn check_config_lists_prods_effective_policy_gates_and_errors() {
     assert_eq!(prod["destructiveTools"]["value"], false, "{prod}");
     assert!(b["config_errors"].is_array(), "config_errors missing: {b}");
 }
+
+#[test]
+#[ignore = "spawns the built binary; run with --include-ignored"]
+fn a_blank_server_is_invalid_params_not_the_default() {
+    for value in ["", "   ", "\t"] {
+        let (mut s, _d) = session();
+        let answer = s.call("iris_execute", &json!({"code": "Write 1", "server": value}));
+        let b = body(&answer);
+        assert_eq!(b["error_code"], "INVALID_PARAMS", "{value:?}: {answer}");
+        assert_eq!(b["success"], false, "{value:?}: {b}");
+    }
+    let (mut s, _d) = session();
+    let answer = s.call(
+        "compare_namespace",
+        &json!({"server_a": " ", "server_b": "prod"}),
+    );
+    assert_eq!(body(&answer)["error_code"], "INVALID_PARAMS", "{answer}");
+}

@@ -149,7 +149,10 @@ _Avoid_: PHI policy
 A tool that returns stored message, stream or journal content. Under block it returns at most the
 content's metadata; under redact it returns the content with sensitive fields replaced, or is
 refused if it cannot redact; under allow it returns the content whole. `iris_interop_query` is one
-only for a call that names a message body (`body_class`, `body_where` or `body_select`).
+only for a call that names a message body (`body_class`, `body_where`, `body_select` or
+`search_table`). Under allow, each bulk-data tool that returns a message body or stream
+(`iris_message_body`, `stream_inspect`, and that `iris_interop_query` call) also needs
+`acknowledgePhi=true`.
 _Avoid_: bulk-PHI tool
 
 **SQL lexer**:
@@ -166,6 +169,12 @@ _Avoid_: PHI global
 The kind of work a tool does (compile, execute, query, search, docs, source control, debug, admin,
 skill, kb); a server's `allow` list and environment template are written in categories.
 _Avoid_: tool group, permission
+
+**Gate class**:
+A tool's row in `CLASSIFICATION`: the write tier it needs, and whether it acts on an IRIS server (`Iris`:
+the template, `allow`, `dataPolicy` and role gates judge it against a target) or on none (`Local`: only the
+write gate applies, and the row says why). The set of `Local` tools is closed.
+_Avoid_: permission level, tool kind
 
 **Acknowledgement**:
 A flag the agent sets in its own call to lift a check meant to catch mistakes: `confirm` on a

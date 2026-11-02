@@ -187,8 +187,22 @@ impl ConnectionPool {
         }
         // The probe logs in: this is a request, so it reads the member's secrets.
         let conn = member.connection();
-        let mode = match conn.client(crate::iris::http::ClientKind::Probe) {
-            Ok(client) => conn.detect_system_mode(&client).await,
+        let mode = match crate::iris::http::probe_session(&conn.tls) {
+            Ok(session) => {
+                let mode = conn.detect_system_mode(&session.client).await;
+                session
+                    .finish(
+                        &conn.tls,
+                        &crate::iris::csp_session::store_for_primary(
+                            &conn.base_url,
+                            &conn.username,
+                        ),
+                        // The mode query answers only an account that signed in.
+                        mode != SystemMode::Unknown,
+                    )
+                    .await;
+                mode
+            }
             Err(_) => SystemMode::Unknown,
         };
         if mode == SystemMode::Unknown {
@@ -520,16 +534,16 @@ fn withheld_item(
 
 /// The password `name`'s `servers.json` entry may use, looking in order at iad's own keychain item
 /// for the entry's endpoint, the Server Manager's secret (only for an entry `iris_import_servers`
-/// wrote, or a 1.6.x import whose endpoint still equals the profile's), and the plaintext password
-/// saved for this endpoint.
+/// wrote, or a 1.6.x import whose endpoint still equals the profile's), the plaintext password
+/// saved for this endpoint. A password an earlier version saved under the Server Manager's service
+/// is never used or copied; it is reported in `withheld`.
 pub fn native_password_in(
     name: &str,
     entry: &crate::iris::servers_config::ServerEntry,
     profiles: &[crate::iris::server_manager::ServerManagerProfile],
 ) -> NativePassword {
     use crate::iris::server_manager::{
-        legacy_iad_secret, resolve_iad_credential, sm_secret_for_in, store_iad_credential,
-        SmSecretError,
+        legacy_iad_item_exists, resolve_iad_credential, sm_secret_for_in, SmSecretError,
     };
     let Ok(endpoint) = crate::iris::servers_config::entry_endpoint(entry) else {
         return NativePassword::default();
@@ -594,18 +608,25 @@ pub fn native_password_in(
         };
     }
 
-    // 1.6.x wrote its own passwords under the Server Manager's service. An entry that matches no
-    // profile is iad's: copy the item to iad's account and leave the original where it is.
-    if profile_here.is_none() {
-        if let Some(pw) = legacy_iad_secret(name, &entry.username) {
-            if store_iad_credential(name, &entry.username, &endpoint, &pw).is_ok() {
-                tracing::info!("copied the keychain password of '{name}' to iad's own service");
-            }
-            return NativePassword {
-                password: pw,
-                withheld: None,
-            };
-        }
+    // 1.6.x wrote its own passwords under the Server Manager's service, keyed by name alone. A name
+    // proves nothing about where a password may go, and no field in the entry can prove it either
+    // (`iris_add_server` writes `password_endpoint` for whatever address it is given). So such an
+    // item is never read into a connection, never sent and never copied: the entry is told apart
+    // from one with no item, reported, and the operator re-enters the password with
+    // `iris_add_server`, which saves it for this address.
+    if profile_here.is_none() && legacy_iad_item_exists(name, &entry.username) {
+        return NativePassword {
+            password: String::new(),
+            withheld: Some(withheld_item(
+                name,
+                "legacy_keychain",
+                "keychain password saved by an earlier version",
+                format!(
+                    "a password saved under this name by an earlier version is not tied to an address, and this entry is {endpoint}; it was not sent"
+                ),
+                "run iris_add_server for this name with its password, which saves it for this address",
+            )),
+        };
     }
     NativePassword::default()
 }

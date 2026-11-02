@@ -230,6 +230,82 @@ jobs:
           Write-Host "PASS: safeStorage and raw DPAPI both resolve; junk reports a format error"
           exit 0
 
+  winget-install:
+    # Spec 152. Generates the winget manifests for the latest published release with
+    # packaging/winget/winget_manifests.py, then has real winget validate them, install from them
+    # and run the installed command. A second install with a wrong hash must fail, which proves
+    # winget checks the hash the generator wrote. The release asset is what users get, so the test
+    # installs it rather than this commit's build. No secret: github.token only reads the release.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # windows-latest carries winget (1.11.510 on 2026-11-02) although the image notes do not list
+      # it, so this step normally exits at the first line. If an image drops it, winget comes from
+      # Microsoft's own release, pinned by tag and checked against the SHA-256 GitHub records.
+      - name: Install winget 1.29.380
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          if (Get-Command winget -ErrorAction SilentlyContinue) { winget --version; exit 0 }
+          $base = 'https://github.com/microsoft/winget-cli/releases/download/v1.29.380'
+          $files = @{
+            'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle' = '65dea9c01ce08ee7b763366b27c0e651f97db857c11ca9b9c301826c10092f2e'
+            'DesktopAppInstaller_Dependencies.zip' = 'ba875afe9d190f61218985ac0292a99d1db710bf93e13c68944ca9d89f0d82d1'
+            'e53e159d00e04f729cc2180cffd1c02e_License1.xml' = 'bcb15118ec47df24e3e6013a7006147c3a15b3a8104ed660fe87c8b4ed01f485'
+          }
+          foreach ($name in $files.Keys) {
+            Invoke-WebRequest -Uri "$base/$name" -OutFile $name
+            $got = (Get-FileHash $name -Algorithm SHA256).Hash.ToLower()
+            if ($got -ne $files[$name]) { throw "$name hash $got, expected $($files[$name])" }
+          }
+          Expand-Archive DesktopAppInstaller_Dependencies.zip -DestinationPath deps
+          $dep = Get-ChildItem deps -Recurse -Filter *.appx | Where-Object { $_.FullName -match 'x64' } | ForEach-Object FullName
+          Add-AppxProvisionedPackage -Online -PackagePath Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle `
+            -DependencyPackagePath $dep -LicensePath e53e159d00e04f729cc2180cffd1c02e_License1.xml | Out-Null
+          Add-AppxPackage -Path Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle -DependencyPath $dep
+          "$env:LOCALAPPDATA\Microsoft\WindowsApps" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      - name: Generate, validate and install the manifests
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ProgressPreference = 'SilentlyContinue'
+          winget --version
+          winget settings --enable LocalManifestFiles
+          $tag = gh release view --repo intersystems-community/iris-agentic-dev --json tagName -q .tagName
+          $version = $tag.TrimStart('v')
+          gh release download $tag --repo intersystems-community/iris-agentic-dev -p iris-agentic-dev-windows-x86_64.exe -D asset
+          $sha = (Get-FileHash asset\iris-agentic-dev-windows-x86_64.exe -Algorithm SHA256).Hash
+          $date = (Get-Date -AsUTC -Format 'yyyy-MM-dd')
+          python packaging/winget/winget_manifests.py --version $version --sha256 $sha --release-date $date --out good
+          $dir = "good\manifests\i\InterSystemsCommunity\IrisAgenticDev\$version"
+
+          winget validate --manifest $dir
+          if ($LASTEXITCODE -ne 0) { throw "winget validate failed ($LASTEXITCODE)" }
+
+          winget install --manifest $dir --accept-package-agreements --accept-source-agreements --disable-interactivity
+          if ($LASTEXITCODE -ne 0) { throw "winget install failed ($LASTEXITCODE)" }
+          $exe = "$env:LOCALAPPDATA\Microsoft\WinGet\Links\iris-agentic-dev.exe"
+          $out = & $exe --version
+          Write-Host "installed: $out"
+          if ($out -ne "iris-agentic-dev $version") { throw "expected 'iris-agentic-dev $version', got '$out'" }
+          winget uninstall --manifest $dir --accept-source-agreements --disable-interactivity
+          if ($LASTEXITCODE -ne 0) { throw "winget uninstall failed ($LASTEXITCODE)" }
+
+          # A manifest whose hash is not the asset's must not install.
+          $wrong = ('0' * 64)
+          python packaging/winget/winget_manifests.py --version $version --sha256 $wrong --release-date $date --out bad
+          winget install --manifest "bad\manifests\i\InterSystemsCommunity\IrisAgenticDev\$version" --accept-package-agreements --accept-source-agreements --disable-interactivity
+          if ($LASTEXITCODE -eq 0) { throw "winget installed a manifest with the wrong hash" }
+          if (Test-Path $exe) { throw "the wrong-hash install left $exe behind" }
+          Write-Host "PASS: winget validates, installs and runs $version, and refuses a wrong hash"
+          # pwsh exits with the last native exit code, which is the refused install's.
+          exit 0
+
   sign-windows:
     runs-on: windows-latest
     # Only sign on master and version tags — not on PRs (no secrets available there anyway).

@@ -9,10 +9,12 @@ authors.workspace = true
 license.workspace = true
 
 [features]
-# Carries no code. It exists so this crate's test targets can gate on the same `--features testing`
-# flag the core crate's do, which is what CI and every documented test command pass. `testing` is
-# already on for the core dependency below unconditionally.
-testing = []
+# Turns on the core crate's `testing` module (test hooks, fixtures, a mock LLM model) and lets this
+# crate's test targets gate on the same `--features testing` flag the core crate's do, which is what
+# CI and every documented test command pass. A build without it, release included, compiles none of
+# that into the binary: the core dependency below must not name `testing` (guarded by
+# `release_build_carries_no_test_hooks` in the bin crate's unit tests).
+testing = ["iris-agentic-dev-core/testing"]
 
 [[bin]]
 name = "iris-agentic-dev"
@@ -23,7 +25,7 @@ name = "iris_agentic_dev"
 path = "src/lib.rs"
 
 [dependencies]
-iris-agentic-dev-core = { path = "../iris-agentic-dev-core", features = ["testing"] }
+iris-agentic-dev-core = { path = "../iris-agentic-dev-core" }
 rmcp = { workspace = true }
 reqwest = { workspace = true }
 clap.workspace = true

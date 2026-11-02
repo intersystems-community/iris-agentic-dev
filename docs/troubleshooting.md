@@ -86,8 +86,8 @@ Fixes, in order of likelihood:
    [`CONFIG_INVALID`](#config_invalid).
 
 The same applies to every loosening setting. A project's `tls_verify = false`, `ssh_host`,
-`service_username`, `compile_time_gate = false`, `dataPolicy = "allow"` or `mcpTemplate = "dev"`
-is set aside until you trust the file.
+`service_username`, `compile_time_gate = false`, `dataPolicy = "allow"`, `mcpTemplate = "dev"` or
+a `mode` other than `operate` is set aside until you trust the file.
 
 ---
 
@@ -132,10 +132,12 @@ set; `check_config.read_only_from` says which. Under strict, iad writes nothing 
 every tool that runs its ObjectScript through a scratch class in the `IrisDevTmp` package is off,
 and the write and destructive gates are closed on every server, whatever opens them elsewhere (a
 write such as `iris_doc` put answers `READ_ONLY_STRICT` with `gate: "write_tools"`). `iris_doc`
-reads, `iris_query`, `iris_search`, `iris_info`, `iris_servers` and `check_config` still work. To use the others, remove the setting (any file may set strict, and
+reads (not `mode=compiled`), `iris_query`, `iris_search`, `iris_info`, `iris_servers`,
+`check_config` and the skill readers (from the bundled skills) still work. To use the others, remove the setting (any file may set strict, and
 a project file cannot unset it from the operator file). Strict together with `irisAudit = true` is
 a configuration error, because the audit emission compiles a class: `iris-agentic-dev mcp` names
-both settings on stderr and exits 2. See
+both settings on stderr and exits 2, and `iris-agentic-dev tool` refuses every IRIS tool with
+`READ_ONLY_STRICT_WITH_AUDIT`. See
 [Strict read-only](connecting.md#strict-read-only-no-scratch-classes).
 
 ---
@@ -236,6 +238,17 @@ tool's `inputSchema` is the authoritative list. `iris_admin.action` has 25 value
 current set for every tool is in [docs/tools.md](tools.md).
 
 ---
+
+## A redirect, or a timeout from GitHub or the LLM API
+
+No client sends a credential or session cookie along a redirect. A gateway that answers with a 3xx
+(http to https, or a trailing slash added) returns that 3xx as the error: use the final URL. That
+holds for the LLM client too, so an `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` that redirects fails
+with `LLM API error 30x`; point it at the address the redirect leads to.
+
+The clients that read skill manifests, skills and version tags from GitHub connect within 30
+seconds and finish a request within 120. A request that outruns either returns an error and
+nothing is installed or loaded.
 
 ## Verbose HTTP logging
 

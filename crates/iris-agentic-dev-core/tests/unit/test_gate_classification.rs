@@ -707,12 +707,11 @@ fn tools_that_reach_the_generator() -> std::collections::BTreeSet<String> {
 /// listed.
 const SCRATCH_ONLY_ON_WRITE_BRANCHES: &[&str] = &["iris_doc", "iris_query"];
 
-/// Local tools that reach the generator through the skill and knowledge store on the default
-/// connection (`skills_tools::xecute`). They act on no target server, so the column leaves them
-/// out: marking them would hide `skill` and `kb`, and with them the guardrail skills, from an
-/// operator who asked for no scratch classes on a production server. They still obey the write
-/// gate (`kb` and `skill` writes are Write).
-const LOCAL_STORE_TOOLS: &[&str] = &["agent_info", "kb", "kb_index", "skill", "skill_community"];
+/// Local tools that reach the generator. There are none: the skill and knowledge store tools
+/// (`agent_info`, `kb`, `kb_index`, `skill`, `skill_community`) run on the default server, so
+/// they are IRIS rows on `TargetSource::Default` and carry `.scratch()` (R2). Before that fix the
+/// column left them out and the template, `allow` and strict read-only never judged them.
+const LOCAL_STORE_TOOLS: &[&str] = &[];
 
 /// T135 (C14). The scratch column agrees with the source: every tool whose handler can reach
 /// `execute_via_generator` is marked, and no other tool is. `readOnlyHint` is a separate promise

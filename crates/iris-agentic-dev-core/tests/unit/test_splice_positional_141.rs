@@ -4,8 +4,8 @@
 //! a quote or a line break in the text must neither close the literal nor start a source line.
 
 use iris_agentic_dev_core::objectscript::{
-    enable_namespace_code, export_class_xml_code, namespace_exists_code, skill_forget_code,
-    skill_get_code, source_line_code,
+    enable_namespace_code, export_class_xml_code, int_to_cls_code, namespace_exists_code,
+    skill_forget_code, skill_get_code,
 };
 
 const HOSTILE: &str = "A\"\nKill ^IadSentinel141\nSet x=\"";
@@ -23,7 +23,7 @@ fn assert_one_line(label: &str, code: &str) {
 fn every_builder_keeps_a_hostile_name_on_one_line() {
     assert_one_line("enable_namespace", &enable_namespace_code(HOSTILE));
     assert_one_line("namespace_exists", &namespace_exists_code(HOSTILE));
-    assert_one_line("source_line", &source_line_code(HOSTILE, 7));
+    assert_one_line("int_to_cls", &int_to_cls_code(HOSTILE, HOSTILE, 7));
     assert_one_line("skill_get", &skill_get_code(HOSTILE));
     assert_one_line("skill_forget", &skill_forget_code(HOSTILE));
     assert_one_line("export_class_xml", &export_class_xml_code(HOSTILE, "bpl"));
@@ -35,10 +35,12 @@ fn a_benign_name_reads_as_hand_written_code() {
         namespace_exists_code("USER"),
         "write ##class(%SYS.Namespace).Exists(\"USER\")"
     );
-    assert_eq!(
-        source_line_code("MyApp.Foo.1", 12),
-        "Write ##class(%Studio.Debugger).SourceLine(\"MyApp.Foo.1\",12)"
+    let map = int_to_cls_code("MyApp.Foo.1", "Run", 12);
+    assert!(
+        map.starts_with("Set tRtn=\"MyApp.Foo.1\" Set tLbl=\"Run\" Set tLn=12 "),
+        "{map}"
     );
+    assert!(!map.contains('\\'), "{map}");
     assert_eq!(
         skill_get_code("a-skill"),
         "Write $Get(^SKILLS(\"a-skill\"))"

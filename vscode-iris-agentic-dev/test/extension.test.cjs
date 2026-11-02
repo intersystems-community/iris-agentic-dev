@@ -32,11 +32,28 @@ const USER_PROD = { webServer: { host: "iris.corp.example", port: 443, scheme: "
 const WS_PROD = { webServer: { host: "attacker.example", port: 80 }, username: "alice" };
 
 const sectionsRead = [];
-function useConfig({ conn, user, workspace, iad = {} }) {
+// `conn` is one flat object set at the user level. `connScopes` sets the
+// layers apart, as VS Code reports them: `get` returns them merged, `inspect`
+// returns each one.
+function useConfig({ conn, connScopes, user, workspace, iad = {}, iadLayers = {} }) {
+  const layers = connScopes ?? { globalValue: conn };
+  const merged = Object.values(layers).some((l) => l !== undefined)
+    ? {
+        ...layers.defaultValue,
+        ...layers.globalValue,
+        ...layers.workspaceValue,
+        ...layers.workspaceFolderValue,
+      }
+    : undefined;
   vscode.workspace.workspaceFolders = [{ uri: { scheme: "file" } }];
   vscode.workspace.getConfiguration = (section) => {
     sectionsRead.push(section);
-    if (section === "objectscript") return { get: (k) => (k === "conn" ? conn : undefined) };
+    if (section === "objectscript") {
+      return {
+        get: (k) => (k === "conn" ? merged : undefined),
+        inspect: (k) => (k === "conn" ? layers : undefined),
+      };
+    }
     if (section === "intersystems") {
       return {
         get: (k) => (k === "servers" ? { ...user, ...workspace } : undefined),
@@ -45,7 +62,19 @@ function useConfig({ conn, user, workspace, iad = {} }) {
       };
     }
     if (section === "iris-agentic-dev") {
-      return { get: (k, d) => ({ serverPath: fakeBinary, ...iad })[k] ?? d };
+      // `iad` is a flat user-level value. `iadLayers` sets a key's layers
+      // apart, as VS Code reports them: `get` returns the winner (workspace
+      // over user), `inspect` returns each layer.
+      const flat = { serverPath: fakeBinary, ...iad };
+      const merged = (k) => {
+        const l = iadLayers[k];
+        if (!l) return flat[k];
+        return l.workspaceFolderValue ?? l.workspaceValue ?? l.globalValue ?? l.defaultValue ?? flat[k];
+      };
+      return {
+        get: (k, d) => merged(k) ?? d,
+        inspect: (k) => iadLayers[k] ?? (k in flat ? { globalValue: flat[k] } : undefined),
+      };
     }
     return { get: (_k, d) => d };
   };
@@ -75,6 +104,13 @@ test("package.json declares limited support for untrusted workspaces", () => {
 test("serverPath is machine-scoped, so a workspace cannot set it", () => {
   const prop = pkg.contributes.configuration.properties["iris-agentic-dev.serverPath"];
   assert.equal(prop.scope, "machine");
+});
+
+test("scheme and tlsVerify are application-scoped, so a workspace cannot set them", () => {
+  for (const key of ["scheme", "tlsVerify"]) {
+    const prop = pkg.contributes.configuration.properties[`iris-agentic-dev.${key}`];
+    assert.equal(prop.scope, "application", key);
+  }
 });
 
 test("an untrusted workspace starts nothing and reads no workspace connection or servers", async () => {
@@ -184,4 +220,211 @@ test("a workspace definition that carries its own password keeps it", async () =
   } finally {
     provider.dispose();
   }
+});
+
+// --- objectscript.conn: the user's password goes only to the user's host ------
+
+const USER_CONN = {
+  active: true,
+  host: "iris.corp.example",
+  port: 443,
+  ns: "USER",
+  username: "alice",
+  password: "user-level-secret",
+};
+
+async function launch(connScopes, { user = {}, workspace = {} } = {}) {
+  useConfig({ connScopes, user, workspace });
+  const provider = new IrisDevMcpProvider(context());
+  try {
+    const [def] = await provider.provideMcpServerDefinitions(token);
+    return { def, out: def && (await provider.resolveMcpServerDefinition(def, token)) };
+  } finally {
+    provider.dispose();
+  }
+}
+
+test("a workspace that moves host and port does not inherit the user-level password", async () => {
+  const { def, out } = await launch({
+    globalValue: USER_CONN,
+    workspaceValue: { host: "attacker.example", port: 80 },
+  });
+  assert.equal(def.env.IRIS_HOST, "attacker.example");
+  assert.equal(def.env.IRIS_PASSWORD, undefined);
+  assert.equal(out.env.IRIS_PASSWORD, undefined);
+  assert.equal(vscode.__shown.inputBox.length, 1, "the user is asked instead");
+  assert.match(vscode.__shown.inputBox[0].prompt, /attacker\.example/);
+  assert.doesNotMatch(JSON.stringify(vscode.__log), /user-level-secret/);
+});
+
+test("a workspace folder that moves only the port does not inherit the password either", async () => {
+  const { def } = await launch({
+    globalValue: USER_CONN,
+    workspaceFolderValue: { port: 8080 },
+  });
+  assert.equal(def.env.IRIS_PASSWORD, undefined);
+});
+
+test("a workspace that moves only the host does not inherit the password", async () => {
+  const { def } = await launch({
+    globalValue: USER_CONN,
+    workspaceValue: { host: "attacker.example" },
+  });
+  assert.equal(def.env.IRIS_PASSWORD, undefined);
+});
+
+test("a workspace that changes only the namespace keeps the user-level password", async () => {
+  const { def } = await launch({
+    globalValue: USER_CONN,
+    workspaceValue: { ns: "SCRATCH" },
+  });
+  assert.equal(def.env.IRIS_PASSWORD, "user-level-secret");
+  assert.equal(def.env.IRIS_NAMESPACE, "SCRATCH");
+});
+
+test("a workspace that repeats the user's host and port keeps the password", async () => {
+  const { def } = await launch({
+    globalValue: USER_CONN,
+    workspaceValue: { host: "IRIS.corp.example", port: 443 },
+  });
+  assert.equal(def.env.IRIS_PASSWORD, "user-level-secret");
+});
+
+test("a workspace conn that carries its own password uses that one", async () => {
+  const { def } = await launch({
+    globalValue: USER_CONN,
+    workspaceValue: { host: "ci.example", port: 80, password: "from-the-file" },
+  });
+  assert.equal(def.env.IRIS_PASSWORD, "from-the-file");
+});
+
+test("a workspace that names another server does not inherit the password", async () => {
+  const { def } = await launch(
+    { globalValue: { ...USER_CONN, server: "prod" }, workspaceValue: { server: "other" } },
+    { user: { prod: USER_PROD, other: USER_PROD } }
+  );
+  assert.equal(def.env.IRIS_SERVER_NAME, "other");
+  assert.equal(def.env.IRIS_PASSWORD, undefined);
+});
+
+test("a workspace-only named server gets no user-level conn password", async () => {
+  const { def, out } = await launch(
+    { globalValue: { ...USER_CONN, server: "dev" } },
+    { workspace: { dev: WS_PROD } }
+  );
+  assert.equal(def.env.IRIS_HOST, "attacker.example");
+  assert.equal(def.env.IRIS_PASSWORD, undefined);
+  assert.equal(out.env.IRIS_PASSWORD, undefined);
+  assert.equal(vscode.__shown.inputBox.length, 1, "the user is asked instead");
+});
+
+test("a user-level named server keeps the user-level conn password", async () => {
+  const { def } = await launch(
+    { globalValue: { ...USER_CONN, server: "prod" } },
+    { user: { prod: USER_PROD } }
+  );
+  assert.equal(def.env.IRIS_HOST, "iris.corp.example");
+  assert.equal(def.env.IRIS_PASSWORD, "user-level-secret");
+});
+
+test("a conn set only in the workspace is the workspace's own, password included", async () => {
+  const { def } = await launch({
+    workspaceValue: { active: true, host: "ci.example", port: 80, password: "ws-own" },
+  });
+  assert.equal(def.env.IRIS_PASSWORD, "ws-own");
+});
+
+test("a conn set only in the workspace has no user-level password to inherit", async () => {
+  const { def } = await launch({
+    workspaceValue: { active: true, host: "ci.example", port: 80 },
+  });
+  assert.equal(def.env.IRIS_PASSWORD, undefined);
+});
+
+// --- scheme and tlsVerify: only the user's own value counts --------------------
+
+async function launchIad(iadLayers) {
+  useConfig({ conn: USER_CONN, iadLayers });
+  const provider = new IrisDevMcpProvider(context());
+  try {
+    const [def] = await provider.provideMcpServerDefinitions(token);
+    return def;
+  } finally {
+    provider.dispose();
+  }
+}
+
+test("a workspace tlsVerify=false does not switch off the user's certificate check", async () => {
+  for (const layer of ["workspaceValue", "workspaceFolderValue"]) {
+    const def = await launchIad({ tlsVerify: { globalValue: true, [layer]: false } });
+    assert.equal(def.env.IRIS_TLS_VERIFY, undefined, layer);
+  }
+});
+
+test("a workspace tlsVerify=false with nothing set by the user leaves the check on", async () => {
+  const def = await launchIad({ tlsVerify: { defaultValue: true, workspaceValue: false } });
+  assert.equal(def.env.IRIS_TLS_VERIFY, undefined);
+});
+
+test("the user's own tlsVerify=false still turns the check off", async () => {
+  const def = await launchIad({ tlsVerify: { defaultValue: true, globalValue: false } });
+  assert.equal(def.env.IRIS_TLS_VERIFY, "false");
+});
+
+test("a workspace scheme=http does not downgrade the user's https", async () => {
+  for (const layer of ["workspaceValue", "workspaceFolderValue"]) {
+    const def = await launchIad({ scheme: { globalValue: "https", [layer]: "http" } });
+    assert.equal(def.env.IRIS_SCHEME, "https", layer);
+  }
+});
+
+test("a workspace scheme with nothing set by the user is ignored", async () => {
+  const def = await launchIad({ scheme: { defaultValue: "", workspaceValue: "http" } });
+  assert.equal(def.env.IRIS_SCHEME, undefined);
+});
+
+test("the user's own scheme is used", async () => {
+  const def = await launchIad({ scheme: { defaultValue: "", globalValue: "http" } });
+  assert.equal(def.env.IRIS_SCHEME, "http");
+});
+
+// --- the user-level password goes only to the user's own username --------------
+
+const USER_CONN_ALICE = { ...USER_CONN };
+
+test("a workspace that changes only the username does not inherit the password", async () => {
+  const { def, out } = await launch({
+    globalValue: USER_CONN_ALICE,
+    workspaceValue: { username: "bob" },
+  });
+  assert.equal(def.env.IRIS_USERNAME, "bob");
+  assert.equal(def.env.IRIS_PASSWORD, undefined);
+  assert.equal(out.env.IRIS_PASSWORD, undefined);
+  assert.equal(vscode.__shown.inputBox.length, 1, "the user is asked instead");
+  assert.match(vscode.__shown.inputBox[0].prompt, /bob@iris\.corp\.example/);
+});
+
+test("a workspace that repeats the user's username keeps the password", async () => {
+  const { def } = await launch({
+    globalValue: USER_CONN_ALICE,
+    workspaceValue: { username: "alice" },
+  });
+  assert.equal(def.env.IRIS_PASSWORD, "user-level-secret");
+});
+
+test("a username that differs only in case keeps the password", async () => {
+  const { def } = await launch({
+    globalValue: USER_CONN_ALICE,
+    workspaceFolderValue: { username: "Alice" },
+  });
+  assert.equal(def.env.IRIS_PASSWORD, "user-level-secret");
+});
+
+test("a workspace username with no user-level username gets no password", async () => {
+  const { username: _u, ...noUser } = USER_CONN_ALICE;
+  const { def } = await launch({
+    globalValue: noUser,
+    workspaceValue: { username: "bob" },
+  });
+  assert.equal(def.env.IRIS_PASSWORD, undefined);
 });

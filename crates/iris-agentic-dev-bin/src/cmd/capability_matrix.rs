@@ -1,6 +1,5 @@
 use anyhow::Result;
 use clap::Args;
-use iris_agentic_dev_core::tools::admin_tools;
 
 use super::connection_args::ConnectionArgs;
 
@@ -15,35 +14,36 @@ pub struct CapabilityMatrixCommand {
 
 impl CapabilityMatrixCommand {
     pub async fn run(self) -> Result<()> {
+        // `capability_matrix` compiles a scratch class on the server. Strict read-only is checked
+        // before anything is discovered, and the call then goes through the same pipeline as the
+        // tool, so the template and `allow` answer for it too. It used to call the implementation
+        // directly and meet none of them.
+        if let Some(refusal) =
+            iris_agentic_dev_core::tools::target::cli_strict_refusal("capability_matrix")
+        {
+            eprintln!("{refusal}");
+            crate::exit(1);
+        }
         let iris = self.conn.resolve().await?;
-        let client = iris.client(iris_agentic_dev_core::iris::http::ClientKind::Call)?;
-
-        match admin_tools::capability_matrix_impl(&iris, &client, None).await {
-            Ok(result) => {
-                for content in &result.content {
-                    if let Some(text) = content.as_text() {
-                        if self.json {
-                            // Re-serialize as compact JSON
-                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text.text) {
-                                println!("{}", serde_json::to_string(&v)?);
-                            } else {
-                                println!("{}", text.text);
-                            }
-                        } else {
-                            // Pretty-print
-                            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text.text) {
-                                println!("{}", serde_json::to_string_pretty(&v)?);
-                            } else {
-                                println!("{}", text.text);
-                            }
-                        }
-                    }
+        let body =
+            match super::dispatch::dispatch_tool(iris, "capability_matrix", serde_json::json!({}))
+                .await
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    crate::exit(1);
                 }
-            }
-            Err(e) => {
-                eprintln!("error: {e}");
-                crate::exit(1);
-            }
+            };
+        super::dispatch::exit_if_refused(&body);
+        if self.json {
+            println!("{}", serde_json::to_string(&body)?);
+        } else {
+            println!("{}", serde_json::to_string_pretty(&body)?);
+        }
+        // The body is printed either way; a failed probe is a failed command.
+        if super::dispatch::is_failure(&body) {
+            crate::exit(1);
         }
         Ok(())
     }

@@ -1,6 +1,6 @@
 # Next release notes (staging)
 
-Baseline: v1.7.0, whose notes are final in `docs/release-notes/v1.7.0.md`. What follows is
+Baseline: v1.7.1, whose notes are final in `docs/release-notes/v1.7.1.md`. What follows is
 staged for the release after it.
 
 I add an entry here as each user-facing change lands, so release notes are not

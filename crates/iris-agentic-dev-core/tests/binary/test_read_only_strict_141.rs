@@ -93,7 +93,8 @@ fn strict_from_a_project_file_hides_every_scratch_tool() {
         "iris_query",
         "iris_servers",
         "check_config",
-        "skill",
+        "skill_list",
+        "skill_describe",
     ] {
         assert!(
             listed.iter().any(|n| n == t),
