@@ -303,6 +303,8 @@ jobs:
           if ($LASTEXITCODE -eq 0) { throw "winget installed a manifest with the wrong hash" }
           if (Test-Path $exe) { throw "the wrong-hash install left $exe behind" }
           Write-Host "PASS: winget validates, installs and runs $version, and refuses a wrong hash"
+          # pwsh exits with the last native exit code, which is the refused install's.
+          exit 0
 
   sign-windows:
     runs-on: windows-latest
