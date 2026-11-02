@@ -3,7 +3,11 @@
   "private": true,
   "description": "Lint toolchain pins for the spec-gates quality boundaries. Not a publishable package — the Rust workspace is the project.",
   "devDependencies": {
-    "markdownlint-cli2": "0.23.2",
-    "prettier": "3.9.6"
+    "markdownlint-cli2": "0.24.0",
+    "prettier": "3.9.10"
+  },
+  "overrides": {
+    "re2js": "2.9.1",
+    "katex": "0.18.2"
   }
 }
