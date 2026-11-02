@@ -120,9 +120,11 @@ git push github vX.Y.Z
 - [ ] `build-vsix` job passes (npm test includes `serverVersion.test.cjs` — it checks package.json matches Cargo.toml)
 - [ ] `publish-vsix` job passes (VS Code Marketplace upload)
 - [ ] `update-homebrew-tap` job passes
-- [ ] GitHub release page shows six assets: the VSIX plus five bare binaries (linux-x86_64,
-      linux-aarch64, macos-x86_64, macos-arm64, windows-x86_64.exe). They are not tarballs, and
-      checksums live in the Homebrew formula rather than as release assets.
+- [ ] Approve the `release` environment when the run asks (twice: before `docker-publish`, then
+      before `publish-marketplace` and `update-homebrew-tap`)
+- [ ] GitHub release page shows nine assets: the five bare binaries (linux-x86_64,
+      linux-aarch64, macos-x86_64, macos-arm64, windows-x86_64.exe), the VSIX, the CycloneDX
+      SBOM, `SHA256SUMS` and `SHA256SUMS.sigstore.json`
 
 ## 8. Post-release
 
@@ -131,3 +133,7 @@ git push github vX.Y.Z
 - [ ] Comment on contributor PRs
 - [ ] Verify Homebrew tap: `brew tap intersystems-community/tap && brew install iris-agentic-dev` installs the new version
 - [ ] Smoke test: `iris-agentic-dev --version` prints `vX.Y.Z`
+- [ ] winget: `gh auth switch -u isc-tdyar && scripts/winget-submit.sh X.Y.Z` (dry run: downloads,
+      verifies against `SHA256SUMS`, prints the manifests), then the same with `--submit` to open the
+      `microsoft/winget-pkgs` pull request. Switch gh back afterwards. Spec 152: no winget token is
+      stored anywhere until a dedicated bot account exists.
