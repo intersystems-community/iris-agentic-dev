@@ -1,0 +1,42 @@
+id: CORPUS-44
+prompt: |
+  Bench.Sum.Total(pList) in the BENCHMARK namespace should return the sum of the numbers in the
+  %List pList, and 0 for an empty list. It raises <UNDEFINED> for an empty list. Fix it and leave
+  the class compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+fixtures:
+  - name: Bench.Sum
+    content: |
+      Class Bench.Sum Extends %RegisteredObject
+      {
+
+      ClassMethod Total(pList As %List) As %Integer
+      {
+          For i = 1:1:$ListLength(pList) {
+              Set tTotal = $Get(tTotal, 0) + $List(pList, i)
+          }
+          Quit tTotal
+      }
+
+      }
+check: |
+  try { set ok=((##class(Bench.Sum).Total($ListBuild(1,2,3))=6)&&(##class(Bench.Sum).Total("")=0)) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Sum
+    content: |
+      Class Bench.Sum Extends %RegisteredObject
+      {
+
+      ClassMethod Total(pList As %List) As %Integer
+      {
+          Set tTotal = 0
+          For i = 1:1:$ListLength(pList) {
+              Set tTotal = tTotal + $List(pList, i)
+          }
+          Quit tTotal
+      }
+
+      }
+tags: [undefined, loops]

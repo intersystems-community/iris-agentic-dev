@@ -699,6 +699,7 @@ pub const CLASSIFICATION: &[ToolClass] = &[
         .local_default("lists the server registry from the launch settings and files on disk"),
     ro("iris_symbols"),
     ro("iris_symbols_local").local("parses source files under the project directory on the host"),
+    ro("iris_check"),
     mixed(
         "iris_system_performance",
         &[

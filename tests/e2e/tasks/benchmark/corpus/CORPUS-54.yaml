@@ -1,0 +1,35 @@
+id: CORPUS-54
+prompt: |
+  Bench.Word.Of(pCode) in the BENCHMARK namespace should return "one", "two" or "three" for the
+  codes 1 to 3, and "other" for any other code. Of(7) raises <ILLEGAL VALUE>. Fix it and leave the
+  class compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+fixtures:
+  - name: Bench.Word
+    content: |
+      Class Bench.Word Extends %RegisteredObject
+      {
+
+      ClassMethod Of(pCode As %Integer) As %String
+      {
+          Quit $Case(pCode, 1:"one", 2:"two", 3:"three")
+      }
+
+      }
+check: |
+  try { set ok=((##class(Bench.Word).Of(2)="two")&&(##class(Bench.Word).Of(7)="other")) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Word
+    content: |
+      Class Bench.Word Extends %RegisteredObject
+      {
+
+      ClassMethod Of(pCode As %Integer) As %String
+      {
+          Quit $Case(pCode, 1:"one", 2:"two", 3:"three", :"other")
+      }
+
+      }
+tags: [functions, case]

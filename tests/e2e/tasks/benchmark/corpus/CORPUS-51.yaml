@@ -1,0 +1,35 @@
+id: CORPUS-51
+prompt: |
+  Bench.Info.Major() in the BENCHMARK namespace should return the major version number of the
+  running IRIS instance, as the %SYSTEM.Version class reports it. It raises <METHOD DOES NOT EXIST>.
+  Fix it and leave the class compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+fixtures:
+  - name: Bench.Info
+    content: |
+      Class Bench.Info Extends %RegisteredObject
+      {
+
+      ClassMethod Major() As %Integer
+      {
+          Quit $System.Version.GetMajorVersion()
+      }
+
+      }
+check: |
+  try { set ok=(##class(Bench.Info).Major()=$System.Version.GetMajor()) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Info
+    content: |
+      Class Bench.Info Extends %RegisteredObject
+      {
+
+      ClassMethod Major() As %Integer
+      {
+          Quit $System.Version.GetMajor()
+      }
+
+      }
+tags: [system-classes, wrong-member]

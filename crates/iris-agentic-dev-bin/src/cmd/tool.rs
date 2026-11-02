@@ -34,6 +34,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "iris_add_server",
     "iris_admin",
     "iris_business_rule_info",
+    "iris_check",
     "iris_compile",
     "iris_containers",
     "iris_coverage",

@@ -44,7 +44,7 @@ fn release_notes() -> Vec<(String, String)> {
             Some((key, version, read(&format!("docs/release-notes/{name}"))))
         })
         .collect();
-    notes.sort_by(|a, b| b.0.cmp(&a.0));
+    notes.sort_by_key(|n| std::cmp::Reverse(n.0));
     notes.into_iter().map(|(_, v, text)| (v, text)).collect()
 }
 

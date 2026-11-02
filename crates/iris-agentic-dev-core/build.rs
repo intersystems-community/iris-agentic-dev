@@ -40,6 +40,17 @@ fn main() {
     };
 
     println!("cargo:rustc-env=IRIS_AGENTIC_DEV_BUILD_SUFFIX={suffix}");
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-changed=.git/refs");
+    // Resolved through git: `.git` is two directories up from this crate, and a rerun path that
+    // does not exist counts as always changed, which recompiled the crate on every build.
+    let git_dir = Command::new("git")
+        .args(["rev-parse", "--absolute-git-dir"])
+        .current_dir(&manifest_dir)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| ".git".to_string());
+    println!("cargo:rerun-if-changed={git_dir}/HEAD");
+    println!("cargo:rerun-if-changed={git_dir}/refs");
 }

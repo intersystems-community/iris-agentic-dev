@@ -1,0 +1,41 @@
+id: CORPUS-47
+prompt: |
+  Bench.Check.Validate(pAge) in the BENCHMARK namespace should return an error %Status for a
+  negative age and $$$OK otherwise. Set sc = ##class(Bench.Check).Validate(5) raises <COMMAND>. Fix
+  it and leave the class compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+fixtures:
+  - name: Bench.Check
+    content: |
+      Class Bench.Check Extends %RegisteredObject
+      {
+
+      ClassMethod Validate(pAge As %Integer) As %Status
+      {
+          If pAge < 0 {
+              Quit $$$ERROR($$$GeneralError, "age must not be negative")
+          }
+          Quit
+      }
+
+      }
+check: |
+  try { set ok=($system.Status.IsOK(##class(Bench.Check).Validate(5))&&$system.Status.IsError(##class(Bench.Check).Validate(-1))) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Check
+    content: |
+      Class Bench.Check Extends %RegisteredObject
+      {
+
+      ClassMethod Validate(pAge As %Integer) As %Status
+      {
+          If pAge < 0 {
+              Quit $$$ERROR($$$GeneralError, "age must not be negative")
+          }
+          Quit $$$OK
+      }
+
+      }
+tags: [status-handling, return-value]

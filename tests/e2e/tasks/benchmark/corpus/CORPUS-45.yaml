@@ -1,0 +1,56 @@
+id: CORPUS-45
+prompt: |
+  Bench.Tree.ValueOf(pKey) in the BENCHMARK namespace should return the value stored at
+  ^Bench.Tree(pKey), or an empty string when that node holds no value of its own, which includes a
+  node that only has child nodes. Setup() stores a value at "a" and a child under "b". ValueOf("b")
+  raises <UNDEFINED>. Fix it and leave the class compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+fixtures:
+  - name: Bench.Tree
+    content: |
+      Class Bench.Tree Extends %RegisteredObject
+      {
+
+      ClassMethod Setup()
+      {
+          Kill ^Bench.Tree
+          Set ^Bench.Tree("a") = 1
+          Set ^Bench.Tree("b", "x") = 2
+      }
+
+      ClassMethod ValueOf(pKey As %String) As %String
+      {
+          If $Data(^Bench.Tree(pKey), tValue) {
+              Quit tValue
+          }
+          Quit ""
+      }
+
+      }
+check: |
+  try { do ##class(Bench.Tree).Setup() set ok=((##class(Bench.Tree).ValueOf("a")=1)&&(##class(Bench.Tree).ValueOf("b")="")&&(##class(Bench.Tree).ValueOf("zz")="")) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Tree
+    content: |
+      Class Bench.Tree Extends %RegisteredObject
+      {
+
+      ClassMethod Setup()
+      {
+          Kill ^Bench.Tree
+          Set ^Bench.Tree("a") = 1
+          Set ^Bench.Tree("b", "x") = 2
+      }
+
+      ClassMethod ValueOf(pKey As %String) As %String
+      {
+          If $Data(^Bench.Tree(pKey), tValue) # 2 {
+              Quit tValue
+          }
+          Quit ""
+      }
+
+      }
+tags: [globals, undefined]

@@ -1,0 +1,45 @@
+id: CORPUS-48
+prompt: |
+  Bench.Price.Net(pGross) in the BENCHMARK namespace should return pGross with a 20% discount
+  applied, so Net(100) is 80. It raises <PARAMETER>. Fix it and leave the class compiled on the
+  server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+fixtures:
+  - name: Bench.Price
+    content: |
+      Class Bench.Price Extends %RegisteredObject
+      {
+
+      ClassMethod Net(pGross As %Numeric) As %Numeric
+      {
+          Quit ..Apply(pGross, 0.2, 1)
+      }
+
+      ClassMethod Apply(pAmount As %Numeric, pRate As %Numeric) As %Numeric
+      {
+          Quit pAmount * (1 - pRate)
+      }
+
+      }
+check: |
+  try { set ok=(##class(Bench.Price).Net(100)=80) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Price
+    content: |
+      Class Bench.Price Extends %RegisteredObject
+      {
+
+      ClassMethod Net(pGross As %Numeric) As %Numeric
+      {
+          Quit ..Apply(pGross, 0.2)
+      }
+
+      ClassMethod Apply(pAmount As %Numeric, pRate As %Numeric) As %Numeric
+      {
+          Quit pAmount * (1 - pRate)
+      }
+
+      }
+tags: [method-calls, arguments]

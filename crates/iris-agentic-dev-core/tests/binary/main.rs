@@ -14,6 +14,7 @@ fn isolate_the_test_process() {
     iris_agentic_dev_core::testing::isolate_process();
 }
 
+mod check_ascot;
 mod cli_discovery;
 mod coding_pack_129;
 mod gate_normalize_163;

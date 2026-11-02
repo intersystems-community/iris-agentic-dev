@@ -444,8 +444,14 @@ fn mcp_server_negotiates_all_known_protocol_versions() {
         return;
     };
 
-    // All known protocol versions should be echoed back
-    for client_version in &["2026-07-28", "2025-11-25", "2024-11-05"] {
+    // Every known version with an `initialize` handshake is echoed back. 2026-07-28 moved the
+    // lifecycle into per-request `_meta`, so a client naming it over `initialize` is answered with
+    // the newest version that still has one (rmcp's `LATEST_WITH_INITIALIZE`).
+    for (client_version, expected) in &[
+        ("2026-07-28", "2025-11-25"),
+        ("2025-11-25", "2025-11-25"),
+        ("2024-11-05", "2024-11-05"),
+    ] {
         let mut child = iris_agentic_dev_core::testing::clean_mcp_command(&bin)
             .env("IRIS_HOST", "127.0.0.1")
             .env("IRIS_WEB_PORT", "9")
@@ -471,8 +477,8 @@ fn mcp_server_negotiates_all_known_protocol_versions() {
             .unwrap_or("missing");
 
         assert_eq!(
-            server_version, *client_version,
-            "client sent {client_version}, server replied {server_version} — should echo known versions"
+            server_version, *expected,
+            "client sent {client_version}, server replied {server_version}, expected {expected}"
         );
 
         iris_agentic_dev_core::testing::stop_server(&mut child);

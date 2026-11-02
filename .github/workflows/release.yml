@@ -68,7 +68,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@3da603d4464771f1a8c3dd4acb41f03bc8107551 # 1.92.0
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
         with:
           targets: ${{ matrix.target }}
       # No rust-cache here. A release build restores nothing it did not compile itself: a cache
@@ -163,7 +163,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@3da603d4464771f1a8c3dd4acb41f03bc8107551 # 1.92.0
+      - uses: dtolnay/rust-toolchain@035fceb3c12fb0c6a9461b52775e16473133e591 # 1.95.0
       - name: Install cargo-cyclonedx
         run: cargo install cargo-cyclonedx --locked --version 0.5.9
       - name: Generate the SBOM

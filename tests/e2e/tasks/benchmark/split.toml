@@ -86,6 +86,12 @@
 #   class, a ToolSet query's parameters and `MaxRows`, and `AddDocument` with and without a `source`. None
 #   makes an LLM call.
 #
+# - **CORPUS-43 to CORPUS-57 are holdout from the day they were written (2026-10-29).** Each plants
+#   a defect the IRIS compiler accepts and the program trips on at runtime, drawn from the
+#   runtime-proven tests of `objectscript-typecheck-corpus`; CORPUS-57, a misspelled macro the
+#   compiler also catches, was asked for in the PR review. Written to measure `iris_check` (PR #166);
+#   none involves a routine.
+#
 # One caveat that the split cannot fix and the report has to carry instead: I wrote the 42 corpus
 # tasks knowing what iad's 81 tools can do. Authoring is not tuning — no description, prompt or skill
 # was changed while looking at a result from these tasks — but a corpus written by the tool author is
@@ -156,6 +162,21 @@ holdout = [
   "CORPUS-39",
   "CORPUS-40",
   "CORPUS-41",
+  "CORPUS-43",
+  "CORPUS-44",
+  "CORPUS-45",
+  "CORPUS-46",
+  "CORPUS-47",
+  "CORPUS-48",
+  "CORPUS-49",
+  "CORPUS-50",
+  "CORPUS-51",
+  "CORPUS-52",
+  "CORPUS-53",
+  "CORPUS-54",
+  "CORPUS-55",
+  "CORPUS-56",
+  "CORPUS-57",
   "SKILL-01",
   "SKILL-04",
   "SKILL-06",

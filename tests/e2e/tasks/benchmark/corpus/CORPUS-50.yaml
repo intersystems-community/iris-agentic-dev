@@ -1,0 +1,64 @@
+id: CORPUS-50
+prompt: |
+  Bench.Card.Example(pTitle, pOwner) in the BENCHMARK namespace builds a card and returns its
+  Summary(), the title followed by the owner in parentheses, so Example("Dune", "Ann") is
+  "Dune (Ann)". It raises <PROPERTY DOES NOT EXIST>. Fix it and leave the class compiled on the
+  server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+fixtures:
+  - name: Bench.Card
+    content: |
+      Class Bench.Card Extends %RegisteredObject
+      {
+
+      Property Title As %String;
+
+      Property Owner As %String;
+
+      /// The title followed by the owner in parentheses.
+      Method Summary() As %String
+      {
+          Quit ..Title_" ("_..Owner_")"
+      }
+
+      /// The summary of a card titled pTitle and owned by pOwner.
+      ClassMethod Example(pTitle As %String, pOwner As %String) As %String
+      {
+          Set tCard = ..%New()
+          Set tCard.Turtle = pTitle
+          Set tCard.Owner = pOwner
+          Quit tCard.Summary()
+      }
+
+      }
+check: |
+  try { set ok=(##class(Bench.Card).Example("Dune","Ann")="Dune (Ann)") } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Card
+    content: |
+      Class Bench.Card Extends %RegisteredObject
+      {
+
+      Property Title As %String;
+
+      Property Owner As %String;
+
+      /// The title followed by the owner in parentheses.
+      Method Summary() As %String
+      {
+          Quit ..Title_" ("_..Owner_")"
+      }
+
+      /// The summary of a card titled pTitle and owned by pOwner.
+      ClassMethod Example(pTitle As %String, pOwner As %String) As %String
+      {
+          Set tCard = ..%New()
+          Set tCard.Title = pTitle
+          Set tCard.Owner = pOwner
+          Quit tCard.Summary()
+      }
+
+      }
+tags: [properties, wrong-member]
