@@ -30,3 +30,7 @@ outputs/
 *.inc
 *.csp
 *.dfi
+
+# Vendored from microsoft/winget-cli (MIT) and kept byte-identical to upstream, so a schema
+# update is a plain copy that diffs cleanly against the source (spec 152).
+packaging/winget/schemas/
