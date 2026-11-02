@@ -241,8 +241,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Windows Server images ship without winget. Installed from Microsoft's own release,
-      # pinned by tag and checked against the SHA-256 GitHub records for each asset.
+      # windows-latest carries winget (1.11.510 on 2026-11-02) although the image notes do not list
+      # it, so this step normally exits at the first line. If an image drops it, winget comes from
+      # Microsoft's own release, pinned by tag and checked against the SHA-256 GitHub records.
       - name: Install winget 1.29.380
         shell: pwsh
         run: |
@@ -292,7 +293,7 @@ jobs:
           $out = & $exe --version
           Write-Host "installed: $out"
           if ($out -ne "iris-agentic-dev $version") { throw "expected 'iris-agentic-dev $version', got '$out'" }
-          winget uninstall --manifest $dir --disable-interactivity
+          winget uninstall --manifest $dir --accept-source-agreements --disable-interactivity
           if ($LASTEXITCODE -ne 0) { throw "winget uninstall failed ($LASTEXITCODE)" }
 
           # A manifest whose hash is not the asset's must not install.

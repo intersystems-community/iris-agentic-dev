@@ -20,8 +20,8 @@
   `gh api`. A clone of `winget-pkgs` is several hundred thousand files.
 - **The CI job installs the published release, not this commit's build.** winget needs an HTTPS URL
   and a hash, and the published asset is what users get. The generator is what changes per commit.
-- **winget on the runner** comes from Microsoft's `v1.29.380` release, hash-checked, because Windows
-  Server images ship without it.
+- **winget on the runner** is the image's own (1.11.510 on 2026-11-02, not in the image notes). The
+  job falls back to Microsoft's `v1.29.380` release, hash-checked, if an image drops it.
 
 ## Follow-ups
 
