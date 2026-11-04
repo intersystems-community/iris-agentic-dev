@@ -7,11 +7,10 @@
 #   format_file <abs_path>         -- run the right formatter for $abs_path
 #   find_prettier_root <abs_path>  -- locate nearest package.json
 #
-# INFRA-019:
-#   - The caller must source policy.sh before sourcing this file if it
-#     wants policy-driven exclude filtering. When the loader is unavailable
-#     (missing-policy fallback path -- ADR-006), format_file still runs but
-#     skips exclude filtering, matching alpha.11 behavior.
+# Notes:
+#   - The caller must source policy.sh before sourcing this file: the
+#     exclude filtering reads the policy. Both callers (post-edit and
+#     format-changed) refuse to format when the policy cannot be loaded.
 #   - format_file consults each tool's exclude list (prettier, markdownlint,
 #     and shell scope) before invoking the underlying tool and short-circuits
 #     silently if the project-relative path matches any glob.
@@ -129,9 +128,12 @@ _gates_run_tool() {
 # Returns 0 on success, on exclude-skip, or when no formatter is installed
 # for the extension. Returns nonzero only when a present formatter actually
 # fails on the path. Callers that care about severity (format-changed,
-# post-edit) check this rc; legacy callers can ignore it.
+# post-edit) check this rc. A skip for a missing prettier also sets
+# GATES_FORMAT_SKIPPED to the reason, so a caller can say why.
+# shellcheck disable=SC2034  # GATES_FORMAT_SKIPPED is read by the caller
 format_file() {
     local file_path="$1"
+    GATES_FORMAT_SKIPPED=""
     [[ -z "$file_path" ]] && return 0
     [[ ! -f "$file_path" ]] && return 0
 
@@ -149,14 +151,30 @@ format_file() {
                 && _gates_path_excluded_for_tool markdownlint "$file_path"; then
                 return 0
             fi
+            # The pinned prettier, as verify.sh resolves it, never bare npx:
+            # without prettier installed, npx fails (or downloads one), and
+            # a missing tool is a skip, not a tool failure (#195).
+            local pbin=""
             if PRETTIER_ROOT=$(find_prettier_root "$file_path"); then
-                if command -v npx >/dev/null 2>&1; then
-                    _gates_run_tool npx --prefix "$PRETTIER_ROOT" prettier \
-                        --write "$file_path" || rc=$?
-                fi
-            elif command -v prettier >/dev/null 2>&1; then
-                _gates_run_tool prettier --write "$file_path" || rc=$?
+                pbin="$(_gates_tool_bin prettier "$PRETTIER_ROOT")"
+            else
+                pbin="$(_gates_tool_bin prettier "$(_gates_dispatch_project_root)")"
             fi
+            if [[ -z "$pbin" ]]; then
+                GATES_FORMAT_SKIPPED="prettier not installed (node_modules/.bin or PATH)"
+                return 0
+            fi
+            # prettier reads .gitignore and silently skips a file it lists.
+            # The gate checks a tracked file regardless (#199), so a tracked
+            # file is formatted with only .prettierignore applied (#204). An
+            # untracked file keeps the default: gitignored output stays
+            # untouched.
+            local pargs=(--write)
+            if git -C "$(dirname "$file_path")" ls-files --error-unmatch \
+                -- "$(basename "$file_path")" >/dev/null 2>&1; then
+                pargs+=(--ignore-path "$(_gates_dispatch_project_root)/.prettierignore")
+            fi
+            _gates_run_tool "$pbin" "${pargs[@]}" "$file_path" || rc=$?
             ;;
         py)
             if command -v ruff >/dev/null 2>&1; then
@@ -218,23 +236,91 @@ format_file() {
 # ---------------------------------------------------------------------------
 
 # Print the project-relative paths (NUL-separated) that match <tool>'s include
-# globs and none of its exclude globs, under <root>.
+# globs and none of its exclude globs, under <root>. In a git work tree,
+# untracked files git ignores are skipped too (#126): CI checks out only
+# what is committed, so linting what git ignores (husky's generated .husky/_/,
+# build output) fails locally where CI passes. A tracked file is checked
+# even when an ignore pattern matches it, as it is in CI.
+#
+# One pass (#169): the globs are read once, git lists the files (ignored
+# untracked files never reach the loop), and matching stays in bash. Nothing
+# in the loop starts a process, so the cost per file is a few string tests.
 _gates_collect_files() { # <tool> <root>
-    local tool="$1" root="$2" f rel inc matched
-    while IFS= read -r -d '' f; do
-        rel="${f#"$root"/}"
+    local tool="$1" root="$2" g rel abs prel matched
+    local incs=() excs=() proot
+    while IFS= read -r g; do
+        [[ -n "$g" ]] && incs+=("$g")
+    done < <(gates_policy_list "$tool" include 2>/dev/null || true)
+    [[ "${#incs[@]}" -eq 0 ]] && return 0
+    while IFS= read -r g; do
+        [[ -n "$g" ]] && excs+=("$g")
+    done < <(gates_policy_list "$tool" exclude 2>/dev/null || true)
+    # Excludes match the path relative to the project root and the absolute
+    # path, as format_file's exclude check does.
+    proot="$(_gates_dispatch_project_root)"
+    while IFS= read -r -d '' rel; do
+        # The directories the find walk prunes stay out of scope even when
+        # git tracks files under them.
+        case "/$rel/" in
+            */.git/* | */node_modules/* | */.venv/* | */target/* | */dist/*) continue ;;
+        esac
         matched=0
-        while IFS= read -r inc; do
-            [[ -z "$inc" ]] && continue
-            if _gates_glob_match "$rel" "$inc"; then
+        for g in "${incs[@]}"; do
+            if _gates_glob_match "$rel" "$g"; then
                 matched=1
                 break
             fi
-        done < <(gates_policy_list "$tool" include 2>/dev/null || true)
+        done
         [[ "$matched" -eq 1 ]] || continue
-        _gates_path_excluded_for_tool "$tool" "$f" && continue
+        abs="$root/$rel"
+        # Regular files only, like find -type f: git also lists symlinks and
+        # tracked files deleted from the work tree.
+        [[ -f "$abs" && ! -L "$abs" ]] || continue
+        prel="$abs"
+        if [[ -n "$proot" && "$abs" == "$proot/"* ]]; then
+            prel="${abs#"$proot"/}"
+        fi
+        matched=0
+        for g in "${excs[@]+"${excs[@]}"}"; do
+            if _gates_glob_match "$prel" "$g" || _gates_glob_match "$abs" "$g"; then
+                matched=1
+                break
+            fi
+        done
+        [[ "$matched" -eq 1 ]] && continue
         printf '%s\0' "$rel"
-    done < <(find "$root" \
+    done < <(_gates_list_files "$root")
+}
+
+# List the files under <root>, NUL-separated and relative to it. In a git
+# work tree: tracked files plus untracked files git does not ignore. Outside
+# one: every file, with the usual dependency and build directories pruned.
+_gates_list_files() { # <root>
+    local root="$1" f prev=""
+    if [[ "$(git -C "$root" rev-parse --is-inside-work-tree 2>/dev/null)" == "true" ]]; then
+        while IFS= read -r -d '' f; do
+            # Unmerged paths are listed once per stage, adjacent to each other.
+            [[ "$f" == "$prev" ]] && continue
+            prev="$f"
+            # git lists a submodule or a nested repository as one directory
+            # entry; walk it as find always did.
+            f="${f%/}"
+            if [[ -d "$root/$f" && ! -L "$root/$f" ]]; then
+                _gates_find_files "$root" "$root/$f"
+            else
+                printf '%s\0' "$f"
+            fi
+        done < <(git -C "$root" ls-files -co --exclude-standard -z 2>/dev/null)
+        return 0
+    fi
+    _gates_find_files "$root" "$root"
+}
+
+_gates_find_files() { # <root> <dir>: files under <dir>, relative to <root>
+    local root="$1" f
+    while IFS= read -r -d '' f; do
+        printf '%s\0' "${f#"$root"/}"
+    done < <(find "$2" \
         \( -name .git -o -name node_modules -o -name .venv -o -name target -o -name dist \) -prune \
         -o -type f -print0)
 }
@@ -242,11 +328,26 @@ _gates_collect_files() { # <tool> <root>
 # Resolve the binary for <tool> under <root>, preferring the project-pinned
 # install so the version is deterministic across the agent, git, and CI
 # boundaries. Order: node_modules/.bin (lockfile-pinned) -> PATH -> none.
+# The exception is shellcheck (#274): the npm "shellcheck" package is a
+# downloader wrapper that fetches whatever release is latest at install
+# time, so package-lock.json pins nothing for it; its pins (mise,
+# .tool-versions, install-shellcheck.sh) describe a PATH install, which
+# wins, and the wrapper runs only when PATH has no other shellcheck. A
+# wrapper on PATH (npm scripts put node_modules/.bin first) is passed over
+# the same way, so the result is then a full path.
 # Deliberately NOT `npx <tool>`: bare npx downloads "latest" (or a stale cached
 # version), which manufactures a tool version and breaks parity. Echoes the
 # binary path, or nothing when the tool is unavailable.
 _gates_tool_bin() { # <binary-name> <root>
-    local binname="$1" root="$2"
+    local binname="$1" root="$2" p
+    if [[ "$binname" == shellcheck ]]; then
+        while IFS= read -r p; do
+            [[ -z "$p" || "$p" == */node_modules/.bin/shellcheck ]] && continue
+            [[ "$p" == "$(command -v shellcheck)" ]] && p=shellcheck
+            printf '%s\n' "$p"
+            return 0
+        done <<<"$(type -ap shellcheck 2>/dev/null)"
+    fi
     if [[ -x "$root/node_modules/.bin/$binname" ]]; then
         printf '%s\n' "$root/node_modules/.bin/$binname"
     elif command -v "$binname" >/dev/null 2>&1; then
@@ -298,23 +399,68 @@ _gates_check_tool() { # <tool> <root>
 
     cd "$root" || return 1
 
+    # The output is kept so a failure can name its first finding (below).
+    local out
+    out="$(mktemp 2>/dev/null || mktemp -t gates-check)" || return 1
     local rc=0
     case "$tool" in
         prettier)
-            "$bin" --check "${files[@]}" || rc=$?
+            # prettier reads .gitignore by default and silently skips an
+            # explicitly named file it lists, so a tracked file someone
+            # put in .gitignore passed unchecked (#199). Untracked ignored
+            # files never reach this list; .prettierignore still applies.
+            "$bin" --check --ignore-path .prettierignore "${files[@]}" >"$out" 2>&1 || rc=$?
             ;;
         markdownlint)
             # --no-globs: markdownlint-cli2 UNIONS a config file's "globs"
             # with explicit file args, which would sweep in files the policy
             # excludes. The policy's file selection must be authoritative.
-            "$bin" --no-globs "${files[@]}" || rc=$?
+            "$bin" --no-globs "${files[@]}" >"$out" 2>&1 || rc=$?
             ;;
         shellcheck)
-            "$bin" "${files[@]}" || rc=$?
+            "$bin" "${files[@]}" >"$out" 2>&1 || rc=$?
             ;;
     esac
+    cat "$out"
+    if [[ "$rc" -ne 0 ]]; then
+        local finding
+        finding="$(_gates_first_finding "$tool" "$out")"
+        [[ -n "$finding" ]] && printf '##gates-fail## %s\n' "$finding"
+    fi
+    rm -f "$out"
     _gates_emit_meta "$tool" "$binname" "$count" "$count" "" "$bin"
     return "$rc"
+}
+
+# The first finding in a check tool's output, as one line, for verify.sh's
+# summary (#262): each tool opens with banner lines and closes with a
+# footer, so neither the first nor the last line names what failed.
+# ANSI escapes are dropped first: prettier colors "[warn]" whenever CI is
+# set (every GitHub Actions job), terminal or not. Empty when no line looks
+# like a finding.
+_gates_first_finding() { # <tool> <output-file>
+    local esc=$'\033'
+    case "$1" in
+        prettier)
+            # "[warn] a.md" or "[error] a.md: SyntaxError: ...", not the
+            # "Code style issues found ..." footer.
+            sed "s/${esc}\[[0-9;]*[A-Za-z]//g" "$2" | grep -E '^\[(warn|error)\] ' \
+                | grep -v 'Code style issues' | sed -n '1p' || true
+            ;;
+        markdownlint)
+            # "a.md:1:1 error MD018/... text"
+            sed "s/${esc}\[[0-9;]*[A-Za-z]//g" "$2" | grep -E '^[^[:space:]]+:[0-9]+(:[0-9]+)? ' \
+                | sed -n '1p' || true
+            ;;
+        shellcheck)
+            # "In b.sh line 2:" and the first "^-- SC2086 (info): ..." under it.
+            sed "s/${esc}\[[0-9;]*[A-Za-z]//g" "$2" | awk '
+                /^In .* line [0-9]+:$/ && loc == "" { loc = substr($0, 4, length($0) - 4) }
+                loc != "" && match($0, /SC[0-9]+ \(/) {
+                    print loc ": " substr($0, RSTART); exit
+                }' || true
+            ;;
+    esac
 }
 
 # CLI entrypoint (only when executed, not when sourced by the hooks).

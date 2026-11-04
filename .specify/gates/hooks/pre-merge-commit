@@ -1,0 +1,22 @@
+#!/bin/bash
+# shellcheck shell=bash
+set -euo pipefail
+
+# Behavioral probe (#74): answers for pre-merge-commit itself, so the probe
+# proves git's pre-merge-commit hook reaches this script.
+if [[ "${GATES_PROBE:-}" == "1" ]]; then
+    _probe_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    echo "gates-probe:pre-merge-commit:$(head -n 1 "$_probe_root/.specify/gates/.runtime-version" 2>/dev/null || echo unknown)" >&2
+    exit 1
+fi
+
+# Git pre-merge-commit hook -- git boundary (#148).
+#
+# `git merge` that creates a merge commit runs pre-merge-commit and
+# commit-msg, never pre-commit. Without this hook a local merge into main
+# would skip the protected-branch block and the secret scan. It runs the
+# pre-commit checks unchanged: git calls it with no arguments, after the
+# merge result is in the index, so the staged files are what the merge
+# brings in. Needs git 2.24 or later; older git never calls it.
+export GATES_GIT_HOOK=pre-merge-commit
+exec bash "$(dirname "${BASH_SOURCE[0]}")/pre-commit" "$@"

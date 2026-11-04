@@ -3,7 +3,7 @@
 # taskfile-detect.sh -- detect whether a project's Taskfile.yml exposes
 # both `lint:` and `test:` top-level targets.
 #
-# INFRA-024 init flow uses this to decide whether to recommend
+# init uses this (through policy-infer.sh) to decide whether to propose
 # verify-quality.orchestrator = "task" on first run. Returns 0 when both
 # targets are present, 1 otherwise. Missing Taskfile.yml also returns 1.
 #
