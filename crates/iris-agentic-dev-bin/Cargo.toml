@@ -62,7 +62,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 
 [dev-dependencies]
 # Runs `testing::isolate_process` before `main` in every test target (spec 141 T183).
-ctor = "0.2"
+ctor = "1.0"
 tempfile = "3"
 serde_json.workspace = true
 

@@ -69,7 +69,7 @@ zbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] 
 # Test dependencies
 [dev-dependencies]
 # Runs `testing::isolate_process` before `main` in every test target (spec 141 T183).
-ctor = "0.2"
+ctor = "1.0"
 tokio = { workspace = true, features = ["full"] }
 tempfile = "3"
 serde_json.workspace = true
