@@ -769,7 +769,7 @@ fn current_windows_username() -> Option<String> {
     use windows::Win32::System::WindowsProgramming::GetUserNameW;
     let mut buf = vec![0u16; 257];
     let mut size = buf.len() as u32;
-    let ok = unsafe { GetUserNameW(PWSTR(buf.as_mut_ptr()), &mut size) };
+    let ok = unsafe { GetUserNameW(Some(PWSTR(buf.as_mut_ptr())), &mut size) };
     if ok.is_err() {
         return None;
     }
@@ -809,9 +809,9 @@ fn vscdb_dpapi_decrypt(ciphertext: &[u8], what: &str) -> Result<Vec<u8>, String>
     let decrypted =
         unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec() };
     unsafe {
-        windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(
+        windows::Win32::Foundation::LocalFree(Some(windows::Win32::Foundation::HLOCAL(
             output.pbData as *mut _,
-        ));
+        )));
     }
     Ok(decrypted)
 }

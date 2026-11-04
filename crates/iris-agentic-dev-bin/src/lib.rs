@@ -17,7 +17,7 @@ pub fn exit(code: i32) -> ! {
 #[cfg(test)]
 mod test_isolation {
     #[cfg(feature = "testing")]
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn isolate_the_lib_test_process() {
         iris_agentic_dev_core::testing::isolate_process();
     }
@@ -27,7 +27,7 @@ mod test_isolation {
     // build these tests. They get the two settings of `isolate_process` that keep a test off the
     // developer's files and keychain: an empty `HOME` and `IAD_NO_KEYCHAIN=1`.
     #[cfg(not(feature = "testing"))]
-    #[ctor::ctor]
+    #[ctor::ctor(unsafe)]
     fn isolate_the_lib_test_process() {
         let home = std::env::temp_dir().join(format!("iad-bin-lib-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&home);
