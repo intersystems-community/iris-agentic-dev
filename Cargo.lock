@@ -1413,6 +1413,7 @@ dependencies = [
  "ctor",
  "dirs",
  "futures-util",
+ "getrandom 0.4.3",
  "keyring",
  "keyring-core",
  "quick-xml",
