@@ -6,17 +6,23 @@
 # Weekly, grouped per ecosystem, so the queue is one PR per ecosystem a week rather than one per
 # package. Security updates are not grouped or delayed by this file; they open as soon as an
 # advisory is published (Settings > Code security > Dependabot security updates).
+#
+# Each version update waits 7 days after its release (cooldown). A hijacked package is usually caught
+# and pulled within days, so the wait keeps a fresh, compromised release out of the queue. Security
+# updates ignore the cooldown.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
     groups:
       actions: { patterns: ["*"] }
 
   - package-ecosystem: cargo
     directory: /
     schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
     ignore:
       # Held at 3.1.x in Cargo.toml: 3.2 changes protocol-version negotiation (SEP-2567), which
       # clients can see. It moves in its own PR, not inside a grouped minor bump.
@@ -31,22 +37,35 @@ updates:
   - package-ecosystem: npm
     directory: /vscode-iris-agentic-dev
     schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
     groups:
       extension-minor:
         update-types: [minor, patch]
+    # Tied to the oldest VS Code the extension supports (engines.vscode ^1.99.0, which runs on
+    # Node 20). Newer typings let code use APIs that release lacks, and which 7 needs Node 22.22.
+    # Move these together with engines.vscode, by hand.
+    ignore:
+      - dependency-name: "@types/vscode"
+      - dependency-name: "@types/node"
+        versions: [">=21"]
+      - dependency-name: which
+        versions: [">=7"]
 
   - package-ecosystem: npm
     directory: /
     schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
     groups:
       lint-tooling: { patterns: ["*"] }
 
   - package-ecosystem: pip
     directory: /.github/requirements
     schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
     groups:
       ci-python: { patterns: ["*"] }
 
   - package-ecosystem: docker
     directory: /
     schedule: { interval: weekly, day: monday }
+    cooldown: { default-days: 7 }
