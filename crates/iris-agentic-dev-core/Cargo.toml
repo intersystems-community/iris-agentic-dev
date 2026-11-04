@@ -35,7 +35,7 @@ tracing.workspace = true
 urlencoding = "2"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
-dirs = "5"
+dirs = "7"
 keyring = { version = "4.2", features = ["v1"] }
 keyring-core = { version = "1" }
 tree-sitter = "0.26"
@@ -45,7 +45,7 @@ quick-xml = "0.41"
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots", "connect", "handshake"], default-features = false }
 futures-util = { version = "0.3", features = ["sink"] }
 base64 = "0.22"
-aes-gcm = "0.10"
+aes-gcm = "0.11"
 similar = "2"
 
 
@@ -60,8 +60,8 @@ apple-native-keyring-store = "1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-native-keyring-store = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
-windows = { version = "0.58", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_System_WindowsProgramming"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
+windows = { version = "0.62", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_System_WindowsProgramming"] }
 
 [target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
 zbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] }
@@ -69,7 +69,7 @@ zbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] 
 # Test dependencies
 [dev-dependencies]
 # Runs `testing::isolate_process` before `main` in every test target (spec 141 T183).
-ctor = "0.2"
+ctor = "1"
 tokio = { workspace = true, features = ["full"] }
 tempfile = "3"
 serde_json.workspace = true

@@ -208,7 +208,7 @@ pub fn parse_local_state_key(local_state_json: &str) -> Result<Vec<u8>, String> 
 /// Open a `v10`/`v11` envelope with the unsealed AES-256 key.
 pub fn decrypt_safe_storage(envelope: &[u8], aes_key: &[u8]) -> Result<String, String> {
     use aes_gcm::aead::{Aead, KeyInit};
-    use aes_gcm::{Aes256Gcm, Key, Nonce};
+    use aes_gcm::{Aes256Gcm, Key};
 
     if aes_key.len() != 32 {
         return Err(format!(
@@ -232,15 +232,18 @@ pub fn decrypt_safe_storage(envelope: &[u8], aes_key: &[u8]) -> Result<String, S
     let nonce = &envelope[ENVELOPE_TAG_LEN..ENVELOPE_TAG_LEN + GCM_NONCE_LEN];
     let sealed = &envelope[ENVELOPE_TAG_LEN + GCM_NONCE_LEN..];
 
-    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(aes_key));
-    let plaintext = cipher
-        .decrypt(Nonce::from_slice(nonce), sealed)
-        .map_err(|_| {
-            "AES-GCM authentication failed — the Local State key does not match this \
+    // Both lengths were checked above, so neither conversion fails; an error stays an error.
+    let key = Key::<Aes256Gcm>::try_from(aes_key)
+        .map_err(|_| format!("AES-256 key is {} bytes, not 32", aes_key.len()))?;
+    let nonce = aes_gcm::aead::Nonce::<Aes256Gcm>::try_from(nonce)
+        .map_err(|_| format!("GCM nonce is {} bytes, not {GCM_NONCE_LEN}", nonce.len()))?;
+    let cipher = Aes256Gcm::new(&key);
+    let plaintext = cipher.decrypt(&nonce, sealed).map_err(|_| {
+        "AES-GCM authentication failed — the Local State key does not match this \
              value. The credential may have been written by a different VS Code \
              install, or Local State was replaced after the secret was stored."
-                .to_string()
-        })?;
+            .to_string()
+    })?;
 
     String::from_utf8(plaintext).map_err(|e| format!("decrypted bytes are not UTF-8: {e}"))
 }

@@ -19,7 +19,7 @@ pub mod testing;
 // The unit tests inside `src/` run in their own binary, which no aggregator's `main.rs` reaches.
 // Same reason as the aggregators: isolate before `main` (spec 141 T183).
 #[cfg(all(test, feature = "testing"))]
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn isolate_the_lib_test_process() {
     testing::isolate_process();
 }

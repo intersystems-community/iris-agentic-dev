@@ -13,7 +13,7 @@
 
 // Runs before `main`, so before any test thread: no test in this binary reaches the developer's
 // real keychain or home directory. See `testing::isolate_process`.
-#[ctor::ctor]
+#[ctor::ctor(unsafe)]
 fn isolate_the_test_process() {
     iris_agentic_dev_core::testing::isolate_process();
 }
