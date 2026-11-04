@@ -127,7 +127,7 @@
     "@types/which": "^3.0.4",
     "@vscode/vsce": "^4.1.0",
     "esbuild": "^0.28.0",
-    "typescript": "^5"
+    "typescript": "^7"
   },
   "overrides": {
     "@azure/msal-node": ">=7.1.0",
