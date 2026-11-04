@@ -29,7 +29,7 @@
         "version": {
           "type": "string",
           "minLength": 1,
-          "description": "Tag or commit identifier to pin. Branch names are refused at sync time — a moving pin is not a pin."
+          "description": "Tag or commit identifier to pin. Branch names are refused at sync time \u2014 a moving pin is not a pin."
         },
         "file": {
           "type": "string",
@@ -41,19 +41,31 @@
     },
     "hooks": {
       "type": "object",
-      "description": "Map of hook name to hook stanza. Hook names are free-form strings matching the name used by gates_policy_get / gates_policy_list callers.",
+      "description": "Map of hook name to hook stanza. Hook names are free-form strings matching the name used by gates_policy_get / gates_policy_list callers. gates, gate_timeout_s and test_severity are accepted only under verify-quality.",
+      "properties": {
+        "verify-quality": {
+          "$ref": "#/$defs/hook"
+        }
+      },
       "additionalProperties": {
-        "$ref": "#/$defs/hook"
+        "$ref": "#/$defs/hook",
+        "properties": {
+          "gates": false,
+          "gate_timeout_s": false,
+          "test_severity": false
+        }
       }
     },
     "protected_files": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Files refused at the agent PreToolUse boundary and by the git forbidden-file scan, on top of the built-in secret/key defaults.",
+      "description": "Files refused at the agent PreToolUse boundary, on top of the built-in secret/key defaults. At the git boundary a staged match needs a Protected-Change trailer (see git.protected_change_trailer).",
       "properties": {
         "extra": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Additional paths or globs to protect."
         }
       }
@@ -77,6 +89,42 @@
           "type": "boolean",
           "default": true,
           "description": "Reject AI-ism / self-referential phrasing in commit messages and PRs."
+        },
+        "protected_change_trailer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Let a staged protected_files.extra path through the git boundary only when the commit message carries a 'Protected-Change: <path>' trailer for every staged protected path plus 'Approved-By: <name>' (checked in commit-msg). false restores the unconditional pre-commit refusal, from the commit after the one that turns it off: that commit is judged by HEAD's policy and passes with its trailers. The agent boundary refuses protected edits either way."
+        },
+        "block_bulk_staging": {
+          "type": "boolean",
+          "default": false,
+          "x-since": "0.4.0",
+          "description": "Refuse bulk staging at the agent boundary: git add -A / --all / . / :/ / *, or a directory argument. Explicit file paths, -u, --renormalize, git commit -a and -p stay allowed. The git boundary cannot tell how the index was filled, so this rule is agent-boundary only."
+        },
+        "ai_branding": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "AI-branding rule of git.forbid_ai_isms, applied by commit-msg and the PR validator.",
+          "properties": {
+            "terms": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "default": ["Anthropic", "GPT", "OpenAI", "Copilot"],
+              "description": "Terms refused as whole words, case-insensitive, matched literally. An empty list disables the branding check (the standalone 'Claude' rule stays)."
+            },
+            "allow_phrases": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "default": [],
+              "description": "Literal phrases, matched ignoring case, removed from the message before the branding and standalone 'Claude' checks, e.g. a product or branch name that contains a term."
+            }
+          }
         }
       }
     },
@@ -122,13 +170,17 @@
         },
         "include": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": ["*"],
           "description": "Feature-directory-name globs eligible for enforcement when marked Complete. Non-matching complete features stay informational."
         },
         "exclude": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Feature-directory-name globs skipped entirely (not discovered)."
         },
@@ -137,6 +189,48 @@
           "minimum": 1,
           "default": 30,
           "description": "Per-accept-block watchdog seconds; an exceeded budget fails that criterion."
+        },
+        "snapshot_exclude": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "not": {
+              "pattern": "^[*/?]+$"
+            }
+          },
+          "default": [],
+          "description": "Repository-relative path globs of untracked or gitignored files left out of the accept-block read-only check, for files another process writes while blocks run (an editor or plugin cache). A trailing slash names a directory and everything under it (\"cache/\" equals \"cache/**\"). A pattern of only *, ? and / would exempt every path and is refused. Tracked files are always checked."
+        },
+        "cover": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["script", "at"],
+          "x-since": "0.5.0",
+          "description": "A covering script (feature 007): at the boundaries in at, the spec gate runs `<script> <feature> <task-id> <block-file>` from the project root before each accept block; exit 0 with exactly one non-empty line on stdout marks the block covered (not run, reported by name with that line as reason), anything else runs the block. CI is never covered: CI runs the full policy (constitution, Principle III). The script is protected like policy.json at every boundary.",
+          "properties": {
+            "script": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Project-relative path of the covering script (not absolute, no .. segment); must be a regular file inside the project, or verify.sh refuses the run. Protected at every boundary, whatever protected_files.extra says."
+            },
+            "at": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": ["agent", "git"]
+              },
+              "description": "Boundaries where the script is asked (agent, git). ci is refused: CI runs the full policy (constitution, Principle III)."
+            },
+            "timeout_s": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 300,
+              "default": 30,
+              "description": "Time limit in seconds for one answer of the script; on timeout its process group is stopped and the block runs."
+            }
+          }
         }
       }
     }
@@ -149,7 +243,11 @@
       "allOf": [
         {
           "if": {
-            "properties": { "orchestrator": { "const": "custom" } },
+            "properties": {
+              "orchestrator": {
+                "const": "custom"
+              }
+            },
             "required": ["orchestrator"]
           },
           "then": {
@@ -166,12 +264,16 @@
       "properties": {
         "include": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Glob patterns selecting files in scope. Consumed by config generators."
         },
         "exclude": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Glob patterns excluded from scope. Consumed by config generators."
         },
         "orchestrator": {
@@ -185,20 +287,97 @@
           "description": "How the hook's overall exit code maps to caller-visible severity."
         },
         "on_missing_runner": {
+          "deprecated": true,
           "type": "string",
           "enum": ["warn", "skip"],
           "default": "warn",
-          "description": "Behavior when no per-service runner can be resolved for a tool (neither $dir/.venv/bin/<tool> nor `uv run --project $dir <tool>` is available). Default is warn. INFRA-025: applies to the verify-quality legacy walker's Python branch; per-service opt-out via [tool.gates.hooks] skip in pyproject.toml is logged as SKIP regardless of this field."
+          "description": "Deprecated: no gate reads this field, so it has no effect. It is still accepted so existing policies validate; doctor recommends removing it."
         },
         "on_missing_tests": {
+          "deprecated": true,
           "type": "string",
           "enum": ["warn", "skip"],
           "default": "skip",
-          "description": "Behavior when the test runner reports no tests collected (pytest exit code 5). Default is skip (log SKIP, no WARNING/FAIL). INFRA-026: warn flips to logging WARN and incrementing the warnings counter; consumed by the verify-quality Python branch's pytest classifier."
+          "description": "Deprecated: no gate reads this field, so it has no effect. It is still accepted so existing policies validate; doctor recommends removing it."
         },
         "custom_command": {
           "type": "string",
           "description": "Shell command invoked when orchestrator == custom."
+        },
+        "gates": {
+          "type": "object",
+          "x-since": "0.5.0",
+          "description": "Project gates (verify-quality only): named commands run after the orchestrator's gates, in key order, each reported as its own gate in the text report, --json and the attestation. The runtime's own gate names are reserved and refused.",
+          "propertyNames": {
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,39}$",
+            "not": {
+              "enum": [
+                "prettier",
+                "markdownlint",
+                "shellcheck",
+                "task-lint",
+                "task-test",
+                "custom",
+                "spec",
+                "contract",
+                "parity",
+                "policy",
+                "lock",
+                "constitution"
+              ]
+            }
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/projectGate"
+          }
+        },
+        "gate_timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "default": 600,
+          "x-since": "0.5.0",
+          "description": "Time limit in seconds for project gates without their own timeout_s (verify-quality only). A gate over its limit fails and its process group is stopped."
+        },
+        "test_severity": {
+          "type": "string",
+          "enum": ["error", "warning", "info"],
+          "default": "warning",
+          "x-since": "0.5.0",
+          "description": "Severity of the task-test gate under the task orchestrator (verify-quality only). task-lint stays error."
+        }
+      }
+    },
+    "projectGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["command"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Run as sh -c \"<command>\" from the project root, with GATES_BOUNDARY set to agent, git, ci or none. Exit 126 or 127 fails the gate (command not found or not executable)."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["error", "warning", "info"],
+          "default": "error",
+          "description": "How a non-zero exit maps: error fails the run, warning and info warn. A timeout or a command that cannot start fails whatever the severity."
+        },
+        "timeout_s": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "description": "Time limit in seconds; default gate_timeout_s, else 600."
+        },
+        "skip_at": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["agent", "git"]
+          },
+          "description": "Earlier boundaries at which this gate does not run, by declaration; each skip is reported by name. ci cannot be named: CI runs the full policy (constitution, Principle III)."
         }
       }
     }

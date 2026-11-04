@@ -52,7 +52,8 @@ case "$RC" in
         exit 0
         ;;
     *)
-        # Internal error (missing jq/policy, etc.) -> fail open, but say why.
+        # Internal error (missing jq, missing or invalid policy, etc.) ->
+        # fail open, but say why: verify.sh's output names the errors.
         printf 'gates: verify.sh could not run (exit %s); allowing stop.\n%s\n' \
             "$RC" "$OUTPUT" >&2
         exit 0

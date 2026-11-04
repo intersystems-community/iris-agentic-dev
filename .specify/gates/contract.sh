@@ -11,7 +11,8 @@ set -uo pipefail
 #
 # sync is the only network moment the contract machinery has; verify.sh
 # proves drift offline from the committed artifacts. policy.json is
-# user-owned and never written here.
+# user-owned: the only write is sync --update setting extends.version in
+# the copy on its own review branch (#135), never in the user's checkout.
 #
 # Exit codes: 0 = success (including "nothing to sync/propose"),
 #             1 = usage or environment error,
@@ -27,6 +28,8 @@ source "$GATES_DIR/lib/policy.sh"
 source "$GATES_DIR/lib/attest.sh"
 # shellcheck source=lib/contract.sh disable=SC1091
 source "$GATES_DIR/lib/contract.sh"
+# shellcheck source=lib/message.sh disable=SC1091
+source "$GATES_DIR/lib/message.sh"
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "contract: jq not found (run /speckit.gates.doctor)" >&2
@@ -42,21 +45,29 @@ gates_contract_paths "$PROJECT_ROOT"
 # Print the deviation inventory (TSV from gates_contract_deviations) as
 # human lines. Reads stdin.
 print_deviations() {
-    local n=0 class path from to rest
-    while IFS=$'\t' read -r class path from to rest; do
-        [[ -z "$class" ]] && continue
-        echo "contract: deviation ($class): $path: baseline $from -> overlay $to"
-        n=$((n + 1))
-    done
-    [[ "$n" -eq 0 ]] && echo "contract: no deviations -- the overlay only adds or strengthens"
-    return 0
+    local devs
+    devs="$(cat)"
+    if [[ -z "$devs" ]]; then
+        echo "contract: no deviations -- the overlay only adds or strengthens"
+        return 0
+    fi
+    gates_contract_print_deviations "contract: deviation " <<<"$devs"
 }
 
-# Fetch + validate + materialize <version>, writing the three artifacts
-# only after every check passes. Echoes nothing on the happy path except
-# the summary; all failures name their cause and leave prior state intact.
-materialize() { # <version>
-    local version="$1"
+# Would the message rules of the update branch at <wt> accept <msg>, as
+# the commit message (commit-msg) and as the PR text (pr-check)? Judged by
+# the branch's own policy, like the hooks that will judge it.
+update_message_ok() { # <wt> <msg>
+    (cd "$1" && export GATES_POLICY_FILE="" CLAUDE_PROJECT_DIR="$1" \
+        && gates_message_check commit "$2" && gates_message_check pr "$2") >/dev/null 2>&1
+}
+
+# Fetch + validate + materialize <version> against <overlay> (default
+# policy.json), writing the three artifacts only after every check passes.
+# Echoes nothing on the happy path except the summary; all failures name
+# their cause and leave prior state intact.
+materialize() { # <version> [overlay]
+    local version="$1" overlay="${2:-$CONTRACT_OVERLAY}"
     local work
     work="$(mktemp -d 2>/dev/null || mktemp -d -t gates-sync)" || {
         echo "contract: mktemp failed" >&2
@@ -87,7 +98,7 @@ materialize() { # <version>
         return 2
     fi
     # Materialize and validate the merge result too.
-    if ! gates_contract_merge "$work/baseline.json" "$CONTRACT_OVERLAY" >"$work/effective.json"; then
+    if ! gates_contract_merge "$work/baseline.json" "$overlay" >"$work/effective.json"; then
         rm -rf "$work"
         echo "contract: could not merge baseline and overlay" >&2
         return 2
@@ -141,8 +152,12 @@ cmd_sync() {
         echo "contract: no extends declared in policy.json -- nothing to sync"
         return 0
     fi
-    if ! GATES_POLICY_FILE="$CONTRACT_OVERLAY" gates_validate_policy "$CONTRACT_OVERLAY" >/dev/null 2>&1; then
-        echo "contract: policy.json itself fails validation -- fix it before syncing" >&2
+    # The overlay is a partial policy: shape and values here, completeness on
+    # the merged effective policy in materialize.
+    local val
+    if ! val="$(gates_contract_validate_overlay "$CONTRACT_OVERLAY" 2>&1)"; then
+        echo "contract: policy.json itself fails validation -- fix it before syncing:" >&2
+        printf '%s\n' "$val" | sed 's/^/  /' >&2
         return 2
     fi
 
@@ -179,15 +194,34 @@ cmd_sync() {
         echo "contract: already up to date ($current)"
         return 0
     fi
+    # The declaration moves with the pin (#135): the branch's policy.json
+    # must name the new version, or its own contract gate (declaration vs
+    # lock) refuses it. The effective policy is materialized against that
+    # updated overlay, since it re-attaches extends verbatim.
+    local overlay_new
+    overlay_new="$(mktemp 2>/dev/null || mktemp -t gates-overlay)" || {
+        echo "contract: mktemp failed" >&2
+        return 1
+    }
+    if ! gates_contract_set_version "$CONTRACT_OVERLAY" "$target" >"$overlay_new"; then
+        rm -f "$overlay_new"
+        echo "contract: could not set extends.version in policy.json" >&2
+        return 2
+    fi
     local rc=0
-    materialize "$target" || rc=$?
-    [[ "$rc" -ne 0 ]] && return "$rc"
+    materialize "$target" "$overlay_new" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+        rm -f "$overlay_new"
+        return "$rc"
+    fi
     local work="$MATERIALIZED_DIR"
+    mv "$overlay_new" "$work/policy.json"
 
-    # Enforcement delta for the review body.
+    # Enforcement delta for the review body: every classified change between
+    # the two baselines, strengthenings and added or removed hooks included.
     local delta
-    delta="$(gates_contract_deviations "$CONTRACT_SNAPSHOT" "$work/baseline.json" 2>/dev/null \
-        | awk -F'\t' '{ printf "- %s: %s: %s -> %s\n", $1, $2, $3, $4 }')"
+    delta="$(gates_contract_deviations "$CONTRACT_SNAPSHOT" "$work/baseline.json" delta 2>/dev/null \
+        | gates_contract_print_deviations "- " delta)"
     [[ -z "$delta" ]] && delta="- no rule-level differences (metadata/ordering only)"
 
     if ! git -C "$PROJECT_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -208,43 +242,117 @@ cmd_sync() {
     # A temporary worktree keeps the user's checkout untouched (SC-003:
     # current enforcement stays at the old pin until the branch merges).
     local wt="$work/wt"
-    if ! git -C "$PROJECT_ROOT" worktree add -q -b "$branch" "$wt" HEAD 2>/dev/null; then
+    # A failure from here on removes the worktree AND the branch, so a
+    # retry does not stop at "branch already exists" (#135).
+    discard_update() {
+        git -C "$PROJECT_ROOT" worktree remove -f "$wt" >/dev/null 2>&1
+        git -C "$PROJECT_ROOT" worktree prune >/dev/null 2>&1
+        git -C "$PROJECT_ROOT" branch -D "$branch" >/dev/null 2>&1
         rm -rf "$work"
+    }
+    if ! git -C "$PROJECT_ROOT" worktree add -q -b "$branch" "$wt" HEAD 2>/dev/null; then
+        discard_update
         echo "contract: could not create a worktree for $branch" >&2
         return 2
     fi
+    # The commit's gate runs in the worktree, which has no node_modules: link
+    # the main tree's, so prettier and markdownlint run there instead of
+    # being skipped (#172). Never staged (only the four files below are).
+    if [[ -d "$PROJECT_ROOT/node_modules" && ! -e "$wt/node_modules" ]]; then
+        ln -s "$PROJECT_ROOT/node_modules" "$wt/node_modules" 2>/dev/null || true
+    fi
     mkdir -p "$wt/.specify/gates"
+    cp "$work/policy.json" "$wt/.specify/gates/policy.json"
     cp "$work/baseline.json" "$wt/.specify/gates/baseline.json"
     cp "$work/baseline.lock.json" "$wt/.specify/gates/baseline.lock.json"
     cp "$work/effective.json" "$wt/.specify/gates/policy.effective.json"
-    local msg new_digest
+    local msg new_digest protected trailers=""
     new_digest="$(jq -r '.digest' "$work/baseline.lock.json")"
+    if ! git -C "$wt" add .specify/gates/policy.json .specify/gates/baseline.json \
+        .specify/gates/baseline.lock.json .specify/gates/policy.effective.json; then
+        discard_update
+        echo "contract: could not stage the update on $branch" >&2
+        return 2
+    fi
+    # The artifacts (and usually policy.json) are protected files (#137):
+    # the commit declares each one it changes, judged by the branch's own
+    # policy as commit-msg will judge it. The approver is the person running
+    # the update (git committer name): they declare the change, the review
+    # of the branch approves it. The trailers go in even where
+    # git.protected_change_trailer is false: pr-check.sh still requires
+    # them for policy.json and the artifacts there, and pre-commit lets
+    # this exact change through on its own shape (#154).
+    protected="$(cd "$wt" && GATES_POLICY_FILE="" CLAUDE_PROJECT_DIR="$wt" gates_staged_protected_paths)"
+    if [[ -n "$protected" ]]; then
+        # A committer name the message rules refuse (a branding term) would
+        # sink every message below (#159). Take the first approver the rules
+        # accept: the name, the local part of the committer email, then a
+        # fixed value pointing at the committer the commit records anyway.
+        local ident approver="" cand
+        ident="$(git -C "$wt" var GIT_COMMITTER_IDENT 2>/dev/null || true)"
+        for cand in "${ident%% <*}" "$(sed -n 's/^[^<]*<\([^@>]*\).*$/\1/p' <<<"$ident")" \
+            "the committer of this commit"; do
+            [[ -n "$cand" ]] || continue
+            if update_message_ok "$wt" "chore: update policy baseline
+
+Approved-By: $cand"; then
+                approver="$cand"
+                break
+            fi
+        done
+        trailers="$(while IFS= read -r p; do printf 'Protected-Change: %s\n' "$p"; done <<<"$protected")
+Approved-By: ${approver:-the committer of this commit}"
+    fi
+    # Body lines over 100 characters draw a commit-msg warning (#172): the
+    # file gets its own line, and a source too long for one is named by
+    # where it is recorded instead.
+    local source_line="Source: $CONTRACT_SOURCE"
+    [[ "${#source_line}" -le 100 ]] \
+        || source_line="Source: extends.source in .specify/gates/policy.json"
     msg="chore: update policy baseline $current -> $target
 
-Source: $CONTRACT_SOURCE ($CONTRACT_BASEFILE)
+$source_line
+Baseline file: $CONTRACT_BASEFILE
 New digest: $new_digest
 
 Enforcement delta (baseline $current -> $target):
-$delta"
-    (
-        cd "$wt" \
-            && git add .specify/gates/baseline.json .specify/gates/baseline.lock.json .specify/gates/policy.effective.json \
-            && git -c commit.gpgsign=false commit -q -m "$msg"
-    ) || {
-        git -C "$PROJECT_ROOT" worktree remove -f "$wt" >/dev/null 2>&1
-        rm -rf "$work"
-        echo "contract: could not commit the update on $branch" >&2
+$delta${trailers:+
+
+$trailers}"
+    # The delta quotes no policy values, but the source, the versions and
+    # hook names are still the repo's own text. Should the branch's message
+    # rules refuse the message (commit-msg here, pr-check for the PR body),
+    # fall back to one that carries none of it: counts only (#154).
+    if ! update_message_ok "$wt" "$msg"; then
+        local counts
+        counts="$(gates_contract_deviations "$CONTRACT_SNAPSHOT" "$work/baseline.json" delta 2>/dev/null \
+            | awk -F'\t' 'NF { n[$1]++ } END { printf "%d strengthened, %d weakened, %d changed", n["strengthened"], n["weakened"], n["changed"] }')"
+        msg="chore: update policy baseline
+
+New digest: $new_digest
+
+Enforcement delta: ${counts:-not available}
+(Versions, source and changed paths are left out because this repo's
+message rules refuse the full message. The branch name carries the new
+version; the diff of baseline.json shows every change.)${trailers:+
+
+$trailers}"
+    fi
+    if ! (cd "$wt" && git -c commit.gpgsign=false commit -q -m "$msg"); then
+        discard_update
+        echo "contract: could not commit the update on $branch (cause above); branch and worktree removed -- fix the cause and re-run" >&2
         return 2
-    }
+    fi
     git -C "$PROJECT_ROOT" worktree remove -f "$wt" >/dev/null 2>&1 || true
+    git -C "$PROJECT_ROOT" worktree prune >/dev/null 2>&1 || true
     rm -rf "$work"
     echo "contract: update $current -> $target committed on branch $branch"
     printf '%s\n' "$delta"
     if command -v gh >/dev/null 2>&1 \
-        && git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null | grep -q github; then
+        && grep -q github <<<"$(git -C "$PROJECT_ROOT" remote get-url origin 2>/dev/null)"; then
         if git -C "$PROJECT_ROOT" push -q -u origin "$branch" 2>/dev/null \
             && (cd "$PROJECT_ROOT" && gh pr create --head "$branch" \
-                --title "chore: update policy baseline $current -> $target" \
+                --title "${msg%%$'\n'*}" \
                 --body "$msg" 2>/dev/null); then
             echo "contract: pull request opened for $branch"
             return 0
@@ -323,17 +431,30 @@ cmd_propose() {
     # Apply exactly the deviating paths onto the baseline document.
     local paths_json
     paths_json="$(printf '%s\n' "$deviations" | awk -F'\t' '{print $5}' | jq -s -c '.')"
-    jq -S --slurpfile eff "$CONTRACT_EFFECTIVE" --argjson ps "$paths_json" '
-        reduce $ps[] as $p (.; setpath($p; ($eff[0] | getpath($p))))
-    ' "$work/src/$CONTRACT_BASEFILE" >"$work/proposed.json" \
-        && mv "$work/proposed.json" "$work/src/$CONTRACT_BASEFILE"
+    # Keep the upstream file's key order and indentation (no -S), so the
+    # proposal diff shows the deviating values and nothing else (#135). A
+    # hook the overlay removes is deleted, not set to null.
+    local upstream="$work/src/$CONTRACT_BASEFILE" indent lead
+    indent=(--indent 2)
+    lead="$(awk '/^[ \t]+"/ { match($0, /^[ \t]+/); print substr($0, 1, RLENGTH); exit }' "$upstream")"
+    if [[ "$lead" == $'\t'* ]]; then
+        indent=(--tab)
+    elif [[ -n "$lead" && "${#lead}" -le 7 ]]; then
+        indent=(--indent "${#lead}")
+    fi
+    jq "${indent[@]}" --slurpfile eff "$CONTRACT_EFFECTIVE" --argjson ps "$paths_json" '
+        reduce $ps[] as $p (.;
+            ($eff[0] | getpath($p)) as $v
+            | if $v == null then delpaths([$p]) else setpath($p; $v) end)
+    ' "$upstream" >"$work/proposed.json" \
+        && mv "$work/proposed.json" "$upstream"
     local body
     body="Origin: $consumer
 Pinned baseline: $CONTRACT_SOURCE@$pinned_version
 Rationale: $rationale
 
 Deviations proposed:
-$(printf '%s\n' "$deviations" | awk -F'\t' '{ printf "- %s: %s: %s -> %s\n", $1, $2, $3, $4 }')"
+$(gates_contract_print_deviations "- " delta <<<"$deviations")"
     (
         cd "$work/src" \
             && git add "$CONTRACT_BASEFILE" \
@@ -344,7 +465,7 @@ $(printf '%s\n' "$deviations" | awk -F'\t' '{ printf "- %s: %s: %s -> %s\n", $1,
         echo "contract: could not commit the proposal" >&2
         return 2
     }
-    if command -v gh >/dev/null 2>&1 && printf '%s' "$CONTRACT_SOURCE" | grep -q github; then
+    if command -v gh >/dev/null 2>&1 && grep -q github <<<"$CONTRACT_SOURCE"; then
         if (cd "$work/src" && git push -q origin "$branch" 2>/dev/null \
             && gh pr create --head "$branch" \
                 --title "policy: proposal from $consumer" --body "$body" 2>/dev/null); then

@@ -113,18 +113,25 @@ gates_const_manifest_tier() { # <manifest> <tier>
 # --- Annotation parser (contracts/annotation-format.md) ----------------------
 
 # Parse a constitution into principles and their enforcement markers. A
-# principle is an `### ` (h3) heading; markers bind to the principle they fall
-# under (up to the next h2/h3). Emits TAB-separated protocol lines:
+# principle is an `### ` (h3) heading inside the `## Core Principles` section
+# (#82): sub-headings under other sections (Additional Constraints,
+# Governance, ...) are prose, not principles. Markers bind to the principle
+# they fall under (up to the next h2/h3). Emits TAB-separated protocol lines:
 #
 #   PRINCIPLE<TAB><heading-line><TAB><name><TAB><surface><TAB><ref><TAB><expect>
 #       an empty <surface> means the principle is unannotated (legal, FR-013).
 #   MALFORMED<TAB><line><TAB><name-or-dash><TAB><message>
 #       a fail-closed marker error; callers name constitution.md:<line>.
+#   NOCORE
+#       the file has no `## Core Principles` section, so no principles.
 #
 # Marker grammar rules (annotation-format.md): exactly one `gates:enforce`
 # per principle (a second is MALFORMED); `surface=` required from the fixed
 # set; `ref=` required unless `surface=prose`; unknown keys or `=`-less tokens
-# are MALFORMED; a marker before any principle is MALFORMED with name "-".
+# are MALFORMED; a marker before any principle is MALFORMED with name "-";
+# a marker under a heading outside Core Principles is MALFORMED (an
+# enforcement claim that is never checked is the silent no-op this gate
+# exists to catch).
 # HTML comments without `gates:enforce` (e.g. the Sync Impact Report) are
 # ignored (grammar rule 1).
 gates_const_parse() { # <constitution>
@@ -141,17 +148,38 @@ gates_const_parse() { # <constitution>
                 pline, pname, psurface, pref, pexpect
         }
     }
-    BEGIN { pline = 0; pname = ""; psurface = ""; pref = ""; pexpect = ""; have = 0 }
+    BEGIN { pline = 0; pname = ""; psurface = ""; pref = ""; pexpect = ""; have = 0
+            incore = 0; sawcore = 0; outname = ""; fch = ""; flen = 0 }
+    # Fenced code blocks (``` or ~~~, up to three spaces of indent) are
+    # example content: a heading or marker inside one is not a principle,
+    # like the spec gate parser treats fences in tasks.md. A fence closes on
+    # the same character, at least as long, with no info string.
+    /^ ? ? ?(```|~~~)/ {
+        f = $0; sub(/^ */, "", f)
+        c = substr(f, 1, 1); n = 0
+        while (substr(f, n + 1, 1) == c) n++
+        rest = substr(f, n + 1); gsub(/^[ \t]+|[ \t]+$/, "", rest)
+        if (fch == "") {
+            # A backtick fence info string may not contain a backtick.
+            if (!(c == "`" && index(rest, "`") > 0)) { fch = c; flen = n; next }
+        } else if (c == fch && n >= flen && rest == "") {
+            fch = ""; flen = 0; next
+        }
+    }
+    fch != "" { next }
     /^###[ \t]/ {
         flush()
-        pline = NR
         h = $0; sub(/^###[ \t]+/, "", h); gsub(/[ \t]+$/, "", h)
-        pname = h; psurface = ""; pref = ""; pexpect = ""; have = 0
+        psurface = ""; pref = ""; pexpect = ""; have = 0
+        if (incore) { pline = NR; pname = h; outname = "" }
+        else { pline = 0; pname = ""; outname = h }
         next
     }
     /^##[ \t]/ {
         flush()
-        pline = 0; pname = ""; psurface = ""; pref = ""; pexpect = ""; have = 0
+        pline = 0; pname = ""; psurface = ""; pref = ""; pexpect = ""; have = 0; outname = ""
+        incore = (tolower($0) ~ /^##[ \t]+core principles/) ? 1 : 0
+        if (incore) sawcore = 1
         next
     }
     (index($0, "gates:enforce") > 0 && index($0, "<!--") > 0) {
@@ -167,6 +195,10 @@ gates_const_parse() { # <constitution>
             next
         }
         have = 1
+        if (pline == 0 && outname != "") {
+            printf "MALFORMED\t%d\t%s\tgates:enforce marker outside Core Principles (move the principle under ## Core Principles)\n", NR, outname
+            next
+        }
         if (pline == 0) {
             printf "MALFORMED\t%d\t%s\tgates:enforce marker before any principle heading\n", NR, name
             next
@@ -189,7 +221,7 @@ gates_const_parse() { # <constitution>
         psurface = surface; pref = ref; pexpect = expect
         next
     }
-    END { flush() }
+    END { flush(); if (!sawcore) print "NOCORE" }
     ' "$file"
 }
 
@@ -314,7 +346,7 @@ gates_const_fragments() { # <corpus> <profile-json>
                         ;;
                     posture/*)
                         bare="${t#posture/}"
-                        if printf '%s\n' "$postures" | grep -qx "$bare"; then
+                        if grep -qx "$bare" <<<"$postures"; then
                             score=$((score + 1))
                         fi
                         ;;
@@ -464,7 +496,7 @@ the boundary that proves it."
     gates_const_parse "$augment" \
         | awk -F'\t' '$1 == "PRINCIPLE" && $4 != "" { print $3 }' >"$annotated_tmp"
     local existing_count
-    existing_count="$(grep -c '^### ' "$augment" || true)"
+    existing_count="$(gates_const_parse "$augment" | grep -c '^PRINCIPLE' || true)"
 
     local markers_file newblock_file
     markers_file="$(mktemp 2>/dev/null || mktemp -t gates-mk)" || return 1
@@ -528,24 +560,43 @@ the boundary that proves it."
 # (e.g. a ci ref with no CI configuration anywhere) — a gap that is not the
 # principle's fault. All read $2 (project root) explicitly.
 
-# policy: <section>.<key> present in the ENFORCED policy (effective when a 003
-# contract is live — the policy loader resolves that) and, if expect is given,
-# equal to it; an enabled-style key must not be false.
+# The policy path a policy ref names, as a full dotted path (#139). A ref
+# whose first segment is a top-level policy section (policy.schema.json
+# allows no others) is already one -- hooks.markdownlint.severity,
+# git.block_main_commits; any other ref is the <hook>.<key> shorthand for
+# hooks.<hook>.<key>.
+_gates_const_policy_path() { # <ref>
+    case "${1%%.*}" in
+        attestation | extends | git | hooks | protected_files | spec) printf '%s' "$1" ;;
+        *) printf 'hooks.%s' "$1" ;;
+    esac
+}
+
+# policy: the ref's full path is present in the ENFORCED policy (effective
+# when a 003 contract is live -- the policy loader resolves that). A scalar
+# must equal expect when one is given, and an enabled-style key must not be
+# false. A list or object (#171) is present when non-empty; expect on a list
+# names an element it must contain, on an object a key it must have.
 _gates_const_eval_policy() { # <ref> <expect>
     local ref="${1:-}" expect="${2:-}"
-    local section="${ref%%.*}" key="${ref#*.}"
-    local val
-    val="$(gates_policy_section_get "$section" "$key" 2>/dev/null)"
-    [[ -z "$val" ]] && val="$(gates_policy_get "$section" "$key" 2>/dev/null)"
-    if [[ -z "$val" ]]; then
-        echo missing
-        return 0
-    fi
-    if [[ -n "$expect" ]]; then
-        [[ "$val" == "$expect" ]] && echo active || echo missing
-        return 0
-    fi
-    [[ "$val" == "false" ]] && echo missing || echo active
+    local path file state=""
+    path="$(_gates_const_policy_path "$ref")"
+    file="$(gates_policy_file 2>/dev/null)"
+    [[ -n "$file" && -f "$file" ]] && state="$(jq -r --arg p "$path" --arg e "$expect" '
+        (try getpath($p | split(".")) catch null) as $v
+        | ($v | type) as $t
+        | if $v == null then "missing"
+          elif $t == "array" or $t == "object" then
+            if ($v | length) == 0 then "missing"
+            elif $e == "" then "active"
+            elif $t == "array" then (if any($v[]; tostring == $e) then "active" else "missing" end)
+            elif ($v | has($e)) then "active"
+            else "missing" end
+          elif $e != "" then (if ($v | tostring) == $e then "active" else "missing" end)
+          elif $v == false then "missing"
+          else "active" end
+    ' "$file" 2>/dev/null)"
+    [[ "$state" == "active" ]] && echo active || echo missing
 }
 
 # agent-hook: <script.sh> exists under .claude/hooks/gates/, is executable, and
@@ -576,46 +627,57 @@ _gates_const_eval_git_hook() { # <ref> <root>
         echo pending-boundary
         return 0
     }
-    local gitdir hookdir hooks_path
-    gitdir="$(git -C "$root" rev-parse --git-dir)"
-    [[ "$gitdir" != /* ]] && gitdir="$root/$gitdir"
-    hooks_path="$(git -C "$root" config core.hooksPath 2>/dev/null || true)"
-    hookdir="$gitdir/hooks"
-    if [[ -n "$hooks_path" ]]; then
-        [[ "$hooks_path" != /* ]] && hooks_path="$root/$hooks_path"
-        hookdir="$hooks_path"
-    fi
+    # --git-path hooks: the directory git actually runs hooks from -- the
+    # shared one in a linked worktree (whose --git-dir is
+    # .git/worktrees/<name>), and core.hooksPath when set.
+    local hookdir
+    hookdir="$(git -C "$root" rev-parse --git-path hooks)"
+    [[ "$hookdir" != /* ]] && hookdir="$root/$hookdir"
     local hf="$hookdir/$ref"
     if [[ ! -f "$hf" || ! -x "$hf" ]]; then
         echo missing
         return 0
     fi
+    # A stub (issue #59) is only active while this branch's hook exists.
+    if grep -q 'spec-gates hook stub' "$hf" 2>/dev/null; then
+        [[ -f "$root/.specify/gates/hooks/$ref" ]] && echo active || echo missing
+        return 0
+    fi
     grep -q 'gates\|verify.sh' "$hf" 2>/dev/null && echo active || echo missing
 }
 
-# ci: some CI configuration exists and names the check/job. No CI config at all
-# is pending-boundary (the CI boundary is simply not projected yet).
+# ci: a pipeline runs the gates (a proven `verify.sh --boundary ci` step,
+# lib/manifest.sh gates_ci_unproven, #198) and the ref: a template step id
+# (gates, canary, pr) must be a live step, any other ref must appear in the
+# live text. Live means comments, disabled steps and steps that cannot fail
+# removed (gates_ci_live, the reading doctor's drift check uses), so a
+# `# TODO: wire gates` line or an `|| true` step enforces nothing (#139,
+# #171). No
+# pipeline file at all is pending-boundary (the CI boundary is simply not
+# projected yet).
 _gates_const_eval_ci() { # <ref> <root>
     local ref="${1:-}" root="${2:-}"
-    local anyci=0
-    if [[ -d "$root/.github/workflows" ]]; then
-        anyci=1
-        grep -rqF "$ref" "$root/.github/workflows" 2>/dev/null && {
-            echo active
-            return 0
-        }
+    # Without the manifest library nothing can show a live step: fail closed.
+    declare -f gates_ci_body >/dev/null 2>&1 || {
+        echo missing
+        return 0
+    }
+    if [[ ! -d "$root/.github/workflows" && -z "$(gates_ci_candidates "$root")" ]]; then
+        echo pending-boundary
+        return 0
     fi
-    local f
-    for f in "$root/.gitlab-ci.yml" "$root/Jenkinsfile"; do
-        if [[ -f "$f" ]]; then
-            anyci=1
-            grep -qF "$ref" "$f" 2>/dev/null && {
-                echo active
-                return 0
-            }
-        fi
-    done
-    [[ "$anyci" == "0" ]] && echo pending-boundary || echo missing
+    local body re
+    body="$(gates_ci_body "$root")"
+    if [[ -z "$body" ]]; then
+        echo missing
+        return 0
+    fi
+    re="$(gates_ci_step_re "$ref")"
+    if [[ -n "$re" ]]; then
+        grep -qE "$re" <<<"$body" && echo active || echo missing
+    else
+        grep -qF -- "$ref" <<<"$body" && echo active || echo missing
+    fi
 }
 
 # accept: specs/<feature>/tasks.md carries an accept block whose "# verifies:"
@@ -672,6 +734,118 @@ _gates_const_eval_scanner() { # <ref> <root>
     echo missing
 }
 
+# policy.schema.json beside this library (the projected runtime and the
+# extension both keep it one level up).
+GATES_CONST_SCHEMA="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/policy.schema.json"
+
+# What policy.schema.json allows at a dotted path:
+# "<type>|<enum>|<item enum>|<required>|<minimum>|<keys>" (lists
+# comma-joined; keys only for an object that allows no others), "unknown" for a path the
+# schema has no room for, empty when the schema cannot be read.
+_gates_const_schema_at() { # <path>
+    [[ -f "$GATES_CONST_SCHEMA" ]] || return 0
+    jq -r --arg p "$1" '
+        . as $root
+        | def deref: if type == "object" and has("$ref")
+              then .["$ref"] as $r | $root | getpath($r | ltrimstr("#/") | split("/"))
+              else . end;
+        reduce ($p | split("."))[] as $k (.;
+            if . == null then null
+            else deref
+                | if ((.properties // {}) | has($k)) then .properties[$k]
+                  elif (.additionalProperties | type) == "object" then .additionalProperties
+                  else null end
+            end)
+        | if . == null then "unknown"
+          else deref
+            | [(.type // "" | tostring), ((.enum // []) | map(tostring) | join(",")),
+               ((.items.enum // []) | map(tostring) | join(",")),
+               ((.required // []) | join(",")),
+               (.minimum // "" | tostring),
+               (if .additionalProperties == false then (.properties // {}) | keys | join(",") else "" end)]
+            | join("|")
+          end
+    ' "$GATES_CONST_SCHEMA" 2>/dev/null
+}
+
+# Is <value> in the comma-joined <allowed> list? An empty list allows all.
+_gates_const_allows() { # <allowed> <value>
+    [[ -z "$1" ]] || grep -qxF -- "$2" <<<"$(tr ',' '\n' <<<"$1")"
+}
+
+# Is the integer <value> below the schema's non-negative <minimum>? False
+# when there is no minimum. A value too long for shell arithmetic is
+# positive and far above any minimum the schema sets.
+_gates_const_below() { # <value> <minimum>
+    [[ "$2" =~ ^[0-9]+$ ]] || return 1
+    [[ "$1" == -* ]] && return 0
+    [[ "$1" =~ ^[0-9]{1,18}$ ]] && ((10#$1 < 10#$2))
+}
+
+# A policy proposal that converges (#171): applying it makes the principle
+# active. The schema decides the shape (a list gets an element added, a
+# boolean is set to true); an annotation no valid policy can satisfy -- a
+# path the schema lacks, an expect outside the allowed values -- is reported
+# as the annotation to fix, never as a policy edit.
+_gates_const_policy_proposal() { # <path> <expect>
+    local path="$1" expect="$2" info type enum ienum req min keys change=""
+    info="$(_gates_const_schema_at "$path")"
+    if [[ "$info" == unknown ]]; then
+        printf 'fix the annotation: policy.schema.json has no %s, so no policy can satisfy it' "$path"
+        return 0
+    fi
+    IFS='|' read -r type enum ienum req min keys <<<"$info"
+    case "$type" in
+        boolean)
+            if [[ -n "$expect" && "$expect" != true && "$expect" != false ]]; then
+                printf 'fix the annotation: %s is a boolean, expect=%s can never match' "$path" "$expect"
+                return 0
+            fi
+            change="set $path = ${expect:-true}"
+            ;;
+        array)
+            if [[ -z "$expect" ]]; then
+                change="add at least one entry to $path"
+            elif _gates_const_allows "$ienum" "$expect"; then
+                change="add \"$expect\" to the $path list"
+            else
+                printf 'fix the annotation: %s entries are one of %s, expect=%s can never match' "$path" "$ienum" "$expect"
+                return 0
+            fi
+            ;;
+        object)
+            if [[ -n "$expect" ]] && ! _gates_const_allows "$keys" "$expect"; then
+                printf 'fix the annotation: %s has only the keys %s, expect=%s can never match' "$path" "$keys" "$expect"
+                return 0
+            fi
+            change="add $path with at least one key"
+            [[ -n "$expect" ]] && change="add key \"$expect\" to $path"
+            [[ -n "$req" ]] && change="$change (required: $req)"
+            ;;
+        *)
+            if [[ -n "$expect" ]] && ! _gates_const_allows "$enum" "$expect"; then
+                printf 'fix the annotation: %s is one of %s, expect=%s can never match' "$path" "$enum" "$expect"
+                return 0
+            elif [[ "$type" == integer && -n "$expect" && ! "$expect" =~ ^-?[0-9]+$ ]]; then
+                printf 'fix the annotation: %s is an integer, expect=%s can never match' "$path" "$expect"
+                return 0
+            elif [[ "$type" == integer && -n "$expect" ]] && _gates_const_below "$expect" "$min"; then
+                # A value below the schema minimum makes verify.sh refuse
+                # the policy, so it is never a change to propose (#199).
+                printf 'fix the annotation: %s is an integer >= %s, expect=%s can never match' "$path" "$min" "$expect"
+                return 0
+            elif [[ -n "$expect" ]]; then
+                change="set $path = $expect"
+            elif [[ -n "$enum" ]]; then
+                change="set $path to one of $enum"
+            else
+                change="set $path to a value other than false"
+            fi
+            ;;
+    esac
+    printf 'edit policy.json (overlay): %s, then re-sync if a contract is live' "$change"
+}
+
 # The concrete change proposed for a missing surface (R5). Policy changes name
 # the OVERLAY on purpose — with a 003 contract live, that edit flows through
 # sync into the effective policy exactly like any overlay deviation.
@@ -679,8 +853,7 @@ _gates_const_proposed() { # <surface> <ref> <expect>
     local surface="${1:-}" ref="${2:-}" expect="${3:-}"
     case "$surface" in
         policy)
-            local want="${expect:-non-false}"
-            printf 'edit policy.json (overlay): set %s = %s, then re-sync if a contract is live' "$ref" "$want"
+            _gates_const_policy_proposal "$(_gates_const_policy_path "$ref")" "$expect"
             ;;
         agent-hook)
             printf 'wire .claude/hooks/gates/%s and reference it in settings.json (/speckit.gates.init)' "$ref"
@@ -774,6 +947,7 @@ gates_const_check_raw() { # <root> <constitution> [<policy>]
                 printf 'MALFORMED\t%s\t%s\n' "$line" "$surface"
                 rc=1
                 ;;
+            NOCORE) printf 'NOCORE\n' ;;
             PRINCIPLE)
                 if [[ -z "$surface" ]]; then
                     unann=$((unann + 1))
@@ -813,6 +987,7 @@ gates_const_check() { # <root> <constitution> [<policy>] [<label>]
             PROSE) echo "  prose-only: $a" ;;
             GAP) echo "  gap: $a — $b ref=$c not wired ($d)" ;;
             MALFORMED) echo "  $label:$a: malformed marker: $b" ;;
+            NOCORE) echo "  $label has no '## Core Principles' section, so it declares no principles" ;;
             UNANNOTATED)
                 [[ "$a" -gt 0 ]] && echo "  $a principle(s) unannotated (informational)"
                 ;;

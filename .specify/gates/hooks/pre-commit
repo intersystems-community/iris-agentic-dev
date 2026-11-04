@@ -2,6 +2,16 @@
 # shellcheck shell=bash
 set -euo pipefail
 
+# Behavioral probe (#74): doctor and project.sh run the hook git actually
+# runs with GATES_PROBE=1, to prove the call chain reaches this script
+# through whatever hook manager sits in between. It runs before any policy
+# read, so it works with every rule turned off, and it can only refuse.
+if [[ "${GATES_PROBE:-}" == "1" ]]; then
+    _probe_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    echo "gates-probe:pre-commit:$(head -n 1 "$_probe_root/.specify/gates/.runtime-version" 2>/dev/null || echo unknown)" >&2
+    exit 1
+fi
+
 # Git pre-commit hook -- git boundary.
 #
 # Two responsibilities, deliberately separated:
@@ -14,20 +24,76 @@ set -euo pipefail
 # intentional: whole-tree checking is what makes "if the git boundary passed,
 # CI passes" a guarantee rather than a hope. Emergency override: GATES_SKIP=1.
 
-STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACM)"
-
-if [[ -z "$STAGED_FILES" ]]; then
-    exit 0
-fi
-
-ERRORS=0
+# Every staged path whose content lands in the commit (issue #186):
+# --no-renames lists a rename under its new name (A) instead of as an R
+# entry the filter dropped, and T keeps a symlink replaced by a regular
+# file, so `git mv x .env` or a rename with a small edit is still scanned.
+STAGED_FILTER=(--no-renames --diff-filter=ACMT)
+STAGED_FILES="$(git diff --cached --name-only "${STAGED_FILTER[@]}")"
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# The git boundary judges the repository being committed. An inherited
+# CLAUDE_PROJECT_DIR (a session in the main checkout committing in a linked
+# worktree, or `git -C <other repo>`) would otherwise select another
+# checkout's policy, since the policy loader prefers it.
+if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    export CLAUDE_PROJECT_DIR="$PROJECT_ROOT"
+fi
+# GATES_POLICY_FILE replaces the whole policy (#196), so one variable on a
+# commit would drop every rule. The git boundary judges the policy the
+# repository commits: it ignores the variable, and says so.
+if [[ -n "${GATES_POLICY_FILE:-}" ]]; then
+    echo "gates: GATES_POLICY_FILE=$GATES_POLICY_FILE is ignored at the git boundary; the repository's policy applies" >&2
+    unset GATES_POLICY_FILE
+fi
 POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
 # shellcheck source=/dev/null disable=SC1091
 [[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"
 
+# --- The runtime this hook needs (issue #159) ---
+# Without lib/policy.sh the protected-branch setting and the protected
+# files go unchecked. A branch that tracks something under .specify/gates
+# (the stub's adoption test) and lacks it was never projected, as in a
+# fresh clone of a repo that gitignores the runtime: refuse.
+if [[ ! -f "$POLICY_LIB" ]] \
+    && { git rev-parse -q --verify "HEAD:.specify/gates" >/dev/null 2>&1 \
+        || [[ -n "$(git ls-files -- ':(top).specify/gates' 2>/dev/null)" ]]; }; then
+    echo "ERROR: ${GATES_GIT_HOOK:-pre-commit} refused -- .specify/gates is tracked but the runtime is not projected (missing: lib/policy.sh)." >&2
+    echo "  Project it: bash .specify/extensions/gates/runtime/project.sh" >&2
+    exit 1
+fi
+
+# The secret and forbidden-file rules are lib/secrets.sh (issue #212).
+# Without it the scan cannot run. A branch that tracks a runtime from 0.4.0
+# on (or an unversioned one) lost part of its projection: refuse, as above.
+# A branch whose runtime predates the lib (hooks copied into .git/hooks are
+# shared by every branch) or that never adopted gates commits with a
+# warning that the scan did not run.
+SECRETS_LIB="$PROJECT_ROOT/.specify/gates/lib/secrets.sh"
+if [[ -f "$SECRETS_LIB" ]]; then
+    # shellcheck source=/dev/null disable=SC1091
+    source "$SECRETS_LIB"
+elif git rev-parse -q --verify "HEAD:.specify/gates" >/dev/null 2>&1 \
+    || [[ -n "$(git ls-files -- ':(top).specify/gates' 2>/dev/null)" ]]; then
+    case "$(head -n 1 "$PROJECT_ROOT/.specify/gates/.runtime-version" 2>/dev/null || true)" in
+        0.[0-3].*)
+            echo "WARN: this branch's gates runtime predates the installed pre-commit hook;" >&2
+            echo "  secret and forbidden-file scan skipped. Rebase onto the upgraded branch or run /speckit.gates.upgrade." >&2
+            ;;
+        *)
+            echo "ERROR: ${GATES_GIT_HOOK:-pre-commit} refused -- .specify/gates is tracked but the runtime is not projected (missing: lib/secrets.sh)." >&2
+            echo "  Project it: bash .specify/extensions/gates/runtime/project.sh" >&2
+            exit 1
+            ;;
+    esac
+else
+    echo "WARN: no lib/secrets.sh on this branch (gates not adopted); secret and forbidden-file scan skipped" >&2
+fi
+
 # --- Block commits to protected branches (policy: git.block_main_commits) ---
+# Checked before the no-staged-files exit below: an empty commit
+# (--allow-empty) or one that only deletes files is still a commit to main
+# (issue #129).
 BLOCK_MAIN=true
 if command -v gates_policy_section_get >/dev/null 2>&1; then
     [[ "$(gates_policy_section_get git block_main_commits)" == "false" ]] && BLOCK_MAIN=false
@@ -36,6 +102,15 @@ CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
 if [[ "$BLOCK_MAIN" == "true" ]] \
     && [[ "$CURRENT_BRANCH" == "main" || "$CURRENT_BRANCH" == "master" ]]; then
     if [[ "${GATES_ALLOW_MAIN_COMMIT:-0}" != "1" ]]; then
+        # Run as pre-merge-commit (#148): a merge commit is a commit too.
+        if [[ "${GATES_GIT_HOOK:-}" == "pre-merge-commit" ]]; then
+            echo "ERROR: Merge commits into '$CURRENT_BRANCH' are blocked." >&2
+            echo "  Merge through a pull request instead." >&2
+            echo "" >&2
+            echo "  To override (release/CI only):" >&2
+            echo "    GATES_ALLOW_MAIN_COMMIT=1 git merge ..." >&2
+            exit 1
+        fi
         echo "ERROR: Direct commits to '$CURRENT_BRANCH' are blocked." >&2
         echo "  Create a feature branch instead:" >&2
         echo "    git switch -c feat/my-feature" >&2
@@ -46,134 +121,138 @@ if [[ "$BLOCK_MAIN" == "true" ]] \
     fi
 fi
 
-# --- Check for forbidden files ---
-check_forbidden_files() {
-    local file="$1"
-    local basename
-    basename=$(basename "$file")
-
-    # Template/example files are meant to be committed even when the base name
-    # looks sensitive (.env.example, config.sample, .env.template). Must come
-    # BEFORE the .env.* rule, and mirrors protect-files.sh so the agent and git
-    # boundaries agree.
-    case "$basename" in
-        *.example | *.sample | *.template) return 0 ;;
-    esac
-
-    case "$basename" in
-        .env | .env.*) return 1 ;;
-        id_rsa* | id_ed25519* | id_ecdsa* | authorized_keys | known_hosts) return 1 ;;
-        *.pem | *.key | *.crt | *.p12 | *.pfx | *.keystore) return 1 ;;
-        credentials.json | service-account*.json | aws-credentials) return 1 ;;
-    esac
-
-    if echo "$file" | grep -qE '/(\.ssh|\.gnupg|\.aws|\.gcloud)/'; then
-        return 1
-    fi
-
-    return 0
-}
-
-# --- Check for secrets in staged content ---
-check_for_secrets() {
-    local file="$1"
-    local content
-    content=$(git show ":$file" 2>/dev/null || echo "")
-
-    if [[ -z "$content" ]]; then
-        return 0
-    fi
-
-    # AWS keys
-    if echo "$content" | grep -qE 'AKIA[0-9A-Z]{16}'; then
-        echo "  SECRET: AWS key pattern in $file" >&2
-        return 1
-    fi
-
-    # OpenAI keys
-    if echo "$content" | grep -qE 'sk-[a-zA-Z0-9]{48}'; then
-        echo "  SECRET: OpenAI key pattern in $file" >&2
-        return 1
-    fi
-
-    # GitHub tokens
-    if echo "$content" | grep -qE '(ghp_|gho_)[a-zA-Z0-9]{36}'; then
-        echo "  SECRET: GitHub token pattern in $file" >&2
-        return 1
-    fi
-
-    # GitLab tokens
-    if echo "$content" | grep -qE 'glpat-[a-zA-Z0-9_-]{20}'; then
-        echo "  SECRET: GitLab token pattern in $file" >&2
-        return 1
-    fi
-
-    # Slack tokens
-    if echo "$content" | grep -qE 'xoxb-[0-9]{10,}'; then
-        echo "  SECRET: Slack token pattern in $file" >&2
-        return 1
-    fi
-
-    # Generic password/secret/token assignments
-    if echo "$content" | grep -qiE '(password|secret|api_key|token)\s*[=:]\s*["\x27][^\s"'\'']{8,}'; then
-        echo "  SECRET: Possible credential assignment in $file" >&2
-        return 1
-    fi
-
-    return 0
-}
-
-# Collect policy-declared extra protected paths (protected_files.extra) once.
-PROTECTED_EXTRA=()
-if command -v gates_policy_section_list >/dev/null 2>&1; then
-    while IFS= read -r _entry; do
-        [[ -n "$_entry" ]] && PROTECTED_EXTRA+=("$_entry")
-    done < <(gates_policy_section_list protected_files extra)
+if [[ -z "$STAGED_FILES" ]]; then
+    exit 0
 fi
 
-file_is_policy_protected() { # <rel_path>
-    local f="$1" e
-    [[ "${#PROTECTED_EXTRA[@]}" -eq 0 ]] && return 1
-    for e in "${PROTECTED_EXTRA[@]}"; do
-        if gates_glob_match "$f" "$e" || [[ "$(basename "$f")" == "$e" ]]; then
-            return 0
-        fi
-    done
-    return 1
+ERRORS=0
+
+# Staged protected_files.extra paths (issue #47). With
+# git.protected_change_trailer on (the default) they are allowed through to
+# commit-msg, which requires a Protected-Change trailer per path plus
+# Approved-By; pre-commit only announces them. Off, the old refusal applies.
+PROTECTED_STAGED=""
+PROTECTED_TRAILER=true
+if command -v gates_staged_protected_paths >/dev/null 2>&1; then
+    PROTECTED_STAGED="$(gates_staged_protected_paths)"
+    # The commit-level switch also reads HEAD's policy, so a commit turning
+    # the trailer rule off is checked for trailers, not refused (#172).
+    if command -v gates_protected_trailer_enabled_commit >/dev/null 2>&1; then
+        gates_protected_trailer_enabled_commit || PROTECTED_TRAILER=false
+    else
+        gates_protected_trailer_enabled || PROTECTED_TRAILER=false
+    fi
+elif command -v gates_policy_section_list >/dev/null 2>&1; then
+    # This branch's runtime predates the trailer path (.git/hooks is shared
+    # by every branch; the projected lib is not), so commit-msg cannot
+    # check trailers here: keep that runtime's refusal instead of failing
+    # open.
+    PROTECTED_TRAILER=false
+    while IFS= read -r _entry; do
+        [[ -z "$_entry" ]] && continue
+        while IFS= read -r _f; do
+            [[ -z "$_f" ]] && continue
+            if gates_glob_match "$_f" "$_entry" || [[ "${_f##*/}" == "$_entry" ]]; then
+                PROTECTED_STAGED="${PROTECTED_STAGED:+$PROTECTED_STAGED$'\n'}$_f"
+            fi
+        done <<<"$STAGED_FILES"
+    done < <(gates_policy_section_list protected_files extra)
+    PROTECTED_STAGED="$(printf '%s\n' "$PROTECTED_STAGED" | awk 'NF && !seen[$0]++')"
+fi
+
+# The one exception to the refusal with the trailer rule off (#154): the
+# commit `contract.sh sync --update` makes on its gates/baseline-<v>
+# branch -- policy.json changing extends.version only, plus the three
+# contract artifacts, consistent with the pin. lib/contract.sh checks that
+# shape against the index; without the libs the refusal stands.
+contract_update_staged() {
+    local lib="$PROJECT_ROOT/.specify/gates/lib"
+    [[ -f "$lib/attest.sh" && -f "$lib/contract.sh" ]] || return 1
+    (
+        set +eu
+        # shellcheck source=/dev/null disable=SC1091
+        source "$lib/attest.sh" && source "$lib/contract.sh" \
+            && command -v gates_contract_update_staged >/dev/null 2>&1 \
+            && gates_contract_update_staged "$PROJECT_ROOT"
+    )
 }
 
 # --- Git-specific safety pass over staged files ---
 echo "Pre-commit: scanning staged files for secrets and forbidden paths..."
 
-for file in $STAGED_FILES; do
-    if ! check_forbidden_files "$file"; then
-        echo "BLOCKED: forbidden file: $file" >&2
+# The rules and the scan are lib/secrets.sh, shared with pr-check.sh, which
+# runs them over the commits of a pull request (issue #212). Names are read
+# NUL-separated, so none is split at a space or globbed; ":<path>" names
+# the staged copy. One line per offending file, in staged order: the first
+# rule a file matched, or the forbidden-file refusal.
+if command -v gates_secret_scan >/dev/null 2>&1; then
+    SCAN_RC=0
+    SCAN_REPORT="$(while IFS= read -r -d '' file; do printf ':%s\0' "$file"; done \
+        < <(git diff --cached --name-only -z "${STAGED_FILTER[@]}") | gates_secret_scan)" || SCAN_RC=$?
+    if [[ "$SCAN_RC" -eq 2 ]]; then
+        echo "BLOCKED: cannot read staged content for the secret scan (git grep failed)" >&2
         ERRORS=$((ERRORS + 1))
-        continue
     fi
+    if [[ -n "$SCAN_REPORT" ]]; then
+        printf '%s\n' "$SCAN_REPORT" >&2
+        ERRORS=$((ERRORS + $(grep -c '' <<<"$SCAN_REPORT")))
+    fi
+fi
 
-    if file_is_policy_protected "$file"; then
-        echo "BLOCKED: policy-protected file staged: $file" >&2
-        ERRORS=$((ERRORS + 1))
-        continue
+if [[ -n "$PROTECTED_STAGED" ]]; then
+    if [[ "$PROTECTED_TRAILER" == "true" ]]; then
+        echo "Pre-commit: $(printf '%s\n' "$PROTECTED_STAGED" | wc -l | tr -d ' ') protected file(s) staged; commit-msg will check the message for these trailers (informational):"
+        while IFS= read -r f; do
+            echo "    Protected-Change: $f"
+        done <<<"$PROTECTED_STAGED"
+        echo "    Approved-By: <name>"
+    elif contract_update_staged; then
+        echo "Pre-commit: staged change is exactly a policy baseline update (contract.sh sync --update shape and pin verified); protected contract files allowed"
+    else
+        while IFS= read -r f; do
+            echo "BLOCKED: policy-protected file staged: $f" >&2
+            ERRORS=$((ERRORS + 1))
+        done <<<"$PROTECTED_STAGED"
     fi
-
-    if ! check_for_secrets "$file"; then
-        ERRORS=$((ERRORS + 1))
-        continue
-    fi
-done
+fi
 
 # --- Shared quality gate (identical to the agent and CI boundaries) ---
-if [[ "${GATES_SKIP:-0}" != "1" ]]; then
+if [[ "${GATES_SKIP:-0}" == "1" ]]; then
+    echo "gates: GATES_SKIP=1, so the quality gate (verify.sh) did not run" >&2
+else
     VERIFY="$PROJECT_ROOT/.specify/gates/verify.sh"
     if [[ -x "$VERIFY" ]]; then
         echo "Pre-commit: running quality gate (verify.sh --boundary git)..."
-        if ! "$VERIFY" --boundary git; then
+        # On a terminal, show a line as each gate and block starts and ends
+        # (feature 007): verify.sh appends them to GATES_PROGRESS. A caller
+        # that set the variable (even to empty) keeps its choice; off a
+        # terminal nothing changes.
+        GATE_ENV=()
+        if [ -t 2 ] && [[ -z "${GATES_PROGRESS+set}" ]]; then
+            GATE_ENV=(env GATES_PROGRESS=/dev/stderr)
+        fi
+        if ! ${GATE_ENV[@]+"${GATE_ENV[@]}"} "$VERIFY" --boundary git; then
             echo "" >&2
             echo "Quality gate failed at the git boundary (see above)." >&2
             ERRORS=$((ERRORS + 1))
         fi
+    fi
+fi
+
+# --- Project-owned rules (#71): .specify/gates/hooks.local.d/pre-commit/ ---
+# They add refusals on top of the checks above and survive upgrades.
+if compgen -G "$PROJECT_ROOT/.specify/gates/hooks.local.d/pre-commit/*.sh" >/dev/null; then
+    LLIB="$PROJECT_ROOT/.specify/gates/lib/local-hooks.sh"
+    if [[ -f "$LLIB" ]] && "$BASH" -n "$LLIB" 2>/dev/null; then
+        # shellcheck source=/dev/null disable=SC1090
+        source "$LLIB"
+        if ! gates_run_local "$PROJECT_ROOT" pre-commit; then
+            echo "BLOCKED: $GATES_LOCAL_MSG" >&2
+            ERRORS=$((ERRORS + 1))
+        fi
+    else
+        echo "BLOCKED: local rules exist in hooks.local.d/pre-commit, but lib/local-hooks.sh cannot load" >&2
+        ERRORS=$((ERRORS + 1))
     fi
 fi
 

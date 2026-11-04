@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # shellcheck shell=bash
-# gates-policy-infer.sh -- synthesize .specify/gates/policy.json from host lint configs.
+# policy-infer.sh -- synthesize .specify/gates/policy.json from host lint configs.
 #
-# Used by the alpha.12 migration guide (INFRA-029) as the `infer` answer to
-# the policy-seed prompt. Reads the host's existing `.prettierignore`,
+# init uses this to seed a policy for a project that already has lint
+# configs. Reads the host's existing `.prettierignore`,
 # `.markdownlint-cli2.yaml`, and (optional) `.specify/gates/shellcheck-excludes.txt`
-# and emits a policy whose exclude arrays, when fed through
-# gates-generate-configs.sh, regenerate those files byte-equal for the
-# patterns the policy covers.
+# and emits a policy whose exclude arrays carry the patterns those files
+# list.
 #
 # The include arrays, orchestrator choices, severities, and the verify-
 # quality / format-changed / post-edit stanzas are copied from the bundled
@@ -19,17 +18,18 @@
 # emits a per-field diff summary on stderr.
 #
 # Usage (sourced):
-#   source gates-policy-infer.sh
+#   source policy-infer.sh
 #   gates_policy_infer <project_dir> <output_path>
 #
 # Usage (CLI):
-#   gates-policy-infer.sh <project_dir> <output_path>
+#   policy-infer.sh <project_dir> <output_path>
 #
 # Exit codes:
 #   0  policy synthesized and validated
 #   2  usage error (missing args, bad project dir)
 #   3  bundled default template not found
 #   4  resulting policy failed schema validation
+#   5  the policy could not be written to <output_path>
 #
 # Dependencies: jq, awk, grep. No Python or Node runtime.
 
@@ -57,9 +57,8 @@ _gates_infer_parse_prettierignore() {
 }
 
 # Extract entries from the single `ignores:` YAML block. Each entry is
-# a single-quoted scalar: `  - 'value'`. Intentionally strict (matches
-# the shape emitted by gates-generate-configs.sh) to avoid parsing the
-# wider YAML surface. Uses awk with -v SQ='\''  so the awk body itself
+# a single-quoted scalar: `  - 'value'`. Intentionally strict, to avoid
+# parsing the wider YAML surface. Uses awk with -v SQ='\''  so the awk body itself
 # contains no literal single quotes (avoids shell quoting collisions).
 _gates_infer_parse_markdownlint() {
     local file="$1"
@@ -203,10 +202,16 @@ gates_policy_infer() {
         return 4
     fi
 
+    # The summary names the output path, so it follows a successful write.
+    if ! { mkdir -p "$(dirname "$output_path")" && mv "$stage_policy" "$output_path"; }; then
+        echo "ERROR: could not write the policy to $output_path" >&2
+        return 5
+    fi
+
     # Surface a per-field summary on stderr so the operator can see what
     # was inferred vs. what was left at defaults.
     {
-        echo "gates-policy-infer: synthesized policy at $output_path"
+        echo "policy-infer: synthesized policy at $output_path"
         printf '  prettier.exclude       <- %s\n' "$prettier_source"
         printf '  markdownlint.exclude   <- %s\n' "$markdown_source"
         printf '  shellcheck.exclude     <- %s\n' "$shellcheck_source"
@@ -215,8 +220,6 @@ gates_policy_infer() {
             "$(has_taskfile_lint_test "$project_dir" && echo present || echo absent)"
     } >&2
 
-    mkdir -p "$(dirname "$output_path")"
-    mv "$stage_policy" "$output_path"
     return 0
 }
 

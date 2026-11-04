@@ -6,8 +6,9 @@
 #   gates_contract_paths <root>            # artifact path globals
 #   gates_contract_declared <overlay>      # 0 iff extends present; sets fields
 #   gates_contract_merge <snap> <overlay>  # canonical effective JSON on stdout
-#   gates_contract_deviations <snap> <eff> # TSV: class<TAB>path<TAB>from<TAB>to
+#   gates_contract_deviations <snap> <eff> # TSV: class<TAB>path<TAB>from<TAB>to...
 #   gates_contract_check <root>            # the four invariants (R6)
+#   gates_contract_update_staged <root>    # index holds exactly a sync --update commit
 #   gates_contract_fetch <src> <ver> <file> <out>  # sync-time fetch (R2)
 #   gates_contract_version_max             # stdin versions -> highest (R7)
 #
@@ -65,48 +66,266 @@ gates_contract_merge() { # <snapshot> <overlay>
 # the effective policy. A "leaf" is a scalar or a whole array reached via
 # object keys only — array interiors are excluded so a list edit is ONE
 # deviation on the list, not one per element. Defined-order fields classify
-# as "weakened";
-# everything else that differs is "changed"; strengthenings and additions
-# are not deviations. Output: one TSV line per deviation:
-#   <weakened|changed>\t<dot.path>\t<baseline-value>\t<effective-value>\t<path-as-json-array>
-# The trailing JSON path is what propose feeds to setpath (dot-joined paths
-# would break on keys containing dots).
-gates_contract_deviations() { # <snapshot> <effective>
-    local snap="${1:-}" eff="${2:-}"
+# as "weakened" or "strengthened": enabled and the git toggles true->false,
+# severity/parity moving right, include losing globs or exclude gaining
+# them, git.ai_branding.terms losing terms. A whole hook the effective side
+# drops (null or absent) is ONE weakened deviation marked "removed".
+# Everything else that differs is "changed". Strengthenings and additions
+# are not deviations. Keys starting with "_" (_comment) are annotations,
+# never enforcement, and are not compared.
+#
+# Project gates (feature 006, contracts/policy-gates.md): a baseline gate
+# under hooks.verify-quality.gates that the effective side drops is ONE
+# weakened deviation marked "removed", like a hook; a gate's skip_at
+# classifies like exclude (gaining a boundary is weakened, losing one
+# strengthened; absent is none); a gate's severity (default error) and
+# test_severity (default warning) use the severity rank; command,
+# timeout_s and gate_timeout_s are "changed". Since these keys are often
+# absent from the baseline, the effective side's skip_at, severity,
+# timeout_s, test_severity and gate_timeout_s of baseline gates are
+# compared too, not only the baseline's leaves.
+#
+# The covering script (feature 007, contracts/policy-cover.md): spec.cover
+# present in the effective policy and absent from the baseline is ONE
+# weakened deviation marked "cover script added", although additions are
+# otherwise not deviations (a covering script skips proof); a baseline
+# spec.cover the effective side drops is ONE strengthened line ("cover
+# script removed"). With both present, spec.cover.at gaining a boundary is
+# weakened and losing one strengthened; script and timeout_s are
+# "changed", the effective side's keys compared too.
+#
+# With mode "delta" (sync --update: old baseline vs new baseline) the
+# strengthenings are reported too, and a hook or gate the new side adds is
+# ONE strengthened line marked "added": an update review needs every change.
+#
+# Output: one TSV line per deviation:
+#   <class>\t<dot.path>\t<baseline-value>\t<effective-value>\t<path-as-json-array>\t<summary>\t<removed|added|>
+# The JSON path is what propose feeds to setpath (dot-joined paths would
+# break on keys containing dots). The summary describes the change without
+# quoting policy text (#154): list changes as counts; booleans, numbers and
+# severities as from -> to; any other value as set, unset or changed. The
+# delta lines that become commit and PR text use it, since a quoted value
+# ("Copilot" in git.ai_branding.terms, a word the message rules forbid)
+# would make the repo's own commit-msg refuse the update commit.
+gates_contract_deviations() { # <snapshot> <effective> [delta]
+    local snap="${1:-}" eff="${2:-}" mode="${3:-}"
     [[ -f "$snap" && -f "$eff" ]] || return 1
-    jq -r -n --slurpfile b "$snap" --slurpfile e "$eff" '
+    jq -r -n --slurpfile b "$snap" --slurpfile e "$eff" --arg mode "$mode" '
         def sev_rank: { "error": 0, "warning": 1, "info": 2, "off": 3 };
+        def git_toggles: ["block_main_commits", "conventional_commits", "forbid_ai_isms",
+                          "protected_change_trailer", "block_bulk_staging"];
+        def leaves: [ paths(type != "object") | select(all(.[]; type == "string"))
+                      | select(any(.[]; startswith("_")) | not) ];
+        def hook_names: (.hooks // {}) | if type == "object" then
+            [ to_entries[] | select(.value | type == "object") | select(.key | startswith("_") | not)
+              | .key ] else [] end;
+        def gate_names: (try .hooks["verify-quality"].gates catch null) // {}
+            | if type == "object" then
+                [ to_entries[] | select(.value | type == "object") | select(.key | startswith("_") | not)
+                  | .key ] else [] end;
+        def is_gate_field($p): ($p | length) == 5 and $p[0] == "hooks" and $p[1] == "verify-quality"
+            and $p[2] == "gates";
+        def sev_default($p):
+            if is_gate_field($p) and $p[4] == "severity" then "error"
+            elif $p == ["hooks", "verify-quality", "test_severity"] then "warning"
+            else null end;
+        def sev_leaf: . == "severity" or . == "parity" or . == "test_severity";
+        def summary($leaf; $bv; $ev):
+            def plain: type == "boolean" or type == "number" or type == "null";
+            if ($bv | type) == "array" and ($ev | type) == "array" then
+                (($ev - $bv) | length) as $a | (($bv - $ev) | length) as $r
+                | if $a == 0 and $r == 0 then "same entries, order or repeats changed"
+                  else "\($a) added, \($r) removed" end
+            elif ($ev | type) == "array" and $bv == null then "set (\($ev | length) entries)"
+            elif ($bv | type) == "array" and $ev == null then "unset (was \($bv | length) entries)"
+            elif (($bv | plain) and ($ev | plain))
+                 or (($leaf | sev_leaf)
+                     and (sev_rank[$bv|tostring] != null) and (sev_rank[$ev|tostring] != null)) then
+                "\($bv | tojson) -> \($ev | tojson)"
+            elif $bv == null then "set"
+            elif $ev == null then "unset"
+            else "value changed" end;
+        def row($c; $p; $bv; $ev; $kind):
+            [ $c, ($p | map(tostring) | join(".")), ($bv | tojson), ($ev | tojson), ($p | tojson),
+              (if $kind == "" then summary($p | last | tostring; $bv; $ev)
+               elif ($kind | startswith("cover ")) then $kind
+               elif ($p | length) == 4 then "gate \($kind)" else "hook \($kind)" end),
+              $kind ]
+            | join("\t");
         ($b[0] | del(.extends)) as $base
         | ($e[0] | del(.extends)) as $eff
-        | [ $base | paths(type != "object") | select(all(.[]; type == "string")) ] as $ps
-        | $ps[]
-        | . as $p
-        | ($base | getpath($p)) as $bv
-        | ($eff | getpath($p)) as $ev
-        | select($bv != $ev)
-        | ($p | last | tostring) as $leaf
-        | ($p | map(tostring) | join(".")) as $path
-        | ( if $leaf == "enabled" and $bv == true and $ev == false then "weakened"
-            elif $leaf == "enabled" and $bv == false and $ev == true then "skip"
-            elif ($leaf == "severity" or $leaf == "parity")
-                 and (sev_rank[$bv|tostring] != null) and (sev_rank[$ev|tostring] != null) then
-              ( if sev_rank[$ev|tostring] > sev_rank[$bv|tostring] then "weakened"
-                elif sev_rank[$ev|tostring] < sev_rank[$bv|tostring] then "skip"
-                else "changed" end )
-            elif $leaf == "include" and ($bv | type) == "array" and ($ev | type) == "array" then
-              ( ($bv - $ev) as $removed | ($ev - $bv) as $added
-                | if ($removed | length) > 0 and ($added | length) == 0 then "weakened"
-                  elif ($added | length) > 0 and ($removed | length) == 0 then "skip"
-                  else "changed" end )
-            elif $leaf == "exclude" and ($bv | type) == "array" and ($ev | type) == "array" then
-              ( ($ev - $bv) as $added | ($bv - $ev) as $removed
-                | if ($added | length) > 0 and ($removed | length) == 0 then "weakened"
-                  elif ($removed | length) > 0 and ($added | length) == 0 then "skip"
-                  else "changed" end )
-            else "changed" end ) as $class
-        | select($class != "skip")
-        | "\($class)\t\($path)\t\($bv | tojson)\t\($ev | tojson)\t\($p | tojson)"
+        | ($base | hook_names) as $bh
+        | ($eff | hook_names) as $eh
+        | [ $bh[] | select(IN($eh[]) | not) ] as $removed
+        | [ $eh[] | select(IN($bh[]) | not) ] as $added
+        # Gate rows only when the verify-quality hook itself is on both sides
+        # (a removed or added hook is already its one line).
+        | (if "verify-quality" | IN(($removed + $added)[]) then [] else ($base | gate_names) end) as $bg
+        | (if "verify-quality" | IN(($removed + $added)[]) then [] else ($eff | gate_names) end) as $eg
+        | [ $bg[] | select(IN($eg[]) | not) ] as $gremoved
+        | [ $eg[] | select(IN($bg[]) | not) ] as $gadded
+        | def cover_of: (try .spec.cover catch null) | if type == "object" then . else null end;
+          ($base | cover_of) as $bc
+        | ($eff | cover_of) as $ec
+        | ( $removed[] | row("weakened"; ["hooks", .]; $base.hooks[.]; null; "removed") ),
+          ( if $mode == "delta" then
+              $added[] | row("strengthened"; ["hooks", .]; null; $eff.hooks[.]; "added")
+            else empty end ),
+          ( $gremoved[]
+            | row("weakened"; ["hooks", "verify-quality", "gates", .];
+                  $base.hooks["verify-quality"].gates[.]; null; "removed") ),
+          ( if $mode == "delta" then
+              $gadded[]
+              | row("strengthened"; ["hooks", "verify-quality", "gates", .];
+                    null; $eff.hooks["verify-quality"].gates[.]; "added")
+            else empty end ),
+          ( if $bc == null and $ec != null then
+              row("weakened"; ["spec", "cover"]; null; $ec; "cover script added")
+            elif $bc != null and $ec == null and $mode == "delta" then
+              row("strengthened"; ["spec", "cover"]; $bc; null; "cover script removed")
+            else empty end ),
+          ( ( ($base | leaves)
+              + (if $mode == "delta" then ($eff | leaves)
+                 else [ $eff | leaves | .[]
+                        | select((. == ["hooks", "verify-quality", "test_severity"])
+                                 or (. == ["hooks", "verify-quality", "gate_timeout_s"])
+                                 or (is_gate_field(.) and (.[3] | IN($bg[])))
+                                 or (.[0:2] == ["spec", "cover"] and $bc != null)) ] end) )
+            | unique[]
+            | . as $p
+            # An added or removed spec.cover is its one line above.
+            | select((.[0:2] == ["spec", "cover"] and ($bc == null or $ec == null)) | not)
+            | select(($p[0] == "hooks" and (($p[1] // "") | IN(($removed + $added)[])))
+                     or ($p == ["hooks"])
+                     or (($p | length) >= 4 and $p[0:3] == ["hooks", "verify-quality", "gates"]
+                         and ($p[3] | IN(($gremoved + $gadded)[]))) | not)
+            | ($base | try getpath($p) catch null) as $bv
+            | ($eff | try getpath($p) catch null) as $ev
+            | select($bv != $ev)
+            | ($p | last | tostring) as $leaf
+            | ($bv // sev_default($p)) as $bs
+            | ($ev // sev_default($p)) as $es
+            | ( if ($leaf == "enabled"
+                    or ($p | length) == 2 and $p[0] == "git" and ($leaf | IN(git_toggles[])))
+                   and ($bv | type) == "boolean" and ($ev | type) == "boolean" then
+                  (if $bv then "weakened" else "strengthened" end)
+                elif ($leaf | sev_leaf)
+                     and (sev_rank[$bs|tostring] != null) and (sev_rank[$es|tostring] != null) then
+                  ( if sev_rank[$es|tostring] > sev_rank[$bs|tostring] then "weakened"
+                    elif sev_rank[$es|tostring] < sev_rank[$bs|tostring] then "strengthened"
+                    else "changed" end )
+                elif ((is_gate_field($p) and $leaf == "skip_at") or $p == ["spec", "cover", "at"])
+                     and (($bv // []) | type) == "array" and (($ev // []) | type) == "array" then
+                  ( (($ev // []) - ($bv // []) | length) as $gained
+                    | (($bv // []) - ($ev // []) | length) as $lost
+                    | if $gained > 0 and $lost == 0 then "weakened"
+                      elif $lost > 0 and $gained == 0 then "strengthened"
+                      else "changed" end )
+                elif ($leaf == "include" or $leaf == "exclude")
+                     and ($bv | type) == "array" and ($ev | type) == "array" then
+                  ( ($ev - $bv | length) as $gained | ($bv - $ev | length) as $lost
+                    | (if $leaf == "include" then [$lost, $gained] else [$gained, $lost] end) as $wl
+                    | if $wl[0] > 0 and $wl[1] == 0 then "weakened"
+                      elif $wl[1] > 0 and $wl[0] == 0 then "strengthened"
+                      else "changed" end )
+                elif $p == ["git", "ai_branding", "terms"]
+                     and ($bv | type) == "array" and ($ev | type) == "array" then
+                  ( ($ev - $bv | length) as $gained | ($bv - $ev | length) as $lost
+                    | if $gained > 0 and $lost == 0 then "strengthened"
+                      elif $lost > 0 and $gained == 0 then "weakened"
+                      else "changed" end )
+                else "changed" end ) as $class
+            | select($mode == "delta" or $class != "strengthened")
+            | row($class; $p; $bv; $ev; "") )
     '
+}
+
+# Print deviation TSV (stdin) as one line per deviation, after <prefix>:
+#   <prefix>(<class>): <path>: baseline <from> -> overlay <to>
+#   <prefix>(weakened): <path>: removed
+# The update review and propose use the "- " form with the summary instead
+# of the values (delta lines): that text becomes commit and PR text (#154).
+gates_contract_print_deviations() { # <prefix> [delta]
+    local prefix="$1" mode="${2:-}" class path from to jpath summary kind
+    while IFS=$'\t' read -r class path from to jpath summary kind; do
+        [[ -z "$class" ]] && continue
+        if [[ "$mode" == "delta" ]]; then
+            if [[ -n "$kind" ]]; then
+                printf '%s%s (%s): %s\n' "$prefix" "$kind" "$class" "$path"
+            else
+                printf '%s%s: %s: %s\n' "$prefix" "$class" "$path" "$summary"
+            fi
+        elif [[ -n "$kind" ]]; then
+            printf '%s(%s): %s: %s\n' "$prefix" "$class" "$path" "$kind"
+        else
+            printf '%s(%s): %s: baseline %s -> overlay %s\n' "$prefix" "$class" "$path" "$from" "$to"
+        fi
+    done
+    return 0
+}
+
+# Shape check for the overlay (policy.json with extends). The overlay is a
+# partial policy: hooks may be absent, a hook may set only the fields it
+# changes (no severity) or be null (removed). Field values are still
+# checked here so a typo is named against policy.json; completeness is the
+# merged effective policy's job (validated strictly at sync).
+gates_contract_validate_overlay() { # <overlay>
+    local overlay="${1:-}" tmp rc=0
+    [[ -f "$overlay" ]] || return 2
+    if ! jq -e 'type == "object" and ((has("hooks") | not) or (.hooks | type == "object"))' \
+        "$overlay" >/dev/null 2>&1; then
+        echo "ERROR: $overlay must be an object (with \"hooks\", when present, an object)" >&2
+        return 4
+    fi
+    tmp="$(mktemp 2>/dev/null || mktemp -t gates-overlay)" || return 1
+    # Fill what only the merge supplies, then validate the values. A project
+    # gate may restate only what it changes (a skip_at on a baseline gate,
+    # feature 006), so its command is filled too.
+    jq '.hooks = ((.hooks // {}) | with_entries(
+            if (.value | type) == "object" then
+                .value |= ((if has("severity") then . else . + { severity: "error" } end)
+                    | if .orchestrator == "custom" and (has("custom_command") | not)
+                      then . + { custom_command: "-" } else . end
+                    | if (.gates | type) == "object" then
+                        .gates |= with_entries(
+                            if (.value | type) == "object" and (.value | has("command") | not)
+                            then .value += { command: "-" } else . end)
+                      else . end)
+            else . end))' "$overlay" >"$tmp" 2>/dev/null || {
+        rm -f "$tmp"
+        return 3
+    }
+    local out
+    out="$(GATES_POLICY_FILE="$tmp" gates_validate_policy "$tmp" 2>&1)" || rc=$?
+    rm -f "$tmp"
+    # Name the user's file, not the filled-in copy (a few short lines).
+    [[ -n "$out" ]] && printf '%s\n' "${out//"$tmp"/$overlay}" >&2
+    return "$rc"
+}
+
+# Print <overlay> with extends.version set to <version>, changing only that
+# value's text where possible so the reviewed diff is one line (#135). Falls
+# back to a jq rewrite (key order kept) when the text edit is not exact.
+gates_contract_set_version() { # <overlay> <version>
+    local overlay="$1" version="$2" old want got
+    want="$(jq -S --arg v "$version" '.extends.version = $v' "$overlay" 2>/dev/null)" || return 1
+    old="$(jq -r '.extends.version // ""' "$overlay" 2>/dev/null)"
+    if [[ -n "$old" ]]; then
+        got="$(awk -v old="\"$old\"" -v new="\"$version\"" '
+            !done && /"version"[[:space:]]*:/ {
+                i = index($0, "\"version\""); rest = substr($0, i); j = index(rest, old)
+                if (j > 0) {
+                    $0 = substr($0, 1, i - 1) substr(rest, 1, j - 1) new substr(rest, j + length(old))
+                    done = 1
+                }
+            }
+            { print }' "$overlay")"
+        if [[ "$(jq -S . <<<"$got" 2>/dev/null)" == "$want" ]]; then
+            printf '%s\n' "$got"
+            return 0
+        fi
+    fi
+    jq --arg v "$version" '.extends.version = $v' "$overlay"
 }
 
 # The four invariants (R6, contracts/artifact-layout.md), proven offline.
@@ -139,7 +358,12 @@ gates_contract_check() { # <root>
     # 2: snapshot matches the pinned digest.
     local want got
     want="$(jq -r '.digest // ""' "$CONTRACT_LOCK" 2>/dev/null)"
-    got="sha256:$(gates_sha256 "$CONTRACT_SNAPSHOT")" || got=""
+    # A failed hash is a missing tool, not a mismatch: say which (#172).
+    if ! got="sha256:$(gates_sha256 "$CONTRACT_SNAPSHOT" 2>/dev/null)"; then
+        CONTRACT_STATUS="fail"
+        CONTRACT_DETAIL="cannot hash baseline.json to check the pin: neither sha256sum nor shasum found -- install one (coreutils or perl)"
+        return 0
+    fi
     if [[ -z "$want" || "$got" != "$want" ]]; then
         CONTRACT_STATUS="fail"
         CONTRACT_DETAIL="baseline snapshot does not match the pin (baseline.json vs baseline.lock.json digest) -- tampering or a broken sync; re-run contract.sh sync"
@@ -178,6 +402,55 @@ gates_contract_check() { # <root>
     return 0
 }
 
+# Does the index of the repo at <root> hold exactly the commit `contract.sh
+# sync --update` makes (#154)? pre-commit asks this only where
+# git.protected_change_trailer is false and would otherwise refuse the
+# protected contract artifacts outright. All of these must hold, read from
+# the index and HEAD, never the work tree:
+#   - the branch is gates/baseline-<v> and the staged lock pins <v>;
+#   - nothing is staged but policy.json and the three artifacts, and
+#     policy.json and the lock are among them;
+#   - policy.json differs from HEAD in extends.version only;
+#   - the staged four pass the contract invariants (snapshot matches the
+#     lock digest, declaration matches the lock, effective = recompute).
+# The snapshot's provenance cannot be proven offline; that is what the
+# review of the update branch is for. Returns 0 = exactly an update.
+gates_contract_update_staged() { # <root>
+    local root="${1:-.}" branch version staged f tmp rc=1
+    local has_policy=0 has_lock=0
+    branch="$(git -C "$root" symbolic-ref --short -q HEAD 2>/dev/null)" || return 1
+    [[ "$branch" == gates/baseline-?* ]] || return 1
+    version="${branch#gates/baseline-}"
+    staged="$(git -C "$root" diff --cached --name-only --no-renames 2>/dev/null)" || return 1
+    while IFS= read -r f; do
+        case "$f" in
+            .specify/gates/policy.json) has_policy=1 ;;
+            .specify/gates/baseline.lock.json) has_lock=1 ;;
+            .specify/gates/baseline.json | .specify/gates/policy.effective.json) ;;
+            *) return 1 ;;
+        esac
+    done <<<"$staged"
+    [[ "$has_policy" == "1" && "$has_lock" == "1" ]] || return 1
+    tmp="$(mktemp -d 2>/dev/null || mktemp -d -t gates-update)" || return 1
+    mkdir -p "$tmp/.specify/gates"
+    for f in policy.json baseline.json baseline.lock.json policy.effective.json; do
+        git -C "$root" show ":.specify/gates/$f" >"$tmp/.specify/gates/$f" 2>/dev/null || {
+            rm -rf "$tmp"
+            return 1
+        }
+    done
+    if git -C "$root" show "HEAD:.specify/gates/policy.json" >"$tmp/head.json" 2>/dev/null \
+        && [[ "$(jq -r '.version // ""' "$tmp/.specify/gates/baseline.lock.json" 2>/dev/null)" == "$version" ]] \
+        && jq -e '.extends.version | type == "string"' "$tmp/head.json" >/dev/null 2>&1 \
+        && [[ "$(jq -S 'del(.extends.version)' "$tmp/head.json" 2>/dev/null)" \
+            == "$(jq -S 'del(.extends.version)' "$tmp/.specify/gates/policy.json" 2>/dev/null)" ]] \
+        && (gates_contract_check "$tmp" && [[ "$CONTRACT_STATUS" == "pass" ]]); then
+        rc=0
+    fi
+    rm -rf "$tmp"
+    return "$rc"
+}
+
 # Fetch one document from a versioned git source (R2). Sync-time only --
 # the single place the contract machinery may touch the network. Refuses
 # branch-name versions (a moving pin is not a pin). Writes the raw document
@@ -189,7 +462,7 @@ gates_contract_fetch() { # <source> <version> <file> <out>
         echo "contract: fetch: missing argument" >&2
         return 2
     fi
-    if git ls-remote --heads "$source" "refs/heads/$version" 2>/dev/null | grep -q .; then
+    if [[ -n "$(git ls-remote --heads "$source" "refs/heads/$version" 2>/dev/null)" ]]; then
         echo "contract: '$version' is a branch on $source -- pin a tag or commit instead (a moving pin is not a pin)" >&2
         return 2
     fi
@@ -199,10 +472,18 @@ gates_contract_fetch() { # <source> <version> <file> <out>
         return 2
     }
     local clone_ok=0
-    if git clone -q --depth 1 --branch "$version" "$source" "$tmp/src" 2>/dev/null; then
-        clone_ok=1
-    elif git clone -q "$source" "$tmp/src" 2>/dev/null \
-        && git -C "$tmp/src" checkout -q "$version" 2>/dev/null; then
+    # Without git's per-repository variables (#293): run from a hook or a
+    # script that exports GIT_DIR, `git -C "$tmp/src" checkout` would check
+    # the version out in the caller's repository instead of the clone.
+    if (
+        # shellcheck source=watch.sh disable=SC1091
+        declare -F gates_git_env_clear >/dev/null \
+            || source "$(dirname "${BASH_SOURCE[0]}")/watch.sh" || exit 1
+        gates_git_env_clear
+        git clone -q --depth 1 --branch "$version" "$source" "$tmp/src" 2>/dev/null \
+            || { git clone -q "$source" "$tmp/src" 2>/dev/null \
+                && git -C "$tmp/src" checkout -q "$version" 2>/dev/null; }
+    ); then
         clone_ok=1
     fi
     if [[ "$clone_ok" != "1" ]]; then

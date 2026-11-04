@@ -4,6 +4,8 @@
 name: Quality Gates
 on:
   pull_request:
+    # `edited`: a change to the title or description re-runs the pull request check.
+    types: [opened, synchronize, reopened, edited]
   push:
     # This repository's default branch is master, not main. Left as the
     # template's `main`, the push trigger would silently never fire.
@@ -19,6 +21,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Full history: the pull request check walks base..head for protected changes.
+          fetch-depth: 0
           persist-credentials: false
       # setup-node@v7 / node 22 to match ci.yml, release.yml and
       # skill-regression.yml rather than introduce a second node convention.
@@ -52,3 +56,26 @@ jobs:
       # (known violation) was accepted instead of blocked.
       - name: Prove the gate still blocks (canaries)
         run: bash .specify/gates/canary.sh
+      # The pull request's title and description against the commit-message rules, the
+      # Protected-Change declarations across its commits, and the staged-file secret and
+      # forbidden-file scan over each commit (a cherry-pick, rebase, am or revert never ran it).
+      # Title and body arrive through env, never interpolated into the script. It runs the BASE
+      # branch's pr-check.sh against the checkout, so a pull request cannot replace the code that
+      # judges it; a base without pr-check.sh runs the pull request's own copy. Dependabot and
+      # Renovate descriptions quote upstream release notes, so only their titles are checked.
+      - name: Check the pull request (text, protected changes, secrets)
+        if: github.event_name == 'pull_request'
+        env:
+          GATES_PR_TITLE: ${{ github.event.pull_request.title }}
+          GATES_PR_BODY: ${{ !contains(fromJSON('["dependabot[bot]", "renovate[bot]"]'), github.event.pull_request.user.login) && github.event.pull_request.body || '' }}
+        run: |
+          base="origin/$GITHUB_BASE_REF"
+          if git cat-file -e "$base:.specify/gates/pr-check.sh" 2>/dev/null; then
+            rt="$(mktemp -d)"
+            git archive "$base" .specify/gates | tar -x -C "$rt"
+            echo "pr-check: running the base revision's pr-check.sh ($base)"
+            GATES_RUNTIME_DIR="$rt/.specify/gates" bash "$rt/.specify/gates/pr-check.sh"
+          else
+            echo "pr-check: the base ($base) has no pr-check.sh (adoption PR); running the pull request's own copy"
+            bash .specify/gates/pr-check.sh
+          fi
