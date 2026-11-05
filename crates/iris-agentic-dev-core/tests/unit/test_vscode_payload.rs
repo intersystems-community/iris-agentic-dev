@@ -15,8 +15,15 @@ use iris_agentic_dev_core::iris::vscode_payload::{
     DecodedPayload, PayloadEncoding, DPAPI_BLOB_HEADER, LOCAL_STATE_KEY_PREFIX,
 };
 
-const TEST_KEY: [u8; 32] = [7u8; 32];
-const TEST_NONCE: [u8; 12] = [3u8; 12];
+/// Bytes from the OS for each run. Every test seals and opens with the same key, so no test needs a
+/// particular value, and nothing that looks like a committed key sits in the source.
+fn random_bytes<const N: usize>() -> [u8; N] {
+    let mut b = [0u8; N];
+    getrandom::fill(&mut b).expect("OS randomness");
+    b
+}
+static TEST_KEY: std::sync::LazyLock<[u8; 32]> = std::sync::LazyLock::new(random_bytes);
+static TEST_NONCE: std::sync::LazyLock<[u8; 12]> = std::sync::LazyLock::new(random_bytes);
 
 /// A plausible 140-byte DPAPI blob: real 20-byte header + filler.
 fn fake_dpapi_blob() -> Vec<u8> {
@@ -98,7 +105,7 @@ fn full_chain_from_stored_text_to_plaintext_password() {
     let DecodedPayload::SafeStorage(envelope) = decode_payload(stored.as_bytes()).unwrap() else {
         panic!("expected a safeStorage envelope");
     };
-    assert_eq!(decrypt_safe_storage(&envelope, &TEST_KEY).unwrap(), sealed);
+    assert_eq!(decrypt_safe_storage(&envelope, &*TEST_KEY).unwrap(), sealed);
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +132,8 @@ fn bare_v10_and_v11_envelopes_are_recognized() {
 #[test]
 fn envelope_with_the_wrong_key_fails_authentication_without_blaming_the_user() {
     let envelope = seal_v10("hunter2", &TEST_KEY, &TEST_NONCE);
-    let wrong_key = [9u8; 32];
+    let wrong_key: [u8; 32] = random_bytes();
+    assert_ne!(wrong_key, *TEST_KEY);
 
     let err = decrypt_safe_storage(&envelope, &wrong_key).unwrap_err();
     assert!(
@@ -140,7 +148,7 @@ fn envelope_with_the_wrong_key_fails_authentication_without_blaming_the_user() {
 
 #[test]
 fn envelope_shorter_than_nonce_plus_tag_is_rejected() {
-    let err = decrypt_safe_storage(b"v10short", &TEST_KEY).unwrap_err();
+    let err = decrypt_safe_storage(b"v10short", &*TEST_KEY).unwrap_err();
     assert!(err.contains("too short"), "got: {err}");
 }
 
@@ -155,7 +163,7 @@ fn decrypt_rejects_a_key_that_is_not_32_bytes() {
 fn decrypt_rejects_a_payload_that_is_not_an_envelope() {
     let mut not_envelope = vec![0u8; 40];
     not_envelope[0] = 0xFF;
-    let err = decrypt_safe_storage(&not_envelope, &TEST_KEY).unwrap_err();
+    let err = decrypt_safe_storage(&not_envelope, &*TEST_KEY).unwrap_err();
     assert!(err.contains("not a safeStorage envelope"), "got: {err}");
 }
 

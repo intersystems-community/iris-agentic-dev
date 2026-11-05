@@ -72,6 +72,8 @@ zbus-secret-service-keyring-store = { version = "1", features = ["crypto-rust"] 
 ctor = "1"
 tokio = { workspace = true, features = ["full"] }
 tempfile = "3"
+# Random AES keys and nonces for the safeStorage tests. Already in Cargo.lock through uuid.
+getrandom = "0.4"
 serde_json.workspace = true
 reqwest.workspace = true
 regex.workspace = true
