@@ -57,6 +57,11 @@ unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR \
 #   covered -- failing accept block a covering script vouches for at
 #              agent and git fails at ci, and is reported covered at git
 #                                     -> verify.sh spec gate       (exit 2)
+#   worktree -- a project gate builds a throwaway repository during a
+#              commit in a linked worktree
+#                                     -> verify.sh gate environment
+#                                        (main repo not bare, worktree
+#                                        index unchanged)
 #
 # Usage:
 #   canary.sh [--json] [--only <id>[,<id>...]]
@@ -85,7 +90,7 @@ done
 CANARY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
-CANARY_SET="format markdown shell bash protect prhook bulk local secret credential protected branding pr spec errexit contract project covered"
+CANARY_SET="format markdown shell bash protect prhook bulk local secret credential protected branding pr spec errexit contract project covered worktree"
 
 if [[ -n "$ONLY" ]]; then
     IFS=',' read -r -a _only_ids <<<"$ONLY"
@@ -790,6 +795,71 @@ run_covered_canary() {
 }
 
 # ---------------------------------------------------------------------------
+# Worktree canary (#293): in a linked worktree git runs the pre-commit hook
+# with an absolute GIT_DIR and GIT_INDEX_FILE. A project gate that builds a
+# throwaway repository (git init, add and commit in a temp directory) must
+# build its own. A real commit in a linked worktree of a sandbox runs such a
+# gate through the stub and the projected pre-commit hook; blocked means
+# the gate ran, the sandbox's main repository is still not bare, and the
+# worktree's index is unchanged. A gate that inherited git's variables set
+# core.bare = true there and staged every tracked file deleted.
+# ---------------------------------------------------------------------------
+run_worktree_canary() {
+    local pre stub
+    if ! pre="$(pre_commit_hook)" || ! stub="$(git_hook stub.sh)"; then
+        record worktree skipped "pre-commit hook or stub missing — enforcement gap (gate commands in a linked worktree)" 1
+        return 0
+    fi
+    local d="$WORKDIR/worktree" w="$WORKDIR/worktree-linked" marker="$WORKDIR/worktree-ran" hooks
+    project_sandbox "$d" '{ "hooks": { "verify-quality": { "orchestrator": "none", "severity": "error", "gates": { "sandbox": { "command": "bash sandbox.sh", "timeout_s": 120 } } } } }'
+    # Nothing here needs the linters, and the link must not be committed.
+    rm -f "$d/node_modules"
+    mkdir -p "$d/.specify/gates/hooks" || setup_fail "worktree hooks dir"
+    cp "$pre" "$d/.specify/gates/hooks/pre-commit" || setup_fail "worktree project hook"
+    chmod +x "$d/.specify/gates/hooks/pre-commit"
+    cat >"$d/sandbox.sh" <<'SH' || setup_fail "worktree gate script"
+#!/bin/bash
+set -e
+: >"$CANARY_WT_MARKER"
+t="$(mktemp -d 2>/dev/null || mktemp -d -t gates-canary-wt)"
+cd "$t" || exit 1
+git init -q
+echo x >f
+git add -A
+git -c user.email=canary@example.invalid -c user.name=gates-canary commit -q -m sandbox
+cd / && rm -rf "$t"
+SH
+    git init -q "$d" >/dev/null 2>&1 || setup_fail "worktree git init"
+    git -C "$d" checkout -q -b canary-probe 2>/dev/null || setup_fail "worktree branch"
+    git -C "$d" config user.email canary@example.invalid
+    git -C "$d" config user.name "gates-canary"
+    (cd "$d" && git add -A && git commit -q -m 'chore: canary worktree seed') >/dev/null 2>&1 \
+        || setup_fail "worktree seed commit"
+    # The stub goes in after the seed commit, as init installs it.
+    hooks="$(git -C "$d" rev-parse --git-path hooks)" || setup_fail "worktree hooks path"
+    [[ "$hooks" == /* ]] || hooks="$d/$hooks"
+    { cp "$stub" "$hooks/pre-commit" && chmod +x "$hooks/pre-commit"; } || setup_fail "worktree install stub"
+    git -C "$d" worktree add -q -b canary-wt "$w" >/dev/null 2>&1 || setup_fail "worktree add"
+    printf 'probe\n' >"$w/probe.txt"
+    git -C "$w" add probe.txt || setup_fail "worktree stage"
+    local before after bare rc=0
+    before="$(git -C "$w" ls-files --stage)"
+    (cd "$w" && CANARY_WT_MARKER="$marker" CLAUDE_PROJECT_DIR="$w" \
+        git commit -q -m 'chore: canary worktree probe') >/dev/null 2>&1 || rc=$?
+    after="$(git -C "$w" ls-files --stage)"
+    bare="$(git -C "$d" config --get core.bare)"
+    if [[ ! -e "$marker" ]]; then
+        record worktree accepted "the commit in a linked worktree did not run the project gate (exit $rc), so nothing was proven" 1
+    elif [[ "$bare" != "false" ]]; then
+        record worktree accepted "a project gate that built a throwaway repository from a linked worktree set the main repository's core.bare to '${bare:-unset}' — gate commands inherit git's hook variables" 1
+    elif [[ "$before" != "$after" ]]; then
+        record worktree accepted "a project gate that built a throwaway repository from a linked worktree changed the worktree's index — gate commands inherit git's hook variables" 1
+    else
+        record worktree blocked "a project gate built its own throwaway repository from a linked worktree; the main repository and the worktree index are untouched" 0
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Run + report
 # ---------------------------------------------------------------------------
 for id in $CANARY_SET; do
@@ -813,6 +883,7 @@ for id in $CANARY_SET; do
         contract) run_contract_canary ;;
         project) run_project_canary ;;
         covered) run_covered_canary ;;
+        worktree) run_worktree_canary ;;
     esac
 done
 

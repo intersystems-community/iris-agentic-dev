@@ -89,6 +89,7 @@ gates_spec_included() { # <feature-name>
 # state machine; command bodies land in <outdir>/block-N.cmd, metadata on
 # stdout as TAB-separated protocol lines:
 #   ERROR<TAB><line><TAB><message>
+#   WARN<TAB><line><TAB><message>   (doctor's lint; the gate ignores it)
 #   BLOCK<TAB><cmdfile><TAB><verifies-or-dash><TAB><ordinal><TAB><task text>
 #   TASKS<TAB><total><TAB><unchecked><TAB><first unchecked task text>
 # <ordinal> is the block's position (from 1) among the accept blocks under
@@ -140,7 +141,27 @@ gates_spec_parse() { # <tasks-md> <outdir>
             i = j - 1
         }
     }
+    # Does command line <s> pipe into `grep -q` (or --quiet, --silent) or
+    # `head`? The reader exits early, the writer dies of SIGPIPE, and
+    # under pipefail that is the block status, exit 141 (#302). `||` is
+    # not a pipe.
+    function pipe_early(s,    t, seg, i) {
+        t = s
+        while ((i = index(t, "|")) > 0) {
+            t = substr(t, i + 1)
+            if (substr(t, 1, 1) == "|") { t = substr(t, 2); continue }
+            if (substr(t, 1, 1) == "&") t = substr(t, 2)
+            seg = t
+            sub(/^[ \t]+/, "", seg)
+            if (seg ~ /^head([ \t]|$)/) return 1
+            if (seg !~ /^[ef]?grep[ \t]/) continue
+            if (match(seg, /[|;&]/)) seg = substr(seg, 1, RSTART - 1)
+            if (seg ~ /[ \t]-[A-Za-z]*q/ || seg ~ /[ \t]--(quiet|silent)/) return 1
+        }
+        return 0
+    }
     BEGIN {
+        pipemsg = "a pipe into `grep -q` or `head` can fail the block with exit 141 (SIGPIPE) under pipefail; capture first: out=\"$(cmd 2>&1)\"; grep -q pat <<<\"$out\""
         in_fence = 0; in_accept = 0
         task = ""; have_task = 0; tord = 0
         nblocks = 0; total = 0; unchecked = 0; first_unc = ""
@@ -204,6 +225,7 @@ gates_spec_parse() { # <tasks-md> <outdir>
                     if (stripped ~ /^[[:space:]]*![[:space:]]/ && index(stripped, "||") == 0) neg_line = NR
                 }
                 cont = (stripped ~ /\\$/)
+                if (pipe_early(stripped)) printf "WARN\t%d\t%s\n", NR, pipemsg
                 hd_scan(stripped)
                 if (!cont && hd_n > 0) { hd_on = 1; hd_i = 1 }
             }
@@ -262,10 +284,27 @@ gates_spec_parse() { # <tasks-md> <outdir>
 # nested verify.sh appends its attestation), left out of the read-only
 # check together with the policy's spec.snapshot_exclude globs. A tracked
 # path is never exempt. gates_spec_gate sets GATES_SPEC_SNAPSHOT_EXCLUDE.
-# The gate lock (#263) is held by the run itself, not by a block.
+# The gate lock (#263) is held by the run itself, not by a block; a nested
+# verify.sh writes each failing gate's output under .specify/gates/output/.
+# Editor temporary files (#303) come and go while a block runs whenever a file
+# is open in an editor: vim's swap files and its 4913 write probe, backup
+# files, Emacs lock and auto-save files. Being gitignored does not exempt
+# them, since ignored files are checked too. Agent tooling writes its own
+# state in the background the same way (#327): a Claude Code memory plugin
+# keeps .claude/mind.* (its store, locks and write-ahead log). Only those
+# files: what an agent edits under .claude/ on purpose (settings, skills,
+# commands) stays checked.
 GATES_SPEC_SNAPSHOT_BUILTIN_EXCLUDE=".specify/gates/attestations.jsonl
 .specify/gates/.attestations.jsonl.*
-.specify/gates/.lock/"
+.specify/gates/.lock/
+.specify/gates/output/
+**/*.swp
+**/*.swo
+**/*~
+**/.#*
+**/#*#
+**/4913
+**/.claude/mind.*"
 
 # A directory below the root with its own .git (file or directory) is a
 # nested repository or worktree, such as an agent's worktree under
@@ -678,38 +717,44 @@ gates_spec_lease_holders() { # <fifo> <scratch>
         /^n/ { if (substr($0, 2) == f && a ~ /[wu]/) print p }' "$scratch"
 }
 
-# Stop every process a block left behind (#197): anything still holding
-# the lease descriptor (<eof> is missing until the last holder exits) or
-# carrying block marker <id>. Lease holders on their way out get half a
-# second, as in the group check. The table is read after a short settle,
-# so a fork racing the block's exit is in it and a quick write by a
-# process neither check sees lands before the after-snapshot. Whatever is
-# left is killed and both are checked again. Returns 0 when none was
-# left, 1 when some had to be stopped.
-gates_spec_detached_stop() { # <id> <scratch> <fifo> <eof>
-    local id="$1" scratch="$2" fifo="$3" eof="$4" pids n=0 m
-    while [[ ! -f "$eof" && $n -lt 5 ]]; do
-        sleep 0.1
-        n=$((n + 1))
-    done
-    sleep 0.1
+# Of <pid...>, the live (non-zombie) processes outside process group
+# <pgid>, one per line: the block's own group is stopped and reported on
+# its own, and a member killed a moment ago can still hold the lease.
+# Without ps every PID is printed.
+gates_spec_foreign() { # <pgid> <pid...>
+    local g="$1" procs
+    shift
+    [[ $# -gt 0 ]] || return 0
+    if procs="$(ps -A -o pid= -o pgid= -o stat= 2>/dev/null)" && [[ -n "$procs" ]]; then
+        awk -v g="$g" -v want=" $* " 'index(want, " " $1 " ") && $2 != g && $3 !~ /^Z/ { print $1 }' <<<"$procs"
+        return 0
+    fi
+    printf '%s\n' "$@"
+}
+
+# Stop every process outside the block's group <pgid> that the block left
+# behind (#197): anything carrying block marker <id> and, when the lease
+# was still held (<held> non-empty), anything holding the lease FIFO
+# <fifo>. They are killed. Then, when the lease was held, the last holder
+# exiting is the event that ends the wait: the lease reader writes "eof"
+# to descriptor <fd>. That wait has a cap, so a holder that neither /proc
+# nor lsof can name (or one that cannot die) does not hang the gate; the
+# cap decides nothing, since a lease still held at this point fails the
+# block either way. Returns 0 when none was left, 1 when some was.
+gates_spec_detached_stop() { # <id> <scratch> <fifo> <pgid> <held> <fd>
+    local id="$1" scratch="$2" fifo="$3" pgid="$4" held="$5" fd="$6" pids
     pids="$(gates_spec_marked "$id" "$scratch")" || pids=""
-    [[ -f "$eof" && -z "$pids" ]] && return 0
-    n=0
-    while [[ $n -lt 5 ]]; do
-        [[ -f "$eof" ]] || pids="$pids $(gates_spec_lease_holders "$fifo" "$scratch")"
-        # shellcheck disable=SC2086  # a list of numeric PIDs
-        [[ -n "${pids// /}" ]] && kill -KILL $pids 2>/dev/null
-        m=0
-        while [[ ! -f "$eof" && $m -lt 6 ]]; do
-            sleep 0.05
-            m=$((m + 1))
-        done
-        pids="$(gates_spec_marked "$id" "$scratch")" || pids=""
-        [[ -f "$eof" && -z "$pids" ]] && break
-        n=$((n + 1))
-    done
-    return 1
+    [[ -n "$held" ]] && pids="$pids $(gates_spec_lease_holders "$fifo" "$scratch")"
+    # shellcheck disable=SC2086  # a list of numeric PIDs
+    pids="$(gates_spec_foreign "$pgid" $pids)"
+    [[ -z "$held" && -z "$pids" ]] && return 0
+    # shellcheck disable=SC2086  # a list of numeric PIDs
+    [[ -n "$pids" ]] && kill -KILL $pids 2>/dev/null
+    if [[ -n "$held" ]]; then
+        gates_watch_wait 5 "$fd"
+        [[ -n "$GATES_WATCH_RC" ]] || return 1
+    fi
+    [[ -z "$pids" ]]
 }
 
 # The 1-minute load average, for the timeout detail (#264): without it a
@@ -739,15 +784,19 @@ gates_spec_load_avg() {
 # timeout(1) on macOS base), snapshots before and after. Outside a git work
 # tree the block does not run: a mutation check that cannot happen fails
 # closed. The block is a job of a `set -m` subshell, so it leads its own
-# process group. A timeout stops that whole group (#136); so does the end
-# of every block, and a block that leaves a process running past a short
-# grace fails (#164): a late write would land after the snapshot. A child
+# process group. A timeout stops that whole group (#136). A block ends
+# when every process holding its lease descriptor has exited: the lease
+# reader's "eof" is the event, awaited for the rest of the block's time
+# limit, so a child the block killed without waiting passes however long
+# its exit takes (#294). A process still holding the lease at the limit
+# fails the block (#164): a late write would land after the snapshot. So
+# does a process left in the group after the lease is released (it closed
+# the descriptor); that last check reads the process table once. A child
 # that left the group (set -m, setsid, a double fork) is found by the
-# lease descriptor it inherited or the GATES_SPEC_BLOCK marker in its
-# environment, stopped, and fails the block too (#197). A process that
-# closed the descriptor and re-executed without the marker (or, on macOS,
-# runs an Apple-signed binary, whose environment ps cannot read) is not
-# found.
+# lease or the GATES_SPEC_BLOCK marker in its environment, stopped, and
+# fails the block too (#197). A process that closed the descriptor and
+# re-executed without the marker (or, on macOS, runs an Apple-signed
+# binary, whose environment ps cannot read) is not found.
 # The previous block's after-snapshot is reused as this block's before-
 # snapshot (SPEC_SNAP_PREV), since the gate writes nothing in between.
 # Returns 0 pass, 1 fail, 2 timeout, 3 mutation; detail in SPEC_BLOCK_DETAIL.
@@ -777,47 +826,37 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
         mark="$outfile.mark"
         gates_spec_mark "$mark"
     fi
-    rm -f "$marker" "$leftover"
-    local rc=0 procs="$outfile.procs" lease="$outfile.lease" eof="$outfile.lease.eof"
+    rm -f "$marker" "$leftover" "$outfile.detached"
+    local rc=0 procs="$outfile.procs" lease="$outfile.lease" leased="$outfile.leased"
     # Unique per block and gate run; set only in the block's environment.
     GATES_SPEC_BLOCK_SEQ=$((${GATES_SPEC_BLOCK_SEQ:-0} + 1))
-    local bid="$$-$GATES_SPEC_BLOCK_SEQ-$RANDOM$RANDOM" reader
+    local bid="$$-$GATES_SPEC_BLOCK_SEQ-$RANDOM$RANDOM"
     # The lease (#197): the block inherits the write end of a FIFO on fd 7,
     # and so does every process it starts, in or out of its group or
-    # session, unless it closes the descriptor. The reader sees EOF, and
-    # writes <eof>, only once the last holder has exited. It starts first
-    # (opening the write end waits for a reader) and outside the block's
-    # group, so a timeout does not take it along.
-    rm -f "$lease" "$eof"
-    if ! mkfifo "$lease" 2>/dev/null; then
-        rm -f "$mark"
-        SPEC_BLOCK_DETAIL="cannot check for leftover processes: mkfifo failed"
-        return 1
-    fi
-    (
-        cat "$lease" >/dev/null 2>&1 &
-        c=$!
-        trap 'kill "$c" 2>/dev/null; exit 0' TERM
-        wait "$c"
-        : >"$eof"
-    ) </dev/null >/dev/null 2>&1 &
-    reader=$!
-    # The block's exit status comes back on a FIFO, and one read with the
-    # block's time limit decides (gates_watch_wait, lib/watch.sh): no timer
-    # process, so a block that has finished is never reported as timed out.
-    # Only that decision writes the timeout marker.
+    # session, unless it closes the descriptor. The lease reader sees EOF
+    # only once the last holder has exited, and then writes "eof" to a
+    # second FIFO, <leased>. The block's exit status comes back on a third,
+    # <status>. One read with the block's time limit decides on the status
+    # (gates_watch_wait, lib/watch.sh): no timer process, so a block that
+    # has finished is never reported as timed out, and only that decision
+    # writes the timeout marker. A second read, for the rest of the limit,
+    # waits for "eof". No sleep decides either outcome.
     local status="$outfile.status"
-    rm -f "$status"
-    if ! mkfifo "$status" 2>/dev/null; then
-        kill -TERM "$reader" 2>/dev/null
-        wait "$reader" 2>/dev/null
-        rm -f "$mark" "$lease" "$eof"
+    rm -f "$lease" "$leased" "$status"
+    if ! mkfifo "$lease" "$leased" "$status" 2>/dev/null; then
+        rm -f "$mark" "$lease" "$leased" "$status"
         SPEC_BLOCK_DETAIL="cannot watch the block: mkfifo failed"
         return 1
     fi
     (
         set -m
-        exec 6<>"$status"
+        exec 6<>"$status" 5<>"$leased"
+        SECONDS=0
+        # The reader starts first (opening the write end waits for a
+        # reader) and is its own job, so stopping the block's group does
+        # not take it along.
+        { cat "$lease" >/dev/null 2>&1; echo eof >&5; } </dev/null >/dev/null 2>&1 6>&- &
+        reader=$!
         # A git hook runs this with GIT_DIR and GIT_INDEX_FILE set (absolute
         # in a linked worktree): a block that builds a sandbox repository
         # would then add, commit and tag in the caller's repository (#173).
@@ -834,42 +873,48 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
             (cd "$root" && GATES_SPEC_EXEC=1 GATES_SPEC_BLOCK="$bid" exec bash -eo pipefail "$cmdfile") \
                 7>"$lease" >"$outfile" 2>&1 </dev/null 6>&-
             echo "$?" >&6
-        } >/dev/null 2>&1 </dev/null &
+        } >/dev/null 2>&1 </dev/null 5>&- &
         pid=$!
         stopped=""
         trap 'stopped=1; kill -TERM -- -"$pid" 2>/dev/null' HUP INT TERM
         gates_watch_wait "$timeout" 6
         brc="$GATES_WATCH_RC"
-        if [[ -z "$brc" ]]; then
+        held=1
+        if [[ -n "$brc" ]]; then
+            wait "$pid" 2>/dev/null
+            # What the block started may finish within its limit: a child
+            # it killed without waiting is gone once it releases the lease,
+            # however long that takes on a loaded machine. At least one
+            # second, so a block that ended at its limit still gets a read.
+            left=$((timeout - SECONDS))
+            [[ "$left" -ge 1 ]] || left=1
+            gates_watch_wait "$left" 5
+            [[ -n "$GATES_WATCH_RC" ]] && held=""
+            # Still in the group after the lease was released (a process
+            # that closed descriptor 7), or still holding it at the limit.
+            if gates_spec_group_alive "$pid"; then
+                : >"$leftover"
+                gates_spec_group_stop "$pid"
+            fi
+        else
             gates_spec_group_stop "$pid"
             wait "$pid" 2>/dev/null
-            # Stopped from outside (the caller was interrupted): not a timeout.
-            [[ -n "$stopped" ]] && exit 143
-            : >"$marker"
-            exit 2
         fi
-        wait "$pid" 2>/dev/null
-        # A child that is already on its way out (the block killed it
-        # without waiting) gets half a second before it counts.
-        n=0
-        while [[ $n -lt 5 ]] && gates_spec_group_alive "$pid"; do
-            sleep 0.1
-            n=$((n + 1))
-        done
-        if gates_spec_group_alive "$pid"; then
-            : >"$leftover"
-            gates_spec_group_stop "$pid"
-        fi
-        exit "$brc"
+        # A process outside the group is stopped on every path, pass or not.
+        gates_spec_detached_stop "$bid" "$procs" "$lease" "$pid" "$held" 5 ||
+            : >"$outfile.detached"
+        kill -TERM -- -"$reader" 2>/dev/null
+        wait "$reader" 2>/dev/null
+        [[ -n "$brc" ]] && exit "$brc"
+        # Stopped from outside (the caller was interrupted): not a timeout.
+        [[ -n "$stopped" ]] && exit 143
+        : >"$marker"
+        exit 2
     ) 2>/dev/null || rc=$?
-    rm -f "$status"
-    # A process outside the group is stopped on every path, pass or not.
+    rm -f "$status" "$lease" "$leased"
     local detached=""
-    gates_spec_detached_stop "$bid" "$procs" "$lease" "$eof" ||
-        detached="left a detached process running (stopped)"
-    kill -TERM "$reader" 2>/dev/null
-    wait "$reader" 2>/dev/null
-    rm -f "$lease" "$eof"
+    [[ -f "$outfile.detached" ]] && detached="left a detached process running (stopped)"
+    rm -f "$outfile.detached"
     if [[ -f "$marker" ]]; then
         rm -f "$marker" "$leftover" "$mark"
         local load
@@ -879,7 +924,11 @@ gates_spec_run_block() { # <cmdfile> <timeout-s> <root> <outfile>
     fi
     if [[ "$rc" -ne 0 ]]; then
         SPEC_BLOCK_DETAIL="exit $rc"
-        [[ -f "$leftover" ]] && SPEC_BLOCK_DETAIL="exit $rc; left a process running (stopped)"
+        # 141 is 128 + SIGPIPE: under pipefail a `| grep -q` or `| head`
+        # that exits early fails the block (#302).
+        [[ "$rc" -eq 141 ]] &&
+            SPEC_BLOCK_DETAIL="exit 141 (SIGPIPE: a pipe reader exited early under pipefail)"
+        [[ -f "$leftover" ]] && SPEC_BLOCK_DETAIL="$SPEC_BLOCK_DETAIL; left a process running (stopped)"
         SPEC_BLOCK_DETAIL="$SPEC_BLOCK_DETAIL${detached:+; $detached}"
         rm -f "$leftover" "$mark"
         return 1
@@ -936,17 +985,24 @@ gates_spec_cover_boundary() {
 # <outfile> and stderr discarded. Covered (return 0, the reason in
 # SPEC_COVER_REASON) means exit 0 and exactly one non-empty line; the line
 # is cut to 200 characters with control characters removed (FR-008).
-# Anything else returns 1 and the block runs: a non-zero exit, a timeout
-# (the script's process group is stopped), no line, several lines, a
-# script that is not executable. GATES_GATE_ROOT keeps a script that starts
-# verify.sh on this project from running the full suite inside the run.
+# Anything else returns 1 and the block runs: a non-zero exit, no line,
+# several lines, a script that is not executable. A timeout (the script's
+# process group is stopped) returns 124, so the caller can say why the
+# block ran (#295); the block runs then too. GATES_GATE_ROOT keeps a script
+# that starts verify.sh on this project from running the full suite inside
+# the run.
 gates_spec_cover_ask() { # <root> <script> <timeout-s> <feature> <task-id> <block-file> <outfile>
-    local root="$1" script="$1/$2" outfile="$7" rc=0 lines line
+    local root="$1" script="$1/$2" outfile="$7" rc=0 lines line here="$PWD"
     SPEC_COVER_REASON=""
     [[ -f "$script" && -x "$script" ]] || return 1
+    # In this shell, not a subshell: only gates_run_watched's own
+    # GATES_WATCH_DETAIL tells its timeout from a script that exits 124.
+    cd "$root" || return 1
     # shellcheck disable=SC2016  # expanded by the inner sh
-    (cd "$root" && GATES_GATE_ROOT="$root" gates_run_watched "$3" "$outfile" \
-        sh -c '"$0" "$@" 2>/dev/null' "$script" "$4" "$5" "$6") || rc=$?
+    GATES_GATE_ROOT="$root" gates_run_watched "$3" "$outfile" \
+        sh -c '"$0" "$@" 2>/dev/null' "$script" "$4" "$5" "$6" || rc=$?
+    cd "$here" 2>/dev/null || cd "$root" || :
+    [[ "$rc" -eq 124 && -n "$GATES_WATCH_DETAIL" ]] && return 124
     [[ "$rc" -eq 0 && -s "$outfile" ]] || return 1
     lines="$(awk 'END { print NR }' "$outfile")"
     [[ "$lines" == "1" ]] || return 1
@@ -995,7 +1051,9 @@ gates_spec_block_entry() { # <task> <ordinal> <verifies> <result> <reason> <decl
 #   SPEC_COVERED_NAMES "<feature> <task-id>#<n>, ..." of those blocks
 #   SPEC_RESULTS_JSON  FeatureConformance array (data-model.md)
 # In text mode (json=0) informational lines print directly: per-criterion
-# results for --accept runs and one line per not-enforced feature.
+# results for --accept runs, and one summary line counting the features
+# that are not enforced (#300). GATES_SPEC_VERBOSE=1 lists each of them
+# instead, with its Status; --json always carries every feature.
 gates_spec_gate() { # <root> <accept-arg> <json 0|1>
     local root="${1:-}" accept="${2:-}" json="${3:-0}"
     SPEC_RESULT="pass"
@@ -1033,7 +1091,7 @@ $(gates_policy_section_list spec snapshot_exclude)"
         SPEC_DETAIL="spec gate: could not create work dir (mktemp)"
         return 0
     fi
-    local failures="" results="" complete_n=0 f
+    local failures="" results="" complete_n=0 info_n=0 f
     while IFS= read -r f; do
         [[ -z "$f" ]] && continue
         SPEC_FEATURES=$((SPEC_FEATURES + 1))
@@ -1105,11 +1163,16 @@ $(gates_policy_section_list spec snapshot_exclude)"
                 [[ "$tl_fresh" == "1" ]] && SPEC_SNAP_PREV=""
                 gates_progress_start "$bname"
                 estart="$(date +%s)"
+                # Why a block under covering ran anyway, when the script
+                # ran out of time (#295): part of the block's reason.
+                local cnote=""
                 if [[ -n "$cover_b" ]]; then
-                    local cstart cend covered=0
+                    local cstart cend covered=0 crc=0
                     cstart="$estart"
                     gates_spec_cover_ask "$root" "$cover_script" "$cover_s" "$f" "$tid" \
-                        "${bfiles[$i]}" "$tmp/$f/cover-$i" && covered=1
+                        "${bfiles[$i]}" "$tmp/$f/cover-$i" || crc=$?
+                    [[ "$crc" -eq 0 ]] && covered=1
+                    [[ "$crc" -eq 124 ]] && cnote="covering timed out after ${cover_s}s; block ran"
                     cend="$(date +%s)"
                     # The script may write to the tree: the next block takes
                     # a fresh before-snapshot instead of the last after-one.
@@ -1149,6 +1212,10 @@ $(gates_policy_section_list spec snapshot_exclude)"
                     3) bres="mutation"; breason="read-only check failed" ;;
                     *) bres="fail"; breason="check failed" ;;
                 esac
+                if [[ -n "$cnote" ]]; then
+                    breason="$cnote${breason:+; $breason}"
+                    SPEC_BLOCK_DETAIL="$cnote${SPEC_BLOCK_DETAIL:+; $SPEC_BLOCK_DETAIL}"
+                fi
                 fblocks="$fblocks$(gates_spec_block_entry "$tid" "$ord" "${bverifies[$i]}" \
                     "$bres" "$breason" "" "$bdur"),"
                 gates_timeline_line "$bname" "$estart" "$bend" "$bres" "$breason"
@@ -1156,7 +1223,9 @@ $(gates_policy_section_list spec snapshot_exclude)"
                 if [[ "$brc" -eq 0 ]]; then
                     fpassed=$((fpassed + 1))
                     if [[ "$enforced" == "0" && "$json" == "0" ]]; then
-                        echo "spec: $f: \"$label\" -- pass"
+                        echo "spec: $f: \"$label\" -- pass${cnote:+ ($cnote)}"
+                    elif [[ -n "$cnote" && "$json" == "0" ]]; then
+                        echo "spec: $f: \"$label\" -- pass ($cnote)"
                     fi
                 else
                     ffailed=$((ffailed + 1))
@@ -1196,7 +1265,11 @@ $(gates_policy_section_list spec snapshot_exclude)"
             fi
         else
             outcome="informational"
-            if [[ "$json" == "0" && "$accept" != "all" && "$accept" != "$f" ]]; then
+            if [[ "$accept" != "all" && "$accept" != "$f" ]]; then
+                info_n=$((info_n + 1))
+            fi
+            if [[ "$json" == "0" && "$accept" != "all" && "$accept" != "$f" \
+                && "${GATES_SPEC_VERBOSE:-}" == "1" ]]; then
                 local status
                 status="$(gates_spec_status "$fdir/spec.md")"
                 # Display-clip the raw Status value (issue #34): enforcement
@@ -1223,6 +1296,11 @@ $(gates_policy_section_list spec snapshot_exclude)"
     done <<<"$(gates_spec_features "$root")"
     SPEC_RESULTS_JSON="[${results%,}]"
     rm -rf "$tmp"
+    # One line for every feature not enforced, not one each (#300): a
+    # repository with many open specs would bury the gate summary.
+    if [[ "$json" == "0" && "$info_n" -gt 0 && "${GATES_SPEC_VERBOSE:-}" != "1" ]]; then
+        echo "spec: $info_n informational, $complete_n enforced -- not enforced unless spec.md says exactly **Status**: Complete (GATES_SPEC_VERBOSE=1 lists each)"
+    fi
     # Every covered block is named in the summary, so --json names it too
     # (constitution, Principle III); with none covered the detail is as
     # before.

@@ -1,5 +1,6 @@
 #!/bin/bash
 # shellcheck shell=bash
+# gates: honours GATES_RUNTIME_DIR (#316)
 set -euo pipefail
 
 # Behavioral probe (#74): answers for pre-merge-commit itself, so the probe
@@ -18,5 +19,6 @@ fi
 # pre-commit checks unchanged: git calls it with no arguments, after the
 # merge result is in the index, so the staged files are what the merge
 # brings in. Needs git 2.24 or later; older git never calls it.
+# It runs the pre-commit hook next to it, which honours GATES_RUNTIME_DIR.
 export GATES_GIT_HOOK=pre-merge-commit
 exec bash "$(dirname "${BASH_SOURCE[0]}")/pre-commit" "$@"

@@ -114,6 +114,9 @@ gates_contract_deviations() { # <snapshot> <effective> [delta]
         def sev_rank: { "error": 0, "warning": 1, "info": 2, "off": 3 };
         def git_toggles: ["block_main_commits", "conventional_commits", "forbid_ai_isms",
                           "protected_change_trailer", "block_bulk_staging"];
+        # Toggles that relax a protection when on (#313): true is the
+        # weaker side, and an absent key is its default, false.
+        def git_relaxers: ["allow_force_with_lease_on_branches"];
         def leaves: [ paths(type != "object") | select(all(.[]; type == "string"))
                       | select(any(.[]; startswith("_")) | not) ];
         def hook_names: (.hooks // {}) | if type == "object" then
@@ -188,6 +191,7 @@ gates_contract_deviations() { # <snapshot> <effective> [delta]
               + (if $mode == "delta" then ($eff | leaves)
                  else [ $eff | leaves | .[]
                         | select((. == ["hooks", "verify-quality", "test_severity"])
+                                 or (length == 2 and .[0] == "git" and (.[1] | IN(git_relaxers[])))
                                  or (. == ["hooks", "verify-quality", "gate_timeout_s"])
                                  or (is_gate_field(.) and (.[3] | IN($bg[])))
                                  or (.[0:2] == ["spec", "cover"] and $bc != null)) ] end) )
@@ -205,7 +209,10 @@ gates_contract_deviations() { # <snapshot> <effective> [delta]
             | ($p | last | tostring) as $leaf
             | ($bv // sev_default($p)) as $bs
             | ($ev // sev_default($p)) as $es
-            | ( if ($leaf == "enabled"
+            | ( if ($p | length) == 2 and $p[0] == "git" and ($leaf | IN(git_relaxers[]))
+                   and (($bv // false) | type) == "boolean" and (($ev // false) | type) == "boolean" then
+                  (if ($ev // false) then "weakened" else "strengthened" end)
+                elif ($leaf == "enabled"
                     or ($p | length) == 2 and $p[0] == "git" and ($leaf | IN(git_toggles[])))
                    and ($bv | type) == "boolean" and ($ev | type) == "boolean" then
                   (if $bv then "weakened" else "strengthened" end)

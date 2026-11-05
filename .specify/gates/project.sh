@@ -9,7 +9,11 @@ set -uo pipefail
 # file write per runtime file (issue #72).
 #
 #   bash .specify/extensions/gates/runtime/project.sh [options]   # install / upgrade
-#   bash .specify/gates/project.sh --check                        # projected copy
+#   bash .specify/gates/project.sh [options]                      # projected copy
+#
+# Both copies take every option. The projected copy checks the install
+# state, then hands the whole invocation to the installed copy, which does
+# the work.
 #
 # Contract: specs/005-upgrade-safe-projection/contracts/project-sh.md.
 # Never writes .specify/gates/policy.json. Never runs without a policy.
@@ -42,7 +46,7 @@ refuse() { # <message...>: exit 2 before anything is written
 inlist() { [[ -n "$1" ]] && grep -qxF -- "$2" <<<"$1"; }
 addline() { if [[ -z "$1" ]]; then printf '%s' "$2"; else printf '%s\n%s' "$1" "$2"; fi; }
 
-ARGS="$*" # for the projected copy's hand-off to the installed one
+ARGS=("$@") # for the projected copy's hand-off to the installed one
 DRY=0 CHECK=0 AGENT=1 GITHOOKS=1 DOWNGRADE=0 SKIPCANARY=0 LINTIGN=0 PROBEGIT=0 WIREMGR=0
 TAKE="" KEEP=""
 while [[ $# -gt 0 ]]; do
@@ -58,7 +62,7 @@ while [[ $# -gt 0 ]]; do
         --probe-git) PROBEGIT=1 ;;
         --wire-manager) WIREMGR=1 ;;
         --skip-canary) SKIPCANARY=1 ;;
-        -h | --help) sed -n '5,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h | --help) sed -n '5,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) refuse "unknown option: $1 (see --help)" ;;
     esac
     shift
@@ -105,12 +109,11 @@ if [[ "$SRC" -ef "$ROOT/.specify/gates" ]]; then
         absent) refuse "the gates extension is not installed. Install it: $REL_ADD" ;;
     esac
     [[ -f "$VEND/project.sh" ]] || refuse "the installed extension has no project.sh (older than 0.4.0?). Upgrade it: $REL_ADD"
-    if [[ "$CHECK" -eq 1 ]]; then
-        # Same flags, so a --no-agent-hooks project is checked as one.
-        # shellcheck disable=SC2086  # the original options, split as typed
-        exec bash "$VEND/project.sh" $ARGS
-    fi
-    refuse "run the installed copy, not the projected one: bash .specify/extensions/gates/runtime/project.sh"
+    # Every invocation goes to the installed copy with the caller's options
+    # as given (#315): --check checks a --no-agent-hooks project as one,
+    # and --keep-local or --add-lint-ignores do what they say. exec, so
+    # this file is not read again while the projection rewrites it.
+    exec bash "$VEND/project.sh" ${ARGS[@]+"${ARGS[@]}"}
 fi
 VENDORED=0
 if [[ "$SRC" -ef "$VEND" ]]; then
@@ -254,11 +257,12 @@ fi
 NEED_RTV=0
 [[ "$(head -n 1 "$RTV_FILE" 2>/dev/null || true)" == "$VERSION" ]] || NEED_RTV=1
 GI="$ROOT/.specify/gates/.gitignore"
-# The attestation log and the gate lock (#263) are run-time files, never
-# source: one line each, added when missing.
+# The attestation log, the gate lock (#263) and the per-gate failure
+# output (output/<gate>.log) are run-time files, never source: one line
+# each, added when missing.
 NEED_GI=0
 GI_ADD=""
-for gi_line in attestations.jsonl .lock/; do
+for gi_line in attestations.jsonl .lock/ output/; do
     grep -qxF "$gi_line" "$GI" 2>/dev/null && continue
     NEED_GI=1
     GI_ADD="$(addline "$GI_ADD" "$gi_line")"
@@ -327,6 +331,12 @@ if [[ "$GITHOOKS" -eq 1 ]]; then
                 [[ -x "$f.legacy" ]] && LEGACY=1
             fi
             if [[ "$MANAGER" == "husky" || "$MANAGER" == "lefthook" || "$MANAGER" == "pre-commit" ]]; then
+                # A copied gates hook or an older stub is replaced with the
+                # stub whatever the manager's config says (#314): git runs
+                # it until the manager's install command replaces it.
+                if [[ "$MANAGER" != "husky" && -e "$f" ]] && ! cmp -s "$STUB" "$f" && gates_hook_is_gates "$f" "$n"; then
+                    HOOKPLAN="$(addline "$HOOKPLAN" "$n")"
+                fi
                 if [[ "$LEGACY" -eq 1 && "$WIREMGR" -eq 0 ]]; then
                     :
                 elif ! gates_manager_wired "$ROOT" "$MANAGER" "$n"; then
@@ -352,8 +362,10 @@ if [[ "$GITHOOKS" -eq 1 ]]; then
                 fi
             elif [[ ! -e "$f" ]] || cmp -s "$STUB" "$f"; then
                 { [[ -e "$f" ]] && [[ -x "$f" ]]; } || HOOKPLAN="$(addline "$HOOKPLAN" "$n")"
-            elif grep -q 'spec-gates hook stub\|Git commit-msg hook\.\|Git pre-commit hook --' "$f"; then
-                HOOKPLAN="$(addline "$HOOKPLAN" "$n")" # an older stub or a copied gates hook
+            elif gates_hook_is_gates "$f" "$n"; then
+                # An older stub, a copied gates hook, or a hook that only
+                # calls the gates hook (#298): the stub runs the same.
+                HOOKPLAN="$(addline "$HOOKPLAN" "$n")"
             elif ! gates_calls_through "$f" "$n"; then
                 FOREIGN="$(addline "$FOREIGN" "$n")"
             fi
@@ -521,16 +533,24 @@ report_side() {
         # Before the manager's install command replaces them, the gates
         # stubs still run (#203): name those apart, so the summary does
         # not claim a hook runs no gates when it does today.
+        # Named by what git runs now (#314): the stub, or a copied gates
+        # hook this run replaces with the stub (--check and --dry-run
+        # leave it in place).
+        local copyrun=""
         for n in $MGRPLAN; do
-            if [[ "$(gates_hook_owner "$ROOT" "$n")" == "gates" ]]; then
+            if [[ "$(gates_hook_owner "$ROOT" "$n")" != "gates" ]]; then
+                notrun="$notrun $n"
+            elif cmp -s "$STUB" "$HOOKSDIR/$n"; then
                 stubrun="$stubrun $n"
             else
-                notrun="$notrun $n"
+                copyrun="$copyrun $n"
             fi
         done
         [[ -n "$notrun" ]] && say "$MANAGER owns the git hooks and does not run gates for:$notrun"
         [[ -n "$stubrun" ]] \
             && say "$(gates_manager_file "$ROOT" "$MANAGER" pre-commit) has no gates entry for:$stubrun (git still runs the gates stub for them, until $MANAGER's install command replaces it)"
+        [[ -n "$copyrun" ]] \
+            && say "$(gates_manager_file "$ROOT" "$MANAGER" pre-commit) has no gates entry for:$copyrun (git runs an older gates hook for them; projection replaces it with the gates stub, which runs until $MANAGER's install command replaces it)"
         for n in $MGRPLAN; do
             mf="$(gates_manager_file "$ROOT" "$MANAGER" "$n")"
             if gates_manager_appendable "$ROOT" "$MANAGER" "$n"; then

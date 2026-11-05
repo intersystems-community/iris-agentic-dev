@@ -101,6 +101,12 @@
           "x-since": "0.4.0",
           "description": "Refuse bulk staging at the agent boundary: git add -A / --all / . / :/ / *, or a directory argument. Explicit file paths, -u, --renormalize, git commit -a and -p stay allowed. The git boundary cannot tell how the index was filled, so this rule is agent-boundary only."
         },
+        "allow_force_with_lease_on_branches": {
+          "type": "boolean",
+          "default": false,
+          "x-since": "0.6.0",
+          "description": "Let the agent run git push --force-with-lease (that exact form; never --force, -f, --force-with-lease=<ref>, a +refspec, --mirror or --all) when it names the remote and only branches other than main, master and the remote's default branch (refs/remotes/<remote>/HEAD, which must be known). Every other force push stays refused. Weakens enforcement: under a policy contract, turning it on is a weakening deviation."
+        },
         "ai_branding": {
           "type": "object",
           "additionalProperties": false,

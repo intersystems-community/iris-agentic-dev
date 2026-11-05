@@ -202,7 +202,8 @@ builtin_rules() {
     # test such as test_no_secret_leak.py, a token parser) asks the human
     # instead: blocking it outright left no way to edit such files at all.
     if [[ -z "$BLOCKED" && -z "$NAMEASK" ]]; then
-        _word="$(echo "$BASENAME" | grep -oiE 'credentials|secret|password|token|keystore' | head -n 1 || true)"
+        _word="$(grep -oiE 'credential|secret|passw(or)?d|token|keystore' <<<"$BASENAME" || true)"
+        _word="${_word%%$'\n'*}"
         [[ -n "$_word" ]] && NAMEASK="the file name contains '$_word'; confirm $FILE_PATH does not hold a credential"
     fi
 
