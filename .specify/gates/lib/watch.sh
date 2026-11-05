@@ -74,8 +74,16 @@ gates_watch_wait() { # <timeout-s> <fd>
 # decision writes the timeout marker, so a command that exits 124 by
 # itself leaves GATES_WATCH_DETAIL empty. Call it in the caller's own
 # shell (not in $( )), or GATES_WATCH_DETAIL is lost.
+#
+# With GATES_WATCH_STREAM=1 (verify.sh's run_gate under GATES_VERBOSE=1,
+# #309), the output also goes to the caller's stderr through tee, on
+# descriptor 7. The status is then written when the output ends: a
+# process the command leaves holding it keeps the gate running, up to the
+# limit.
 gates_run_watched() { # <timeout-s> <outfile> <cmd...>
     local timeout="$1" outfile="$2" marker="$2.timedout" fifo="$2.status" rc=0 load
+    local stream_fd=-
+    [[ "${GATES_WATCH_STREAM:-}" == "1" ]] && stream_fd=2
     shift 2
     GATES_WATCH_DETAIL=""
     rm -f "$marker" "$fifo"
@@ -94,8 +102,13 @@ gates_run_watched() { # <timeout-s> <outfile> <cmd...>
         {
             trap : HUP INT TERM
             gates_git_env_clear
-            "$@" >"$outfile" 2>&1 </dev/null 6>&-
-            echo "$?" >&6
+            if [[ "$stream_fd" == "2" ]]; then
+                "$@" 2>&1 </dev/null 6>&- 7>&- | tee "$outfile" >&7 6>&- 7>&-
+                echo "${PIPESTATUS[0]}" >&6
+            else
+                "$@" >"$outfile" 2>&1 </dev/null 6>&- 7>&-
+                echo "$?" >&6
+            fi
         } >/dev/null 2>&1 </dev/null &
         pid=$!
         stopped=""
@@ -111,7 +124,7 @@ gates_run_watched() { # <timeout-s> <outfile> <cmd...>
         # Stopped from outside (the caller was interrupted): not a timeout.
         [[ -n "$stopped" ]] || : >"$marker"
         exit "$crc"
-    ) 2>/dev/null || rc=$?
+    ) 7>&"$stream_fd" 2>/dev/null || rc=$?
     rm -f "$fifo"
     if [[ -f "$marker" ]]; then
         rm -f "$marker"

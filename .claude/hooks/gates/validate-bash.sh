@@ -355,9 +355,16 @@ if [[ -z "$BLOCKED" ]]; then
     done < <(grep -oE '(^|[^[:alnum:]_.-])rm[[:space:]]+[^;&|`]*' <<<"$RMCMD" || true)
 fi
 
-# Force push
+# Force push. The refusal names what to do instead (#313).
+FORCE_ALT="
+Instead: push without force (integrate the remote branch first: git pull --rebase or a merge),
+push the rewritten history to a new branch, or let the forge rebase the merge request
+(GitLab: PUT /projects/:id/merge_requests/:iid/rebase; GitHub: the pull request's Update branch).
+A human can run the force push outside the agent. With git.allow_force_with_lease_on_branches,
+git push --force-with-lease <remote> <branch> to a branch other than main, master and the
+remote's default branch is allowed."
 if grep -qE 'git\s+push\s+(.*\s)?(-f|--force)(\s|$)' <<<"$COMMAND"; then
-    BLOCKED="git push --force"
+    BLOCKED="git push --force$FORCE_ALT"
 fi
 
 # Hard reset
@@ -518,7 +525,8 @@ after_eq() {
 }
 git_scan() {
     local seg t a v base cdir sub n i dashdash xa whole staged wtree force seqoff k dq sq
-    local -a p
+    local lease lease_all pskip
+    local -a p pos
     local hskip=""
     local scwd="$CWD"
     local asg='^[A-Za-z_][A-Za-z0-9_]*='
@@ -610,6 +618,10 @@ git_scan() {
         staged=0
         wtree=0
         force=""
+        lease=0
+        lease_all=""
+        pskip=0
+        pos=()
         while [[ "$i" -lt "$n" ]]; do
             a="${w[i]}"
             i=$((i + 1))
@@ -671,13 +683,27 @@ git_scan() {
             t="$UQ"
             case "$sub" in
                 push)
+                    # An option's value is no remote or refspec.
+                    if [[ "$pskip" -eq 1 ]]; then
+                        pskip=0
+                        continue
+                    fi
                     if [[ "$dashdash" -eq 0 ]]; then
                         case "$t" in
+                            # Only the bare form (#313): it may pass under
+                            # git.allow_force_with_lease_on_branches, decided
+                            # from the LEASE line below. --force-if-includes
+                            # forces nothing on its own.
+                            --force-with-lease) lease=1; continue ;;
+                            --force-if-includes) continue ;;
                             --force* | --mirror) printf 'FORCE git push %s\n' "$t" ;;
                             --delete) printf 'PUSHDEL git push %s\n' "$t" ;;
+                            --all | --branches | --tags) lease_all="$t" ;;
+                            --push-option | --repo | --receive-pack | --exec) pskip=1 ;;
                             --*) ;;
                             -*f*) printf 'FORCE git push %s\n' "$t" ;;
                             -*d*) printf 'PUSHDEL git push %s\n' "$t" ;;
+                            -o) pskip=1 ;;
                         esac
                     fi
                     # `+ref` forces that ref; `:ref` deletes it.
@@ -685,6 +711,7 @@ git_scan() {
                         +?*) printf 'FORCE git push %s\n' "$t" ;;
                         :?*) printf 'PUSHDEL git push %s\n' "$t" ;;
                     esac
+                    [[ "$dashdash" -eq 1 || "$t" != -* ]] && pos+=("$t")
                     continue
                     ;;
                 stash)
@@ -836,6 +863,16 @@ git_scan() {
         if [[ -n "$force" && "$dashdash" -eq 0 ]]; then
             printf 'DESTRUCT git checkout %s\n' "$force"
         fi
+        # --force-with-lease (#313): with --all, --branches or --tags it
+        # forces every ref it pushes; otherwise the remote and refspecs go
+        # on a LEASE line, "<dir>\t<words>", for the policy check below.
+        if [[ "$sub" == push && "$lease" -eq 1 ]]; then
+            if [[ -n "$lease_all" ]]; then
+                printf 'FORCE git push --force-with-lease %s\n' "$lease_all"
+            else
+                printf 'LEASE %s\t%s\n' "$base" "${pos[*]:-}"
+            fi
+        fi
     done < <(printf '%s\n' "$COMMAND" | awk '
         # A `...` substitution is an argument this cannot resolve: it
         # stands in as $SUBST, and its own text is scanned as a command.
@@ -864,8 +901,73 @@ if [[ -n "$DESTRUCT" ]]; then
     BLOCKED="$DESTRUCT (discards uncommitted work)"
 fi
 FORCE="$(awk '/^FORCE / { sub(/^FORCE /, ""); print; exit }' <<<"$GIT_SCAN")"
+# lease_target_ok <dir> <words>: 0 when git.allow_force_with_lease_on_branches
+# is on and the push names a remote and only branches that are neither main,
+# master nor the remote's default branch (#313). Anything it cannot read --
+# the policy, a refspec, the remote's default branch -- refuses; LEASE_WHY
+# says why.
+LEASE_WHY=""
+lease_policy_on() {
+    local pf="$LROOT/.specify/gates/policy.json" v
+    [[ -f "$pf" ]] || return 1
+    if [[ -z "$DEGRADED" ]]; then
+        v="$(jq -r '.git.allow_force_with_lease_on_branches // false' "$pf" 2>/dev/null)" || return 1
+        [[ "$v" == "true" ]]
+        return
+    fi
+    grep -qE '"allow_force_with_lease_on_branches"[[:space:]]*:[[:space:]]*true' <<<"$(tr '\n' ' ' <"$pf")"
+}
+lease_target_ok() { # <dir> <words>
+    local dir="$1" remote dflt r dst
+    local -a words=()
+    read -r -a words <<<"$2" || true
+    if [[ -z "$dir" ]]; then
+        LEASE_WHY="the repository it runs in is unknown (a cd this check cannot follow)"
+        return 1
+    fi
+    if [[ "${#words[@]}" -lt 2 ]]; then
+        LEASE_WHY="it names no branch; name the remote and the branch (git push --force-with-lease origin <branch>)"
+        return 1
+    fi
+    remote="${words[0]}"
+    if ! [[ "$remote" =~ ^[A-Za-z0-9._-]+$ ]] \
+        || ! dflt="$(git -C "$dir" symbolic-ref --quiet --short "refs/remotes/$remote/HEAD" 2>/dev/null)"; then
+        LEASE_WHY="the default branch of remote '$remote' is unknown (git remote set-head $remote --auto records it)"
+        return 1
+    fi
+    dflt="${dflt#"$remote"/}"
+    for r in "${words[@]:1}"; do
+        dst="${r##*:}"
+        dst="${dst#refs/heads/}"
+        if ! [[ "$dst" =~ ^[A-Za-z0-9._][A-Za-z0-9._/-]*$ ]] || [[ "$dst" == HEAD || "$dst" == refs/* ]]; then
+            LEASE_WHY="'$r' names no branch this check can read"
+            return 1
+        fi
+        case "$dst" in
+            main | master | "$dflt")
+                LEASE_WHY="'$dst' is the default or a protected branch"
+                return 1
+                ;;
+        esac
+    done
+    return 0
+}
+if [[ -z "$FORCE" ]]; then
+    while IFS= read -r _lease; do
+        [[ -n "$_lease" ]] || continue
+        _lease="${_lease#LEASE }"
+        if ! lease_policy_on; then
+            FORCE="git push --force-with-lease"
+            break
+        fi
+        if ! lease_target_ok "${_lease%%$'\t'*}" "${_lease#*$'\t'}"; then
+            FORCE="git push --force-with-lease ($LEASE_WHY)"
+            break
+        fi
+    done < <(grep '^LEASE ' <<<"$GIT_SCAN" || true)
+fi
 if [[ -n "$FORCE" ]]; then
-    BLOCKED="$FORCE (force push)"
+    BLOCKED="$FORCE (force push)$FORCE_ALT"
 fi
 PUSHDEL="$(awk '/^PUSHDEL / { sub(/^PUSHDEL /, ""); print; exit }' <<<"$GIT_SCAN")"
 if [[ -n "$PUSHDEL" ]]; then

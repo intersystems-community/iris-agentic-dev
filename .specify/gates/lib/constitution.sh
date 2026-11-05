@@ -667,7 +667,14 @@ _gates_const_eval_ci() { # <ref> <root>
         return 0
     fi
     local body re
-    body="$(gates_ci_body "$root")"
+    # The live pipeline text is the same for every ci principle of a run;
+    # proving it is most of the check's cost (#334), so the loops prime it
+    # once (_gates_const_ci_prime) and each call reuses it.
+    if [[ "${_GATES_CONST_CI_ROOT-}" == "$root" && -n "${_GATES_CONST_CI_ROOT+x}" ]]; then
+        body="$_GATES_CONST_CI_BODY"
+    else
+        body="$(gates_ci_body "$root")"
+    fi
     if [[ -z "$body" ]]; then
         echo missing
         return 0
@@ -876,6 +883,17 @@ _gates_const_proposed() { # <surface> <ref> <expect>
     esac
 }
 
+# Prove <root>'s pipelines once for this run and keep the live text, so the
+# ci evaluations below (each in its own $( ) subshell) reuse it (#334).
+# Called in the loop's own shell; check and align clear it when they
+# start, so a later call never reuses an earlier call's pipelines.
+_gates_const_ci_prime() { # <root>
+    [[ "${_GATES_CONST_CI_ROOT-}" == "$1" && -n "${_GATES_CONST_CI_ROOT+x}" ]] && return 0
+    declare -f gates_ci_body >/dev/null 2>&1 || return 0
+    _GATES_CONST_CI_BODY="$(gates_ci_body "$1")"
+    _GATES_CONST_CI_ROOT="$1"
+}
+
 # Evaluate one annotated principle's surface. Echoes "state<TAB>proposed".
 _gates_const_eval_surface() { # <surface> <ref> <expect> <root>
     local surface="${1:-}" ref="${2:-}" expect="${3:-}" root="${4:-}"
@@ -909,11 +927,14 @@ gates_const_align() { # <root> <constitution> [<policy-override>]
         return 1
     }
     [[ -n "$policy" ]] && export GATES_POLICY_FILE="$policy"
+    # The pipeline proof is cached for this call only (#334).
+    unset _GATES_CONST_CI_ROOT _GATES_CONST_CI_BODY
     local tag line name surface ref expect
     while IFS=$'\t' read -r tag line name surface ref expect; do
         [[ "$tag" == "PRINCIPLE" ]] || continue
         [[ -z "$surface" ]] && continue
         local sp
+        [[ "$surface" == "ci" ]] && _gates_const_ci_prime "$root"
         sp="$(_gates_const_eval_surface "$surface" "$ref" "$expect" "$root")"
         printf '%s\t%s\t%s\t%s\n' "$name" "$surface" "$ref" "$sp"
     done <<<"$(gates_const_parse "$constitution")"
@@ -938,6 +959,8 @@ gates_const_check_raw() { # <root> <constitution> [<policy>]
         return 1
     }
     [[ -n "$policy" ]] && export GATES_POLICY_FILE="$policy"
+    # The pipeline proof is cached for this call only (#334).
+    unset _GATES_CONST_CI_ROOT _GATES_CONST_CI_BODY
     local rc=0 unann=0
     local tag line name surface ref expect
     while IFS=$'\t' read -r tag line name surface ref expect; do
@@ -958,6 +981,7 @@ gates_const_check_raw() { # <root> <constitution> [<policy>]
                     continue
                 fi
                 local sp state
+                [[ "$surface" == "ci" ]] && _gates_const_ci_prime "$root"
                 sp="$(_gates_const_eval_surface "$surface" "$ref" "$expect" "$root")"
                 state="${sp%%$'\t'*}"
                 if [[ "$state" == "active" ]]; then

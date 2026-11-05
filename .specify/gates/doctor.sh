@@ -187,6 +187,43 @@ install_checks() {
             esac
         done < <(jq -r '(.extensions.gates.registered_commands.claude // [])[]' "$REG" 2>/dev/null)
         [[ "$reg_ok" -gt 0 ]] && echo "${OK}$reg_ok registered gates command(s) installed as regular files"
+        # A registry entry whose registered_commands lists no command for
+        # any agent (#311): Spec Kit registered nothing, so no
+        # /speckit.gates.* command loads, and the loop above had nothing to
+        # check. registered_skills says nothing here: Spec Kit 1.2.x leaves
+        # it empty on a healthy install. An entry without the key at all
+        # (older Spec Kit) is not judged.
+        REG_FIX="run \`specify integration upgrade --force\` (or reinstall the extension, README \"Upgrade\")"
+        if jq -e '.extensions.gates | has("registered_commands")' "$REG" >/dev/null 2>&1 \
+            && ! jq -e '[.extensions.gates.registered_commands[]? | arrays | .[]] | length > 0' "$REG" >/dev/null 2>&1; then
+            echo "${BAD}the extension registry lists no gates command for any agent, so no /speckit.gates.* command loads — $REG_FIX"
+            MISSING=$((MISSING + 1))
+        fi
+        # A partial registration: every command extension.yml provides must
+        # be registered for claude, the agent whose files are checked above.
+        reg_claude="$(jq -r '(.extensions.gates.registered_commands.claude // [])[]' "$REG" 2>/dev/null)"
+        EXT_YML="$PROJECT_ROOT/.specify/extensions/gates/extension.yml"
+        if [[ -n "$reg_claude" && -f "$EXT_YML" ]]; then
+            while IFS= read -r rcmd; do
+                [[ -n "$rcmd" ]] || continue
+                grep -qxF "$rcmd" <<<"$reg_claude" && continue
+                echo "${BAD}$rcmd is provided by the extension but not registered for claude, so it does not load — $REG_FIX"
+                MISSING=$((MISSING + 1))
+            done < <(awk '/^provides:/ { p = 1; next } p && /^[^ #]/ { p = 0 }
+                p && /^    - name:[ \t]*["\047]?speckit\.gates\./ {
+                    sub(/^    - name:[ \t]*/, ""); gsub(/["\047]/, ""); sub(/[ \t]+$/, ""); print }' "$EXT_YML")
+        fi
+    fi
+    # Gates skills rendered by an older Spec Kit (#311) record their
+    # origin as `source: gates:commands/...`. Spec Kit now claims an
+    # extension's skills by `source: extension:gates` and leaves any other
+    # skill alone on remove and upgrade, so these are never updated.
+    REG_OLD=0
+    for rf in "$PROJECT_ROOT"/.claude/skills/speckit-gates-*/SKILL.md; do
+        [[ -f "$rf" ]] && grep -qE '^[[:space:]]*source:[[:space:]]*["'"'"']?gates:' "$rf" && REG_OLD=$((REG_OLD + 1))
+    done
+    if [[ "$REG_OLD" -gt 0 ]]; then
+        echo "${REC}$REG_OLD gates skill(s) carry the old registration (source: gates:commands/...), which Spec Kit no longer updates or removes — run \`specify integration upgrade --force\` (or reinstall the extension, README \"Upgrade\")"
     fi
     if [[ -d "$PROJECT_ROOT/.specify/extensions/gates/.specify-dev" ]]; then
         echo "${REC}this is a --dev install (for developing spec-gates itself); other clones will not have its files — install from a release zip"
@@ -763,6 +800,9 @@ if declare -f gates_spec_features >/dev/null 2>&1 \
                     MISSING=$((MISSING + 1))
                     ferrors=$((ferrors + 1))
                     ;;
+                # A block that may fail by itself (#302): a nudge, since
+                # refusing it would break blocks that pass today.
+                WARN) echo "${REC}specs/$f/tasks.md:$a1: $a2" ;;
                 BLOCK) nblocks=$((nblocks + 1)) ;;
                 TASKS)
                     tasks_total="$a1"
@@ -776,7 +816,7 @@ if declare -f gates_spec_features >/dev/null 2>&1 \
             [[ "$ferrors" -eq 0 ]] \
                 && echo "${OK}$f — Complete, $nblocks accept block(s), enforced"
         elif [[ "$tasks_total" -gt 0 && "$tasks_unchecked" -eq 0 ]]; then
-            echo "${REC}$f — every task checked but Status is not Complete; set **Status**: Complete in spec.md to turn enforcement on"
+            echo "${REC}$f — every task checked but Status is not Complete; set **Status**: Complete in spec.md to turn enforcement on; its accept blocks then run at the agent, git and ci boundaries, so check their runtime and network needs first"
         elif [[ "$ferrors" -eq 0 ]]; then
             echo "${SKIP}$f — $nblocks accept block(s), not enforced ($tasks_unchecked of $tasks_total tasks open)"
         fi
@@ -884,6 +924,12 @@ elif git -C "$PROJECT_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
                     echo "${REC}$h runs gates twice: .pre-commit-config.yaml calls the gates hook as well (fix: \`pre-commit install -f --hook-type $h\` deletes $h.legacy)"
                 fi
             fi
+        elif [[ "$DOC_MGR" != "husky" ]] && declare -f gates_hook_delegates >/dev/null 2>&1 \
+            && gates_hook_delegates "$hf" "$h"; then
+            # Its only command calls the gates hook (#298), as the 0.3.x
+            # hand-written hooks do: gates code, so the probe below runs it.
+            echo "${OK}$h installed, executable, delegates to the gates runtime"
+            echo "${REC}$h only calls .specify/gates/hooks/$h — run /speckit.gates.upgrade to replace it with the gates stub (it also fails closed when this branch's hook goes missing)"
         elif declare -f gates_calls_through >/dev/null 2>&1 && gates_calls_through "$hf" "$h"; then
             # The call-through to .specify/gates/hooks/<name> on a line that
             # runs, not any mention of "gates" (#128).

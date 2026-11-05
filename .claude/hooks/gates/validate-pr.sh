@@ -130,18 +130,30 @@ HEREDOC = re.compile(
     r"\$\(\s*cat\s*<<-?\s*(?:'(\w+)'|\"(\w+)\"|\\(\w+)|(\w+))[^\n]*\n(.*?)\n[ \t]*(?:\1|\2|\3|\4)[ \t]*\n\s*\)",
     re.DOTALL,
 )
+# glab has no description-file flag (#312): `"$(cat <path>)"` and
+# `"$(<path)"` with a literal path, as the whole word, are read as one.
+# A word that is only that comes out as FILEMARK + the path; anything else
+# in the substitution, or around it, leaves the word dynamic.
+CATFILE = re.compile(r"\$\(\s*(?:cat\s+|<\s*)([A-Za-z0-9_./~+@%,=:-]+)\s*\)")
+FILEMARK = "\x00file\x00"
 
 
 def lex(s):
     segs, toks = [], []
-    text, lit, inword = [], True, False
+    text, lit, inword, fileref = [], True, False, None
     i, n = 0, len(s)
 
     def end_word():
-        nonlocal text, lit, inword
+        nonlocal text, lit, inword, fileref
         if inword:
-            toks.append(("".join(text), lit))
-        text, lit, inword = [], True, False
+            word = "".join(text)
+            if fileref is not None:
+                if word == FILEMARK:
+                    word = FILEMARK + fileref
+                else:
+                    word = word.replace(FILEMARK, "$(cat %s)" % fileref)
+            toks.append((word, lit))
+        text, lit, inword, fileref = [], True, False, None
 
     def end_seg():
         nonlocal toks
@@ -182,6 +194,12 @@ def lex(s):
                         if m.group(4) and re.search(r"[$`\\]", body):
                             lit = False
                         text.append(body)
+                        i = m.end()
+                        continue
+                    m = CATFILE.match(s, i)
+                    if m:
+                        fileref, lit = m.group(1), False
+                        text.append(FILEMARK)
                         i = m.end()
                         continue
                 if s[i] in "$`":
@@ -241,8 +259,12 @@ def out(**kw):
     sys.exit(0)
 
 
+# The tool of the PR command being read, for the refusal's advice.
+TOOL = ["gh"]
+
+
 def refuse(msg):
-    out(error=msg)
+    out(error=msg, tool=TOOL[0])
 
 
 PR_SUBS = {
@@ -331,6 +353,11 @@ def parse_pr(kind, args):
         if key == "body_file":
             if "`" in val or "$(" in val:
                 refuse("ERROR: the %s path is a command substitution." % name)
+        elif kind == "glab" and key == "body" and val.startswith(FILEMARK):
+            # --description "$(cat <path>)": the file is read and checked.
+            found[key] = None
+            found["body_file"] = val[len(FILEMARK):]
+            continue
         elif not vlit:
             refuse("ERROR: the %s value is not literal text (a variable, command substitution, glob or unbalanced quote)." % name)
         found[key] = val
@@ -404,6 +431,8 @@ pr_re = re.compile(r"(gh" + repo_opt + r"\s+pr\s+(create|new|edit)|glab" + repo_
 result, ask = None, None
 for seg in lex(command):
     kind, args, via = find_pr(seg)
+    if kind is not None:
+        TOOL[0] = "gh" if kind == "api" else kind
     if kind is None:
         # A PR command inside a shell string (sh -c, eval) is not read here.
         words = [t[0] for t in seg]
@@ -441,7 +470,7 @@ for seg in lex(command):
 if result is None:
     out(pr=False, ask=ask or "")
 out(pr=True, title=result.get("title") or "", body=result.get("body") or "",
-    body_file=result.get("body_file") or "", ask=ask or "")
+    body_file=result.get("body_file") or "", tool=TOOL[0], ask=ask or "")
 PYEOF
 }
 # Project-owned rules (#71) run once every shipped check allowed, so they
@@ -461,6 +490,14 @@ run_local_rules() {
 PARTS=$(pr_parts "$COMMAND")
 
 PARSE_ERROR=$(printf '%s' "$PARTS" | jq -r '.error // empty')
+TOOL=$(printf '%s' "$PARTS" | jq -r '.tool // "gh"')
+if [[ -n "$PARSE_ERROR" && "$TOOL" == glab ]]; then
+    # glab has no --body and no description-file flag (#312).
+    # shellcheck disable=SC2016  # literal advice text
+    refuse "$PARSE_ERROR" "  A title or description this hook cannot read is one it cannot check. Pass each" \
+        "  once, as quoted text (--title \"...\" --description '...'), or the description" \
+        '  from a file as --description "$(cat <path>)" (glab has no description-file flag).'
+fi
 if [[ -n "$PARSE_ERROR" ]]; then
     refuse "$PARSE_ERROR" "  A title or body this hook cannot read is one it cannot check. Pass each once," \
         "  as quoted text (--title \"...\" --body '...') or with --body-file <path>."
@@ -498,11 +535,19 @@ resolve_body_file() { # <path>
 }
 
 # Fail closed (issue #65): a body this hook cannot read is a body it cannot
-# check -- refuse instead of validating the title alone.
+# check -- refuse instead of validating the title alone. For glab the file
+# is the one --description "$(cat <path>)" reads (#312).
+BF_FLAG="--body-file $BODY_FILE"
+BF_ALT="--body"
+if [[ "$TOOL" == glab ]]; then
+    # shellcheck disable=SC2016  # literal command text
+    BF_FLAG='--description "$(cat '"$BODY_FILE"')"'
+    BF_ALT="--description '...'"
+fi
 if [[ -n "$BODY_FILE" ]]; then
     if [[ "$BODY_FILE" == "-" ]]; then
-        refuse "ERROR: --body-file - (stdin) cannot be checked before the command runs." \
-            "  Write the body to a file in a separate step and pass its path, or use --body."
+        refuse "ERROR: $BF_FLAG (stdin) cannot be checked before the command runs." \
+            "  Write the body to a file in a separate step and pass its path, or use $BF_ALT."
     fi
     RESOLVED="$(resolve_body_file "$BODY_FILE")"
     if [[ ! -f "$RESOLVED" || ! -r "$RESOLVED" ]]; then
@@ -514,9 +559,9 @@ if [[ -n "$BODY_FILE" ]]; then
                 "  variables it inherits (exported before the agent started), not a shell" \
                 "  variable set in an earlier command. Pass the path literally.")
         fi
-        refuse "ERROR: cannot read --body-file $BODY_FILE (resolved: $RESOLVED)." \
+        refuse "ERROR: cannot read $BF_FLAG (resolved: $RESOLVED)." \
             ${UNSET_HINT[@]+"${UNSET_HINT[@]}"} \
-            "  Write the file in a separate step first and pass a readable path, or use --body."
+            "  Write the file in a separate step first and pass a readable path, or use $BF_ALT."
     fi
     # Both forms given: check both, whichever the tool ends up using.
     BODY="${BODY:+$BODY$'\n\n'}$(cat "$RESOLVED")"

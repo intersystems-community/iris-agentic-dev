@@ -1,5 +1,6 @@
 #!/bin/bash
 # shellcheck shell=bash
+# gates: honours GATES_RUNTIME_DIR (#316)
 set -euo pipefail
 
 # Behavioral probe (#74): doctor and project.sh run the hook git actually
@@ -20,9 +21,12 @@ fi
 #   2. The shared quality gate, delegated to verify.sh --boundary git, so the
 #      lint/format checks are identical to the agent and CI boundaries.
 #
-# The quality gate runs against the whole tree (not staged-only). That is
-# intentional: whole-tree checking is what makes "if the git boundary passed,
-# CI passes" a guarantee rather than a hope. Emergency override: GATES_SKIP=1.
+# The quality gate runs against the whole working tree (not staged-only),
+# the same tree CI checks out. "If the git boundary passed, CI passes" holds
+# when the working tree matches what is committed: an unstaged fix can let a
+# broken commit pass, and an untracked file can fail a clean one (#305). The
+# hook says so on one line when the two differ. Emergency override:
+# GATES_SKIP=1.
 
 # Every staged path whose content lands in the commit (issue #186):
 # --no-renames lists a rename under its new name (A) instead of as an R
@@ -46,9 +50,39 @@ if [[ -n "${GATES_POLICY_FILE:-}" ]]; then
     echo "gates: GATES_POLICY_FILE=$GATES_POLICY_FILE is ignored at the git boundary; the repository's policy applies" >&2
     unset GATES_POLICY_FILE
 fi
-POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
+# The runtime this hook loads (#316): the checked-out tree's own, or, in a
+# tree without one, the main worktree's, which the stub names in
+# GATES_RUNTIME_DIR. Only the main worktree of this same repository (the
+# parent of `git rev-parse --git-common-dir`) is accepted. Its policy, on
+# its own disk, judges the commit, so nothing this commit adds or changes
+# can loosen it; the checked-out tree's index is still what is scanned.
+RUNTIME="$PROJECT_ROOT/.specify/gates"
+RUNTIME_FALLBACK=0
+if [[ -n "${GATES_RUNTIME_DIR:-}" ]]; then
+    _rt_common="$(git rev-parse --git-common-dir 2>/dev/null)" \
+        && _rt_common="$(cd "$_rt_common" 2>/dev/null && pwd -P)" || _rt_common=""
+    _rt_want=""
+    if [[ -n "$_rt_common" && "${_rt_common##*/}" == ".git" ]] \
+        && [[ "$(git config --file "$_rt_common/config" --bool core.bare 2>/dev/null)" != "true" ]]; then
+        _rt_want="${_rt_common%/.git}/.specify/gates"
+    fi
+    _rt_got="$(cd "$GATES_RUNTIME_DIR" 2>/dev/null && pwd -P)" || _rt_got=""
+    if [[ -z "$_rt_want" || "$_rt_got" != "$_rt_want" ]]; then
+        echo "ERROR: ${GATES_GIT_HOOK:-pre-commit} refused -- GATES_RUNTIME_DIR=$GATES_RUNTIME_DIR is not this repository's main worktree runtime${_rt_want:+ ($_rt_want)}" >&2
+        exit 1
+    fi
+    RUNTIME="$_rt_got"
+    RUNTIME_FALLBACK=1
+fi
+POLICY_LIB="$RUNTIME/lib/policy.sh"
 # shellcheck source=/dev/null disable=SC1091
 [[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"
+# In the fallback the policy is the main worktree's. The variable is set
+# here, after the inherited one was dropped, and not exported.
+if [[ "$RUNTIME_FALLBACK" -eq 1 ]] && command -v gates_policy_file >/dev/null 2>&1; then
+    unset GATES_POLICY_FILE
+    GATES_POLICY_FILE="$(CLAUDE_PROJECT_DIR="${RUNTIME%/.specify/gates}" gates_policy_file)"
+fi
 
 # --- The runtime this hook needs (issue #159) ---
 # Without lib/policy.sh the protected-branch setting and the protected
@@ -69,13 +103,13 @@ fi
 # A branch whose runtime predates the lib (hooks copied into .git/hooks are
 # shared by every branch) or that never adopted gates commits with a
 # warning that the scan did not run.
-SECRETS_LIB="$PROJECT_ROOT/.specify/gates/lib/secrets.sh"
+SECRETS_LIB="$RUNTIME/lib/secrets.sh"
 if [[ -f "$SECRETS_LIB" ]]; then
     # shellcheck source=/dev/null disable=SC1091
     source "$SECRETS_LIB"
 elif git rev-parse -q --verify "HEAD:.specify/gates" >/dev/null 2>&1 \
     || [[ -n "$(git ls-files -- ':(top).specify/gates' 2>/dev/null)" ]]; then
-    case "$(head -n 1 "$PROJECT_ROOT/.specify/gates/.runtime-version" 2>/dev/null || true)" in
+    case "$(head -n 1 "$RUNTIME/.runtime-version" 2>/dev/null || true)" in
         0.[0-3].*)
             echo "WARN: this branch's gates runtime predates the installed pre-commit hook;" >&2
             echo "  secret and forbidden-file scan skipped. Rebase onto the upgraded branch or run /speckit.gates.upgrade." >&2
@@ -166,7 +200,7 @@ fi
 # contract artifacts, consistent with the pin. lib/contract.sh checks that
 # shape against the index; without the libs the refusal stands.
 contract_update_staged() {
-    local lib="$PROJECT_ROOT/.specify/gates/lib"
+    local lib="$RUNTIME/lib"
     [[ -f "$lib/attest.sh" && -f "$lib/contract.sh" ]] || return 1
     (
         set +eu
@@ -219,10 +253,24 @@ fi
 # --- Shared quality gate (identical to the agent and CI boundaries) ---
 if [[ "${GATES_SKIP:-0}" == "1" ]]; then
     echo "gates: GATES_SKIP=1, so the quality gate (verify.sh) did not run" >&2
+elif [[ "$RUNTIME_FALLBACK" -eq 1 ]]; then
+    # verify.sh judges a projected tree; this one has none (#316).
+    echo "gates: the quality gate (verify.sh) did not run: this worktree has no gates runtime of its own; the checks above used the main worktree's ($RUNTIME)" >&2
 else
     VERIFY="$PROJECT_ROOT/.specify/gates/verify.sh"
     if [[ -x "$VERIFY" ]]; then
         echo "Pre-commit: running quality gate (verify.sh --boundary git)..."
+        # The gate judges the working tree; name it when that is not the
+        # commit (#305). git reads the index it handed this hook, the
+        # temporary one for `commit -a` and `commit <paths>`, so tracked
+        # changes left out of the commit count, and so do the untracked
+        # files the walk lints (not ignored).
+        TREE_UNSTAGED="$(git diff --name-only 2>/dev/null | wc -l | tr -d ' ' || true)"
+        TREE_UNTRACKED="$(git ls-files --others --exclude-standard --directory --no-empty-directory 2>/dev/null \
+            | wc -l | tr -d ' ' || true)"
+        if [[ "${TREE_UNSTAGED:-0}" -gt 0 || "${TREE_UNTRACKED:-0}" -gt 0 ]]; then
+            echo "gates: warning: the gate judges the working tree, not this commit: $TREE_UNSTAGED file(s) with changes outside the commit, $TREE_UNTRACKED untracked path(s)" >&2
+        fi
         # On a terminal, show a line as each gate and block starts and ends
         # (feature 007): verify.sh appends them to GATES_PROGRESS. A caller
         # that set the variable (even to empty) keeps its choice; off a

@@ -329,6 +329,13 @@ gates_ci_pr_snippet() { # <github|gitlab|jenkins>
                 '  script:' \
                 '    - |' \
                 '      set -e' \
+                '      bots="renovate-bot dependabot"' \
+                '      case " $bots " in' \
+                '        *" ${GITLAB_USER_LOGIN:-none} "*)' \
+                '          echo "pr-check: the MR pipeline was started by the bot user ${GITLAB_USER_LOGIN}; its description (quoted release notes) is not checked"' \
+                '          export CI_MERGE_REQUEST_DESCRIPTION="" CI_MERGE_REQUEST_DESCRIPTION_IS_TRUNCATED=false' \
+                '          ;;' \
+                '      esac' \
                 '      base="${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}"' \
                 '      if [ -z "$base" ]; then' \
                 '        bash .specify/gates/pr-check.sh' \
@@ -778,13 +785,34 @@ gates_ci_live() { # <file>
 # cannot fail the job), or the string of a Jenkins `sh` step; or the last
 # line of such a `|` block or `'''` string, with no heredoc, `trap` or
 # `exit 0` before it and no `\` continuation into it.
+#
+# Two more forms count (#306). Save and exit: `rc=0` (or `rc=`) on a line
+# before the step, the step followed by `|| rc=$?`, and `exit "$rc"` (or
+# `exit $rc`) as the last line, with nothing between that exits, traps,
+# execs, opens a heredoc, assigns rc or continues a line (any variable
+# name, the same in all three places). A called script: in place of the
+# verify.sh command, `[bash |sh ][./]<path>` naming a file of the
+# repository outside .specify/gates/ (no `..`, not absolute) whose own
+# text runs the step in one of the forms above (the last command, or save
+# and exit). Scripts are followed one level: a script the script calls is
+# not read. CALLED holds the paths proven that way, as " a b ".
+# shellcheck disable=SC2016  # awk source: $v and $? are awk and shell text
 _gates_ci_bare_awk='
-    function bare(s,   q) {
+    function bare(s,   q, p) {
         sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s)
         q = substr(s, 1, 1)
         if (length(s) >= 2 && (q == "\"" || q == "\047") && substr(s, length(s), 1) == q)
             s = substr(s, 2, length(s) - 2)
-        return s ~ /^(bash[ \t]+)?(\.\/)?(\.specify\/gates\/)?verify\.sh[ \t]+(--json[ \t]+)?--boundary[ \t]+ci([ \t]+--json)?$/
+        if (s ~ /^(bash[ \t]+)?(\.\/)?(\.specify\/gates\/)?verify\.sh[ \t]+(--json[ \t]+)?--boundary[ \t]+ci([ \t]+--json)?$/) return 1
+        if (CALLED == "" || s !~ /^((bash|sh)[ \t]+)?(\.\/)?[A-Za-z0-9_][A-Za-z0-9_.\/-]*$/) return 0
+        p = s; sub(/^(bash|sh)[ \t]+/, "", p); sub(/^\.\//, "", p)
+        return index(CALLED, " " p " ") > 0
+    }
+    # The line names a script proven to run the step (a candidate line).
+    function calls(s,   k, nc, c) {
+        nc = split(CALLED, c, / /)
+        for (k = 1; k <= nc; k++) if (c[k] != "" && index(s, c[k])) return 1
+        return 0
     }
     # b[1..t-1] the script lines that run before the step in the same shell:
     # none can skip it (exit 0), take over its status (trap), make it text
@@ -799,11 +827,38 @@ _gates_ci_bare_awk='
         return p !~ /\\[ \t]*$/
     }
     # b[1..m] the lines of a script block, t the verify line: the bare
-    # command, nothing after it, nothing unsafe before it.
+    # command, nothing after it, nothing unsafe before it; or the save and
+    # exit form.
     function last_line(t, m,   k) {
-        if (!bare(b[t])) return 0
+        if (!bare(b[t])) return saved(t, m)
         for (k = t + 1; k <= m; k++) if (b[k] ~ /[^ \t]/) return 0
         return before_ok(t)
+    }
+    function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+    # The save and exit form (#306): `v=0` or `v=` before line t, line t
+    # the bare command then `|| v=$?`, `exit "$v"` or `exit $v` the last
+    # line, and nothing between that exits, traps, execs, opens a heredoc,
+    # names v other than as $v, or continues a line.
+    function saved(t, m,   s, v, k, x, init, last) {
+        s = trim(b[t])
+        if (!match(s, /[ \t]*\|\|[ \t]*[A-Za-z_][A-Za-z0-9_]*=\$\?$/)) return 0
+        v = substr(s, RSTART); sub(/^[ \t]*\|\|[ \t]*/, "", v); sub(/=.*$/, "", v)
+        if (!bare(substr(s, 1, RSTART - 1))) return 0
+        init = 0
+        for (k = 1; k < t; k++) { x = trim(b[k]); if (x == v "=0" || x == v "=") init = 1 }
+        if (!init || !before_ok(t)) return 0
+        last = 0
+        for (k = m; k > t; k--) if (b[k] ~ /[^ \t]/) { last = k; break }
+        if (!last) return 0
+        x = trim(b[last])
+        if (x != "exit \"$" v "\"" && x != "exit $" v && x != "exit \"${" v "}\"" && x != "exit ${" v "}") return 0
+        for (k = t + 1; k < last; k++) {
+            x = b[k]
+            if (x ~ /<</ || x ~ /(^|[^A-Za-z0-9_])(trap|exit|exec)([ \t;]|$)/ || x ~ /\\[ \t]*$/) return 0
+            gsub("\\$\\{" v "\\}|\\$" v "([^A-Za-z0-9_]|$)", "", x)
+            if (x ~ ("(^|[^A-Za-z0-9_])" v "([^A-Za-z0-9_]|$)")) return 0
+        }
+        return 1
     }
 '
 
@@ -837,8 +892,8 @@ _gates_ci_events() {
 
 # GitHub and GitLab (stdin: the text after _gates_ci_yaml_drop): prints why
 # no gates step is proven, nothing when one is.
-_gates_ci_prove_yaml() { # <kind>
-    awk -v kind="$1" "$_gates_ci_bare_awk"'
+_gates_ci_prove_yaml() { # <kind> [called scripts]
+    awk -v kind="$1" -v CALLED="${2:-}" "$_gates_ci_bare_awk"'
         function indent(s) { return match(s, /[^ \t]/) ? RSTART - 1 : -1 }
         function keycol(s) { match(s, /^[ \t]*(-[ \t]+)?/); return RLENGTH }
         # The key a GitLab list item on line i belongs to; PJ is its line.
@@ -895,7 +950,7 @@ _gates_ci_prove_yaml() { # <kind>
         END {
             seen = 0; why = ""
             for (i = 1; i <= n; i++) {
-                if (line[i] !~ /verify\.sh/) continue
+                if (line[i] !~ /verify\.sh/ && !calls(line[i])) continue
                 seen = 1
                 if (proven(i)) exit
             }
@@ -908,8 +963,8 @@ _gates_ci_prove_yaml() { # <kind>
 # Jenkins (stdin: the text after _gates_ci_jenkins_drop): prints why no gates
 # step is proven, nothing when one is. An `sh` step inside `catchError`,
 # `warnError` or `try` has its failure swallowed.
-_gates_ci_prove_jenkins() {
-    awk "$_gates_ci_bare_awk"'
+_gates_ci_prove_jenkins() { # [called scripts]
+    awk -v CALLED="${1:-}" "$_gates_ci_bare_awk"'
         # The sh step opener on a line: sets SHQ (its quote, single or
         # triple) and SHP (the offset after it); 0 if there is none.
         function opener(s) {
@@ -956,7 +1011,7 @@ _gates_ci_prove_jenkins() {
             }
             seen = 0
             for (i = 1; i <= n; i++) {
-                if (line[i] !~ /verify\.sh/) continue
+                if (line[i] !~ /verify\.sh/ && !calls(line[i])) continue
                 seen = 1
                 if (proven(i)) exit
             }
@@ -965,20 +1020,80 @@ _gates_ci_prove_jenkins() {
         }'
 }
 
+# The repository files a pipeline text (stdin) names as a command, one
+# level (#306): the first word of a command, or the word after bash or sh,
+# that is a regular file under <root>, not absolute, without `..`, and not
+# under .specify/gates/ (the runtime itself). One relative path per line.
+_gates_ci_called() { # <root>
+    local root="$1" p seen=" "
+    while IFS= read -r p; do
+        [[ -n "$p" && "$p" != /* && "$p" != *..* && "$p" != .specify/gates/* ]] || continue
+        [[ -f "$root/$p" && "$seen" != *" $p "* ]] || continue
+        seen="$seen$p "
+        printf '%s\n' "$p"
+    done < <(awk '
+        {
+            s = $0
+            sub(/^[ \t]*(-[ \t]+)?([A-Za-z_][A-Za-z0-9_-]*:([ \t]+|$))?/, "", s)
+            if (match(s, /(^|[^A-Za-z0-9_.])(sh|bat)[ \t]*\(?[ \t]*(script[ \t]*:[ \t]*)?["\047]+/)) s = substr(s, RSTART + RLENGTH)
+            n = split(s, seg, /&&|\|\||[;|]/)
+            for (k = 1; k <= n; k++) {
+                w = seg[k]
+                sub(/^[ \t"\047({]+/, "", w)
+                sub(/^(bash|sh)[ \t]+/, "", w)
+                sub(/^\.\//, "", w)
+                if (match(w, /^[A-Za-z0-9_][A-Za-z0-9_.\/-]*/)) print substr(w, 1, RLENGTH)
+            }
+        }')
+    return 0
+}
+
+# The called scripts (from _gates_ci_called) that run the gates step in a
+# form the proof accepts, as " a b " for the CALLED awk variable.
+_gates_ci_proven_scripts() { # <root>; candidates on stdin
+    local root="$1" p out=" "
+    while IFS= read -r p; do
+        [[ -n "$p" ]] || continue
+        if _gates_ci_uncomment "$root/$p" | awk "$_gates_ci_bare_awk"'
+            { n++; b[n] = $0 }
+            END {
+                for (t = 1; t <= n; t++) if (b[t] ~ /verify\.sh/ && last_line(t, n)) exit 0
+                exit 1
+            }'; then
+            out="$out$p "
+        fi
+    done
+    [[ "$out" == " " ]] || printf '%s\n' "$out"
+}
+
+# The repository root a pipeline file belongs to: above .github/workflows,
+# else its directory.
+_gates_ci_root() { # <file>
+    case "$1" in
+        */.github/workflows/*) printf '%s\n' "${1%/.github/workflows/*}" ;;
+        .github/workflows/*) printf '.\n' ;;
+        */*) printf '%s\n' "${1%/*}" ;;
+        *) printf '.\n' ;;
+    esac
+}
+
 # Why the gates step of a pipeline file is not proven; nothing when it is.
 # A pipeline that sets GATES_SPEC_EXEC (skips the spec gate) or
 # GATES_POLICY_FILE (replaces the policy) anywhere weakens every step.
 gates_ci_unproven() { # <file>
-    local kind text ev
+    local kind text ev root called
     kind="$(_gates_ci_kind "$1")"
     text="$(_gates_ci_uncomment "$1")"
+    root="$(_gates_ci_root "$1")"
     if grep -qE '(^|[^A-Za-z0-9_])(GATES_SPEC_EXEC|GATES_POLICY_FILE)([^A-Za-z0-9_]|$)' <<<"$text"; then
         echo "it sets GATES_SPEC_EXEC or GATES_POLICY_FILE, which skip or replace gates — remove them from the pipeline"
         return 0
     fi
     case "$kind" in
         jenkins)
-            _gates_ci_jenkins_drop <<<"$text" | _gates_ci_prove_jenkins
+            text="$(_gates_ci_jenkins_drop <<<"$text")"
+            called="$(_gates_ci_called "$root" <<<"$text" | _gates_ci_proven_scripts "$root")"
+            _gates_ci_prove_jenkins "$called" <<<"$text"
             ;;
         *)
             if [[ "$kind" == github ]]; then
@@ -988,7 +1103,9 @@ gates_ci_unproven() { # <file>
                     return 0
                 fi
             fi
-            _gates_ci_yaml_drop "$kind" <<<"$text" | _gates_ci_prove_yaml "$kind"
+            text="$(_gates_ci_yaml_drop "$kind" <<<"$text")"
+            called="$(_gates_ci_called "$root" <<<"$text" | _gates_ci_proven_scripts "$root")"
+            _gates_ci_prove_yaml "$kind" "$called" <<<"$text"
             ;;
     esac
 }
@@ -1022,11 +1139,18 @@ gates_ci_inert() { # <root>
 }
 
 # The live text of every gates pipeline, one after the other; empty if none.
+# A repository script a live line runs is read too, one level (#306): its
+# text without comments and without the steps whose failure is swallowed.
 gates_ci_body() { # <root>
-    local root="$1" files f
+    local root="$1" files f live p
     files="$(gates_ci_files "$root")" || return 0
     while IFS= read -r f; do
-        gates_ci_live "$root/$f"
+        live="$(gates_ci_live "$root/$f")"
+        printf '%s\n' "$live"
+        while IFS= read -r p; do
+            [[ -n "$p" ]] || continue
+            _gates_ci_uncomment "$root/$p" | _gates_ci_segments yaml
+        done < <(_gates_ci_called "$root" <<<"$live")
     done <<<"$files"
 }
 

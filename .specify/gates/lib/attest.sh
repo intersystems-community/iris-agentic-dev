@@ -358,12 +358,29 @@ gates_pin_problems() { # <pkgname> <root>
 # drifted tool, or nothing when every pinned tool matches. Tools with no pin
 # (pinned null) are exempt; tools with no detected version (skipped/missing)
 # are exempt too — their absence is surfaced as `skipped`, not as drift.
-gates_pin_mismatches() { # <gates-json-array>
-    printf '%s' "${1:-[]}" | jq -r '
+# With <root>, a node linter whose entry in node_modules/.package-lock.json
+# (what npm last installed) differs from package-lock.json's names that
+# cause (#299): the install came from another lockfile, typically before a
+# branch switch.
+gates_pin_mismatches() { # <gates-json-array> [root]
+    local root="${2:-}" stale=" " pkg hv lv
+    if [[ -n "$root" && -f "$root/package-lock.json" && -f "$root/node_modules/.package-lock.json" ]]; then
+        for pkg in $_GATES_NODE_LINTERS; do
+            lv="$(jq -r --arg p "node_modules/$pkg" '.packages[$p].version // empty' \
+                "$root/package-lock.json" 2>/dev/null || true)"
+            [[ -n "$lv" ]] || continue
+            hv="$(jq -r --arg p "node_modules/$pkg" '.packages[$p].version // empty' \
+                "$root/node_modules/.package-lock.json" 2>/dev/null || true)"
+            [[ "$hv" == "$lv" ]] || stale="$stale$pkg "
+        done
+    fi
+    printf '%s' "${1:-[]}" | jq -r --arg stale "$stale" '
         [ .[]
           | select(.pinned != null and .version != null and .version != .pinned)
           | "\(.name): resolved \(.version), pinned \(.pinned) "
             + (if .name == "shellcheck" then "(install the pinned version: bash .specify/gates/install-shellcheck.sh)"
+               elif (((.bin // "") | split("/") | last) as $pkg | $stale | contains(" " + $pkg + " "))
+               then "(node_modules was installed from another lockfile; run npm ci)"
                else "(run npm ci)" end) ]
         | join("; ")' 2>/dev/null || true
 }

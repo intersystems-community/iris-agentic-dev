@@ -1,4 +1,5 @@
 #!/bin/bash
+# gates: honours GATES_RUNTIME_DIR (#316)
 set -euo pipefail
 
 # Behavioral probe (#74): doctor and project.sh run the hook git actually
@@ -40,12 +41,42 @@ if [[ -n "${GATES_POLICY_FILE:-}" ]]; then
     echo "gates: GATES_POLICY_FILE=$GATES_POLICY_FILE is ignored at the git boundary; the repository's policy applies" >&2
     unset GATES_POLICY_FILE
 fi
-POLICY_LIB="$PROJECT_ROOT/.specify/gates/lib/policy.sh"
+# The runtime this hook loads (#316): the checked-out tree's own, or, in a
+# tree without one, the main worktree's, which the stub names in
+# GATES_RUNTIME_DIR. Only the main worktree of this same repository (the
+# parent of `git rev-parse --git-common-dir`) is accepted. Its policy, on
+# its own disk, judges the commit, so nothing this commit adds or changes
+# can loosen it; the checked-out tree's index is still what is scanned.
+RUNTIME="$PROJECT_ROOT/.specify/gates"
+RUNTIME_FALLBACK=0
+if [[ -n "${GATES_RUNTIME_DIR:-}" ]]; then
+    _rt_common="$(git rev-parse --git-common-dir 2>/dev/null)" \
+        && _rt_common="$(cd "$_rt_common" 2>/dev/null && pwd -P)" || _rt_common=""
+    _rt_want=""
+    if [[ -n "$_rt_common" && "${_rt_common##*/}" == ".git" ]] \
+        && [[ "$(git config --file "$_rt_common/config" --bool core.bare 2>/dev/null)" != "true" ]]; then
+        _rt_want="${_rt_common%/.git}/.specify/gates"
+    fi
+    _rt_got="$(cd "$GATES_RUNTIME_DIR" 2>/dev/null && pwd -P)" || _rt_got=""
+    if [[ -z "$_rt_want" || "$_rt_got" != "$_rt_want" ]]; then
+        echo "ERROR: ${GATES_GIT_HOOK:-commit-msg} refused -- GATES_RUNTIME_DIR=$GATES_RUNTIME_DIR is not this repository's main worktree runtime${_rt_want:+ ($_rt_want)}" >&2
+        exit 1
+    fi
+    RUNTIME="$_rt_got"
+    RUNTIME_FALLBACK=1
+fi
+POLICY_LIB="$RUNTIME/lib/policy.sh"
 # shellcheck source=/dev/null disable=SC1091
 [[ -f "$POLICY_LIB" ]] && source "$POLICY_LIB"
+# In the fallback the policy is the main worktree's. The variable is set
+# here, after the inherited one was dropped, and not exported.
+if [[ "$RUNTIME_FALLBACK" -eq 1 ]] && command -v gates_policy_file >/dev/null 2>&1; then
+    unset GATES_POLICY_FILE
+    GATES_POLICY_FILE="$(CLAUDE_PROJECT_DIR="${RUNTIME%/.specify/gates}" gates_policy_file)"
+fi
 
-MESSAGE_LIB="$PROJECT_ROOT/.specify/gates/lib/message.sh"
-RUNTIME_VERSION="$(head -n 1 "$PROJECT_ROOT/.specify/gates/.runtime-version" 2>/dev/null || true)"
+MESSAGE_LIB="$RUNTIME/lib/message.sh"
+RUNTIME_VERSION="$(head -n 1 "$RUNTIME/.runtime-version" 2>/dev/null || true)"
 
 # True when version $1 is older than $2 (numeric major.minor.patch).
 version_lt() {

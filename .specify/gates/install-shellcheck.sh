@@ -37,6 +37,16 @@ set -euo pipefail
 # older version cannot be pinned this way: --update fails, and its pins go
 # into shellcheck.local.sha256 by hand, from assets verified some other way.
 #
+# Mirrors (#301): GATES_SHELLCHECK_BASE_URL replaces the release download
+# base (default https://github.com/koalaman/shellcheck/releases/download;
+# the asset is fetched from <base>/v<version>/<asset>), and
+# GATES_SHELLCHECK_API_URL the release API base --update reads (default
+# https://api.github.com/repos/koalaman/shellcheck/releases/tags; the
+# release is <api>/v<version>). A mirror changes where the bytes come
+# from, never what is accepted: the download is still checked against the
+# pinned SHA-256, and --update still checks the API digest against the
+# download.
+#
 # The project root is $CLAUDE_PROJECT_DIR when set, else the git work tree
 # this script sits in, else the working directory.
 #
@@ -50,7 +60,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="${CLAUDE_PROJECT_DIR:-$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || pwd)}"
 SUMS="$HERE/shellcheck.sha256"
 LOCAL_SUMS="$ROOT/.specify/gates/shellcheck.local.sha256"
-API="https://api.github.com/repos/koalaman/shellcheck/releases/tags"
+API="${GATES_SHELLCHECK_API_URL:-https://api.github.com/repos/koalaman/shellcheck/releases/tags}"
+API="${API%/}"
+DOWNLOAD="${GATES_SHELLCHECK_BASE_URL:-https://github.com/koalaman/shellcheck/releases/download}"
+DOWNLOAD="${DOWNLOAD%/}"
 
 die() {
     echo "install-shellcheck: $*" >&2
@@ -87,7 +100,7 @@ if [[ "${1:-}" == "--pin" ]]; then
 fi
 [[ -n "$VERSION" ]] \
     || die "$ROOT declares no shellcheck version (in mise.toml, mise.lock or .tool-versions)"
-BASE="https://github.com/koalaman/shellcheck/releases/download/v$VERSION"
+BASE="$DOWNLOAD/v$VERSION"
 
 for t in curl tar; do
     command -v "$t" >/dev/null 2>&1 || die "$t not found; install it and re-run"
@@ -106,7 +119,7 @@ trap 'rm -rf "$TMP"' EXIT
 if [[ "${1:-}" == "--update" ]]; then
     command -v jq >/dev/null 2>&1 || die "--update needs jq"
     curl -fsSL -o "$TMP/release.json" "$API/v$VERSION" \
-        || die "cannot read the v$VERSION release from the GitHub API"
+        || die "cannot read the v$VERSION release from $API/v$VERSION"
     : >"$TMP/sums"
     for plat in darwin.aarch64 darwin.x86_64 linux.aarch64 linux.x86_64; do
         asset="shellcheck-v$VERSION.$plat.tar.xz"
@@ -116,7 +129,7 @@ if [[ "${1:-}" == "--update" ]]; then
         # v0.11.0 on; nothing older can be pinned from the API (#203).
         [[ -n "$digest" ]] \
             || die "no published digest for $asset: GitHub publishes asset digests only from shellcheck v0.11.0 on, so --update cannot pin v$VERSION. Pin v0.11.0 or later, or verify the four assets yourself and add their '<sha256>  <asset>' lines to $LOCAL_SUMS"
-        curl -fsSL -o "$TMP/$asset" "$BASE/$asset" || die "download of $asset failed"
+        curl -fsSL -o "$TMP/$asset" "$BASE/$asset" || die "download of $BASE/$asset failed"
         [[ "$(sha256 "$TMP/$asset")" == "$digest" ]] \
             || die "$asset does not match its published digest"
         printf '%s  %s\n' "$digest" "$asset" >>"$TMP/sums"
@@ -152,7 +165,7 @@ done
 [[ -n "$expected" ]] \
     || die "no pinned checksum for $asset (pin it: bash $HERE/install-shellcheck.sh --update)"
 
-curl -fsSL -o "$TMP/$asset" "$BASE/$asset" || die "download of $asset failed"
+curl -fsSL -o "$TMP/$asset" "$BASE/$asset" || die "download of $BASE/$asset failed"
 actual="$(sha256 "$TMP/$asset")"
 if [[ "$actual" != "$expected" ]]; then
     echo "install-shellcheck: checksum mismatch for $asset" >&2

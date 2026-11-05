@@ -83,9 +83,14 @@ _gates_local_exec() {
     # is never reported as timed out, and no sleep paces the decision. As
     # in lib/watch.sh, which this file does not source: the canary copies
     # it alone.
+    # The rule also holds the write end of a lease FIFO on descriptor 7,
+    # and so does every process it starts unless it closes it. A reader
+    # writes "eof" to a second FIFO once the last holder has exited: that
+    # event, not a time budget, tells a child on its way out from one that
+    # keeps running (#294), as for accept blocks in lib/spec-gate.sh.
     fifo="$errf.status"
-    if ! mkfifo "$fifo" 2>/dev/null; then
-        rm -f "$errf"
+    if ! mkfifo "$fifo" "$errf.lease" "$errf.leased" 2>/dev/null; then
+        rm -f "$errf" "$fifo" "$errf.lease" "$errf.leased"
         echo "cannot watch the rule: mkfifo failed"
         return 1
     fi
@@ -96,13 +101,18 @@ _gates_local_exec() {
         # the rule outlives a TERM to that group (a handler, not an ignore,
         # so the rule still gets the signal) and reports its status.
         set -m
-        exec 6<>"$fifo"
+        exec 6<>"$fifo" 5<>"$errf.leased"
+        SECONDS=0
+        # The lease reader is its own job, started first: opening the
+        # write end waits for a reader.
+        { cat "$errf.lease" >/dev/null 2>&1; echo eof >&5; } </dev/null >/dev/null 2>&1 6>&- &
+        reader=$!
         {
             trap : HUP INT TERM
             GATES_HOOK="$GATES_LOCAL_HOOK" GATES_PROJECT_ROOT="$GATES_LOCAL_ROOT" \
-                "$BASH" "$f" "$@" <<<"$GATES_LOCAL_STDIN" >/dev/null 2>"$errf" 6>&-
+                "$BASH" "$f" "$@" <<<"$GATES_LOCAL_STDIN" >/dev/null 2>"$errf" 6>&- 7>"$errf.lease"
             echo "$?" >&6
-        } </dev/null >/dev/null 2>&1 &
+        } </dev/null >/dev/null 2>&1 5>&- &
         pid=$!
         rrc=""
         read -r -t "$limit" -u 6 rrc 2>/dev/null || :
@@ -111,25 +121,36 @@ _gates_local_exec() {
             _gates_local_group_stop "$pid"
             crc=0
             wait "$pid" 2>/dev/null || crc=$?
+            kill -TERM -- -"$reader" 2>/dev/null
             exit "$crc"
         fi
         wait "$pid" 2>/dev/null
-        # The rule exited, and whatever it started goes with it. A child
-        # already on its way out gets half a second before it counts. A rule
+        # The rule exited, and whatever it started goes with it. A rule
         # that leaves a process running refuses, as an accept block does:
-        # the process would outlive the check it was part of.
-        n=0
-        while [[ $n -lt 5 ]] && _gates_local_group_alive "$pid"; do
-            sleep 0.1
-            n=$((n + 1))
-        done
+        # the process would outlive the check it was part of. A group with
+        # a live member waits, for the rest of the limit (at least one
+        # round), until the lease ends or the group is empty, so a child on
+        # its way out (the rule killed it without waiting) is gone first.
+        # Only then does a member count: one still in the group at the
+        # limit, or one that closed descriptor 7. A child that left the
+        # group (setsid) is out of reach and may keep the lease, so the
+        # group is looked at again each second; that read paces the look
+        # and decides nothing.
         if _gates_local_group_alive "$pid"; then
-            _gates_local_group_stop "$pid"
-            echo leftover >"$flag"
+            n=0
+            while [[ "$n" -eq 0 || "$SECONDS" -lt "$limit" ]] && _gates_local_group_alive "$pid"; do
+                n=1
+                read -r -t 1 -u 5 _ 2>/dev/null && break
+            done
+            if _gates_local_group_alive "$pid"; then
+                _gates_local_group_stop "$pid"
+                echo leftover >"$flag"
+            fi
         fi
+        kill -TERM -- -"$reader" 2>/dev/null
         exit "$rrc"
     ) || rc=$?
-    rm -f "$fifo"
+    rm -f "$fifo" "$errf.lease" "$errf.leased"
     cat "$errf" 2>/dev/null
     rm -f "$errf"
     return "$rc"

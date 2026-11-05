@@ -40,6 +40,38 @@ if [ ! -f "$hook" ]; then
         echo "  Project it (bash .specify/extensions/gates/runtime/project.sh) rather than committing around it." >&2
         exit 1
     fi
+    # Nothing tracked and no runtime here: a linked worktree of a
+    # repository that keeps .specify/ untracked, or a branch from before
+    # adoption (#316). The main worktree of this same repository (the
+    # parent of the common git directory, never a path from elsewhere) may
+    # hold the runtime. Its hook can judge this worktree only if it loads
+    # its runtime from GATES_RUNTIME_DIR while reading this worktree's
+    # index; a hook that says so carries the marker line below.
+    main=""
+    common="$(git rev-parse --git-common-dir 2>/dev/null)" \
+        && common="$(cd "$common" 2>/dev/null && pwd -P)" \
+        && [ "$(basename "$common")" = ".git" ] \
+        && [ "$(git config --file "$common/config" --bool core.bare 2>/dev/null)" != "true" ] \
+        && main="$(dirname "$common")"
+    if [ -n "$main" ] && [ "$main" != "$(cd "$root" && pwd -P)" ]; then
+        mhook="$main/.specify/gates/hooks/$name"
+        if [ "$name" = "pre-merge-commit" ] && [ ! -f "$mhook" ] \
+            && [ -f "$main/.specify/gates/hooks/pre-commit" ]; then
+            mhook="$main/.specify/gates/hooks/pre-commit"
+            GATES_GIT_HOOK=pre-merge-commit
+            export GATES_GIT_HOOK
+        fi
+        if [ -f "$mhook" ]; then
+            if grep -q '^# gates: honours GATES_RUNTIME_DIR' "$mhook" 2>/dev/null; then
+                echo "gates: $name -- this worktree has no gates runtime; running the main worktree's ($main/.specify/gates)" >&2
+                GATES_RUNTIME_DIR="$main/.specify/gates"
+                export GATES_RUNTIME_DIR
+                exec bash "$mhook" "$@"
+            fi
+            echo "gates: $name skipped -- this worktree has no gates runtime, and the main worktree's ($main/.specify/gates) cannot judge it from here: its $name hook does not load its runtime from GATES_RUNTIME_DIR" >&2
+            exit 0
+        fi
+    fi
     # A branch from before gates was adopted has nothing to enforce.
     echo "gates: $name skipped -- this branch has no gates runtime" >&2
     exit 0
