@@ -1407,7 +1407,7 @@ dependencies = [
  "aes-gcm",
  "anyhow",
  "apple-native-keyring-store",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bollard",
  "chrono",
  "ctor",
