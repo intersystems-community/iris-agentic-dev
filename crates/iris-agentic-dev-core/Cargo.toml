@@ -46,7 +46,7 @@ tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots", "
 futures-util = { version = "0.3", features = ["sink"] }
 base64 = "0.22"
 aes-gcm = "0.11"
-similar = "2"
+similar = "3"
 
 
 # Platform keychain store crates — already in the dep tree via keyring v4.
