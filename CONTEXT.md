@@ -217,3 +217,38 @@ Something iad found in the configuration and did not act on: a loosening setting
 file, or a credential withheld from a server it was not meant for. Each is reported with its source
 and what would lift it, before any call is refused.
 _Avoid_: ignored setting, dropped config, warning
+
+## Storage maps
+
+**Default storage**:
+The storage definition IRIS generates and maintains for a persistent class as it compiles. iad writes it exactly
+as given and never edits it.
+_Avoid_: object storage, persistent storage
+
+**SQL storage**:
+A class's storage written by hand on `%Storage.SQL`, made of SQL storage maps. Also called custom SQL storage.
+_Avoid_: custom storage (that is the other kind, below), mapped storage
+
+**Custom storage**:
+Storage on `%Library.CustomStorage`, where the developer writes the access code for the globals by hand
+instead of describing them with maps. iad reads it and does not edit it.
+_Avoid_: SQL storage, custom SQL storage
+
+**SQL storage map**:
+A hand-written part of a class's SQL storage that says how one global holds the table's rows: its subscripts,
+where each column sits in a node, and how the row ID is formed. The developer owns it, unlike default storage.
+_Avoid_: mapping, global mapping, custom storage
+
+**Master map**:
+The one data map a table reads and writes its rows through. Every other map of the table is an index map.
+_Avoid_: main map, data map (for this one map)
+
+**Map version**:
+A short fingerprint of a storage map as it was read. A change that carries an older version than the stored map
+is refused.
+_Avoid_: revision, etag
+
+**Scratch copy**:
+A temporary copy of a class with a proposed storage map, compiled and queried to check a change before the real
+class is touched, then removed.
+_Avoid_: dry run, test class
