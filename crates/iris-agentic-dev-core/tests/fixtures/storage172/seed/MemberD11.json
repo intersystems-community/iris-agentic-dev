@@ -1,0 +1,41 @@
+{
+  "class": "IadSm172.MemberD11",
+  "globals": [
+    {
+      "global": "^IadSm172MemberD",
+      "subscripts": ["1"],
+      "value": "Alice^Portland"
+    },
+    {
+      "global": "^IadSm172MemberD",
+      "subscripts": ["1", "contact"],
+      "value": "alice@example.com^5551234"
+    },
+    {
+      "global": "^IadSm172MemberD",
+      "subscripts": ["2"],
+      "value": "Bob^Seattle"
+    },
+    {
+      "global": "^IadSm172MemberD",
+      "subscripts": ["2", "contact"],
+      "value": "bob@example.com^5555678"
+    },
+    { "global": "^IadSm172MemberD", "value": "2" }
+  ],
+  "question": "SELECT Name, City, Email, Phone FROM IadSm172.MemberD11 ORDER BY ID",
+  "answer": [
+    {
+      "Name": "Alice",
+      "City": "Portland",
+      "Email": "alice@example.com",
+      "Phone": "5551234"
+    },
+    {
+      "Name": "Bob",
+      "City": "Seattle",
+      "Email": "bob@example.com",
+      "Phone": "5555678"
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "class": "IadSm172.BookMulti",
+  "globals": [
+    {
+      "global": "^IadSm172BookMulti",
+      "subscripts": ["1", "title"],
+      "value": "The Hobbit"
+    },
+    {
+      "global": "^IadSm172BookMulti",
+      "subscripts": ["1", "pub"],
+      "value": "Allen & Unwin"
+    },
+    {
+      "global": "^IadSm172BookMulti",
+      "subscripts": ["1", "loc"],
+      "value": "London"
+    },
+    {
+      "global": "^IadSm172BookMulti",
+      "subscripts": ["2", "title"],
+      "value": "Dune"
+    },
+    {
+      "global": "^IadSm172BookMulti",
+      "subscripts": ["2", "pub"],
+      "value": "Chilton Books"
+    },
+    {
+      "global": "^IadSm172BookMulti",
+      "subscripts": ["2", "loc"],
+      "value": "Philadelphia"
+    },
+    { "global": "^IadSm172BookMulti", "value": "2" }
+  ],
+  "question": "SELECT Title, Publisher, Location FROM IadSm172.BookMulti ORDER BY ID",
+  "answer": [
+    {
+      "Title": "The Hobbit",
+      "Publisher": "Allen & Unwin",
+      "Location": "London"
+    },
+    {
+      "Title": "Dune",
+      "Publisher": "Chilton Books",
+      "Location": "Philadelphia"
+    }
+  ]
+}

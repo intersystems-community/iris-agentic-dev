@@ -1,0 +1,6 @@
+# expect: attribute
+<Storage name="Test">
+<SQLMap name="M" type="data">
+<Global>^Test</Global>
+</SQLMap>
+</Storage>

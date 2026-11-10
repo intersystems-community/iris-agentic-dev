@@ -1,0 +1,61 @@
+{
+  "class": "IadSm172.LoanUnion",
+  "globals": [
+    {
+      "global": "^IadSm172LoanU",
+      "subscripts": [
+        "1"
+      ],
+      "value": "101^B001"
+    },
+    {
+      "global": "^IadSm172LoanU",
+      "subscripts": [
+        "2"
+      ],
+      "value": "102^B002"
+    },
+    {
+      "global": "^IadSm172LoanU",
+      "subscripts": [
+        "3"
+      ],
+      "value": "101^B007"
+    },
+    {
+      "global": "^IadSm172LoanUIdx",
+      "subscripts": [
+        "101",
+        "1"
+      ],
+      "value": ""
+    },
+    {
+      "global": "^IadSm172LoanUIdx",
+      "subscripts": [
+        "101",
+        "3"
+      ],
+      "value": ""
+    },
+    {
+      "global": "^IadSm172LoanUIdx",
+      "subscripts": [
+        "102",
+        "2"
+      ],
+      "value": ""
+    }
+  ],
+  "question": "SELECT LoanNo, BookId FROM IadSm172.LoanUnion WHERE MemberId = 101 ORDER BY LoanNo",
+  "answer": [
+    {
+      "LoanNo": 1,
+      "BookId": "B001"
+    },
+    {
+      "LoanNo": 3,
+      "BookId": "B007"
+    }
+  ]
+}

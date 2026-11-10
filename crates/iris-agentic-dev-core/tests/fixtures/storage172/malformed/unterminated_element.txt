@@ -1,0 +1,6 @@
+# expect: unterminated
+<Storage name="Test">
+<SQLMap name="M">
+<Global>^Test</Global>
+</SQLMap
+</Storage>

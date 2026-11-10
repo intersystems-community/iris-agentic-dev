@@ -1,0 +1,20 @@
+{
+  "class": "IadSm172.LoanList",
+  "globals": [
+    {
+      "global": "^IadSm172LoanList",
+      "subscripts": ["1"],
+      "lb": [123, "B001", "B002"]
+    },
+    { "global": "^IadSm172LoanList", "subscripts": ["2"], "lb": [456, "B003"] },
+    { "global": "^IadSm172LoanList", "value": "2" }
+  ],
+  "question": "SELECT MemberId, BookIds FROM IadSm172.LoanList ORDER BY ID",
+  "answer": [
+    {
+      "MemberId": 123,
+      "BookIds": "\u0003\u0004{\u0006\u0001B001\u0006\u0001B002"
+    },
+    { "MemberId": 456, "BookIds": "\u0004\u0004È\u0001\u0006\u0001B003" }
+  ]
+}

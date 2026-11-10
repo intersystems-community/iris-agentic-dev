@@ -161,3 +161,24 @@ Measured on fixture classes `Iad172.Probe` and `Iad172.Lst`:
 a `Piece` level with no delimiter), and the dictionary keeps the spelling as written. Lower-case `sub` is common in real
 maps, so the validator compares access types ignoring case and the writer keeps the original spelling. Map `Type`
 stays case-sensitive (`DATA` fails with #5511).
+
+## R17. D11 and fixture facts (measured 2026-11-10, fixtures in `tests/fixtures/storage172/`)
+
+- **A SQL DELETE kills the row node's whole subtree.** `DELETE FROM IadSm172.Loan WHERE ID = 1` took
+  `$Data(^IadSm172Loan(1))` from 11 to 0 and removed `^IadSm172Loan(1,"EV",1)`, a row of the other table
+  (`LoanEvent`) stored inside it, with no error or warning (`test_storage_map_d11_172_live`).
+- **A level walked as a plain subscript returns literal sub-nodes as rows.** A map over `^IadSm172Loan` with
+  subscripts `{LoanNo}`, `{Part}` returned `(1,"EV")` and `(2,"EV")`.
+- **An UPDATE of a row-node field keeps the sub-node fields** (`MemberD11`: Email and Phone on the `"contact"` node
+  were unchanged).
+- A parent's map is not confused by child rows under its row nodes: `Loan` returns only real loans although
+  `^IadSm172Loan(id,"EV",n)` exists.
+- A master map's subscripts must be IDKEY fields (#5547). A composite row ID needs `Index IDKEY On (...) [ IdKey ]`;
+  RowIdSpec entries are optional for it (`Copy` has them, `LoanEvent` does not).
+- `NextCode` refers to its level as `{Ln}`, sets it to the next subscript or to `""` to stop, and every line starts
+  with a space or a tab (column 0 is a label).
+- `RowReference` reads the row from another global while the map walks its own (`LoanUnion`).
+- A code value with `]]` and no `<`, `>` or `&` stays raw; with one of them, IRIS writes CDATA split as
+  `]]]]><![CDATA[` (`Notes`). `BlockCount 0` and `ConditionalWithHostVars 0` are dropped on save (`Notes`).
+- Not exercised: the bitmap map in `Genre` compiles, but the seed format sets only strings and `$LIST`s, so its
+  question goes through the master map.

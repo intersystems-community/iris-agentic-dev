@@ -1,0 +1,11 @@
+{
+  "class": "IadSm172.Member",
+  "globals": [
+    {"global": "^IadSm172Member", "subscripts": ["1"], "value": "Alice^Portland^35"},
+    {"global": "^IadSm172Member", "subscripts": ["2"], "value": "Bob^Seattle^42"},
+    {"global": "^IadSm172Member", "subscripts": ["3"], "value": "Carol^Portland^38"},
+    {"global": "^IadSm172Member", "value": "3"}
+  ],
+  "question": "SELECT Name, Age FROM IadSm172.Member WHERE City = 'Portland' ORDER BY ID",
+  "answer": [{"Name": "Alice", "Age": 35}, {"Name": "Carol", "Age": 38}]
+}

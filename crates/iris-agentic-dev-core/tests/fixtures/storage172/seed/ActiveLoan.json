@@ -1,0 +1,36 @@
+{
+  "class": "IadSm172.ActiveLoan",
+  "globals": [
+    {
+      "global": "^IadSm172ActiveLoan",
+      "subscripts": ["1"],
+      "value": "101^B001^active"
+    },
+    {
+      "global": "^IadSm172ActiveLoan",
+      "subscripts": ["2"],
+      "value": "102^B002^returned"
+    },
+    {
+      "global": "^IadSm172ActiveLoan",
+      "subscripts": ["3"],
+      "value": "103^B003^active"
+    },
+    {
+      "global": "^IadSm172ActiveLoanIdx",
+      "subscripts": ["active", "1"],
+      "value": ""
+    },
+    {
+      "global": "^IadSm172ActiveLoanIdx",
+      "subscripts": ["active", "3"],
+      "value": ""
+    },
+    { "global": "^IadSm172ActiveLoan", "value": "3" }
+  ],
+  "question": "SELECT MemberId, BookId FROM IadSm172.ActiveLoan WHERE Status = 'active' ORDER BY ID",
+  "answer": [
+    { "MemberId": 101, "BookId": "B001" },
+    { "MemberId": 103, "BookId": "B003" }
+  ]
+}

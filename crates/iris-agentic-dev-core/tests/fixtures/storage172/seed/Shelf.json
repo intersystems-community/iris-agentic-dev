@@ -1,0 +1,26 @@
+{
+  "class": "IadSm172.Shelf",
+  "globals": [
+    {
+      "global": "^IadSm172Shelf",
+      "subscripts": ["1"],
+      "value": "Fiction^North"
+    },
+    {
+      "global": "^IadSm172Shelf",
+      "subscripts": ["reserved"],
+      "value": "Reserved^Reserved"
+    },
+    {
+      "global": "^IadSm172Shelf",
+      "subscripts": ["2"],
+      "value": "NonFiction^South"
+    },
+    { "global": "^IadSm172Shelf", "value": "2" }
+  ],
+  "question": "SELECT ShelfLoc, ShelfArea FROM IadSm172.Shelf ORDER BY ID",
+  "answer": [
+    { "ShelfLoc": "North", "ShelfArea": "Fiction" },
+    { "ShelfLoc": "South", "ShelfArea": "NonFiction" }
+  ]
+}

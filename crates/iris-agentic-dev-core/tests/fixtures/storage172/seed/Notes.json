@@ -1,0 +1,13 @@
+{
+  "class": "IadSm172.Notes",
+  "globals": [
+    {"global": "^IadSm172Notes", "subscripts": ["1"], "value": "Atlas^Ines"},
+    {"global": "^IadSm172Notes", "subscripts": ["2"], "value": "Zephyr^Omar"},
+    {"global": "^IadSm172Notes", "value": "2"}
+  ],
+  "question": "SELECT Title, Author, Half FROM IadSm172.Notes ORDER BY ID",
+  "answer": [
+    {"Title": "Atlas", "Author": "Ines", "Half": "first"},
+    {"Title": "Zephyr", "Author": "Omar", "Half": "second"}
+  ]
+}

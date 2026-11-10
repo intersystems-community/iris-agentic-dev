@@ -1,0 +1,9 @@
+# expect: unterminated
+<Storage name="Test">
+<SQLMap name="M">
+<Global>^Test</Global>
+<NextCode><![CDATA[
+ s x=1
+</NextCode>
+</SQLMap>
+</Storage>

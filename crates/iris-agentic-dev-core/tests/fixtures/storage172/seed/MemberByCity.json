@@ -1,0 +1,41 @@
+{
+  "class": "IadSm172.MemberByCity",
+  "globals": [
+    {
+      "global": "^IadSm172MemberByCity",
+      "subscripts": ["1"],
+      "value": "Alice^Portland^35"
+    },
+    {
+      "global": "^IadSm172MemberByCity",
+      "subscripts": ["2"],
+      "value": "Bob^Seattle^42"
+    },
+    {
+      "global": "^IadSm172MemberByCity",
+      "subscripts": ["3"],
+      "value": "Carol^Portland^38"
+    },
+    {
+      "global": "^IadSm172MemberByCityI",
+      "subscripts": ["Portland", "1"],
+      "value": ""
+    },
+    {
+      "global": "^IadSm172MemberByCityI",
+      "subscripts": ["Portland", "3"],
+      "value": ""
+    },
+    {
+      "global": "^IadSm172MemberByCityI",
+      "subscripts": ["Seattle", "2"],
+      "value": ""
+    },
+    { "global": "^IadSm172MemberByCity", "value": "3" }
+  ],
+  "question": "SELECT Name, Age FROM IadSm172.MemberByCity WHERE City = 'Portland' ORDER BY ID",
+  "answer": [
+    { "Name": "Alice", "Age": 35 },
+    { "Name": "Carol", "Age": 38 }
+  ]
+}

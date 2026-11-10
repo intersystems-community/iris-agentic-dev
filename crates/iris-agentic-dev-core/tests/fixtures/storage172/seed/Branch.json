@@ -1,0 +1,21 @@
+{
+  "class": "IadSm172.Branch",
+  "globals": [
+    {
+      "global": "^IadSm172Branch",
+      "subscripts": ["1"],
+      "value": "NYC^USA^North"
+    },
+    {
+      "global": "^IadSm172Branch",
+      "subscripts": ["2"],
+      "value": "LON^UK^South"
+    },
+    { "global": "^IadSm172Branch", "value": "2" }
+  ],
+  "question": "SELECT BranchId, Country, BranchName FROM IadSm172.Branch ORDER BY ID",
+  "answer": [
+    { "BranchId": "NYC", "Country": "USA", "BranchName": "North" },
+    { "BranchId": "LON", "Country": "UK", "BranchName": "South" }
+  ]
+}

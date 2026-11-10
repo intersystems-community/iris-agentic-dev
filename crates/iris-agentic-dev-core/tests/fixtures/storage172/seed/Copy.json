@@ -1,0 +1,15 @@
+{
+  "class": "IadSm172.Copy",
+  "globals": [
+    {"global": "^IadSm172Copy", "subscripts": ["B001", "North", "1"], "value": "N-12"},
+    {"global": "^IadSm172Copy", "subscripts": ["B001", "North", "2"], "value": "N-13"},
+    {"global": "^IadSm172Copy", "subscripts": ["B001", "South", "1"], "value": "S-02"},
+    {"global": "^IadSm172Copy", "subscripts": ["B002", "North", "1"], "value": "N-40"}
+  ],
+  "question": "SELECT Branch, CopyNo, Shelf FROM IadSm172.Copy WHERE BookId = 'B001' ORDER BY Branch, CopyNo",
+  "answer": [
+    {"Branch": "North", "CopyNo": 1, "Shelf": "N-12"},
+    {"Branch": "North", "CopyNo": 2, "Shelf": "N-13"},
+    {"Branch": "South", "CopyNo": 1, "Shelf": "S-02"}
+  ]
+}

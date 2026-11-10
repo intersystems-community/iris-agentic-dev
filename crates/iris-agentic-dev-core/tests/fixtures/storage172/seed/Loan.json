@@ -1,0 +1,61 @@
+{
+  "class": "IadSm172.Loan",
+  "globals": [
+    {
+      "global": "^IadSm172Loan",
+      "subscripts": [
+        "1"
+      ],
+      "value": "101^B001^67340"
+    },
+    {
+      "global": "^IadSm172Loan",
+      "subscripts": [
+        "2"
+      ],
+      "value": "102^B002^67341"
+    },
+    {
+      "global": "^IadSm172Loan",
+      "subscripts": [
+        "1",
+        "EV",
+        "1"
+      ],
+      "value": "issued^67340"
+    },
+    {
+      "global": "^IadSm172Loan",
+      "subscripts": [
+        "1",
+        "EV",
+        "2"
+      ],
+      "value": "renewed^67354"
+    },
+    {
+      "global": "^IadSm172Loan",
+      "subscripts": [
+        "2",
+        "EV",
+        "1"
+      ],
+      "value": "issued^67341"
+    },
+    {
+      "global": "^IadSm172Loan",
+      "value": "2"
+    }
+  ],
+  "question": "SELECT MemberId, BookId FROM IadSm172.Loan ORDER BY ID",
+  "answer": [
+    {
+      "MemberId": 101,
+      "BookId": "B001"
+    },
+    {
+      "MemberId": 102,
+      "BookId": "B002"
+    }
+  ]
+}

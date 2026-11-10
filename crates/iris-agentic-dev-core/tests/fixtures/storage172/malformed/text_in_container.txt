@@ -1,0 +1,7 @@
+# expect: text
+<Storage name="Test">
+<SQLMap name="M">
+Some text here
+<Global>^Test</Global>
+</SQLMap>
+</Storage>

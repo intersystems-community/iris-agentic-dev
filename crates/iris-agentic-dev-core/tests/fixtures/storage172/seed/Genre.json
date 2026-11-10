@@ -1,0 +1,27 @@
+{
+  "class": "IadSm172.Genre",
+  "globals": [
+    {
+      "global": "^IadSm172Genre",
+      "subscripts": ["1"],
+      "value": "B001^SciFi^1"
+    },
+    {
+      "global": "^IadSm172Genre",
+      "subscripts": ["2"],
+      "value": "B002^Fiction^0"
+    },
+    {
+      "global": "^IadSm172Genre",
+      "subscripts": ["3"],
+      "value": "B003^Mystery^1"
+    },
+    { "global": "^IadSm172Genre", "value": "3" }
+  ],
+  "question": "SELECT BookId, GenreName, Popular FROM IadSm172.Genre ORDER BY ID",
+  "answer": [
+    { "BookId": "B001", "GenreName": "SciFi", "Popular": true },
+    { "BookId": "B002", "GenreName": "Fiction", "Popular": false },
+    { "BookId": "B003", "GenreName": "Mystery", "Popular": true }
+  ]
+}
