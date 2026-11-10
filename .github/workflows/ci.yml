@@ -362,6 +362,10 @@ jobs:
     #   "Cannot call an iris.package wrapper / dbapi.connect" — upstream image regression.
     #   Replaced both with 2025.3, last known-good stable on GHA.)
     #   2025.3      — stable release; last known-good on GHA runners as of 2026-07-17
+    # 2026-11-10: 2025.3's community license expires 2026-11-13, so e2e moved to 2026.1
+    #   (published 2026-09-09). Its post-start hook still fails the same way, so the job starts
+    #   /iris-main without the hook and sets the password and CallIn itself (step below).
+    #   2026.1      — current e2e image
     # Each version runs in its own job so a regression on one version never masks another.
     strategy:
       fail-fast: false
@@ -384,18 +388,37 @@ jobs:
       - run: cargo build --locked -p iris-agentic-dev
       - name: Start IRIS container
         run: |
+          # The intersystemsdc 2026.x images' post-start hook calls `dbapi.connect`, fails and
+          # stops IRIS ("Cannot call an iris.package wrapper"), every start on 2026.1. Start
+          # iris-main directly, without the hook, and do the two things it did in the next step.
           docker run -d --name iris-e2e \
             -p 52773:52773 \
             --shm-size 1g \
             --ulimit nofile=65536:65536 \
-            -e IRIS_PASSWORD=SYS \
-            -e IRIS_USERNAME=_SYSTEM \
-            ${{ matrix.iris_image }}
+            --entrypoint /tini \
+            ${{ matrix.iris_image }} -- /iris-main
           # Wait for container to be running and dump early logs for diagnostics
           sleep 15
           docker ps -a | grep iris-e2e
           echo "=== Early container logs ==="
           docker logs iris-e2e 2>&1 | head -40 || true
+      - name: Set the _SYSTEM password and enable CallIn (what the image's hook did)
+        run: |
+          for i in $(seq 1 60); do
+            docker exec iris-e2e iris qlist 2>/dev/null | grep -q '\^running' && break
+            sleep 3
+          done
+          for i in $(seq 1 20); do
+            out=$(docker exec -i iris-e2e iris session IRIS -U %SYS <<'OS'
+          Set p("Password")="SYS",p("ChangePassword")=0 Write "PW:",##class(Security.Users).Modify("_SYSTEM",.p),!
+          Set s("Enabled")=1 Write "CALLIN:",##class(Security.Services).Modify("%Service_CallIn",.s),!
+          Halt
+          OS
+            )
+            echo "$out" | grep -q 'PW:1' && echo "$out" | grep -q 'CALLIN:1' && { echo "$out"; exit 0; }
+            sleep 3
+          done
+          echo "$out"; docker logs iris-e2e 2>&1 | tail -30; exit 1
       - name: Wait for IRIS Atelier API to be ready (up to 7 minutes)
         run: |
           IRIS_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' iris-e2e)

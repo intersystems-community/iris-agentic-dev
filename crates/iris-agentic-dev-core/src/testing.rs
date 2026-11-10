@@ -578,12 +578,19 @@ impl ThrowawayIris {
                     &format!("127.0.0.1:{THROWAWAY_SUPERSERVER_PORT}:1972"),
                     "-p",
                     &format!("127.0.0.1:{THROWAWAY_WEB_PORT}:52773"),
-                    // What the CI job's own IRIS container is started with.
+                    // What the CI job's own IRIS container is started with: iris-main directly,
+                    // without the image's post-start hook, which calls `dbapi.connect`, fails and
+                    // stops IRIS on every 2026.1 start. `clear_password_change` below does the
+                    // one thing the hook did that these tests need.
                     "--shm-size",
                     "1g",
                     "--ulimit",
                     "nofile=65536:65536",
+                    "--entrypoint",
+                    "/tini",
                     &image,
+                    "--",
+                    "/iris-main",
                 ])
                 .output()
                 .expect("must run the docker CLI");
