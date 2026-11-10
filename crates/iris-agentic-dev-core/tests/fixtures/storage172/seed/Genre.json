@@ -3,25 +3,45 @@
   "globals": [
     {
       "global": "^IadSm172Genre",
-      "subscripts": ["1"],
+      "subscripts": [
+        "1"
+      ],
       "value": "B001^SciFi^1"
     },
     {
       "global": "^IadSm172Genre",
-      "subscripts": ["2"],
+      "subscripts": [
+        "2"
+      ],
       "value": "B002^Fiction^0"
     },
     {
       "global": "^IadSm172Genre",
-      "subscripts": ["3"],
+      "subscripts": [
+        "3"
+      ],
       "value": "B003^Mystery^1"
     },
-    { "global": "^IadSm172Genre", "value": "3" }
+    {
+      "global": "^IadSm172Genre",
+      "value": "3"
+    }
   ],
-  "question": "SELECT BookId, GenreName, Popular FROM IadSm172.Genre ORDER BY ID",
+  "question": "SELECT BookId, GenreName FROM IadSm172.Genre WHERE Popular = 1 ORDER BY ID",
   "answer": [
-    { "BookId": "B001", "GenreName": "SciFi", "Popular": true },
-    { "BookId": "B002", "GenreName": "Fiction", "Popular": false },
-    { "BookId": "B003", "GenreName": "Mystery", "Popular": true }
+    {
+      "BookId": "B001",
+      "GenreName": "SciFi"
+    },
+    {
+      "BookId": "B003",
+      "GenreName": "Mystery"
+    }
+  ],
+  "build_indexes": [
+    "PopularBitmap"
+  ],
+  "kill": [
+    "^IadSm172GenreBit"
   ]
 }

@@ -7,6 +7,8 @@ Property GenreName As %String;
 
 Property Popular As %Boolean;
 
+Index PopularBitmap On Popular [ Type = bitmap ];
+
 Storage SQLStorage
 {
 <SqlIdExpression>$i(^IadSm172Genre)</SqlIdExpression>

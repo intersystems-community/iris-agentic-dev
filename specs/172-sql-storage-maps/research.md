@@ -180,5 +180,8 @@ stays case-sensitive (`DATA` fails with #5511).
 - `RowReference` reads the row from another global while the map walks its own (`LoanUnion`).
 - A code value with `]]` and no `<`, `>` or `&` stays raw; with one of them, IRIS writes CDATA split as
   `]]]]><![CDATA[` (`Notes`). `BlockCount 0` and `ConditionalWithHostVars 0` are dropped on save (`Notes`).
-- Not exercised: the bitmap map in `Genre` compiles, but the seed format sets only strings and `$LIST`s, so its
+- A bitmap index map is built by `%BuildIndices`, which takes the class's Index names, not map names (#5066 for a
+  bare map). `Genre` declares `Index PopularBitmap On Popular [ Type = bitmap ]` beside its `PopularBitmap` map, the
+  rig builds it after the compile, and the plan for `WHERE Popular = 1` reads "bitmap index IadSm172.Genre.PopularBitmap".
+  FR-023's `build_indexes` must use the Index name for the same reason.
   question goes through the master map.

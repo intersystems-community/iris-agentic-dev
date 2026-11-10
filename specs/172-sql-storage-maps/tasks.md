@@ -3,7 +3,7 @@
 **Input**: `specs/172-sql-storage-maps/` — spec.md, plan.md, research.md, data-model.md,
 contracts/iris_storage_map.md, quickstart.md; ADR `docs/adr/0004-sql-storage-maps-are-edited-through-a-model.md`
 
-**Who does what**: implementation teammates (haiku) take one task at a time in their own worktree. The lead reviews
+**Who does what**: implementation teammates (sonnet) take one task at a time in their own worktree. The lead reviews
 each diff, runs the full suite and commits. A teammate never commits, pushes or merges.
 
 ## Rules for every task
@@ -48,11 +48,11 @@ Every task ends with `LINT` clean.
 
 **Purpose**: the tool exists, answers `NOT_IMPLEMENTED` for every action, and every registration guard is green.
 
-- [ ] T003 Create `src/tools/storage_map/mod.rs` with `pub mod tree; pub mod model; pub mod path; pub mod validate;
+- [x] T003 Create `src/tools/storage_map/mod.rs` with `pub mod tree; pub mod model; pub mod path; pub mod validate;
 pub mod code; pub mod globals; pub mod diagram; pub mod sample; pub mod uses; pub mod write; pub mod explain;
 pub mod shape;` and an empty file for each module; add `pub mod storage_map;` to `src/tools/mod.rs` next to
       `pub mod storage_guard;` (line ~122). Prove: `cargo build --features testing`.
-- [ ] T004 Add `pub mod batch8;` to `src/tools/params/mod.rs` and create `src/tools/params/batch8.rs` with
+- [x] T004 Add `pub mod batch8;` to `src/tools/params/mod.rs` and create `src/tools/params/batch8.rs` with
       `IrisStorageMapParams` exactly as contracts/iris_storage_map.md "Params" lists (fields `action: String` with
       `#[schemars(extend("enum" = ["read","diagram","uses","compare","preview","propose","check","edit","replace"]))]`,
       `class`, `map`, `global`, `namespaces: Option<Vec<String>>`, `version`, `ops: Option<Vec<Value>>`,
@@ -61,13 +61,13 @@ pub mod shape;` and an empty file for each module; add `pub mod storage_map;` to
       `namespace`, `server`, `confirm`), `#[serde(deny_unknown_fields)]`, derive like `ResolveStorageParams` in
       `batch7.rs:85`. Test first: `tests/unit/test_storage_map_params_172.rs` parses a JSON string with every field
       and one with an unknown field (must fail). Prove: `U test_storage_map_params_172`.
-- [ ] T005 Add the tool method `iris_storage_map` in `src/tools/mod.rs` beside `resolve_storage` (~:10072), shaped
+- [x] T005 Add the tool method `iris_storage_map` in `src/tools/mod.rs` beside `resolve_storage` (~:10072), shaped
       like `iris_global` (~:7426): `target_conn()`, `conn_client`, call `storage_map::handle(&iris, client, &p,
 self).await`, `record_call`. In `storage_map/mod.rs` add `pub async fn handle(...) -> Result<CallToolResult,
 McpError>` that returns `err_json("NOT_IMPLEMENTED", "<action>")` for each known action and `INVALID_ACTION`
       otherwise. Add the `dispatch!("iris_storage_map", IrisStorageMapParams, iris_storage_map);` arm in
       `dispatch_by_name` (~:12030). Prove: `cargo build --features testing`.
-- [ ] T006 Register the tool name everywhere the guards check (list from plan.md and docs/invariants.md "a tool"
+- [x] T006 Register the tool name everywhere the guards check (list from plan.md and docs/invariants.md "a tool"
       row): `write_gate.rs:658` `CLASSIFICATION` row from plan.md "Classification" (all actions as in the table; opt-in
       raising comes in T064); `iris/server_manager.rs:971` `tool_to_category` arm (`Docs`); `write_gate.rs:1131`
       `effective_category` arms (check/edit/replace → `Compile`; compare/propose/preview → `Execute`);
@@ -77,17 +77,20 @@ McpError>` that returns `err_json("NOT_IMPLEMENTED", "<action>")` for each known
       :246; toolset counts in `tests/unit/test_toolset.rs:131` and `:264`; `/tests/e2e/skill_eval/tool_applicability.toml`
       (`iris_storage_map = "storage"`). Prove: `U test_gate_classification`, `U test_enum_gate_classes`,
       `U test_tool_category_coverage`, `U test_output_schema`, `U test_toolset`, then the whole `U` target.
-- [ ] T007 Add `iris_storage_map` to `/docs/tools.md`: a quick-reference row, and a section headed with the tool
+- [x] T007 Add `iris_storage_map` to `/docs/tools.md`: a quick-reference row, and a section headed with the tool
       name whose parameter table matches T004's struct exactly. Prove:
       `U every_documented_tool_parameter_is_in_the_input_schema`.
-- [ ] T008 Add one case per read-only action (`read`, `diagram`, `uses`) to `tests/integration/test_enum_tools_work_live.rs:50`
+- [x] T008 Add one case per read-only action (`read`, `diagram`, `uses`) to `tests/integration/test_enum_tools_work_live.rs:50`
       `cases()`, expecting `NOT_IMPLEMENTED` for now (later tasks change the expectation). Prove: `L test_enum_tools_work_live`.
-- [ ] T009 [P] Binary schema test `tests/binary/test_storage_map_schema_172.rs`: `tools/list` advertises
+- [x] T009 [P] Binary schema test `tests/binary/test_storage_map_schema_172.rs`: `tools/list` advertises
       `iris_storage_map` with `additionalProperties: false`, the `action` enum of nine values, and every property of
       T004. Use `ParamContract` and `assert_advertised_contracts` as in `tests/binary/schema_batch7.rs`. Prove:
       `B test_storage_map_schema_172`.
-- [ ] T010 Add `IAD_STORAGE_CORPUS` and `IAD_REGEN_GOLDEN` to `BEHAVIOR_ENV_VARS` in `src/testing.rs`. Prove:
+- [x] T010 Add `IAD_STORAGE_CORPUS` and `IAD_REGEN_GOLDEN` to `BEHAVIOR_ENV_VARS` in `src/testing.rs`. Prove:
       `U behavior_env` (the existing registry guard) and the whole `U` target.
+- [x] T010a Constitution IV: `tests/unit/test_storage_map_unreachable_172.rs` calls `iris_storage_map` for every
+      action on an `IrisTools` with no connection (`iris: None`) and asserts `IRIS_UNREACHABLE` (not `NOT_IMPLEMENTED`,
+      and no panic). Prove: `U test_storage_map_unreachable_172`.
 
 **Checkpoint**: the full `U` target is green, and `iris_storage_map` is listed.
 
@@ -105,42 +108,42 @@ exact text IRIS returns on GET after a PUT) plus `seed/<Name>.json`:
 `{"class": "...", "globals": [{"ref": "^IadSm172X(1)", "value": "..."}], "question": "<SELECT ...>", "answer": [[...]]}`.
 Package `IadSm172`, globals `^IadSm172*`, invented domain (a small library: members, loans, books, branches).
 
-- [ ] T011 Live rig `tests/integration/storage172_rig.rs` (add `mod` line): `pub async fn load_fixture(r: &Rig, name:
+- [x] T011 Live rig `tests/integration/storage172_rig.rs` (add `mod` line): `pub async fn load_fixture(r: &Rig, name:
 &str)` (drop first, kill its globals, set the seed nodes via `iris_global set`, PUT with `iris_doc` put +
       compile, assert success), `pub async fn drop_fixture(r: &Rig, name: &str)` (delete class, kill globals, assert),
       `pub async fn ask(r: &Rig, name: &str) -> Vec<Vec<Value>>` (runs the seed's question with `iris_query`). Test:
       `tests/integration/test_storage172_rig_live.rs` loads `Member` (T012), asks, asserts the seed's answer, drops,
       asserts the class is gone. Prove: `L test_storage172_rig_live`.
-- [ ] T012 [P] Fixture `Member`: one data map, `^`-delimited pieces on the ID node, ID from `SqlIdExpression`
+- [x] T012 [P] Fixture `Member`: one data map, `^`-delimited pieces on the ID node, ID from `SqlIdExpression`
       `$i(^IadSm172Member)`. Known answer: name of member 2. Prove: a case in `test_storage172_rig_live`.
-- [ ] T013 [P] Fixture `LoanList`: data fields with no `<Delimiter>` (so `$LIST`). Prove: rig case.
-- [ ] T014 [P] Fixture `BookMulti`: fields on three different nodes (`"title"`, `"pub"`, `"loc"`). Prove: rig case.
-- [ ] T015 [P] Fixture `Branch`: a computed field whose `RetrievalCode` reads the global through `{L1}`, with a `<`
+- [x] T013 [P] Fixture `LoanList`: data fields with no `<Delimiter>` (so `$LIST`). Prove: rig case.
+- [x] T014 [P] Fixture `BookMulti`: fields on three different nodes (`"title"`, `"pub"`, `"loc"`). Prove: rig case.
+- [x] T015 [P] Fixture `Branch`: a computed field whose `RetrievalCode` reads the global through `{L1}`, with a `<`
       and `&` in the code (raw characters, CDATA). Prove: rig case asks the computed column.
-- [ ] T016 [P] Fixture `Shelf`: a subscript level with multi-line `NextCode` that contains a line that is only `}` and
+- [x] T016 [P] Fixture `Shelf`: a subscript level with multi-line `NextCode` that contains a line that is only `}` and
       a tab character. Prove: rig case.
-- [ ] T017 [P] Fixture `MemberByCity`: `Member`'s shape plus an index map `CityIdx` on `^IadSm172MemberI`, index built
+- [x] T017 [P] Fixture `MemberByCity`: `Member`'s shape plus an index map `CityIdx` on `^IadSm172MemberI`, index built
       by the seed. Prove: rig case asks `WHERE City = ?`.
-- [ ] T018 [P] Fixture `ActiveLoan`: a conditional index map (`PopulationType conditional`, a `Condition`). Prove: rig
+- [x] T018 [P] Fixture `ActiveLoan`: a conditional index map (`PopulationType conditional`, a `Condition`). Prove: rig
       case.
-- [ ] T019 [P] Fixture `Copy`: composite row ID of three parts (RowIdSpec 1..3). Prove: rig case.
-- [ ] T020 [P] Fixtures `Loan` and `LoanEvent` (D11, nested): one global `^IadSm172Loan`; `Loan` rows at
+- [x] T019 [P] Fixture `Copy`: composite row ID of three parts (RowIdSpec 1..3). Prove: rig case.
+- [x] T020 [P] Fixtures `Loan` and `LoanEvent` (D11, nested): one global `^IadSm172Loan`; `Loan` rows at
       `^IadSm172Loan(id)="member^book^date"`, `LoanEvent` rows inside them at `^IadSm172Loan(id,"EV",n)`; the
       child's level-1 subscript is the parent ID and its level 2 is the literal `"EV"`. Prove: rig case joins them, and
       a `Loan` query returns no row for an `"EV"` node.
-- [ ] T021 [P] Fixture `MemberD11` (D11 inside one map): `^IadSm172MemberD(id)="name^city"` holds two fields and
+- [x] T021 [P] Fixture `MemberD11` (D11 inside one map): `^IadSm172MemberD(id)="name^city"` holds two fields and
       `^IadSm172MemberD(id,"contact")="email^phone"` two more, all one row. Prove: rig case returns all four columns.
-- [ ] T022 [P] Fixture `LoanUnion`: a `RowReference` map. Prove: rig case.
-- [ ] T023 [P] Fixture `Genre`: a bitmap index map. Prove: rig case.
-- [ ] T024 [P] Fixture `Notes`: a storage `<Description>` (CDATA and `///` lines), a code value containing `]]`, and
+- [x] T022 [P] Fixture `LoanUnion`: a `RowReference` map. Prove: rig case.
+- [x] T023 [P] Fixture `Genre`: a bitmap index map. Prove: rig case.
+- [x] T024 [P] Fixture `Notes`: a storage `<Description>` (CDATA and `///` lines), a code value containing `]]`, and
       `BlockCount 0` / `ConditionalWithHostVars 0` written by hand (IRIS drops them; the canonical file has them
       dropped). Prove: rig case.
-- [ ] T025 [P] Malformed bodies `tests/fixtures/storage172/malformed/*.txt`, each with a first line `# expect: <error
+- [x] T025 [P] Malformed bodies `tests/fixtures/storage172/malformed/*.txt`, each with a first line `# expect: <error
 substring>`: unterminated element, unterminated CDATA, attribute other than `name`, text inside a container,
       two attributes, nesting depth 65, a 2 MiB body, a body that is only `]]` repeated. Prove: files exist (used by
       T031).
 
-- [ ] T026 Live D11 checks (FR-023b), recorded in research.md by the lead, run before any read or write code: (a) DELETE one `Loan` row through
+- [x] T026 Live D11 checks (FR-023b), recorded in research.md by the lead, run before any read or write code: (a) DELETE one `Loan` row through
       its map: are its `"EV"` children removed too? (b) a map that walks level 2 of `^IadSm172Loan` as row IDs: does
       it return the `"EV"` node as a row? (c) UPDATE of one `MemberD11` field: are the `contact` fields kept? Each
       as a test asserting what IRIS does. Put them in `tests/integration/test_storage_map_d11_172_live.rs`. Prove: `L test_storage_map_d11_172`.

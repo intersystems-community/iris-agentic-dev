@@ -115,11 +115,12 @@ A path names one element of the model, keyed by name where the element has one:
 ## Validation (before any write, FR-014)
 
 | Rule                                                                                                | Error                          |
-| --------------------------------------------------------------------------------------------------- | ------------------------------ |
+| --------------------------------------------------------------------------------------------------- | ------------------------------ | --------------------------------------------- | --------------------- |
 | Subscript, RowIdSpec, Accessvar, Invalidcondition names are integers                                | `STORAGE_MAP_INVALID`          |
 | Map `type` in the five values, exact case                                                           | `STORAGE_MAP_INVALID`          |
 | `access_type` in the five values, ignoring case (spelling kept as written; research R16)            | `STORAGE_MAP_INVALID`          |
 | No unknown element in a write (except one already in `extra`, which is reported as dropped-on-save) | `STORAGE_MAP_INVALID`          |
+| Extended global reference (`^                                                                       | "NS"                           | X`, `^["NS"]X`) on a write or sample (FR-026) | `STORAGE_MAP_INVALID` |
 | No empty leaf set on purpose                                                                        | `STORAGE_MAP_INVALID`          |
 | Map is `columnar`, or storage not `%Storage.SQL`                                                    | `STORAGE_MAP_READ_ONLY`        |
 | Carried version differs from the stored one                                                         | `STORAGE_MAP_VERSION_CONFLICT` |
@@ -130,7 +131,7 @@ A path names one element of the model, keyed by name where the element has one:
 read (GET, parse, versions)
   → validate ops (FR-014) → gates (FR-026..030) → data checks (FR-023)
   → scratch copy: PUT IrisDevTmp.<id>, compile, delete       ── fails → STORAGE_MAP_COMPILE_FAILED, real class untouched
-  → real PUT (canonical text) → read-back compare (FR-012)  ── differs → STORAGE_MAP_DROPPED / STORAGE_MAP_WRITER_MISMATCH
+  → real PUT (canonical text) → read-back compare (FR-012) → gates again on what IRIS stored (FR-012a)  ── differs → STORAGE_MAP_DROPPED / STORAGE_MAP_WRITER_MISMATCH
   → real compile                                             ── fails → restore previous text, compile → STORAGE_MAP_RESTORED
   → opt-ins: seed_counter, build_indexes (write gate)
   → response: new model, diff, warnings

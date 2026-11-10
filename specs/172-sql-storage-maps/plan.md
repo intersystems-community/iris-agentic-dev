@@ -62,8 +62,8 @@ build_indexes, include_values }` is the only reader of the call's action and opt
 
 ## Prerequisites (queue-jumpers, Q11)
 
-1. `iris_doc` put reads `result.status` (branch `fix/doc-put-result-status`, done locally, uncommitted). 172 uses
-   its helper `check_atelier_put_errors` for every PUT. **172 rebases onto it once it is merged.**
+1. `iris_doc` put reads `result.status`: on master as `87e2cab7`; 172 is based on it and uses
+   `check_atelier_put_errors` for every PUT.
 2. A separate security check, tracked privately, settled before phase 1 starts (the review found 172 makes its path
    easier to reach). Its outcome may add a guard test that FR-026's tests extend.
 
@@ -239,7 +239,7 @@ the model JSON.
 `click`, link or `%%{init}` text is ever emitted from input (FR-005). JSON: `{nodes: [{id, kind,
 label}], edges: [{from, to}]}`.
 
-## Phases (for tasks.md)
+## Phases (for tasks.md; tasks.md splits these into Phases 0–15)
 
 Each phase ends with its tests green; no phase starts before the previous one's gate.
 
@@ -262,10 +262,12 @@ Each phase ends with its tests green; no phase starts before the previous one's 
 
 ## Delegation
 
-Implementation teammates run on haiku (Tom, 2026-11-09). Each task names its files, the test to write first, the
+Implementation teammates run on sonnet (Tom, 2026-11-10; haiku stopped partway). Each task names its files, the test to write first, the
 function signatures, and the command that proves it. The lead reviews every diff and runs the full suite before
 anything is committed. Pure-module tasks (phases 2 to 5, diagram, explain) can run in parallel worktrees; IRIS
-tasks run one at a time against iris-dev-iris (shared container, `--test-threads=1`).
+tasks run one at a time against iris-dev-iris (shared container, `--test-threads=1`). Locally, run only the unit
+target and the storage-map live tests: endpoint security killed the session three times on 2026-11-10 during the
+full binary target and the live tool sweep, which CI runs instead.
 
 ## Complexity Tracking
 

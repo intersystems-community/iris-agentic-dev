@@ -5,7 +5,8 @@
 //!   PUT and compile), so loading it is also a byte-for-byte round-trip check;
 //! - `seed/<Name>.json`: `{"class", "globals": [{"global", "subscripts", "value"}], "question",
 //!   "answer": [ {column: value} ]}`. A seed entry may carry `"lb": [..]` instead of `"value"` for
-//!   a `$LIST` node. Each `global` is killed before seeding and after the test.
+//!   a `$LIST` node; `"build_indexes": ["<Index>"]` builds those indexes after the compile. Each
+//!   `global` is killed before seeding and after the test.
 
 use crate::live_rig_171::Rig;
 use serde_json::{json, Value};
@@ -47,13 +48,20 @@ impl Fixture {
         }
     }
 
-    /// Every distinct global the seed sets, as written (`^IadSm172Member`).
+    /// Every distinct global the seed sets, plus its `kill` list (globals an index build writes).
     pub fn globals(&self) -> Vec<String> {
         let mut out: Vec<String> = self.seed["globals"]
             .as_array()
             .into_iter()
             .flatten()
             .filter_map(|g| g["global"].as_str().map(str::to_string))
+            .chain(
+                self.seed["kill"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|g| g.as_str().map(str::to_string)),
+            )
             .collect();
         out.sort();
         out.dedup();
@@ -166,6 +174,26 @@ pub async fn load_fixture(r: &Rig, f: &Fixture) -> String {
         )
         .await;
     assert_eq!(put["success"], true, "{}: put and compile: {put}", f.name);
+    // A seed can name index maps to build after the compile (a bitmap cannot be seeded as text).
+    // `%BuildIndices` takes the class's Index names, so each map has a matching Index definition.
+    for idx in f.seed["build_indexes"].as_array().into_iter().flatten() {
+        let code = format!(
+            "Set sc=##class({}).%BuildIndices($lb({})) Write $Select(sc=1:\"BUILT\",1:$System.Status.GetErrorText(sc))",
+            f.class,
+            os_literal(idx.as_str().unwrap_or_default())
+        );
+        let built = r
+            .call("iris_execute", json!({"code": code, "namespace": "USER"}))
+            .await;
+        assert!(
+            built["output"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("BUILT"),
+            "{}: building {idx}: {built}",
+            f.name
+        );
+    }
     let got = r
         .call(
             "iris_doc",

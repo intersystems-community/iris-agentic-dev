@@ -228,6 +228,7 @@ mod test_sql_translate_131;
 mod test_sql_validators_141;
 mod test_ssh_spawn_171;
 mod test_storage_map_params_172;
+mod test_storage_map_unreachable_172;
 mod test_stored_check_141;
 mod test_stored_source_141;
 mod test_stream_inspect_141;

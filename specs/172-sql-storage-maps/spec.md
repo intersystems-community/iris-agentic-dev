@@ -62,7 +62,7 @@ Settled by grilling before this spec was written (ADR 0004; Q-numbers refer to t
 - Q5: `iris_doc` still accepts map text, runs the same safeguards when the map changed, and warns that
   `iris_storage_map` exists. A map edit is an ordinary write: same write gates, no extra acknowledgement.
 - Q6: Map globals and map code go through the existing global and code checks; dynamic globals need an
-  acknowledgement; `preview` of a proposed map needs execute permission.
+  acknowledgement (superseded: an operator limit, FR-028); `preview` of a proposed map needs execute permission.
 - Q7: Declared contract: `model_version`, golden-file test, public `docs/storage-maps.md`.
 - Q8: `edit` refuses ID reuse and an unbuilt index by default; `seed_counter` and `build_indexes` opt in.
 - Q9: `propose` drafts a map from a sampled global and writes nothing.
@@ -75,6 +75,9 @@ Settled by grilling before this spec was written (ADR 0004; Q-numbers refer to t
 ### Session 2026-11-09 (security review of this design)
 
 An adversarial review checked this design against iad's recent security work (specs 052, 087, 133, 137, 141, 171).
+Tom chose to report nested tables and the DELETE hazard rather than block them (FR-003a, 2026-11-10), and to
+exercise bitmap maps for real: fixtures build them with `%BuildIndices`, which needs a class `Index` named like the
+map (research R17).
 Tom chose an operator limit for dynamic globals (FR-028; was acknowledgement required in Q6), and chose to treat
 map code like class code, with code-bearing edits also in the Execute category (FR-027), over a pattern allowlist. Other changes:
 FR-005 (diagram escaping), FR-010a (no blind overwrite), FR-012a (re-gate what IRIS stored; refuse
@@ -390,7 +393,9 @@ answer.
   global reference starts with `^`, `$` or `@`.
 - **FR-003a**: `read` MUST report a map whose row node holds fields and also has sub-nodes, and a data map stored
   inside another map's row node (same global, its subscripts extend the other's with a literal level); both maps name
-  each other.
+  each other. On the parent, a derived fact MUST say that a SQL DELETE of one of its rows also deletes the rows of the
+  nested map stored under it (measured, research R17). iad does not change or block this behaviour; `diagram` shows the
+  nesting, and `docs/storage-maps.md` and the skill state the hazard with the test that measured it.
 - **FR-004**: `resolve_storage` MUST use the same reader and return the maps for a `%Storage.SQL` class.
 - **FR-005**: `diagram` MUST return Mermaid flowchart text and the same content as JSON. Labels MUST be built
   from a fixed set of characters, with everything else escaped; no Mermaid directive, link or click handler may come
@@ -472,7 +477,7 @@ answer.
   blocklist and the sensitive-name check, on every action that reaches IRIS (`compare`, `preview`, `propose`,
   `check`, `edit`, `replace`, the opt-ins and the `iris_doc` hand-off), not only on writes. A code-storage or
   blocklisted global is a fixed rule. An extended reference to another namespace or database MUST be refused for
-  writes and sampling in 172; `read`, `diagram` and `uses` may show it.
+  writes and sampling in 172 (`STORAGE_MAP_INVALID`, rule `extended_reference`); `read`, `diagram` and `uses` may show it.
 - **FR-027**: Map code is treated like class code written through `iris_doc`. Every code-bearing element MUST pass
   the same lexical code-edit check as `iris_execute` code, from both entry points, along with source control and the
   compile-time gate. An edit or `iris_doc` put that adds or changes a code-bearing element is judged in the Execute
@@ -543,7 +548,7 @@ answer.
 
 ### Measurable Outcomes
 
-- **SC-001**: Every SQL storage map in the container's `%SYS` namespace (162 classes on IRIS 2026.2) and every class in
+- **SC-001**: Every SQL storage map in the container's `%SYS` namespace (162 classes on IRIS 2026.2, re-counted on each image) and every class in
   the public corpus round-trips byte-identically through read and write.
 - **SC-002**: Every single-field edit in the test suite changes exactly the edited element in the stored class.
 - **SC-003**: Each of the nine measured traps in the Context has a test, and none of them reaches the real class
@@ -556,7 +561,7 @@ answer.
 
 ## Assumptions
 
-- IRIS 2026.2 on iris-dev-iris is the reference. CI's throwaway container runs 2025.3; a writing rule that differs
+- IRIS 2026.2 on iris-dev-iris is the reference. CI's e2e and throwaway containers run 2026.1; a writing rule that differs
   between them is a test failure to investigate, not a reason to skip.
 - `Deferred` (added in 2025.2) is part of the model; older servers are out of scope.
 - Editing is limited to `%Storage.SQL` in 172. Custom storage (`%Library.CustomStorage`) and other storage classes that carry SQL maps are read-only
