@@ -52,6 +52,7 @@ mod test_discovery_docker_live;
 mod test_dispatch_formal_spec_live;
 mod test_dispatch_gate_handlers;
 mod test_doc_live;
+mod test_doc_put_result_status_172;
 mod test_doc_search_live;
 mod test_e2e;
 mod test_e2e_all_tools;

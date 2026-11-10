@@ -75,6 +75,7 @@ mod test_dispatch_gate;
 mod test_dml_sql_unit;
 mod test_doc_gate_order_141;
 mod test_doc_params;
+mod test_doc_put_result_status_172;
 mod test_doc_search_unit;
 mod test_doc_unit2;
 mod test_docnames_130;

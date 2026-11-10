@@ -1764,22 +1764,32 @@ pub fn delete_outcome(status: reqwest::StatusCode, body: &str) -> DeleteOutcome 
     // `status.errors`. A source-control class that refuses in `OnBeforeDelete` leaves `status.errors`
     // empty and puts it in `result.status` (and the console): the reply is a 200 either way.
     let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
-    if let Some(first) = parsed["status"]["errors"]
+    match atelier_error_text(&parsed, "delete refused with no text") {
+        Some(text) => DeleteOutcome::Refused(text),
+        None => DeleteOutcome::Gone,
+    }
+}
+
+/// Check an Atelier PUT response body for errors.
+/// Handles two error shapes: traditional status.errors array and the 2026.2 case where
+/// status.errors is empty but result.status contains "ERROR" text.
+/// Returns Some(error_message) if an error is found, None if successful.
+pub fn check_atelier_put_errors(body: &serde_json::Value) -> Option<String> {
+    atelier_error_text(body, "Document upload failed")
+}
+
+/// The error a 2xx Atelier reply carries, if any: the first `status.errors` entry (`no_text` when
+/// it has no `error` string), else a `result.status` that starts with `ERROR`.
+fn atelier_error_text(body: &serde_json::Value, no_text: &str) -> Option<String> {
+    if let Some(first) = body["status"]["errors"]
         .as_array()
         .and_then(|errs| errs.first())
     {
-        return DeleteOutcome::Refused(
-            first["error"]
-                .as_str()
-                .unwrap_or("delete refused with no text")
-                .to_string(),
-        );
+        return Some(first["error"].as_str().unwrap_or(no_text).to_string());
     }
-    match parsed["result"]["status"].as_str() {
-        Some(text) if text.trim_start().starts_with("ERROR") => {
-            DeleteOutcome::Refused(text.trim().to_string())
-        }
-        _ => DeleteOutcome::Gone,
+    match body["result"]["status"].as_str() {
+        Some(text) if text.trim_start().starts_with("ERROR") => Some(text.trim().to_string()),
+        _ => None,
     }
 }
 

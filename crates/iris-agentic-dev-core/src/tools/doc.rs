@@ -927,16 +927,11 @@ async fn do_write(
         let body_hint = crate::iris::http::text_or_default(resp).await;
         return http_err_json(put_status, body_hint.trim());
     }
-    // Check body for Atelier-level errors (200 OK with status.errors, e.g. build 110
-    // SetTextFromString NULL namespace bug via web gateway).
+    // Check body for Atelier-level errors (200 OK with status.errors or result.status).
+    // IRIS 2026.2 can return HTTP 200 with empty status.errors and error text in result.status.
     let put_body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
-    if let Some(errs) = put_body["status"]["errors"].as_array() {
-        if !errs.is_empty() {
-            let msg = errs[0]["error"]
-                .as_str()
-                .unwrap_or("Document upload failed");
-            return err_json("UPLOAD_FAILED", msg);
-        }
+    if let Some(err_msg) = crate::iris::connection::check_atelier_put_errors(&put_body) {
+        return err_json("UPLOAD_FAILED", &err_msg);
     }
 
     // Write open hint for VS Code auto-open
