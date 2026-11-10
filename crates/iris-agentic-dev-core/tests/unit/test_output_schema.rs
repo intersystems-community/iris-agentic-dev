@@ -83,6 +83,7 @@ const TOOLS_WITH_DECLARED_OUTPUT_SCHEMA: &[&str] = &[
     "iris_generate_class",
     "iris_generate_test",
     "resolve_storage",
+    "iris_storage_map",
     "iris_info",
     "iris_table_info",
     "iris_doc_search",
@@ -244,7 +245,7 @@ fn test_all_ninety_tools_are_declared() {
     // check `output_schemas.rs`'s batch history before assuming either.
     assert_eq!(
         TOOLS_WITH_DECLARED_OUTPUT_SCHEMA.len(),
-        90,
-        "expected exactly 90 declared tools"
+        91,
+        "expected exactly 91 declared tools"
     );
 }

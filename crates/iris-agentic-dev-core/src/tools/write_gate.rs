@@ -731,6 +731,22 @@ pub const CLASSIFICATION: &[ToolClass] = &[
     ro("query_audit_log"),
     ro("resolve_dynamic_dispatch").scratch(),
     ro("resolve_storage"),
+    mixed(
+        "iris_storage_map",
+        &[
+            ("read", WriteClass::ReadOnly),
+            ("diagram", WriteClass::ReadOnly),
+            ("uses", WriteClass::ReadOnly),
+            ("check", WriteClass::ReadOnly),
+            ("compare", WriteClass::Write),
+            ("preview", WriteClass::Write),
+            ("propose", WriteClass::Write),
+            ("edit", WriteClass::Write),
+            ("replace", WriteClass::Write),
+        ],
+        // An action that is missing or unknown is judged as a write (FR-030a: the strictest reading).
+        WriteClass::Write,
+    ),
     ro("skill_community_list")
         .local_default("lists community skills from a public index, not an IRIS server"),
     // These three read `^SKILLS` through the container's terminal and `skill_forget` kills from it:
@@ -1133,6 +1149,17 @@ pub fn effective_category(
         "iris_global" if writes => ToolCategory::Execute,
         "iris_query" if writes || flag("force") => ToolCategory::Execute,
         "iris_doc" if writes => ToolCategory::Compile,
+        "iris_storage_map" if writes => {
+            let action = args
+                .and_then(|a| a.get("action"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            match action {
+                "check" | "edit" | "replace" => ToolCategory::Compile,
+                "compare" | "preview" | "propose" => ToolCategory::Execute,
+                _ => base,
+            }
+        }
         _ if writes
             && matches!(
                 base,

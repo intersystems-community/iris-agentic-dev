@@ -1317,7 +1317,7 @@ pub enum IrisGenerateTestResponse {
     InvalidOutput(GenerateInvalidOutputError),
 }
 
-// ── resolve_storage / iris_info / iris_table_info ───────────────────────────
+// ── resolve_storage / iris_storage_map / iris_info / iris_table_info ──────────
 
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ResolveStorageOk {
@@ -1332,6 +1332,27 @@ pub struct ResolveStorageOk {
 #[serde(untagged)]
 pub enum ResolveStorageResponse {
     Ok(ResolveStorageOk),
+    Err(ToolError),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct IrisStorageMapOk {
+    pub success: bool,
+    pub model_version: u32,
+    pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub class: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    /// Additional action-specific fields (storage, mermaid, uses, etc.)
+    #[serde(flatten)]
+    pub rest: serde_json::Value,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum IrisStorageMapResponse {
+    Ok(IrisStorageMapOk),
     Err(ToolError),
 }
 

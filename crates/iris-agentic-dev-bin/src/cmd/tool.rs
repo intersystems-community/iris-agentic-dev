@@ -70,6 +70,7 @@ pub const TOOL_NAMES: &[&str] = &[
     "iris_search",
     "iris_servers",
     "iris_source_control",
+    "iris_storage_map",
     "iris_symbols",
     "iris_symbols_local",
     "iris_system_performance",

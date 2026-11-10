@@ -425,6 +425,9 @@ pub const BEHAVIOR_ENV_VARS: &[&str] = &[
     "IRIS_INFO_MAX_DOCUMENTS",
     // the size of the in-memory call-history buffer
     "IRIS_TELEMETRY_BUFFER_SIZE",
+    // spec 172: storage-map test corpus directory (T109) and golden regeneration flag (T095)
+    "IAD_STORAGE_CORPUS",
+    "IAD_REGEN_GOLDEN",
 ];
 
 /// A `Command` for the binary with every behavior-changing variable removed.

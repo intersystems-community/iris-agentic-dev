@@ -1061,8 +1061,8 @@ fn tool_to_category(tool_name: &str) -> Option<crate::iris::workspace_config::To
         // Read-only code/schema/class-structure introspection — same bucket as
         // docs_introspect/iris_doc above.
         "extract_message_map_routing" | "find_subclass_implementations" | "iris_doc_search"
-        | "iris_generate" | "iris_generate_test" | "iris_macro" | "iris_table_info"
-        | "resolve_dynamic_dispatch" => ToolCategory::Docs,
+        | "iris_generate" | "iris_generate_test" | "iris_macro" | "iris_storage_map"
+        | "iris_table_info" | "resolve_dynamic_dispatch" => ToolCategory::Docs,
 
         // A tool with no arm is not "not gated": `effective_category` gives it the strictest
         // reading unless it is on `INTENTIONALLY_UNCATEGORIZED_TOOLS`.

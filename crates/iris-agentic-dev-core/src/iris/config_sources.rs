@@ -224,6 +224,8 @@ pub const LAUNCH_SETTINGS: &[(&str, SettingClass, &str)] = &[
     ("IAD_THROWAWAY_IMAGE", Neutral, "test hook: the throwaway container image"),
     ("IRIS_INFO_MAX_DOCUMENTS", Neutral, "how many documents iris_info lists"),
     ("IRIS_TELEMETRY_BUFFER_SIZE", Neutral, "size of the in-memory call history"),
+    ("IAD_STORAGE_CORPUS", Neutral, "test hook: storage-map corpus directory (spec 172)"),
+    ("IAD_REGEN_GOLDEN", Neutral, "test hook: regenerate golden files (spec 172)"),
 ];
 
 /// Does a `read_only` value (the file key or `IAD_READ_ONLY`) ask for strict read-only?

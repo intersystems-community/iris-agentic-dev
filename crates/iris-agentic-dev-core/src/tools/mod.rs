@@ -120,6 +120,7 @@ pub mod search;
 pub mod server_tools;
 pub mod skills_tools;
 pub mod storage_guard;
+pub mod storage_map;
 pub mod stored_check;
 pub mod superclass_check;
 pub mod symbols_local;
@@ -10097,6 +10098,41 @@ Methods:
         self.record_call("resolve_storage", result.is_ok());
         result
     }
+
+    #[tool(
+        description = "SQL storage map editor — read, visualize, and edit the data maps in a class's Storage block. Currently returns NOT_IMPLEMENTED for all actions; full implementation in a future release. action: read (return model), diagram (render Mermaid), uses (find classes using a global), compare (check against live data), preview (show data through a proposed map), propose (draft a map from live data), check (validate in a scratch class), edit (modify a map), replace (replace entire map). class, map, global, namespace, server: target. version: from read() for edit/replace. ops: path edit operations for edit. model: SqlMap object for replace/check/preview. confirm_removal: acknowledge removal on first replace call. seed_counter, build_indexes: opt-in post-write actions. include_values, acknowledgePhi: include data values (requires PHI acknowledgement). max_nodes, max_rows: limits for data sampling. Skill: iris-storage-mapping (extra).",
+        output_schema = output_schemas::oneof_output_schema::<output_schemas::IrisStorageMapResponse>()
+    )]
+    async fn iris_storage_map(
+        &self,
+        Parameters(params): Parameters<params::batch8::IrisStorageMapParams>,
+    ) -> Result<CallToolResult, McpError> {
+        // Every declared field, by name, so the handler sees exactly what the schema advertises
+        // (the source-contract guard checks each one is read).
+        let p = serde_json::json!({
+            "action": params.action,
+            "class": params.class,
+            "map": params.map,
+            "global": params.global,
+            "namespaces": params.namespaces,
+            "version": params.version,
+            "ops": params.ops,
+            "model": params.model,
+            "confirm_removal": params.confirm_removal,
+            "seed_counter": params.seed_counter,
+            "build_indexes": params.build_indexes,
+            "include_values": params.include_values,
+            "acknowledgePhi": params.acknowledge_phi,
+            "max_nodes": params.max_nodes,
+            "max_rows": params.max_rows,
+            "namespace": params.namespace,
+        });
+        let iris = self.target_conn()?;
+        let client = self.conn_client(&iris)?;
+        let result = storage_map::handle(&iris, client.as_ref(), &p, self).await;
+        self.record_call("iris_storage_map", result.is_ok());
+        result
+    }
 }
 
 #[tool_handler]
@@ -12298,6 +12334,11 @@ impl IrisTools {
             "resolve_storage",
             params::batch7::ResolveStorageParams,
             resolve_storage
+        );
+        dispatch!(
+            "iris_storage_map",
+            params::batch8::IrisStorageMapParams,
+            iris_storage_map
         );
         dispatch!(
             "stream_inspect",

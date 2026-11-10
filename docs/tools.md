@@ -79,6 +79,7 @@ unless there is something non-obvious to say about it.
 | [`mermaid_class`](#mermaid_class)                                                                                         | Administration            |
 | [`mermaid_production`](#mermaid_production)                                                                               | Administration            |
 | [`resolve_storage`](#resolve_storage)                                                                                     | Administration            |
+| [`iris_storage_map`](#iris_storage_map)                                                                                   | Administration            |
 | [`compare_document`](#compare_document)                                                                                   | Administration            |
 | [`compare_namespace`](#compare_namespace)                                                                                 | Administration            |
 | [`iris_admin`](#iris_admin-) ☠                                                                                            | Administration            |
@@ -1802,6 +1803,35 @@ global layout, extents, and index locations.
 | `class`     | string | —        | **Required.** Class name       |
 | `namespace` | string | `"USER"` | Namespace to query             |
 | `server`    | string | —        | Named server; omit for default |
+
+### `iris_storage_map`
+
+Read, visualize, and edit the data maps in a class's Storage block. Actions: `read` (return
+model), `diagram` (render Mermaid), `uses` (find classes using a global), `compare` (check
+against live data), `preview` (show data through a proposed map), `propose` (draft a map from
+live data), `check` (validate in a scratch class), `edit` (modify a map), `replace` (replace
+entire map).
+
+| Parameter         | Type         | Default  | Notes                                                                                  |
+| ----------------- | ------------ | -------- | -------------------------------------------------------------------------------------- |
+| `action`          | string, enum | —        | `read`, `diagram`, `uses`, `compare`, `preview`, `propose`, `check`, `edit`, `replace` |
+| `class`           | string       | —        | Class name (required for all except `uses`, `propose`)                                 |
+| `map`             | string       | all maps | Map name; default all maps or master                                                   |
+| `global`          | string       | —        | Global name (required for `uses`, `propose`)                                           |
+| `namespaces`      | string array | —        | Other namespaces to search for `uses`                                                  |
+| `version`         | string       | —        | Map version from `read` (required for `edit`, `replace`)                               |
+| `ops`             | object array | —        | Path operations for `edit`                                                             |
+| `model`           | object       | —        | SqlMap object for `replace`, `check`, `preview`                                        |
+| `confirm_removal` | boolean      | `false`  | Acknowledge removal on first `replace` call                                            |
+| `seed_counter`    | boolean      | `false`  | Seed the ID counter (opt-in post-write action)                                         |
+| `build_indexes`   | boolean      | `false`  | Build indexes after write (opt-in post-write action)                                   |
+| `include_values`  | boolean      | `false`  | Include data values (requires `acknowledgePhi`)                                        |
+| `acknowledgePhi`  | boolean      | `false`  | Required with `include_values` (data policy)                                           |
+| `max_nodes`       | integer      | `200`    | Maximum nodes for `compare`, `propose` (clamped 1–1000)                                |
+| `max_rows`        | integer      | `50`     | Maximum rows for `preview` (clamped 1–1000)                                            |
+| `namespace`       | string       | target   | Namespace for the operation                                                            |
+| `server`          | string       | default  | Named server; omit for default                                                         |
+| `confirm`         | boolean      | `false`  | Subject-server confirmation                                                            |
 
 ### `compare_document`
 

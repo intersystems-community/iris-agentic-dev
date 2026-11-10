@@ -55,6 +55,7 @@ pub mod batch4;
 pub mod batch5;
 pub mod batch6;
 pub mod batch7;
+pub mod batch8;
 
 /// An integer that may arrive as a JSON number or as a decimal string.
 ///
