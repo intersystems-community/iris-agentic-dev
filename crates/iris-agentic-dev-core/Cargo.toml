@@ -41,7 +41,7 @@ keyring-core = { version = "1" }
 tree-sitter = "0.26"
 tree-sitter-objectscript = "1.10"
 tree-sitter-objectscript-routine = "1.10"
-quick-xml = "0.41"
+quick-xml = "0.42"
 tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots", "connect", "handshake"], default-features = false }
 futures-util = { version = "0.3", features = ["sink"] }
 base64 = "0.22"
