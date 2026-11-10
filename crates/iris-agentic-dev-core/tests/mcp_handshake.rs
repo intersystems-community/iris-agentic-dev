@@ -432,11 +432,11 @@ fn web_prefix_in_connection_url() {
     );
 }
 
-/// Issue #117: server negotiates all known protocol versions including 2026-07-28.
-///
-/// 2026-07-28 requires `ttlMs`/`cacheScope` on the `tools/list` response (SEP-2549).
-/// We set those fields in list_tools, so the server can legitimately advertise and
-/// echo 2026-07-28. All known versions are echoed back to clients that request them.
+/// Protocol negotiation over `initialize` (#117, rmcp 3.9). A client that asks for a version
+/// with an `initialize` handshake (2024-11-05 through 2025-11-25) gets that version back. 2026-07-28
+/// moved the lifecycle into per-request metadata (SEP-2567), so an `initialize` asking for it, or
+/// for a version nobody knows, gets the newest version that still has `initialize`: 2025-11-25.
+/// rmcp 3.1 echoed 2026-07-28 here; that answer was wrong by the 2026-07-28 spec.
 #[test]
 fn mcp_server_negotiates_all_known_protocol_versions() {
     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -444,8 +444,14 @@ fn mcp_server_negotiates_all_known_protocol_versions() {
         return;
     };
 
-    // All known protocol versions should be echoed back
-    for client_version in &["2026-07-28", "2025-11-25", "2024-11-05"] {
+    for (client_version, expected) in &[
+        ("2024-11-05", "2024-11-05"),
+        ("2025-03-26", "2025-03-26"),
+        ("2025-06-18", "2025-06-18"),
+        ("2025-11-25", "2025-11-25"),
+        ("2026-07-28", "2025-11-25"),
+        ("1999-01-01", "2025-11-25"),
+    ] {
         let mut child = iris_agentic_dev_core::testing::clean_mcp_command(&bin)
             .env("IRIS_HOST", "127.0.0.1")
             .env("IRIS_WEB_PORT", "9")
@@ -471,8 +477,8 @@ fn mcp_server_negotiates_all_known_protocol_versions() {
             .unwrap_or("missing");
 
         assert_eq!(
-            server_version, *client_version,
-            "client sent {client_version}, server replied {server_version} — should echo known versions"
+            server_version, *expected,
+            "client sent {client_version}, server replied {server_version}, expected {expected}"
         );
 
         iris_agentic_dev_core::testing::stop_server(&mut child);
@@ -480,10 +486,9 @@ fn mcp_server_negotiates_all_known_protocol_versions() {
     }
 }
 
-/// Issue #117: tools/list response carries cache annotation when negotiating 2026-07-28.
-///
-/// SEP-2549 requires ttlMs and cacheScope on the ListToolsResult for 2026-07-28 peers.
-/// ttlMs=0 means "do not cache" — correct for tools that query live IRIS state.
+/// Issue #117: tools/list carries the SEP-2549 cache fields (ttlMs, cacheScope) on every answer,
+/// here after a client that asked `initialize` for 2026-07-28 and was answered with 2025-11-25.
+/// ttlMs=0 means "do not cache", which is right for tools that query live IRIS state.
 #[test]
 fn mcp_server_tools_list_includes_cache_annotation_for_2026_07_28() {
     std::thread::sleep(std::time::Duration::from_millis(500));

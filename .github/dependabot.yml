@@ -24,12 +24,12 @@ updates:
     schedule: { interval: weekly, day: monday }
     cooldown: { default-days: 7 }
     ignore:
-      # Held at 3.1.x in Cargo.toml: 3.2 changes protocol-version negotiation (SEP-2567), which
-      # clients can see. It moves in its own PR, not inside a grouped minor bump.
+      # Held at 3.9.x in Cargo.toml: a minor rmcp release can change what clients see (3.2 changed
+      # protocol negotiation), so each one moves in its own PR, not inside a grouped minor bump.
       - dependency-name: rmcp
-        versions: [">=3.2"]
+        versions: [">=3.10"]
       - dependency-name: rmcp-macros
-        versions: [">=3.2"]
+        versions: [">=3.10"]
     groups:
       cargo-minor:
         update-types: [minor, patch]

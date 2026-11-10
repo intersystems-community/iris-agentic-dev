@@ -10204,10 +10204,12 @@ impl ServerHandler for IrisTools {
             .await
     }
 
-    fn get_info(&self) -> ServerInfo {
-        // Cap to 2025-11-25: the 2026-07-28 draft requires per-tool cache metadata that
-        // clients using that version will reject when absent. Pin until we opt into caching.
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+    fn get_info(&self) -> ServerConfig {
+        // The fallback when a client asks `initialize` for a version that has no `initialize`
+        // handshake: 2026-07-28 moved the lifecycle into per-request metadata (SEP-2567), so rmcp
+        // answers an `initialize` for it, or for an unknown version, with this one. A client that
+        // asks for 2024-11-05 through 2025-11-25 gets its own version back.
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_protocol_version(ProtocolVersion::V_2025_11_25)
             .with_server_info(Implementation::new(
                 "iris-agentic-dev".to_string(),
@@ -10229,7 +10231,9 @@ impl ServerHandler for IrisTools {
     /// Explicitly enumerate all supported protocol versions including 2026-07-28.
     ///
     /// 2026-07-28 requires `ttlMs`/`cacheScope` on the `tools/list` response (SEP-2549).
-    /// We set those in `list_tools` above, so advertising this version is now correct. (#117)
+    /// We set those in `list_tools` below, so advertising this version is now correct. (#117)
+    /// It is reachable only through per-request `_meta` and `discover`: an `initialize` for it
+    /// gets the `get_info` fallback, 2025-11-25.
     fn supported_protocol_versions(&self) -> std::borrow::Cow<'static, [ProtocolVersion]> {
         std::borrow::Cow::Borrowed(ProtocolVersion::KNOWN_VERSIONS)
     }
