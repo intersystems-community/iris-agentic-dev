@@ -6639,22 +6639,36 @@ Methods:
         let Some(iris) = self.target_conn_opt()? else {
             return Ok((Vec::new(), false));
         };
-        // Build a JSON array of {name, description, body} objects via %DynamicArray so
-        // skill names and descriptions are properly escaped — raw string concatenation
-        // produced invalid JSON the moment any entry existed (#119).
-        let code = r#"Set arr=##class(%DynamicArray).%New() Set key="" For { Set key=$Order(^SKILLS(key)) Quit:key=""  Set val=$Get(^SKILLS(key)) Set obj=##class(%DynamicObject).%New() Do obj.%Set("name",key) Do obj.%Set("description",$Piece(val,"|",1)) Do obj.%Set("body",$Piece(val,"|",2)) Do arr.%Push(obj) } Write arr.%ToJSON()"#;
-        Ok(
-            match iris
-                .execute(code, &crate::tools::skills_tools::skills_namespace())
-                .await
-            {
-                Ok(output) => match serde_json::from_str::<Vec<serde_json::Value>>(output.trim()) {
-                    Ok(entries) => (entries, true),
-                    Err(_) => (Vec::new(), false),
-                },
+        let ns = crate::tools::skills_tools::skills_namespace();
+        // Atelier SQL first: `%Library.Global_Get` returns each node with its reference and raw
+        // value, so no scratch class and no docker terminal is needed. The terminal was the only
+        // path before, and when it failed the synthesized source went missing (CI on 2025.3).
+        let client = self.conn_client(&iris)?;
+        if let Ok(resp) = iris
+            .query(
+                "SELECT Name, Value FROM %Library.Global_Get(?, '^SKILLS')",
+                vec![serde_json::json!(ns)],
+                &ns,
+                &client,
+            )
+            .await
+        {
+            if let Some(rows) = resp["result"]["content"].as_array() {
+                return Ok((
+                    crate::tools::skills_tools::skill_entries_from_global_rows(rows),
+                    true,
+                ));
+            }
+        }
+        // A server without Atelier REST (docker_only): read ^SKILLS through the terminal.
+        let code = crate::tools::skills_tools::synthesized_skills_terminal_code();
+        Ok(match iris.execute(code, &ns).await {
+            Ok(output) => match serde_json::from_str::<Vec<serde_json::Value>>(output.trim()) {
+                Ok(entries) => (entries, true),
                 Err(_) => (Vec::new(), false),
             },
-        )
+            Err(_) => (Vec::new(), false),
+        })
     }
 
     #[tool(
@@ -6700,27 +6714,15 @@ Methods:
         }
 
         let (synth, synth_searched) = self.synthesized_skills().await?;
-        if synth_searched {
-            let code = crate::objectscript::skill_get_code(&p.name);
-            if let Some(iris) = self.target_conn_opt()? {
-                if let Ok(output) = iris
-                    .execute(&code, &crate::tools::skills_tools::skills_namespace())
-                    .await
-                {
-                    if let Ok(mut skill) = serde_json::from_str::<serde_json::Value>(output.trim())
-                    {
-                        if let Some(obj) = skill.as_object_mut() {
-                            obj.insert(
-                                "source".to_string(),
-                                serde_json::Value::String(
-                                    bundled::SkillSource::Synthesized.as_str().to_string(),
-                                ),
-                            );
-                        }
-                        return ok_json(serde_json::json!({"success": true, "skill": skill}));
-                    }
-                }
+        if let Some(entry) = synth.iter().find(|e| e["name"] == p.name.as_str()) {
+            let mut skill = entry.clone();
+            if let Some(obj) = skill.as_object_mut() {
+                obj.insert(
+                    "source".to_string(),
+                    bundled::SkillSource::Synthesized.as_str().into(),
+                );
             }
+            return ok_json(serde_json::json!({"success": true, "skill": skill}));
         }
 
         // FR-004: never a bare miss — say where we looked.

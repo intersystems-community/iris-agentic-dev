@@ -139,3 +139,56 @@ fn test_skills_namespace_env_override() {
     env_guard.unset("OBJECTSCRIPT_SKILLMCP_NAMESPACE");
     assert_eq!(ns, "SKILLS");
 }
+
+// skill_list read ^SKILLS through a docker terminal only, so the synthesized source was missing
+// whenever that path failed (CI on 2025.3: "synthesized.searched=false"). It now reads the rows
+// `%Library.Global_Get` returns over Atelier SQL; this is the parser for those rows.
+mod synthesized_rows {
+    use iris_agentic_dev_core::tools::skills_tools::skill_entries_from_global_rows;
+    use serde_json::json;
+
+    #[test]
+    fn a_quoted_subscript_and_piece_split_value_become_an_entry() {
+        let rows =
+            vec![json!({"Name": "^SKILLS(\"auto-a\")", "Value": "first desc|first body|0|t"})];
+        let got = skill_entries_from_global_rows(&rows);
+        assert_eq!(
+            got,
+            vec![json!({"name": "auto-a", "description": "first desc", "body": "first body"})]
+        );
+    }
+
+    #[test]
+    fn doubled_quotes_in_the_subscript_are_undone() {
+        let rows = vec![json!({"Name": "^SKILLS(\"say \"\"hi\"\"\")", "Value": "d \"q\"|b"})];
+        let got = skill_entries_from_global_rows(&rows);
+        assert_eq!(got[0]["name"], "say \"hi\"");
+        assert_eq!(got[0]["description"], "d \"q\"");
+    }
+
+    #[test]
+    fn a_numeric_subscript_is_kept_as_text() {
+        let rows = vec![json!({"Name": "^SKILLS(42)", "Value": "d|b"})];
+        assert_eq!(skill_entries_from_global_rows(&rows)[0]["name"], "42");
+    }
+
+    #[test]
+    fn the_top_node_deeper_subscripts_and_malformed_rows_are_skipped() {
+        let rows = vec![
+            json!({"Name": "^SKILLS", "Value": "top"}),
+            json!({"Name": "^SKILLS(\"a\",\"b\")", "Value": "d|b"}),
+            json!({"Name": "^OTHER(\"a\")", "Value": "d|b"}),
+            json!({"Value": "no name"}),
+            json!({"Name": "^SKILLS(\"ok\")", "Value": "d|b"}),
+        ];
+        let got = skill_entries_from_global_rows(&rows);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0]["name"], "ok");
+    }
+
+    #[test]
+    fn a_comma_inside_a_quoted_subscript_is_one_subscript() {
+        let rows = vec![json!({"Name": "^SKILLS(\"a,b\")", "Value": "d|b"})];
+        assert_eq!(skill_entries_from_global_rows(&rows)[0]["name"], "a,b");
+    }
+}

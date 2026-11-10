@@ -25,6 +25,58 @@ pub fn skills_namespace() -> String {
     std::env::var("OBJECTSCRIPT_SKILLMCP_NAMESPACE").unwrap_or_else(|_| "USER".to_string())
 }
 
+/// ObjectScript for a docker terminal that writes every `^SKILLS` entry as a JSON array of
+/// `{name, description, body}`. The loop is on one line with no braces, because terminal input has
+/// no block syntax. Used only when Atelier SQL cannot answer (a server with no web server).
+pub fn synthesized_skills_terminal_code() -> &'static str {
+    "Set arr=##class(%DynamicArray).%New(),key=\"\" For  Set key=$Order(^SKILLS(key)) Quit:key=\"\"  Set val=$Get(^SKILLS(key)),obj=##class(%DynamicObject).%New() Do obj.%Set(\"name\",key),obj.%Set(\"description\",$Piece(val,\"|\",1)),obj.%Set(\"body\",$Piece(val,\"|\",2)),arr.%Push(obj)\nWrite arr.%ToJSON()"
+}
+
+/// The synthesized skills in the rows `%Library.Global_Get(<ns>, '^SKILLS')` returns over Atelier
+/// SQL: one `{name, description, body}` per first-level node, the value split on `|` the way the
+/// skill writer stores it. `Name` is the node's reference as IRIS prints it (`^SKILLS("a""b")`);
+/// the top node, deeper nodes, other globals and rows without a name are left out.
+pub fn skill_entries_from_global_rows(rows: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    rows.iter()
+        .filter_map(|row| {
+            let reference = row["Name"].as_str()?;
+            let inner = reference.strip_prefix("^SKILLS(")?.strip_suffix(')')?;
+            let name = single_subscript(inner)?;
+            let value = row["Value"].as_str().unwrap_or("");
+            let mut pieces = value.split('|');
+            Some(serde_json::json!({
+                "name": name,
+                "description": pieces.next().unwrap_or(""),
+                "body": pieces.next().unwrap_or(""),
+            }))
+        })
+        .collect()
+}
+
+/// One subscript as IRIS prints it: a quoted string with `""` for `"`, or a bare number. `None`
+/// for anything else, including two subscripts.
+fn single_subscript(text: &str) -> Option<String> {
+    if let Some(quoted) = text.strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
+        let mut out = String::new();
+        let mut chars = quoted.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '"' {
+                // Inside the quotes a lone `"` would end the string, so it must be doubled.
+                if chars.next() != Some('"') {
+                    return None;
+                }
+            }
+            out.push(c);
+        }
+        return Some(out);
+    }
+    let numeric = !text.is_empty()
+        && text
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '-' || c == '.' || c == 'E');
+    numeric.then(|| text.to_string())
+}
+
 /// True only when a docker-exec run of `Kill ^SKILLS(...) Write "OK"` confirmed the delete.
 ///
 /// `IrisConnection::execute` talks to the IRIS terminal, and the terminal reports a failure by

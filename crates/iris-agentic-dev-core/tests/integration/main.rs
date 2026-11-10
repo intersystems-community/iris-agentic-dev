@@ -110,6 +110,7 @@ mod test_setup_skills_141_live;
 mod test_skill_facts_127_live;
 mod test_skill_install_e2e;
 mod test_skill_kb_gate_171_live;
+mod test_skill_list_atelier_live;
 mod test_skill_symbols_live;
 mod test_skills_store_171_live;
 mod test_sm_e2e;
