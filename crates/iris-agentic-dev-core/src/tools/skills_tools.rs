@@ -32,6 +32,17 @@ pub fn synthesized_skills_terminal_code() -> &'static str {
     "Set arr=##class(%DynamicArray).%New(),key=\"\" For  Set key=$Order(^SKILLS(key)) Quit:key=\"\"  Set val=$Get(^SKILLS(key)),obj=##class(%DynamicObject).%New() Do obj.%Set(\"name\",key),obj.%Set(\"description\",$Piece(val,\"|\",1)),obj.%Set(\"body\",$Piece(val,\"|\",2)),arr.%Push(obj)\nWrite arr.%ToJSON()"
 }
 
+/// The JSON array [`synthesized_skills_terminal_code`] writes, out of the terminal's whole output.
+/// The terminal can print a banner first (IRIS 2025.3 in CI printed a license expiry warning), so
+/// the array is the first line that starts with `[`. `None` when no line parses as an array.
+pub fn skill_entries_from_terminal_output(output: &str) -> Option<Vec<serde_json::Value>> {
+    output
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with('['))
+        .find_map(|line| serde_json::from_str::<Vec<serde_json::Value>>(line).ok())
+}
+
 /// The synthesized skills in the rows `%Library.Global_Get(<ns>, '^SKILLS')` returns over Atelier
 /// SQL: one `{name, description, body}` per first-level node, the value split on `|` the way the
 /// skill writer stores it. `Name` is the node's reference as IRIS prints it (`^SKILLS("a""b")`);

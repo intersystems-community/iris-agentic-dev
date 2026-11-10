@@ -192,3 +192,34 @@ mod synthesized_rows {
         assert_eq!(skill_entries_from_global_rows(&rows)[0]["name"], "a,b");
     }
 }
+
+// The docker terminal can print a banner before the JSON. On IRIS 2025.3 in CI it printed a license
+// expiry warning, so the whole output did not parse and the synthesized source went missing.
+mod terminal_output {
+    use iris_agentic_dev_core::tools::skills_tools::skill_entries_from_terminal_output;
+
+    #[test]
+    fn a_banner_before_the_json_is_skipped() {
+        let out = "*** Warning: This InterSystems IRIS license will expire in 3 days ***\n\n\n\n[{\"name\":\"a\",\"description\":\"d\",\"body\":\"b\"}]\n";
+        let got = skill_entries_from_terminal_output(out).expect("entries");
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0]["name"], "a");
+    }
+
+    #[test]
+    fn plain_json_still_parses_and_an_empty_array_is_an_answer() {
+        assert!(skill_entries_from_terminal_output("[]")
+            .expect("empty")
+            .is_empty());
+        assert_eq!(
+            skill_entries_from_terminal_output("[{\"name\":\"x\"}]").unwrap()[0]["name"],
+            "x"
+        );
+    }
+
+    #[test]
+    fn output_with_no_json_array_is_none() {
+        assert!(skill_entries_from_terminal_output("<SYNTAX>\n").is_none());
+        assert!(skill_entries_from_terminal_output("").is_none());
+    }
+}

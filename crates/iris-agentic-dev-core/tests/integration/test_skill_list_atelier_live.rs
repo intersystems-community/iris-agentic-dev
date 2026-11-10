@@ -117,8 +117,9 @@ async fn the_terminal_fallback_reads_skills_through_docker() {
     assert_eq!(set["success"], true, "{set}");
     assert_eq!(kill["success"], true, "{kill}");
     let out = out.expect("docker terminal run");
-    let entries: Vec<serde_json::Value> =
-        serde_json::from_str(out.trim()).unwrap_or_else(|e| panic!("not JSON ({e}): {out}"));
+    let entries =
+        iris_agentic_dev_core::tools::skills_tools::skill_entries_from_terminal_output(&out)
+            .unwrap_or_else(|| panic!("no JSON array in the terminal output: {out}"));
     let found = entries
         .iter()
         .find(|e| e["name"] == name)

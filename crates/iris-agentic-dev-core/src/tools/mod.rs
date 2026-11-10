@@ -6662,12 +6662,12 @@ Methods:
         }
         // A server without Atelier REST (docker_only): read ^SKILLS through the terminal.
         let code = crate::tools::skills_tools::synthesized_skills_terminal_code();
-        Ok(match iris.execute(code, &ns).await {
-            Ok(output) => match serde_json::from_str::<Vec<serde_json::Value>>(output.trim()) {
-                Ok(entries) => (entries, true),
-                Err(_) => (Vec::new(), false),
-            },
-            Err(_) => (Vec::new(), false),
+        let entries = iris.execute(code, &ns).await.ok().and_then(|output| {
+            crate::tools::skills_tools::skill_entries_from_terminal_output(&output)
+        });
+        Ok(match entries {
+            Some(entries) => (entries, true),
+            None => (Vec::new(), false),
         })
     }
 
