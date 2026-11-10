@@ -367,8 +367,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - iris_version: "2025.3"
-            iris_image: "intersystemsdc/iris-community:2025.3"
+          - iris_version: "2026.1"
+            iris_image: "intersystemsdc/iris-community:2026.1"
             initial_wait_secs: 90
     name: "e2e-tests (IRIS ${{ matrix.iris_version }})"
     steps:
