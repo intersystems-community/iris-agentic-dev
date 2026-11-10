@@ -558,7 +558,8 @@ XData ProductionDefinition
 ];
 
 /// Send six one-second messages, wait until one is done, stop with `stop_args`, and report
-/// `done,queued` right after the stop.
+/// `done,queued` right after the stop. The count has a unary `+` because on 2025.3 `GetCount` returns
+/// "" for a stopped production's empty queue, which read as "not a count: 6," in CI.
 async fn send_six_then_stop(
     c: &IrisConnection,
     client: &reqwest::Client,
@@ -574,7 +575,7 @@ async fn send_six_then_stop(
              Kill svc\n \
              Hang 1.5\n \
              Set sc=##class(Ens.Director).StopProduction({stop_args}) If 'sc {{ Write \"stop failed\" Quit }}\n \
-             Write $Get(^Test127.Done,0),\",\",##class(Ens.Queue).GetCount(\"Test127.SlowOp\")"
+             Write $Get(^Test127.Done,0),\",\",+##class(Ens.Queue).GetCount(\"Test127.SlowOp\")"
         ),
     )
     .await
@@ -589,7 +590,7 @@ async fn start_and_drain(c: &IrisConnection, client: &reqwest::Client) -> String
          For w=1:1:20 { Quit:##class(Ens.Queue).GetCount(\"Test127.SlowOp\")=0  Hang 0.5 }\n \
          Hang 1.5\n \
          Set k=\"\",d=0 For { Set k=$Order(^Test127.Done(k)) Quit:k=\"\"  Set d=d+1 }\n \
-         Write $Get(^Test127.Done,0),\",\",d,\",\",##class(Ens.Queue).GetCount(\"Test127.SlowOp\")",
+         Write $Get(^Test127.Done,0),\",\",d,\",\",+##class(Ens.Queue).GetCount(\"Test127.SlowOp\")",
     )
     .await
 }
