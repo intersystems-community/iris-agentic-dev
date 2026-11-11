@@ -250,29 +250,30 @@ reader.
 
 **Independent test**: diagram renders with `mmdc`; `uses` returns exactly the fixture classes.
 
-- [ ] T046 [P] [US2] `src/tools/storage_map/diagram.rs`: `pub fn mermaid(m: &StorageModel, map: Option<&str>) ->
+- [x] T046 [P] [US2] `src/tools/storage_map/diagram.rs`: `pub fn mermaid(m: &StorageModel, map: Option<&str>) ->
 String` and `pub fn graph(m: &StorageModel, map: Option<&str>) -> Graph { nodes: Vec<GNode{id, kind, label}>,
 edges: Vec<GEdge{from, to}> }` per plan "Diagram"; `fn label(s: &str) -> String` keeps only letters, digits,
       space and `_.,:^(){}%$-`, everything else becomes `#<code>;`. Test first `tests/unit/test_storage_map_diagram_172.rs`:
       `Member` gives the expected node list; a field named `x"];click A call alert()` and a value containing
-      `%%{init` produce no `click`, `%%` or `"]` in the output. Prove: `U test_storage_map_diagram_172`.
-- [ ] T047 [US2] Render check `tests/integration/test_storage_map_diagram_render_172_live.rs`: for every fixture,
+      `%%{init` produce no `%%` and no raw `"` or `]` in a label (`click` stays as inert quoted text), and a `%`
+      that starts a `%%` pair is escaped. Prove: `U test_storage_map_diagram_172`.
+- [x] T047 [US2] Render check `tests/integration/test_storage_map_diagram_render_172_live.rs`: for every fixture,
       write `mermaid()` to a temp file and run `mmdc -i <f> -o <f>.svg`; assert exit 0. If `mmdc` is missing, panic
       with the install hint unless `IAD_ALLOW_SKIP=1`. Prove: `L test_storage_map_diagram_render_172`.
-- [ ] T048 [US2] `mod.rs`: the `diagram` action (read, then `mermaid` + `graph`). Test first: a case in
+- [x] T048 [US2] `mod.rs`: the `diagram` action (read, then `mermaid` + `graph`). Test first: a case in
       `test_storage_map_read_172_live.rs`. Prove: `L test_storage_map_read_172`.
-- [ ] T049 [P] [US2] `src/tools/storage_map/globals.rs`: `pub fn normalize_global(raw: &str) -> Result<GlobalRef,
+- [x] T049 [P] [US2] `src/tools/storage_map/globals.rs`: `pub fn normalize_global(raw: &str) -> Result<GlobalRef,
 String>` with `GlobalRef { name: String, extended: Option<String>, subscripts_prefix: Option<String> }`; accepts
       `^X`, `X`, `^X(...)`, `^|"NS"|X`, `^["NS"]X`, `^|"^^/db"|X`; anything with `@` or `$Name` → `Err("dynamic")`.
       Test first `tests/unit/test_storage_map_gates_172.rs`: each form, both caret spellings, case kept. Prove:
       `U test_storage_map_gates_172`.
-- [ ] T050 [US2] `src/tools/storage_map/uses.rs`: `pub async fn uses(iris, client, global: &GlobalRef, namespaces:
+- [x] T050 [US2] `src/tools/storage_map/uses.rs`: `pub async fn uses(iris, client, global: &GlobalRef, namespaces:
 &[String]) -> Result<Value, ...>` with the two queries of research R11 through `iris.query`, matching after
       `normalize_global` on both sides. Test first `tests/integration/test_storage_map_uses_172_live.rs`: load
       `Member` and `MemberByCity`; `uses ^IadSm172Member` returns both data maps; `uses ^IadSm172MemberI` returns the
       index map; an unused global returns `[]` and names the namespace searched. Prove: `L test_storage_map_uses_172`.
-- [ ] T051 [US2] Wire `uses` in `mod.rs`; change T008's `diagram` and `uses` cases to expect success. Prove:
-      `L test_enum_tools_work_live`.
+- [x] T051 [US2] Wire `uses` in `mod.rs`; change T008's `diagram` and `uses` cases to expect success. Prove:
+      `L test_enum_tools_work_live` (CI only: the sweep is not run locally, see the XDR note in plan.md).
 
 ---
 
