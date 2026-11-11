@@ -1,0 +1,11 @@
+{
+  "class": "IadSm172.DefaultBook",
+  "globals": [
+    {"global": "^IadSm172.DefaultBookD", "subscripts": ["1"], "lb": ["", "Atlas", "Ines", "978-1"]},
+    {"global": "^IadSm172.DefaultBookD", "subscripts": ["2"], "lb": ["", "Zephyr", "Omar", "978-2"]},
+    {"global": "^IadSm172.DefaultBookD", "value": "2"}
+  ],
+  "kill": ["^IadSm172.DefaultBookI", "^IadSm172.DefaultBookS"],
+  "question": "SELECT Title, Author FROM IadSm172.DefaultBook ORDER BY ID",
+  "answer": [{"Title": "Atlas", "Author": "Ines"}, {"Title": "Zephyr", "Author": "Omar"}]
+}

@@ -31,3 +31,4 @@ fixture_case!(member_d11, "MemberD11");
 fixture_case!(copy, "Copy");
 fixture_case!(loan_union, "LoanUnion");
 fixture_case!(notes, "Notes");
+fixture_case!(default_book, "DefaultBook");
