@@ -49,6 +49,7 @@ pub const SERVICE_ACCOUNT_TOOLS: &[&str] = &[
     "iris_coverage",
     "iris_ws_open",
     "iris_ws_exec",
+    "iris_storage_map",
 ];
 
 fn arg<'a>(args: &'a Value, keys: &[&str]) -> Option<&'a str> {
@@ -60,11 +61,23 @@ fn arg<'a>(args: &'a Value, keys: &[&str]) -> Option<&'a str> {
 /// Does this call run the agent's code, so that it must run as the service account?
 ///
 /// `iris_query` does when it writes or forces; `iris_global` when it sets or kills;
-/// `iris_coverage` when it starts or runs the agent's test path. Both spellings of the action
-/// argument are read.
+/// `iris_coverage` when it starts or runs the agent's test path; `iris_storage_map` when
+/// compare/propose/preview or when opt-ins are set. Both spellings of the action argument are read.
 pub fn needs_service_account(tool: &str, args: &Value) -> bool {
     let action = arg(args, &["action", "mode"]).map(str::to_ascii_lowercase);
     let action = action.as_deref().unwrap_or("");
+
+    // T036: iris_storage_map needs service account for specific actions and opt-ins
+    if tool == "iris_storage_map" {
+        let shape = crate::tools::storage_map::call_shape(args);
+        use crate::tools::storage_map::Action;
+        return matches!(
+            shape.action,
+            Action::Compare | Action::Preview | Action::Propose
+        ) || shape.seed_counter
+            || shape.build_indexes;
+    }
+
     match tool {
         "iris_execute"
         | "iris_execute_method"

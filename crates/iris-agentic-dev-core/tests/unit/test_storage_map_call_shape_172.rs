@@ -1,6 +1,8 @@
-//! Storage map call_shape tests (T034)
+//! Storage map call_shape tests (T034, T035, T036)
 
+use iris_agentic_dev_core::tools::exec::needs_service_account;
 use iris_agentic_dev_core::tools::storage_map::{call_shape, Action};
+use iris_agentic_dev_core::tools::write_gate::{classify, is_scratch_call, WriteClass};
 use serde_json::json;
 
 #[test]
@@ -124,4 +126,212 @@ fn test_call_shape_opt_ins() {
     let shape = call_shape(&params);
     assert!(!shape.seed_counter);
     assert!(!shape.build_indexes);
+}
+
+// ── T035: classify integration ─────────────────────────────────────────────────
+
+#[test]
+fn test_classify_iris_storage_map_read() {
+    let args = json!({"action": "read"}).as_object().cloned();
+    let class = classify("iris_storage_map", args.as_ref());
+    assert_eq!(class, Some(WriteClass::ReadOnly));
+}
+
+#[test]
+fn test_classify_iris_storage_map_diagram() {
+    let args = json!({"action": "diagram"}).as_object().cloned();
+    let class = classify("iris_storage_map", args.as_ref());
+    assert_eq!(class, Some(WriteClass::ReadOnly));
+}
+
+#[test]
+fn test_classify_iris_storage_map_uses() {
+    let args = json!({"action": "uses"}).as_object().cloned();
+    let class = classify("iris_storage_map", args.as_ref());
+    assert_eq!(class, Some(WriteClass::ReadOnly));
+}
+
+#[test]
+fn test_classify_iris_storage_map_check() {
+    let args = json!({"action": "check"}).as_object().cloned();
+    let class = classify("iris_storage_map", args.as_ref());
+    assert_eq!(class, Some(WriteClass::ReadOnly));
+}
+
+#[test]
+fn test_classify_iris_storage_map_edit() {
+    let args = json!({"action": "edit"}).as_object().cloned();
+    let class = classify("iris_storage_map", args.as_ref());
+    assert_eq!(class, Some(WriteClass::Write));
+}
+
+#[test]
+fn test_classify_iris_storage_map_replace() {
+    let args = json!({"action": "replace"}).as_object().cloned();
+    let class = classify("iris_storage_map", args.as_ref());
+    assert_eq!(class, Some(WriteClass::Write));
+}
+
+#[test]
+fn test_classify_iris_storage_map_compare() {
+    let args = json!({"action": "compare"}).as_object().cloned();
+    let class = classify("iris_storage_map", args.as_ref());
+    assert_eq!(class, Some(WriteClass::Write));
+}
+
+#[test]
+fn test_classify_iris_storage_map_preview() {
+    let args = json!({"action": "preview"}).as_object().cloned();
+    let class = classify("iris_storage_map", args.as_ref());
+    assert_eq!(class, Some(WriteClass::Write));
+}
+
+#[test]
+fn test_classify_iris_storage_map_propose() {
+    let args = json!({"action": "propose"}).as_object().cloned();
+    let class = classify("iris_storage_map", args.as_ref());
+    assert_eq!(class, Some(WriteClass::Write));
+}
+
+#[test]
+fn test_classify_iris_storage_map_unreadable() {
+    // Unreadable action becomes Edit with opt-ins (seed_counter + build_indexes = true)
+    // Edit with build_indexes is Destructive
+    let args = json!({"action": "unknown"}).as_object().cloned();
+    let class = classify("iris_storage_map", args.as_ref());
+    assert_eq!(class, Some(WriteClass::Destructive));
+}
+
+// ── T035: is_scratch_call integration ──────────────────────────────────────────
+
+#[test]
+fn test_is_scratch_call_read() {
+    let args = json!({"action": "read"}).as_object().cloned();
+    assert!(!is_scratch_call("iris_storage_map", args.as_ref()));
+}
+
+#[test]
+fn test_is_scratch_call_diagram() {
+    let args = json!({"action": "diagram"}).as_object().cloned();
+    assert!(!is_scratch_call("iris_storage_map", args.as_ref()));
+}
+
+#[test]
+fn test_is_scratch_call_uses() {
+    let args = json!({"action": "uses"}).as_object().cloned();
+    assert!(!is_scratch_call("iris_storage_map", args.as_ref()));
+}
+
+#[test]
+fn test_is_scratch_call_check() {
+    let args = json!({"action": "check"}).as_object().cloned();
+    assert!(is_scratch_call("iris_storage_map", args.as_ref()));
+}
+
+#[test]
+fn test_is_scratch_call_edit() {
+    let args = json!({"action": "edit"}).as_object().cloned();
+    assert!(is_scratch_call("iris_storage_map", args.as_ref()));
+}
+
+#[test]
+fn test_is_scratch_call_replace() {
+    let args = json!({"action": "replace"}).as_object().cloned();
+    assert!(is_scratch_call("iris_storage_map", args.as_ref()));
+}
+
+#[test]
+fn test_is_scratch_call_compare() {
+    let args = json!({"action": "compare"}).as_object().cloned();
+    assert!(is_scratch_call("iris_storage_map", args.as_ref()));
+}
+
+#[test]
+fn test_is_scratch_call_preview() {
+    let args = json!({"action": "preview"}).as_object().cloned();
+    assert!(is_scratch_call("iris_storage_map", args.as_ref()));
+}
+
+#[test]
+fn test_is_scratch_call_propose() {
+    let args = json!({"action": "propose"}).as_object().cloned();
+    assert!(is_scratch_call("iris_storage_map", args.as_ref()));
+}
+
+// ── T036: needs_service_account integration ────────────────────────────────────
+
+#[test]
+fn test_needs_service_account_read() {
+    let args = json!({"action": "read"});
+    assert!(!needs_service_account("iris_storage_map", &args));
+}
+
+#[test]
+fn test_needs_service_account_diagram() {
+    let args = json!({"action": "diagram"});
+    assert!(!needs_service_account("iris_storage_map", &args));
+}
+
+#[test]
+fn test_needs_service_account_uses() {
+    let args = json!({"action": "uses"});
+    assert!(!needs_service_account("iris_storage_map", &args));
+}
+
+#[test]
+fn test_needs_service_account_check() {
+    let args = json!({"action": "check"});
+    assert!(!needs_service_account("iris_storage_map", &args));
+}
+
+#[test]
+fn test_needs_service_account_edit() {
+    let args = json!({"action": "edit"});
+    assert!(!needs_service_account("iris_storage_map", &args));
+}
+
+#[test]
+fn test_needs_service_account_replace() {
+    let args = json!({"action": "replace"});
+    assert!(!needs_service_account("iris_storage_map", &args));
+}
+
+#[test]
+fn test_needs_service_account_compare() {
+    let args = json!({"action": "compare"});
+    assert!(needs_service_account("iris_storage_map", &args));
+}
+
+#[test]
+fn test_needs_service_account_preview() {
+    let args = json!({"action": "preview"});
+    assert!(needs_service_account("iris_storage_map", &args));
+}
+
+#[test]
+fn test_needs_service_account_propose() {
+    let args = json!({"action": "propose"});
+    assert!(needs_service_account("iris_storage_map", &args));
+}
+
+#[test]
+fn test_needs_service_account_with_seed_counter() {
+    let args = json!({"action": "edit", "seed_counter": true});
+    assert!(needs_service_account("iris_storage_map", &args));
+}
+
+#[test]
+fn test_needs_service_account_with_build_indexes() {
+    let args = json!({"action": "replace", "build_indexes": true});
+    assert!(needs_service_account("iris_storage_map", &args));
+}
+
+#[test]
+fn classify_with_no_arguments_is_destructive_and_scratch() {
+    use iris_agentic_dev_core::tools::write_gate::{classify, is_scratch_call, WriteClass};
+    assert_eq!(
+        classify("iris_storage_map", None),
+        Some(WriteClass::Destructive)
+    );
+    assert!(is_scratch_call("iris_storage_map", None));
 }

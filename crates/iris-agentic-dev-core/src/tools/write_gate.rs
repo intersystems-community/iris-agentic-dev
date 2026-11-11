@@ -1015,6 +1015,23 @@ pub fn classify(
     args: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> Option<WriteClass> {
     let entry = CLASSIFICATION.iter().find(|e| e.tool == tool)?;
+
+    // T035: iris_storage_map uses call_shape to determine classification
+    if tool == "iris_storage_map" {
+        // No arguments reads as an unreadable action, which `call_shape` judges strictest.
+        let params = args.map_or(serde_json::Value::Null, |a| {
+            serde_json::Value::Object(a.clone())
+        });
+        let shape = crate::tools::storage_map::call_shape(&params);
+        use crate::tools::storage_map::Action;
+        return Some(match shape.action {
+            Action::Read | Action::Diagram | Action::Uses | Action::Check => WriteClass::ReadOnly,
+            Action::Edit | Action::Replace if shape.build_indexes => WriteClass::Destructive,
+            Action::Compare | Action::Preview | Action::Propose => WriteClass::Write,
+            Action::Edit | Action::Replace => WriteClass::Write,
+        });
+    }
+
     // `force` skips `iris_query`'s read-only SQL check, so a forced read runs what a write runs and
     // is judged as one (spec 141, T-R4a-U22).
     if tool == "iris_query"
@@ -1088,6 +1105,17 @@ pub fn is_scratch_call(
     if crate::testing::scratch_call_rule_ignored() {
         return false;
     }
+
+    // T035: iris_storage_map is scratch for every action except read, diagram, uses
+    if tool == "iris_storage_map" {
+        let params = args.map_or(serde_json::Value::Null, |a| {
+            serde_json::Value::Object(a.clone())
+        });
+        let shape = crate::tools::storage_map::call_shape(&params);
+        use crate::tools::storage_map::Action;
+        return !matches!(shape.action, Action::Read | Action::Diagram | Action::Uses);
+    }
+
     let mode = args
         .and_then(|a| a.get("mode"))
         .and_then(|v| v.as_str())

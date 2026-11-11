@@ -188,11 +188,11 @@ pub build_indexes: bool, pub include_values: bool, pub code_changed: Option<bool
       unknown, any case or whitespace variant) becomes `Action::Edit` with both opt-ins `true` (FR-030a). Test first
       `tests/unit/test_storage_map_call_shape_172.rs`: every action, `" EDIT "`, `"Read"`, a number, a missing
       action, opt-ins as `true`/`false`/absent/`"true"` (a string is not `true`). Prove: `U test_storage_map_call_shape_172`.
-- [ ] T035 Make `write_gate::classify` (`write_gate.rs:997`) call `storage_map::call_shape` for `iris_storage_map`
+- [x] T035 Make `write_gate::classify` (`write_gate.rs:997`) call `storage_map::call_shape` for `iris_storage_map`
       only, and make `is_scratch_call` (`write_gate.rs:1064`) do the same (scratch for every action except read,
       diagram, uses). Test first in `tests/unit/test_storage_map_call_shape_172.rs`: `classify` and `is_scratch_call`
       for each action and for an unreadable one. Prove: `U test_storage_map_call_shape_172` and `U test_gate_classification`.
-- [ ] T036 Make `exec::needs_service_account` (`tools/exec.rs:72`) use `call_shape` for `iris_storage_map` and add the
+- [x] T036 Make `exec::needs_service_account` (`tools/exec.rs:72`) use `call_shape` for `iris_storage_map` and add the
       tool to `SERVICE_ACCOUNT_TOOLS` (`exec.rs:43`): service account for compare, propose, preview and when an
       opt-in is set; connection user otherwise (plan "Classification"). Test first in the same file: the decision for
       each row of that table. Prove: `U test_storage_map_call_shape_172`, `U service_account`.
