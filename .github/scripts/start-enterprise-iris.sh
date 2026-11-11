@@ -35,7 +35,9 @@ for _ in $(seq 1 60); do
 done
 
 # _SYSTEM gets a known password, CallIn is on (embedded Python and the native tests need it),
-# and the gateway logs in as CSPSystem with password authentication on %Service_WebGateway.
+# the gateway logs in as CSPSystem with password authentication on %Service_WebGateway, and USER
+# is an interoperability namespace, as it is on the Community image (the plain iris image leaves it
+# off, so `Include Ensemble` and the production tests fail there).
 out=""
 for _ in $(seq 1 20); do
   out=$(docker exec -i "$IRIS_NAME" iris session IRIS -U %SYS <<OS
@@ -43,17 +45,19 @@ Set p("Password")="$PW",p("ChangePassword")=0,p("PasswordNeverExpires")=1 Write 
 Set c("Password")="$PW",c("PasswordNeverExpires")=1 Write "CSP:",##class(Security.Users).Modify("CSPSystem",.c),!
 Set s("Enabled")=1 Write "CALLIN:",##class(Security.Services).Modify("%Service_CallIn",.s),!
 Set g("Enabled")=1,g("AutheEnabled")=32 Write "GW:",##class(Security.Services).Modify("%Service_WebGateway",.g),!
+Write "ENS:",##class(%EnsembleMgr).EnableNamespace("USER",0),!
 Write "KEY: expires ",\$ZDATE(\$SYSTEM.License.KeyExpirationDate(),3),", ",\$SYSTEM.License.KeyLicenseCapacity(),!
 Halt
 OS
   ) || true
   if echo "$out" | grep -q 'PW:1' && echo "$out" | grep -q 'CSP:1' \
-    && echo "$out" | grep -q 'CALLIN:1' && echo "$out" | grep -q 'GW:1'; then
+    && echo "$out" | grep -q 'CALLIN:1' && echo "$out" | grep -q 'GW:1' \
+    && echo "$out" | grep -q 'ENS:1'; then
     break
   fi
   sleep 3
 done
-echo "$out" | grep -E '^(PW|CSP|CALLIN|GW|KEY):' || { echo "$out"; docker logs "$IRIS_NAME" 2>&1 | tail -30; exit 1; }
+echo "$out" | grep -E '^(PW|CSP|CALLIN|GW|ENS|KEY):' || { echo "$out"; docker logs "$IRIS_NAME" 2>&1 | tail -30; exit 1; }
 echo "$out" | grep -q 'PW:1' || { docker logs "$IRIS_NAME" 2>&1 | tail -30; exit 1; }
 
 # The default bridge has no container DNS, so the gateway is pointed at the IRIS container IP.
