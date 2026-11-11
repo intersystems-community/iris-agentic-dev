@@ -150,27 +150,27 @@ substring>`: unterminated element, unterminated CDATA, attribute other than `nam
 
 ### Tree (pure; port of `.iad-local/storage-maps/proto/model.py`, ask the lead for a copy)
 
-- [ ] T027 [P] `src/tools/storage_map/tree.rs`: `pub struct Node { pub tag: String, pub name: Option<String>, pub value:
+- [x] T027 [P] `src/tools/storage_map/tree.rs`: `pub struct Node { pub tag: String, pub name: Option<String>, pub value:
 Option<String>, pub children: Option<Vec<Node>> }`, `pub fn is_canonical_number(s: &str) -> bool`,
       `pub fn order_key(name: Option<&str>) -> OrderKey` (`$Order` collation: none < canonical numbers numerically <
       strings by code point), `pub fn sort_key(n: &Node)`. Test first `tests/unit/test_storage_map_tree_172.rs`:
       `1 < 2 < 10 < 11 < "A" < "a"`, `"01"` and `"1.0"` are strings, `-1 < 0`. Prove: `U test_storage_map_tree_172`.
-- [ ] T028 `tree.rs`: `pub fn parse_body(text: &str) -> Result<Vec<Node>, ParseError>` (`ParseError { offset: usize,
+- [x] T028 `tree.rs`: `pub fn parse_body(text: &str) -> Result<Vec<Node>, ParseError>` (`ParseError { offset: usize,
 context: String, reason: String }`), iterative (an explicit stack, no recursion), linear time, no regex
       backtracking on values; limits `MAX_BODY_BYTES = 1 MiB`, `MAX_DEPTH = 32`. Tests first: each fixture's Storage
       body parses; the tree for `Member` has the expected tags in order. Prove: `U test_storage_map_tree_172`.
-- [ ] T029 `tree.rs`: `pub fn emit_body(nodes: &[Node]) -> String` with research R3 rules 1–2 (sort, CDATA on a new
+- [x] T029 `tree.rs`: `pub fn emit_body(nodes: &[Node]) -> String` with research R3 rules 1–2 (sort, CDATA on a new
       line for `<`, `>`, `&`, split at every `]]`) and `Description` always CDATA. Test first: for every fixture,
       `emit_body(parse_body(body))` equals the body byte for byte. Prove: `U test_storage_map_tree_172`.
-- [ ] T030 `tree.rs`: `pub fn normalize(nodes: Vec<Node>) -> Vec<Node>` (drop empty leaves; drop `BlockCount` and
+- [x] T030 `tree.rs`: `pub fn normalize(nodes: Vec<Node>) -> Vec<Node>` (drop empty leaves; drop `BlockCount` and
       `ConditionalWithHostVars` equal to `0`; keep the R3 rule-4 list). Test first: `Notes`'s hand-written input with
       the defaults normalizes and emits to the canonical fixture text. Prove: `U test_storage_map_tree_172`.
-- [ ] T031 `tree.rs`: `pub fn split_class(text: &str) -> Result<Vec<StorageSpan>, ParseError>` returning every Storage
+- [x] T031 `tree.rs`: `pub fn split_class(text: &str) -> Result<Vec<StorageSpan>, ParseError>` returning every Storage
       block (`StorageSpan { name, start, body_start, body_end, end }`), the body end found by parsing elements, never
       by counting braces. Tests first: `Shelf` (NextCode with `}` lines) splits correctly; a class with two Storage
       blocks returns two; every malformed file returns `Err` whose reason contains its `# expect:` text, within 100 ms
       each. Prove: `U test_storage_map_tree_172`.
-- [ ] T032 Live round-trip over `%SYS`: `tests/integration/test_storage_map_sys_roundtrip_172_live.rs` lists every
+- [x] T032 Live round-trip over `%SYS`: `tests/integration/test_storage_map_sys_roundtrip_172_live.rs` lists every
       class with a compiled SQL map in `%SYS` (`SELECT DISTINCT parent FROM %Dictionary.CompiledStorageSQLMap`), GETs
       each, and asserts `emit_body(normalize(parse_body(body)))` equals the body for all of them; asserts the list is
       not empty (expect about 160 on 2026.2) and prints the count. Read-only. Prove:
@@ -178,11 +178,11 @@ context: String, reason: String }`), iterative (an explicit stack, no recursion)
 
 ### Model base and call shape (pure)
 
-- [ ] T033 [P] `src/tools/storage_map/model.rs`: `pub const MODEL_VERSION: u32 = 1;` and `pub fn fnv1a64(bytes: &[u8])
+- [x] T033 [P] `src/tools/storage_map/model.rs`: `pub const MODEL_VERSION: u32 = 1;` and `pub fn fnv1a64(bytes: &[u8])
 -> u64` with `pub fn version_hex(text: &str) -> String` (16 lowercase hex digits). Test first
       `tests/unit/test_storage_map_model_172.rs`: the published FNV-1a 64 test vectors (`""` →
       `cbf29ce484222325`, `"a"` → `af63dc4c8601ec8c`). Prove: `U test_storage_map_model_172`.
-- [ ] T034 [P] `src/tools/storage_map/mod.rs`: `pub struct CallShape { pub action: Action, pub seed_counter: bool,
+- [x] T034 [P] `src/tools/storage_map/mod.rs`: `pub struct CallShape { pub action: Action, pub seed_counter: bool,
 pub build_indexes: bool, pub include_values: bool, pub code_changed: Option<bool> }`, `pub enum Action` (nine
       variants), `pub fn call_shape(params: &Value) -> CallShape`. An action it cannot read (missing, not a string,
       unknown, any case or whitespace variant) becomes `Action::Edit` with both opt-ins `true` (FR-030a). Test first
