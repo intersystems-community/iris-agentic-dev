@@ -169,8 +169,14 @@ pub(crate) fn cases() -> Vec<Case> {
             "iris_storage_map",
             json!({"action": "read", "class": "%Dictionary.ClassDefinition"}),
         ),
-        c("iris_storage_map", json!({"action": "diagram"})),
-        c("iris_storage_map", json!({"action": "uses"})),
+        c(
+            "iris_storage_map",
+            json!({"action": "diagram", "class": "%Dictionary.ClassDefinition"}),
+        ),
+        c(
+            "iris_storage_map",
+            json!({"action": "uses", "global": "^IRIS.Msg"}),
+        ),
         c("iris_storage_map", json!({"action": "check"})),
         c("skill_community_list", json!({})),
         c("skill_describe", json!({"name": "objectscript-guardrails"})),

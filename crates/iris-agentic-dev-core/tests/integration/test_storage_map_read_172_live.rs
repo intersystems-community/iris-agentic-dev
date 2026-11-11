@@ -114,3 +114,46 @@ async fn resolve_storage_returns_sql_maps_and_keeps_its_keys() {
     assert_eq!(s["sql_maps"][0]["name"], "Master", "{got}");
     assert_eq!(s["sql_maps"][0]["global"], "^IadSm172Member", "{got}");
 }
+
+/// T048: `iris_storage_map action=diagram` returns Mermaid and JSON graph.
+#[tokio::test]
+#[ignore]
+async fn diagram_returns_mermaid_and_graph() {
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let f = Fixture::read("Member");
+    load_fixture(&r, &f).await;
+    let got = r
+        .call(
+            "iris_storage_map",
+            json!({"action": "diagram", "class": "IadSm172.Member", "namespace": "USER"}),
+        )
+        .await;
+    let problems = drop_fixture(&r, &f).await;
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(got["success"], true, "{got}");
+    assert_eq!(got["action"], "diagram", "{got}");
+    assert_eq!(got["class"], "IadSm172.Member", "{got}");
+
+    // Check Mermaid output
+    let mermaid = got["mermaid"].as_str().unwrap_or("");
+    assert!(mermaid.contains("flowchart LR"), "{got}");
+    assert!(mermaid.contains("^IadSm172Member"), "{got}");
+    assert!(mermaid.contains("{ID}"), "{got}");
+
+    // Check graph structure
+    let graph = &got["graph"];
+    assert!(graph["nodes"].is_array(), "{got}");
+    assert!(graph["edges"].is_array(), "{got}");
+    let nodes = graph["nodes"].as_array().unwrap();
+    assert!(!nodes.is_empty(), "{got}");
+
+    // Should have global, subscript, and data nodes at minimum
+    let kinds: Vec<&str> = nodes.iter().filter_map(|n| n["kind"].as_str()).collect();
+    assert!(kinds.contains(&"global"), "Missing global node: {got}");
+    assert!(
+        kinds.contains(&"subscript"),
+        "Missing subscript node: {got}"
+    );
+    assert!(kinds.contains(&"data"), "Missing data node: {got}");
+    // row_id node may or may not be present depending on the map
+}

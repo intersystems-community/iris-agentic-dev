@@ -50,46 +50,28 @@ pub fn call_shape(params: &Value) -> CallShape {
         .map(|s| s.trim())
         .unwrap_or("");
 
-    let (action, is_unreadable) = match action_str.to_lowercase().as_str() {
-        "read" => (Action::Read, false),
-        "diagram" => (Action::Diagram, false),
-        "uses" => (Action::Uses, false),
-        "compare" => (Action::Compare, false),
-        "preview" => (Action::Preview, false),
-        "propose" => (Action::Propose, false),
-        "check" => (Action::Check, false),
-        "edit" => (Action::Edit, false),
-        "replace" => (Action::Replace, false),
-        _ => (Action::Edit, true), // Unreadable becomes Edit with opt-ins
+    let action = match action_str.to_lowercase().as_str() {
+        "read" => Some(Action::Read),
+        "diagram" => Some(Action::Diagram),
+        "uses" => Some(Action::Uses),
+        "compare" => Some(Action::Compare),
+        "preview" => Some(Action::Preview),
+        "propose" => Some(Action::Propose),
+        "check" => Some(Action::Check),
+        "edit" => Some(Action::Edit),
+        "replace" => Some(Action::Replace),
+        _ => None,
     };
+    let unreadable = action.is_none();
 
-    // Opt-ins: only true if the value is boolean true
-    let mut seed_counter = params
-        .get("seed_counter")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let mut build_indexes = params
-        .get("build_indexes")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    let include_values = params
-        .get("include_values")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-
-    // Force both opt-ins to true for unreadable action
-    if is_unreadable {
-        seed_counter = true;
-        build_indexes = true;
-    }
+    // An opt-in is on only when its value is boolean `true`.
+    let opt_in = |key: &str| params.get(key).and_then(Value::as_bool).unwrap_or(false);
 
     CallShape {
-        action,
-        seed_counter,
-        build_indexes,
-        include_values,
+        action: action.unwrap_or(Action::Edit),
+        seed_counter: unreadable || opt_in("seed_counter"),
+        build_indexes: unreadable || opt_in("build_indexes"),
+        include_values: opt_in("include_values"),
         code_changed: None, // Will be set later when we have before/after trees
     }
 }
@@ -105,13 +87,13 @@ pub async fn handle(
 
     match action {
         "read" => read(iris, client, p).await,
-        "diagram" | "uses" | "compare" | "preview" | "propose" | "check" | "edit" | "replace" => {
-            err_result(json!({
-                "success": false,
-                "error_code": "NOT_IMPLEMENTED",
-                "error": format!("Action '{}' not yet implemented", action)
-            }))
-        }
+        "diagram" => diagram(iris, client, p).await,
+        "uses" => uses_action(iris, client, p).await,
+        "compare" | "preview" | "propose" | "check" | "edit" | "replace" => err_result(json!({
+            "success": false,
+            "error_code": "NOT_IMPLEMENTED",
+            "error": format!("Action '{}' not yet implemented", action)
+        })),
         _ => err_result(json!({
             "success": false,
             "error_code": "INVALID_ACTION",
@@ -122,12 +104,59 @@ pub async fn handle(
 
 fn fail(code: &str, msg: String, extra: Value) -> Result<CallToolResult, McpError> {
     let mut body = json!({"success": false, "error_code": code, "error": msg});
-    if let Some(extra_obj) = extra.as_object() {
-        if let Some(body_obj) = body.as_object_mut() {
-            body_obj.extend(extra_obj.iter().map(|(k, v)| (k.clone(), v.clone())));
-        }
+    if let (Some(body_obj), Value::Object(extra_obj)) = (body.as_object_mut(), extra) {
+        body_obj.extend(extra_obj);
     }
     err_result(body)
+}
+
+/// The `class` param, the namespace and the parsed storage model that `read` and `diagram`
+/// both start from, or the refusal to return when any of them is missing.
+async fn load_model<'p>(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    p: &'p Value,
+    action: &str,
+) -> Result<(&'p str, String, model::StorageModel), Result<CallToolResult, McpError>> {
+    let Some(class) = p.get("class").and_then(Value::as_str) else {
+        return Err(fail(
+            "INVALID_PARAMS",
+            format!("{action} needs `class`"),
+            json!({}),
+        ));
+    };
+    if let Err(e) = crate::objectscript::validate_class_name(class) {
+        return Err(err_result(e));
+    }
+    let ns = p
+        .get("namespace")
+        .and_then(Value::as_str)
+        .unwrap_or(&iris.namespace)
+        .to_string();
+    let text = match class_text(iris, client, class, &ns).await {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            return Err(fail(
+                "STORAGE_MAP_NOT_FOUND",
+                format!("no class {class} in namespace {ns}"),
+                json!({}),
+            ))
+        }
+        Err(r) => return Err(Ok(r)),
+    };
+    match model_of(class, &text) {
+        Ok(Some(m)) => Ok((class, ns, m)),
+        Ok(None) => Err(fail(
+            "STORAGE_MAP_NOT_FOUND",
+            format!("class {class} has no Storage block"),
+            json!({}),
+        )),
+        Err(e) => Err(fail(
+            "STORAGE_MAP_PARSE_FAILED",
+            format!("cannot parse the Storage block of {class}: {}", e.reason),
+            json!({"offset": e.offset, "context": e.context}),
+        )),
+    }
 }
 
 /// The class's text as IRIS stores it, or `None` when IRIS has no such class.
@@ -200,44 +229,9 @@ async fn read(
     client: &reqwest::Client,
     p: &Value,
 ) -> Result<CallToolResult, McpError> {
-    let Some(class) = p.get("class").and_then(Value::as_str) else {
-        return fail("INVALID_PARAMS", "read needs `class`".into(), json!({}));
-    };
-    if let Err(e) = crate::objectscript::validate_class_name(class) {
-        return err_result(e);
-    }
-    let ns = p
-        .get("namespace")
-        .and_then(Value::as_str)
-        .unwrap_or(&iris.namespace)
-        .to_string();
-    let text = match class_text(iris, client, class, &ns).await {
-        Ok(Some(t)) => t,
-        Ok(None) => {
-            return fail(
-                "STORAGE_MAP_NOT_FOUND",
-                format!("no class {class} in namespace {ns}"),
-                json!({}),
-            )
-        }
-        Err(r) => return Ok(r),
-    };
-    let mut m = match model_of(class, &text) {
-        Ok(Some(m)) => m,
-        Ok(None) => {
-            return fail(
-                "STORAGE_MAP_NOT_FOUND",
-                format!("class {class} has no Storage block"),
-                json!({}),
-            )
-        }
-        Err(e) => {
-            return fail(
-                "STORAGE_MAP_PARSE_FAILED",
-                format!("cannot parse the Storage block of {class}: {}", e.reason),
-                json!({"offset": e.offset, "context": e.context}),
-            )
-        }
+    let (class, ns, mut m) = match load_model(iris, client, p, "read").await {
+        Ok(loaded) => loaded,
+        Err(reply) => return reply,
     };
     // FR-003a: maps of other classes stored in the same global, nested either way.
     let globals: Vec<String> = m
@@ -281,5 +275,84 @@ async fn read(
         "namespace": ns,
         "storage": m.storage,
         "derived": m.derived,
+    })))
+}
+
+/// `diagram` (FR-005, US2): Mermaid flowchart and JSON graph of a storage map.
+async fn diagram(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    p: &Value,
+) -> Result<CallToolResult, McpError> {
+    let (class, ns, m) = match load_model(iris, client, p, "diagram").await {
+        Ok(loaded) => loaded,
+        Err(reply) => return reply,
+    };
+    let map_filter = p.get("map").and_then(Value::as_str);
+
+    Ok(CallToolResult::structured(json!({
+        "success": true,
+        "model_version": model::MODEL_VERSION,
+        "action": "diagram",
+        "class": class,
+        "namespace": ns,
+        "mermaid": diagram::mermaid(&m, map_filter),
+        "graph": diagram::graph(&m, map_filter),
+    })))
+}
+
+/// `uses` (R11, US2): Find all classes whose storage maps use a given global.
+async fn uses_action(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    p: &Value,
+) -> Result<CallToolResult, McpError> {
+    let Some(global_raw) = p.get("global").and_then(Value::as_str) else {
+        return fail("INVALID_PARAMS", "uses needs `global`".into(), json!({}));
+    };
+
+    let global_ref = match globals::normalize_global(global_raw) {
+        Ok(r) => r,
+        Err(e) if e == "dynamic" => {
+            return fail(
+                "INVALID_PARAMS",
+                format!("global reference contains dynamic elements: {global_raw}"),
+                json!({}),
+            )
+        }
+        Err(e) => return fail("INVALID_PARAMS", e, json!({})),
+    };
+
+    // The connection's namespace first, then each extra one once.
+    let mut namespaces = vec![iris.namespace.clone()];
+    let extra = p.get("namespaces").and_then(Value::as_array);
+    for ns in extra.into_iter().flatten().filter_map(Value::as_str) {
+        if !namespaces.iter().any(|n| n == ns) {
+            namespaces.push(ns.to_string());
+        }
+    }
+
+    let uses_list = match uses::uses(iris, client, &global_ref, &namespaces).await {
+        Ok(list) => list,
+        Err(e) => {
+            return fail(
+                "USES_QUERY_FAILED",
+                format!("failed to query uses: {}", e),
+                json!({}),
+            )
+        }
+    };
+
+    let uses_json: Vec<Value> = uses_list.iter().map(uses::use_to_json).collect();
+    let count = uses_json.len();
+
+    Ok(CallToolResult::structured(json!({
+        "success": true,
+        "model_version": model::MODEL_VERSION,
+        "action": "uses",
+        "global": global_ref.name,
+        "namespaces_searched": namespaces,
+        "uses": uses_json,
+        "count": count,
     })))
 }
