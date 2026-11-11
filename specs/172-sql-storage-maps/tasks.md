@@ -207,26 +207,26 @@ reader.
 **Goal**: `read` returns the storage model; `resolve_storage` returns the maps.
 **Independent test**: read each fixture; fields match `%Dictionary.CompiledStorageSQLMap*` for that class.
 
-- [ ] T037 [P] [US1] `model.rs`: the typed structs of data-model.md (`StorageModel`, `SqlMap`, `Subscript`,
+- [x] T037 [P] [US1] `model.rs`: the typed structs of data-model.md (`StorageModel`, `SqlMap`, `Subscript`,
       `DataField`, `RowIdPart`, `ExtraElement`) with `serde::Serialize`, field names exactly as data-model.md. Test
       first: serialising a hand-built `SqlMap` gives the documented keys. Prove: `U test_storage_map_model_172`.
-- [ ] T038 [US1] `model.rs`: `pub fn from_tree(class: &str, storage_name: &str, nodes: &[Node]) -> StorageModel`;
+- [x] T038 [US1] `model.rs`: `pub fn from_tree(class: &str, storage_name: &str, nodes: &[Node]) -> StorageModel`;
       unknown tags go to `extra` with tag, name and value; integers parsed from `name=` for subscripts, row ID parts,
       access variables and invalid conditions (a non-integer becomes a `derived` warning, not a panic). Test first:
       `Member`, `BookMulti`, `Copy` and `Shelf` give the expected models (assert specific fields, not only counts).
       Prove: `U test_storage_map_model_172`.
-- [ ] T039 [US1] `model.rs`: `pub fn derived_facts(m: &StorageModel) -> Vec<Derived>` per research R5 and FR-003
+- [x] T039 [US1] `model.rs`: `pub fn derived_facts(m: &StorageModel) -> Vec<Derived>` per research R5 and FR-003
       (no delimiter → `$LIST`; master map = first data map; later data maps `used: false`; RetrievalCode → computed,
       not filed; writable only when the master map's global starts with `^`, `$` or `@`). Test first with `LoanList`,
       `Branch`, and a hand-built model with two data maps. Prove: `U test_storage_map_model_172`.
-- [ ] T040 [US1] `model.rs` D11 facts (FR-003a): `derived_facts` reports a row node that holds fields and has
+- [x] T040 [US1] `model.rs` D11 facts (FR-003a): `derived_facts` reports a row node that holds fields and has
       sub-nodes; `pub fn nested_maps(models: &[StorageModel]) -> Vec<(String, String)>` pairs a data map stored inside
       another (same global, extra literal level). Test first: `MemberD11` gives the first fact; `Loan` + `LoanEvent`
       give one pair; `Member` gives neither. Prove: `U test_storage_map_model_172`.
-- [ ] T041 [US1] `model.rs`: map and storage versions: `version_hex(emit_body(&[map_node]))` per map and over the
+- [x] T041 [US1] `model.rs`: map and storage versions: `version_hex(emit_body(&[map_node]))` per map and over the
       whole normalized body. Test first: the version is stable across two parses and changes when one piece changes.
       Prove: `U test_storage_map_model_172`.
-- [ ] T042 [US1] `model.rs`: `pub fn default_storage(nodes: &[Node]) -> Option<DefaultStorage>` for default storage
+- [x] T042 [US1] `model.rs`: `pub fn default_storage(nodes: &[Node]) -> Option<DefaultStorage>` for default storage
       (`<Data name=…><Value name="n"><Value>Prop</Value>`), plus `editable` and `not_editable_reason` per data-model.md.
       Test first: a default-storage class text in `tests/fixtures/storage172/classes/DefaultBook.cls` (write it; plain
       `%Persistent` with three properties, as IRIS stores it). Prove: `U test_storage_map_model_172`.
