@@ -215,7 +215,7 @@ server)` → the same refusal body as `iris_execute`. `code::code_changed(before
    audit record carries it. The same applies to the `iris_doc` hand-off.
 3. `code::dynamic_global`: `AccessType Global`, `@` or `$Name`-built references in `DataAccess`/`RowReference`/
    `Global` → `STORAGE_MAP_DYNAMIC_GLOBAL_BLOCKED` (operator limit), naming the expression, unless the effective
-   policy for the server has `allow_dynamic_map_globals = true`. That field is a new loosening setting: added to
+   policy for the server has `allowDynamicMapGlobals = true`. That field is a new loosening setting: added to
    `PolicyLayer`, set aside from an untrusted file and from an operator layer whose address binding withholds
    loosening (`strip_operator_loosening`), reported by `check_config`, and listed in `docs/connecting.md`.
 4. `check_compile_time_code_mode(new_text, doc)` on the whole new class text, as `do_write` does.

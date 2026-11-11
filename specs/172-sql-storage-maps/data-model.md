@@ -154,7 +154,7 @@ read (GET, parse, versions)
 | `STORAGE_MAP_WRITER_MISMATCH`        | read-back differs in a way the drop rules do not explain (iad bug)                                           |
 | `STORAGE_MAP_ID_REUSE`               | ID counter below the highest existing ID; names both                                                         |
 | `STORAGE_MAP_INDEX_UNBUILT`          | new index map over existing data with no index nodes                                                         |
-| `STORAGE_MAP_DYNAMIC_GLOBAL_BLOCKED` | refusal (operator limit): a dynamic global; lifted only by `allow_dynamic_map_globals = true` for the server |
+| `STORAGE_MAP_DYNAMIC_GLOBAL_BLOCKED` | refusal (operator limit): a dynamic global; lifted only by `allowDynamicMapGlobals = true` for the server |
 | `STORAGE_MAP_SCAN_CAPPED`            | not an error: a flag in compare/preview/propose responses                                                    |
 
 Gate refusals keep their existing codes and the `refusal {kind, server, lift, set_aside}` shape.

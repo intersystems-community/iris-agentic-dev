@@ -81,7 +81,7 @@ const OBJECTSCRIPT_API_TOKENS: &[&str] = &[
 ///
 /// Exact names for the `^odd*` and `^r*` families, not prefixes: a prefix hides application
 /// globals that start the same way.
-const CODE_STORAGE_GLOBALS: &[&str] = &[
+pub(crate) const CODE_STORAGE_GLOBALS: &[&str] = &[
     "^%Dictionary*",
     "^oddDEF",
     "^oddEXT",

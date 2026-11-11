@@ -311,6 +311,7 @@ fn dispatch_gate_system_blocklist_blocks_pct_sys() {
         data_policy: Some(DataPolicy::Allow), // allow data policy — blocklist still fires
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        allow_dynamic_map_globals: false,
         iris_audit: false,
     };
     let params = serde_json::json!({"action": "get", "global_name": "%SYS"});
@@ -331,6 +332,7 @@ fn dispatch_gate_phi_gate_blocks_papmi_without_ack() {
         data_policy: Some(DataPolicy::Allow),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        allow_dynamic_map_globals: false,
         iris_audit: false,
     };
     let params = serde_json::json!({"action": "get", "global_name": "PAPMI"});
@@ -351,6 +353,7 @@ fn dispatch_gate_phi_gate_passes_papmi_with_ack() {
         data_policy: Some(DataPolicy::Allow),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        allow_dynamic_map_globals: false,
         iris_audit: false,
     };
     let params =
@@ -371,6 +374,7 @@ fn dispatch_gate_non_phi_global_passes() {
         data_policy: Some(DataPolicy::Allow),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        allow_dynamic_map_globals: false,
         iris_audit: false,
     };
     let params = serde_json::json!({"action": "get", "global_name": "MyAppData"});
@@ -391,6 +395,7 @@ fn dispatch_gate_kill_non_blocklisted_passes() {
         data_policy: Some(DataPolicy::Allow),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        allow_dynamic_map_globals: false,
         iris_audit: false,
     };
     let params = serde_json::json!({"action": "kill", "global_name": "IrisDevTest"});

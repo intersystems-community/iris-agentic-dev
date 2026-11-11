@@ -39,24 +39,27 @@ fn test_call_shape_all_actions() {
     assert_eq!(call_shape(&params).action, Action::Replace);
 }
 
+/// T034: a case or whitespace variant is not the action it resembles. `"Read"` must not be
+/// judged as a read, because the handler would not run it as one.
 #[test]
-fn test_call_shape_case_insensitive() {
-    // Action is case-insensitive
-    let params = json!({"action": "Read"});
-    assert_eq!(call_shape(&params).action, Action::Read);
-
-    let params = json!({"action": "EDIT"});
-    assert_eq!(call_shape(&params).action, Action::Edit);
-}
-
-#[test]
-fn test_call_shape_whitespace() {
-    // Whitespace is trimmed, then lowercased
-    let params = json!({"action": " EDIT "});
-    let shape = call_shape(&params);
-    assert_eq!(shape.action, Action::Edit);
-    // But since the raw action wasn't in the list before trim, opt-ins may differ
-    // Actually, re-reading the spec: trim happens before the match, so this should work
+fn test_call_shape_case_and_whitespace_variants_are_unreadable() {
+    for a in [
+        "Read", "READ", " read", "read ", " EDIT ", "Edit", "dIagram", "uses\n", "edit\t",
+    ] {
+        let shape = call_shape(&json!({"action": a, "acknowledgePhi": true}));
+        assert!(shape.unreadable, "{a:?}");
+        assert_eq!(shape.action, Action::Edit, "{a:?}");
+        assert!(shape.seed_counter && shape.build_indexes, "{a:?}");
+        assert!(
+            !shape.acknowledge_phi,
+            "an unreadable call acknowledges nothing: {a:?}"
+        );
+    }
+    let shape = call_shape(&json!({"action": "read", "acknowledgePhi": true}));
+    assert!(!shape.unreadable);
+    assert_eq!(shape.action, Action::Read);
+    assert!(shape.acknowledge_phi);
+    assert!(!call_shape(&json!({"action": "read", "acknowledgePhi": "true"})).acknowledge_phi);
 }
 
 #[test]

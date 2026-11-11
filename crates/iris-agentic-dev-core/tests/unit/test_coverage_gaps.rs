@@ -463,6 +463,7 @@ mod server_manager_coverage {
                 data_policy: None,
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                allow_dynamic_map_globals: false,
                 iris_audit: false,
             }),
         }];
@@ -484,6 +485,7 @@ mod server_manager_coverage {
                 data_policy: None,
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                allow_dynamic_map_globals: false,
                 iris_audit: false,
             }),
         }];
@@ -505,6 +507,7 @@ mod server_manager_coverage {
                 data_policy: None,
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                allow_dynamic_map_globals: false,
                 iris_audit: false,
             }),
         }];
@@ -526,6 +529,7 @@ mod server_manager_coverage {
                 data_policy: Some(DataPolicy::Block),
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                allow_dynamic_map_globals: false,
                 iris_audit: false,
             }),
         }];
@@ -547,6 +551,7 @@ mod server_manager_coverage {
                 data_policy: Some(DataPolicy::Allow),
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                allow_dynamic_map_globals: false,
                 iris_audit: false,
             }),
         }];
@@ -568,6 +573,7 @@ mod server_manager_coverage {
                 data_policy: Some(DataPolicy::Redact),
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                allow_dynamic_map_globals: false,
                 iris_audit: false,
             }),
         }];
@@ -589,6 +595,7 @@ mod server_manager_coverage {
                 data_policy: Some(DataPolicy::Block),
                 global_blocklist: vec![],
                 data_policy_kill_allowlist: vec![],
+                allow_dynamic_map_globals: false,
                 iris_audit: false,
             }),
         }];

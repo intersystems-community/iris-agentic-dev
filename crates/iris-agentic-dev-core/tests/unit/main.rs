@@ -232,6 +232,7 @@ mod test_storage_map_diagram_172;
 mod test_storage_map_gates_172;
 mod test_storage_map_model_172;
 mod test_storage_map_params_172;
+mod test_storage_map_policy_172;
 mod test_storage_map_tree_172;
 mod test_storage_map_unreachable_172;
 mod test_stored_check_141;

@@ -128,6 +128,7 @@ pub const SETTINGS: &[SettingDecl] = &[
     decl("policy.*.allow", Loosening, "lists the categories the server permits", "[policy.x]\nallow = [\"query\"]\n"),
     decl("policy.*.dataPolicy", Loosening, "allow or redact lets PHI-capable tools run", "[policy.x]\ndataPolicy = \"allow\"\n"),
     decl("policy.*.dataPolicyKillAllowlist", Loosening, "exempts patterns from the kill blocklist", "[policy.x]\ndataPolicyKillAllowlist = [\"^X\"]\n"),
+    decl("policy.*.allowDynamicMapGlobals", Loosening, "allows dynamic global references in storage maps", "[policy.x]\nallowDynamicMapGlobals = true\n"),
     decl("policy.*.globalBlocklist", Tightening, "adds patterns to the blocklist", "[policy.x]\nglobalBlocklist = [\"^X\"]\n"),
     decl("policy.*.irisAudit", Tightening, "adds an audit record per call", "[policy.x]\nirisAudit = true\n"),
     // ── [instance.<server>] ──────────────────────────────────────────────────────────────────
@@ -949,6 +950,7 @@ pub fn loosening_settings(table: &toml::Table) -> Vec<String> {
                 ("writeTools", true),
                 ("destructiveTools", true),
                 ("compileTimeGate", false),
+                ("allowDynamicMapGlobals", true),
             ] {
                 if flag(p, k) == Some(loosens_when) {
                     push(key(k), loosens_when.to_string());

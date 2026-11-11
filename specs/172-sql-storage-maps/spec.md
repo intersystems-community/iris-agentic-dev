@@ -281,7 +281,7 @@ calls the gate.
    code-edit check refuses in `iris_execute`, **Then** the map is refused with the same refusal.
 3. **Given** a dynamic global (`AccessType Global`, indirection in data access or Row Reference), **Then** the edit is
    refused as an operator limit that names the global expression; only the server setting
-   `allow_dynamic_map_globals` lifts it.
+   `allowDynamicMapGlobals` lifts it.
 4. **Given** `preview`, `compare` or `propose`, **Then** it is judged as an execute call on the target server and runs
    as the service account when one is configured.
 5. **Given** a map edit, **Then** it passes the same write gates as any document write, with no extra
@@ -486,7 +486,7 @@ answer.
   files rows, and that the service account does not cover it.
 - **FR-028**: A dynamic global (`AccessType Global`, `@` indirection, or a `$Name`-built reference in a map's
   global, data access or Row Reference) MUST be refused as an operator limit, naming the expression. Only the
-  per-server setting `allow_dynamic_map_globals = true`, in the operator file or a trusted file, lifts it; it is a
+  per-server setting `allowDynamicMapGlobals = true`, in the operator file or a trusted file, lifts it; it is a
   loosening setting, and no call argument lifts it.
 - **FR-029**: `preview`, `compare` and `propose` run code on the server built from a map or for one. They MUST be
   judged as execute calls (write tier, execute category), and MUST run as the service account when one is configured,

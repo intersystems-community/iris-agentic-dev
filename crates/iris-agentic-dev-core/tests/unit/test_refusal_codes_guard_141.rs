@@ -249,3 +249,23 @@ fn the_two_codes_that_were_missing_now_carry_a_refusal() {
         assert_eq!(out["refusal"]["kind"], kind, "{code}: {out}");
     }
 }
+
+/// A code in the list whose `describe` arm is missing or misspelled comes back with no `refusal`,
+/// and nothing else notices: on 2026-11-11 a rename in the arm list dropped
+/// `DOCKER_TERMINAL_LOGIN_REQUIRED` from `describe` while the list still held it.
+#[test]
+fn every_listed_refusal_code_is_classified() {
+    use iris_agentic_dev_core::policy::refusal::{classify_refusal, REFUSAL_CODES};
+    let unclassified: Vec<&str> = REFUSAL_CODES
+        .iter()
+        .copied()
+        .filter(|code| {
+            let body = serde_json::json!({"success": false, "error_code": code, "error": "x"});
+            classify_refusal(body, "default", &[])["refusal"]["kind"].is_null()
+        })
+        .collect();
+    assert!(
+        unclassified.is_empty(),
+        "listed but never classified: {unclassified:?}"
+    );
+}

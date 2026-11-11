@@ -73,6 +73,7 @@ pub const REFUSAL_CODES: &[&str] = &[
     "BODY_NOT_REDACTABLE",
     "STORED_SOURCE_UNREADABLE",
     "HOST_PATH_BLOCKED",
+    "STORAGE_MAP_DYNAMIC_GLOBAL_BLOCKED",
 ];
 
 /// The setting behind a refusal of this code, when it is a configurable limit.
@@ -122,6 +123,9 @@ fn setting_compile_gate(s: &str) -> String {
     } else {
         policy_key("compileTimeGate")(s)
     }
+}
+fn setting_dynamic_map_globals(s: &str) -> String {
+    policy_key("allowDynamicMapGlobals")(s)
 }
 
 /// The kind of a code that is not decided by provenance.
@@ -191,6 +195,10 @@ fn describe(code: &str, body: &Value) -> Option<Fixed> {
         "SCM_ADMIN_BLOCKED" => Configurable(Lift::Launch("IRIS_SCM_ALLOW_DISCONNECT")),
         "READ_ONLY_STRICT" => Configurable(Lift::Launch("read_only")),
         "NAME_CONFLICT" => Configurable(Lift::Launch("server name")),
+        "STORAGE_MAP_DYNAMIC_GLOBAL_BLOCKED" => Configurable(Lift::Part {
+            part: "allow_dynamic_map_globals",
+            setting: setting_dynamic_map_globals,
+        }),
         c if c.starts_with("SERVICE_ACCOUNT_")
             || c == "SESSION_IDENTITY_CHANGED"
             || c == "DOCKER_TERMINAL_LOGIN_REQUIRED"
@@ -325,6 +333,7 @@ fn edit_for(code: &str, server: &str, body: &Value) -> Option<String> {
         "DESTRUCTIVE_TOOLS_DISABLED" => policy("destructiveTools", "true"),
         "COMPILE_TIME_EXEC_BLOCKED" if default => "compile_time_gate = false".to_string(),
         "COMPILE_TIME_EXEC_BLOCKED" => policy("compileTimeGate", "false"),
+        "STORAGE_MAP_DYNAMIC_GLOBAL_BLOCKED" => policy("allowDynamicMapGlobals", "true"),
         "ENV_GATE_BLOCKED" => policy("mcpTemplate", "\"dev\" (or \"test\")"),
         "POLICY_GATE" => policy(
             "allow",

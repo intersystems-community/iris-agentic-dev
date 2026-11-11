@@ -1,6 +1,15 @@
 //! Global reference normalization for storage maps (spec 172 US2).
 
+use super::tree::Node;
+use super::Action;
+use crate::policy::code_edit_gate::CODE_STORAGE_GLOBALS;
+use crate::policy::data_policy_gate::check_phi_name_gate;
+use crate::policy::effective::EffectivePolicy;
+use crate::policy::patterns::matches_any;
+use crate::policy::system_blocklist_gate::check_system_blocklist;
+use crate::tools::global::canonical_global_name;
 use serde::Serialize;
+use serde_json::{json, Value};
 
 /// A normalized global reference.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -68,6 +77,165 @@ pub fn normalize_global(raw: &str) -> Result<GlobalRef, String> {
         extended,
         subscripts_prefix,
     })
+}
+
+/// Tags whose value names a global (plan "Gates in the handler" step 1), compared without case.
+/// `SqlIdExpression` holds code, so the globals it names are read token by token.
+pub(super) const GLOBAL_TAGS: &[&str] = &[
+    "Global",
+    "IdLocation",
+    "DataLocation",
+    "IndexLocation",
+    "StreamLocation",
+    "CounterLocation",
+];
+
+/// Checks every global a map or storage keyword names against the global gates (FR-026).
+///
+/// Each name is normalised the way the shared gate does it ([`canonical_global_name`], so `^X`
+/// and `X` are one name), then refused if it is a code-storage global (fixed rule), on the system
+/// or the server's blocklist, or PHI-named without `acknowledgePhi`. An extended reference is
+/// refused for every action except `read`, `diagram` and `uses`. A reference the dynamic check
+/// owns (`@`, `$NAME`) is left to it; any other value that is not a global reference is refused.
+///
+/// Bodies carry `error_code` only; the dispatcher adds `refusal` (`classify_refusal`).
+pub fn check_map_globals(
+    nodes: &[Node],
+    policy: &EffectivePolicy,
+    server: &str,
+    action: Action,
+    acknowledge_phi: bool,
+) -> Option<Value> {
+    let reads_only = matches!(action, Action::Read | Action::Diagram | Action::Uses);
+    for (tag, raw) in named_globals(nodes) {
+        let r = match normalize_global(&raw) {
+            Ok(r) => r,
+            Err(e) if e == "dynamic" => continue,
+            Err(e) => return Some(invalid(&tag, &raw, "global_reference", &e)),
+        };
+        if r.extended.is_some() && !reads_only {
+            return Some(invalid(
+                &tag,
+                &raw,
+                "extended_reference",
+                "a reference to another namespace or database cannot be written or sampled",
+            ));
+        }
+        let name = match canonical_global_name(&r.name) {
+            Ok(n) => n,
+            Err(body) => return Some(body),
+        };
+        let caret_name = format!("^{name}");
+        if matches_any(&caret_name, CODE_STORAGE_GLOBALS) {
+            return Some(json!({
+                "success": false,
+                "error_code": "CODE_EDIT_BLOCKED",
+                "error": format!(
+                    "{tag} names {caret_name}, which holds class or routine code; a storage map \
+                     cannot be laid over it"
+                ),
+                "global": caret_name,
+                "tag": tag,
+            }));
+        }
+        if let Some(body) = check_system_blocklist(
+            &name,
+            &policy.global_blocklist.value,
+            &policy.kill_allowlist.value,
+            false,
+            server,
+        ) {
+            return Some(body);
+        }
+        if let Some(body) = check_phi_name_gate(&name, acknowledge_phi, server) {
+            return Some(body);
+        }
+    }
+    None
+}
+
+fn invalid(tag: &str, raw: &str, rule: &str, why: &str) -> Value {
+    json!({
+        "success": false,
+        "error_code": "STORAGE_MAP_INVALID",
+        "rule": rule,
+        "error": format!("{tag} `{raw}`: {why}"),
+        "tag": tag,
+    })
+}
+
+/// `(tag, reference)` for every global the tree names: the value of each [`GLOBAL_TAGS`] element
+/// and each `^name` token in a `SqlIdExpression`, at any depth.
+fn named_globals(nodes: &[Node]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut stack: Vec<&Node> = nodes.iter().rev().collect();
+    while let Some(node) = stack.pop() {
+        if let Some(value) = node
+            .value
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            if GLOBAL_TAGS
+                .iter()
+                .any(|t| t.eq_ignore_ascii_case(&node.tag))
+            {
+                out.push((node.tag.clone(), value.to_string()));
+                // A global named inside the subscripts (`^X(^Y)`) is checked too.
+                if let Some(open) = value.find('(') {
+                    for token in global_tokens(&value[open..]) {
+                        out.push((node.tag.clone(), token));
+                    }
+                }
+            } else if node.tag.eq_ignore_ascii_case("SqlIdExpression") {
+                for token in global_tokens(value) {
+                    out.push((node.tag.clone(), token));
+                }
+            }
+        }
+        if let Some(children) = &node.children {
+            stack.extend(children.iter().rev());
+        }
+    }
+    out
+}
+
+/// Every global reference in a piece of ObjectScript: `^name`, `^|"ns"|name` and `^["ns"]name`.
+/// A caret not followed by a name (the `"^"` of a `$Piece` delimiter) is skipped. Over-reading
+/// is the safe side: a string literal that happens to hold `^X` is checked too.
+pub fn global_tokens(code: &str) -> Vec<String> {
+    let is_name = |c: char| c.is_ascii_alphanumeric() || c == '%' || c == '.';
+    let bytes = code.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'^' {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut j = i + 1;
+        // An extended prefix runs to its closer: `|` for `^|"ns"|`, `]` for `^["ns"]`.
+        if let Some(&open) = bytes.get(j).filter(|b| **b == b'|' || **b == b'[') {
+            let close = if open == b'|' { b'|' } else { b']' };
+            match bytes[j + 1..].iter().position(|b| *b == close) {
+                Some(k) => j += k + 2,
+                None => {
+                    out.push(code[start..].to_string());
+                    break;
+                }
+            }
+        }
+        let name_start = j;
+        while let Some(c) = code[j..].chars().next().filter(|c| is_name(*c)) {
+            j += c.len_utf8();
+        }
+        if j > name_start {
+            out.push(code[start..j].to_string());
+        }
+        i = j.max(i + 1);
+    }
+    out
 }
 
 #[cfg(test)]

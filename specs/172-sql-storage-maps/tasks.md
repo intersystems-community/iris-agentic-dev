@@ -188,6 +188,9 @@ pub build_indexes: bool, pub include_values: bool, pub code_changed: Option<bool
       unknown, any case or whitespace variant) becomes `Action::Edit` with both opt-ins `true` (FR-030a). Test first
       `tests/unit/test_storage_map_call_shape_172.rs`: every action, `" EDIT "`, `"Read"`, a number, a missing
       action, opt-ins as `true`/`false`/absent/`"true"` (a string is not `true`). Prove: `U test_storage_map_call_shape_172`.
+      Fixed 2026-11-11 in review: `call_shape` had trimmed and lowercased the action, so `"Read"` was judged a read,
+      and `handle` read the action itself. Both now go through `call_shape`, exact names only; `CallShape` gained
+      `unreadable` and `acknowledge_phi`.
 - [x] T035 Make `write_gate::classify` (`write_gate.rs:997`) call `storage_map::call_shape` for `iris_storage_map`
       only, and make `is_scratch_call` (`write_gate.rs:1064`) do the same (scratch for every action except read,
       diagram, uses). Test first in `tests/unit/test_storage_map_call_shape_172.rs`: `classify` and `is_scratch_call`
@@ -281,43 +284,46 @@ String>` with `GlobalRef { name: String, extended: Option<String>, subscripts_pr
 
 **Independent test**: each refusal from both entry points, both spellings; each handler calls the gate.
 
-- [ ] T052 [P] [US8] `src/tools/storage_map/code.rs`: `pub const CODE_TAGS: &[&str]` (research R6 list) and
+- [x] T052 [P] [US8] `src/tools/storage_map/code.rs`: `pub const CODE_TAGS: &[&str]` (research R6 list) and
       `pub fn code_elements(m: &[Node]) -> Vec<(Path, String)>`; every element value is treated as code unless its tag
       is in `LITERAL_TAGS` (`Type`, `Delimiter`, `Piece`, `Node`, `PopulationType`, `PopulationPct`, `BlockCount`,
       `Structure`, `Deferred`, `ConditionalWithHostVars`, `Field`, `AccessType`). Test first
       `tests/unit/test_storage_map_gates_172.rs`: `Shelf` and `Branch` yield their code elements; an unknown tag's
       value is yielded as code. Prove: `U test_storage_map_gates_172`.
-- [ ] T053 [US8] `code.rs`: `pub fn check_map_code(nodes: &[Node], server: &str) -> Option<Value>` calling
+- [x] T053 [US8] `code.rs`: `pub fn check_map_code(nodes: &[Node], server: &str) -> Option<Value>` calling
       `policy::code_edit_gate::check_objectscript_code_edit` on each code element. Test first: a NextCode that names
       a code-storage global and one that uses `$system.OBJ.Compile` are refused with `CODE_EDIT_BLOCKED`; `Shelf`'s
       NextCode passes. Prove: `U test_storage_map_gates_172`.
-- [ ] T054 [US8] `code.rs`: `pub fn dynamic_globals(nodes: &[Node]) -> Vec<String>` (FR-028: `AccessType Global`,
+- [x] T054 [US8] `code.rs`: `pub fn dynamic_globals(nodes: &[Node]) -> Vec<String>` (FR-028: `AccessType Global`,
       `@`, `$Name` in `Global`, `DataAccess`, `RowReference`) and `pub fn code_changed(before: &[Node], after: &[Node])
 -> bool`. Test first: three dynamic forms found, a plain map none; `code_changed` true when only a NextCode
       changes, false when only a piece changes. Prove: `U test_storage_map_gates_172`.
-- [ ] T055 [US8] Make `CODE_STORAGE_GLOBALS` (`policy/code_edit_gate.rs:84`) `pub(crate)`. `globals.rs`: `pub fn
+- [x] T055 [US8] Make `CODE_STORAGE_GLOBALS` (`policy/code_edit_gate.rs:84`) `pub(crate)`. `globals.rs`: `pub fn
 check_map_globals(nodes: &[Node], policy: &EffectivePolicy, server: &str, action: Action) -> Option<Value>`:
       every global a map or storage keyword names (plan "Gates in the handler" step 1) through `CODE_STORAGE_GLOBALS`,
       `check_system_blocklist` (with the server's blocklist), `check_phi_name_gate`; an extended reference refused for
       writes and sampling. Test first: `^ROUTINE`, `ROUTINE`, `^rOBJ` in `Global`, `^oddDEF` in `IdLocation`, a
       custom-blocklist global, a PHI-named global, `^["%SYS"]X` on `edit` (refused) and on `read` (allowed). Prove:
       `U test_storage_map_gates_172`.
-- [ ] T056 [US8] Add `STORAGE_MAP_DYNAMIC_GLOBAL_BLOCKED` to `policy/refusal.rs` `REFUSAL_CODES` (:35) with a
-      `describe` arm (operator limit; lift names `allow_dynamic_map_globals`), and a row to `/docs/error-codes.md`.
+- [x] T056 [US8] Add `STORAGE_MAP_DYNAMIC_GLOBAL_BLOCKED` to `policy/refusal.rs` `REFUSAL_CODES` (:35) with a
+      `describe` arm (operator limit; lift names `allowDynamicMapGlobals`), and a row to `/docs/error-codes.md`.
       Prove: `U test_refusal_codes_guard_141`, `U test_docs_contract`.
-- [ ] T057 [US8] Add the loosening setting `allow_dynamic_map_globals: bool` to the per-server policy:
+- [x] T057 [US8] Add the loosening setting `allow_dynamic_map_globals: bool` (TOML key `allowDynamicMapGlobals`, camelCase like the other `[policy.x]` keys) to the per-server policy:
       `iris/workspace_config.rs` (beside `data_policy_kill_allowlist`), `PolicyLayer` in `policy/effective.rs`,
       `strip_operator_loosening` (:576) and the untrusted-file set-aside, `check_config` output, `/docs/connecting.md`.
       Test first `tests/unit/test_storage_map_policy_172.rs`: parse a TOML string with the key (unit/TOML layer), an
       untrusted workspace file sets it aside, an operator file keeps it. Prove: `U test_storage_map_policy_172`.
-- [ ] T058 [US8] `mod.rs`: `pub fn gate_tree(nodes: &[Node], shape: &CallShape, policy, server) -> Option<Value>` runs
+- [x] T058 [US8] `mod.rs`: `pub fn gate_tree(nodes: &[Node], shape: &CallShape, policy, server) -> Option<Value>` runs
       T055, T053, T054 (refuse dynamic unless the setting) in that order. Test first: one case per refusal through
       `gate_tree`. Prove: `U test_storage_map_gates_172`.
-- [ ] T059 [US8] Handler-calls-gate test `tests/integration/test_storage_map_gates_172_live.rs`: for `check`, `edit`,
+- [x] T059 [US8] Handler-calls-gate test `tests/integration/test_storage_map_gates_172_live.rs`: for `check`, `edit`,
       `replace`, `compare`, `preview` and `propose`, a call whose model names `^ROUTINE` is refused with the fixed-rule
       refusal and nothing is written (GET the class before and after); same for `^routine` spelled without the caret.
       Prove: `L test_storage_map_gates_172` (it fails until the actions exist; the lead keeps it red-listed until
       T086).
+      Written 2026-11-11 and red as planned: `check`, `preview`, `replace` and `edit` answer `NOT_IMPLEMENTED`;
+      `propose` is already refused by the dispatch gate on its `global` param. `compare` takes no caller tree, so its
+      gate is covered by `gate_tree` in the unit tests.
 
 ---
 

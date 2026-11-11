@@ -146,6 +146,7 @@ pub struct PolicyLayer {
     pub data_policy: Option<Declared<DataPolicy>>,
     pub global_blocklist: Vec<String>,
     pub kill_allowlist: Option<Declared<Vec<String>>>,
+    pub allow_dynamic_map_globals: Option<Declared<bool>>,
     pub audit: bool,
     pub write_tools: Option<Declared<bool>>,
     pub destructive_tools: Option<Declared<bool>>,
@@ -245,6 +246,7 @@ impl PolicyLayer {
             l.write_tools = flag("writeTools");
             l.destructive_tools = flag("destructiveTools");
             l.compile_gate = flag("compileTimeGate");
+            l.allow_dynamic_map_globals = flag("allowDynamicMapGlobals");
         }
 
         if is_default {
@@ -358,6 +360,7 @@ pub struct EffectivePolicy {
     pub data_policy: Part<DataPolicy>,
     pub global_blocklist: Part<Vec<String>>,
     pub kill_allowlist: Part<Vec<String>>,
+    pub allow_dynamic_map_globals: Part<bool>,
     pub audit: Part<bool>,
     /// `None` means undeclared: the system mode decides.
     pub write_tools: Part<Option<bool>>,
@@ -378,6 +381,7 @@ impl Default for EffectivePolicy {
             data_policy: Part::new(DataPolicy::Block, d),
             global_blocklist: Part::new(Vec::new(), d),
             kill_allowlist: Part::new(Vec::new(), d),
+            allow_dynamic_map_globals: Part::new(false, d),
             audit: Part::new(false, d),
             write_tools: Part::new(None, PartSource::SystemMode),
             destructive_tools: Part::new(None, d),
@@ -399,6 +403,7 @@ impl EffectivePolicy {
             data_policy: Some(self.data_policy.value.clone()),
             global_blocklist: self.global_blocklist.value.clone(),
             data_policy_kill_allowlist: self.kill_allowlist.value.clone(),
+            allow_dynamic_map_globals: self.allow_dynamic_map_globals.value,
             iris_audit: self.audit.value,
         }
     }
@@ -422,6 +427,7 @@ impl EffectivePolicy {
             "compileTimeGate": self.compile_gate.to_json(serde_json::json!(
                 if self.compile_gate.value { "on" } else { "off" })),
             "dataPolicyKillAllowlist": self.kill_allowlist.to_json(serde_json::json!(self.kill_allowlist.value)),
+            "allowDynamicMapGlobals": self.allow_dynamic_map_globals.to_json(serde_json::json!(self.allow_dynamic_map_globals.value)),
         })
     }
 }
@@ -594,6 +600,13 @@ fn strip_operator_loosening(cx: &mut Ctx, op: &PolicyLayer) -> PolicyLayer {
             let (k, t) = (d.key.clone(), d.text.clone());
             cx.set_aside_bound("kill_allowlist", &k, &t);
             l.kill_allowlist = None;
+        }
+    }
+    if let Some(d) = l.allow_dynamic_map_globals.as_ref() {
+        if d.value {
+            let (k, t) = (d.key.clone(), d.text.clone());
+            cx.set_aside_bound("allow_dynamic_map_globals", &k, &t);
+            l.allow_dynamic_map_globals = None;
         }
     }
     if let Some(d) = l.write_tools.as_ref() {
@@ -897,6 +910,23 @@ pub fn effective_policy(inp: &PolicyInputs) -> EffectivePolicy {
         _ => {}
     }
 
+    // allow_dynamic_map_globals: true is loosening, false is strict.
+    if let Some(m) = merge_scalar(
+        &mut cx,
+        "allow_dynamic_map_globals",
+        o.allow_dynamic_map_globals.as_ref(),
+        w.allow_dynamic_map_globals.as_ref(),
+        |b| u8::from(!*b),
+        1,
+    ) {
+        out.allow_dynamic_map_globals.set_aside = m.set_aside;
+        if m.from != PartSource::StrictDefault {
+            out.allow_dynamic_map_globals.value = m.value;
+            out.allow_dynamic_map_globals.from = m.from;
+            out.allow_dynamic_map_globals.file = m.file;
+        }
+    }
+
     // Each part names its own items; the policy lists all of them, in a stable order.
     for item in &cx.items {
         let ids = match item.part {
@@ -904,6 +934,7 @@ pub fn effective_policy(inp: &PolicyInputs) -> EffectivePolicy {
             Some("allow") => &mut out.allow.set_aside,
             Some("data_policy") => &mut out.data_policy.set_aside,
             Some("kill_allowlist") => &mut out.kill_allowlist.set_aside,
+            Some("allow_dynamic_map_globals") => &mut out.allow_dynamic_map_globals.set_aside,
             Some("write_tools") => &mut out.write_tools.set_aside,
             Some("destructive_tools") => &mut out.destructive_tools.set_aside,
             Some("role") => &mut out.role.set_aside,

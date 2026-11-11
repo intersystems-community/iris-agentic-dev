@@ -342,6 +342,11 @@ pub struct ConnectionPolicyRaw {
     pub global_blocklist: Vec<String>,
     #[serde(rename = "dataPolicyKillAllowlist", default)]
     pub data_policy_kill_allowlist: Vec<String>,
+    /// Allow dynamic global references in storage maps (`AccessType Global`, `@` indirection,
+    /// `$Name`-built references). False by default. Loosening setting: an untrusted workspace
+    /// file cannot set this true.
+    #[serde(rename = "allowDynamicMapGlobals", default)]
+    pub allow_dynamic_map_globals: bool,
     /// Emit a `%SYS.Audit` record for every tool call on this connection. Off by default.
     /// Requires the event definition to exist on the target IRIS instance — see
     /// `docs/agent-attribution.md` for the one-time setup command.
@@ -372,6 +377,8 @@ pub struct ConnectionPolicy {
     pub global_blocklist: Vec<String>,
     /// Patterns exempted from kill-operation blocklist check only.
     pub data_policy_kill_allowlist: Vec<String>,
+    /// Allow dynamic global references in storage maps. False by default. Loosening setting.
+    pub allow_dynamic_map_globals: bool,
     /// Emit a `%SYS.Audit` record for every tool call on this connection. Off by default.
     pub iris_audit: bool,
 }
@@ -439,6 +446,8 @@ impl ConnectionPolicy {
                 .filter(|k| other.data_policy_kill_allowlist.contains(k))
                 .cloned()
                 .collect(),
+            allow_dynamic_map_globals: self.allow_dynamic_map_globals
+                && other.allow_dynamic_map_globals,
             iris_audit: self.iris_audit || other.iris_audit,
         }
     }
@@ -651,6 +660,7 @@ pub fn load_fleet_config_from_str(contents: &str) -> Result<FleetConfig, toml::d
                 data_policy: raw.data_policy.clone(),
                 global_blocklist: raw.global_blocklist.clone(),
                 data_policy_kill_allowlist: raw.data_policy_kill_allowlist.clone(),
+                allow_dynamic_map_globals: raw.allow_dynamic_map_globals,
                 iris_audit: raw.iris_audit,
             },
         );

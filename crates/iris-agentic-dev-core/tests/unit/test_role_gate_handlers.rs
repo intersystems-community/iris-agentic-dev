@@ -305,6 +305,7 @@ fn test_policy_gate_fires_before_role_gate() {
         data_policy: None,
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        allow_dynamic_map_globals: false,
         iris_audit: false,
     };
 

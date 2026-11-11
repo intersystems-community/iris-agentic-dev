@@ -33,6 +33,11 @@ pub enum Action {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallShape {
     pub action: Action,
+    /// The action was missing, not a string, or not exactly one of the action names. `action` is
+    /// then `Edit` and both opt-ins are on, and the handler answers `INVALID_ACTION`.
+    pub unreadable: bool,
+    /// `acknowledgePhi` is boolean `true` (never for an unreadable call).
+    pub acknowledge_phi: bool,
     pub seed_counter: bool,
     pub build_indexes: bool,
     pub include_values: bool,
@@ -41,16 +46,14 @@ pub struct CallShape {
 
 /// Parses the action and opt-ins from params into a CallShape.
 ///
-/// Per FR-030a: unreadable action (missing, not a string, unknown, any whitespace/case variant)
-/// becomes Edit with both opt-ins true.
+/// Per FR-030a: an unreadable action (missing, not a string, unknown, any whitespace or case
+/// variant) becomes Edit with both opt-ins true.
 pub fn call_shape(params: &Value) -> CallShape {
-    let action_str = params
-        .get("action")
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim())
-        .unwrap_or("");
+    // Exact names only: `" EDIT "` or `"Read"` is unreadable, so no spelling can be judged as a
+    // lighter action than the one the handler would run (FR-030a, T034).
+    let action_str = params.get("action").and_then(Value::as_str).unwrap_or("");
 
-    let action = match action_str.to_lowercase().as_str() {
+    let action = match action_str {
         "read" => Some(Action::Read),
         "diagram" => Some(Action::Diagram),
         "uses" => Some(Action::Uses),
@@ -69,6 +72,8 @@ pub fn call_shape(params: &Value) -> CallShape {
 
     CallShape {
         action: action.unwrap_or(Action::Edit),
+        unreadable,
+        acknowledge_phi: !unreadable && opt_in("acknowledgePhi"),
         seed_counter: unreadable || opt_in("seed_counter"),
         build_indexes: unreadable || opt_in("build_indexes"),
         include_values: opt_in("include_values"),
@@ -83,21 +88,28 @@ pub async fn handle(
     p: &Value,
     _tools: &crate::tools::IrisTools,
 ) -> Result<CallToolResult, McpError> {
-    let action = p.get("action").and_then(|v| v.as_str()).unwrap_or("");
-
-    match action {
-        "read" => read(iris, client, p).await,
-        "diagram" => diagram(iris, client, p).await,
-        "uses" => uses_action(iris, client, p).await,
-        "compare" | "preview" | "propose" | "check" | "edit" | "replace" => err_result(json!({
-            "success": false,
-            "error_code": "NOT_IMPLEMENTED",
-            "error": format!("Action '{}' not yet implemented", action)
-        })),
-        _ => err_result(json!({
+    // The same reader the classifier, strict read-only and the service-account check use.
+    let shape = call_shape(p);
+    if shape.unreadable {
+        let shown = p.get("action").map(Value::to_string).unwrap_or_default();
+        return err_result(json!({
             "success": false,
             "error_code": "INVALID_ACTION",
-            "error": format!("Unknown action: '{}'", action)
+            "error": format!(
+                "Unknown action: {shown}. Use one of read, diagram, uses, compare, preview, \
+                 propose, check, edit, replace (exact, lowercase)."
+            )
+        }));
+    }
+
+    match shape.action {
+        Action::Read => read(iris, client, p).await,
+        Action::Diagram => diagram(iris, client, p).await,
+        Action::Uses => uses_action(iris, client, p).await,
+        other => err_result(json!({
+            "success": false,
+            "error_code": "NOT_IMPLEMENTED",
+            "error": format!("Action '{other:?}' not yet implemented")
         })),
     }
 }

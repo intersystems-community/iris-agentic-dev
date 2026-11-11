@@ -23,6 +23,7 @@ fn policy(blocklist: &[&str], kill_allow: &[&str]) -> ConnectionPolicy {
         data_policy: Some(DataPolicy::Block),
         global_blocklist: blocklist.iter().map(|s| s.to_string()).collect(),
         data_policy_kill_allowlist: kill_allow.iter().map(|s| s.to_string()).collect(),
+        allow_dynamic_map_globals: false,
         iris_audit: false,
     }
 }

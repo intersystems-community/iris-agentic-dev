@@ -22,6 +22,7 @@ fn policy_dev() -> ConnectionPolicy {
         data_policy: Some(DataPolicy::Allow),
         global_blocklist: vec![],
         data_policy_kill_allowlist: vec![],
+        allow_dynamic_map_globals: false,
         iris_audit: false,
     }
 }
