@@ -230,17 +230,17 @@ reader.
       (`<Data name=…><Value name="n"><Value>Prop</Value>`), plus `editable` and `not_editable_reason` per data-model.md.
       Test first: a default-storage class text in `tests/fixtures/storage172/classes/DefaultBook.cls` (write it; plain
       `%Persistent` with three properties, as IRIS stores it). Prove: `U test_storage_map_model_172`.
-- [ ] T043 [US1] `mod.rs`: the `read` action: GET via `doc::fetch_doc_lines` (make it `pub(crate)`), `split_class`,
+- [x] T043 [US1] `mod.rs`: the `read` action: GET via `doc::fetch_doc_lines` (make it `pub(crate)`), `split_class`,
       parse each body, build the model; class missing → `STORAGE_MAP_NOT_FOUND`; parse failure →
       `STORAGE_MAP_PARSE_FAILED` with offset and context; class XML → refused (FR-012a). Answer per
       contracts "Answers". Test first `tests/integration/test_storage_map_read_172_live.rs`: read `Member` and assert
       global, subscript expression and each field's node/delimiter/piece, and compare them with
       `SELECT ... FROM %Dictionary.CompiledStorageSQLMapData WHERE parent = ?`; read a missing class; read
       `DefaultBook`. Prove: `L test_storage_map_read_172`.
-- [ ] T044 [US1] `admin_tools.rs:2366` `resolve_storage_impl`: add `sql_maps` (the `read` model's maps) to each
+- [x] T044 [US1] `admin_tools.rs:2366` `resolve_storage_impl`: add `sql_maps` (the `read` model's maps) to each
       storage of type `%Storage.SQL`; no key removed. Test first: a case in `test_storage_map_read_172_live.rs` for
       `Member`, plus a key-set check that the old keys are all still present. Prove: `L test_storage_map_read_172`.
-- [ ] T045 [US1] Change T008's `read` case to expect success. Prove: `L test_enum_tools_work_live`.
+- [x] T045 [US1] Change T008's `read` case to expect success. Prove: `L test_enum_tools_work_live`.
 
 **Checkpoint**: US1 works alone (MVP).
 

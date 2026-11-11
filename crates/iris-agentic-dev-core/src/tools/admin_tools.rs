@@ -2383,7 +2383,7 @@ pub async fn resolve_storage_impl(
                 .as_array()
                 .cloned()
                 .unwrap_or_default();
-            let storages: Vec<serde_json::Value> = rows
+            let mut storages: Vec<serde_json::Value> = rows
                 .iter()
                 .map(|r| {
                     serde_json::json!({
@@ -2395,6 +2395,21 @@ pub async fn resolve_storage_impl(
                     })
                 })
                 .collect();
+            // A `%Storage.SQL` class keeps its rows' layout in SQL maps, not in the locations
+            // above (which are empty for it): add the maps, read the same way `iris_storage_map`
+            // reads them (spec 172 FR-004). No key is removed.
+            for s in storages.iter_mut() {
+                if s["type"] == "%Storage.SQL" {
+                    let name = s["name"].as_str().unwrap_or_default();
+                    if let Some(maps) = crate::tools::storage_map::sql_maps_json(
+                        iris, client, class, name, namespace,
+                    )
+                    .await
+                    {
+                        s["sql_maps"] = maps;
+                    }
+                }
+            }
             ok_json(serde_json::json!({
                 "success": true,
                 "class": class,

@@ -1310,7 +1310,7 @@ fn stale_content_err(
 }
 
 /// Fetch a document's source as a line vector. Returns Ok(None) on 404.
-async fn fetch_doc_lines(
+pub(crate) async fn fetch_doc_lines(
     iris: &IrisConnection,
     client: &reqwest::Client,
     name: &str,

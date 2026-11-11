@@ -122,6 +122,7 @@ mod test_sql_safety_e2e;
 mod test_sql_translate_e2e;
 mod test_storage172_rig_live;
 mod test_storage_map_d11_172_live;
+mod test_storage_map_read_172_live;
 mod test_storage_map_sys_roundtrip_172_live;
 mod test_stream_inspect_141_live;
 mod test_strict_sweep_171_live;

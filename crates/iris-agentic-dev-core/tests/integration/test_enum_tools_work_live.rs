@@ -165,7 +165,10 @@ pub(crate) fn cases() -> Vec<Case> {
             "resolve_storage",
             json!({"class": "%Dictionary.ClassDefinition"}),
         ),
-        c("iris_storage_map", json!({"action": "read"})),
+        c(
+            "iris_storage_map",
+            json!({"action": "read", "class": "%Dictionary.ClassDefinition"}),
+        ),
         c("iris_storage_map", json!({"action": "diagram"})),
         c("iris_storage_map", json!({"action": "uses"})),
         c("iris_storage_map", json!({"action": "check"})),
