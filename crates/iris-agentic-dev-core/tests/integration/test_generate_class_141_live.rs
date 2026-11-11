@@ -104,7 +104,7 @@ impl Rig {
         let rig = Rig {
             tools,
             conn: conn(),
-            client: reqwest::Client::new(),
+            client: iris_agentic_dev_core::testing::iris_client("_SYSTEM", "SYS"),
             _env: env,
         };
         rig.clean().await;
@@ -213,7 +213,7 @@ impl Drop for Rig {
         // A client of its own: this test's client has connections owned by the runtime that is
         // blocked in `join` below, and a request on one of them never completes.
         let _ = std::thread::spawn(move || {
-            let client = reqwest::Client::new();
+            let client = iris_agentic_dev_core::testing::iris_client("_SYSTEM", "SYS");
             let rt = tokio::runtime::Runtime::new().unwrap();
             let _ = rt.block_on(conn.execute_via_generator(
                 &format!(" Kill {MARKER}\n Do $system.OBJ.DeletePackage(\"IadGen141\",\"-d\")"),

@@ -345,7 +345,7 @@ impl LiveIris {
                 &t.password,
                 iris_agentic_dev_core::iris::connection::DiscoverySource::ExplicitFlag,
             ),
-            client: reqwest::Client::new(),
+            client: iris_agentic_dev_core::testing::live_client(),
         }
     }
 

@@ -176,7 +176,7 @@ async fn the_blocklist_covers_every_code_storage_global_on_this_instance() {
         std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".into()),
         DiscoverySource::EnvVar,
     );
-    let client = reqwest::Client::new();
+    let client = iris_agentic_dev_core::testing::live_client();
     let mut missing = Vec::new();
     let mut seen = 0;
     for ns in ["USER", "%SYS"] {

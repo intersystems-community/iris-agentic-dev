@@ -131,7 +131,7 @@ impl Fixture {
         .unwrap_or("")
         .to_string();
 
-        let client = reqwest::Client::new();
+        let client = iris_agentic_dev_core::testing::live_client();
         let target = LiveTarget::from_env();
         let put = client
             .put(format!("{}/api/atelier/v1/{NS}/doc/{HOOK}.cls", base_url()))

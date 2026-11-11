@@ -165,7 +165,7 @@ fn aihub_http_path() {
 #[ignore = "live GitHub raw"]
 async fn aihub_139_upstream_files() {
     let list = include_str!("../fixtures/aihub139/upstream-files.txt");
-    let client = reqwest::Client::new();
+    let client = iris_agentic_dev_core::testing::live_client();
     let mut bad = Vec::new();
     let paths: Vec<&str> = list.lines().skip(1).collect();
     assert_eq!(

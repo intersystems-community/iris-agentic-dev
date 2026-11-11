@@ -24,7 +24,7 @@ async fn atelier(method: reqwest::Method, path: &str, body: Option<Value>) -> Va
     let port = std::env::var("IRIS_WEB_PORT").unwrap_or_else(|_| "52780".into());
     let user = std::env::var("IRIS_USERNAME").unwrap_or_else(|_| "_SYSTEM".into());
     let pass = std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".into());
-    let mut req = reqwest::Client::new()
+    let mut req = iris_agentic_dev_core::testing::live_client()
         .request(
             method,
             format!("http://{host}:{port}/api/atelier/v1/USER/{path}"),

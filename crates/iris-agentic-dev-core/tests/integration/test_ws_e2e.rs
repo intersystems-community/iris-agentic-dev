@@ -31,7 +31,7 @@ async fn iris_conn() -> Option<IrisConnection> {
     );
 
     // Probe the real Atelier version rather than assuming V7.
-    let client = reqwest::Client::new();
+    let client = iris_agentic_dev_core::testing::live_client();
     if let Ok(resp) = client
         .get(format!("{}/api/atelier/", conn.base_url))
         .basic_auth(&conn.username, Some(&conn.password))

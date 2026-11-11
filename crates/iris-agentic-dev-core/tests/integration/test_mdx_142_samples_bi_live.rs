@@ -50,7 +50,7 @@ fn conn() -> Option<(IrisConnection, reqwest::Client, String)> {
         pass,
         DiscoverySource::EnvVar,
     );
-    Some((conn, reqwest::Client::new(), ns))
+    Some((conn, iris_agentic_dev_core::testing::live_client(), ns))
 }
 
 async fn load(c: &IrisConnection, client: &reqwest::Client, ns: &str) {

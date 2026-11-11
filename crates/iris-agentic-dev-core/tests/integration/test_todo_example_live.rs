@@ -188,7 +188,7 @@ impl App {
             base,
             user: var("IRIS_USERNAME", "_SYSTEM"),
             password: var("IRIS_PASSWORD", "SYS"),
-            client: reqwest::Client::new(),
+            client: iris_agentic_dev_core::testing::live_client(),
             rt: tokio::runtime::Runtime::new().expect("tokio runtime"),
         }
     }

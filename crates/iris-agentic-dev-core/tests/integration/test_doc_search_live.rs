@@ -4,7 +4,7 @@
 use iris_agentic_dev_core::tools::doc_search::{handle_iris_doc_search, IrisDocSearchParams};
 
 fn make_client() -> reqwest::Client {
-    reqwest::Client::new()
+    reqwest::Client::new() // no-jar: docs.intersystems.com, not IRIS
 }
 
 #[tokio::test]

@@ -127,7 +127,7 @@ fn message_with_id(body: &str, id: u64) -> Value {
 
 impl Session {
     pub(crate) async fn open(port: u16, name: &str) -> Session {
-        let http = reqwest::Client::new();
+        let http = reqwest::Client::new(); // no-jar: iad's HTTP transport, not IRIS
         let url = format!("http://127.0.0.1:{port}/mcp");
         let init = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-03-26", "capabilities": {},

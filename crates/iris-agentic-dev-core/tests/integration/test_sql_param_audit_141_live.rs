@@ -42,7 +42,7 @@ async fn sql_parameter_is_audited_and_the_header_is_not() {
     let Some(iris) = ThrowawayIris::start() else {
         return;
     };
-    let client = reqwest::Client::new();
+    let client = iris_agentic_dev_core::testing::iris_client(iris.username, iris.password);
 
     // 1. Every `%System/%SQL` event on (Dynamic, XDBC and Embedded statements, DDL, DML, query,
     //    utility): which leaf event the Atelier query endpoint raises depends on the statement.

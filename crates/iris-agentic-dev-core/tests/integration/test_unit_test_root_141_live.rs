@@ -60,7 +60,7 @@ fn body(r: Result<rmcp::model::CallToolResult, String>) -> Value {
 }
 
 async fn put_and_compile(t: &LiveTarget) -> Value {
-    let client = reqwest::Client::new();
+    let client = iris_agentic_dev_core::testing::live_client();
     let base = t.base_url();
     let put = client
         .put(format!("{base}/api/atelier/v1/USER/doc/{CLASS}.cls"))

@@ -99,7 +99,7 @@ async fn rig(at: &Where) -> Rig {
     Rig {
         tools,
         conn,
-        client: reqwest::Client::new(),
+        client: iris_agentic_dev_core::testing::iris_client(&at.user, &at.password),
         _dir: dir,
     }
 }

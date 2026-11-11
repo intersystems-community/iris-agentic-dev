@@ -54,7 +54,7 @@ impl Harness {
                 pass,
                 DiscoverySource::EnvVar,
             ),
-            client: reqwest::Client::new(),
+            client: iris_agentic_dev_core::testing::live_client(),
         }
     }
 

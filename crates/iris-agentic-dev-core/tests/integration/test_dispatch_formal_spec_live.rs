@@ -17,7 +17,7 @@ fn conn() -> (IrisConnection, reqwest::Client) {
         get("IRIS_PASSWORD", "SYS"),
         DiscoverySource::EnvVar,
     );
-    (c, reqwest::Client::new())
+    (c, iris_agentic_dev_core::testing::live_client())
 }
 
 const MAKE: &str = r#" For c="IadDispatch140.A","IadDispatch140.B" {

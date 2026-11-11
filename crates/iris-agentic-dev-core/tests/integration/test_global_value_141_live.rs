@@ -28,7 +28,7 @@ fn make_conn() -> Option<(IrisConnection, reqwest::Client)> {
         password,
         DiscoverySource::EnvVar,
     );
-    Some((conn, reqwest::Client::new()))
+    Some((conn, iris_agentic_dev_core::testing::live_client()))
 }
 
 fn params(action: &str, global_name: &str, value: Option<&str>) -> IrisGlobalParams {
