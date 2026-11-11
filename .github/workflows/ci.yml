@@ -369,8 +369,9 @@ jobs:
     # 2026-11-11: an Enterprise job beside it. Enterprise images have no private web server, so
     #   .github/scripts/start-enterprise-iris.sh starts IRIS with the license key from the
     #   IRIS_LICENSE_KEY_B64 secret (an x64 container key, expires 2027-11-30) and a webgateway
-    #   container in front of it on 52773. Both images pull without a registry login. The job
-    #   runs only on pushes to this repo's branches (see `if:` above), so the secret is there.
+    #   container in front of it on 52773. The iris image needs a registry login (secrets
+    #   ICR_USERNAME/ICR_TOKEN, pull only); webgateway is public. The job runs only on pushes to
+    #   this repo's branches (see `if:` above), so the secrets are there.
     # Each version runs in its own job so a regression on one version never masks another.
     strategy:
       fail-fast: false
@@ -421,13 +422,20 @@ jobs:
         if: matrix.edition == 'enterprise'
         env:
           IRIS_LICENSE_KEY_B64: ${{ secrets.IRIS_LICENSE_KEY_B64 }}
+          ICR_USERNAME: ${{ secrets.ICR_USERNAME }}
+          ICR_TOKEN: ${{ secrets.ICR_TOKEN }}
           IRIS_IMAGE: ${{ matrix.iris_image }}
           GATEWAY_IMAGE: ${{ matrix.gateway_image }}
         run: |
-          if [ -z "$IRIS_LICENSE_KEY_B64" ]; then
-            echo "::error::secret IRIS_LICENSE_KEY_B64 is not set; the Enterprise job cannot start IRIS"
-            exit 1
-          fi
+          for s in IRIS_LICENSE_KEY_B64 ICR_USERNAME ICR_TOKEN; do
+            if [ -z "${!s}" ]; then
+              echo "::error::secret $s is not set; the Enterprise job cannot start IRIS"
+              exit 1
+            fi
+          done
+          # The Enterprise iris image is served to a logged-in user only (pull access; the
+          # webgateway image is public). The login is dropped in the cleanup step.
+          printf '%s' "$ICR_TOKEN" | docker login containers.intersystems.com -u "$ICR_USERNAME" --password-stdin
           KEY_FILE="$RUNNER_TEMP/iris-license"
           printf '%s' "$IRIS_LICENSE_KEY_B64" | base64 -d > "$KEY_FILE"
           # IRIS reads it as irisowner (uid 51773); the runner VM is single-use.
@@ -623,6 +631,7 @@ jobs:
         run: |
           IRIS_NAME=iris-e2e bash .github/scripts/start-enterprise-iris.sh stop
           rm -f "$RUNNER_TEMP/iris-license"
+          docker logout containers.intersystems.com || true
 
   vscode-extension:
     runs-on: ubuntu-latest
