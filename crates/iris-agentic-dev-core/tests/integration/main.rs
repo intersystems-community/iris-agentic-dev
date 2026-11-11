@@ -78,6 +78,7 @@ mod test_interop_search_171_live;
 mod test_interop_ui_136_live;
 mod test_iris_admin_observability_live;
 mod test_iris_audit_live;
+mod test_iris_audit_sessions_live;
 mod test_iris_doc_depth_live;
 mod test_iris_global_live;
 mod test_iris_test_e2e;
