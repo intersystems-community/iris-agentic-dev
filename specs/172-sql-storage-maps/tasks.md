@@ -539,7 +539,7 @@ Value>` through `execute_via_generator` (service account per T036). Test first
       `test_body_read_ack_171` stays green. Prove: `U test_storage_map_policy_172`, `U test_body_read_ack_171`.
       Done 2026-11-12, in the handler only (`sample::values_refusal`). Deviation: `iris_storage_map` is not added
       to `HANDLER_ENFORCED_TOOLS`/`ACKNOWLEDGED_BODY_READS`, because `names_argument` treats `include_values:
-    false` as naming the argument, so every call sending it would need `acknowledgePhi` under `allow`.
+  false` as naming the argument, so every call sending it would need `acknowledgePhi` under `allow`.
 - [ ] T089 [US5] Identity: in `test_storage_map_data_172_live.rs`, with a service account configured (see
       `test_scratch_cleanup_141_live.rs` for the throwaway setup), `compare`/`preview` answers carry the service
       account in `identity`, and refuse when the service account cannot be used. Prove: `L test_storage_map_data_172`.
@@ -553,23 +553,33 @@ Value>` through `execute_via_generator` (service account per T036). Test first
 
 **Independent test**: `$i` over a counterless global is refused; `seed_counter` fixes it.
 
-- [ ] T090 [P] [US6] `write.rs`: `pub fn id_counter_ref(storage_keywords, master: &SqlMap) -> Option<GlobalRef>` (plain
+- [x] T090 [P] [US6] `write.rs`: `pub fn id_counter_ref(storage_keywords, master: &SqlMap) -> Option<GlobalRef>` (plain
       `$i(^G)` / `$i(^G(subs))` only; anything else → "not verifiable" text, FR-024). Test first in
       `test_storage_map_write_172.rs`: the forms, and three non-verifiable ones. Prove: `U test_storage_map_write_172`.
-- [ ] T091 [US6] Live checks first in `tests/integration/test_storage_map_data_172_live.rs`: on a throwaway global with
+      Done 2026-11-12: `id_counter_ref(keywords) -> Result<GlobalRef, String>` (the map argument was not needed);
+      quoted subscripts keep their spaces.
+- [x] T091 [US6] Live checks first in `tests/integration/test_storage_map_data_172_live.rs`: on a throwaway global with
       rows 1..3 and no counter, an INSERT through a `$i` map overwrites row 1 (reproduces research R5); a new index map
       over existing data answers nothing for a present value. Prove: `L test_storage_map_data_172`.
-- [ ] T092 [US6] `write.rs` D11 check (FR-023b): refuse an edit whose walked level holds literal sub-node names the
+      Done 2026-11-12: both reproduced on 2026.2.
+- [x] T092 [US6] `write.rs` D11 check (FR-023b): refuse an edit whose walked level holds literal sub-node names the
       walk does not skip, naming the level and the masked node. Test first: the (b) map from T026 is refused; the same
       map with a `NextCode` that skips non-numeric subscripts passes. Prove: `L test_storage_map_data_172`.
-- [ ] T093 [US6] `write.rs` data checks (FR-023): `STORAGE_MAP_ID_REUSE` naming counter and highest ID;
+      Done 2026-11-12. Narrowed after the first run refused Copy's string IDs and ActiveLoan's index value: named
+      nodes count only under row nodes that hold values (`$Data` 11 one level up) or among numeric IDs. T026 (b)
+      now puts its class through Atelier directly, since iad refuses that map.
+- [x] T093 [US6] `write.rs` data checks (FR-023): `STORAGE_MAP_ID_REUSE` naming counter and highest ID;
       `STORAGE_MAP_INDEX_UNBUILT`; FR-023a sharing checks (index range used by another map or non-empty; counter used
       by another class via `uses`). Replace T073's stub. Test first: each refusal in the data live test. Prove:
       `L test_storage_map_data_172`.
-- [ ] T094 [US6] Opt-ins: `seed_counter` sets the counter (reports the old value), `build_indexes` runs
+      Done 2026-11-12. The ID check runs when the write sets the ID expression or the master map, so a counter
+      already behind does not block unrelated edits. Through `iris_doc` (no opt-ins) ID reuse and an unbuilt index
+      are warnings, so a class can still be defined over existing globals; the walk check still refuses.
+- [x] T094 [US6] Opt-ins: `seed_counter` sets the counter (reports the old value), `build_indexes` runs
       `##class(<Class>).%BuildIndices($lb("<Map>"))` as the service account after compile; both classed per T064.
       Replace T073's stub. Test first: after `seed_counter`, an INSERT does not overwrite; after `build_indexes`, the
       present value is found; `build_indexes` with destructive tools off is refused. Prove: `L test_storage_map_data_172`.
+      Done 2026-11-12: both run as the execute identity after the real compile; `opt_ins_run` reports them.
 
 ---
 

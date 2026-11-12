@@ -92,13 +92,9 @@ Storage SQLStorage
 }
 "#;
     load_fixture(&r, &loan).await;
-    let put = r
-        .call(
-            "iris_doc",
-            json!({"mode": "put", "name": "IadSm172Test.LoanWalk.cls", "content": walk,
-                "compile": true, "namespace": "USER"}),
-        )
-        .await;
+    // This measures IRIS, not iad: iad now refuses this map (FR-023b, it reads "EV" as a row), so
+    // the class goes in through Atelier directly.
+    let put = raw_put_and_compile("IadSm172Test.LoanWalk.cls", walk).await;
     let q = r
         .call(
             "iris_query",
@@ -191,4 +187,41 @@ async fn d11_update_preserves_other_fields() {
         email_kept && phone_kept && city_kept,
         "{before_row} -> {after_row}"
     );
+}
+
+/// PUT and compile `doc` through Atelier with the connection's own client, bypassing iad's tools.
+async fn raw_put_and_compile(doc: &str, text: &str) -> serde_json::Value {
+    use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
+    let t = iris_agentic_dev_core::testing::LiveTarget::from_env();
+    let mut conn = IrisConnection::new(
+        t.base_url(),
+        &t.namespace,
+        &t.username,
+        &t.password,
+        DiscoverySource::ExplicitFlag,
+    );
+    conn.probe().await;
+    let client = conn
+        .client(iris_agentic_dev_core::iris::http::ClientKind::Call)
+        .expect("client");
+    let url = conn.versioned_ns_url(
+        "USER",
+        &format!("/doc/{}?ignoreConflict=1", urlencoding::encode(doc)),
+    );
+    let lines: Vec<&str> = text.lines().collect();
+    let put = client
+        .put(&url)
+        .basic_auth(&conn.username, Some(&conn.password))
+        .json(&serde_json::json!({"enc": false, "content": lines}))
+        .send()
+        .await
+        .expect("PUT");
+    if !put.status().is_success() {
+        return serde_json::json!({"success": false, "status": put.status().as_u16()});
+    }
+    let compiled = conn
+        .compile_document(doc, "USER", "cuk", &client)
+        .await
+        .expect("compile");
+    serde_json::json!({"success": compiled.success(), "errors": compiled.errors})
 }

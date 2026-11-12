@@ -41,6 +41,8 @@ pub struct ShapeReport {
     pub data_states: BTreeMap<String, BTreeMap<String, u32>>,
     /// Per depth, the literal (non-numeric) subscripts seen: sub-node names, never values.
     pub sub_nodes: BTreeMap<String, Vec<String>>,
+    /// Per depth, how many nodes had a numeric last subscript.
+    pub numeric_subscripts: BTreeMap<String, u32>,
     pub formats: Vec<Format>,
     /// Sample values, only with `include_values` after the data policy (FR-021).
     pub values: Option<Vec<serde_json::Value>>,
@@ -58,6 +60,9 @@ impl ShapeReport {
             .or_default()
             .entry(state.clone())
             .or_default() += 1;
+        if depth > 0 && row["n"].is_null() {
+            *self.numeric_subscripts.entry(d.clone()).or_default() += 1;
+        }
         if let Some(name) = row["n"].as_str() {
             let names = self.sub_nodes.entry(d.clone()).or_default();
             if !names.iter().any(|n| n == name) {

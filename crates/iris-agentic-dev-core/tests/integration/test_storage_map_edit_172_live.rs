@@ -573,14 +573,6 @@ async fn test_storage_map_edit_172_edit_refusals() {
                    "ops": [{"op": "set", "path": "/maps/Master/type", "value": "columnar"}]}),
         )
         .await;
-    let opt_in = r
-        .call(
-            "iris_storage_map",
-            json!({"action": "edit", "class": CLASS, "version": current, "namespace": "USER",
-                   "seed_counter": true,
-                   "ops": [{"op": "set", "path": "/maps/Master/data/Age/piece", "value": "4"}]}),
-        )
-        .await;
     let after = stored_text(&r, CLASS).await;
     let book = Fixture::read("DefaultBook");
     load_fixture(&r, &book).await;
@@ -604,51 +596,76 @@ async fn test_storage_map_edit_172_edit_refusals() {
         columnar["error_code"], "STORAGE_MAP_READ_ONLY",
         "{columnar}"
     );
-    assert_eq!(opt_in["error_code"], "NOT_IMPLEMENTED", "{opt_in}");
     assert_eq!(default["error_code"], "STORAGE_MAP_READ_ONLY", "{default}");
     assert_eq!(after, before, "a refused edit changed the class");
     assert!(problems.is_empty(), "cleanup: {problems:?}");
 }
 
-/// T075: a replace that removes elements lists them and writes only when confirmed. `Shelf`'s
-/// subscript has a NextCode, which is optional: without it the map still compiles.
+/// T075: a replace that removes elements lists them and writes only when confirmed.
+/// `ActiveLoan`'s StatusIndex is conditional; without its Condition and PopulationType it is an
+/// ordinary index, which still compiles.
 #[tokio::test]
 #[ignore = "live IRIS"]
 async fn test_storage_map_edit_172_replace_confirms_removal() {
     let r = rig(&Where::live(), Toolset::Merged).await;
-    let f = Fixture::read("Shelf");
+    let f = Fixture::read("ActiveLoan");
     load_fixture(&r, &f).await;
-    let map = read_storage(&r, &f.class).await["maps"][0].clone();
-    assert!(map["subscripts"][0]["next_code"].is_string(), "{map}");
-    let mut smaller = map.clone();
-    smaller["subscripts"][0]
-        .as_object_mut()
+    let map = read_storage(&r, &f.class).await["maps"]
+        .as_array()
         .unwrap()
-        .remove("next_code");
-    let args = json!({"action": "replace", "class": f.class, "map": "Master",
+        .iter()
+        .find(|m| m["name"] == "StatusIndex")
+        .cloned()
+        .expect("StatusIndex");
+    let mut smaller = map.clone();
+    let o = smaller.as_object_mut().unwrap();
+    o.remove("condition");
+    o.remove("population_type");
+    let args = json!({"action": "replace", "class": f.class, "map": "StatusIndex",
                       "version": map["version"], "model": smaller, "namespace": "USER"});
     let first = r.call("iris_storage_map", args.clone()).await;
     let untouched = stored_text(&r, &f.class).await;
     let mut confirmed = args.clone();
     confirmed["confirm_removal"] = json!(true);
     let second = r.call("iris_storage_map", confirmed).await;
-    let after = read_storage(&r, &f.class).await["maps"][0].clone();
+    let after = read_storage(&r, &f.class).await["maps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "StatusIndex")
+        .cloned()
+        .unwrap_or_default();
     let problems = drop_fixture(&r, &f).await;
 
-    let removed = json!(["/maps/Master/subscripts/1/next_code"]);
+    let mut removed: Vec<String> = first["removed"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    removed.sort();
     assert_eq!(
         first["error_code"], "STORAGE_MAP_CONFIRM_REMOVAL",
         "{first}"
     );
-    assert_eq!(first["removed"], removed, "{first}");
+    assert_eq!(
+        removed,
+        vec![
+            "/maps/StatusIndex/condition",
+            "/maps/StatusIndex/population_type"
+        ],
+        "{first}"
+    );
     assert_eq!(
         untouched.trim_end(),
         f.cls_text.trim_end(),
         "the first call wrote"
     );
     assert_eq!(second["success"], true, "{second}");
-    assert_eq!(second["removed"], removed, "{second}");
-    assert!(after["subscripts"][0]["next_code"].is_null(), "{after}");
+    assert!(after["condition"].is_null(), "{after}");
+    assert!(after["population_type"].is_null(), "{after}");
     assert!(problems.is_empty(), "cleanup: {problems:?}");
 }
 

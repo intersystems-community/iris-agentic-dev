@@ -36,6 +36,9 @@ ALLOWED = {
     # eleven times instead of here, which is the wrong place for a permanent non-tool: a
     # baseline line says "this mistake exists and we tolerate it", and this is not a mistake.
     "iris_version",
+    # A response field of iris_storage_map (`check`, `edit`, `replace`, `preview`): the IRIS
+    # compile errors, beside their `explanations`. Spec 172's contract names it.
+    "iris_errors",
 }
 
 # Path-scoped exemptions: `{relative path: {names}}`. A document whose subject is a wrong

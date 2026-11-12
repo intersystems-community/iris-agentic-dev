@@ -574,6 +574,9 @@ pub struct WriteCtx<'a> {
     pub shape: &'a super::CallShape,
     pub policy: &'a crate::policy::effective::EffectivePolicy,
     pub server: &'a str,
+    /// The identity the opt-ins run as (the service account when set, T036); `None` when the
+    /// call asks for no opt-in.
+    pub exec: Option<(&'a IrisConnection, &'a reqwest::Client)>,
 }
 
 /// The class as iad read it before the write: its text and timestamp, the Storage span, and the
@@ -656,7 +659,20 @@ pub async fn write_map(
     if let Some(refusal) = super::code::gate_tree(&after, w.shape, w.policy, w.server) {
         return Err(refusal);
     }
-    // Data checks (FR-023) arrive in Phase 10 (T093).
+    let plan = data_checks(
+        &CheckCtx {
+            iris: w.iris,
+            client: w.client,
+            ns: w.ns,
+            class: w.class,
+            seed_counter: w.shape.seed_counter,
+            build_indexes: w.shape.build_indexes,
+            warn_only: false,
+        },
+        &loaded.nodes,
+        &after,
+    )
+    .await?;
     let scratch = scratch_check(w.iris, w.client, &loaded.text, &after, w.ns, w.class).await?;
 
     let doc = format!("{}.cls", w.class);
@@ -753,6 +769,8 @@ pub async fn write_map(
         });
     }
 
+    let opt_ins_run = run_opt_ins(w, &plan).await;
+
     // The final text (a compile may add a StreamLocation, R3.7) gives the model the caller sees.
     let (final_text, _) = get_doc(w.iris, w.client, &doc, w.ns)
         .await
@@ -768,7 +786,8 @@ pub async fn write_map(
         "versions": {"before": before.storage.version, "after": now.storage.version},
         "code_changed": super::code::code_changed(&loaded.nodes, &after),
         "scratch_class": scratch,
-        "warnings": [],
+        "opt_ins_run": opt_ins_run,
+        "warnings": plan.warnings,
     }))
 }
 
@@ -832,6 +851,8 @@ pub struct DocGuard {
     previous: Option<String>,
     sent: Vec<Node>,
     changed: bool,
+    /// What the data checks could only warn about (FR-023 without opt-ins).
+    warnings: Vec<String>,
 }
 
 /// The FR-014 rules for an `iris_doc` put. Read-only storage is not refused here: `iris_doc`'s
@@ -924,6 +945,22 @@ pub async fn doc_precheck(
         return Err(refusal);
     }
     let class = doc.strip_suffix(".cls").unwrap_or(doc);
+    // FR-031 includes the data checks (FR-023); iris_doc has no opt-ins, so a refusal here is
+    // lifted by making the change with iris_storage_map.
+    let plan = data_checks(
+        &CheckCtx {
+            iris,
+            client,
+            ns,
+            class,
+            seed_counter: false,
+            build_indexes: false,
+            warn_only: true,
+        },
+        &before,
+        &sent,
+    )
+    .await?;
     // The scratch compile protects the real compile. A put without `compile` compiles nothing,
     // so the compiled class keeps working whatever the source says; storing a class with a new
     // property before its map is the usual way to add a field (#5502 until it is mapped).
@@ -935,6 +972,7 @@ pub async fn doc_precheck(
         previous,
         sent,
         changed,
+        warnings: plan.warnings,
     })
 }
 
@@ -1009,10 +1047,494 @@ impl DocGuard {
         put_back(iris, client, doc, previous, ns).await
     }
 
-    /// Add the map-change warning to `resp` when the put changed an SQL map.
+    /// The answer's warnings: the map-change warning when the map changed, and what the data
+    /// checks found.
     pub fn warn_if_changed(&self, resp: &mut Value) {
+        let mut all: Vec<&str> = Vec::new();
         if self.changed {
-            resp["warnings"] = json!([DOC_MAP_WARNING]);
+            all.push(DOC_MAP_WARNING);
+        }
+        all.extend(self.warnings.iter().map(String::as_str));
+        if !all.is_empty() {
+            resp["warnings"] = json!(all);
         }
     }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Data checks before a write (FR-023, FR-023a, FR-023b; Phase 10)
+// ───────────────────────────────────────────────────────────────────────────
+
+/// The global node a storage's `SqlIdExpression` increments, when iad can tell for sure: a plain
+/// `$i(^G)` or `$INCREMENT(^G(<literal subscripts>))`, any case. Anything else is not verifiable
+/// (FR-024), and the `Err` says why.
+pub fn id_counter_ref(
+    keywords: &std::collections::BTreeMap<String, String>,
+) -> Result<super::globals::GlobalRef, String> {
+    let Some(expr) = keywords.get("SqlIdExpression") else {
+        return Err("no SqlIdExpression: the caller supplies the IDs".into());
+    };
+    let e = expr.trim();
+    let lower = e.to_ascii_lowercase();
+    let Some(arg) = ["$increment(", "$i("]
+        .iter()
+        .find_map(|p| lower.starts_with(p).then(|| &e[p.len()..]))
+        .and_then(|rest| rest.strip_suffix(')'))
+        .map(str::trim)
+    else {
+        return Err(format!("{e} is not a plain $INCREMENT of a global"));
+    };
+    let Some(after_caret) = arg.strip_prefix('^') else {
+        return Err(format!("{e} does not increment a global by name"));
+    };
+    let (name, subs) = match after_caret.find('(') {
+        Some(i) => (&after_caret[..i], Some(&after_caret[i..])),
+        None => (after_caret, None),
+    };
+    if crate::objectscript::validate_global_name(name).is_err() {
+        return Err(format!("{e}: {name:?} is not a plain global name"));
+    }
+    let prefix = match subs {
+        None => None,
+        Some(s) => {
+            let inner = s
+                .strip_prefix('(')
+                .and_then(|r| r.strip_suffix(')'))
+                .ok_or_else(|| format!("{e}: unbalanced subscripts"))?;
+            let parts: Vec<&str> = split_top_level(inner, ',')
+                .into_iter()
+                .map(str::trim)
+                .collect();
+            let literal = |t: &&str| {
+                super::tree::is_canonical_number(t)
+                    || (t.len() >= 2
+                        && t.starts_with('"')
+                        && t.ends_with('"')
+                        && !t[1..t.len() - 1].replace("\"\"", "").contains('"'))
+            };
+            if inner.is_empty() || !parts.iter().all(literal) {
+                return Err(format!(
+                    "{e}: a subscript is not a literal, so iad cannot read it"
+                ));
+            }
+            Some(format!("({})", parts.join(",")))
+        }
+    };
+    Ok(super::globals::GlobalRef {
+        name: format!("^{name}"),
+        extended: None,
+        subscripts_prefix: prefix,
+    })
+}
+
+/// What the data checks found that the write must do after the real compile, and the warnings
+/// for what they could not check.
+#[derive(Debug, Default)]
+pub struct DataPlan {
+    /// `(counter reference, highest ID)` to seed (`seed_counter`).
+    pub seed: Option<(String, String)>,
+    /// Index maps to build (`build_indexes`).
+    pub build: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+/// A map's leading constant subscripts as `(1,"x")`, re-quoted by iad, or `None` when a leading
+/// subscript is not a plain literal. Stops at the first subscript that is not constant.
+fn constant_prefix(map: &super::model::SqlMap) -> Option<String> {
+    let mut subs: Vec<&super::model::Subscript> = map.subscripts.iter().collect();
+    subs.sort_by_key(|s| s.level);
+    let mut parts = Vec::new();
+    for sb in subs {
+        let e = sb.expression.trim();
+        if e.contains('{') {
+            break;
+        }
+        if super::tree::is_canonical_number(e) {
+            parts.push(e.to_string());
+        } else {
+            let inner = e.strip_prefix('"').and_then(|r| r.strip_suffix('"'))?;
+            if inner.replace("\"\"", "").contains('"') {
+                return None;
+            }
+            parts.push(crate::objectscript::os_str_expr(
+                &inner.replace("\"\"", "\""),
+            ));
+        }
+    }
+    Some(if parts.is_empty() {
+        String::new()
+    } else {
+        format!("({})", parts.join(","))
+    })
+}
+
+/// A plain global name for generated code, or `None` (dynamic, extended, subscripted).
+fn plain_global(name: &str) -> Option<String> {
+    let g = super::globals::normalize_global(name).ok()?;
+    let bare = g.name.strip_prefix('^')?;
+    (g.extended.is_none()
+        && g.subscripts_prefix.is_none()
+        && crate::objectscript::validate_global_name(bare).is_ok())
+    .then(|| format!("^{bare}"))
+}
+
+/// Run iad's own ObjectScript on the write's connection and return what it wrote.
+async fn run_code(w: &CheckCtx<'_>, code: &str) -> Result<String, Value> {
+    w.iris
+        .execute_via_generator_prefixed(code, w.ns, w.client, "IrisDevSm")
+        .await
+        .map_err(|e| body("IRIS_EXECUTE_ERROR", format!("data check: {e}"), json!({})))
+}
+
+/// The maps of `after` that are new or differ from `before`.
+fn changed_maps<'a>(before: &[Node], after: &'a [Node]) -> Vec<&'a Node> {
+    after
+        .iter()
+        .filter(|n| n.tag == "SQLMap")
+        .filter(|n| {
+            let old = before
+                .iter()
+                .find(|b| b.tag == "SQLMap" && b.name == n.name);
+            old.map(|o| emit_body(&normalize(vec![o.clone()])))
+                != Some(emit_body(&normalize(vec![(*n).clone()])))
+        })
+        .collect()
+}
+
+/// What the data checks read from: the connection, the class, and whether the call opted in.
+pub struct CheckCtx<'a> {
+    pub iris: &'a IrisConnection,
+    pub client: &'a reqwest::Client,
+    pub ns: &'a str,
+    pub class: &'a str,
+    pub seed_counter: bool,
+    pub build_indexes: bool,
+    /// `iris_doc`, which has no opt-ins: an ID counter behind the data and an unbuilt index are
+    /// warnings, not refusals, so a class can still be defined over existing globals. The walk
+    /// check (FR-023b) still refuses: that map would return wrong rows.
+    pub warn_only: bool,
+}
+
+/// A whole global, no extended reference and no subscripts.
+fn whole_global_ref(name: &str) -> super::globals::GlobalRef {
+    super::globals::GlobalRef {
+        name: name.to_string(),
+        extended: None,
+        subscripts_prefix: None,
+    }
+}
+
+/// Whether a map of a class other than the one being written uses `global` in the namespace.
+async fn used_by_another_class(w: &CheckCtx<'_>, global: &str) -> bool {
+    super::uses::uses(
+        w.iris,
+        w.client,
+        &whole_global_ref(global),
+        &[w.ns.to_string()],
+    )
+    .await
+    .unwrap_or_default()
+    .iter()
+    .any(|u| u.class != w.class)
+}
+
+/// The data checks of a write (FR-023, FR-023a, FR-023b), on the real globals, before anything is
+/// written. `Err` is the refusal; `Ok` says what the opt-ins must do afterwards.
+pub async fn data_checks(
+    w: &CheckCtx<'_>,
+    before: &[Node],
+    after: &[Node],
+) -> Result<DataPlan, Value> {
+    let mut plan = DataPlan::default();
+    let m = super::model::from_tree(w.class, "", after);
+    let old = super::model::from_tree(w.class, "", before);
+    let changed: Vec<String> = changed_maps(before, after)
+        .iter()
+        .filter_map(|n| n.name.clone())
+        .collect();
+    walk_check(w, &m, &changed, &mut plan).await?;
+    counter_check(w, &m, &old, &changed, &mut plan).await?;
+    index_check(w, &m, &old, &mut plan).await?;
+    Ok(plan)
+}
+
+/// FR-023b: a level the map walks as row IDs must not hold literal sub-nodes it does not skip.
+async fn walk_check(
+    w: &CheckCtx<'_>,
+    m: &super::model::StorageModel,
+    changed: &[String],
+    plan: &mut DataPlan,
+) -> Result<(), Value> {
+    let mut sampled: std::collections::BTreeMap<String, super::shape::ShapeReport> =
+        std::collections::BTreeMap::new();
+    for map in m.storage.maps.iter().filter(|x| changed.contains(&x.name)) {
+        let Some(g) = plain_global(&map.global) else {
+            plan.warnings.push(format!(
+                "map {}: its global {} is not a plain name, so its data was not checked",
+                map.name, map.global
+            ));
+            continue;
+        };
+        if !sampled.contains_key(&g) {
+            let report = super::sample::sample(
+                w.iris,
+                w.client,
+                w.ns,
+                &whole_global_ref(&g),
+                super::sample::caps(None),
+                false,
+            )
+            .await?;
+            sampled.insert(g.clone(), report);
+        }
+        let shape = &sampled[&g];
+        for sb in &map.subscripts {
+            let walks = sb.expression.contains('{');
+            let skips = sb.next_code.is_some()
+                || sb.start_value.is_some()
+                || !sb.invalid_conditions.is_empty();
+            let Some(names) = shape
+                .sub_nodes
+                .get(&sb.level.to_string())
+                .filter(|n| !n.is_empty())
+            else {
+                continue;
+            };
+            // Named nodes are a problem where they are not IDs: under row nodes that hold values
+            // (a parent's "EV", D11), or mixed in among numeric IDs (Shelf's "reserved"). A
+            // level of string IDs (Copy's B001) or an index value ("active") is not.
+            let under_rows = sb.level >= 2
+                && shape
+                    .data_states
+                    .get(&(sb.level - 1).to_string())
+                    .and_then(|s| s.get("11"))
+                    .is_some_and(|n| *n > 0);
+            let among_numbers = shape
+                .numeric_subscripts
+                .get(&sb.level.to_string())
+                .is_some_and(|n| *n > 0);
+            if walks && !skips && (under_rows || among_numbers) {
+                return Err(body(
+                    "STORAGE_MAP_INVALID",
+                    format!(
+                        "map {} walks level {} of {g} as row IDs, and that level holds the \
+                         named node(s) {}, which would read as rows. Skip them with a NextCode, \
+                         a StartValue or an Invalidcondition (FR-023b).",
+                        map.name,
+                        sb.level,
+                        names
+                            .iter()
+                            .map(|n| format!("\"{n}\""))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    json!({"rules": [{"path": format!("/maps/{}/subscripts/{}", map.name, sb.level),
+                                      "rule": "walks_literal_nodes"}],
+                           "level": sb.level, "nodes": names}),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// FR-023: the ID counter must not be behind the highest ID already stored. Checked when the
+/// write sets the ID expression or the master map; a counter that was already behind is not
+/// this write's doing, and refusing would block every unrelated edit.
+async fn counter_check(
+    w: &CheckCtx<'_>,
+    m: &super::model::StorageModel,
+    old: &super::model::StorageModel,
+    changed: &[String],
+    plan: &mut DataPlan,
+) -> Result<(), Value> {
+    let master = m.storage.maps.iter().find(|x| x.master);
+    let id_touched = m.storage.keywords.get("SqlIdExpression")
+        != old.storage.keywords.get("SqlIdExpression")
+        || master.is_some_and(|x| changed.contains(&x.name));
+    let (counter, master) = match (
+        id_counter_ref(&m.storage.keywords),
+        master.filter(|_| id_touched),
+    ) {
+        (Ok(counter), Some(master)) => (counter, master),
+        (Err(why), _) if m.storage.keywords.contains_key("SqlIdExpression") => {
+            plan.warnings
+                .push(format!("the ID counter was not checked: {why}"));
+            return Ok(());
+        }
+        _ => return Ok(()),
+    };
+    let first = master.subscripts.iter().min_by_key(|s| s.level);
+    let g = match (plain_global(&master.global), first) {
+        (Some(g), Some(sb)) if sb.expression.contains('{') => g,
+        _ => {
+            plan.warnings.push(
+                "the highest ID could not be read from the master map, so the ID counter was \
+                 not checked"
+                    .into(),
+            );
+            return Ok(());
+        }
+    };
+    let counter_ref = format!(
+        "{}{}",
+        counter.name,
+        counter.subscripts_prefix.as_deref().unwrap_or("")
+    );
+    let c = crate::objectscript::os_str_expr(&counter_ref);
+    let code = format!(
+        "Set c={c},h=$Order({g}(\"\"),-1) For {{ Quit:h=\"\"  Quit:h=+h  Set h=$Order({g}(h),-1) }} Write $Get(@c),\"|\",h"
+    );
+    let out = run_code(w, &code).await?;
+    let (value, highest) = out.trim().split_once('|').unwrap_or(("", ""));
+    let behind = !highest.is_empty()
+        && value.parse::<f64>().unwrap_or(0.0) < highest.parse::<f64>().unwrap_or(0.0);
+    if !behind {
+        return Ok(());
+    }
+    if w.warn_only {
+        // Nothing to seed: iris_doc has no opt-in.
+        plan.warnings.push(format!(
+            "the ID counter {counter_ref} holds {value:?} but the highest ID in {g} is \
+             {highest}: the next INSERT would overwrite a row (R5). Set the \
+             counter, or use iris_storage_map edit with seed_counter: true."
+        ));
+        return Ok(());
+    }
+    if !w.seed_counter {
+        return Err(body(
+            "STORAGE_MAP_ID_REUSE",
+            format!(
+                "the ID counter {counter_ref} holds {value:?} but the highest ID in {g} is \
+                 {highest}, so the next INSERT would overwrite a row (R5). \
+                 Repeat with seed_counter: true to set the counter first."
+            ),
+            json!({"counter": counter_ref, "counter_value": value, "highest_id": highest}),
+        ));
+    }
+    // FR-023a: another class counting with the same global must not be reseeded.
+    if used_by_another_class(w, &counter.name).await {
+        return Err(body(
+            "STORAGE_MAP_INVALID",
+            format!(
+                "seed_counter: another class's map uses {}, so iad will not reset it",
+                counter.name
+            ),
+            json!({"rules": [{"path": "/keywords/SqlIdExpression", "rule": "counter_shared"}]}),
+        ));
+    }
+    if super::tree::is_canonical_number(highest) {
+        plan.seed = Some((c, highest.to_string()));
+    } else {
+        plan.warnings.push(format!(
+            "the highest ID {highest:?} is not a number, so the counter was not seeded"
+        ));
+    }
+    Ok(())
+}
+
+/// FR-023, FR-023a: a new index map over existing data needs its index built.
+async fn index_check(
+    w: &CheckCtx<'_>,
+    m: &super::model::StorageModel,
+    old: &super::model::StorageModel,
+    plan: &mut DataPlan,
+) -> Result<(), Value> {
+    let master = m.storage.maps.iter().find(|x| x.master);
+    let has_data = match master.and_then(|x| plain_global(&x.global)) {
+        Some(g) => run_code(w, &format!("Write $Data({g})")).await?.trim() != "0",
+        None => false,
+    };
+    for map in m.storage.maps.iter().filter(|x| {
+        matches!(x.r#type.as_str(), "index" | "bitmap")
+            && !old.storage.maps.iter().any(|o| o.name == x.name)
+    }) {
+        let (Some(g), Some(prefix)) = (plain_global(&map.global), constant_prefix(map)) else {
+            plan.warnings.push(format!(
+                "index map {}: its range could not be checked",
+                map.name
+            ));
+            continue;
+        };
+        let range = format!("{g}{prefix}");
+        let filled = run_code(w, &format!("Write $Data({range})")).await?.trim() != "0";
+        if w.build_indexes {
+            let shared = used_by_another_class(w, &g).await;
+            if filled || shared {
+                return Err(body(
+                    "STORAGE_MAP_INVALID",
+                    format!(
+                        "build_indexes: {range} already holds nodes or another map uses it, and an \
+                         index build purges the index first (FR-023a)"
+                    ),
+                    json!({"rules": [{"path": format!("/maps/{}", map.name), "rule": "index_range_in_use"}]}),
+                ));
+            }
+            plan.build.push(map.name.clone());
+        } else if has_data && !filled {
+            if w.warn_only {
+                plan.warnings.push(format!(
+                    "index map {} is new and {range} is empty, but the table has rows: queries through \
+                     it find nothing until the index is built (%BuildIndices, or iris_storage_map with \
+                     build_indexes: true)",
+                    map.name
+                ));
+            } else {
+                return Err(body(
+                    "STORAGE_MAP_INDEX_UNBUILT",
+                    format!(
+                        "index map {} is new and {range} is empty, but the table has rows: queries \
+                         through it would find nothing (R5). Repeat with build_indexes: true.",
+                        map.name
+                    ),
+                    json!({"map": map.name, "range": range}),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The opt-ins after the real compile (T094), as the call's execute identity: seed the counter
+/// (reporting the value it replaced) and build the new indexes.
+async fn run_opt_ins(w: &WriteCtx<'_>, plan: &DataPlan) -> Value {
+    let (iris, client) = w.exec.unwrap_or((w.iris, w.client));
+    let mut done = serde_json::Map::new();
+    if let Some((counter, highest)) = &plan.seed {
+        let code = format!("Set c={counter},old=$Get(@c),@c={highest} Write old");
+        done.insert(
+            "seed_counter".into(),
+            match iris
+                .execute_via_generator_prefixed(&code, w.ns, client, "IrisDevSm")
+                .await
+            {
+                Ok(old) => json!({"set_to": highest, "replaced": old.trim()}),
+                Err(e) => json!({"error": e.to_string()}),
+            },
+        );
+    }
+    if !plan.build.is_empty() {
+        let names: Vec<String> = plan
+            .build
+            .iter()
+            .map(|n| crate::objectscript::os_str_expr(n))
+            .collect();
+        let code = format!(
+            "Set sc=##class({}).%BuildIndices($lb({})) Write $Select(sc=1:\"OK\",1:$System.Status.GetErrorText(sc))",
+            w.class,
+            names.join(",")
+        );
+        done.insert(
+            "build_indexes".into(),
+            match iris
+                .execute_via_generator_prefixed(&code, w.ns, client, "IrisDevSm")
+                .await
+            {
+                Ok(out) if out.trim() == "OK" => json!({"built": plan.build}),
+                Ok(out) => json!({"error": out.trim()}),
+                Err(e) => json!({"error": e.to_string()}),
+            },
+        );
+    }
+    Value::Object(done)
 }

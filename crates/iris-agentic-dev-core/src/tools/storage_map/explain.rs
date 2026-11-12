@@ -131,15 +131,15 @@ pub const EXPLAINED: [(u32, &str); 24] = [
     ),
 ];
 
-/// The explanation for the first error number in `iris_error` that [`EXPLAINED`] knows, read
+/// The explanation for the first error number in `error_text` that [`EXPLAINED`] knows, read
 /// from `ERROR #nnnn` or `ERROR#nnnn`. `None` when it names no known number.
-pub fn explain(iris_error: &str) -> Option<String> {
-    explain_code(iris_error).map(|(_, text)| text.to_string())
+pub fn explain(error_text: &str) -> Option<String> {
+    explain_code(error_text).map(|(_, text)| text.to_string())
 }
 
 /// [`explain`] with the number it explained.
-fn explain_code(iris_error: &str) -> Option<(u32, &'static str)> {
-    iris_error.split('#').skip(1).find_map(|after| {
+fn explain_code(error_text: &str) -> Option<(u32, &'static str)> {
+    error_text.split('#').skip(1).find_map(|after| {
         let end = after
             .find(|c: char| !c.is_ascii_digit())
             .unwrap_or(after.len());

@@ -208,9 +208,9 @@ pub async fn handle(
         Action::Read => read(iris, client, p).await,
         Action::Diagram => diagram(iris, client, p).await,
         Action::Uses => uses_action(iris, client, p).await,
-        Action::Check => check(iris, client, p, tools, &shape).await,
-        Action::Edit => edit(iris, client, p, tools, &shape).await,
-        Action::Replace => replace(iris, client, p, tools, &shape).await,
+        Action::Check => check_action(iris, client, p, tools, &shape).await,
+        Action::Edit => edit_action(iris, client, p, tools, &shape).await,
+        Action::Replace => replace_action(iris, client, p, tools, &shape).await,
         Action::Compare => compare_action(iris, client, p, tools, &shape).await,
         Action::Preview => preview_action(iris, client, p, tools, &shape).await,
         other => err_result(json!({
@@ -357,7 +357,7 @@ fn proposed_node(
 /// the map it names, through the gates, then compiled in a scratch copy that is deleted
 /// afterwards. The real class is never written. A copy that does not compile answers
 /// `STORAGE_MAP_COMPILE_FAILED` with IRIS's errors and their explanations.
-async fn check(
+async fn check_action(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: &Value,
@@ -453,18 +453,15 @@ fn map_name_for(
     }
 }
 
-/// The opt-ins run after the real compile in Phase 10 (T094). Until then a call that asks for one
-/// is refused before anything is written, rather than written without it.
-fn refuse_opt_ins(shape: &CallShape) -> Option<Result<CallToolResult, McpError>> {
-    (shape.seed_counter || shape.build_indexes).then(|| {
-        fail(
-            "NOT_IMPLEMENTED",
-            "seed_counter and build_indexes are not available yet; nothing was written. Repeat the \
-             call without them."
-                .into(),
-            json!({}),
-        )
-    })
+/// The opt-ins write as the execute identity (T036); a call without them needs none.
+fn opt_in_exec_context(
+    tools: &crate::tools::IrisTools,
+    shape: &CallShape,
+) -> Result<Option<crate::tools::exec::ExecContext>, Value> {
+    (shape.seed_counter || shape.build_indexes)
+        .then(|| tools.exec_context())
+        .transpose()
+        .map_err(|e| e.to_json())
 }
 
 /// The class as a write needs it: name, namespace, and what [`write::Loaded`] holds, or the
@@ -847,16 +844,13 @@ async fn preview_action(
 
 /// `edit` (US3, FR-010): path operations on the class's tree, then the write path. The version
 /// is the map's when every op is inside one existing map, else the storage version.
-async fn edit(
+async fn edit_action(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: &Value,
     tools: &crate::tools::IrisTools,
     shape: &CallShape,
 ) -> Result<CallToolResult, McpError> {
-    if let Some(refusal) = refuse_opt_ins(shape) {
-        return refusal;
-    }
     let (class, ns, loaded, stored) = match load_for_write(iris, client, p, "edit").await {
         Ok(found) => found,
         Err(reply) => return reply,
@@ -885,6 +879,10 @@ async fn edit(
         Err(e) => return fail("INVALID_PARAMS", e, json!({})),
     };
     let t = tools.target()?;
+    let cx = match opt_in_exec_context(tools, shape) {
+        Ok(cx) => cx,
+        Err(e) => return err_result(e),
+    };
     let w = write::WriteCtx {
         iris,
         client,
@@ -893,6 +891,7 @@ async fn edit(
         shape,
         policy: &t.primary.effective,
         server: &t.primary.key,
+        exec: cx.as_ref().map(|cx| (cx.conn.as_ref(), cx.client.as_ref())),
     };
     let result = write::write_map(&w, &loaded, after).await;
     audit_write(tools, class, one_map.as_deref(), &stored, &result, &changed);
@@ -902,16 +901,13 @@ async fn edit(
 /// `replace` (US3, FR-011): the whole map from `model`. The first call that would remove
 /// elements lists them and writes nothing (`STORAGE_MAP_CONFIRM_REMOVAL`); the same call with
 /// `confirm_removal: true` writes.
-async fn replace(
+async fn replace_action(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: &Value,
     tools: &crate::tools::IrisTools,
     shape: &CallShape,
 ) -> Result<CallToolResult, McpError> {
-    if let Some(refusal) = refuse_opt_ins(shape) {
-        return refusal;
-    }
     let Some(proposed) = p.get("model").filter(|v| !v.is_null()) else {
         return fail("INVALID_PARAMS", "replace needs `model`".into(), json!({}));
     };
@@ -981,6 +977,10 @@ async fn replace(
         .cloned()
         .collect();
     let t = tools.target()?;
+    let cx = match opt_in_exec_context(tools, shape) {
+        Ok(cx) => cx,
+        Err(e) => return err_result(e),
+    };
     let w = write::WriteCtx {
         iris,
         client,
@@ -989,6 +989,7 @@ async fn replace(
         shape,
         policy: &t.primary.effective,
         server: &t.primary.key,
+        exec: cx.as_ref().map(|cx| (cx.conn.as_ref(), cx.client.as_ref())),
     };
     let result = write::write_map(&w, &loaded, after).await;
     audit_write(tools, class, Some(&name), &stored, &result, &changed);

@@ -419,3 +419,255 @@ async fn test_storage_map_data_172_unbuilt_index_finds_nothing() {
     );
     assert!(problems.is_empty(), "cleanup: {problems:?}");
 }
+
+// ── T092–T094: the data checks a write runs, and the opt-ins ──────────────────
+
+const LOAN_WALK: &str = r#"Class IadSm172Test.LoanWalk Extends %Persistent [ StorageStrategy = SQLStorage ]
+{
+
+Property LoanNo As %Integer;
+
+Property Part As %String;
+
+Index IDKEY On (LoanNo, Part) [ IdKey, Unique ];
+
+Storage SQLStorage
+{
+<SQLMap name="Master">
+<Global>^IadSm172Loan</Global>
+<Subscript name="1">
+<Expression>{LoanNo}</Expression>
+</Subscript>
+<Subscript name="2">
+<Expression>{Part}</Expression>
+SKIP</Subscript>
+<Type>data</Type>
+</SQLMap>
+<StreamLocation>^IadSm172LoanWalkS</StreamLocation>
+<Type>%Storage.SQL</Type>
+}
+
+}
+"#;
+
+/// T092 (FR-023b): a map that walks `Loan`'s level 2 as row IDs would read its `"EV"` node as a
+/// row (T026 b), so the write is refused, naming the level and the node; with a NextCode that
+/// skips non-numeric subscripts it goes through.
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn test_storage_map_data_172_a_walk_over_named_nodes_is_refused() {
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let loan = Fixture::read("Loan");
+    load_fixture(&r, &loan).await;
+    let put = |text: String| {
+        let r = &r;
+        async move {
+            r.call(
+                "iris_doc",
+                json!({"mode": "put", "name": "IadSm172Test.LoanWalk.cls", "content": text,
+                       "compile": true, "namespace": "USER"}),
+            )
+            .await
+        }
+    };
+    let walking = put(LOAN_WALK.replace("SKIP", "")).await;
+    let skip = "<NextCode> s {L2}=$o(^IadSm172Loan({L1},{L2}))\n f  {\n\tq:{L2}=\"\"\n\tq:{L2}=+{L2}\n\ts {L2}=$o(^IadSm172Loan({L1},{L2}))\n }</NextCode>\n";
+    let skipping = put(LOAN_WALK.replace("SKIP", skip)).await;
+    let del = r
+        .call(
+            "iris_doc",
+            json!({"mode": "delete", "name": "IadSm172Test.LoanWalk.cls", "namespace": "USER"}),
+        )
+        .await;
+    let problems = drop_fixture(&r, &loan).await;
+
+    assert_eq!(walking["error_code"], "STORAGE_MAP_INVALID", "{walking}");
+    assert_eq!(
+        walking["rules"][0]["rule"], "walks_literal_nodes",
+        "{walking}"
+    );
+    assert_eq!(walking["level"], 2, "{walking}");
+    assert_eq!(walking["nodes"], json!(["EV"]), "{walking}");
+    assert_eq!(skipping["success"], true, "{skipping}");
+    assert_eq!(del["success"], true, "{del}");
+    assert!(problems.is_empty(), "cleanup: {problems:?}");
+}
+
+/// T093/T094: a counter behind the highest ID is refused; `seed_counter` sets it and reports the
+/// value it replaced, and the next INSERT does not overwrite row 1.
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn test_storage_map_data_172_id_reuse_and_seed_counter() {
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let f = Fixture::read("Member");
+    load_fixture(&r, &f).await;
+    r.call(
+        "iris_execute",
+        json!({"code": "ZKill ^IadSm172Member Write 1", "namespace": "USER"}),
+    )
+    .await;
+    // Setting the ID expression is when the check runs (a counter that was already behind is
+    // not an unrelated edit's doing).
+    let edit = |seed: bool, version: serde_json::Value| {
+        json!({"action": "edit", "class": f.class, "version": version, "namespace": "USER",
+               "seed_counter": seed,
+               "ops": [{"op": "set", "path": "/keywords/SqlIdExpression",
+                        "value": "$INCREMENT(^IadSm172Member)"}]})
+    };
+    let read = r
+        .call(
+            "iris_storage_map",
+            json!({"action": "read", "class": f.class, "namespace": "USER"}),
+        )
+        .await;
+    let version = read["storage"]["version"].clone();
+    let refused = r
+        .call("iris_storage_map", edit(false, version.clone()))
+        .await;
+    let seeded = r.call("iris_storage_map", edit(true, version)).await;
+    let insert = r
+        .call(
+            "iris_query",
+            json!({"query": "INSERT INTO IadSm172.Member (Name, City, Age) VALUES ('Zed', 'Nowhere', 1)",
+                   "mode": "write", "namespace": "USER"}),
+        )
+        .await;
+    let rows = r
+        .call(
+            "iris_query",
+            json!({"query": "SELECT ID, Name FROM IadSm172.Member ORDER BY ID", "namespace": "USER"}),
+        )
+        .await;
+    let problems = drop_fixture(&r, &f).await;
+
+    assert_eq!(refused["error_code"], "STORAGE_MAP_ID_REUSE", "{refused}");
+    assert_eq!(refused["highest_id"], "3", "{refused}");
+    assert_eq!(refused["counter"], "^IadSm172Member", "{refused}");
+    assert_eq!(seeded["success"], true, "{seeded}");
+    assert_eq!(
+        seeded["opt_ins_run"]["seed_counter"]["set_to"], "3",
+        "{seeded}"
+    );
+    assert_eq!(
+        seeded["opt_ins_run"]["seed_counter"]["replaced"], "",
+        "{seeded}"
+    );
+    assert_eq!(insert["success"], true, "{insert}");
+    let names: Vec<(i64, String)> = rows["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["ID"].as_i64().unwrap_or(0),
+                r["Name"].as_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        names[0],
+        (1, "Alice".to_string()),
+        "row 1 was overwritten: {rows}"
+    );
+    assert_eq!(names.last().unwrap(), &(4, "Zed".to_string()), "{rows}");
+    assert!(problems.is_empty(), "cleanup: {problems:?}");
+}
+
+async fn genre_storage(r: &Rig) -> serde_json::Value {
+    r.call(
+        "iris_storage_map",
+        json!({"action": "read", "class": "IadSm172.Genre", "namespace": "USER"}),
+    )
+    .await["storage"]
+        .clone()
+}
+
+/// T093/T094: a new index map over existing data with an empty index is refused; with
+/// `build_indexes` it is built and the known question answers; a build over an index that already
+/// holds nodes is refused (FR-023a); with the destructive tier off the opt-in is refused.
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn test_storage_map_data_172_unbuilt_index_and_build_indexes() {
+    use crate::live_rig_171::rig_with;
+    use crate::storage172_rig::ask;
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let f = Fixture::read("Genre");
+    load_fixture(&r, &f).await;
+    let s0 = genre_storage(&r).await;
+    let bitmap = s0["maps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "PopularBitmap")
+        .cloned()
+        .expect("the bitmap map");
+    let removed = r
+        .call(
+            "iris_storage_map",
+            json!({"action": "edit", "class": f.class, "version": bitmap["version"], "namespace": "USER",
+                   "ops": [{"op": "remove", "path": "/maps/PopularBitmap"}]}),
+        )
+        .await;
+    r.call(
+        "iris_global",
+        json!({"action": "kill", "global_name": "^IadSm172GenreBit", "namespace": "USER"}),
+    )
+    .await;
+    let add = |build: bool, version: serde_json::Value| {
+        json!({"action": "edit", "class": "IadSm172.Genre", "version": version, "namespace": "USER",
+               "build_indexes": build,
+               "ops": [{"op": "add", "path": "/maps/PopularBitmap",
+                        "value": {"type": "bitmap", "global": "^IadSm172GenreBit",
+                                  "subscripts": [{"level": 1, "expression": "{Popular}"},
+                                                 {"level": 2, "expression": "{ID}"}]}}]})
+    };
+    let v1 = genre_storage(&r).await["version"].clone();
+    let unbuilt = r.call("iris_storage_map", add(false, v1.clone())).await;
+    let no_destructive = rig_with(
+        &Where::live(),
+        Toolset::Merged,
+        "write_tools_enabled = true\ndestructive_tools_enabled = false\n",
+    )
+    .await
+    .call("iris_storage_map", add(true, v1.clone()))
+    .await;
+    let built = r.call("iris_storage_map", add(true, v1)).await;
+    let rows = ask(&r, &f).await;
+    // The index is built now; take the map out again and try a build over the filled range.
+    let v2 = genre_storage(&r).await["maps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "PopularBitmap")
+        .map(|m| m["version"].clone())
+        .unwrap_or_default();
+    r.call(
+        "iris_storage_map",
+        json!({"action": "edit", "class": f.class, "version": v2, "namespace": "USER",
+               "ops": [{"op": "remove", "path": "/maps/PopularBitmap"}]}),
+    )
+    .await;
+    let v3 = genre_storage(&r).await["version"].clone();
+    let over_filled = r.call("iris_storage_map", add(true, v3)).await;
+    let problems = drop_fixture(&r, &f).await;
+
+    assert_eq!(removed["success"], true, "{removed}");
+    assert_eq!(
+        unbuilt["error_code"], "STORAGE_MAP_INDEX_UNBUILT",
+        "{unbuilt}"
+    );
+    assert!(no_destructive["refusal"].is_object(), "{no_destructive}");
+    assert_eq!(built["success"], true, "{built}");
+    assert_eq!(
+        built["opt_ins_run"]["build_indexes"]["built"],
+        json!(["PopularBitmap"]),
+        "{built}"
+    );
+    let expected = f.seed["answer"].as_array().cloned().unwrap_or_default();
+    assert_eq!(rows, expected, "the built index does not answer");
+    assert_eq!(
+        over_filled["rules"][0]["rule"], "index_range_in_use",
+        "{over_filled}"
+    );
+    assert!(problems.is_empty(), "cleanup: {problems:?}");
+}

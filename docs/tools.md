@@ -1832,8 +1832,13 @@ and the data disagree: a field on a piece the data does not have, `$LIST` agains
 a row node with values or sub-nodes no field reads. `preview` returns the rows a map (the stored one,
 or `model`) would give, read through a scratch copy; values are masked unless `include_values`,
 which needs `acknowledgePhi` under `dataPolicy = "allow"` and is refused under `block` and `redact`.
-Both run as the service account when one is set, and say so in `identity`. In this build `propose`
-answers `NOT_IMPLEMENTED`, and `seed_counter` and `build_indexes` are refused.
+Both run as the service account when one is set, and say so in `identity`. Before a write, iad also checks the data: a map that walks a level holding named nodes (a parent's
+`"EV"` node, or `"reserved"` among numeric IDs) is refused unless the walk skips them; an ID counter
+behind the highest stored ID is `STORAGE_MAP_ID_REUSE`, which `seed_counter: true` fixes by setting
+it; and a new index map over data with an empty index is `STORAGE_MAP_INDEX_UNBUILT`, which
+`build_indexes: true` fixes by building it (a destructive write, refused if the index range is in
+use). Through `iris_doc` those two are warnings, since it has no opt-ins. In this build `propose`
+answers `NOT_IMPLEMENTED`.
 
 | Parameter         | Type         | Default  | Notes                                                                                  |
 | ----------------- | ------------ | -------- | -------------------------------------------------------------------------------------- |
