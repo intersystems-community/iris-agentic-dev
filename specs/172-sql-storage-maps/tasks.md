@@ -331,29 +331,42 @@ check_map_globals(nodes: &[Node], policy: &EffectivePolicy, server: &str, action
 
 **Independent test**: a map that fails to compile leaves the real class and table working.
 
-- [ ] T060 [US4] Live check first (research R7 open item): `tests/integration/test_storage_map_scratch_172_live.rs`
+- [x] T060 [US4] Live check first (research R7 open item): `tests/integration/test_storage_map_scratch_172_live.rs`
       loads `Member`, records `$Query` checksums of `^IadSm172Member*`, compiles a scratch copy over the same
       globals and deletes it, and asserts the checksums are unchanged. Use `iris_doc` put/compile/delete for now.
       Prove: `L test_storage_map_scratch_172`.
-- [ ] T061 [US4] `iris/connection.rs`: `pub async fn compile_scratch_class(&self, source: &str, namespace: &str,
+      Done 2026-11-11: compile and Atelier delete of a copy over `Member`'s real globals left every node's CRC
+      unchanged (the test also proves the checksum sees a one-node change). R7's open item is closed.
+- [x] T061 [US4] `iris/connection.rs`: `pub async fn compile_scratch_class(&self, source: &str, namespace: &str,
 client: &reqwest::Client, prefix: &str) -> anyhow::Result<(String, CompileResult)>` built on `ScratchGuard`,
       `compile_document` and `delete_scratch`; returns the scratch class name; uses `check_atelier_put_errors`.
       Test first: a case in `test_storage_map_scratch_172_live.rs` (a valid source compiles and is gone afterwards; an
       invalid one returns its errors and is gone). Prove: `L test_storage_map_scratch_172`.
-- [ ] T062 [US4] `write.rs`: `pub fn scratch_source(real_text: &str, storage: &[Node], scratch_class: &str) ->
+      Done 2026-11-11: takes `source: impl FnOnce(&str) -> String` (the name is generated first, so the source
+      can name it); refuses under strict read-only; a stored-but-flagged PUT (#16023) comes back as a failed result.
+- [x] T062 [US4] `write.rs`: `pub fn scratch_source(real_text: &str, storage: &[Node], scratch_class: &str) ->
 Result<String, String>` per FR-015a (class header with the same superclasses, the properties and indices the map
       names, `SqlTableName` = scratch name, emitted Storage; nothing else). Test first
       `tests/unit/test_storage_map_write_172.rs`: from `Member` plus an added method, a query and an XData block, the
       output has none of the three and has the Storage block byte-identical to `emit_body`. Prove:
       `U test_storage_map_write_172`.
-- [ ] T063 [P] [US4] `src/tools/storage_map/explain.rs`: `pub fn explain(iris_error: &str) -> Option<String>` for
+      Done 2026-11-11: keeps `Import` lines, `SqlRowIdName`/`SqlRowIdPrivate`, IdKey indices and indices named
+      like a map. Refuses default storage (no SQLMap): read-only per FR-002, and IRIS refuses a second class on its
+      globals (#5564, measured on `DefaultBook`). A `Relationship` is not carried. Live: every SQL-storage fixture's
+      scratch copy compiles (`test_storage_map_scratch_172_scratch_source_compiles_for_every_fixture`).
+- [x] T063 [P] [US4] `src/tools/storage_map/explain.rs`: `pub fn explain(iris_error: &str) -> Option<String>` for
       5002, 5508–5511, 5513, 5524, 5538, 5539, 5541–5549, 5583, 5585, 5596, 15511, 16023, each in plain words from
       research R4/R5. Test first `tests/unit/test_storage_map_explain_172.rs`: each number maps to text; an unknown
       number gives `None`. Prove: `U test_storage_map_explain_172`.
-- [ ] T064 [US4] `classify` raise for opt-ins and code: `call_shape` sets `code_changed`; `classify` returns Write
+      Done 2026-11-11: texts from `^%qMsg("%ObjectErrors")` on 2026.2 plus R4/R5; the first known `#nnnn` wins, so
+      the #5030 wrapper never hides the map error.
+- [x] T064 [US4] `classify` raise for opt-ins and code: `call_shape` sets `code_changed`; `classify` returns Write
       for compare/propose/preview, Destructive with `build_indexes`; `effective_category` adds Execute when
       `seed_counter`, `build_indexes` or `code_changed`. Test first in `test_storage_map_call_shape_172.rs`, one case
       per row of plan "Classification". Prove: `U test_storage_map_call_shape_172`, `U test_gate_classification`.
+      Done 2026-11-11: `code_changed` is judged from the call alone (an op path or model key outside the literal
+      list, or unreadable ops), so it can over-flag and never under-flag; `effective_category` now reads
+      `call_shape` (`check` was falling back to `docs`).
 - [ ] T065 [US4] `mod.rs`: the `check` action: build the tree from `model` (or the class), `gate_tree`,
       `validate` (T070 lands later; until then `check` calls a stub that returns `Ok`), `scratch_source`,
       `check_compile_time_code_mode`, `compile_scratch_class`; failure → `STORAGE_MAP_COMPILE_FAILED` with

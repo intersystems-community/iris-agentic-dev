@@ -1512,6 +1512,76 @@ impl IrisConnection {
         Ok(CompileResult { errors, console })
     }
 
+    /// PUT, compile and delete a scratch class named `IrisDevTmp.<prefix><id>` (spec 172 R7).
+    /// `source` gets the generated name and returns the class text. Returns the name and the
+    /// compile result; a PUT IRIS stored but flagged (`result.status` #16023) comes back as a
+    /// failed result carrying that error. The class is gone on every exit, under the same guard
+    /// as the executor's, so a dropped call deletes it too.
+    ///
+    /// Compiling a copy whose Storage names the real globals writes nothing to them, and the
+    /// delete leaves them alone (measured, `test_storage_map_scratch_172`).
+    pub async fn compile_scratch_class(
+        &self,
+        source: impl FnOnce(&str) -> String,
+        namespace: &str,
+        client: &reqwest::Client,
+        prefix: &str,
+    ) -> anyhow::Result<(String, CompileResult)> {
+        if let Some((tool, from)) = crate::tools::target::call_read_only_source() {
+            anyhow::bail!(
+                "READ_ONLY_STRICT (scratch-class compile): {tool} would compile a scratch class \
+                 on the server, and read-only mode is strict ({from}), so iad sent nothing."
+            );
+        }
+        let id: String = uuid::Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(12)
+            .collect();
+        let class_name = format!("IrisDevTmp.{prefix}{id}");
+        let doc_name = format!("{class_name}.cls");
+        let content: Vec<String> = source(&class_name).lines().map(str::to_string).collect();
+
+        let mut scratch = ScratchGuard::new(self, &doc_name, namespace);
+        let put_url = self.versioned_ns_url(
+            namespace,
+            &format!("/doc/{}", urlencoding::encode(&doc_name)),
+        );
+        let put = client
+            .put(&put_url)
+            .header(reqwest::header::USER_AGENT, user_agent(caller_mode()))
+            .basic_auth(&self.username, Some(&self.password))
+            .json(&serde_json::json!({"enc": false, "content": content}))
+            .send()
+            .await;
+        let put = match put {
+            Ok(r) => r,
+            Err(e) => {
+                // The request may have reached IRIS, so the guard stays armed.
+                scratch.release(self, client).await;
+                return Err(e.into());
+            }
+        };
+        if !put.status().is_success() {
+            scratch.disarm();
+            anyhow::bail!("PUT {doc_name} failed: HTTP {}", put.status());
+        }
+        let put_body: serde_json::Value = crate::iris::http::json_or_default(put).await;
+        let result = match check_atelier_put_errors(&put_body) {
+            Some(err) => Ok(CompileResult {
+                errors: vec![err],
+                console: vec![],
+            }),
+            None => {
+                self.compile_document(&doc_name, namespace, "cuk", client)
+                    .await
+            }
+        };
+        scratch.release(self, client).await;
+        Ok((class_name, result?))
+    }
+
     /// A tool-call client for the connection the launch settings describe: `IRIS_INSECURE` and
     /// `IRIS_TLS_VERIFY` apply to it and to nothing else. A client for a connection of its own is
     /// `conn.client(ClientKind::Call)`.

@@ -77,7 +77,109 @@ pub fn call_shape(params: &Value) -> CallShape {
         seed_counter: unreadable || opt_in("seed_counter"),
         build_indexes: unreadable || opt_in("build_indexes"),
         include_values: opt_in("include_values"),
-        code_changed: None, // Will be set later when we have before/after trees
+        code_changed: match action {
+            None => Some(true),
+            Some(Action::Edit) => Some(ops_carry_code(params.get("ops"))),
+            Some(Action::Replace) => Some(params.get("model").is_some_and(carries_code)),
+            Some(_) => None,
+        },
+    }
+}
+
+/// Model keys whose values are literals, never ObjectScript: the JSON names of
+/// `code::LITERAL_TAGS` and the model's own bookkeeping. Every other key is judged as code
+/// (fail closed, like `code::code_elements`).
+const LITERAL_KEYS: &[&str] = &[
+    "type",
+    "delimiter",
+    "piece",
+    "node",
+    "population_type",
+    "population_pct",
+    "block_count",
+    "structure",
+    "deferred",
+    "conditional_with_host_vars",
+    "field",
+    "access_type",
+    "name",
+    "version",
+    "master",
+    "used",
+    "level",
+    "position",
+    "variable",
+    "editable",
+    "not_editable_reason",
+    "description",
+    "derived",
+    "format",
+    "computed",
+    "filed",
+    "model_version",
+    "class",
+];
+
+/// Whether an `edit`'s ops can change map code (plan "Classification"). Judged from the call
+/// alone, before the class is read: an op whose path ends in a code key, a value that carries
+/// code, or ops iad cannot read.
+fn ops_carry_code(ops: Option<&Value>) -> bool {
+    let Some(Value::Array(ops)) = ops else {
+        return true;
+    };
+    ops.iter().any(|op| {
+        let last = op
+            .get("path")
+            .and_then(Value::as_str)
+            .and_then(|p| p.rsplit('/').next());
+        let Some(last) = last else { return true };
+        match op.get("value") {
+            Some(v @ (Value::Object(_) | Value::Array(_))) => carries_code(v),
+            _ => !LITERAL_KEYS.contains(&last),
+        }
+    })
+}
+
+/// Whether a model fragment sets any non-empty value under a key that is not literal. An
+/// `extra` element `{tag, value}` is code unless its tag is literal.
+fn carries_code(v: &Value) -> bool {
+    match v {
+        Value::Object(o) => {
+            // An `extra` element `{tag, name, value}`: its value is judged by its tag here, and
+            // skipped by the key loop below.
+            let tagged = o.contains_key("tag");
+            if let (Some(tag), Some(value)) = (o.get("tag"), o.get("value")) {
+                let literal = tag
+                    .as_str()
+                    .is_some_and(|t| code::LITERAL_TAGS.contains(&t));
+                if !literal && value.as_str().is_some_and(|s| !s.trim().is_empty()) {
+                    return true;
+                }
+            }
+            o.iter().any(|(k, val)| match val {
+                Value::String(s) => {
+                    !s.trim().is_empty()
+                        && !LITERAL_KEYS.contains(&k.as_str())
+                        && k != "tag"
+                        && !(tagged && k == "value")
+                }
+                // `data` and `keywords` are keyed by field or keyword name; their values are
+                // judged on their own keys, or as code when they are bare strings.
+                Value::Object(m) if matches!(k.as_str(), "data" | "keywords") => {
+                    m.iter().any(|(kk, vv)| match vv {
+                        Value::String(s) => {
+                            !s.trim().is_empty() && !code::LITERAL_TAGS.contains(&kk.as_str())
+                        }
+                        other => carries_code(other),
+                    })
+                }
+                Value::Object(_) | Value::Array(_) => carries_code(val),
+                _ => false,
+            })
+        }
+        Value::Array(a) => a.iter().any(carries_code),
+        Value::String(s) => !s.trim().is_empty(),
+        _ => false,
     }
 }
 

@@ -27,7 +27,7 @@ pub const CODE_TAGS: &[&str] = &[
 /// Tags whose values are literals, not code.
 ///
 /// Everything else goes through the code gate (fail closed).
-const LITERAL_TAGS: &[&str] = &[
+pub const LITERAL_TAGS: &[&str] = &[
     "Type",
     "Delimiter",
     "Piece",

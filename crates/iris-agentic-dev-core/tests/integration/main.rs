@@ -125,6 +125,7 @@ mod test_storage_map_d11_172_live;
 mod test_storage_map_diagram_render_172_live;
 mod test_storage_map_gates_172_live;
 mod test_storage_map_read_172_live;
+mod test_storage_map_scratch_172_live;
 mod test_storage_map_sys_roundtrip_172_live;
 mod test_storage_map_uses_172_live;
 mod test_stream_inspect_141_live;

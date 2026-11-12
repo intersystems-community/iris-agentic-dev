@@ -338,3 +338,163 @@ fn classify_with_no_arguments_is_destructive_and_scratch() {
     );
     assert!(is_scratch_call("iris_storage_map", None));
 }
+
+// ── T064: opt-ins and map code raise the call (plan "Classification") ──────────
+
+mod t064 {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory::{
+        self, Compile, Docs, Execute,
+    };
+    use iris_agentic_dev_core::tools::storage_map::call_shape;
+    use iris_agentic_dev_core::tools::write_gate::{classify, effective_category, WriteClass};
+    use serde_json::{json, Value};
+
+    fn judged(args: Value) -> (WriteClass, Vec<ToolCategory>) {
+        let a = args.as_object().cloned();
+        let class = classify("iris_storage_map", a.as_ref()).expect("classified");
+        let mut cats = effective_category("iris_storage_map", a.as_ref(), class);
+        cats.sort_by_key(|c| format!("{c:?}"));
+        (class, cats)
+    }
+
+    /// A literal-only edit op (a piece number).
+    fn literal_op() -> Value {
+        json!([{"op": "set", "path": "/maps/Master/data/Age/piece", "value": "4"}])
+    }
+
+    #[test]
+    fn t064_read_diagram_uses_are_read_only_docs() {
+        for a in ["read", "diagram", "uses"] {
+            assert_eq!(
+                judged(json!({"action": a})),
+                (WriteClass::ReadOnly, vec![Docs]),
+                "{a}"
+            );
+        }
+    }
+
+    #[test]
+    fn t064_check_is_read_only_compile() {
+        assert_eq!(
+            judged(json!({"action": "check", "model": {"global": "^G"}})),
+            (WriteClass::ReadOnly, vec![Compile])
+        );
+    }
+
+    #[test]
+    fn t064_compare_propose_preview_are_write_execute() {
+        for a in ["compare", "propose", "preview"] {
+            assert_eq!(
+                judged(json!({"action": a})),
+                (WriteClass::Write, vec![Execute]),
+                "{a}"
+            );
+        }
+    }
+
+    #[test]
+    fn t064_edit_replace_without_code_are_write_compile() {
+        assert_eq!(
+            judged(json!({"action": "edit", "ops": literal_op()})),
+            (WriteClass::Write, vec![Compile])
+        );
+        let model = json!({"name": "Master", "type": "data", "data": {"Age": {"name": "Age",
+                    "delimiter": "\"^\"", "piece": "3"}}});
+        assert_eq!(
+            judged(json!({"action": "replace", "model": model})),
+            (WriteClass::Write, vec![Compile])
+        );
+    }
+
+    #[test]
+    fn t064_edit_replace_with_map_code_add_execute() {
+        let ops = json!([{"op": "set", "path": "/maps/Master/data/Age/retrieval_code",
+                          "value": "Set {*}=$i(^Side)"}]);
+        assert_eq!(
+            judged(json!({"action": "edit", "ops": ops})),
+            (WriteClass::Write, vec![Compile, Execute])
+        );
+        let model = json!({"name": "Master", "condition": "$i(^Side)"});
+        assert_eq!(
+            judged(json!({"action": "replace", "model": model})),
+            (WriteClass::Write, vec![Compile, Execute])
+        );
+        // A subtree set whose contents carry code is code too.
+        let ops = json!([{"op": "set", "path": "/maps/Master/subscripts/1",
+                          "value": {"level": 1, "expression": "{ID}"}}]);
+        assert_eq!(
+            judged(json!({"action": "edit", "ops": ops})).1,
+            vec![Compile, Execute]
+        );
+        // Removing a code element changes what runs.
+        let ops = json!([{"op": "remove", "path": "/maps/Master/condition"}]);
+        assert_eq!(
+            judged(json!({"action": "edit", "ops": ops})).1,
+            vec![Compile, Execute]
+        );
+        // An unknown key is judged as code (fail closed, like `code::code_elements`).
+        let ops = json!([{"op": "set", "path": "/maps/Master/wibble", "value": "x"}]);
+        assert_eq!(
+            judged(json!({"action": "edit", "ops": ops})).1,
+            vec![Compile, Execute]
+        );
+    }
+
+    #[test]
+    fn t064_extra_elements_are_judged_by_their_tag() {
+        let model = |tag: &str| json!({"name": "Master", "extra": [{"tag": tag, "value": "x"}]});
+        assert_eq!(
+            judged(json!({"action": "replace", "model": model("Structure")})).1,
+            vec![Compile],
+            "a literal tag carries no code"
+        );
+        assert_eq!(
+            judged(json!({"action": "replace", "model": model("Wibble")})).1,
+            vec![Compile, Execute],
+            "an unknown tag is code"
+        );
+    }
+
+    #[test]
+    fn t064_seed_counter_adds_execute() {
+        assert_eq!(
+            judged(json!({"action": "edit", "ops": literal_op(), "seed_counter": true})),
+            (WriteClass::Write, vec![Compile, Execute])
+        );
+    }
+
+    #[test]
+    fn t064_build_indexes_is_destructive_and_adds_execute() {
+        assert_eq!(
+            judged(json!({"action": "replace", "model": {"name": "M"}, "build_indexes": true})),
+            (WriteClass::Destructive, vec![Compile, Execute])
+        );
+    }
+
+    #[test]
+    fn t064_unreadable_is_the_strictest_row() {
+        assert_eq!(
+            judged(json!({"action": "Edit"})),
+            (WriteClass::Destructive, vec![Compile, Execute])
+        );
+    }
+
+    #[test]
+    fn t064_call_shape_sets_code_changed_for_writes_only() {
+        assert_eq!(call_shape(&json!({"action": "read"})).code_changed, None);
+        assert_eq!(
+            call_shape(&json!({"action": "check", "model": {"condition": "1"}})).code_changed,
+            None
+        );
+        assert_eq!(
+            call_shape(&json!({"action": "edit", "ops": literal_op()})).code_changed,
+            Some(false)
+        );
+        assert_eq!(
+            call_shape(&json!({"action": "edit", "ops": "not a list"})).code_changed,
+            Some(true),
+            "ops iad cannot read are judged as code"
+        );
+        assert_eq!(call_shape(&json!({})).code_changed, Some(true));
+    }
+}

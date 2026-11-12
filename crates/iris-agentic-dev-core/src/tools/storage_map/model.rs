@@ -507,7 +507,16 @@ fn parse_access_var(node: &Node) -> Option<AccessVar> {
 fn parse_invalid_condition(node: &Node) -> Option<InvalidCondition> {
     let name_str = node.name.as_deref()?;
     let level = name_str.parse::<u32>().ok()?;
-    let expression = node.value.clone().unwrap_or_default();
+    // IRIS stores it as a child `<Expression>` (`%Dictionary.StorageSQLMapSubInvalidcondition
+    // Definition`); a bare value is read too.
+    let expression = node
+        .children
+        .iter()
+        .flatten()
+        .find(|c| c.tag == "Expression")
+        .and_then(|c| c.value.clone())
+        .or_else(|| node.value.clone())
+        .unwrap_or_default();
 
     Some(InvalidCondition { level, expression })
 }
@@ -839,4 +848,254 @@ pub fn nested_maps(models: &[StorageModel]) -> Vec<(String, String)> {
     }
 
     nested
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Model JSON back to elements (check, preview, replace take one SqlMap as `model`)
+// ───────────────────────────────────────────────────────────────────────────
+
+type Obj = serde_json::Map<String, serde_json::Value>;
+
+/// The `SQLMap` element for one SqlMap in model JSON, the inverse of the parser above. Output-only
+/// keys (`version`, `master`, `used`, `derived`) are ignored; any other key iad does not know is
+/// refused, so nothing the caller set is dropped without a word. `access_type` `Sub` (the
+/// default) writes no element.
+pub fn map_node(map: &serde_json::Value) -> Result<Node, String> {
+    let o = object(map, "model")?;
+    known(
+        o,
+        "model",
+        &[
+            "name",
+            "version",
+            "type",
+            "master",
+            "used",
+            "global",
+            "subscripts",
+            "data",
+            "row_id",
+            "condition",
+            "condition_fields",
+            "conditional_with_host_vars",
+            "population_type",
+            "population_pct",
+            "block_count",
+            "structure",
+            "row_reference",
+            "deferred",
+            "extra",
+        ],
+    )?;
+    let name = text(o, "name", "model")?.ok_or("model: the map has no `name`")?;
+    let mut children = Vec::new();
+    for (key, tag) in [
+        ("type", "Type"),
+        ("global", "Global"),
+        ("condition", "Condition"),
+        ("condition_fields", "ConditionFields"),
+        ("conditional_with_host_vars", "ConditionalWithHostVars"),
+        ("population_type", "PopulationType"),
+        ("population_pct", "PopulationPct"),
+        ("block_count", "BlockCount"),
+        ("structure", "Structure"),
+        ("row_reference", "RowReference"),
+        ("deferred", "Deferred"),
+    ] {
+        push_leaf(&mut children, tag, text(o, key, "model")?);
+    }
+    for (i, sub) in list(o, "subscripts", "model")?.iter().enumerate() {
+        children.push(subscript_node(sub, &format!("model/subscripts/{i}"))?);
+    }
+    if let Some(data) = o.get("data") {
+        let data = object(data, "model/data")?;
+        for (field, d) in data {
+            children.push(data_node(field, d, &format!("model/data/{field}"))?);
+        }
+    }
+    for (i, part) in list(o, "row_id", "model")?.iter().enumerate() {
+        let at = format!("model/row_id/{i}");
+        let p = object(part, &at)?;
+        known(p, &at, &["position", "field", "expression"])?;
+        let mut c = Vec::new();
+        push_leaf(&mut c, "Field", text(p, "field", &at)?);
+        push_leaf(&mut c, "Expression", text(p, "expression", &at)?);
+        children.push(branch("RowIdSpec", Some(number(p, "position", &at)?), c));
+    }
+    children.extend(extra_nodes(o, "model")?);
+    Ok(branch("SQLMap", Some(name), children))
+}
+
+fn subscript_node(v: &serde_json::Value, at: &str) -> Result<Node, String> {
+    let s = object(v, at)?;
+    known(
+        s,
+        at,
+        &[
+            "level",
+            "expression",
+            "access_type",
+            "delimiter",
+            "data_access",
+            "next_code",
+            "start_value",
+            "stop_value",
+            "stop_expression",
+            "loop_init_value",
+            "null_marker",
+            "access_vars",
+            "invalid_conditions",
+            "extra",
+        ],
+    )?;
+    let mut c = Vec::new();
+    push_leaf(&mut c, "Expression", text(s, "expression", at)?);
+    push_leaf(
+        &mut c,
+        "AccessType",
+        text(s, "access_type", at)?.filter(|a| a != "Sub"),
+    );
+    for (key, tag) in [
+        ("delimiter", "Delimiter"),
+        ("data_access", "DataAccess"),
+        ("next_code", "NextCode"),
+        ("start_value", "StartValue"),
+        ("stop_value", "StopValue"),
+        ("stop_expression", "StopExpression"),
+        ("loop_init_value", "LoopInitValue"),
+        ("null_marker", "NullMarker"),
+    ] {
+        push_leaf(&mut c, tag, text(s, key, at)?);
+    }
+    for (i, av) in list(s, "access_vars", at)?.iter().enumerate() {
+        let here = format!("{at}/access_vars/{i}");
+        let a = object(av, &here)?;
+        known(a, &here, &["level", "code", "variable"])?;
+        let mut ac = Vec::new();
+        push_leaf(&mut ac, "Code", text(a, "code", &here)?);
+        push_leaf(&mut ac, "Variable", text(a, "variable", &here)?);
+        c.push(branch("Accessvar", Some(number(a, "level", &here)?), ac));
+    }
+    for (i, ic) in list(s, "invalid_conditions", at)?.iter().enumerate() {
+        let here = format!("{at}/invalid_conditions/{i}");
+        let a = object(ic, &here)?;
+        known(a, &here, &["level", "expression"])?;
+        let mut icc = Vec::new();
+        push_leaf(&mut icc, "Expression", text(a, "expression", &here)?);
+        c.push(branch(
+            "Invalidcondition",
+            Some(number(a, "level", &here)?),
+            icc,
+        ));
+    }
+    c.extend(extra_nodes(s, at)?);
+    Ok(branch("Subscript", Some(number(s, "level", at)?), c))
+}
+
+fn data_node(field: &str, v: &serde_json::Value, at: &str) -> Result<Node, String> {
+    let d = object(v, at)?;
+    known(
+        d,
+        at,
+        &[
+            "name",
+            "node",
+            "delimiter",
+            "piece",
+            "retrieval_code",
+            "extra",
+            "derived",
+        ],
+    )?;
+    if let Some(n) = text(d, "name", at)? {
+        if n != field {
+            return Err(format!("{at}: name {n:?} differs from its key {field:?}"));
+        }
+    }
+    let mut c = Vec::new();
+    for (key, tag) in [
+        ("node", "Node"),
+        ("delimiter", "Delimiter"),
+        ("piece", "Piece"),
+        ("retrieval_code", "RetrievalCode"),
+    ] {
+        push_leaf(&mut c, tag, text(d, key, at)?);
+    }
+    c.extend(extra_nodes(d, at)?);
+    Ok(branch("Data", Some(field.to_string()), c))
+}
+
+fn extra_nodes(o: &Obj, at: &str) -> Result<Vec<Node>, String> {
+    list(o, "extra", at)?
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let here = format!("{at}/extra/{i}");
+            let e = object(e, &here)?;
+            known(e, &here, &["tag", "name", "value"])?;
+            Ok(Node {
+                tag: text(e, "tag", &here)?.ok_or(format!("{here}: no `tag`"))?,
+                name: text(e, "name", &here)?,
+                value: text(e, "value", &here)?,
+                children: None,
+            })
+        })
+        .collect()
+}
+
+fn branch(tag: &str, name: Option<String>, children: Vec<Node>) -> Node {
+    Node {
+        tag: tag.to_string(),
+        name,
+        value: None,
+        children: Some(children),
+    }
+}
+
+fn push_leaf(into: &mut Vec<Node>, tag: &str, value: Option<String>) {
+    if let Some(value) = value {
+        into.push(Node {
+            tag: tag.to_string(),
+            name: None,
+            value: Some(value),
+            children: None,
+        });
+    }
+}
+
+fn object<'a>(v: &'a serde_json::Value, at: &str) -> Result<&'a Obj, String> {
+    v.as_object().ok_or(format!("{at}: expected an object"))
+}
+
+fn known(o: &Obj, at: &str, keys: &[&str]) -> Result<(), String> {
+    match o.keys().find(|k| !keys.contains(&k.as_str())) {
+        Some(k) => Err(format!("{at}: unknown key `{k}`")),
+        None => Ok(()),
+    }
+}
+
+/// A string value; `null` and absent are `None`.
+fn text(o: &Obj, key: &str, at: &str) -> Result<Option<String>, String> {
+    match o.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => Ok(Some(s.clone())),
+        Some(_) => Err(format!("{at}/{key}: expected text")),
+    }
+}
+
+/// A positive integer, as the element's `name`.
+fn number(o: &Obj, key: &str, at: &str) -> Result<String, String> {
+    o.get(key)
+        .and_then(serde_json::Value::as_u64)
+        .filter(|n| *n > 0)
+        .map(|n| n.to_string())
+        .ok_or(format!("{at}/{key}: expected a positive integer"))
+}
+
+fn list<'a>(o: &'a Obj, key: &str, at: &str) -> Result<&'a [serde_json::Value], String> {
+    match o.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(&[]),
+        Some(serde_json::Value::Array(a)) => Ok(a),
+        Some(_) => Err(format!("{at}/{key}: expected a list")),
+    }
 }

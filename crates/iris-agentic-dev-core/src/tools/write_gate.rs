@@ -1172,22 +1172,34 @@ pub fn effective_category(
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
     };
+    // Plan "Classification", read through `call_shape` like `classify` (FR-030a). `check` is
+    // read-only and still compiles, so this does not wait for `writes`; a call with two
+    // categories needs both allowed.
+    if tool == "iris_storage_map" {
+        use crate::tools::storage_map::Action;
+        let params = args.map_or(serde_json::Value::Null, |a| {
+            serde_json::Value::Object(a.clone())
+        });
+        let shape = crate::tools::storage_map::call_shape(&params);
+        return match shape.action {
+            Action::Read | Action::Diagram | Action::Uses => vec![base],
+            Action::Check => vec![ToolCategory::Compile],
+            Action::Compare | Action::Preview | Action::Propose => vec![ToolCategory::Execute],
+            Action::Edit | Action::Replace
+                if shape.seed_counter
+                    || shape.build_indexes
+                    || shape.code_changed != Some(false) =>
+            {
+                vec![ToolCategory::Compile, ToolCategory::Execute]
+            }
+            Action::Edit | Action::Replace => vec![ToolCategory::Compile],
+        };
+    }
     let primary = match tool {
         "global_kill" => ToolCategory::Execute,
         "iris_global" if writes => ToolCategory::Execute,
         "iris_query" if writes || flag("force") => ToolCategory::Execute,
         "iris_doc" if writes => ToolCategory::Compile,
-        "iris_storage_map" if writes => {
-            let action = args
-                .and_then(|a| a.get("action"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            match action {
-                "check" | "edit" | "replace" => ToolCategory::Compile,
-                "compare" | "preview" | "propose" => ToolCategory::Execute,
-                _ => base,
-            }
-        }
         _ if writes
             && matches!(
                 base,
