@@ -904,6 +904,21 @@ async fn do_write(
         }
     }
 
+    // A class with an SQL storage map gets the map's safeguards (spec 172 FR-031): validated,
+    // gated and compiled in a scratch copy before the PUT, read back after it, and put back if
+    // its compile fails. Default storage keeps the path below unchanged (FR-032).
+    let map_guard = if name.to_ascii_lowercase().ends_with(".cls")
+        && super::storage_map::write::content_has_sql_map(content)
+    {
+        match super::storage_map::write::doc_precheck(iris, client, name, content, namespace).await
+        {
+            Ok(guard) => Some(guard),
+            Err(answer) => return crate::tools::err_result(answer),
+        }
+    } else {
+        None
+    };
+
     // Write content verbatim, exactly as supplied — matching the Atelier REST
     // contract, and never stripping/second-guessing Storage (see `tools::storage_guard`).
     let lines: Vec<&str> = content.lines().collect();
@@ -932,6 +947,12 @@ async fn do_write(
     let put_body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
     if let Some(err_msg) = crate::iris::connection::check_atelier_put_errors(&put_body) {
         return err_json("UPLOAD_FAILED", &err_msg);
+    }
+
+    if let Some(guard) = &map_guard {
+        if let Err(answer) = guard.read_back(iris, client, name, namespace).await {
+            return crate::tools::err_result(answer);
+        }
     }
 
     // Write open hint for VS Code auto-open
@@ -1026,6 +1047,16 @@ async fn do_write(
             "compile_console": compile_console,
             "content": content,
         });
+        if let Some(guard) = &map_guard {
+            if compile_ok {
+                guard.warn_if_changed(&mut resp);
+            } else {
+                resp["storage_map"] = match guard.restore(iris, client, name, namespace).await {
+                    Ok(()) => serde_json::json!({"restored": true}),
+                    Err(e) => serde_json::json!({"restored": false, "restore_error": e}),
+                };
+            }
+        }
         if compile_ok {
             super::add_source_hint(&mut resp, content.as_deref());
         } else {
@@ -1039,6 +1070,9 @@ async fn do_write(
     }
 
     let mut resp = serde_json::json!({"success": true, "name": name, "open_uri": open_uri});
+    if let Some(guard) = &map_guard {
+        guard.warn_if_changed(&mut resp);
+    }
     gate.note_if_off(&mut resp);
     ok_json(resp)
 }

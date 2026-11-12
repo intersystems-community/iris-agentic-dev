@@ -161,3 +161,27 @@ fn iris_storage_map_declares_exactly_eighteen_parameters() {
         "`iris_storage_map` parameters must match the contract exactly"
     );
 }
+
+/// T080 (FR-032): `iris_doc`'s description, as `tools/list` advertises it, says default storage
+/// is off-limits and sends SQL storage maps to `iris_storage_map`.
+#[test]
+#[ignore = "spawns the built binary; run with --include-ignored"]
+fn iris_doc_description_separates_default_storage_from_sql_maps() {
+    let Some(_bin) = require_iad_binary() else {
+        return;
+    };
+    let tools = iris_agentic_dev_core::testing::advertised_tools();
+    let desc = tools
+        .get("iris_doc")
+        .and_then(|t| t["description"].as_str())
+        .expect("`iris_doc` must appear in tools/list with a description")
+        .to_string();
+    assert!(
+        desc.contains("default storage") && desc.contains("off-limits"),
+        "iris_doc must say default storage is off-limits: {desc}"
+    );
+    assert!(
+        desc.contains("SQL storage map") && desc.contains("iris_storage_map"),
+        "iris_doc must send SQL storage maps to iris_storage_map: {desc}"
+    );
+}

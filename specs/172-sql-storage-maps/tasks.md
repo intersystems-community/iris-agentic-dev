@@ -464,23 +464,31 @@ code_changed}` to the call record and to `irisAudit` emission when enabled; no c
 
 **Independent test**: an `iris_doc` put that breaks the map leaves the real class working and warns.
 
-- [ ] T078 [US9] `write.rs`: `pub fn content_has_sql_map(text: &str) -> bool` (any Storage block holding an
+- [x] T078 [US9] `write.rs`: `pub fn content_has_sql_map(text: &str) -> bool` (any Storage block holding an
       `SQLMap`, any storage type) and `pub fn is_class_xml(text: &str) -> bool`. Test first in
       `test_storage_map_write_172.rs`: fixtures true, `DefaultBook` false, an XML export with an SQLMap true for XML.
       Prove: `U test_storage_map_write_172`.
-- [ ] T079 [US9] In `tools/doc.rs` `do_write` (:860), the single write sink: when `content_has_sql_map`, call
+      Done 2026-11-12. A Storage block iad cannot parse but that names an SQLMap counts (fail closed).
+- [x] T079 [US9] In `tools/doc.rs` `do_write` (:860), the single write sink: when `content_has_sql_map`, call
       `storage_map::write::from_doc(...)` (FR-031: FR-012, FR-012a, FR-014–FR-018, FR-023, FR-026–FR-028; no version
       check, no confirm-removal) and return today's answer shape plus the warning text from plan.md; class XML with a
       map is refused. Test first `tests/integration/test_storage_map_doc_172_live.rs`: (a) put of `Member` with
       `<Type>DATA</Type>` leaves the real class answering and returns the warning; (b) put with no map change adds no
       warning; (c) the confirmation-resume path (`doc.rs:310`) also goes through the safeguards; (d) a map over
       `^ROUTINE` via `iris_doc` is refused. Prove: `L test_storage_map_doc_172`.
-- [ ] T080 [US9] Update `iris_doc`'s tool description (in `src/tools/mod.rs`) so it says default storage is off-limits
+      Done 2026-11-12: three hooks in `do_write` (`doc_precheck` before the PUT, `read_back` after it, `restore`
+      after a failed compile); the read-only rule is left out so other storage types keep today's path (FR-032).
+      (c) is a source guard (`test_storage_map_doc_sink_172`): the safeguards sit in `do_write`, the only document
+      PUT in doc.rs, which every write path calls. `iris_doc` answers now pass through `classify_answer`.
+- [x] T080 [US9] Update `iris_doc`'s tool description (in `src/tools/mod.rs`) so it says default storage is off-limits
       and SQL storage maps are edited with `iris_storage_map`. Test first: a binary test in
       `tests/binary/test_storage_map_schema_172.rs` reads `tools/list` and asserts both statements. Prove:
       `B test_storage_map_schema_172`, `U test_description_tiers`.
-- [ ] T081 [US9] Regression: run every existing `iris_doc` live test. Prove: `L test_doc_live`, `L test_doc_gate`,
+      Done 2026-11-12.
+- [x] T081 [US9] Regression: run every existing `iris_doc` live test. Prove: `L test_doc_live`, `L test_doc_gate`,
       `L test_storage` (all existing).
+      Done 2026-11-12: 663 live tests in the iris_doc write modules (doc, code-mode, compile, superclass and
+      enforcement gates, injection, handlers, SCM) pass.
 
 ---
 
@@ -488,22 +496,27 @@ code_changed}` to the call record and to `irisAudit` emission when enabled; no c
 
 **Independent test**: `compare` reports a planted mismatch; `preview` returns the known row.
 
-- [ ] T082 [P] [US5] `src/tools/storage_map/sample.rs`: `pub fn build_code(global: &GlobalRef, max_nodes: u32,
+- [x] T082 [P] [US5] `src/tools/storage_map/sample.rs`: `pub fn build_code(global: &GlobalRef, max_nodes: u32,
 seconds: u32, include_values: bool) -> String` (FR-030b: the global name is validated and re-quoted by iad; no
       other caller text) and `pub fn parse(out: &str) -> Result<ShapeReport, String>` (`shape.rs` holds `ShapeReport`
       per data-model.md). Test first `tests/unit/test_storage_map_sample_172.rs`: the code for `^IadSm172Member`
       contains no caller text beyond the name; a name with `)` or `"` is rejected before code is built; `parse` of a
       captured output gives the expected report; the splice detector (`objectscript-splice`) passes on the file.
       Prove: `U test_storage_map_sample_172`.
-- [ ] T083 [US5] `sample.rs`: `pub async fn sample(iris, client, ns, global, caps, include_values) -> Result<ShapeReport,
+      Done 2026-11-12: one JSON line per node (depth, `$Data`, literal last subscript, format, delimiter, pieces),
+      then a `done` line; the name goes through `validate_global_name` and `os_str_expr`.
+- [x] T083 [US5] `sample.rs`: `pub async fn sample(iris, client, ns, global, caps, include_values) -> Result<ShapeReport,
 Value>` through `execute_via_generator` (service account per T036). Test first
       `tests/integration/test_storage_map_data_172_live.rs`: `Member` gives depth 1, delimiter `^`, pieces as seeded;
       `LoanList` gives `$LIST`; a 2,000-node global stops at 200 with `capped: true`; an empty value is plain. Prove:
       `L test_storage_map_data_172`.
-- [ ] T084 [US5] `$Data` states in sampling (FR-020a): `sample` counts per level the nodes with `$Data` 1, 10 and 11,
+      Done 2026-11-12. Runs as the call's execute identity (`target_exec`) through the scratch-class runner.
+- [x] T084 [US5] `$Data` states in sampling (FR-020a): `sample` counts per level the nodes with `$Data` 1, 10 and 11,
       and lists masked literal sub-node names under value-holding nodes. Test first in
       `test_storage_map_data_172_live.rs`: `MemberD11` shows level 1 all 11 with one sub-node; `Loan` shows level 1
       all 11 with sub-node `"EV"`; `Member` shows level 1 all 1. Prove: `L test_storage_map_data_172`.
+      Done 2026-11-12: a node holding only children (`$Data` 10, `Loan`'s `"EV"`) is reported when the walk first
+      passes under it, since `$Query` never returns it.
 - [ ] T085 [US5] `compare` flags D11 mismatches (FR-020a): `MemberD11` with its `contact` fields removed from the map
       reports "row node has children the map does not read"; a map of only the `contact` fields reports the
       unread value. Prove: `L test_storage_map_data_172`.

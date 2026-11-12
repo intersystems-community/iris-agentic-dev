@@ -535,7 +535,7 @@ fn refusal(content: &str, doc_name: &str, hit: &Hit) -> serde_json::Value {
 }
 
 /// Class XML begins with an XML declaration or an `<Export>` root.
-fn looks_like_class_xml(content: &str) -> bool {
+pub(crate) fn looks_like_class_xml(content: &str) -> bool {
     let head = content.trim_start().to_ascii_lowercase();
     head.starts_with("<?xml") || head.starts_with("<export")
 }
