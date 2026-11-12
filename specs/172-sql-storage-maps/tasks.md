@@ -651,17 +651,22 @@ question, answer }`. Names `IadSm172Gen.C<nnn>`, globals `^IadSm172Gen<nnn>`, in
       validator refuses it before any write, or the case says why only IRIS can tell (the compile check covers it).
       Every error number found has an `explain.rs` entry. Prove: `U test_storage_map_validate_172`,
       `U test_storage_map_explain_172`.
-- [ ] T107 [US11] Random-tree writer test `tests/integration/test_storage_map_random_172_live.rs`: 200 random
+- [x] T107 [US11] Random-tree writer test `tests/integration/test_storage_map_random_172_live.rs`: 200 random
       grammar-valid Storage trees from a fixed seed (inline xorshift, no new crate), each emitted, PUT, read back and
       compared with `normalize(sent)`; any difference fails with the seed and the tree. Prove:
       `L test_storage_map_random_172`.
-- [ ] T108 [US11] `tests/integration/test_storage_map_corpus_172_live.rs`: for every fixture (hand-written and
+      Done 2026-11-12: 200 trees, all compared, with CDATA, `]]`, multi-line tabbed NextCode, access variables,
+      invalid conditions and negative BlockCount among them; no difference.
+- [x] T108 [US11] `tests/integration/test_storage_map_corpus_172_live.rs`: for every fixture (hand-written and
       generated), round-trip byte-identical,
       compile, and the known answer. Prove: `L test_storage_map_corpus_172`.
-- [ ] T109 [US11] Local-only coverage test in the same file: reads `IAD_STORAGE_CORPUS` (a directory of feature-vector
+      Done 2026-11-12: runs the rig's whole check on every fixture under `classes/` and `generated/classes/`.
+- [x] T109 [US11] Local-only coverage test in the same file: reads `IAD_STORAGE_CORPUS` (a directory of feature-vector
       JSON produced outside the repo); unset → the test prints that it was not run and passes only with
       `IAD_ALLOW_SKIP=1`, otherwise panics; set → reports combinations with no public fixture. Prove: run with the
       variable unset and `IAD_ALLOW_SKIP=1`; the lead runs it with the variable set.
+      Done 2026-11-12. Combination key: map type, depth (4+), node layout, delimiter class. Lead run on the local
+      vectors: 76 combinations, 4 covered by the 15 public fixtures (the generator's target).
 
 ---
 
