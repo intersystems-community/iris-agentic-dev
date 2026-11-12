@@ -8,7 +8,7 @@ RUST_TEST_THREADS=12 cargo test --features testing --test unit storage_map
 
 # live, on iris-dev-iris (web port 52780, USER)
 docker ps --filter name=iris-dev-iris
-cargo test --features testing --test integration storage_map -- --test-threads=1 --include-ignored
+cargo test --features testing --test integration -- --test-threads=1 --include-ignored storage_map storage172 doc_put_result_status_172
 
 # binary schema check
 cargo build && IAD_BINARY=./target/debug/iris-agentic-dev \

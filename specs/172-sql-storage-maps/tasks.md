@@ -615,9 +615,11 @@ false` as naming the argument, so every call sending it would need `acknowledgeP
 
 ## Phase 12: User Story 11 — A public corpus with known answers (P2)
 
-- [ ] T100 [US11] Lead: from the internal pattern catalogue's coverage list (kept outside the repo), write the list of
+- [x] T100 [US11] Lead: from the internal pattern catalogue's coverage list (kept outside the repo), write the list of
       corpus classes still missing after T012–T024 into `tests/fixtures/storage172/CORPUS.md` in generic words
       (pattern, not origin). Prove: file exists.
+      Done 2026-11-12: six groups (T101a to T101f), found by running the catalogue's own extractor over the 15
+      fixtures and taking the coverage-list items none of them has.
 - [ ] T101 [P] [US11] One task per class in `CORPUS.md` (the lead splits this into T101a, T101b, …): an invented
       fixture plus seed with its known answer, as T012. Prove: rig case per class.
 - [ ] T102 [P] [US11] Dimensions file `/crates/iris-agentic-dev-core/tests/fixtures/storage172/dimensions.toml`
@@ -694,12 +696,15 @@ question, answer }`. Names `IadSm172Gen.C<nnn>`, globals `^IadSm172Gen<nnn>`, in
 - [x] T114 Remove every `NOT_IMPLEMENTED` from `storage_map/`. Prove: `grep -rn NOT_IMPLEMENTED src/tools/storage_map`
       is empty.
       Done 2026-11-12: every action is implemented; the dispatcher's fallback arm is gone.
-- [ ] T115 Every `#[ignore]` test in this feature appears in `quickstart.md`'s commands. Prove: lead check.
+- [x] T115 Every `#[ignore]` test in this feature appears in `quickstart.md`'s commands. Prove: lead check.
+      Done 2026-11-12: the integration command also filters `storage172` and `doc_put_result_status_172`.
 - [ ] T116 Full suite: `cargo test --features testing -- --test-threads=1 --include-ignored` (all targets) green.
 - [ ] T117 Coverage: the canonical `cargo llvm-cov --summary-only -p iris-agentic-dev-core -- --include-ignored`
       command from the constitution; TOTAL line coverage ≥ 90%, and every file under `storage_map/` ≥ 90%.
-- [ ] T118 Lead: `/CLAUDE.md` Recent Changes entry, release-notes draft through `/wordcraft` and `/no-ai-slop`, and
+- [x] T118 Lead: `/CLAUDE.md` Recent Changes entry, release-notes draft through `/wordcraft` and `/no-ai-slop`, and
       clean up the throwaway `Iad172.*` classes and globals in USER on iris-dev-iris.
+      Done 2026-11-12: Recent Changes entry, `release-notes-draft.md` (through the slop reviewer), and the four
+      `Iad172.*` research classes and their globals removed from USER.
 
 ---
 
