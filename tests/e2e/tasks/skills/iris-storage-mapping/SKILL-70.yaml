@@ -1,0 +1,91 @@
+id: SKILL-70
+prompt: |
+  In the BENCHMARK namespace, the table Bench.Map26.Member is a class with SQL storage mapped over an
+  existing global, ^Bench.Map26, whose rows hold name^city^email. Only Name and City are columns
+  today. Add an Email column that reads each member's email from the existing data, without moving
+  or changing the data. Leave the class compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+skill: iris-storage-mapping
+fixtures:
+  - name: Bench.Map26.Member
+    content: |
+      Class Bench.Map26.Member Extends %Persistent [ StorageStrategy = SQLStorage ]
+      {
+
+      Property Name As %String;
+
+      Property City As %String;
+
+      Storage SQLStorage
+      {
+      <SqlIdExpression>$i(^Bench.Map26)</SqlIdExpression>
+      <SQLMap name="Master">
+      <Data name="City">
+      <Delimiter>"^"</Delimiter>
+      <Piece>2</Piece>
+      </Data>
+      <Data name="Name">
+      <Delimiter>"^"</Delimiter>
+      <Piece>1</Piece>
+      </Data>
+      <Global>^Bench.Map26</Global>
+      <Subscript name="1">
+      <Expression>{ID}</Expression>
+      </Subscript>
+      <Type>data</Type>
+      </SQLMap>
+      <StreamLocation>^Bench.Map26S</StreamLocation>
+      <Type>%Storage.SQL</Type>
+      }
+
+      }
+seed: |
+  kill ^Bench.Map26 set ^Bench.Map26=3,^Bench.Map26(1)="Alice^Portland^alice@example.com",^Bench.Map26(2)="Bob^Seattle^bob@example.com",^Bench.Map26(3)="Cy^Boston^cy@example.com"
+check: |
+  set ok=0 try { set rs=##class(%SQL.Statement).%ExecDirect(,"SELECT Name, Email FROM Bench_Map26.Member WHERE ID = 2") set ok=rs.%Next()&&(rs.%Get("Name")="Bob")&&(rs.%Get("Email")="bob@example.com")&&($get(^Bench.Map26(2))="Bob^Seattle^bob@example.com") } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Map26.Member
+    content: |
+      Class Bench.Map26.Member Extends %Persistent [ StorageStrategy = SQLStorage ]
+      {
+
+      Property Name As %String;
+
+      Property City As %String;
+
+      Property Email As %String;
+
+      Storage SQLStorage
+      {
+      <SqlIdExpression>$i(^Bench.Map26)</SqlIdExpression>
+      <SQLMap name="Master">
+      <Data name="City">
+      <Delimiter>"^"</Delimiter>
+      <Piece>2</Piece>
+      </Data>
+      <Data name="Email">
+      <Delimiter>"^"</Delimiter>
+      <Piece>3</Piece>
+      </Data>
+      <Data name="Name">
+      <Delimiter>"^"</Delimiter>
+      <Piece>1</Piece>
+      </Data>
+      <Global>^Bench.Map26</Global>
+      <Subscript name="1">
+      <Expression>{ID}</Expression>
+      </Subscript>
+      <Type>data</Type>
+      </SQLMap>
+      <StreamLocation>^Bench.Map26S</StreamLocation>
+      <Type>%Storage.SQL</Type>
+      }
+
+      }
+teardown: |
+  kill ^Bench.Map26,^Bench.Map26S write "teardown done"
+tags:
+  - storage-map
+  - sql-storage

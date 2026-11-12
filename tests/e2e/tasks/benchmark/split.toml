@@ -90,6 +90,10 @@
 # tasks knowing what iad's 81 tools can do. Authoring is not tuning — no description, prompt or skill
 # was changed while looking at a result from these tasks — but a corpus written by the tool author is
 # not the same evidence as a corpus written by someone else, and the published number says so.
+# - **SKILL-70 to SKILL-73 are holdout from the day they were written (172, 2026-11-12).** They measure
+#   `iris-storage-mapping` on iris-dev-iris (BENCHMARK): add a column the data already holds, fix a map
+#   that reads `^`-delimited rows as `$LIST`, map an existing global, and fix a map that reads a loan's
+#   `"EV"` node as a row. Each has a `seed` that puts the global in place after the fixtures.
 
 train = [
   "PILOT-01",
@@ -214,4 +218,8 @@ holdout = [
   "SKILL-67",
   "SKILL-68",
   "SKILL-69",
+  "SKILL-70",
+  "SKILL-71",
+  "SKILL-72",
+  "SKILL-73",
 ]

@@ -1,0 +1,63 @@
+id: SKILL-72
+prompt: |
+  In the BENCHMARK namespace, stock levels are already stored in the global ^Bench.Map28, one node per
+  item. The class Bench.Map28.Stock has the right properties (Sku, Qty) but keeps its rows somewhere
+  else, so SELECT on it finds nothing. Make Bench.Map28.Stock read the existing global, without moving
+  or copying the data. Leave the class compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+skill: iris-storage-mapping
+fixtures:
+  - name: Bench.Map28.Stock
+    content: |
+      Class Bench.Map28.Stock Extends %Persistent
+      {
+
+      Property Sku As %String;
+
+      Property Qty As %Integer;
+
+      }
+seed: |
+  kill ^Bench.Map28 set ^Bench.Map28=3,^Bench.Map28(1)="A-100|5",^Bench.Map28(2)="B-200|12",^Bench.Map28(3)="C-300|0"
+check: |
+  set ok=0 try { set rs=##class(%SQL.Statement).%ExecDirect(,"SELECT Sku, Qty FROM Bench_Map28.Stock WHERE ID = 2") set ok=rs.%Next()&&(rs.%Get("Sku")="B-200")&&(rs.%Get("Qty")=12) set rs=##class(%SQL.Statement).%ExecDirect(,"SELECT COUNT(*) AS n FROM Bench_Map28.Stock") set ok=ok&&rs.%Next()&&(rs.%Get("n")=3)&&($get(^Bench.Map28(2))="B-200|12")&&('$data(^Bench.Map28.StockD)) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Map28.Stock
+    content: |
+      Class Bench.Map28.Stock Extends %Persistent [ StorageStrategy = SQLStorage ]
+      {
+
+      Property Sku As %String;
+
+      Property Qty As %Integer;
+
+      Storage SQLStorage
+      {
+      <SqlIdExpression>$i(^Bench.Map28)</SqlIdExpression>
+      <SQLMap name="Master">
+      <Data name="Qty">
+      <Delimiter>"|"</Delimiter>
+      <Piece>2</Piece>
+      </Data>
+      <Data name="Sku">
+      <Delimiter>"|"</Delimiter>
+      <Piece>1</Piece>
+      </Data>
+      <Global>^Bench.Map28</Global>
+      <Subscript name="1">
+      <Expression>{ID}</Expression>
+      </Subscript>
+      <Type>data</Type>
+      </SQLMap>
+      <StreamLocation>^Bench.Map28S</StreamLocation>
+      <Type>%Storage.SQL</Type>
+      }
+
+      }
+teardown: |
+  kill ^Bench.Map28,^Bench.Map28S,^Bench.Map28.StockD,^Bench.Map28.StockI,^Bench.Map28.StockS write "teardown done"
+tags:
+  - storage-map
+  - sql-storage

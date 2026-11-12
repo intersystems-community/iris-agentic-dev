@@ -1,0 +1,83 @@
+id: SKILL-71
+prompt: |
+  In the BENCHMARK namespace, SELECT on the table Bench.Map27.Book fails with a <LIST> error, although
+  the rows in its global ^Bench.Map27 are plain title^author text. Fix the table so that a SELECT
+  returns each book's Title and Author, without changing the data. Leave the class compiled on the
+  server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+skill: iris-storage-mapping
+fixtures:
+  - name: Bench.Map27.Book
+    content: |
+      Class Bench.Map27.Book Extends %Persistent [ StorageStrategy = SQLStorage ]
+      {
+
+      Property Title As %String;
+
+      Property Author As %String;
+
+      Storage SQLStorage
+      {
+      <SqlIdExpression>$i(^Bench.Map27)</SqlIdExpression>
+      <SQLMap name="Master">
+      <Data name="Author">
+      <Piece>2</Piece>
+      </Data>
+      <Data name="Title">
+      <Piece>1</Piece>
+      </Data>
+      <Global>^Bench.Map27</Global>
+      <Subscript name="1">
+      <Expression>{ID}</Expression>
+      </Subscript>
+      <Type>data</Type>
+      </SQLMap>
+      <StreamLocation>^Bench.Map27S</StreamLocation>
+      <Type>%Storage.SQL</Type>
+      }
+
+      }
+seed: |
+  kill ^Bench.Map27 set ^Bench.Map27=2,^Bench.Map27(1)="Dune^Herbert",^Bench.Map27(2)="Emma^Austen"
+check: |
+  set ok=0 try { set rs=##class(%SQL.Statement).%ExecDirect(,"SELECT Title, Author FROM Bench_Map27.Book WHERE ID = 1") set ok=rs.%Next()&&(rs.%Get("Title")="Dune")&&(rs.%Get("Author")="Herbert")&&($get(^Bench.Map27(1))="Dune^Herbert") } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Map27.Book
+    content: |
+      Class Bench.Map27.Book Extends %Persistent [ StorageStrategy = SQLStorage ]
+      {
+
+      Property Title As %String;
+
+      Property Author As %String;
+
+      Storage SQLStorage
+      {
+      <SqlIdExpression>$i(^Bench.Map27)</SqlIdExpression>
+      <SQLMap name="Master">
+      <Data name="Author">
+      <Delimiter>"^"</Delimiter>
+      <Piece>2</Piece>
+      </Data>
+      <Data name="Title">
+      <Delimiter>"^"</Delimiter>
+      <Piece>1</Piece>
+      </Data>
+      <Global>^Bench.Map27</Global>
+      <Subscript name="1">
+      <Expression>{ID}</Expression>
+      </Subscript>
+      <Type>data</Type>
+      </SQLMap>
+      <StreamLocation>^Bench.Map27S</StreamLocation>
+      <Type>%Storage.SQL</Type>
+      }
+
+      }
+teardown: |
+  kill ^Bench.Map27,^Bench.Map27S write "teardown done"
+tags:
+  - storage-map
+  - sql-storage

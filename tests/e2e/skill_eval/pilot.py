@@ -315,6 +315,8 @@ def run_one(
         # 132: the reference left ConfigStore, Wallet or web-app state behind that no class reset
         # removes; the session must not start on it.
         graded_task.run_teardown(task)
+        # Spec 172: the globals the task's classes read, after the teardown cleared what was there.
+        graded_task.run_seed(task)
     except (CheckBroken, graded_task.CorpusInvalid) as exc:
         return ArmRun(
             task_id=task.id,

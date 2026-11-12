@@ -695,10 +695,14 @@ question, answer }`. Names `IadSm172Gen.C<nnn>`, globals `^IadSm172Gen<nnn>`, in
 
 ## Phase 14: Lift (release gate, constitution IX)
 
-- [ ] T112 Ladder tasks `/tests/e2e/tasks/benchmark/skills/SKILL-26.yaml` … `SKILL-29.yaml` (format as SKILL-25):
+- [x] T112 Ladder tasks `/tests/e2e/tasks/benchmark/skills/SKILL-26.yaml` … `SKILL-29.yaml` (format as SKILL-25):
       add a column to a map; explain an old global's layout; draft a table over an unmapped global; fix a map that
       reads `$LIST` on `^`-delimited data. Each `check` asserts the fixture's known answer; each has a `teardown`;
       add the IDs to `split.toml` (holdout). Prove: the ladder's own validator.
+      Done 2026-11-12 as SKILL-70 to SKILL-73 (26 to 29 belonged to spec 135's guardrails tasks), under
+      `tests/e2e/tasks/skills/iris-storage-mapping/`, holdout. The harness gains an optional `seed` (globals put in
+      place after the fixtures, and after the teardown before a session); a task without one keeps its
+      fingerprint. All four validate live: the fixture fails its check, the solution passes.
 - [ ] T113 Lead: run the ladder with `--cap` on measured cost, arms tools vs tools+skill, and write
       `specs/172-sql-storage-maps/lift-results.md`. Release blocked until lift ≥ +0.20 or a documented exception.
 

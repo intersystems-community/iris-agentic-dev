@@ -1,0 +1,94 @@
+id: SKILL-73
+prompt: |
+  In the BENCHMARK namespace, loan events are stored under each loan in ^Bench.Map29: the loan's own
+  node holds its details, and ^Bench.Map29(loan,"EV",n) holds the n-th event's action. The table
+  Bench.Map29.Event should list every event, but it returns one wrong row per loan and none of the
+  events. Fix Bench.Map29.Event so that it lists each event's loan number, event number and action,
+  without changing the data. Leave the class compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+skill: iris-storage-mapping
+fixtures:
+  - name: Bench.Map29.Event
+    content: |
+      Class Bench.Map29.Event Extends %Persistent [ StorageStrategy = SQLStorage ]
+      {
+
+      Property LoanNo As %Integer;
+
+      Property EvNo As %Integer;
+
+      Property Action As %String;
+
+      Index IDKEY On (LoanNo, EvNo) [ IdKey, Unique ];
+
+      Storage SQLStorage
+      {
+      <SQLMap name="Master">
+      <Data name="Action">
+      <Delimiter>"^"</Delimiter>
+      <Piece>1</Piece>
+      </Data>
+      <Global>^Bench.Map29</Global>
+      <Subscript name="1">
+      <Expression>{LoanNo}</Expression>
+      </Subscript>
+      <Subscript name="2">
+      <Expression>{EvNo}</Expression>
+      </Subscript>
+      <Type>data</Type>
+      </SQLMap>
+      <StreamLocation>^Bench.Map29S</StreamLocation>
+      <Type>%Storage.SQL</Type>
+      }
+
+      }
+seed: |
+  kill ^Bench.Map29 set ^Bench.Map29(1)="B001^M7",^Bench.Map29(1,"EV",1)="issued",^Bench.Map29(1,"EV",2)="renewed",^Bench.Map29(2)="B002^M9",^Bench.Map29(2,"EV",1)="issued"
+check: |
+  set ok=0 try { set rs=##class(%SQL.Statement).%ExecDirect(,"SELECT COUNT(*) AS n FROM Bench_Map29.Event") set ok=rs.%Next()&&(rs.%Get("n")=3) set rs=##class(%SQL.Statement).%ExecDirect(,"SELECT Action FROM Bench_Map29.Event WHERE LoanNo = 1 AND EvNo = 2") set ok=ok&&rs.%Next()&&(rs.%Get("Action")="renewed")&&($get(^Bench.Map29(1,"EV",2))="renewed") } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Map29.Event
+    content: |
+      Class Bench.Map29.Event Extends %Persistent [ StorageStrategy = SQLStorage ]
+      {
+
+      Property LoanNo As %Integer;
+
+      Property EvNo As %Integer;
+
+      Property Action As %String;
+
+      Index IDKEY On (LoanNo, EvNo) [ IdKey, Unique ];
+
+      Storage SQLStorage
+      {
+      <SQLMap name="Master">
+      <Data name="Action">
+      <Delimiter>"^"</Delimiter>
+      <Piece>1</Piece>
+      </Data>
+      <Global>^Bench.Map29</Global>
+      <Subscript name="1">
+      <Expression>{LoanNo}</Expression>
+      </Subscript>
+      <Subscript name="2">
+      <Expression>"EV"</Expression>
+      </Subscript>
+      <Subscript name="3">
+      <Expression>{EvNo}</Expression>
+      </Subscript>
+      <Type>data</Type>
+      </SQLMap>
+      <StreamLocation>^Bench.Map29S</StreamLocation>
+      <Type>%Storage.SQL</Type>
+      }
+
+      }
+teardown: |
+  kill ^Bench.Map29,^Bench.Map29S write "teardown done"
+tags:
+  - storage-map
+  - sql-storage
+  - d11

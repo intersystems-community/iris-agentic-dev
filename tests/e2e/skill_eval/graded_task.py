@@ -145,6 +145,9 @@ class GradedTask:
     # ObjectScript that removes state no class cleanup reaches: ConfigStore entries, Wallet secrets, a
     # %SYS web app (132). Run before validation, before the session and after the check.
     teardown: str | None = None
+    # ObjectScript that puts in place the globals the task's classes read (spec 172 T112): run after
+    # the fixtures, before validation and before the session, and after the teardown.
+    seed: str | None = None
     # Scored as a fraction beside the main check, never in place of it.
     quality_checks: tuple[QualityCheck, ...] = field(default_factory=tuple)
 
@@ -162,6 +165,8 @@ def task_fingerprint(task: GradedTask) -> str:
             "namespace": task.namespace,
             "skill": task.skill,
             "teardown": task.teardown,
+            # Only when present, so a task without one keeps the fingerprint it had before.
+            **({"seed": task.seed} if task.seed else {}),
         },
         sort_keys=True,
     )
@@ -220,6 +225,7 @@ def load_task(path: str) -> GradedTask:
         skill=raw.get("skill"),
         tags=tuple(raw.get("tags") or ()),
         teardown=str(raw["teardown"]) if str(raw.get("teardown") or "").strip() else None,
+        seed=str(raw["seed"]) if str(raw.get("seed") or "").strip() else None,
         quality_checks=_quality_checks(stem, raw.get("quality_checks")),
     )
     validate_shape(task)
@@ -534,6 +540,17 @@ def run_teardown(task: GradedTask) -> None:
         raise CheckBroken(f"{task.id} teardown failed: {exc}") from exc
 
 
+def run_seed(task: GradedTask) -> None:
+    """Run the task's seed, if it has one. A seed that errors raises `CheckBroken`: a session on
+    data that was not put in place would score the harness, not the agent."""
+    if not task.seed:
+        return
+    try:
+        _iad(["exec", task.seed], task.namespace)
+    except CheckBroken as exc:
+        raise CheckBroken(f"{task.id} seed failed: {exc}") from exc
+
+
 def validate_live(task: GradedTask) -> None:
     """FR-004 and FR-022 against real IRIS: false before, true after.
 
@@ -546,6 +563,7 @@ def validate_live(task: GradedTask) -> None:
     run_teardown(task)
     reset_documents([doc.name for doc in task.fixtures], task.namespace)
     apply_documents(task.fixtures, task.namespace)
+    run_seed(task)
     if run_check(task):
         raise CorpusInvalid(
             f"{task.id}: FR-004 — the check passes against the untouched fixture, so the task is "

@@ -389,3 +389,35 @@ def test_only_classes_new_since_the_snapshot_are_created():
     after = {"Bench.Q2", "Bench.Sub.Item", "Bench.Q2.CountOther", "Bench.Helper"}
     assert created_classes(before, after) == ["Bench.Helper", "Bench.Q2.CountOther"]
     assert created_classes(before, before) == []
+
+
+def test_a_seed_is_read_and_changes_the_fingerprint_only_when_present(tmp_path):
+    """Spec 172 T112: `seed` is ObjectScript that puts the globals a task needs in place after its
+    fixtures. A task without one keeps the fingerprint it had before the field existed, so earlier
+    runs still pool."""
+    from tests.e2e.skill_eval.graded_task import task_fingerprint
+    import hashlib
+    import json
+
+    plain = load_task(write_task(tmp_path, TASK))
+    assert plain.seed is None
+    old_body = json.dumps(
+        {
+            "prompt": plain.prompt,
+            "check": plain.check,
+            "fixtures": [[d.name, d.content] for d in plain.fixtures],
+            "solution": [[d.name, d.content] for d in plain.solution],
+            "quality": [[q.name, q.check] for q in plain.quality_checks],
+            "namespace": plain.namespace,
+            "skill": plain.skill,
+            "teardown": plain.teardown,
+        },
+        sort_keys=True,
+    )
+    assert task_fingerprint(plain) == hashlib.sha256(old_body.encode("utf-8")).hexdigest()
+
+    seeded = load_task(
+        write_task(tmp_path, TASK + '\nseed: |\n  kill ^Pilot99 set ^Pilot99(1)="a^b"\n', name="PILOT-99.yaml")
+    )
+    assert seeded.seed.strip() == 'kill ^Pilot99 set ^Pilot99(1)="a^b"'
+    assert task_fingerprint(seeded) != task_fingerprint(plain)
