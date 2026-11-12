@@ -48,17 +48,24 @@ pub struct Rig {
 /// Where the scenarios run: `iris-dev-iris`, or the throwaway container (the default image and
 /// `IAD_THROWAWAY_IMAGE`, so the same scenarios run on 2025.3).
 pub async fn rig(at: &Where, toolset: Toolset) -> Rig {
+    rig_with(
+        at,
+        toolset,
+        "write_tools_enabled = true\ndestructive_tools_enabled = true\n",
+    )
+    .await
+}
+
+/// [`rig`] with `operator` as the operator file (`~/.iris-agentic-dev.toml`), e.g. to add
+/// `read_only = "strict"`.
+pub async fn rig_with(at: &Where, toolset: Toolset, operator: &str) -> Rig {
     let dir = tempfile::tempdir().unwrap();
     let root = std::fs::canonicalize(dir.path()).unwrap();
     let home = root.join("home");
     let proj = root.join("proj");
     std::fs::create_dir_all(&home).unwrap();
     std::fs::create_dir_all(&proj).unwrap();
-    std::fs::write(
-        home.join(CONFIG_FILE_NAME),
-        "write_tools_enabled = true\ndestructive_tools_enabled = true\n",
-    )
-    .unwrap();
+    std::fs::write(home.join(CONFIG_FILE_NAME), operator).unwrap();
     let inputs = LoadInputs {
         cwd: proj,
         home: Some(home),

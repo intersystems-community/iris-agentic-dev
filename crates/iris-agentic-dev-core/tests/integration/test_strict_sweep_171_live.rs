@@ -258,3 +258,29 @@ async fn strict_with_audit_is_refused_and_compiles_nothing() {
         );
     }
 }
+
+/// Spec 172 T066: every `iris_storage_map` action that compiles, writes or samples is refused under
+/// strict before a request goes out, so nothing reaches `/doc/IrisDevTmp` or `/action/compile`.
+/// The class need not exist: the pipeline refuses first.
+#[tokio::test]
+#[ignore = "requires live IRIS (iris-dev-iris)"]
+async fn storage_map_writes_are_refused_under_strict_without_compiling() {
+    let r = rig(STRICT, Toolset::Merged).await;
+    let class = "IadSm172.Member";
+    let map = json!({"name": "Master", "type": "data", "global": "^IadSm172Member"});
+    for args in [
+        json!({"action": "check", "class": class}),
+        json!({"action": "check", "class": class, "map": "Master", "model": map}),
+        json!({"action": "edit", "class": class, "version": "0", "ops": []}),
+        json!({"action": "replace", "class": class, "map": "Master", "version": "0", "model": map}),
+        json!({"action": "preview", "class": class, "map": "Master", "model": map}),
+        json!({"action": "compare", "class": class, "map": "Master"}),
+        json!({"action": "propose", "global": "^IadSm172Member"}),
+        json!({"action": "Check", "class": class}),
+    ] {
+        let b = call(&r, "iris_storage_map", args.clone()).await;
+        assert_eq!(b["error_code"], "READ_ONLY_STRICT", "{args}: {b}");
+    }
+    let bad: Vec<String> = r.requests().into_iter().filter(|l| compiles(l)).collect();
+    assert!(bad.is_empty(), "storage map compiled under strict: {bad:?}");
+}

@@ -54,3 +54,23 @@ fn test_storage_map_explain_172_unknown_is_none() {
     assert_eq!(explain("no number at all"), None);
     assert_eq!(explain("ERROR #55110: longer number"), None);
 }
+
+/// `check`'s `explanations`: one `{code, text}` per known number, in order, once each.
+#[test]
+fn test_storage_map_explain_172_explanations_for_an_error_list() {
+    use iris_agentic_dev_core::tools::storage_map::explain::explanations;
+    let errors = vec![
+        "ERROR #5511: SQL Map type 'DATA' is invalid\r\n  > ERROR #5030: An error occurred"
+            .to_string(),
+        "ERROR #5030: An error occurred while compiling class 'X'".to_string(),
+        "ERROR #5511: SQL Map type 'DATA' is invalid".to_string(),
+        "ERROR #5596: Global name is missing for SQL map 'M' in table 'T'.".to_string(),
+    ];
+    let got = explanations(&errors);
+    let codes: Vec<u64> = got.iter().filter_map(|e| e["code"].as_u64()).collect();
+    assert_eq!(codes, vec![5511, 5596]);
+    assert!(got
+        .iter()
+        .all(|e| e["text"].as_str().is_some_and(|t| t.len() > 30)));
+    assert!(explanations(&["ERROR #5030: x".to_string()]).is_empty());
+}

@@ -914,13 +914,13 @@ pub fn map_node(map: &serde_json::Value) -> Result<Node, String> {
         }
     }
     for (i, part) in list(o, "row_id", "model")?.iter().enumerate() {
-        let at = format!("model/row_id/{i}");
-        let p = object(part, &at)?;
-        known(p, &at, &["position", "field", "expression"])?;
-        let mut c = Vec::new();
-        push_leaf(&mut c, "Field", text(p, "field", &at)?);
-        push_leaf(&mut c, "Expression", text(p, "expression", &at)?);
-        children.push(branch("RowIdSpec", Some(number(p, "position", &at)?), c));
+        children.push(numbered_node(
+            part,
+            &format!("model/row_id/{i}"),
+            "RowIdSpec",
+            "position",
+            &[("field", "Field"), ("expression", "Expression")],
+        )?);
     }
     children.extend(extra_nodes(o, "model")?);
     Ok(branch("SQLMap", Some(name), children))
@@ -968,25 +968,22 @@ fn subscript_node(v: &serde_json::Value, at: &str) -> Result<Node, String> {
         push_leaf(&mut c, tag, text(s, key, at)?);
     }
     for (i, av) in list(s, "access_vars", at)?.iter().enumerate() {
-        let here = format!("{at}/access_vars/{i}");
-        let a = object(av, &here)?;
-        known(a, &here, &["level", "code", "variable"])?;
-        let mut ac = Vec::new();
-        push_leaf(&mut ac, "Code", text(a, "code", &here)?);
-        push_leaf(&mut ac, "Variable", text(a, "variable", &here)?);
-        c.push(branch("Accessvar", Some(number(a, "level", &here)?), ac));
+        c.push(numbered_node(
+            av,
+            &format!("{at}/access_vars/{i}"),
+            "Accessvar",
+            "level",
+            &[("code", "Code"), ("variable", "Variable")],
+        )?);
     }
     for (i, ic) in list(s, "invalid_conditions", at)?.iter().enumerate() {
-        let here = format!("{at}/invalid_conditions/{i}");
-        let a = object(ic, &here)?;
-        known(a, &here, &["level", "expression"])?;
-        let mut icc = Vec::new();
-        push_leaf(&mut icc, "Expression", text(a, "expression", &here)?);
-        c.push(branch(
+        c.push(numbered_node(
+            ic,
+            &format!("{at}/invalid_conditions/{i}"),
             "Invalidcondition",
-            Some(number(a, "level", &here)?),
-            icc,
-        ));
+            "level",
+            &[("expression", "Expression")],
+        )?);
     }
     c.extend(extra_nodes(s, at)?);
     Ok(branch("Subscript", Some(number(s, "level", at)?), c))
@@ -1023,6 +1020,26 @@ fn data_node(field: &str, v: &serde_json::Value, at: &str) -> Result<Node, Strin
     }
     c.extend(extra_nodes(d, at)?);
     Ok(branch("Data", Some(field.to_string()), c))
+}
+
+/// A numbered element (`RowIdSpec`, `Accessvar`, `Invalidcondition`): `number_key` gives its
+/// name and each `(key, tag)` in `leaves` a text child; any other key is refused.
+fn numbered_node(
+    v: &serde_json::Value,
+    at: &str,
+    tag: &str,
+    number_key: &str,
+    leaves: &[(&str, &str)],
+) -> Result<Node, String> {
+    let o = object(v, at)?;
+    let mut keys = vec![number_key];
+    keys.extend(leaves.iter().map(|(key, _)| *key));
+    known(o, at, &keys)?;
+    let mut c = Vec::new();
+    for (key, leaf_tag) in leaves {
+        push_leaf(&mut c, leaf_tag, text(o, key, at)?);
+    }
+    Ok(branch(tag, Some(number(o, number_key, at)?), c))
 }
 
 fn extra_nodes(o: &Obj, at: &str) -> Result<Vec<Node>, String> {

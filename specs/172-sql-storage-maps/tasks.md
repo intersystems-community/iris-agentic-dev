@@ -367,16 +367,24 @@ Result<String, String>` per FR-015a (class header with the same superclasses, th
       Done 2026-11-11: `code_changed` is judged from the call alone (an op path or model key outside the literal
       list, or unreadable ops), so it can over-flag and never under-flag; `effective_category` now reads
       `call_shape` (`check` was falling back to `docs`).
-- [ ] T065 [US4] `mod.rs`: the `check` action: build the tree from `model` (or the class), `gate_tree`,
+- [x] T065 [US4] `mod.rs`: the `check` action: build the tree from `model` (or the class), `gate_tree`,
       `validate` (T070 lands later; until then `check` calls a stub that returns `Ok`), `scratch_source`,
       `check_compile_time_code_mode`, `compile_scratch_class`; failure → `STORAGE_MAP_COMPILE_FAILED` with
       `iris_errors` and `explanations`. Test first `tests/integration/test_storage_map_edit_172_live.rs`: `check` of
       `Member` with `<Type>DATA</Type>` fails with #5511 explained, the real class is unchanged and still answers its
       known question; a valid `check` succeeds and leaves no `IrisDevTmp` class. Prove: `L test_storage_map_edit_172`.
-- [ ] T066 [US4] Strict read-only live test: in `test_storage_map_edit_172_live.rs`, under `read_only = "strict"`,
+      Done 2026-11-11: a `model` replaces the map named by `map` (or its own `name`; a new name adds a map), via
+      `model::map_node` (unknown keys are `INVALID_PARAMS`). Default storage is `STORAGE_MAP_READ_ONLY`. The
+      compile-time gate runs on the copy under a stand-in name before any request. Handler refusals now leave
+      through `classify_answer`, so `check` in T059 is a fixed-rule refusal. `read` had lost every
+      `Invalidcondition` expression (IRIS stores it as an `<Expression>` child); fixed with the inverse.
+- [x] T066 [US4] Strict read-only live test: in `test_storage_map_edit_172_live.rs`, under `read_only = "strict"`,
       `check`, `edit`, `replace`, `preview`, `compare`, `propose` return `READ_ONLY_STRICT` and `read`, `diagram`,
       `uses` succeed; and add `iris_storage_map` cases to `tests/integration/test_strict_sweep_171_live.rs`. Prove:
       `L test_storage_map_edit_172`, `L test_strict_sweep_171`.
+      Done 2026-11-11: `test_storage_map_edit_172_strict_refuses_writes_and_keeps_reads`, and
+      `storage_map_writes_are_refused_under_strict_without_compiling` in the strict sweep file (focused, not the full
+      sweep, which is not run locally). `live_rig_171::rig_with` takes the operator file.
 
 ---
 

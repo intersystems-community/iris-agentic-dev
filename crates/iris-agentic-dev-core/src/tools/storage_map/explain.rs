@@ -128,14 +128,28 @@ pub const EXPLAINED: [(u32, &str); 23] = [
 /// The explanation for the first error number in `iris_error` that [`EXPLAINED`] knows, read
 /// from `ERROR #nnnn` or `ERROR#nnnn`. `None` when it names no known number.
 pub fn explain(iris_error: &str) -> Option<String> {
+    explain_code(iris_error).map(|(_, text)| text.to_string())
+}
+
+/// [`explain`] with the number it explained.
+fn explain_code(iris_error: &str) -> Option<(u32, &'static str)> {
     iris_error.split('#').skip(1).find_map(|after| {
         let end = after
             .find(|c: char| !c.is_ascii_digit())
             .unwrap_or(after.len());
         let n: u32 = after[..end].parse().ok()?;
-        EXPLAINED
-            .iter()
-            .find(|(k, _)| *k == n)
-            .map(|(_, text)| text.to_string())
+        EXPLAINED.iter().find(|(k, _)| *k == n).copied()
     })
+}
+
+/// `{code, text}` for each error's first known number, in order, each number once
+/// (`STORAGE_MAP_COMPILE_FAILED`'s `explanations`).
+pub fn explanations(errors: &[String]) -> Vec<serde_json::Value> {
+    let mut seen = std::collections::HashSet::new();
+    errors
+        .iter()
+        .filter_map(|e| explain_code(e))
+        .filter(|(n, _)| seen.insert(*n))
+        .map(|(code, text)| serde_json::json!({"code": code, "text": text}))
+        .collect()
 }

@@ -188,7 +188,7 @@ pub async fn handle(
     iris: &IrisConnection,
     client: &reqwest::Client,
     p: &Value,
-    _tools: &crate::tools::IrisTools,
+    tools: &crate::tools::IrisTools,
 ) -> Result<CallToolResult, McpError> {
     // The same reader the classifier, strict read-only and the service-account check use.
     let shape = call_shape(p);
@@ -208,6 +208,7 @@ pub async fn handle(
         Action::Read => read(iris, client, p).await,
         Action::Diagram => diagram(iris, client, p).await,
         Action::Uses => uses_action(iris, client, p).await,
+        Action::Check => check(iris, client, p, tools, &shape).await,
         other => err_result(json!({
             "success": false,
             "error_code": "NOT_IMPLEMENTED",
@@ -224,6 +225,16 @@ fn fail(code: &str, msg: String, extra: Value) -> Result<CallToolResult, McpErro
     err_result(body)
 }
 
+/// What `read`, `diagram` and `check` start from: the `class` param, the namespace, the class's
+/// text and its first Storage block parsed.
+struct StoredClass<'p> {
+    class: &'p str,
+    ns: String,
+    text: String,
+    storage_name: String,
+    nodes: Vec<tree::Node>,
+}
+
 /// The `class` param, the namespace and the parsed storage model that `read` and `diagram`
 /// both start from, or the refusal to return when any of them is missing.
 async fn load_model<'p>(
@@ -232,6 +243,19 @@ async fn load_model<'p>(
     p: &'p Value,
     action: &str,
 ) -> Result<(&'p str, String, model::StorageModel), Result<CallToolResult, McpError>> {
+    let s = load_storage(iris, client, p, action).await?;
+    let m = model_with_facts(s.class, &s.storage_name, &s.nodes);
+    Ok((s.class, s.ns, m))
+}
+
+/// The [`StoredClass`] the params name, or the refusal to return when the class param, the
+/// class or its Storage block is missing, or the block cannot be parsed.
+async fn load_storage<'p>(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    p: &'p Value,
+    action: &str,
+) -> Result<StoredClass<'p>, Result<CallToolResult, McpError>> {
     let Some(class) = p.get("class").and_then(Value::as_str) else {
         return Err(fail(
             "INVALID_PARAMS",
@@ -258,8 +282,14 @@ async fn load_model<'p>(
         }
         Err(r) => return Err(Ok(r)),
     };
-    match model_of(class, &text) {
-        Ok(Some(m)) => Ok((class, ns, m)),
+    match storage_tree(&text) {
+        Ok(Some((storage_name, nodes))) => Ok(StoredClass {
+            class,
+            ns,
+            text,
+            storage_name,
+            nodes,
+        }),
         Ok(None) => Err(fail(
             "STORAGE_MAP_NOT_FOUND",
             format!("class {class} has no Storage block"),
@@ -271,6 +301,149 @@ async fn load_model<'p>(
             json!({"offset": e.offset, "context": e.context}),
         )),
     }
+}
+
+/// `check` (US4, FR-015, FR-015a, FR-017): the class's map, or the caller's `model` in place of
+/// the map it names, through the gates, then compiled in a scratch copy that is deleted
+/// afterwards. The real class is never written. A copy that does not compile answers
+/// `STORAGE_MAP_COMPILE_FAILED` with IRIS's errors and their explanations.
+async fn check(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    p: &Value,
+    tools: &crate::tools::IrisTools,
+    shape: &CallShape,
+) -> Result<CallToolResult, McpError> {
+    let StoredClass {
+        class,
+        ns,
+        text,
+        storage_name,
+        mut nodes,
+    } = match load_storage(iris, client, p, "check").await {
+        Ok(stored) => stored,
+        Err(reply) => return reply,
+    };
+    let stored = model::from_tree(class, &storage_name, &nodes);
+    if !stored.storage.editable {
+        let why = stored.storage.not_editable_reason.unwrap_or_default();
+        return fail(
+            "STORAGE_MAP_READ_ONLY",
+            format!("the storage of {class} is read-only in iris_storage_map: {why}"),
+            json!({}),
+        );
+    }
+
+    // The typed params pass an absent `model` through as `null`.
+    if let Some(proposed) = p.get("model").filter(|v| !v.is_null()) {
+        let map_param = p.get("map").and_then(Value::as_str);
+        let model_name = proposed.get("name").and_then(Value::as_str);
+        let name = match (map_param, model_name) {
+            (Some(a), Some(b)) if a != b => {
+                return fail(
+                    "INVALID_PARAMS",
+                    format!("`map` is {a} but the model is map {b}"),
+                    json!({}),
+                )
+            }
+            (Some(a), _) | (None, Some(a)) => a.to_string(),
+            (None, None) => {
+                return fail(
+                    "INVALID_PARAMS",
+                    "check with a `model` needs `map` or a `name` in the model".into(),
+                    json!({}),
+                )
+            }
+        };
+        let mut proposed = proposed.clone();
+        if let Some(o) = proposed.as_object_mut() {
+            o.entry("name").or_insert_with(|| json!(name));
+        }
+        let node = match model::map_node(&proposed) {
+            Ok(n) => n,
+            Err(e) => return fail("INVALID_PARAMS", e, json!({})),
+        };
+        // The caller's map takes the place of the stored one; a new name adds a map.
+        match nodes
+            .iter_mut()
+            .find(|n| n.tag == "SQLMap" && n.name.as_deref() == Some(name.as_str()))
+        {
+            Some(slot) => *slot = node,
+            None => nodes.push(node),
+        }
+    }
+
+    let t = tools.target()?;
+    if let Some(body) = code::gate_tree(&nodes, shape, &t.primary.effective, &t.primary.key) {
+        return err_result(body);
+    }
+    if let Err(rules) = validate::validate(&nodes) {
+        return fail(
+            "STORAGE_MAP_INVALID",
+            format!(
+                "the map breaks {} rule(s): {}",
+                rules.len(),
+                rules.join("; ")
+            ),
+            json!({"rules": rules}),
+        );
+    }
+    // Build the copy once under a stand-in name, so a failure or a compile-time refusal comes
+    // back before any request. The copy under the real name differs only in the name.
+    let probe = match write::scratch_source(&text, &nodes, "IrisDevTmp.SmCheck") {
+        Ok(s) => s,
+        Err(e) => return fail("STORAGE_MAP_INVALID", e, json!({})),
+    };
+    if crate::tools::target::compile_gate()?.on {
+        if let Some(body) = crate::policy::code_edit_gate::check_compile_time_code_mode(
+            &probe,
+            "IrisDevTmp.SmCheck.cls",
+        ) {
+            return err_result(body);
+        }
+    }
+    let compiled = iris
+        .compile_scratch_class(
+            |name| write::scratch_source(&text, &nodes, name).unwrap_or_default(),
+            &ns,
+            client,
+            "Sm",
+        )
+        .await;
+    let (scratch, result) = match compiled {
+        Ok(done) => done,
+        Err(e) => {
+            return fail(
+                "UPLOAD_FAILED",
+                format!("the scratch copy could not be sent to IRIS: {e}"),
+                json!({}),
+            )
+        }
+    };
+    if !result.success() {
+        return fail(
+            "STORAGE_MAP_COMPILE_FAILED",
+            format!(
+                "the map does not compile ({} error(s)); the real class {class} was not touched",
+                result.errors.len()
+            ),
+            json!({
+                "scratch_class": scratch,
+                "iris_errors": result.errors,
+                "explanations": explain::explanations(&result.errors),
+            }),
+        );
+    }
+    Ok(CallToolResult::structured(json!({
+        "success": true,
+        "model_version": model::MODEL_VERSION,
+        "action": "check",
+        "class": class,
+        "namespace": ns,
+        "compiled": true,
+        "scratch_class": scratch,
+        "warnings": [],
+    })))
 }
 
 /// The class's text as IRIS stores it, or `None` when IRIS has no such class.
@@ -288,14 +461,24 @@ async fn class_text(
 /// The storage model of `class`'s first Storage block: `Ok(None)` when the class has no Storage
 /// block, `Err(ParseError)` when one cannot be parsed.
 fn model_of(class: &str, text: &str) -> Result<Option<model::StorageModel>, tree::ParseError> {
-    let spans = tree::split_class(text)?;
-    let Some(span) = spans.first() else {
+    Ok(storage_tree(text)?.map(|(name, nodes)| model_with_facts(class, &name, &nodes)))
+}
+
+/// The name and parsed nodes of the first Storage block in `text`: `Ok(None)` when there is no
+/// Storage block, `Err(ParseError)` when it cannot be parsed.
+fn storage_tree(text: &str) -> Result<Option<(String, Vec<tree::Node>)>, tree::ParseError> {
+    let Some(span) = tree::split_class(text)?.into_iter().next() else {
         return Ok(None);
     };
     let nodes = tree::parse_body(&text[span.body_start..span.body_end])?;
-    let mut m = model::from_tree(class, &span.name, &nodes);
+    Ok(Some((span.name, nodes)))
+}
+
+/// The storage model of one parsed Storage block, with its derived facts.
+fn model_with_facts(class: &str, storage_name: &str, nodes: &[tree::Node]) -> model::StorageModel {
+    let mut m = model::from_tree(class, storage_name, nodes);
     m.derived = model::derived_facts(&m);
-    Ok(Some(m))
+    m
 }
 
 /// The other classes in `ns` whose data maps use one of `globals` (compiled dictionary).

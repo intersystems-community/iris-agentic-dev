@@ -1812,6 +1812,13 @@ against live data), `preview` (show data through a proposed map), `propose` (dra
 live data), `check` (validate in a scratch class), `edit` (modify a map), `replace` (replace
 entire map).
 
+`check` builds the class's map, or the `model` given for the map `map` names, runs the global and
+map-code gates, and compiles it in a scratch class (`IrisDevTmp.Sm…`) that is deleted afterwards.
+The real class is never written, and compiling the copy writes nothing to the globals it names.
+A copy that does not compile answers `STORAGE_MAP_COMPILE_FAILED` with IRIS's errors and a plain
+explanation of each. Default storage is read-only here (`STORAGE_MAP_READ_ONLY`). In this build
+`read`, `diagram`, `uses` and `check` work; the other actions answer `NOT_IMPLEMENTED`.
+
 | Parameter         | Type         | Default  | Notes                                                                                  |
 | ----------------- | ------------ | -------- | -------------------------------------------------------------------------------------- |
 | `action`          | string, enum | —        | `read`, `diagram`, `uses`, `compare`, `preview`, `propose`, `check`, `edit`, `replace` |
