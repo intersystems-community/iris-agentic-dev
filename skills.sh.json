@@ -26,7 +26,12 @@
     },
     {
       "title": "IRIS SQL & BI",
-      "skills": ["iris-sql", "iris-query-plans", "iris-mdx"]
+      "skills": [
+        "iris-sql",
+        "iris-query-plans",
+        "iris-storage-mapping",
+        "iris-mdx"
+      ]
     },
     {
       "title": "IRIS Vector & AI",

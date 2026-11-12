@@ -26,6 +26,7 @@ skills = [
     # IRIS SQL & BI
     "skills/skills/iris-sql",
     "skills/skills/iris-query-plans",
+    "skills/skills/iris-storage-mapping",
     "skills/skills/iris-mdx",
     # IRIS Vector & AI
     # iris-vector-graph and iris-vector-rag moved to their own repos (commit 1fb7a8c) —

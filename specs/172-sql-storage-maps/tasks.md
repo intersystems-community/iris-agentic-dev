@@ -594,17 +594,22 @@ false` as naming the argument, so every call sending it would need `acknowledgeP
       values masked. Prove: `L test_storage_map_golden_172`.
       Done 2026-11-12: `<Name>.<action>.live.json`; the scratch class name and identity are left out; a seeded
       value in a masked answer fails the test.
-- [ ] T097 [US10] Lead writes `/docs/storage-maps.md` (model, actions, error codes, measured traps, the residual risk
+- [x] T097 [US10] Lead writes `/docs/storage-maps.md` (model, actions, error codes, measured traps, the residual risk
       of saved map code from FR-027); a teammate adds `tests/unit/test_storage_maps_doc_172.rs` asserting every error
       code and action named there exists in the code and every documented trap names its live test. Prove:
       `U test_storage_maps_doc_172`.
-- [ ] T098 [US10] Skill `/skills/skills/iris-storage-mapping/SKILL.md` (`tier: extra`, `managed_by: iris-agentic-dev`),
+      Done 2026-11-12: the doc's guard checks codes, actions and the live test each measured behaviour cites.
+- [x] T098 [US10] Skill `/skills/skills/iris-storage-mapping/SKILL.md` (`tier: extra`, `managed_by: iris-agentic-dev`),
       `embedded_skill!("iris-storage-mapping")` in `src/skills/bundled.rs:145`, listed in `/iris-agentic-dev.toml`
       `provides.skills` and `/skills.sh.json`, and a line under `## Extra skills` in
       `/skills/skills/iris-agentic-dev/SKILL.md`. Lead writes the skill text; every factual claim cites a live test
       by name. Prove: `U test_skill_tiers`, `U test_bundled_skills`.
-- [ ] T099 [US10] `tests/integration/test_storage_mapping_skill_172_live.rs`: one test per claim in the skill (the
+      Done 2026-11-12.
+- [x] T099 [US10] `tests/integration/test_storage_mapping_skill_172_live.rs`: one test per claim in the skill (the
       skill lists them; the test file names match). Prove: `L test_storage_mapping_skill_172`.
+      Done 2026-11-12, as `tests/unit/test_storage_mapping_skill_172.rs`. Deviation: each claim cites the
+      existing live test that measures it (17 citations) instead of a duplicate per claim; the guard fails on a
+      cited test that does not exist and on a claim that cites none.
 
 ---
 

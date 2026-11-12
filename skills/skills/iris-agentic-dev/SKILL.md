@@ -55,6 +55,7 @@ The plugin and a bare `iris-agentic-dev skill install` ship the core skills only
 - `iris-pgwire`: connect to IRIS over the PostgreSQL wire protocol (psycopg3 and other Postgres clients)
 - `iris-product-features`: what IRIS and its products actually include, before you describe a feature
 - `iris-query-plans`: read a query plan, stale indexes, `%BuildIndices`, `TUNE TABLE`, fixed and collected statistics
+- `iris-storage-mapping`: read, check and edit SQL storage maps over existing globals with `iris_storage_map`
 - `iris-vector-ai`: vector search, embeddings and HNSW indexes in IRIS SQL (not pgvector syntax)
 - `iris-vscode-objectscript`: VS Code settings for ObjectScript against an IRIS container
 - `iris-windows-iis-setup`: IIS for IRIS installed natively on Windows

@@ -159,6 +159,7 @@ const EMBEDDED_SKILLS: &[(&str, &str)] = &[
     embedded_skill!("iris-product-features"),
     embedded_skill!("iris-query-plans"),
     embedded_skill!("iris-sql"),
+    embedded_skill!("iris-storage-mapping"),
     embedded_skill!("iris-vector-ai"),
     embedded_skill!("iris-vscode-objectscript"),
     embedded_skill!("iris-windows-iis-setup"),

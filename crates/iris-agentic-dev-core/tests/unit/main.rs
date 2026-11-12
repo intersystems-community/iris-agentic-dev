@@ -248,6 +248,8 @@ mod test_storage_map_tree_172;
 mod test_storage_map_unreachable_172;
 mod test_storage_map_validate_172;
 mod test_storage_map_write_172;
+mod test_storage_mapping_skill_172;
+mod test_storage_maps_doc_172;
 mod test_stored_check_141;
 mod test_stored_source_141;
 mod test_stream_inspect_141;

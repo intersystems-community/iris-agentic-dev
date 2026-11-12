@@ -148,6 +148,7 @@ missing from the table, so any skill in the binary belongs here.
 | `iris-pgwire`                      | extra    | Connecting to IRIS over the PostgreSQL wire protocol (psycopg3 and other PG clients)                                    |             |
 | `iris-product-features`            | extra    | What IRIS actually ships — the features and product boundaries models invent                                            |             |
 | `iris-query-plans`                 | extra    | Reading query plans; stale indexes, `%BuildIndices`, `TUNE TABLE`, outlier selectivity                                  |             |
+| `iris-storage-mapping`             | extra    | Reading, checking and editing SQL storage maps over existing globals with `iris_storage_map`                            |             |
 | `iris-sql`                         | core     | Writing and debugging IRIS SQL: table naming, NULL semantics, `SQLCODE`, DDL quirks                                     |             |
 | `iris-vector-ai`                   | extra    | IRIS vector search syntax (HNSW, `VECTOR_COSINE`, `TO_VECTOR`)                                                          | domain      |
 | `iris-vscode-objectscript`         | extra    | VS Code ObjectScript setup against a container, including the 52773-vs-1972 trap                                        |             |

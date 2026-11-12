@@ -1806,6 +1806,9 @@ global layout, extents, and index locations.
 
 ### `iris_storage_map`
 
+The model, the write path, the error codes and the IRIS behaviour each check is based on are in
+[storage-maps.md](storage-maps.md).
+
 Read, visualize, and edit the data maps in a class's Storage block. Actions: `read` (return
 model), `diagram` (render Mermaid), `uses` (find classes using a global), `compare` (check
 against live data), `preview` (show data through a proposed map), `propose` (draft a map from
