@@ -213,11 +213,7 @@ pub async fn handle(
         Action::Replace => replace_action(iris, client, p, tools, &shape).await,
         Action::Compare => compare_action(iris, client, p, tools, &shape).await,
         Action::Preview => preview_action(iris, client, p, tools, &shape).await,
-        other => err_result(json!({
-            "success": false,
-            "error_code": "NOT_IMPLEMENTED",
-            "error": format!("Action '{other:?}' not yet implemented")
-        })),
+        Action::Propose => propose_action(iris, p, tools, &shape).await,
     }
 }
 
@@ -661,6 +657,33 @@ async fn compare_action(
         Ok(g) => g,
         Err(e) => return fail("INVALID_PARAMS", format!("{}: {e}", map.global), json!({})),
     };
+    sampled_answer(tools, p, shape, &ns, &global, |report| {
+        let mismatches = shape::compare_map(map, &report);
+        json!({
+            "success": true,
+            "model_version": model::MODEL_VERSION,
+            "action": "compare",
+            "class": class,
+            "namespace": ns,
+            "map": map.name,
+            "capped": report.capped,
+            "shape": report,
+            "mismatches": mismatches,
+        })
+    })
+    .await
+}
+
+/// Sample `global` in `ns` as the call's execute identity and answer with `answer(report)`, or
+/// the sampler's error, with the identity attached either way.
+async fn sampled_answer(
+    tools: &crate::tools::IrisTools,
+    p: &Value,
+    shape: &CallShape,
+    ns: &str,
+    global: &globals::GlobalRef,
+    answer: impl FnOnce(shape::ShapeReport) -> Value,
+) -> Result<CallToolResult, McpError> {
     let cx = match tools.exec_context() {
         Ok(cx) => cx,
         Err(e) => return err_result(e.to_json()),
@@ -669,27 +692,14 @@ async fn compare_action(
     let result = match sample::sample(
         &cx.conn,
         cx.client.as_ref(),
-        &ns,
-        &global,
+        ns,
+        global,
         cap,
         shape.include_values,
     )
     .await
     {
-        Ok(report) => {
-            let mismatches = shape::compare_map(map, &report);
-            Ok(CallToolResult::structured(json!({
-                "success": true,
-                "model_version": model::MODEL_VERSION,
-                "action": "compare",
-                "class": class,
-                "namespace": ns,
-                "map": map.name,
-                "capped": report.capped,
-                "shape": report,
-                "mismatches": mismatches,
-            })))
-        }
+        Ok(report) => Ok(CallToolResult::structured(answer(report))),
         Err(answer) => err_result(answer),
     };
     crate::tools::exec::attach_identity(result, &cx.helper_report())
@@ -840,6 +850,55 @@ async fn preview_action(
         }
     };
     crate::tools::exec::attach_identity(result, &cx.helper_report())
+}
+
+/// `propose` (US7): sample a global that has no map and draft one, in model JSON, with every
+/// guessed element listed. Nothing is written; the draft goes to `check` or `replace` after the
+/// caller names its fields.
+async fn propose_action(
+    iris: &IrisConnection,
+    p: &Value,
+    tools: &crate::tools::IrisTools,
+    shape: &CallShape,
+) -> Result<CallToolResult, McpError> {
+    let Some(raw) = p.get("global").and_then(Value::as_str) else {
+        return fail("INVALID_PARAMS", "propose needs `global`".into(), json!({}));
+    };
+    let global = match globals::normalize_global(raw) {
+        Ok(g) if g.extended.is_none() && g.subscripts_prefix.is_none() => g,
+        Ok(_) => {
+            return fail(
+                "INVALID_PARAMS",
+                format!("propose takes a plain global name, not {raw}"),
+                json!({}),
+            )
+        }
+        Err(e) => return fail("INVALID_PARAMS", format!("{raw}: {e}"), json!({})),
+    };
+    let ns = p
+        .get("namespace")
+        .and_then(Value::as_str)
+        .unwrap_or(&iris.namespace)
+        .to_string();
+    let t = tools.target()?;
+    if let Some(refusal) = values_refusal(shape, &t.primary) {
+        return err_result(refusal);
+    }
+    sampled_answer(tools, p, shape, &ns, &global, |report| {
+        let (draft, guesses) = shape::draft(&report);
+        json!({
+            "success": true,
+            "model_version": model::MODEL_VERSION,
+            "action": "propose",
+            "namespace": ns,
+            "global": global.name,
+            "capped": report.capped,
+            "shape": report,
+            "draft": draft,
+            "guesses": guesses,
+        })
+    })
+    .await
 }
 
 /// `edit` (US3, FR-010): path operations on the class's tree, then the write path. The version

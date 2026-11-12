@@ -671,3 +671,97 @@ async fn test_storage_map_data_172_unbuilt_index_and_build_indexes() {
     );
     assert!(problems.is_empty(), "cleanup: {problems:?}");
 }
+
+// ── T111: propose ────────────────────────────────────────────────────────────
+
+async fn member_crc(r: &Rig) -> serde_json::Value {
+    r.call(
+        "iris_execute",
+        json!({"code": "Set crc=0,n=\"^IadSm172Member\" For { Set n=$Query(@n) Quit:n=\"\"  Set crc=$ZCRC(n_@n,7,crc) } Write crc",
+               "namespace": "USER"}),
+    )
+    .await["output"]
+        .clone()
+}
+
+/// `propose` drafts a map from the data alone and writes nothing; the draft, with its fields
+/// named after the class's properties, saved through `replace`, answers the known question.
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn test_storage_map_data_172_propose_drafts_a_working_map() {
+    use crate::storage172_rig::ask;
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let f = Fixture::read("Member");
+    load_fixture(&r, &f).await;
+    let class_before = r
+        .call(
+            "iris_doc",
+            json!({"mode": "get", "name": "IadSm172.Member.cls", "namespace": "USER"}),
+        )
+        .await["content"]
+        .clone();
+    let data_before = member_crc(&r).await;
+    let got = r
+        .call(
+            "iris_storage_map",
+            json!({"action": "propose", "global": "^IadSm172Member", "namespace": "USER"}),
+        )
+        .await;
+    let data_after = member_crc(&r).await;
+    let class_after = r
+        .call(
+            "iris_doc",
+            json!({"mode": "get", "name": "IadSm172.Member.cls", "namespace": "USER"}),
+        )
+        .await["content"]
+        .clone();
+
+    // The seed: rows are name^city^age at depth 1.
+    let mut draft = got["draft"].clone();
+    for (guess, prop) in [("Field1", "Name"), ("Field2", "City"), ("Field3", "Age")] {
+        let mut field = draft["data"][guess].clone();
+        field["name"] = json!(prop);
+        draft["data"].as_object_mut().unwrap().remove(guess);
+        draft["data"][prop] = field;
+    }
+    let version = r
+        .call(
+            "iris_storage_map",
+            json!({"action": "read", "class": f.class, "namespace": "USER"}),
+        )
+        .await["storage"]["maps"][0]["version"]
+        .clone();
+    let saved = r
+        .call(
+            "iris_storage_map",
+            json!({"action": "replace", "class": f.class, "map": "Master", "version": version,
+                   "model": draft, "confirm_removal": true, "namespace": "USER"}),
+        )
+        .await;
+    let rows = ask(&r, &f).await;
+    let problems = drop_fixture(&r, &f).await;
+
+    assert_eq!(got["success"], true, "{got}");
+    assert_eq!(got["draft"]["subscripts"][0]["expression"], "{ID}", "{got}");
+    for (i, guess) in ["Field1", "Field2", "Field3"].iter().enumerate() {
+        assert_eq!(
+            got["draft"]["data"][guess]["piece"],
+            (i + 1).to_string(),
+            "{got}"
+        );
+        assert_eq!(got["draft"]["data"][guess]["delimiter"], "\"^\"", "{got}");
+    }
+    assert!(
+        got["guesses"].as_array().is_some_and(|g| !g.is_empty()),
+        "{got}"
+    );
+    assert_eq!(data_after, data_before, "propose changed the global");
+    assert_eq!(class_after, class_before, "propose changed the class");
+    assert_eq!(saved["success"], true, "{saved}");
+    let expected = f.seed["answer"].as_array().cloned().unwrap_or_default();
+    assert_eq!(
+        rows, expected,
+        "the saved draft does not answer the known question"
+    );
+    assert!(problems.is_empty(), "cleanup: {problems:?}");
+}

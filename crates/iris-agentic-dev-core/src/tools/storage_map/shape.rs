@@ -245,3 +245,82 @@ pub fn compare_map(map: &super::model::SqlMap, shape: &ShapeReport) -> Vec<Misma
     }
     out
 }
+
+/// A first map for a global that has none (`propose`, US7): the depth that holds the most
+/// values is the row node, keyed by `{ID}` (one level) or `{Key1}`…`{IdKey}`; one field per
+/// piece (delimited) or element (`$LIST`) there, and per named sub-node one below. Returns the
+/// map in model JSON and the path of every element it had to guess (names, delimiters, piece
+/// counts), so a caller renames the fields to the class's properties before `check` or `replace`.
+pub fn draft(report: &ShapeReport) -> (serde_json::Value, Vec<String>) {
+    use serde_json::{json, Value};
+    let at = "/maps/Master";
+    let mut guesses = vec![format!("{at}/subscripts")];
+    // The row depth: most value nodes, ignoring the root (often an ID counter).
+    let levels = report
+        .depths
+        .iter()
+        .filter_map(|(d, n)| Some((d.parse::<u32>().ok()?, *n)))
+        .filter(|&(d, _)| d != 0)
+        .max_by_key(|&(d, n)| (n, std::cmp::Reverse(d)))
+        .map_or(1, |(d, _)| d);
+    let subscripts: Vec<Value> = (1..=levels)
+        .map(|l| {
+            let expr = if l == levels {
+                "{ID}".to_string()
+            } else {
+                format!("{{Key{l}}}")
+            };
+            json!({"level": l, "expression": expr})
+        })
+        .collect();
+    let mut data = serde_json::Map::new();
+    let mut add_fields = |prefix: &str, f: &Format| {
+        let delimiter = match (f.format.as_str(), &f.delimiter) {
+            ("$LIST", _) => None,
+            (_, Some(d)) => Some(format!("\"{}\"", d.replace('"', "\"\""))),
+            // A plain value: one field, read whole as the first piece of any delimiter.
+            _ => Some("\"^\"".to_string()),
+        };
+        for i in 1..=f.pieces.max.max(1) {
+            let name = format!("{prefix}{i}");
+            let mut field = serde_json::Map::new();
+            field.insert("name".into(), json!(name));
+            if let Some(n) = &f.node {
+                field.insert("node".into(), json!(n));
+            }
+            if let Some(d) = &delimiter {
+                field.insert("delimiter".into(), json!(d));
+            }
+            field.insert("piece".into(), json!(i.to_string()));
+            guesses.push(format!("{at}/data/{name}"));
+            data.insert(name, Value::Object(field));
+        }
+    };
+    let row = report
+        .formats
+        .iter()
+        .filter(|f| f.depth == levels && f.node.is_none())
+        .max_by_key(|f| f.pieces.max);
+    if let Some(row) = row {
+        add_fields("Field", row);
+    }
+    for f in report.formats.iter().filter(|f| f.depth == levels + 1) {
+        let Some(node) = &f.node else { continue };
+        let mut prefix: String = node.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        if let Some(first) = prefix.get_mut(..1) {
+            first.make_ascii_uppercase();
+        }
+        if prefix.is_empty() || prefix.starts_with(|c: char| c.is_ascii_digit()) {
+            prefix = format!("Node{prefix}");
+        }
+        add_fields(&prefix, f);
+    }
+    let map = json!({
+        "name": "Master",
+        "type": "data",
+        "global": report.global,
+        "subscripts": subscripts,
+        "data": data,
+    });
+    (map, guesses)
+}

@@ -233,6 +233,7 @@ mod test_storage_map_counter_172;
 mod test_storage_map_diagram_172;
 mod test_storage_map_doc_gate_172;
 mod test_storage_map_doc_sink_172;
+mod test_storage_map_draft_172;
 mod test_storage_map_explain_172;
 mod test_storage_map_gates_172;
 mod test_storage_map_map_node_172;

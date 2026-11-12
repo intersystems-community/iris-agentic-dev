@@ -1837,8 +1837,12 @@ Both run as the service account when one is set, and say so in `identity`. Befor
 behind the highest stored ID is `STORAGE_MAP_ID_REUSE`, which `seed_counter: true` fixes by setting
 it; and a new index map over data with an empty index is `STORAGE_MAP_INDEX_UNBUILT`, which
 `build_indexes: true` fixes by building it (a destructive write, refused if the index range is in
-use). Through `iris_doc` those two are warnings, since it has no opt-ins. In this build `propose`
-answers `NOT_IMPLEMENTED`.
+use). Through `iris_doc` those two are warnings, since it has no opt-ins.
+
+`propose` samples a global that has no map and drafts one in model JSON: the depth holding the most
+values is the row node, with one field per piece or `$LIST` element there and per named sub-node
+below it. `guesses` lists every element it had to guess. Nothing is written; rename the fields to
+the class's properties and pass the draft to `check` or `replace`.
 
 | Parameter         | Type         | Default  | Notes                                                                                  |
 | ----------------- | ------------ | -------- | -------------------------------------------------------------------------------------- |

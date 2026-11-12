@@ -539,7 +539,7 @@ Value>` through `execute_via_generator` (service account per T036). Test first
       `test_body_read_ack_171` stays green. Prove: `U test_storage_map_policy_172`, `U test_body_read_ack_171`.
       Done 2026-11-12, in the handler only (`sample::values_refusal`). Deviation: `iris_storage_map` is not added
       to `HANDLER_ENFORCED_TOOLS`/`ACKNOWLEDGED_BODY_READS`, because `names_argument` treats `include_values:
-  false` as naming the argument, so every call sending it would need `acknowledgePhi` under `allow`.
+false` as naming the argument, so every call sending it would need `acknowledgePhi` under `allow`.
 - [ ] T089 [US5] Identity: in `test_storage_map_data_172_live.rs`, with a service account configured (see
       `test_scratch_cleanup_141_live.rs` for the throwaway setup), `compare`/`preview` answers carry the service
       account in `identity`, and refuse when the service account cannot be used. Prove: `L test_storage_map_data_172`.
@@ -657,13 +657,16 @@ question, answer }`. Names `IadSm172Gen.C<nnn>`, globals `^IadSm172Gen<nnn>`, in
 
 ## Phase 13: User Story 7 — Draft a map for an unmapped global (P3)
 
-- [ ] T110 [P] [US7] `src/tools/storage_map/shape.rs`: `pub fn draft(report: &ShapeReport) -> SqlMap` with every
+- [x] T110 [P] [US7] `src/tools/storage_map/shape.rs`: `pub fn draft(report: &ShapeReport) -> SqlMap` with every
       inferred name and type marked `guess: true`. Test first `tests/unit/test_storage_map_sample_172.rs`: a report
       for depth 1, `^`, 3 pieces gives three fields piece 1..3 on the ID node. Prove: `U test_storage_map_sample_172`.
-- [ ] T111 [US7] `mod.rs`: the `propose` action (sample, draft, no write). Test first in
+      Done 2026-11-12: `draft(report) -> (model JSON, guesses)`: model JSON, so `check` and `replace` take it as
+      it is (a `guess` key would be refused as unknown); the guessed paths are listed beside it.
+- [x] T111 [US7] `mod.rs`: the `propose` action (sample, draft, no write). Test first in
       `test_storage_map_data_172_live.rs`: `propose ^IadSm172Member` draft matches the seed's shape; saving the draft
       through `replace` returns the known answer; no class or global changed by `propose` alone. Prove:
       `L test_storage_map_data_172`.
+      Done 2026-11-12.
 
 ---
 
@@ -680,8 +683,9 @@ question, answer }`. Names `IadSm172Gen.C<nnn>`, globals `^IadSm172Gen<nnn>`, in
 
 ## Phase 15: Polish
 
-- [ ] T114 Remove every `NOT_IMPLEMENTED` from `storage_map/`. Prove: `grep -rn NOT_IMPLEMENTED src/tools/storage_map`
+- [x] T114 Remove every `NOT_IMPLEMENTED` from `storage_map/`. Prove: `grep -rn NOT_IMPLEMENTED src/tools/storage_map`
       is empty.
+      Done 2026-11-12: every action is implemented; the dispatcher's fallback arm is gone.
 - [ ] T115 Every `#[ignore]` test in this feature appears in `quickstart.md`'s commands. Prove: lead check.
 - [ ] T116 Full suite: `cargo test --features testing -- --test-threads=1 --include-ignored` (all targets) green.
 - [ ] T117 Coverage: the canonical `cargo llvm-cov --summary-only -p iris-agentic-dev-core -- --include-ignored`
