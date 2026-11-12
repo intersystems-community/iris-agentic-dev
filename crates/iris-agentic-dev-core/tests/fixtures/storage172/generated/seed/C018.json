@@ -1,0 +1,56 @@
+{
+  "answer": [
+    {
+      "F1": "ada",
+      "F2": "x1",
+      "K1": 1
+    },
+    {
+      "F1": "bob",
+      "F2": "y2",
+      "K1": 2
+    },
+    {
+      "F1": "cy",
+      "F2": "z3",
+      "K1": 3
+    }
+  ],
+  "class": "IadSm172Gen.C018",
+  "globals": [
+    {
+      "global": "^IadSm172Gen018",
+      "lb": [
+        "ada",
+        "x1"
+      ],
+      "subscripts": [
+        "1",
+        "d"
+      ]
+    },
+    {
+      "global": "^IadSm172Gen018",
+      "lb": [
+        "bob",
+        "y2"
+      ],
+      "subscripts": [
+        "2",
+        "d"
+      ]
+    },
+    {
+      "global": "^IadSm172Gen018",
+      "lb": [
+        "cy",
+        "z3"
+      ],
+      "subscripts": [
+        "3",
+        "d"
+      ]
+    }
+  ],
+  "question": "SELECT K1, F1, F2 FROM IadSm172Gen.C018 ORDER BY K1"
+}

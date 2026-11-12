@@ -26,7 +26,16 @@ pub struct Fixture {
 impl Fixture {
     /// Read both files of fixture `name`; panics with the path when one is missing or malformed.
     pub fn read(name: &str) -> Self {
-        let dir = fixture_dir();
+        // A generated fixture (T105) lives under `generated/`, with the same layout.
+        let dir = if fixture_dir()
+            .join("classes")
+            .join(format!("{name}.cls"))
+            .is_file()
+        {
+            fixture_dir()
+        } else {
+            fixture_dir().join("generated")
+        };
         let cls_path = dir.join("classes").join(format!("{name}.cls"));
         let seed_path = dir.join("seed").join(format!("{name}.json"));
         let cls_text = std::fs::read_to_string(&cls_path)

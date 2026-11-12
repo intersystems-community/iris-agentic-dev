@@ -1,0 +1,79 @@
+{
+  "answer": [
+    {
+      "F1": "bob",
+      "F2": "y2",
+      "F3": 1,
+      "K1": 1,
+      "K2": 1,
+      "K3": 2
+    }
+  ],
+  "build_indexes": [
+    "IdxF1"
+  ],
+  "class": "IadSm172Gen.C011",
+  "globals": [
+    {
+      "global": "^IadSm172Gen011",
+      "subscripts": [
+        "1",
+        "1",
+        "1"
+      ],
+      "value": "ada"
+    },
+    {
+      "global": "^IadSm172Gen011",
+      "subscripts": [
+        "1",
+        "1",
+        "1",
+        "d"
+      ],
+      "value": "x1"
+    },
+    {
+      "global": "^IadSm172Gen011",
+      "subscripts": [
+        "1",
+        "1",
+        "2"
+      ],
+      "value": "bob"
+    },
+    {
+      "global": "^IadSm172Gen011",
+      "subscripts": [
+        "1",
+        "1",
+        "2",
+        "d"
+      ],
+      "value": "y2"
+    },
+    {
+      "global": "^IadSm172Gen011",
+      "subscripts": [
+        "2",
+        "1",
+        "1"
+      ],
+      "value": "cy"
+    },
+    {
+      "global": "^IadSm172Gen011",
+      "subscripts": [
+        "2",
+        "1",
+        "1",
+        "d"
+      ],
+      "value": "z3"
+    }
+  ],
+  "kill": [
+    "^IadSm172Gen011I"
+  ],
+  "question": "SELECT K1, K2, K3, F1, F2, F3 FROM IadSm172Gen.C011 WHERE F1 = 'bob' ORDER BY K1, K2, K3"
+}

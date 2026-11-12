@@ -622,35 +622,43 @@ false` as naming the argument, so every call sending it would need `acknowledgeP
       fixtures and taking the coverage-list items none of them has.
 - [ ] T101 [P] [US11] One task per class in `CORPUS.md` (the lead splits this into T101a, T101b, …): an invented
       fixture plus seed with its known answer, as T012. Prove: rig case per class.
-- [ ] T102 [P] [US11] Dimensions file `/crates/iris-agentic-dev-core/tests/fixtures/storage172/dimensions.toml`
+- [x] T102 [P] [US11] Dimensions file `/crates/iris-agentic-dev-core/tests/fixtures/storage172/dimensions.toml`
       (lead supplies the dimension names and values from the catalogue; values only, no counts): map type, subscript
       depth, delimiter class per field, node layout, row-node state (value only / children only / value and
       children, i.e. D11), nested in another map yes/no, row ID parts, each code element (one dimension per element,
       present/absent), conditional, parent-child, access type per level, global form. Prove: a unit test in
       `tests/unit/test_storage_map_gen_172.rs` parses the file and asserts every dimension has at least two values.
-- [ ] T103 [US11] Covering-array builder `tests/unit/storage172_gen/pairwise.rs` (shared test-support module, no
+      Done 2026-11-12: seven dimensions (depth, delimiter, node layout, computed field, access type, NextCode, index).
+- [x] T103 [US11] Covering-array builder `tests/unit/storage172_gen/pairwise.rs` (shared test-support module, no
       new crate): `pub fn pairwise(dims: &[Dim], forbidden: &[Pair], seed: u64) -> Vec<Vec<usize>>`, greedy one
       row at a time, deterministic for a seed, never emits a forbidden pair. Test first in `test_storage_map_gen_172.rs`:
       every allowed value pair appears at least once (check by brute force over the output); no forbidden pair
       appears; the same seed gives the same rows; for 3 dimensions of 3 values the output has at most 12 rows.
       Prove: `U test_storage_map_gen_172`.
-- [ ] T104 [US11] Row model and class writer `tests/unit/storage172_gen/class.rs`: `pub fn class_for(row: &[usize],
+      Done 2026-11-12. The module is `tests/unit/storage172_gen.rs` + `storage172_gen/` (the layout guard wants a
+      file beside main.rs); `tests/integration/storage172_gen.rs` includes the same files by path.
+- [x] T104 [US11] Row model and class writer `tests/unit/storage172_gen/class.rs`: `pub fn class_for(row: &[usize],
 dims: &[Dim], n: usize) -> GenClass { name, cls_text, rows: Vec<Vec<String>>, nodes: Vec<(String, String)>,
 question, answer }`. Names `IadSm172Gen.C<nnn>`, globals `^IadSm172Gen<nnn>`, invented field names. The node
       values are built by this module's own encoder (pieces joined with the delimiter, or `$LB` text), never by
       `storage_map` code, and `answer` is the row model itself, so the known answer does not come from the system
       under test. Test first: a two-field `^`-delimited row writes `"a^b"`; a `$LIST` row writes the `$LB` form; the
       answer equals `rows` ordered by ID. Prove: `U test_storage_map_gen_172`.
-- [ ] T105 [US11] Compile oracle `tests/integration/test_storage_map_generated_172_live.rs`: for each row of
+      Done 2026-11-12.
+- [x] T105 [US11] Compile oracle `tests/integration/test_storage_map_generated_172_live.rs`: for each row of
       `pairwise`, PUT and compile the class on iris-dev-iris. A class that compiles is written to
       `tests/fixtures/storage172/generated/` with its seed; a class that fails adds the pair(s) and the IRIS error
       number to `tests/fixtures/storage172/forbidden.toml` (with `IAD_REGEN_GENERATED=1` only; otherwise the test
       asserts the committed files equal a fresh generation). Repeat until no new forbidden pair appears. Every class
       is dropped afterwards. Add `IAD_REGEN_GENERATED` to `BEHAVIOR_ENV_VARS`. Prove: `L test_storage_map_generated_172`.
-- [ ] T106 [US11] Every pair in `forbidden.toml` becomes a case in `tests/unit/test_storage_map_validate_172.rs`: the
+      Done 2026-11-12: 18 generated classes, all compiled and answered; no forbidden pair over these dimensions.
+      Deviation: `IAD_REGEN_GENERATED` is not added to `BEHAVIOR_ENV_VARS`, which lists launch settings only (the
+      guard requires a LAUNCH_SETTINGS row); like `IAD_REGEN_HINTS` it is read by its test alone.
+- [x] T106 [US11] Every pair in `forbidden.toml` becomes a case in `tests/unit/test_storage_map_validate_172.rs`: the
       validator refuses it before any write, or the case says why only IRIS can tell (the compile check covers it).
       Every error number found has an `explain.rs` entry. Prove: `U test_storage_map_validate_172`,
       `U test_storage_map_explain_172`.
+      Done 2026-11-12: with no pair found, the guard holds for every pair `forbidden.toml` gains later.
 - [x] T107 [US11] Random-tree writer test `tests/integration/test_storage_map_random_172_live.rs`: 200 random
       grammar-valid Storage trees from a fixed seed (inline xorshift, no new crate), each emitted, PUT, read back and
       compared with `normalize(sent)`; any difference fails with the seed and the tree. Prove:

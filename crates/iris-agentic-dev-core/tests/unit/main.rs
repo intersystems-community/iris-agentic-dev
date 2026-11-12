@@ -22,6 +22,7 @@ fn isolate_the_test_process() {
 }
 
 mod handler_keys;
+mod storage172_gen;
 mod support_gate_141;
 mod test_admin_api_guardrail;
 mod test_aihub_139;
@@ -236,6 +237,7 @@ mod test_storage_map_doc_sink_172;
 mod test_storage_map_draft_172;
 mod test_storage_map_explain_172;
 mod test_storage_map_gates_172;
+mod test_storage_map_gen_172;
 mod test_storage_map_golden_172;
 mod test_storage_map_map_node_172;
 mod test_storage_map_markdown_172;

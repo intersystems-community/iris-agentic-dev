@@ -58,8 +58,11 @@ fn key(map_type: &str, depth: u64, layout: &str, delim: &str) -> String {
 
 fn fixture_keys() -> BTreeSet<String> {
     let mut out = BTreeSet::new();
-    for e in std::fs::read_dir(fixture_dir().join("classes"))
-        .unwrap()
+    let dirs = ["classes", "generated/classes"].map(|d| fixture_dir().join(d));
+    for e in dirs
+        .iter()
+        .filter_map(|d| std::fs::read_dir(d).ok())
+        .flatten()
         .flatten()
     {
         let text = std::fs::read_to_string(e.path()).unwrap();

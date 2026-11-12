@@ -1,0 +1,91 @@
+{
+  "answer": [
+    {
+      "F1": "bob",
+      "F2": "y2",
+      "K1": 1,
+      "K2": 2
+    }
+  ],
+  "build_indexes": [
+    "IdxF1"
+  ],
+  "class": "IadSm172Gen.C008",
+  "globals": [
+    {
+      "global": "^IadSm172Gen008",
+      "lb": [
+        "ada"
+      ],
+      "subscripts": [
+        "1",
+        "1"
+      ]
+    },
+    {
+      "global": "^IadSm172Gen008",
+      "lb": [
+        "x1"
+      ],
+      "subscripts": [
+        "1",
+        "1",
+        "d"
+      ]
+    },
+    {
+      "global": "^IadSm172Gen008",
+      "lb": [
+        "bob"
+      ],
+      "subscripts": [
+        "1",
+        "2"
+      ]
+    },
+    {
+      "global": "^IadSm172Gen008",
+      "lb": [
+        "y2"
+      ],
+      "subscripts": [
+        "1",
+        "2",
+        "d"
+      ]
+    },
+    {
+      "global": "^IadSm172Gen008",
+      "lb": [
+        "cy"
+      ],
+      "subscripts": [
+        "2",
+        "1"
+      ]
+    },
+    {
+      "global": "^IadSm172Gen008",
+      "lb": [
+        "z3"
+      ],
+      "subscripts": [
+        "2",
+        "1",
+        "d"
+      ]
+    },
+    {
+      "global": "^IadSm172Gen008",
+      "subscripts": [
+        "1",
+        "zz"
+      ],
+      "value": "junk"
+    }
+  ],
+  "kill": [
+    "^IadSm172Gen008I"
+  ],
+  "question": "SELECT K1, K2, F1, F2 FROM IadSm172Gen.C008 WHERE F1 = 'bob' ORDER BY K1, K2"
+}

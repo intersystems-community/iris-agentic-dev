@@ -1,0 +1,51 @@
+{
+  "answer": [
+    {
+      "F1": "bob",
+      "F2": "y2",
+      "F3": 2,
+      "K1": 2
+    }
+  ],
+  "build_indexes": [
+    "IdxF1"
+  ],
+  "class": "IadSm172Gen.C002",
+  "globals": [
+    {
+      "global": "^IadSm172Gen002",
+      "subscripts": [
+        "1",
+        "d"
+      ],
+      "value": "ada|x1"
+    },
+    {
+      "global": "^IadSm172Gen002",
+      "subscripts": [
+        "2",
+        "d"
+      ],
+      "value": "bob|y2"
+    },
+    {
+      "global": "^IadSm172Gen002",
+      "subscripts": [
+        "3",
+        "d"
+      ],
+      "value": "cy|z3"
+    },
+    {
+      "global": "^IadSm172Gen002",
+      "subscripts": [
+        "zz"
+      ],
+      "value": "junk"
+    }
+  ],
+  "kill": [
+    "^IadSm172Gen002I"
+  ],
+  "question": "SELECT K1, F1, F2, F3 FROM IadSm172Gen.C002 WHERE F1 = 'bob' ORDER BY K1"
+}

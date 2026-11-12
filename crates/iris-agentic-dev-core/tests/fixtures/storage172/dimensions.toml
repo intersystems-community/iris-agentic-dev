@@ -1,0 +1,30 @@
+# Dimensions the storage-map generator combines (spec 172 T102). Values only; each value is a
+# shape a real map can have. The generator writes one class per row of a pairwise covering array.
+
+[[dim]]
+name = "depth"
+values = ["1", "2", "3"]
+
+[[dim]]
+name = "delimiter"
+values = ["caret", "pipe", "ctrl1", "list"]
+
+[[dim]]
+name = "node_layout"
+values = ["row", "sub", "row_and_sub", "two_subs"]
+
+[[dim]]
+name = "computed"
+values = ["no", "level1"]
+
+[[dim]]
+name = "access_type"
+values = ["none", "Sub", "sub"]
+
+[[dim]]
+name = "next_code"
+values = ["no", "skip_named"]
+
+[[dim]]
+name = "index"
+values = ["no", "on_f1"]
