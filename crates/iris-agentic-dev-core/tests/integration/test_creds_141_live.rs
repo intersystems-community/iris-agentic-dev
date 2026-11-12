@@ -172,7 +172,7 @@ async fn no_sentinel_reaches_storage_and_the_created_credential_and_users_work()
         return;
     };
     env_guard.set("IRIS_ADMIN_TOOLS", "1");
-    let client = reqwest::Client::new();
+    let client = iris_agentic_dev_core::testing::iris_client(iris.username, iris.password);
     let sys = conn(&iris, iris.username, iris.password);
     install_stub(&iris, &client).await;
 
@@ -189,13 +189,16 @@ async fn no_sentinel_reaches_storage_and_the_created_credential_and_users_work()
     );
     assert_eq!(made["success"], true, "account not created: {made}");
     let acct = conn(&iris, ACCOUNT, ACCOUNT_PW);
-    acct.query("SELECT 1 AS x", vec![], "USER", &client)
+    // Each account in its own CSP session: IRIS answers from the session before it reads
+    // `Authorization`, so a call riding on another account's session proves nothing about this one.
+    let acct_client = iris_agentic_dev_core::testing::iris_client(ACCOUNT, ACCOUNT_PW);
+    acct.query("SELECT 1 AS x", vec![], "USER", &acct_client)
         .await
         .expect("the account the sentinel belongs to must be able to connect");
 
     // Control: a literal in generator source is journaled, so the journal search can see source.
     let control = acct
-        .execute_via_generator(&format!("Write \"{CONTROL}\""), "USER", &client)
+        .execute_via_generator(&format!("Write \"{CONTROL}\""), "USER", &acct_client)
         .await
         .unwrap();
     assert!(control.contains(CONTROL), "{control}");
@@ -206,7 +209,7 @@ async fn no_sentinel_reaches_storage_and_the_created_credential_and_users_work()
     let status = body(
         handle_iris_source_control(
             &acct,
-            &client,
+            &acct_client,
             scm_params(
                 json!({"action": "status", "document": "Iad141.Probe.cls", "namespace": "USER"}),
             ),
@@ -251,7 +254,7 @@ async fn no_sentinel_reaches_storage_and_the_created_credential_and_users_work()
         .execute_via_generator(
             "Write ##class(Ens.Config.Credentials).GetValue(\"iad141cred\",\"Password\")",
             "USER",
-            &client,
+            &acct_client,
         )
         .await
         .unwrap();
@@ -267,7 +270,12 @@ async fn no_sentinel_reaches_storage_and_the_created_credential_and_users_work()
     );
     assert_eq!(newu["success"], true, "create user: {newu}");
     conn(&iris, "iad141new", NEW_USER_PW)
-        .query("SELECT 1 AS x", vec![], "USER", &client)
+        .query(
+            "SELECT 1 AS x",
+            vec![],
+            "USER",
+            &iris_agentic_dev_core::testing::iris_client("iad141new", NEW_USER_PW),
+        )
         .await
         .expect("the user created with a header-borne password must be able to connect");
 
@@ -285,7 +293,12 @@ async fn no_sentinel_reaches_storage_and_the_created_credential_and_users_work()
     );
     assert_eq!(cleared["success"], true, "clear flag: {cleared}");
     conn(&iris, "iad141flag", FLAG_NEW_PW)
-        .query("SELECT 1 AS x", vec![], "USER", &client)
+        .query(
+            "SELECT 1 AS x",
+            vec![],
+            "USER",
+            &iris_agentic_dev_core::testing::iris_client("iad141flag", FLAG_NEW_PW),
+        )
         .await
         .expect("the user whose flag was cleared must connect with the new password");
 
@@ -295,7 +308,7 @@ async fn no_sentinel_reaches_storage_and_the_created_credential_and_users_work()
         args: vec![Secret::new(CRED_PW)],
     };
     let failed = acct
-        .execute_via_generator_with_args(&failing, "USER", &client)
+        .execute_via_generator_with_args(&failing, "USER", &acct_client)
         .await
         .unwrap();
     assert!(
@@ -384,7 +397,7 @@ async fn source_control_still_works_with_an_empty_password() {
     let Some(iris) = ThrowawayIris::start() else {
         return;
     };
-    let client = reqwest::Client::new();
+    let client = iris_agentic_dev_core::testing::iris_client(iris.username, iris.password);
     let acct = conn(&iris, iris.username, iris.password);
     install_stub(&iris, &client).await;
     let store = ElicitationStore::new();

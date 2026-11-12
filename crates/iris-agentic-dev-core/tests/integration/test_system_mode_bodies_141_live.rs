@@ -35,7 +35,7 @@ fn fixture(name: &str) -> PathBuf {
 }
 
 async fn ask(user: &str, pw: &str, sql: &str) -> (u16, String) {
-    let r = reqwest::Client::new()
+    let r = iris_agentic_dev_core::testing::iris_client(user, pw)
         .post(format!("{}/api/atelier/v8/%25SYS/action/query", base()))
         .basic_auth(user, Some(pw))
         .json(&serde_json::json!({ "query": sql }))
@@ -58,7 +58,7 @@ impl Drop for Scratch {
                 .build()
                 .unwrap();
             rt.block_on(async {
-                let _ = reqwest::Client::new()
+                let _ = iris_agentic_dev_core::testing::iris_client(&u, &p)
                     .post(url)
                     .basic_auth(u, Some(p))
                     .json(&serde_json::json!({ "query": sql }))

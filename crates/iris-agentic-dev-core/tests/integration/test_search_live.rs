@@ -28,7 +28,7 @@ async fn make_conn() -> Option<(IrisConnection, reqwest::Client)> {
     // to v1 and search returns empty on v8 IRIS (the /action/search response shape
     // changed; v1 returns {} instead of an array).
     conn.probe().await;
-    Some((conn, reqwest::Client::new()))
+    Some((conn, iris_agentic_dev_core::testing::live_client()))
 }
 
 /// The class the scoped searches look in: two `Test*` methods, so `TestAlwaysPasses` and the regex

@@ -4010,7 +4010,11 @@ impl IrisTools {
             let counter = self.iris_audit_counter.clone();
             if let Some(iris_conn) = conn.clone() {
                 tokio::task::spawn(async move {
-                    let client = match iris_conn.client(crate::iris::http::ClientKind::Raw) {
+                    // In the connection's CSP session, like the call it records. A client with no
+                    // jar sent each of the generator's requests without `CSPSESSIONID`, and IRIS
+                    // opened a session for every one that nothing ended: on a Concurrent User key,
+                    // a license unit each until the web app's timeout.
+                    let client = match iris_conn.client(crate::iris::http::ClientKind::Call) {
                         Ok(c) => c,
                         Err(e) => {
                             tracing::warn!("iris_audit: failed to build HTTP client: {e}");

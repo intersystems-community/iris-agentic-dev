@@ -30,7 +30,7 @@ async fn set_mode(c: &IrisConnection, client: &reqwest::Client, mode: &str) -> S
 #[tokio::test]
 #[ignore = "requires live IRIS (iris-dev-iris); sets SystemMode to LIVE for a moment and restores it"]
 async fn a_live_instance_reads_as_live() {
-    let client = reqwest::Client::new();
+    let client = iris_agentic_dev_core::testing::live_client();
     let admin = conn();
     let old = set_mode(&admin, &client, "LIVE").await;
     assert!(!old.starts_with("ERROR"), "could not set the mode: {old}");

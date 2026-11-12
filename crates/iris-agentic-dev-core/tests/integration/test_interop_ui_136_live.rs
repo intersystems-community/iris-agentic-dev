@@ -42,7 +42,7 @@ fn live() -> Live {
         base,
         user,
         pass,
-        http: reqwest::Client::new(),
+        http: iris_agentic_dev_core::testing::live_client(),
         conn,
     }
 }

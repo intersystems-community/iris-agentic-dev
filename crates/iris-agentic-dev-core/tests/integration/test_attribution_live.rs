@@ -126,7 +126,7 @@ async fn ws_handshake_carries_user_agent_marker() {
     set_caller_mode(CallerMode::Mcp);
 
     // Probe the real Atelier version — WS requires V7+.
-    let probe_client = reqwest::Client::new();
+    let probe_client = iris_agentic_dev_core::testing::live_client();
     let ver_resp = probe_client
         .get(format!("{}/api/atelier/", conn.base_url))
         .basic_auth(&conn.username, Some(&conn.password))

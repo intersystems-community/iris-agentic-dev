@@ -395,7 +395,7 @@ fn atelier(path: &str) -> (reqwest::Client, String, String, String) {
     let user = std::env::var("IRIS_USERNAME").unwrap_or_else(|_| "_SYSTEM".into());
     let pass = std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".into());
     (
-        reqwest::Client::new(),
+        iris_agentic_dev_core::testing::live_client(),
         format!("http://{host}:{port}/api/atelier/v1/USER/{path}"),
         user,
         pass,

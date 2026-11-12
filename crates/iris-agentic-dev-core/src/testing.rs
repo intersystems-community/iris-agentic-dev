@@ -2082,6 +2082,83 @@ pub struct LiveTarget {
     pub namespace: String,
 }
 
+/// An HTTP client for a test's own requests to IRIS as `username`/`password`, in the one CSP
+/// session this process holds for that pair.
+///
+/// A client with no cookie jar sends every request without `CSPSESSIONID`, and IRIS opens a CSP
+/// session for each write that nothing ends. On a Concurrent User key each one holds a license
+/// unit until the web app's timeout: five cookieless PUTs took 25 of a 128-unit Enterprise key, and
+/// the e2e job ran into `<LICENSE LIMIT EXCEEDED>` minutes in (measured 2026-11-11).
+///
+/// The jar is shared, the client is not: a `reqwest::Client` pools connections on the runtime that
+/// opened them, and each test builds its own. Keyed by the password too, because IRIS answers from
+/// the session before it reads `Authorization`, so a test of a wrong or changed password must not
+/// ride on the right one's session.
+pub fn iris_client(username: &str, password: &str) -> reqwest::Client {
+    use std::sync::{Arc, Mutex};
+    static JARS: Mutex<BTreeMap<(String, String), Arc<PortJar>>> = Mutex::new(BTreeMap::new());
+    let jar = JARS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry((username.to_string(), password.to_string()))
+        .or_default()
+        .clone();
+    crate::iris::http::test_client(jar).expect("a reqwest client with a cookie jar")
+}
+
+/// A cookie jar per `host:port`. A cookie's domain carries no port, and every IRIS container names
+/// its session cookie after the port it listens on inside (52773), so one jar for `localhost`
+/// would send `iris-dev-iris`'s session to a throwaway instance on another port.
+#[derive(Default)]
+struct PortJar(
+    std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<reqwest::cookie::Jar>>>,
+);
+
+impl PortJar {
+    fn jar(&self, url: &reqwest::Url) -> std::sync::Arc<reqwest::cookie::Jar> {
+        let key = format!(
+            "{}:{}",
+            url.host_str().unwrap_or_default(),
+            url.port_or_known_default().unwrap_or_default()
+        );
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(key)
+            .or_default()
+            .clone()
+    }
+}
+
+impl reqwest::cookie::CookieStore for PortJar {
+    fn set_cookies(
+        &self,
+        headers: &mut dyn Iterator<Item = &reqwest::header::HeaderValue>,
+        url: &reqwest::Url,
+    ) {
+        self.jar(url).set_cookies(headers, url);
+    }
+
+    fn cookies(&self, url: &reqwest::Url) -> Option<reqwest::header::HeaderValue> {
+        self.jar(url).cookies(url)
+    }
+}
+
+/// [`iris_client`] for the account the live tests run as: `IRIS_USERNAME`/`IRIS_PASSWORD`, or
+/// `_SYSTEM`/`SYS`.
+pub fn live_client() -> reqwest::Client {
+    let var = |k: &str, d: &str| {
+        std::env::var(k)
+            .ok()
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| d.to_string())
+    };
+    iris_client(
+        &var("IRIS_USERNAME", "_SYSTEM"),
+        &var("IRIS_PASSWORD", "SYS"),
+    )
+}
+
 impl LiveTarget {
     pub fn from_env() -> Self {
         let var = |k: &str, default: &str| {

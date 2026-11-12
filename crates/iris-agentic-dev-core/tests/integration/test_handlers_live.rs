@@ -12103,7 +12103,7 @@ async fn test_search_sync_with_wiremock_null_work_id() {
         "SYS",
         DiscoverySource::EnvVar,
     );
-    let client = reqwest::Client::new();
+    let client = iris_agentic_dev_core::testing::live_client();
     let log = Arc::new(Mutex::new(log_store::LogStore::new(200, 60)));
 
     let params = SearchParams {
@@ -12190,7 +12190,7 @@ async fn test_search_async_poll_with_wiremock() {
         "SYS",
         DiscoverySource::EnvVar,
     );
-    let client = reqwest::Client::new();
+    let client = iris_agentic_dev_core::testing::live_client();
     let log = Arc::new(Mutex::new(log_store::LogStore::new(200, 60)));
 
     let params = SearchParams {
@@ -12385,7 +12385,7 @@ async fn test_doc_delete_non_2xx_non_404() {
         "SYS",
         DiscoverySource::EnvVar,
     );
-    let client = reqwest::Client::new();
+    let client = iris_agentic_dev_core::testing::live_client();
     let elicitation_store = iris_agentic_dev_core::elicitation::ElicitationStore::new();
 
     let result = handle_iris_doc(

@@ -100,7 +100,7 @@ impl Drop for Scratch {
 }
 
 async fn atelier_status(user: &str, password: &str) -> u16 {
-    reqwest::Client::new()
+    iris_agentic_dev_core::testing::iris_client(user, password)
         .get(format!(
             "{}/api/atelier/",
             LiveTarget::from_env().base_url()

@@ -76,6 +76,7 @@ async fn probe_atelier_succeeds_against_real_container() {
 #[ignore = "requires live iris-dev-iris container on the mapped Atelier port"]
 async fn probe_atelier_with_client_succeeds_against_real_container() {
     let port = live_port();
+    // no-jar: one read to identify the listener; a read leaves no session open
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(5000))
         .danger_accept_invalid_certs(true)

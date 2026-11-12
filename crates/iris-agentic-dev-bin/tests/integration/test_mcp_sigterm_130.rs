@@ -24,7 +24,7 @@ fn scratch_classes() -> Option<BTreeSet<String>> {
         let url = format!(
             "http://{host}:{port}/api/atelier/v1/USER/docnames/CLS?filter=IrisDevTmp.IrisDev%25"
         );
-        let body: serde_json::Value = reqwest::Client::new()
+        let body: serde_json::Value = iris_agentic_dev_core::testing::live_client()
             .get(&url)
             .basic_auth(&user, Some(&pass))
             .send()

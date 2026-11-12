@@ -41,7 +41,10 @@ fn make_conn(iris: &ThrowawayIris) -> (IrisConnection, reqwest::Client) {
         iris.password,
         DiscoverySource::EnvVar,
     );
-    (conn, reqwest::Client::new())
+    (
+        conn,
+        iris_agentic_dev_core::testing::iris_client(iris.username, iris.password),
+    )
 }
 
 /// The path of the current journal file, as IRIS names it.

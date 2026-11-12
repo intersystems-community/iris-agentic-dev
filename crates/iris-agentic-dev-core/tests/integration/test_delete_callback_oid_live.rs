@@ -41,7 +41,7 @@ fn conn() -> Option<(IrisConnection, reqwest::Client)> {
         pass,
         DiscoverySource::EnvVar,
     );
-    Some((conn, reqwest::Client::new()))
+    Some((conn, iris_agentic_dev_core::testing::live_client()))
 }
 
 async fn put_and_compile(

@@ -33,9 +33,10 @@ async fn call(class: &str, method: &str, args: &[&str]) -> serde_json::Value {
         namespace: Some("USER".to_string()),
         server: None,
     };
-    let result = handle_iris_execute_method(&iris, &reqwest::Client::new(), &p)
-        .await
-        .unwrap();
+    let result =
+        handle_iris_execute_method(&iris, &iris_agentic_dev_core::testing::live_client(), &p)
+            .await
+            .unwrap();
     serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap()
 }
 

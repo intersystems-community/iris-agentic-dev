@@ -133,6 +133,7 @@ mod test_lazy_pool_141;
 mod test_lazy_secrets_141;
 mod test_lift_math;
 mod test_list_tools_pagination;
+mod test_live_client_jar_guard;
 mod test_live_reload;
 mod test_llm_usage;
 mod test_lockfile_sync;

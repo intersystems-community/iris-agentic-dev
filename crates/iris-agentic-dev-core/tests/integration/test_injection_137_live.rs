@@ -37,7 +37,7 @@ fn conn() -> (IrisConnection, reqwest::Client) {
             pass,
             DiscoverySource::EnvVar,
         ),
-        reqwest::Client::new(),
+        iris_agentic_dev_core::testing::live_client(),
     )
 }
 

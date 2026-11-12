@@ -176,6 +176,15 @@ pub fn client_with_store(
     Ok(b.build()?)
 }
 
+/// A live test's own client for IRIS, holding the cookie store the test gives it
+/// (`testing::iris_client`), so each write it sends rides one CSP session.
+#[cfg(feature = "testing")]
+pub fn test_client<C: reqwest::cookie::CookieStore + 'static>(
+    store: Arc<C>,
+) -> anyhow::Result<reqwest::Client> {
+    Ok(base_builder(true).cookie_provider(store).build()?)
+}
+
 /// `b` with `store` as its CSP cookie jar. Test builds wrap the jar so the request is still seen.
 fn jar(b: reqwest::ClientBuilder, store: Arc<CspSessionStore>) -> reqwest::ClientBuilder {
     #[cfg(feature = "testing")]
