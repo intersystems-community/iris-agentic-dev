@@ -1827,9 +1827,13 @@ whole map from `model`; a `replace` that would remove elements lists them as
 carry the `version` from `read`, and a class that changed since is `STORAGE_MAP_VERSION_CONFLICT`.
 A write checks the map, compiles it in a scratch copy, writes the class only if IRIS still holds the
 version iad read, reads it back, and compiles it; if that compile fails, iad puts the previous
-version back (`STORAGE_MAP_RESTORED`). Only the Storage block of the class changes. In this build
-`compare`, `preview` and `propose` answer `NOT_IMPLEMENTED`, and `seed_counter` and
-`build_indexes` are refused.
+version back (`STORAGE_MAP_RESTORED`). Only the Storage block of the class changes. `compare` samples the map's global (at most `max_nodes` nodes, 5 seconds) and lists where the map
+and the data disagree: a field on a piece the data does not have, `$LIST` against delimited text, or
+a row node with values or sub-nodes no field reads. `preview` returns the rows a map (the stored one,
+or `model`) would give, read through a scratch copy; values are masked unless `include_values`,
+which needs `acknowledgePhi` under `dataPolicy = "allow"` and is refused under `block` and `redact`.
+Both run as the service account when one is set, and say so in `identity`. In this build `propose`
+answers `NOT_IMPLEMENTED`, and `seed_counter` and `build_indexes` are refused.
 
 | Parameter         | Type         | Default  | Notes                                                                                  |
 | ----------------- | ------------ | -------- | -------------------------------------------------------------------------------------- |

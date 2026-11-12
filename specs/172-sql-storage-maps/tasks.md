@@ -517,24 +517,35 @@ Value>` through `execute_via_generator` (service account per T036). Test first
       all 11 with sub-node `"EV"`; `Member` shows level 1 all 1. Prove: `L test_storage_map_data_172`.
       Done 2026-11-12: a node holding only children (`$Data` 10, `Loan`'s `"EV"`) is reported when the walk first
       passes under it, since `$Query` never returns it.
-- [ ] T085 [US5] `compare` flags D11 mismatches (FR-020a): `MemberD11` with its `contact` fields removed from the map
+- [x] T085 [US5] `compare` flags D11 mismatches (FR-020a): `MemberD11` with its `contact` fields removed from the map
       reports "row node has children the map does not read"; a map of only the `contact` fields reports the
       unread value. Prove: `L test_storage_map_data_172`.
-- [ ] T086 [US5] `mod.rs`: the `compare` action (match the shape report against the map; `mismatches`). Test first:
+      Done 2026-11-12: each literal sub-node no field reads is named in the mismatch.
+- [x] T086 [US5] `mod.rs`: the `compare` action (match the shape report against the map; `mismatches`). Test first:
       `Member` with a field moved to the wrong piece reports the mismatch with its node; a matching map reports none.
       Prove: `L test_storage_map_data_172`, then `L test_storage_map_gates_172` (T059) for compare.
-- [ ] T087 [US5] `mod.rs`: the `preview` action: `gate_tree`, scratch copy of the proposed map, `SELECT TOP max_rows`
+      Done 2026-11-12. T059 passes in full now that preview exists.
+- [x] T087 [US5] `mod.rs`: the `preview` action: `gate_tree`, scratch copy of the proposed map, `SELECT TOP max_rows`
       through the scratch table as the service account, values masked unless `include_values`; scratch removed. Test
       first: preview of `Member`'s map returns the seed's known answer row (with `include_values`) and masked values
       without it. Prove: `L test_storage_map_data_172`.
-- [ ] T088 [US5] Data policy (FR-021): add `iris_storage_map` to `HANDLER_ENFORCED_TOOLS` (`policy/data_policy_gate.rs:30`);
+      Done 2026-11-12: `compile_scratch_class_then` runs the SELECT while the scratch class exists. Found: IRIS
+      refuses two fields on one piece of a node (#5001 "Duplicate element"), so a proposal that does so is a
+      compile failure.
+- [x] T088 [US5] Data policy (FR-021): add `iris_storage_map` to `HANDLER_ENFORCED_TOOLS` (`policy/data_policy_gate.rs:30`);
       in the handler, `include_values: true` is refused under block and redact and needs `acknowledgePhi` under allow
       (`check_body_read_acknowledged_as`); `names_argument` unchanged. Test first
       `tests/unit/test_storage_map_policy_172.rs`: each policy × include_values true/false/absent; and
       `test_body_read_ack_171` stays green. Prove: `U test_storage_map_policy_172`, `U test_body_read_ack_171`.
+      Done 2026-11-12, in the handler only (`sample::values_refusal`). Deviation: `iris_storage_map` is not added
+      to `HANDLER_ENFORCED_TOOLS`/`ACKNOWLEDGED_BODY_READS`, because `names_argument` treats `include_values:
+    false` as naming the argument, so every call sending it would need `acknowledgePhi` under `allow`.
 - [ ] T089 [US5] Identity: in `test_storage_map_data_172_live.rs`, with a service account configured (see
       `test_scratch_cleanup_141_live.rs` for the throwaway setup), `compare`/`preview` answers carry the service
       account in `identity`, and refuse when the service account cannot be used. Prove: `L test_storage_map_data_172`.
+      Deferred 2026-11-12: needs the throwaway container (`ThrowawayIris`), which is not started on the laptop
+      under the build-load rules. compare/preview take identity from `exec_context`, the path the 141 identity
+      tests cover; run this on a build box.
 
 ---
 

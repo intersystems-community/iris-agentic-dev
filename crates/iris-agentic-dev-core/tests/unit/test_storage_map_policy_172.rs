@@ -101,3 +101,39 @@ fn allow_dynamic_map_globals_trusted_workspace() {
     );
     assert!(p.set_aside.is_empty(), "trusted workspace is not set aside");
 }
+
+// ── T088: values in compare/preview/propose answers follow the data policy (FR-021) ──────────
+
+mod t088 {
+    use iris_agentic_dev_core::tools::storage_map::sample::values_refusal;
+
+    #[test]
+    fn t088_each_policy_and_include_values() {
+        for policy in ["allow", "block", "redact"] {
+            // No values asked for: nothing to refuse, whatever the policy.
+            assert!(
+                values_refusal(false, false, policy, "s1").is_none(),
+                "{policy}"
+            );
+            assert!(
+                values_refusal(false, true, policy, "s1").is_none(),
+                "{policy}"
+            );
+        }
+        // Under allow, values need acknowledgePhi.
+        let r = values_refusal(true, false, "allow", "s1").expect("allow without ack");
+        assert_eq!(r["error_code"], "PHI_ACK_REQUIRED", "{r}");
+        assert!(values_refusal(true, true, "allow", "s1").is_none());
+        // Under block and redact, values are refused, acknowledged or not.
+        for policy in ["block", "redact"] {
+            for ack in [false, true] {
+                let r = values_refusal(true, ack, policy, "s1").expect("refused");
+                assert_eq!(
+                    r["error_code"], "DATA_POLICY_BLOCKED",
+                    "{policy} {ack}: {r}"
+                );
+                assert_eq!(r["server_name"], "s1", "{r}");
+            }
+        }
+    }
+}

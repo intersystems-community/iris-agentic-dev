@@ -1527,6 +1527,26 @@ impl IrisConnection {
         client: &reqwest::Client,
         prefix: &str,
     ) -> anyhow::Result<(String, CompileResult)> {
+        self.compile_scratch_class_then(source, namespace, client, prefix, None)
+            .await
+            .map(|(name, result, _)| (name, result))
+    }
+
+    /// [`Self::compile_scratch_class`] that also runs the SQL `query` builds from the scratch
+    /// class's name while the class exists, when the compile succeeded (`preview`, spec 172 FR-029).
+    /// The query's answer is the third item; the class is deleted afterwards on every path.
+    pub async fn compile_scratch_class_then(
+        &self,
+        source: impl FnOnce(&str) -> String,
+        namespace: &str,
+        client: &reqwest::Client,
+        prefix: &str,
+        query: Option<&(dyn Fn(&str) -> String + Sync)>,
+    ) -> anyhow::Result<(
+        String,
+        CompileResult,
+        Option<anyhow::Result<serde_json::Value>>,
+    )> {
         if let Some((tool, from)) = crate::tools::target::call_read_only_source() {
             anyhow::bail!(
                 "READ_ONLY_STRICT (scratch-class compile): {tool} would compile a scratch class \
@@ -1578,8 +1598,14 @@ impl IrisConnection {
                     .await
             }
         };
+        let answer = match (&result, query) {
+            (Ok(compiled), Some(q)) if compiled.success() => {
+                Some(self.query(&q(&class_name), vec![], namespace, client).await)
+            }
+            _ => None,
+        };
         scratch.release(self, client).await;
-        Ok((class_name, result?))
+        Ok((class_name, result?, answer))
     }
 
     /// A tool-call client for the connection the launch settings describe: `IRIS_INSECURE` and

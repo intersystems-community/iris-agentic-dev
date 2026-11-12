@@ -3,7 +3,7 @@
 
 use super::globals::GlobalRef;
 use super::shape::{Cap, ShapeReport};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 /// The candidate delimiters, in the order they are tried: `^`, `|`, `~`, `$C(1)`, `,`.
 const DELIMITERS: &str = "$C(94),$C(124),$C(126),$C(1),$C(44)";
@@ -89,7 +89,7 @@ pub async fn sample(
     cap: Cap,
     include_values: bool,
 ) -> Result<ShapeReport, Value> {
-    let fail = |code: &str, msg: String| super::write::body(code, msg, serde_json::json!({}));
+    let fail = |code: &str, msg: String| super::write::body(code, msg, json!({}));
     let code = build_code(global, cap.nodes, cap.seconds, include_values)
         .map_err(|e| fail("INVALID_PARAMS", e))?;
     let out = iris
@@ -105,4 +105,43 @@ pub async fn sample(
     report.global = global.name.clone();
     report.cap = cap;
     Ok(report)
+}
+
+/// The refusal for a call that asks for the values a global holds (`include_values`, FR-021), or
+/// `None`: under `allow` they need `acknowledgePhi`; under `block` and `redact` they are refused,
+/// since iad cannot tell which nodes hold PHI. Without `include_values` there is nothing to refuse:
+/// shapes, counts and masked rows carry no values.
+pub fn values_refusal(
+    include_values: bool,
+    acknowledged: bool,
+    data_policy: &str,
+    server: &str,
+) -> Option<Value> {
+    if !include_values {
+        return None;
+    }
+    match data_policy {
+        "allow" if acknowledged => None,
+        "allow" => Some(json!({
+            "success": false,
+            "error_code": "PHI_ACK_REQUIRED",
+            "server_name": server,
+            "tool_name": "iris_storage_map",
+            "error": "dataPolicy=allow requires acknowledgePhi=true for iris_storage_map \
+                      include_values: the answer holds the global's values, which may contain PHI.",
+        })),
+        other => Some(json!({
+            "success": false,
+            "error_code": "DATA_POLICY_BLOCKED",
+            "data_policy_blocked": true,
+            "server_name": server,
+            "data_policy": other,
+            "tool_name": "iris_storage_map",
+            "error": format!(
+                "iris_storage_map include_values returns the global's values, and dataPolicy is \
+                 '{other}' for server '{server}'. The shape, counts and masked rows are still \
+                 available without include_values."
+            ),
+        })),
+    }
 }

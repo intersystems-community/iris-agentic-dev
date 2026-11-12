@@ -181,7 +181,10 @@ pub fn compare_map(map: &super::model::SqlMap, shape: &ShapeReport) -> Vec<Misma
             let problem = match (&want, f.format.as_str()) {
                 (Some(d), "delimited") if f.delimiter.as_deref() != Some(d.as_str()) => Some((
                     format!("pieces delimited by {d:?}"),
-                    format!("delimited by {:?}", f.delimiter.clone().unwrap_or_default()),
+                    format!(
+                        "delimited by {:?}",
+                        f.delimiter.as_deref().unwrap_or_default()
+                    ),
                 )),
                 (Some(d), "$LIST") => Some((
                     format!("pieces delimited by {d:?}"),
@@ -191,7 +194,7 @@ pub fn compare_map(map: &super::model::SqlMap, shape: &ShapeReport) -> Vec<Misma
                     "$LIST (no delimiter)".to_string(),
                     format!(
                         "text delimited by {:?}",
-                        f.delimiter.clone().unwrap_or_default()
+                        f.delimiter.as_deref().unwrap_or_default()
                     ),
                 )),
                 (None, "plain") if f.pieces.max > 0 => {

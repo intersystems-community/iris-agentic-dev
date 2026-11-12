@@ -910,7 +910,15 @@ async fn do_write(
     let map_guard = if name.to_ascii_lowercase().ends_with(".cls")
         && super::storage_map::write::content_has_sql_map(content)
     {
-        match super::storage_map::write::doc_precheck(iris, client, name, content, namespace).await
+        match super::storage_map::write::doc_precheck(
+            iris,
+            client,
+            name,
+            content,
+            namespace,
+            compile_after,
+        )
+        .await
         {
             Ok(guard) => Some(guard),
             Err(answer) => return crate::tools::err_result(answer),

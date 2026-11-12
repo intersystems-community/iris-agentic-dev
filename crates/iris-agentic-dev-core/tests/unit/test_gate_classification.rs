@@ -704,8 +704,11 @@ fn tools_that_reach_the_generator() -> std::collections::BTreeSet<String> {
 /// Tools that reach the scratch class only through a branch the write gate already governs: a put
 /// that runs a source-control hook, `iris_query` with `mode = "write"` or `force`, and the
 /// documented put. A read call never compiles a class, so strict read-only leaves them
-/// listed.
-const SCRATCH_ONLY_ON_WRITE_BRANCHES: &[&str] = &["iris_doc", "iris_query"];
+/// listed. `iris_storage_map` is judged per action (`write_gate::is_scratch_call` reads
+/// `call_shape`): `check`, `edit`, `replace`, `compare`, `preview` and `propose` compile a
+/// scratch class, `read`, `diagram` and `uses` never do, so a static mark would refuse its reads
+/// under strict read-only (spec 172 T066).
+const SCRATCH_ONLY_ON_WRITE_BRANCHES: &[&str] = &["iris_doc", "iris_query", "iris_storage_map"];
 
 /// Local tools that reach the generator. There are none: the skill and knowledge store tools
 /// (`agent_info`, `kb`, `kb_index`, `skill`, `skill_community`) run on the default server, so

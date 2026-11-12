@@ -134,3 +134,288 @@ async fn test_storage_map_data_172_sample_stops_at_the_cap() {
     let row = s.formats.iter().find(|f| f.depth == 1).expect("row");
     assert_eq!((row.format.as_str(), row.pieces.max), ("plain", 0), "{s:?}");
 }
+
+// ── T085, T086: compare ──────────────────────────────────────────────────────
+
+async fn compare(r: &Rig, f: &Fixture) -> serde_json::Value {
+    r.call(
+        "iris_storage_map",
+        json!({"action": "compare", "class": f.class, "namespace": "USER"}),
+    )
+    .await
+}
+
+/// `f` with its class text changed by `edit`, loaded, compared, dropped.
+async fn compared_variant(r: &Rig, name: &str, edit: impl Fn(&str) -> String) -> serde_json::Value {
+    let mut f = Fixture::read(name);
+    f.cls_text = edit(&f.cls_text);
+    load_fixture(r, &f).await;
+    let got = compare(r, &f).await;
+    let problems = drop_fixture(r, &f).await;
+    assert!(problems.is_empty(), "{name}: cleanup: {problems:?}");
+    got
+}
+
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn test_storage_map_data_172_compare_finds_a_field_on_the_wrong_piece() {
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let matching = compared_variant(&r, "Member", |t| t.to_string()).await;
+    // The seed holds three pieces; a map that reads Age from piece 4 reads nothing.
+    let moved = compared_variant(&r, "Member", |t| {
+        t.replacen("<Piece>3</Piece>", "<Piece>4</Piece>", 1)
+    })
+    .await;
+
+    assert_eq!(matching["success"], true, "{matching}");
+    assert_eq!(matching["mismatches"], json!([]), "{matching}");
+    assert_eq!(matching["shape"]["depths"]["1"], 3, "{matching}");
+    assert!(matching["identity"]["user"].is_string(), "{matching}");
+    assert_eq!(moved["success"], true, "{moved}");
+    let m = &moved["mismatches"];
+    assert_eq!(m.as_array().map(Vec::len), Some(1), "{moved}");
+    assert_eq!(m[0]["path"], "/maps/Master/data/Age", "{moved}");
+    assert_eq!(m[0]["expected"], "piece 4", "{moved}");
+    assert_eq!(m[0]["seen"], "at most 3 piece(s)", "{moved}");
+}
+
+/// Remove `fields` (properties and their Data elements) from MemberD11's class text.
+fn without(text: &str, fields: &[&str]) -> String {
+    let mut out = text.to_string();
+    for f in fields {
+        out = out.replacen(&format!("Property {f} As %String;\n\n"), "", 1);
+        let start = out
+            .find(&format!("<Data name=\"{f}\">"))
+            .unwrap_or_else(|| panic!("no Data {f}"));
+        let end = out[start..].find("</Data>\n").unwrap() + start + "</Data>\n".len();
+        out.replace_range(start..end, "");
+    }
+    out
+}
+
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn test_storage_map_data_172_compare_finds_unread_nodes() {
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let full = compared_variant(&r, "MemberD11", |t| t.to_string()).await;
+    let no_contact = compared_variant(&r, "MemberD11", |t| without(t, &["Email", "Phone"])).await;
+    let only_contact = compared_variant(&r, "MemberD11", |t| without(t, &["Name", "City"])).await;
+
+    assert_eq!(full["mismatches"], json!([]), "{full}");
+    let m = no_contact["mismatches"].to_string();
+    assert!(
+        m.contains("row node has children the map does not read"),
+        "{no_contact}"
+    );
+    assert!(m.contains("\\\"contact\\\""), "{no_contact}");
+    let m = only_contact["mismatches"].to_string();
+    assert!(
+        m.contains("the row node holds a value the map does not read"),
+        "{only_contact}"
+    );
+}
+
+// ── T087, T088: preview, and values under the data policy ───────────────────
+
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn test_storage_map_data_172_preview_returns_the_known_rows() {
+    use crate::live_rig_171::rig_with;
+    let r = rig_with(
+        &Where::live(),
+        Toolset::Merged,
+        "write_tools_enabled = true\ndestructive_tools_enabled = true\n\n[policy.default]\ndataPolicy = \"allow\"\n",
+    )
+    .await;
+    let f = Fixture::read("Member");
+    load_fixture(&r, &f).await;
+    let base = json!({"action": "preview", "class": f.class, "namespace": "USER"});
+    let mut with_values = base.clone();
+    with_values["include_values"] = json!(true);
+    with_values["acknowledgePhi"] = json!(true);
+    let shown = r.call("iris_storage_map", with_values.clone()).await;
+    let masked = r.call("iris_storage_map", base.clone()).await;
+    let mut unacked = with_values.clone();
+    unacked["acknowledgePhi"] = json!(false);
+    let refused = r.call("iris_storage_map", unacked).await;
+    // A proposed map that swaps City and Age reads the age as the city. (Two fields on one piece
+    // are refused by IRIS, #5001 "Duplicate element".)
+    let read = r
+        .call(
+            "iris_storage_map",
+            json!({"action": "read", "class": f.class, "namespace": "USER"}),
+        )
+        .await;
+    let mut wrong = read["storage"]["maps"][0].clone();
+    wrong["data"]["Age"]["piece"] = json!("2");
+    wrong["data"]["City"]["piece"] = json!("3");
+    let mut proposed = with_values.clone();
+    proposed["model"] = wrong;
+    let through_proposed = r.call("iris_storage_map", proposed).await;
+    let left = r
+        .call(
+            "iris_query",
+            json!({"query": "SELECT COUNT(*) AS n FROM %Dictionary.ClassDefinition WHERE Name %STARTSWITH 'IrisDevTmp.Sm'",
+                   "namespace": "USER"}),
+        )
+        .await;
+    let problems = drop_fixture(&r, &f).await;
+
+    assert_eq!(shown["success"], true, "{shown}");
+    assert_eq!(shown["row_count"], 3, "{shown}");
+    let rows = shown["rows"].as_array().unwrap();
+    let alice = rows
+        .iter()
+        .find(|row| row["Name"] == "Alice")
+        .unwrap_or_else(|| panic!("no Alice row: {shown}"));
+    assert_eq!(alice["City"], "Portland", "{shown}");
+    assert_eq!(alice["Age"], 35, "{shown}");
+    assert!(shown["identity"]["user"].is_string(), "{shown}");
+
+    assert_eq!(masked["success"], true, "{masked}");
+    assert_eq!(masked["row_count"], 3, "{masked}");
+    assert_eq!(masked["values_masked"], true, "{masked}");
+    assert!(!masked["rows"].to_string().contains("Alice"), "{masked}");
+    assert_eq!(masked["rows"][0]["Name"], "<masked>", "{masked}");
+
+    assert_eq!(refused["error_code"], "PHI_ACK_REQUIRED", "{refused}");
+    assert_eq!(
+        refused["refusal"]["kind"], "acknowledgement_required",
+        "{refused}"
+    );
+
+    assert_eq!(through_proposed["success"], true, "{through_proposed}");
+    let swapped = through_proposed["rows"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|row| row["Name"] == "Alice"))
+        .unwrap_or_else(|| panic!("no Alice row: {through_proposed}"));
+    assert_eq!(swapped["City"], "35", "{through_proposed}");
+    assert_eq!(left["rows"][0]["n"], 0, "a scratch class stayed: {left}");
+    assert!(problems.is_empty(), "cleanup: {problems:?}");
+}
+
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn test_storage_map_data_172_values_are_refused_under_block() {
+    use crate::live_rig_171::rig_with;
+    let r = rig_with(
+        &Where::live(),
+        Toolset::Merged,
+        "write_tools_enabled = true\ndestructive_tools_enabled = true\n\n[policy.default]\ndataPolicy = \"block\"\n",
+    )
+    .await;
+    let f = Fixture::read("Member");
+    load_fixture(&r, &f).await;
+    let mut got = Vec::new();
+    for action in ["compare", "preview"] {
+        got.push(
+            r.call(
+                "iris_storage_map",
+                json!({"action": action, "class": f.class, "namespace": "USER",
+                       "include_values": true, "acknowledgePhi": true}),
+            )
+            .await,
+        );
+    }
+    let shape_only = r
+        .call(
+            "iris_storage_map",
+            json!({"action": "compare", "class": f.class, "namespace": "USER"}),
+        )
+        .await;
+    let problems = drop_fixture(&r, &f).await;
+    for g in &got {
+        assert_eq!(g["error_code"], "DATA_POLICY_BLOCKED", "{g}");
+        assert_eq!(g["refusal"]["kind"], "operator_limit", "{g}");
+    }
+    assert_eq!(
+        shape_only["success"], true,
+        "the shape needs no values: {shape_only}"
+    );
+    assert!(problems.is_empty(), "cleanup: {problems:?}");
+}
+
+// ── T091: the damage FR-023 refuses, reproduced (research R5) ──────────────────
+
+/// With rows 1..3 and no counter node, the first INSERT through a `$i` map gets ID 1 and
+/// overwrites row 1, without an error.
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn test_storage_map_data_172_counterless_insert_overwrites_row_1() {
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let f = Fixture::read("Member");
+    load_fixture(&r, &f).await;
+    // Remove only the root node, the counter `$i(^IadSm172Member)` reads.
+    let zkill = r
+        .call(
+            "iris_execute",
+            json!({"code": "ZKill ^IadSm172Member Write $Data(^IadSm172Member)", "namespace": "USER"}),
+        )
+        .await;
+    let insert = r
+        .call(
+            "iris_query",
+            json!({"query": "INSERT INTO IadSm172.Member (Name, City, Age) VALUES ('Zed', 'Nowhere', 1)",
+                   "mode": "write", "namespace": "USER"}),
+        )
+        .await;
+    let row1 = r
+        .call(
+            "iris_query",
+            json!({"query": "SELECT Name FROM IadSm172.Member WHERE ID = 1", "namespace": "USER"}),
+        )
+        .await;
+    let problems = drop_fixture(&r, &f).await;
+    assert_eq!(
+        zkill["output"].as_str().map(str::trim),
+        Some("10"),
+        "{zkill}"
+    );
+    assert_eq!(insert["success"], true, "{insert}");
+    assert_eq!(
+        row1["rows"][0]["Name"], "Zed",
+        "row 1 was not overwritten: {row1}"
+    );
+    assert!(problems.is_empty(), "cleanup: {problems:?}");
+}
+
+/// An index map over data whose index global is empty answers nothing for a value that is there.
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn test_storage_map_data_172_unbuilt_index_finds_nothing() {
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let f = Fixture::read("MemberByCity");
+    load_fixture(&r, &f).await;
+    let kill = r
+        .call(
+            "iris_global",
+            json!({"action": "kill", "global_name": "^IadSm172MemberByCityI", "namespace": "USER"}),
+        )
+        .await;
+    let by_index = r
+        .call(
+            "iris_query",
+            json!({"query": "SELECT Name FROM IadSm172.MemberByCity WHERE City = 'Portland'",
+                   "namespace": "USER"}),
+        )
+        .await;
+    let by_scan = r
+        .call(
+            "iris_query",
+            json!({"query": "SELECT Name FROM IadSm172.MemberByCity WHERE %NOINDEX City = 'Portland'",
+                   "namespace": "USER"}),
+        )
+        .await;
+    let problems = drop_fixture(&r, &f).await;
+    assert_eq!(kill["success"], true, "{kill}");
+    assert_eq!(
+        by_index["rows"],
+        json!([]),
+        "the empty index still found rows: {by_index}"
+    );
+    assert!(
+        by_scan["rows"].as_array().is_some_and(|r| !r.is_empty()),
+        "the rows are there: {by_scan}"
+    );
+    assert!(problems.is_empty(), "cleanup: {problems:?}");
+}

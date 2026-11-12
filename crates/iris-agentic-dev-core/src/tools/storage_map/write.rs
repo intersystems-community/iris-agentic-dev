@@ -410,19 +410,43 @@ pub async fn scratch_check(
     ns: &str,
     class: &str,
 ) -> Result<String, Value> {
-    // Build the copy once under a stand-in name, so a failure or a compile-time refusal comes
-    // back before any request. The copy under the real name differs only in the name.
+    scratch_probe(text, nodes)?;
+    let untouched = format!("the real class {class} was not touched");
+    let (scratch, _) = scratch_compile(iris, client, text, nodes, ns, None, &untouched).await?;
+    Ok(scratch)
+}
+
+/// Build the scratch copy once under a stand-in name, so a failure (`STORAGE_MAP_INVALID`) or a
+/// compile-time refusal comes back before any request. The copy under the real name differs only
+/// in the name.
+pub fn scratch_probe(text: &str, nodes: &[Node]) -> Result<(), Value> {
     let probe = scratch_source(text, nodes, "IrisDevTmp.SmCheck")
         .map_err(|e| body("STORAGE_MAP_INVALID", e, json!({})))?;
-    if let Some(refusal) = compile_time_refusal(&probe, "IrisDevTmp.SmCheck.cls") {
-        return Err(refusal);
+    match compile_time_refusal(&probe, "IrisDevTmp.SmCheck.cls") {
+        Some(refusal) => Err(refusal),
+        None => Ok(()),
     }
-    let (scratch, result) = iris
-        .compile_scratch_class(
+}
+
+/// Compile `nodes` in a scratch copy of `text` on `iris`, run `query` against it when it
+/// compiled, and delete it. `Ok` is the scratch class's name and the query's answer; `Err` is
+/// `UPLOAD_FAILED` or `STORAGE_MAP_COMPILE_FAILED`, whose message ends with `untouched`.
+pub async fn scratch_compile(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    text: &str,
+    nodes: &[Node],
+    ns: &str,
+    query: Option<&(dyn Fn(&str) -> String + Sync)>,
+    untouched: &str,
+) -> Result<(String, Option<anyhow::Result<Value>>), Value> {
+    let (scratch, result, answer) = iris
+        .compile_scratch_class_then(
             |name| scratch_source(text, nodes, name).unwrap_or_default(),
             ns,
             client,
             "Sm",
+            query,
         )
         .await
         .map_err(|e| {
@@ -436,7 +460,7 @@ pub async fn scratch_check(
         return Err(body(
             "STORAGE_MAP_COMPILE_FAILED",
             format!(
-                "the map does not compile ({} error(s)); the real class {class} was not touched",
+                "the map does not compile ({} error(s)); {untouched}",
                 result.errors.len()
             ),
             json!({
@@ -446,7 +470,7 @@ pub async fn scratch_check(
             }),
         ));
     }
-    Ok(scratch)
+    Ok((scratch, answer))
 }
 
 /// The document's text and timestamp (`result.ts`), or `None` when IRIS has no such document.
@@ -851,14 +875,15 @@ fn doc_gates(nodes: &[Node]) -> Option<Value> {
 }
 
 /// Before an `iris_doc` PUT of `content` as `doc` (FR-031): class XML with a map is refused
-/// (FR-012a); the map is validated (FR-014), gated (FR-026–FR-028) and compiled in a scratch
-/// copy (FR-015). No version check and no confirm-removal: `iris_doc` writes what it is given.
+/// (FR-012a); the map is validated (FR-014), gated (FR-026–FR-028) and, when the put compiles,
+/// compiled in a scratch copy (FR-015). No version check and no confirm-removal.
 pub async fn doc_precheck(
     iris: &IrisConnection,
     client: &reqwest::Client,
     doc: &str,
     content: &str,
     ns: &str,
+    compile: bool,
 ) -> Result<DocGuard, Value> {
     if is_class_xml(content) {
         return Err(body(
@@ -899,7 +924,12 @@ pub async fn doc_precheck(
         return Err(refusal);
     }
     let class = doc.strip_suffix(".cls").unwrap_or(doc);
-    scratch_check(iris, client, content, &sent, ns, class).await?;
+    // The scratch compile protects the real compile. A put without `compile` compiles nothing,
+    // so the compiled class keeps working whatever the source says; storing a class with a new
+    // property before its map is the usual way to add a field (#5502 until it is mapped).
+    if compile {
+        scratch_check(iris, client, content, &sent, ns, class).await?;
+    }
     let changed = emit_body(&normalize(before)) != emit_body(&normalize(sent.clone()));
     Ok(DocGuard {
         previous,

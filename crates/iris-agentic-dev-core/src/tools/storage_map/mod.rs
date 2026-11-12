@@ -211,6 +211,8 @@ pub async fn handle(
         Action::Check => check(iris, client, p, tools, &shape).await,
         Action::Edit => edit(iris, client, p, tools, &shape).await,
         Action::Replace => replace(iris, client, p, tools, &shape).await,
+        Action::Compare => compare_action(iris, client, p, tools, &shape).await,
+        Action::Preview => preview_action(iris, client, p, tools, &shape).await,
         other => err_result(json!({
             "success": false,
             "error_code": "NOT_IMPLEMENTED",
@@ -377,29 +379,8 @@ async fn check(
     if let Some(refusal) = read_only_refusal(class, &stored) {
         return refusal;
     }
-
-    // The typed params pass an absent `model` through as `null`.
-    if let Some(proposed) = p.get("model").filter(|v| !v.is_null()) {
-        let name = match map_name_for(
-            p,
-            proposed,
-            "check with a `model` needs `map` or a `name` in the model",
-        ) {
-            Ok(n) => n,
-            Err(reply) => return reply,
-        };
-        let node = match proposed_node(proposed, &name) {
-            Ok(n) => n,
-            Err(reply) => return reply,
-        };
-        // The caller's map takes the place of the stored one; a new name adds a map.
-        match nodes
-            .iter_mut()
-            .find(|n| n.tag == "SQLMap" && n.name.as_deref() == Some(name.as_str()))
-        {
-            Some(slot) => *slot = node,
-            None => nodes.push(node),
-        }
+    if let Err(reply) = put_model(p, &mut nodes, "check") {
+        return reply;
     }
 
     let t = tools.target()?;
@@ -423,6 +404,33 @@ async fn check(
         "scratch_class": scratch,
         "warnings": [],
     })))
+}
+
+/// The caller's `model`, when the call has one, put into `nodes` for `action`; `Some` is the
+/// map's name. The caller's map takes the place of the stored one; a new name adds a map.
+fn put_model(
+    p: &Value,
+    nodes: &mut Vec<tree::Node>,
+    action: &str,
+) -> Result<Option<String>, Result<CallToolResult, McpError>> {
+    // The typed params pass an absent `model` through as `null`.
+    let Some(proposed) = p.get("model").filter(|v| !v.is_null()) else {
+        return Ok(None);
+    };
+    let name = map_name_for(
+        p,
+        proposed,
+        &format!("{action} with a `model` needs `map` or a `name` in the model"),
+    )?;
+    let node = proposed_node(proposed, &name)?;
+    match nodes
+        .iter_mut()
+        .find(|n| n.tag == "SQLMap" && n.name.as_deref() == Some(name.as_str()))
+    {
+        Some(slot) => *slot = node,
+        None => nodes.push(node),
+    }
+    Ok(Some(name))
 }
 
 /// The map a `model` call is about: `map`, or the model's own `name`; both, and they differ, is
@@ -606,6 +614,235 @@ fn audit_write(
         changed,
         ans["code_changed"] == true,
     ));
+}
+
+/// `compare` (US5, FR-020, FR-020a): sample the map's global and set what the data shows
+/// against the map. Runs as the call's execute identity (the service account when set, FR-029),
+/// whose name the answer carries.
+async fn compare_action(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    p: &Value,
+    tools: &crate::tools::IrisTools,
+    shape: &CallShape,
+) -> Result<CallToolResult, McpError> {
+    let StoredClass {
+        class,
+        ns,
+        storage_name,
+        nodes,
+        ..
+    } = match load_storage(iris, client, p, "compare").await {
+        Ok(stored) => stored,
+        Err(reply) => return reply,
+    };
+    let m = model_with_facts(class, &storage_name, &nodes);
+    let wanted = p.get("map").and_then(Value::as_str);
+    let Some(map) = m
+        .storage
+        .maps
+        .iter()
+        .find(|x| wanted.map_or(x.master, |w| x.name == w))
+    else {
+        return fail(
+            "STORAGE_MAP_NOT_FOUND",
+            match wanted {
+                Some(w) => format!("{class} has no map {w}"),
+                None => format!("{class} has no master map"),
+            },
+            json!({}),
+        );
+    };
+    let t = tools.target()?;
+    if let Some(refusal) = code::gate_tree(&nodes, shape, &t.primary.effective, &t.primary.key) {
+        return err_result(refusal);
+    }
+    if let Some(refusal) = values_refusal(shape, &t.primary) {
+        return err_result(refusal);
+    }
+    let global = match globals::normalize_global(&map.global) {
+        Ok(g) => g,
+        Err(e) => return fail("INVALID_PARAMS", format!("{}: {e}", map.global), json!({})),
+    };
+    let cx = match tools.exec_context() {
+        Ok(cx) => cx,
+        Err(e) => return err_result(e.to_json()),
+    };
+    let cap = sample::caps(p.get("max_nodes").and_then(Value::as_u64));
+    let result = match sample::sample(
+        &cx.conn,
+        cx.client.as_ref(),
+        &ns,
+        &global,
+        cap,
+        shape.include_values,
+    )
+    .await
+    {
+        Ok(report) => {
+            let mismatches = shape::compare_map(map, &report);
+            Ok(CallToolResult::structured(json!({
+                "success": true,
+                "model_version": model::MODEL_VERSION,
+                "action": "compare",
+                "class": class,
+                "namespace": ns,
+                "map": map.name,
+                "capped": report.capped,
+                "shape": report,
+                "mismatches": mismatches,
+            })))
+        }
+        Err(answer) => err_result(answer),
+    };
+    crate::tools::exec::attach_identity(result, &cx.helper_report())
+}
+
+/// [`sample::values_refusal`] for this call's `include_values` and `acknowledgePhi` on `server`.
+fn values_refusal(
+    shape: &CallShape,
+    server: &crate::tools::target::ResolvedServer,
+) -> Option<Value> {
+    sample::values_refusal(
+        shape.include_values,
+        shape.acknowledge_phi,
+        server.data_policy_name(),
+        &server.key,
+    )
+}
+
+/// `row` with every non-null value replaced by `"<masked>"` (FR-021).
+fn masked_row(row: &Value) -> Value {
+    let masked = row
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(k, v)| {
+            let shown = if v.is_null() {
+                Value::Null
+            } else {
+                json!("<masked>")
+            };
+            (k.clone(), shown)
+        })
+        .collect();
+    Value::Object(masked)
+}
+
+/// `preview` (US5, FR-029): the rows a proposed map would return, read through a scratch copy of
+/// the class that is deleted afterwards. The `SELECT` runs the map's code against the real global,
+/// so it runs as the call's execute identity. Values are masked unless `include_values` (FR-021).
+async fn preview_action(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    p: &Value,
+    tools: &crate::tools::IrisTools,
+    shape: &CallShape,
+) -> Result<CallToolResult, McpError> {
+    let StoredClass {
+        class,
+        ns,
+        text,
+        storage_name,
+        mut nodes,
+    } = match load_storage(iris, client, p, "preview").await {
+        Ok(stored) => stored,
+        Err(reply) => return reply,
+    };
+    let before = nodes.clone();
+    let stored = model::from_tree(class, &storage_name, &nodes);
+    if let Some(refusal) = read_only_refusal(class, &stored) {
+        return refusal;
+    }
+    let map_name = match put_model(p, &mut nodes, "preview") {
+        Ok(Some(name)) => name,
+        Ok(None) => p
+            .get("map")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| {
+                stored
+                    .storage
+                    .maps
+                    .iter()
+                    .find(|m| m.master)
+                    .map(|m| m.name.clone())
+            })
+            .unwrap_or_default(),
+        Err(reply) => return reply,
+    };
+    let t = tools.target()?;
+    if let Some(refusal) = code::gate_tree(&nodes, shape, &t.primary.effective, &t.primary.key) {
+        return err_result(refusal);
+    }
+    if let Err(found) = validate::validate_change(&before, &nodes) {
+        return err_result(write::invalid_body(&found));
+    }
+    if let Some(refusal) = values_refusal(shape, &t.primary) {
+        return err_result(refusal);
+    }
+    if let Err(answer) = write::scratch_probe(&text, &nodes) {
+        return err_result(answer);
+    }
+    let max_rows = p
+        .get("max_rows")
+        .and_then(Value::as_u64)
+        .unwrap_or(50)
+        .clamp(1, 1000);
+    let cx = match tools.exec_context() {
+        Ok(cx) => cx,
+        Err(e) => return err_result(e.to_json()),
+    };
+    let sql = move |scratch: &str| format!("SELECT TOP {max_rows} * FROM {scratch}");
+    let compiled = write::scratch_compile(
+        &cx.conn,
+        cx.client.as_ref(),
+        &text,
+        &nodes,
+        &ns,
+        Some(&sql),
+        "nothing was read",
+    )
+    .await;
+    let result = match compiled {
+        Err(answer) => err_result(answer),
+        Ok((_, Some(Err(e)))) => fail(
+            "SQL_ERROR",
+            format!("reading through the proposed map failed: {e}"),
+            json!({}),
+        ),
+        Ok((scratch, answer)) => {
+            let rows: Vec<Value> = answer
+                .and_then(Result::ok)
+                .and_then(|a| a["result"]["content"].as_array().cloned())
+                .unwrap_or_default();
+            let columns: Vec<String> = rows
+                .first()
+                .and_then(Value::as_object)
+                .map(|o| o.keys().cloned().collect())
+                .unwrap_or_default();
+            let shown: Vec<Value> = if shape.include_values {
+                rows.clone()
+            } else {
+                rows.iter().map(masked_row).collect()
+            };
+            Ok(CallToolResult::structured(json!({
+                "success": true,
+                "model_version": model::MODEL_VERSION,
+                "action": "preview",
+                "class": class,
+                "namespace": ns,
+                "map": map_name,
+                "scratch_class": scratch,
+                "columns": columns,
+                "rows": shown,
+                "row_count": rows.len(),
+                "capped": rows.len() as u64 >= max_rows,
+                "values_masked": !shape.include_values,
+            })))
+        }
+    };
+    crate::tools::exec::attach_identity(result, &cx.helper_report())
 }
 
 /// `edit` (US3, FR-010): path operations on the class's tree, then the write path. The version
