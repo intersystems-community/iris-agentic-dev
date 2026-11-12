@@ -3966,6 +3966,27 @@ impl IrisTools {
         )
     }
 
+    /// The audit entry of an `iris_storage_map` write that went through (FR-030c), on the server
+    /// the call acted on: status `written`, the record as its params, and the `%SYS.Audit`
+    /// emission when `irisAudit` is on. Outside a call there is no server to record against.
+    pub(crate) fn audit_map_write(&self, record: serde_json::Value) {
+        let Ok(t) = self.target() else {
+            return;
+        };
+        let server = &t.primary;
+        let policy = server.audited.then_some(&server.policy);
+        self.write_audit_entry_on(
+            "iris_storage_map",
+            &server.key,
+            server.conn.clone(),
+            policy,
+            "written",
+            None,
+            None,
+            record,
+        );
+    }
+
     /// Write an audit log entry for a policy-gated tool call, on the connection of the server the
     /// call acts on, which is not always the default one (spec 141, R1 D8.9). No-op when that
     /// connection has no active policy block.
@@ -10100,7 +10121,7 @@ Methods:
     }
 
     #[tool(
-        description = "SQL storage maps (hand-written %Storage.SQL maps of globals to tables): read, draw, check and edit the maps in a class's Storage block. In this build `read`, `diagram`, `uses` and `check` work; the others answer NOT_IMPLEMENTED. read: returns the storage as structured data (maps, subscripts, fields with node/delimiter/piece, row ID parts, derived facts such as 'no delimiter means $LIST' and nested tables a DELETE would also remove). diagram: renders a Mermaid flowchart and JSON graph of a map. uses: finds all classes whose storage maps use a given global. action: read (return model), diagram (render Mermaid), uses (find classes using a global), compare (check against live data), preview (show data through a proposed map), propose (draft a map from live data), check (validate in a scratch class), edit (modify a map), replace (replace entire map). class, map, global, namespace, server: target. version: from read() for edit/replace. ops: path edit operations for edit. model: SqlMap object for replace/check/preview. confirm_removal: acknowledge removal on first replace call. seed_counter, build_indexes: opt-in post-write actions. include_values, acknowledgePhi: include data values (requires PHI acknowledgement). max_nodes, max_rows: limits for data sampling.",
+        description = "SQL storage maps (hand-written %Storage.SQL maps of globals to tables): read, draw, check and edit the maps in a class's Storage block. In this build `read`, `diagram`, `uses`, `check`, `edit` and `replace` work; `compare`, `preview` and `propose` answer NOT_IMPLEMENTED. read: returns the storage as structured data (maps, subscripts, fields with node/delimiter/piece, row ID parts, derived facts such as 'no delimiter means $LIST' and nested tables a DELETE would also remove). diagram: renders a Mermaid flowchart and JSON graph of a map. uses: finds all classes whose storage maps use a given global. action: read (return model), diagram (render Mermaid), uses (find classes using a global), compare (check against live data), preview (show data through a proposed map), propose (draft a map from live data), check (validate in a scratch class), edit (modify a map), replace (replace entire map). class, map, global, namespace, server: target. version: from read() for edit/replace. ops: path edit operations for edit. model: SqlMap object for replace/check/preview. confirm_removal: acknowledge removal on first replace call. seed_counter, build_indexes: opt-in post-write actions. include_values, acknowledgePhi: include data values (requires PHI acknowledgement). max_nodes, max_rows: limits for data sampling.",
         output_schema = output_schemas::oneof_output_schema::<output_schemas::IrisStorageMapResponse>()
     )]
     async fn iris_storage_map(

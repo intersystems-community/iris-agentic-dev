@@ -3,12 +3,18 @@
 //! behaviour notes come from research R4 and R5.
 
 /// Each error number `explain` knows, with its explanation.
-pub const EXPLAINED: [(u32, &str); 23] = [
+pub const EXPLAINED: [(u32, &str); 24] = [
     (
         5002,
         "ObjectScript in a map element does not run: the generated routine failed to compile. \
             Check RetrievalCode, Condition, NextCode and the subscript expressions; `&gt;` or \
             `&amp;` written inside one is stored literally and breaks the routine (R4).",
+    ),
+    (
+        5502,
+        "The SQL table did not compile. When IRIS lists unmapped fields, a property of the class \
+         is in no data map: add a Data element for it to the master map, or make it calculated \
+         (measured 2026-11-11).",
     ),
     (
         5508,

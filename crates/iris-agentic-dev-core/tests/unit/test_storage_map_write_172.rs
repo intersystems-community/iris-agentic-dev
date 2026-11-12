@@ -60,7 +60,6 @@ fn test_storage_map_write_172_scratch_drops_everything_but_the_map_parts() {
         "Parameter",
         "Projection",
         "Include",
-        "Unused",
         "IadSm172.Member",
     ] {
         assert!(
@@ -74,7 +73,11 @@ fn test_storage_map_write_172_scratch_drops_everything_but_the_map_parts() {
         )),
         "header:\n{out}"
     );
+    // Every property is carried, mapped or not: the real compile refuses a property no data map
+    // files (#5502, measured), so the copy must too, or check would pass a map the real class
+    // rejects.
     for kept in [
+        "Property Unused As %String;",
         "Property Name As %String;",
         "Property City As %String;",
         "Property Age As %Integer;",
@@ -170,4 +173,150 @@ fn test_storage_map_write_172_scratch_refuses_default_storage() {
     let book = fixture("DefaultBook");
     let err = scratch_source(&book, &nodes_of(&book), SCRATCH).expect_err("default storage");
     assert!(err.contains("default storage"), "{err}");
+}
+
+// ── T071: new class text and the read-back check ─────────────────────────────
+
+mod t071 {
+    use iris_agentic_dev_core::tools::storage_map::path::apply;
+    use iris_agentic_dev_core::tools::storage_map::tree::{
+        parse_body, split_class, Node, StorageSpan,
+    };
+    use iris_agentic_dev_core::tools::storage_map::write::{new_class_text, readback_diff};
+    use serde_json::json;
+
+    fn fixture(name: &str) -> String {
+        let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/storage172/classes")
+            .join(format!("{name}.cls"));
+        std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{}: {e}", p.display()))
+    }
+
+    fn split(text: &str) -> (StorageSpan, Vec<Node>) {
+        let span = split_class(text).unwrap().remove(0);
+        let nodes = parse_body(&text[span.body_start..span.body_end]).unwrap();
+        (span, nodes)
+    }
+
+    #[test]
+    fn t071_no_change_gives_the_original_text_for_every_fixture() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/storage172/classes");
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            let text = std::fs::read_to_string(&p).unwrap();
+            let (span, nodes) = split(&text);
+            assert_eq!(
+                new_class_text(&text, &span, &nodes),
+                text,
+                "{}",
+                p.display()
+            );
+        }
+    }
+
+    #[test]
+    fn t071_only_the_storage_body_changes() {
+        let text = fixture("Member");
+        let (span, mut nodes) = split(&text);
+        apply(
+            &mut nodes,
+            &[json!({"op": "set", "path": "/maps/Master/data/Age/piece", "value": "4"})],
+        )
+        .unwrap();
+        let out = new_class_text(&text, &span, &nodes);
+        let a: Vec<&str> = text.lines().collect();
+        let b: Vec<&str> = out.lines().collect();
+        assert_eq!(a.len(), b.len());
+        let diff: Vec<(&str, &str)> = a
+            .iter()
+            .zip(&b)
+            .filter(|(x, y)| x != y)
+            .map(|(x, y)| (*x, *y))
+            .collect();
+        assert_eq!(diff, vec![("<Piece>3</Piece>", "<Piece>4</Piece>")]);
+    }
+
+    /// IRIS writes the storage Description twice: as CDATA in the block and as `///` lines
+    /// above `Storage <name>` (R3). A changed Description changes both.
+    #[test]
+    fn t071_a_changed_description_rewrites_its_comment_lines() {
+        let text = fixture("Notes");
+        let (span, mut nodes) = split(&text);
+        apply(
+            &mut nodes,
+            &[json!({"op": "set", "path": "/keywords/Description", "value": "One note per node."})],
+        )
+        .unwrap();
+        let out = new_class_text(&text, &span, &nodes);
+        assert!(
+            out.contains("/// One note per node.\nStorage SQLStorage\n{\n"),
+            "{out}"
+        );
+        assert!(!out.contains("/// Library notes"), "{out}");
+        assert!(
+            out.contains("<![CDATA[One note per node.]]></Description>"),
+            "{out}"
+        );
+
+        apply(
+            &mut nodes,
+            &[json!({"op": "remove", "path": "/keywords/Description"})],
+        )
+        .unwrap();
+        let out = new_class_text(&text, &span, &nodes);
+        assert!(!out.contains("///"), "{out}");
+        assert!(out.contains("\n\nStorage SQLStorage\n{\n"), "{out}");
+    }
+
+    fn member_nodes(from: &str, to: &str) -> Vec<Node> {
+        let text = fixture("Member");
+        assert!(text.contains(from), "{from}");
+        split(&text.replacen(from, to, 1)).1
+    }
+
+    #[test]
+    fn t071_readback_diff() {
+        let stored = split(&fixture("Member")).1;
+        let same = readback_diff(&stored, &stored);
+        assert!(
+            same.dropped.is_empty() && same.unexplained.is_empty(),
+            "{same:?}"
+        );
+
+        // IRIS drops an element it does not know (R3.6): reported as dropped.
+        let sent = member_nodes(
+            "<Global>^IadSm172Member</Global>",
+            "<Global>^IadSm172Member</Global>\n<Wibble>x</Wibble>",
+        );
+        let d = readback_diff(&sent, &stored);
+        assert_eq!(d.dropped.len(), 1, "{d:?}");
+        assert!(d.dropped[0].contains("Wibble"), "{d:?}");
+        assert!(d.unexplained.is_empty(), "{d:?}");
+
+        // BlockCount 0 is dropped by IRIS (R3.4) and is no difference at all.
+        let sent = member_nodes(
+            "<Type>data</Type>",
+            "<Type>data</Type>\n<BlockCount>0</BlockCount>",
+        );
+        let d = readback_diff(&sent, &stored);
+        assert!(d.dropped.is_empty() && d.unexplained.is_empty(), "{d:?}");
+
+        // A value IRIS changed, and an element it added, are unexplained.
+        let changed = member_nodes("<Piece>3</Piece>", "<Piece>4</Piece>");
+        let d = readback_diff(&changed, &stored);
+        assert_eq!(d.unexplained.len(), 1, "{d:?}");
+        let extra = member_nodes(
+            "<Type>data</Type>",
+            "<Type>data</Type>\n<Structure>x</Structure>",
+        );
+        assert!(!readback_diff(&stored, &extra).unexplained.is_empty());
+
+        // Children out of IRIS's canonical order are unexplained (the canonical form is a fixed
+        // point, R3.8).
+        let mut reordered = stored.clone();
+        reordered.reverse();
+        let d = readback_diff(&stored, &reordered);
+        assert!(!d.unexplained.is_empty(), "{d:?}");
+    }
 }

@@ -104,6 +104,13 @@ Measured on fixture classes `Iad172.Probe` and `Iad172.Lst`:
   real compile fails, iad PUTs that text back, compiles it, and reports both the failure and the restore. If the
   restore fails too, the response says so first.
 
+- **Measured 2026-11-11 (T072, 2026.2 Community, class `IadSm172.TsProbe`)**: a GET gives the document timestamp
+  as `result.ts` and as the `ETag` header. A PUT without `ignoreConflict=1` that carries `If-None-Match: <ts>`
+  succeeds (200, new `ETag`) when `<ts>` is the stored timestamp. With a stale timestamp, or with no header at all
+  on a class that exists, IRIS answers 409, leaves the stored text unchanged and returns the current document. So
+  `guarded_put` sends the timestamp from its GET and treats 409 as `STORAGE_MAP_VERSION_CONFLICT`; the restore
+  sends the timestamp the real PUT returned, so a change between the PUT and the restore is caught the same way.
+
 ## R9. Read-back check
 
 - **Decision**: after every PUT, GET the class, parse both texts, and compare the models after applying R3's drop

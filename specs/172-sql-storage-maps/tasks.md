@@ -392,50 +392,69 @@ Result<String, String>` per FR-015a (class header with the same superclasses, th
 
 **Independent test**: no-change write is byte-identical; a one-field edit changes one element.
 
-- [ ] T067 [P] [US3] `src/tools/storage_map/path.rs`: `pub enum PathSeg`, `pub fn parse_path(p: &str) ->
+- [x] T067 [P] [US3] `src/tools/storage_map/path.rs`: `pub enum PathSeg`, `pub fn parse_path(p: &str) ->
 Result<Vec<PathSeg>, String>` for every path form in data-model.md "Paths". Test first
       `tests/unit/test_storage_map_path_172.rs`: each documented path; `/maps//x`, `/maps/Master/subscripts/a/x`
       rejected. Prove: `U test_storage_map_path_172`.
-- [ ] T068 [US3] `path.rs`: `pub fn apply(nodes: &mut Vec<Node>, ops: &[Value]) -> Result<Vec<String>, String>`
+      Done 2026-11-11: paths map JSON keys to element tags level by level; `/keywords/<Tag>` takes the 27 plain
+      properties of `%Dictionary.StorageDefinition` (read from the compiled dictionary); integer names are canonical.
+- [x] T068 [US3] `path.rs`: `pub fn apply(nodes: &mut Vec<Node>, ops: &[Value]) -> Result<Vec<String>, String>`
       (`set`, `set` null removes, `add` fails if present, `remove`, `move` integer names only; all-or-nothing on a
       copy; returns changed paths). Test first: one test per op on `Member`; a failing third op leaves the tree
       unchanged; `remove` on `extra` works, `set` on `extra` fails. Prove: `U test_storage_map_path_172`.
-- [ ] T069 [US3] Single-field-edit property test: for each fixture and each leaf, `set` it to a new value, emit, and
+      Done 2026-11-11: `set` on a whole element takes an object (`model::element_node`), `add` builds from the
+      same model-JSON builders as `check`.
+- [x] T069 [US3] Single-field-edit property test: for each fixture and each leaf, `set` it to a new value, emit, and
       assert the line diff against the original is exactly that element (plus CDATA wrapping where the value needs
       it). Prove: `U test_storage_map_path_172`.
-- [ ] T070 [P] [US3] `src/tools/storage_map/validate.rs`: `pub fn validate(nodes: &[Node]) -> Result<(), Vec<Invalid>>`
+      Done 2026-11-11: every addressable leaf of all 15 fixtures (prefix edit, so multi-line NextCode and CDATA
+      keep their shape).
+- [x] T070 [P] [US3] `src/tools/storage_map/validate.rs`: `pub fn validate(nodes: &[Node]) -> Result<(), Vec<Invalid>>`
       with every rule in data-model.md "Validation" (`Invalid { path, rule }`). Test first
       `tests/unit/test_storage_map_validate_172.rs`: one failing case per rule, and every fixture passes. Prove:
       `U test_storage_map_validate_172`.
-- [ ] T071 [US3] `write.rs`: `pub fn new_class_text(original: &str, span: &StorageSpan, nodes: &[Node]) -> String`
+      Done 2026-11-11: plus `validate_change(before, after)` so an element IRIS already holds is not refused as
+      unknown; element names per level read from `%Dictionary.Storage*Definition` on 2026.2.
+- [x] T071 [US3] `write.rs`: `pub fn new_class_text(original: &str, span: &StorageSpan, nodes: &[Node]) -> String`
       (prefix + `emit_body(normalize(nodes))` + suffix; only the Storage body changes) and `pub fn readback_diff(sent:
 &[Node], stored: &[Node]) -> ReadbackDiff { dropped: Vec<String>, unexplained: Vec<String> }`. Test first in
       `test_storage_map_write_172.rs`: no-op gives the original text; an unknown element in `sent` shows in `dropped`;
       a reordered element shows in `unexplained`. Prove: `U test_storage_map_write_172`.
-- [ ] T072 [US3] `write.rs`: change detection (FR-010a). Live check first in `test_storage_map_edit_172_live.rs`:
+      Done 2026-11-11: a changed Description also rewrites the `///` lines IRIS writes above `Storage` (R3.3).
+- [x] T072 [US3] `write.rs`: change detection (FR-010a). Live check first in `test_storage_map_edit_172_live.rs`:
       does Atelier PUT without `ignoreConflict=1` refuse a stale document timestamp on 2026.2? Record the answer in
       research.md R8 (lead edits the doc). Then `pub async fn guarded_put(iris, client, name, lines, ns,
 expected_ts: &str) -> Result<String, Value>` that uses whichever works (timestamp header, or a GET just before
       the PUT comparing timestamps) and returns `STORAGE_MAP_VERSION_CONFLICT` on a change. Test: a write after
       another client's PUT is refused. Prove: `L test_storage_map_edit_172`.
-- [ ] T073 [US3] `write.rs`: `pub async fn write_map(ctx: &WriteCtx, original: &str, new_nodes: Vec<Node>) ->
+      Done 2026-11-11: measured that a PUT without `ignoreConflict` honours `If-None-Match: <ts>` (409 on a stale
+      or missing one); `guarded_put` relies on it (research R8).
+- [x] T073 [US3] `write.rs`: `pub async fn write_map(ctx: &WriteCtx, original: &str, new_nodes: Vec<Node>) ->
 Result<Value, Value>` running plan "Write path" in order: validate → `gate_tree` → data checks (stubbed `Ok`
       until T093) → scratch check → `guarded_put` → read-back + `gate_tree` again on what IRIS stored (FR-012a) →
       compile → restore on failure → opt-ins (stubbed until T094) → answer with `changed`, `versions`, `warnings`.
       Test first in `test_storage_map_edit_172_live.rs`: (a) no-change write of every fixture is byte-identical on GET;
       (b) adding `Email` to `Member` returns the new model and the known answer still holds; (c) an edit whose real
       compile fails restores the previous text and says `STORAGE_MAP_RESTORED`. Prove: `L test_storage_map_edit_172`.
-- [ ] T074 [US3] `mod.rs`: the `edit` action (version check against `read`'s map version → `STORAGE_MAP_VERSION_CONFLICT`
+      Done 2026-11-11. Found: a property no data map files fails the real compile (#5502) while the scratch copy,
+      which carried only mapped properties, passed; the copy now carries every property and #5502 is explained.
+      The restore test uses a method generator, code only the real compile runs.
+- [x] T074 [US3] `mod.rs`: the `edit` action (version check against `read`'s map version → `STORAGE_MAP_VERSION_CONFLICT`
       with `current`; `apply`; `write_map`). Test first: stale version refused with the current map; columnar map and
       non-`%Storage.SQL` storage refused with `STORAGE_MAP_READ_ONLY`. Prove: `L test_storage_map_edit_172`.
-- [ ] T075 [US3] `mod.rs`: the `replace` action (whole map from `model`; first call lists `removed` and returns
+      Done 2026-11-11: opt-ins are refused (`NOT_IMPLEMENTED`) until T094 rather than ignored after a write.
+- [x] T075 [US3] `mod.rs`: the `replace` action (whole map from `model`; first call lists `removed` and returns
       `STORAGE_MAP_CONFIRM_REMOVAL`; second call with `confirm_removal: true` writes). Test first: both calls; a
       replace that removes nothing writes on the first call. Prove: `L test_storage_map_edit_172`.
-- [ ] T076 [US3] Audit (FR-030c): each map write adds `{class, map, version_before, version_after, changed_paths,
+      Done 2026-11-11: `removed` lists elements as well as leaves (an empty `<Data name="X"/>` counts).
+- [x] T076 [US3] Audit (FR-030c): each map write adds `{class, map, version_before, version_after, changed_paths,
 code_changed}` to the call record and to `irisAudit` emission when enabled; no code text. Test first
       `tests/unit/test_storage_map_audit_172.rs` on the record builder; a live case reads the local call log. Prove:
       `U test_storage_map_audit_172`, `L test_storage_map_edit_172`.
-- [ ] T077 [US3] Now that `validate` exists, replace T065's stub. Prove: `L test_storage_map_edit_172`.
+      Done 2026-11-11: a second audit entry, status `written`, after the write; params hold only paths and
+      versions.
+- [x] T077 [US3] Now that `validate` exists, replace T065's stub. Prove: `L test_storage_map_edit_172`.
+      Done 2026-11-11 (with T070).
 
 **Checkpoint**: US1–US4 and US8 done. T059 should now pass for `check`, `edit`, `replace`.
 

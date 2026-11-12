@@ -50,7 +50,15 @@ const IRREGULAR: [&str; 6] = [
 
 /// Emitted codes that look like refusals and are not: an input error, a missing capability, a
 /// failure inside IRIS, or a server error. Each carries the reason.
-const NOT_REFUSALS: [(&str, &str); 10] = [
+const NOT_REFUSALS: [(&str, &str); 12] = [
+    (
+        "STORAGE_MAP_VERSION_CONFLICT",
+        "iris_storage_map: the class changed since the caller read it; nothing was written",
+    ),
+    (
+        "STORAGE_MAP_WRITER_MISMATCH",
+        "iris_storage_map: IRIS stored something iad did not send, an iad bug; the write was undone",
+    ),
     (
         "CONFIRM_MISMATCH",
         "iris_admin: the token names another global, an input error",

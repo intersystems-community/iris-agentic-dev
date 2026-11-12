@@ -1812,12 +1812,24 @@ against live data), `preview` (show data through a proposed map), `propose` (dra
 live data), `check` (validate in a scratch class), `edit` (modify a map), `replace` (replace
 entire map).
 
+`diagram` also returns `markdown`: the class's storage as one Markdown document, with each
+map's global layout (for example `^Pkg.ThingI({City},{ID})`), its subscripts, its fields with
+node, delimiter, piece and format, the row ID, the facts `read` derives, and the map's Mermaid
+flowchart. Default storage is listed as its node slots.
+
 `check` builds the class's map, or the `model` given for the map `map` names, runs the global and
 map-code gates, and compiles it in a scratch class (`IrisDevTmp.Sm…`) that is deleted afterwards.
 The real class is never written, and compiling the copy writes nothing to the globals it names.
 A copy that does not compile answers `STORAGE_MAP_COMPILE_FAILED` with IRIS's errors and a plain
-explanation of each. Default storage is read-only here (`STORAGE_MAP_READ_ONLY`). In this build
-`read`, `diagram`, `uses` and `check` work; the other actions answer `NOT_IMPLEMENTED`.
+explanation of each. Default storage is read-only here (`STORAGE_MAP_READ_ONLY`). `edit` applies path operations (`set`, `add`, `remove`, `move`) to the map, and `replace` writes a
+whole map from `model`; a `replace` that would remove elements lists them as
+`STORAGE_MAP_CONFIRM_REMOVAL` and writes only when repeated with `confirm_removal: true`. Both
+carry the `version` from `read`, and a class that changed since is `STORAGE_MAP_VERSION_CONFLICT`.
+A write checks the map, compiles it in a scratch copy, writes the class only if IRIS still holds the
+version iad read, reads it back, and compiles it; if that compile fails, iad puts the previous
+version back (`STORAGE_MAP_RESTORED`). Only the Storage block of the class changes. In this build
+`compare`, `preview` and `propose` answer `NOT_IMPLEMENTED`, and `seed_counter` and
+`build_indexes` are refused.
 
 | Parameter         | Type         | Default  | Notes                                                                                  |
 | ----------------- | ------------ | -------- | -------------------------------------------------------------------------------------- |

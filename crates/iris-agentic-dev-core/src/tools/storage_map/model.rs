@@ -917,9 +917,7 @@ pub fn map_node(map: &serde_json::Value) -> Result<Node, String> {
         children.push(numbered_node(
             part,
             &format!("model/row_id/{i}"),
-            "RowIdSpec",
-            "position",
-            &[("field", "Field"), ("expression", "Expression")],
+            &ROW_ID_PART,
         )?);
     }
     children.extend(extra_nodes(o, "model")?);
@@ -971,18 +969,14 @@ fn subscript_node(v: &serde_json::Value, at: &str) -> Result<Node, String> {
         c.push(numbered_node(
             av,
             &format!("{at}/access_vars/{i}"),
-            "Accessvar",
-            "level",
-            &[("code", "Code"), ("variable", "Variable")],
+            &ACCESS_VAR,
         )?);
     }
     for (i, ic) in list(s, "invalid_conditions", at)?.iter().enumerate() {
         c.push(numbered_node(
             ic,
             &format!("{at}/invalid_conditions/{i}"),
-            "Invalidcondition",
-            "level",
-            &[("expression", "Expression")],
+            &INVALID_CONDITION,
         )?);
     }
     c.extend(extra_nodes(s, at)?);
@@ -1022,24 +1016,44 @@ fn data_node(field: &str, v: &serde_json::Value, at: &str) -> Result<Node, Strin
     Ok(branch("Data", Some(field.to_string()), c))
 }
 
-/// A numbered element (`RowIdSpec`, `Accessvar`, `Invalidcondition`): `number_key` gives its
-/// name and each `(key, tag)` in `leaves` a text child; any other key is refused.
-fn numbered_node(
-    v: &serde_json::Value,
-    at: &str,
-    tag: &str,
-    number_key: &str,
-    leaves: &[(&str, &str)],
-) -> Result<Node, String> {
+/// A numbered element kind: its tag, the key that gives its name, and each `(key, tag)` of its
+/// text children.
+struct Numbered {
+    tag: &'static str,
+    number_key: &'static str,
+    leaves: &'static [(&'static str, &'static str)],
+}
+
+const ROW_ID_PART: Numbered = Numbered {
+    tag: "RowIdSpec",
+    number_key: "position",
+    leaves: &[("field", "Field"), ("expression", "Expression")],
+};
+
+const ACCESS_VAR: Numbered = Numbered {
+    tag: "Accessvar",
+    number_key: "level",
+    leaves: &[("code", "Code"), ("variable", "Variable")],
+};
+
+const INVALID_CONDITION: Numbered = Numbered {
+    tag: "Invalidcondition",
+    number_key: "level",
+    leaves: &[("expression", "Expression")],
+};
+
+/// A numbered element (`RowIdSpec`, `Accessvar`, `Invalidcondition`): `kind.number_key` gives
+/// its name and each `(key, tag)` in `kind.leaves` a text child; any other key is refused.
+fn numbered_node(v: &serde_json::Value, at: &str, kind: &Numbered) -> Result<Node, String> {
     let o = object(v, at)?;
-    let mut keys = vec![number_key];
-    keys.extend(leaves.iter().map(|(key, _)| *key));
+    let mut keys = vec![kind.number_key];
+    keys.extend(kind.leaves.iter().map(|(key, _)| *key));
     known(o, at, &keys)?;
     let mut c = Vec::new();
-    for (key, leaf_tag) in leaves {
+    for (key, leaf_tag) in kind.leaves {
         push_leaf(&mut c, leaf_tag, text(o, key, at)?);
     }
-    Ok(branch(tag, Some(number(o, number_key, at)?), c))
+    Ok(branch(kind.tag, Some(number(o, kind.number_key, at)?), c))
 }
 
 fn extra_nodes(o: &Obj, at: &str) -> Result<Vec<Node>, String> {
@@ -1114,5 +1128,40 @@ fn list<'a>(o: &'a Obj, key: &str, at: &str) -> Result<&'a [serde_json::Value], 
         None | Some(serde_json::Value::Null) => Ok(&[]),
         Some(serde_json::Value::Array(a)) => Ok(a),
         Some(_) => Err(format!("{at}/{key}: expected a list")),
+    }
+}
+
+/// The element `tag` named `name` built from a model-JSON fragment, for `edit`'s `add` and `set`
+/// of a whole element. The fragment may leave out its own name or number (the path gives it);
+/// one that names itself differently is refused.
+pub fn element_node(tag: &str, name: &str, value: &serde_json::Value) -> Result<Node, String> {
+    let at = format!("{tag} {name}");
+    let o = object(value, &at)?;
+    let with = |key: &str, v: serde_json::Value| -> Result<serde_json::Value, String> {
+        let mut o = o.clone();
+        match o.get(key) {
+            Some(existing) if *existing != v => Err(format!(
+                "{at}: `{key}` is {existing} but the path names {v}"
+            )),
+            _ => {
+                o.insert(key.to_string(), v);
+                Ok(serde_json::Value::Object(o))
+            }
+        }
+    };
+    let num = || {
+        name.parse::<u64>()
+            .map(serde_json::Value::from)
+            .map_err(|_| format!("{at}: not a positive integer"))
+    };
+    let numbered = |kind: &Numbered| numbered_node(&with(kind.number_key, num()?)?, &at, kind);
+    match tag {
+        "SQLMap" => map_node(&with("name", serde_json::json!(name))?),
+        "Subscript" => subscript_node(&with("level", num()?)?, &at),
+        "Data" => data_node(name, &with("name", serde_json::json!(name))?, &at),
+        "RowIdSpec" => numbered(&ROW_ID_PART),
+        "Accessvar" => numbered(&ACCESS_VAR),
+        "Invalidcondition" => numbered(&INVALID_CONDITION),
+        other => Err(format!("{other} is not an element iad builds")),
     }
 }

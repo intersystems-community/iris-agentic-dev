@@ -140,6 +140,16 @@ async fn diagram_returns_mermaid_and_graph() {
     assert!(mermaid.contains("^IadSm172Member"), "{got}");
     assert!(mermaid.contains("{ID}"), "{got}");
 
+    // The Markdown document: the layout and a field row a person can read, from the live class.
+    let md = got["markdown"].as_str().unwrap_or("");
+    assert!(md.starts_with("# Storage of IadSm172.Member\n"), "{got}");
+    assert!(md.contains("`^IadSm172Member({ID})`"), "{md}");
+    assert!(
+        md.contains("| `Age` | row node | `\"^\"` | `3` | delimited | yes |"),
+        "{md}"
+    );
+    assert!(md.contains("```mermaid\n"), "{md}");
+
     // Check graph structure
     let graph = &got["graph"];
     assert!(graph["nodes"].is_array(), "{got}");

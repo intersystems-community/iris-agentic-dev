@@ -4,9 +4,9 @@
 use iris_agentic_dev_core::tools::storage_map::explain::{explain, EXPLAINED};
 
 /// The numbers the task names (research R4/R5 and the compile errors map elements raise).
-const NUMBERS: [u32; 23] = [
-    5002, 5508, 5509, 5510, 5511, 5513, 5524, 5538, 5539, 5541, 5542, 5543, 5544, 5545, 5546, 5547,
-    5548, 5549, 5583, 5585, 5596, 15511, 16023,
+const NUMBERS: [u32; 24] = [
+    5002, 5502, 5508, 5509, 5510, 5511, 5513, 5524, 5538, 5539, 5541, 5542, 5543, 5544, 5545, 5546,
+    5547, 5548, 5549, 5583, 5585, 5596, 15511, 16023,
 ];
 
 #[test]
