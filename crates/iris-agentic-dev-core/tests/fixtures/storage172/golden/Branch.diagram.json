@@ -1,0 +1,33 @@
+{
+  "graph": {
+    "edges": [
+      {
+        "from": "G1",
+        "to": "S2"
+      },
+      {
+        "from": "S2",
+        "to": "D3"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "G1",
+        "kind": "global",
+        "label": "^IadSm172Branch"
+      },
+      {
+        "id": "S2",
+        "kind": "subscript",
+        "label": "sub 1: {ID} (Sub)"
+      },
+      {
+        "id": "D3",
+        "kind": "data",
+        "label": "BranchId: piece 1, BranchName: piece 3, Country: piece 2"
+      }
+    ]
+  },
+  "markdown": "# Storage of IadSm172.Branch\n\nStorage `SQLStorage`, type `%Storage.SQL`, editable with iris_storage_map.\n\n| Keyword | Value |\n| --- | --- |\n| `SqlIdExpression` | `$i(^IadSm172Branch)` |\n| `StreamLocation` | `^IadSm172BranchS` |\n\n- table is writable: master global starts with ^, $, or @\n\n## Map `Master` (data, master map)\n\nGlobal layout: `^IadSm172Branch({ID})`\n\n| Level | Expression | Access type | Delimiter | Other |\n| --- | --- | --- | --- | --- |\n| 1 | `{ID}` | Sub | — | — |\n\n| Field | Node | Delimiter | Piece | Format | Filed |\n| --- | --- | --- | --- | --- | --- |\n| `BranchId` | row node | `\"^\"` | `1` | delimited | yes |\n| `BranchName` | row node | `\"^\"` | `3` | delimited | yes |\n| `Country` | row node | `\"^\"` | `2` | delimited | yes |\n\n```mermaid\nflowchart LR\n  G1[\"^IadSm172Branch\"]\n  S2[\"sub 1: {ID} (Sub)\"]\n  D3[\"BranchId: piece 1, BranchName: piece 3, Country: piece 2\"]\n  G1 --> S2\n  S2 --> D3\n```\n",
+  "mermaid": "flowchart LR\n  G1[\"^IadSm172Branch\"]\n  S2[\"sub 1: {ID} (Sub)\"]\n  D3[\"BranchId: piece 1, BranchName: piece 3, Country: piece 2\"]\n  G1 --> S2\n  S2 --> D3\n"
+}

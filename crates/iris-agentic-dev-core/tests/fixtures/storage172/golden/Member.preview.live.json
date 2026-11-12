@@ -1,0 +1,37 @@
+{
+  "action": "preview",
+  "capped": false,
+  "class": "IadSm172.Member",
+  "columns": [
+    "Age",
+    "City",
+    "ID",
+    "Name"
+  ],
+  "map": "Master",
+  "model_version": 1,
+  "namespace": "USER",
+  "row_count": 3,
+  "rows": [
+    {
+      "Age": "<masked>",
+      "City": "<masked>",
+      "ID": "<masked>",
+      "Name": "<masked>"
+    },
+    {
+      "Age": "<masked>",
+      "City": "<masked>",
+      "ID": "<masked>",
+      "Name": "<masked>"
+    },
+    {
+      "Age": "<masked>",
+      "City": "<masked>",
+      "ID": "<masked>",
+      "Name": "<masked>"
+    }
+  ],
+  "success": true,
+  "values_masked": true
+}

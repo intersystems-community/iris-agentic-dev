@@ -1,0 +1,123 @@
+{
+  "derived": [
+    {
+      "fact": "table is writable: master global starts with ^, $, or @",
+      "path": "/storage"
+    }
+  ],
+  "storage": {
+    "default_storage": null,
+    "description": null,
+    "editable": true,
+    "extra": [],
+    "keywords": {
+      "StreamLocation": "^IadSm172CopyS"
+    },
+    "maps": [
+      {
+        "block_count": null,
+        "condition": null,
+        "condition_fields": null,
+        "conditional_with_host_vars": null,
+        "data": {
+          "Shelf": {
+            "delimiter": "\"^\"",
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "delimited"
+            },
+            "extra": [],
+            "name": "Shelf",
+            "node": null,
+            "piece": "1",
+            "retrieval_code": null
+          }
+        },
+        "deferred": null,
+        "extra": [],
+        "global": "^IadSm172Copy",
+        "master": true,
+        "name": "Master",
+        "population_pct": null,
+        "population_type": null,
+        "row_id": [
+          {
+            "expression": "{L1}",
+            "field": "BookId",
+            "position": 1
+          },
+          {
+            "expression": "{L2}",
+            "field": "Branch",
+            "position": 2
+          },
+          {
+            "expression": "{L3}",
+            "field": "CopyNo",
+            "position": 3
+          }
+        ],
+        "row_reference": null,
+        "structure": null,
+        "subscripts": [
+          {
+            "access_type": "Sub",
+            "access_vars": [],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "{BookId}",
+            "extra": [],
+            "invalid_conditions": [],
+            "level": 1,
+            "loop_init_value": null,
+            "next_code": null,
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": null,
+            "stop_value": null
+          },
+          {
+            "access_type": "Sub",
+            "access_vars": [],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "{Branch}",
+            "extra": [],
+            "invalid_conditions": [],
+            "level": 2,
+            "loop_init_value": null,
+            "next_code": null,
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": null,
+            "stop_value": null
+          },
+          {
+            "access_type": "Sub",
+            "access_vars": [],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "{CopyNo}",
+            "extra": [],
+            "invalid_conditions": [],
+            "level": 3,
+            "loop_init_value": null,
+            "next_code": null,
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": null,
+            "stop_value": null
+          }
+        ],
+        "type": "data",
+        "used": true,
+        "version": "c7999b781b21e252"
+      }
+    ],
+    "name": "SQLStorage",
+    "not_editable_reason": null,
+    "type": "%Storage.SQL",
+    "version": "247123d1593dd5b2"
+  }
+}

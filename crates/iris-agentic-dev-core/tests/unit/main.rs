@@ -236,6 +236,7 @@ mod test_storage_map_doc_sink_172;
 mod test_storage_map_draft_172;
 mod test_storage_map_explain_172;
 mod test_storage_map_gates_172;
+mod test_storage_map_golden_172;
 mod test_storage_map_map_node_172;
 mod test_storage_map_markdown_172;
 mod test_storage_map_model_172;

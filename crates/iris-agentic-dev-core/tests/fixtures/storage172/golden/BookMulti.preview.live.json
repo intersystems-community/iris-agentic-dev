@@ -1,0 +1,31 @@
+{
+  "action": "preview",
+  "capped": false,
+  "class": "IadSm172.BookMulti",
+  "columns": [
+    "ID",
+    "Location",
+    "Publisher",
+    "Title"
+  ],
+  "map": "Master",
+  "model_version": 1,
+  "namespace": "USER",
+  "row_count": 2,
+  "rows": [
+    {
+      "ID": "<masked>",
+      "Location": "<masked>",
+      "Publisher": "<masked>",
+      "Title": "<masked>"
+    },
+    {
+      "ID": "<masked>",
+      "Location": "<masked>",
+      "Publisher": "<masked>",
+      "Title": "<masked>"
+    }
+  ],
+  "success": true,
+  "values_masked": true
+}

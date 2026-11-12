@@ -1,0 +1,42 @@
+{
+  "graph": {
+    "edges": [
+      {
+        "from": "G1",
+        "to": "S2"
+      },
+      {
+        "from": "S2",
+        "to": "S3"
+      },
+      {
+        "from": "S3",
+        "to": "D4"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "G1",
+        "kind": "global",
+        "label": "^IadSm172LoanUIdx"
+      },
+      {
+        "id": "S2",
+        "kind": "subscript",
+        "label": "sub 1: {MemberId} (Sub)"
+      },
+      {
+        "id": "S3",
+        "kind": "subscript",
+        "label": "sub 2: {LoanNo} (Sub)"
+      },
+      {
+        "id": "D4",
+        "kind": "data",
+        "label": "BookId: piece 2"
+      }
+    ]
+  },
+  "markdown": "# Storage of IadSm172.LoanUnion\n\nStorage `SQLStorage`, type `%Storage.SQL`, editable with iris_storage_map.\n\n| Keyword | Value |\n| --- | --- |\n| `StreamLocation` | `^IadSm172LoanUS` |\n\n- table is writable: master global starts with ^, $, or @\n\n## Map `Master` (data, master map)\n\nGlobal layout: `^IadSm172LoanUIdx({MemberId},{LoanNo})`\n\n| Level | Expression | Access type | Delimiter | Other |\n| --- | --- | --- | --- | --- |\n| 1 | `{MemberId}` | Sub | — | — |\n| 2 | `{LoanNo}` | Sub | — | — |\n\n| Field | Node | Delimiter | Piece | Format | Filed |\n| --- | --- | --- | --- | --- | --- |\n| `BookId` | row node | `\"^\"` | `2` | delimited | yes |\n\n- row_reference: `^IadSm172LoanU({L2})`\n\n```mermaid\nflowchart LR\n  G1[\"^IadSm172LoanUIdx\"]\n  S2[\"sub 1: {MemberId} (Sub)\"]\n  S3[\"sub 2: {LoanNo} (Sub)\"]\n  D4[\"BookId: piece 2\"]\n  G1 --> S2\n  S2 --> S3\n  S3 --> D4\n```\n",
+  "mermaid": "flowchart LR\n  G1[\"^IadSm172LoanUIdx\"]\n  S2[\"sub 1: {MemberId} (Sub)\"]\n  S3[\"sub 2: {LoanNo} (Sub)\"]\n  D4[\"BookId: piece 2\"]\n  G1 --> S2\n  S2 --> S3\n  S3 --> D4\n"
+}

@@ -1,0 +1,104 @@
+{
+  "action": "propose",
+  "capped": false,
+  "draft": {
+    "data": {},
+    "global": "^IadSm172BookMulti",
+    "name": "Master",
+    "subscripts": [
+      {
+        "expression": "{Key1}",
+        "level": 1
+      },
+      {
+        "expression": "{ID}",
+        "level": 2
+      }
+    ],
+    "type": "data"
+  },
+  "global": "^IadSm172BookMulti",
+  "guesses": [
+    "/maps/Master/subscripts"
+  ],
+  "model_version": 1,
+  "namespace": "USER",
+  "shape": {
+    "cap": {
+      "nodes": 200,
+      "seconds": 5
+    },
+    "capped": false,
+    "data_states": {
+      "0": {
+        "11": 1
+      },
+      "1": {
+        "10": 2
+      },
+      "2": {
+        "1": 6
+      }
+    },
+    "depths": {
+      "0": 1,
+      "2": 6
+    },
+    "formats": [
+      {
+        "delimiter": null,
+        "depth": 0,
+        "format": "plain",
+        "node": null,
+        "pieces": {
+          "max": 1,
+          "min": 1
+        }
+      },
+      {
+        "delimiter": null,
+        "depth": 2,
+        "format": "plain",
+        "node": "\"loc\"",
+        "pieces": {
+          "max": 1,
+          "min": 1
+        }
+      },
+      {
+        "delimiter": null,
+        "depth": 2,
+        "format": "plain",
+        "node": "\"pub\"",
+        "pieces": {
+          "max": 1,
+          "min": 1
+        }
+      },
+      {
+        "delimiter": null,
+        "depth": 2,
+        "format": "plain",
+        "node": "\"title\"",
+        "pieces": {
+          "max": 1,
+          "min": 1
+        }
+      }
+    ],
+    "global": "^IadSm172BookMulti",
+    "nodes_scanned": 9,
+    "numeric_subscripts": {
+      "1": 2
+    },
+    "sub_nodes": {
+      "2": [
+        "loc",
+        "pub",
+        "title"
+      ]
+    },
+    "values": null
+  },
+  "success": true
+}

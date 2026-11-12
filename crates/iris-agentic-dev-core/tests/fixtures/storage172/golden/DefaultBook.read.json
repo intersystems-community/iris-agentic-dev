@@ -1,0 +1,50 @@
+{
+  "derived": [],
+  "storage": {
+    "default_storage": {
+      "data_location": "^IadSm172.DefaultBookD",
+      "id_location": "^IadSm172.DefaultBookD",
+      "index_location": "^IadSm172.DefaultBookI",
+      "nodes": [
+        {
+          "node": "DefaultBookDefaultData",
+          "slots": [
+            {
+              "property": "%%CLASSNAME",
+              "slot": 1
+            },
+            {
+              "property": "Title",
+              "slot": 2
+            },
+            {
+              "property": "Author",
+              "slot": 3
+            },
+            {
+              "property": "ISBN",
+              "slot": 4
+            }
+          ],
+          "value_name": "DefaultBookDefaultData"
+        }
+      ],
+      "stream_location": "^IadSm172.DefaultBookS"
+    },
+    "description": null,
+    "editable": false,
+    "extra": [],
+    "keywords": {
+      "DataLocation": "^IadSm172.DefaultBookD",
+      "DefaultData": "DefaultBookDefaultData",
+      "IdLocation": "^IadSm172.DefaultBookD",
+      "IndexLocation": "^IadSm172.DefaultBookI",
+      "StreamLocation": "^IadSm172.DefaultBookS"
+    },
+    "maps": [],
+    "name": "Default",
+    "not_editable_reason": "default storage",
+    "type": "%Storage.Persistent",
+    "version": "f8228e1d9a25d9b7"
+  }
+}

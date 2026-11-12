@@ -1,0 +1,110 @@
+{
+  "derived": [
+    {
+      "fact": "no delimiter: node read as $LIST",
+      "path": "/maps/Master/data/Half"
+    },
+    {
+      "fact": "computed field: not filed",
+      "path": "/maps/Master/data/Half"
+    },
+    {
+      "fact": "table is writable: master global starts with ^, $, or @",
+      "path": "/storage"
+    }
+  ],
+  "storage": {
+    "default_storage": null,
+    "description": "Library notes: one node per note, title and author as pieces.",
+    "editable": true,
+    "extra": [],
+    "keywords": {
+      "SqlIdExpression": "$i(^IadSm172Notes)",
+      "StreamLocation": "^IadSm172NotesS"
+    },
+    "maps": [
+      {
+        "block_count": null,
+        "condition": null,
+        "condition_fields": null,
+        "conditional_with_host_vars": null,
+        "data": {
+          "Author": {
+            "delimiter": "\"^\"",
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "delimited"
+            },
+            "extra": [],
+            "name": "Author",
+            "node": null,
+            "piece": "2",
+            "retrieval_code": null
+          },
+          "Half": {
+            "delimiter": null,
+            "derived": {
+              "computed": true,
+              "filed": false,
+              "format": "$LIST"
+            },
+            "extra": [],
+            "name": "Half",
+            "node": null,
+            "piece": null,
+            "retrieval_code": " Set {*}=$Select(($Piece($Get(^IadSm172Notes({L1})),\"^\",1)]]\"M\")&1:\"second\",1:\"first\")"
+          },
+          "Title": {
+            "delimiter": "\"^\"",
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "delimited"
+            },
+            "extra": [],
+            "name": "Title",
+            "node": null,
+            "piece": "1",
+            "retrieval_code": null
+          }
+        },
+        "deferred": null,
+        "extra": [],
+        "global": "^IadSm172Notes",
+        "master": true,
+        "name": "Master",
+        "population_pct": null,
+        "population_type": null,
+        "row_id": [],
+        "row_reference": null,
+        "structure": null,
+        "subscripts": [
+          {
+            "access_type": "Sub",
+            "access_vars": [],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "{ID}",
+            "extra": [],
+            "invalid_conditions": [],
+            "level": 1,
+            "loop_init_value": null,
+            "next_code": null,
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": null,
+            "stop_value": null
+          }
+        ],
+        "type": "data",
+        "used": true,
+        "version": "61a32663f575d744"
+      }
+    ],
+    "name": "SQLStorage",
+    "not_editable_reason": null,
+    "type": "%Storage.SQL",
+    "version": "393cc5aca6dd6953"
+  }
+}

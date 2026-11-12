@@ -1,0 +1,33 @@
+{
+  "graph": {
+    "edges": [
+      {
+        "from": "G1",
+        "to": "S2"
+      },
+      {
+        "from": "S2",
+        "to": "D3"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "G1",
+        "kind": "global",
+        "label": "^IadSm172Shelf"
+      },
+      {
+        "id": "S2",
+        "kind": "subscript",
+        "label": "sub 1: {ID} (Sub)"
+      },
+      {
+        "id": "D3",
+        "kind": "data",
+        "label": "ShelfArea: piece 1, ShelfLoc: piece 2"
+      }
+    ]
+  },
+  "markdown": "# Storage of IadSm172.Shelf\n\nStorage `SQLStorage`, type `%Storage.SQL`, editable with iris_storage_map.\n\n| Keyword | Value |\n| --- | --- |\n| `SqlIdExpression` | `$i(^IadSm172Shelf)` |\n| `StreamLocation` | `^IadSm172ShelfS` |\n\n- table is writable: master global starts with ^, $, or @\n\n## Map `Master` (data, master map)\n\nGlobal layout: `^IadSm172Shelf({ID})`\n\n| Level | Expression | Access type | Delimiter | Other |\n| --- | --- | --- | --- | --- |\n| 1 | `{ID}` | Sub | — | Level 1 next_code (below) |\n\n| Field | Node | Delimiter | Piece | Format | Filed |\n| --- | --- | --- | --- | --- | --- |\n| `ShelfArea` | row node | `\"^\"` | `1` | delimited | yes |\n| `ShelfLoc` | row node | `\"^\"` | `2` | delimited | yes |\n\nLevel 1 next_code:\n\n```objectscript\n s {L1}=$o(^IadSm172Shelf({L1}))\n f  {\n\tq:{L1}=\"\"\n\tq:{L1}'=\"reserved\"\n\ts {L1}=$o(^IadSm172Shelf({L1}))\n }\n```\n\n```mermaid\nflowchart LR\n  G1[\"^IadSm172Shelf\"]\n  S2[\"sub 1: {ID} (Sub)\"]\n  D3[\"ShelfArea: piece 1, ShelfLoc: piece 2\"]\n  G1 --> S2\n  S2 --> D3\n```\n",
+  "mermaid": "flowchart LR\n  G1[\"^IadSm172Shelf\"]\n  S2[\"sub 1: {ID} (Sub)\"]\n  D3[\"ShelfArea: piece 1, ShelfLoc: piece 2\"]\n  G1 --> S2\n  S2 --> D3\n"
+}

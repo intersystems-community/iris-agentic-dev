@@ -1,0 +1,60 @@
+{
+  "graph": {
+    "edges": [
+      {
+        "from": "G1",
+        "to": "S2"
+      },
+      {
+        "from": "S2",
+        "to": "S3"
+      },
+      {
+        "from": "S3",
+        "to": "S4"
+      },
+      {
+        "from": "S4",
+        "to": "D5"
+      },
+      {
+        "from": "D5",
+        "to": "R6"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "G1",
+        "kind": "global",
+        "label": "^IadSm172Copy"
+      },
+      {
+        "id": "S2",
+        "kind": "subscript",
+        "label": "sub 1: {BookId} (Sub)"
+      },
+      {
+        "id": "S3",
+        "kind": "subscript",
+        "label": "sub 2: {Branch} (Sub)"
+      },
+      {
+        "id": "S4",
+        "kind": "subscript",
+        "label": "sub 3: {CopyNo} (Sub)"
+      },
+      {
+        "id": "D5",
+        "kind": "data",
+        "label": "Shelf: piece 1"
+      },
+      {
+        "id": "R6",
+        "kind": "row_id",
+        "label": "row ID: BookId, Branch, CopyNo"
+      }
+    ]
+  },
+  "markdown": "# Storage of IadSm172.Copy\n\nStorage `SQLStorage`, type `%Storage.SQL`, editable with iris_storage_map.\n\n| Keyword | Value |\n| --- | --- |\n| `StreamLocation` | `^IadSm172CopyS` |\n\n- table is writable: master global starts with ^, $, or @\n\n## Map `Master` (data, master map)\n\nGlobal layout: `^IadSm172Copy({BookId},{Branch},{CopyNo})`\n\n| Level | Expression | Access type | Delimiter | Other |\n| --- | --- | --- | --- | --- |\n| 1 | `{BookId}` | Sub | — | — |\n| 2 | `{Branch}` | Sub | — | — |\n| 3 | `{CopyNo}` | Sub | — | — |\n\n| Field | Node | Delimiter | Piece | Format | Filed |\n| --- | --- | --- | --- | --- | --- |\n| `Shelf` | row node | `\"^\"` | `1` | delimited | yes |\n\n| Row ID part | Field | Expression |\n| --- | --- | --- |\n| 1 | `BookId` | `{L1}` |\n| 2 | `Branch` | `{L2}` |\n| 3 | `CopyNo` | `{L3}` |\n\n```mermaid\nflowchart LR\n  G1[\"^IadSm172Copy\"]\n  S2[\"sub 1: {BookId} (Sub)\"]\n  S3[\"sub 2: {Branch} (Sub)\"]\n  S4[\"sub 3: {CopyNo} (Sub)\"]\n  D5[\"Shelf: piece 1\"]\n  R6[\"row ID: BookId, Branch, CopyNo\"]\n  G1 --> S2\n  S2 --> S3\n  S3 --> S4\n  S4 --> D5\n  D5 --> R6\n```\n",
+  "mermaid": "flowchart LR\n  G1[\"^IadSm172Copy\"]\n  S2[\"sub 1: {BookId} (Sub)\"]\n  S3[\"sub 2: {Branch} (Sub)\"]\n  S4[\"sub 3: {CopyNo} (Sub)\"]\n  D5[\"Shelf: piece 1\"]\n  R6[\"row ID: BookId, Branch, CopyNo\"]\n  G1 --> S2\n  S2 --> S3\n  S3 --> S4\n  S4 --> D5\n  D5 --> R6\n"
+}

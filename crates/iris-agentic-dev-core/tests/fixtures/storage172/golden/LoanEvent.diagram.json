@@ -1,0 +1,51 @@
+{
+  "graph": {
+    "edges": [
+      {
+        "from": "G1",
+        "to": "S2"
+      },
+      {
+        "from": "S2",
+        "to": "S3"
+      },
+      {
+        "from": "S3",
+        "to": "S4"
+      },
+      {
+        "from": "S4",
+        "to": "D5"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "G1",
+        "kind": "global",
+        "label": "^IadSm172Loan"
+      },
+      {
+        "id": "S2",
+        "kind": "subscript",
+        "label": "sub 1: {Loan} (Sub)"
+      },
+      {
+        "id": "S3",
+        "kind": "subscript",
+        "label": "sub 2: #34;EV#34; (Sub)"
+      },
+      {
+        "id": "S4",
+        "kind": "subscript",
+        "label": "sub 3: {EvNo} (Sub)"
+      },
+      {
+        "id": "D5",
+        "kind": "data",
+        "label": "Action: piece 1, EvDate: piece 2"
+      }
+    ]
+  },
+  "markdown": "# Storage of IadSm172.LoanEvent\n\nStorage `SQLStorage`, type `%Storage.SQL`, editable with iris_storage_map.\n\n| Keyword | Value |\n| --- | --- |\n| `StreamLocation` | `^IadSm172LoanEventS` |\n\n- table is writable: master global starts with ^, $, or @\n\n## Map `Master` (data, master map)\n\nGlobal layout: `^IadSm172Loan({Loan},\"EV\",{EvNo})`\n\n| Level | Expression | Access type | Delimiter | Other |\n| --- | --- | --- | --- | --- |\n| 1 | `{Loan}` | Sub | — | — |\n| 2 | `\"EV\"` | Sub | — | — |\n| 3 | `{EvNo}` | Sub | — | — |\n\n| Field | Node | Delimiter | Piece | Format | Filed |\n| --- | --- | --- | --- | --- | --- |\n| `Action` | row node | `\"^\"` | `1` | delimited | yes |\n| `EvDate` | row node | `\"^\"` | `2` | delimited | yes |\n\n```mermaid\nflowchart LR\n  G1[\"^IadSm172Loan\"]\n  S2[\"sub 1: {Loan} (Sub)\"]\n  S3[\"sub 2: #34;EV#34; (Sub)\"]\n  S4[\"sub 3: {EvNo} (Sub)\"]\n  D5[\"Action: piece 1, EvDate: piece 2\"]\n  G1 --> S2\n  S2 --> S3\n  S3 --> S4\n  S4 --> D5\n```\n",
+  "mermaid": "flowchart LR\n  G1[\"^IadSm172Loan\"]\n  S2[\"sub 1: {Loan} (Sub)\"]\n  S3[\"sub 2: #34;EV#34; (Sub)\"]\n  S4[\"sub 3: {EvNo} (Sub)\"]\n  D5[\"Action: piece 1, EvDate: piece 2\"]\n  G1 --> S2\n  S2 --> S3\n  S3 --> S4\n  S4 --> D5\n"
+}

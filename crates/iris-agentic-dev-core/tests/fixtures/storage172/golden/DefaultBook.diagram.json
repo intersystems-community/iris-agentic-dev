@@ -1,0 +1,8 @@
+{
+  "graph": {
+    "edges": [],
+    "nodes": []
+  },
+  "markdown": "# Storage of IadSm172.DefaultBook\n\nStorage `Default`, type `%Storage.Persistent`, read-only here (default storage).\n\n| Keyword | Value |\n| --- | --- |\n| `DataLocation` | `^IadSm172.DefaultBookD` |\n| `DefaultData` | `DefaultBookDefaultData` |\n| `IdLocation` | `^IadSm172.DefaultBookD` |\n| `IndexLocation` | `^IadSm172.DefaultBookI` |\n| `StreamLocation` | `^IadSm172.DefaultBookS` |\n\n## Default storage\n\n| Location | Global |\n| --- | --- |\n| Data | `^IadSm172.DefaultBookD` |\n| ID | `^IadSm172.DefaultBookD` |\n| Index | `^IadSm172.DefaultBookI` |\n| Stream | `^IadSm172.DefaultBookS` |\n\n### Node `DefaultBookDefaultData`\n\n| Slot | Property |\n| --- | --- |\n| 1 | `%%CLASSNAME` |\n| 2 | `Title` |\n| 3 | `Author` |\n| 4 | `ISBN` |\n",
+  "mermaid": "flowchart LR\n"
+}

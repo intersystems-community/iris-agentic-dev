@@ -585,12 +585,15 @@ false` as naming the argument, so every call sending it would need `acknowledgeP
 
 ## Phase 11: User Story 10 — A contract a GUI can build on (P2)
 
-- [ ] T095 [P] [US10] Golden files: `tests/unit/test_storage_map_golden_172.rs` builds the `read`, `diagram` JSON for
+- [x] T095 [P] [US10] Golden files: `tests/unit/test_storage_map_golden_172.rs` builds the `read`, `diagram` JSON for
       every fixture from its `.cls` text (no IRIS) and compares with `tests/fixtures/storage172/golden/<Name>.<action>.json`;
       `IAD_REGEN_GOLDEN=1` rewrites them (through `EnvGuard`); a test asserts `MODEL_VERSION` matches a constant in the
       golden directory's `VERSION` file, so a shape change without a bump fails. Prove: `U test_storage_map_golden_172`.
-- [ ] T096 [US10] Golden live answers for `compare`, `preview`, `propose` on `Member` and `BookMulti`, stored with
+      Done 2026-11-12: 30 files plus `VERSION`; checked that a changed file fails the test.
+- [x] T096 [US10] Golden live answers for `compare`, `preview`, `propose` on `Member` and `BookMulti`, stored with
       values masked. Prove: `L test_storage_map_golden_172`.
+      Done 2026-11-12: `<Name>.<action>.live.json`; the scratch class name and identity are left out; a seeded
+      value in a masked answer fails the test.
 - [ ] T097 [US10] Lead writes `/docs/storage-maps.md` (model, actions, error codes, measured traps, the residual risk
       of saved map code from FR-027); a teammate adds `tests/unit/test_storage_maps_doc_172.rs` asserting every error
       code and action named there exists in the code and every documented trap names its live test. Prove:

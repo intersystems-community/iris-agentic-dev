@@ -1,0 +1,102 @@
+{
+  "derived": [
+    {
+      "fact": "table is writable: master global starts with ^, $, or @",
+      "path": "/storage"
+    }
+  ],
+  "storage": {
+    "default_storage": null,
+    "description": null,
+    "editable": true,
+    "extra": [],
+    "keywords": {
+      "SqlIdExpression": "$i(^IadSm172Branch)",
+      "StreamLocation": "^IadSm172BranchS"
+    },
+    "maps": [
+      {
+        "block_count": null,
+        "condition": null,
+        "condition_fields": null,
+        "conditional_with_host_vars": null,
+        "data": {
+          "BranchId": {
+            "delimiter": "\"^\"",
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "delimited"
+            },
+            "extra": [],
+            "name": "BranchId",
+            "node": null,
+            "piece": "1",
+            "retrieval_code": null
+          },
+          "BranchName": {
+            "delimiter": "\"^\"",
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "delimited"
+            },
+            "extra": [],
+            "name": "BranchName",
+            "node": null,
+            "piece": "3",
+            "retrieval_code": null
+          },
+          "Country": {
+            "delimiter": "\"^\"",
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "delimited"
+            },
+            "extra": [],
+            "name": "Country",
+            "node": null,
+            "piece": "2",
+            "retrieval_code": null
+          }
+        },
+        "deferred": null,
+        "extra": [],
+        "global": "^IadSm172Branch",
+        "master": true,
+        "name": "Master",
+        "population_pct": null,
+        "population_type": null,
+        "row_id": [],
+        "row_reference": null,
+        "structure": null,
+        "subscripts": [
+          {
+            "access_type": "Sub",
+            "access_vars": [],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "{ID}",
+            "extra": [],
+            "invalid_conditions": [],
+            "level": 1,
+            "loop_init_value": null,
+            "next_code": null,
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": null,
+            "stop_value": null
+          }
+        ],
+        "type": "data",
+        "used": true,
+        "version": "f94d4b1d06f46065"
+      }
+    ],
+    "name": "SQLStorage",
+    "not_editable_reason": null,
+    "type": "%Storage.SQL",
+    "version": "59900eec4c1d1997"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "graph": {
+    "edges": [
+      {
+        "from": "G1",
+        "to": "S2"
+      },
+      {
+        "from": "S2",
+        "to": "D3"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "G1",
+        "kind": "global",
+        "label": "^IadSm172MemberD"
+      },
+      {
+        "id": "S2",
+        "kind": "subscript",
+        "label": "sub 1: {ID} (Sub)"
+      },
+      {
+        "id": "D3",
+        "kind": "data",
+        "label": "City: piece 2, Email: piece 1, Name: piece 1, Phone: piece 2"
+      }
+    ]
+  },
+  "markdown": "# Storage of IadSm172.MemberD11\n\nStorage `SQLStorage`, type `%Storage.SQL`, editable with iris_storage_map.\n\n| Keyword | Value |\n| --- | --- |\n| `SqlIdExpression` | `$i(^IadSm172MemberD)` |\n| `StreamLocation` | `^IadSm172MemberDS` |\n\n- table is writable: master global starts with ^, $, or @\n\n## Map `Master` (data, master map)\n\nGlobal layout: `^IadSm172MemberD({ID})`\n\n| Level | Expression | Access type | Delimiter | Other |\n| --- | --- | --- | --- | --- |\n| 1 | `{ID}` | Sub | — | — |\n\n| Field | Node | Delimiter | Piece | Format | Filed |\n| --- | --- | --- | --- | --- | --- |\n| `City` | row node | `\"^\"` | `2` | delimited | yes |\n| `Email` | `\"contact\"` | `\"^\"` | `1` | delimited | yes |\n| `Name` | row node | `\"^\"` | `1` | delimited | yes |\n| `Phone` | `\"contact\"` | `\"^\"` | `2` | delimited | yes |\n\nFacts:\n\n- row node holds fields (City, Name) and has sub-nodes (\"contact\"): $Data 11\n\n```mermaid\nflowchart LR\n  G1[\"^IadSm172MemberD\"]\n  S2[\"sub 1: {ID} (Sub)\"]\n  D3[\"City: piece 2, Email: piece 1, Name: piece 1, Phone: piece 2\"]\n  G1 --> S2\n  S2 --> D3\n```\n",
+  "mermaid": "flowchart LR\n  G1[\"^IadSm172MemberD\"]\n  S2[\"sub 1: {ID} (Sub)\"]\n  D3[\"City: piece 2, Email: piece 1, Name: piece 1, Phone: piece 2\"]\n  G1 --> S2\n  S2 --> D3\n"
+}

@@ -1,0 +1,90 @@
+{
+  "action": "propose",
+  "capped": false,
+  "draft": {
+    "data": {
+      "Field1": {
+        "delimiter": "\"^\"",
+        "name": "Field1",
+        "piece": "1"
+      },
+      "Field2": {
+        "delimiter": "\"^\"",
+        "name": "Field2",
+        "piece": "2"
+      },
+      "Field3": {
+        "delimiter": "\"^\"",
+        "name": "Field3",
+        "piece": "3"
+      }
+    },
+    "global": "^IadSm172Member",
+    "name": "Master",
+    "subscripts": [
+      {
+        "expression": "{ID}",
+        "level": 1
+      }
+    ],
+    "type": "data"
+  },
+  "global": "^IadSm172Member",
+  "guesses": [
+    "/maps/Master/subscripts",
+    "/maps/Master/data/Field1",
+    "/maps/Master/data/Field2",
+    "/maps/Master/data/Field3"
+  ],
+  "model_version": 1,
+  "namespace": "USER",
+  "shape": {
+    "cap": {
+      "nodes": 200,
+      "seconds": 5
+    },
+    "capped": false,
+    "data_states": {
+      "0": {
+        "11": 1
+      },
+      "1": {
+        "1": 3
+      }
+    },
+    "depths": {
+      "0": 1,
+      "1": 3
+    },
+    "formats": [
+      {
+        "delimiter": null,
+        "depth": 0,
+        "format": "plain",
+        "node": null,
+        "pieces": {
+          "max": 1,
+          "min": 1
+        }
+      },
+      {
+        "delimiter": "^",
+        "depth": 1,
+        "format": "delimited",
+        "node": null,
+        "pieces": {
+          "max": 3,
+          "min": 3
+        }
+      }
+    ],
+    "global": "^IadSm172Member",
+    "nodes_scanned": 4,
+    "numeric_subscripts": {
+      "1": 3
+    },
+    "sub_nodes": {},
+    "values": null
+  },
+  "success": true
+}

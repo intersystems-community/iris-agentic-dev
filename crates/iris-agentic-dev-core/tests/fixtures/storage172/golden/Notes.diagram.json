@@ -1,0 +1,33 @@
+{
+  "graph": {
+    "edges": [
+      {
+        "from": "G1",
+        "to": "S2"
+      },
+      {
+        "from": "S2",
+        "to": "D3"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "G1",
+        "kind": "global",
+        "label": "^IadSm172Notes"
+      },
+      {
+        "id": "S2",
+        "kind": "subscript",
+        "label": "sub 1: {ID} (Sub)"
+      },
+      {
+        "id": "D3",
+        "kind": "data",
+        "label": "Author: piece 2, Half, Title: piece 1"
+      }
+    ]
+  },
+  "markdown": "# Storage of IadSm172.Notes\n\nStorage `SQLStorage`, type `%Storage.SQL`, editable with iris_storage_map.\n\n| Keyword | Value |\n| --- | --- |\n| `SqlIdExpression` | `$i(^IadSm172Notes)` |\n| `StreamLocation` | `^IadSm172NotesS` |\n\n- table is writable: master global starts with ^, $, or @\n\n## Map `Master` (data, master map)\n\nGlobal layout: `^IadSm172Notes({ID})`\n\n| Level | Expression | Access type | Delimiter | Other |\n| --- | --- | --- | --- | --- |\n| 1 | `{ID}` | Sub | — | — |\n\n| Field | Node | Delimiter | Piece | Format | Filed |\n| --- | --- | --- | --- | --- | --- |\n| `Author` | row node | `\"^\"` | `2` | delimited | yes |\n| `Half` | row node | — | — | $LIST | no (computed) |\n| `Title` | row node | `\"^\"` | `1` | delimited | yes |\n\n| Computed field | Retrieval code |\n| --- | --- |\n| `Half` | ` Set {*}=$Select(($Piece($Get(^IadSm172Notes({L1})),\"^\",1)]]\"M\")&1:\"second\",1:\"first\")` |\n\nFacts:\n\n- no delimiter: node read as $LIST\n- computed field: not filed\n\n```mermaid\nflowchart LR\n  G1[\"^IadSm172Notes\"]\n  S2[\"sub 1: {ID} (Sub)\"]\n  D3[\"Author: piece 2, Half, Title: piece 1\"]\n  G1 --> S2\n  S2 --> D3\n```\n",
+  "mermaid": "flowchart LR\n  G1[\"^IadSm172Notes\"]\n  S2[\"sub 1: {ID} (Sub)\"]\n  D3[\"Author: piece 2, Half, Title: piece 1\"]\n  G1 --> S2\n  S2 --> D3\n"
+}

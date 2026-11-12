@@ -1,0 +1,114 @@
+{
+  "derived": [
+    {
+      "fact": "no delimiter: node read as $LIST",
+      "path": "/maps/Master/data/Location"
+    },
+    {
+      "fact": "no delimiter: node read as $LIST",
+      "path": "/maps/Master/data/Publisher"
+    },
+    {
+      "fact": "no delimiter: node read as $LIST",
+      "path": "/maps/Master/data/Title"
+    },
+    {
+      "fact": "table is writable: master global starts with ^, $, or @",
+      "path": "/storage"
+    }
+  ],
+  "storage": {
+    "default_storage": null,
+    "description": null,
+    "editable": true,
+    "extra": [],
+    "keywords": {
+      "SqlIdExpression": "$i(^IadSm172BookMulti)",
+      "StreamLocation": "^IadSm172BookMultiS"
+    },
+    "maps": [
+      {
+        "block_count": null,
+        "condition": null,
+        "condition_fields": null,
+        "conditional_with_host_vars": null,
+        "data": {
+          "Location": {
+            "delimiter": null,
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "whole node"
+            },
+            "extra": [],
+            "name": "Location",
+            "node": "\"loc\"",
+            "piece": null,
+            "retrieval_code": null
+          },
+          "Publisher": {
+            "delimiter": null,
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "whole node"
+            },
+            "extra": [],
+            "name": "Publisher",
+            "node": "\"pub\"",
+            "piece": null,
+            "retrieval_code": null
+          },
+          "Title": {
+            "delimiter": null,
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "whole node"
+            },
+            "extra": [],
+            "name": "Title",
+            "node": "\"title\"",
+            "piece": null,
+            "retrieval_code": null
+          }
+        },
+        "deferred": null,
+        "extra": [],
+        "global": "^IadSm172BookMulti",
+        "master": true,
+        "name": "Master",
+        "population_pct": null,
+        "population_type": null,
+        "row_id": [],
+        "row_reference": null,
+        "structure": null,
+        "subscripts": [
+          {
+            "access_type": "Sub",
+            "access_vars": [],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "{ID}",
+            "extra": [],
+            "invalid_conditions": [],
+            "level": 1,
+            "loop_init_value": null,
+            "next_code": null,
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": null,
+            "stop_value": null
+          }
+        ],
+        "type": "data",
+        "used": true,
+        "version": "56c73887ef7e0c72"
+      }
+    ],
+    "name": "SQLStorage",
+    "not_editable_reason": null,
+    "type": "%Storage.SQL",
+    "version": "c187b106648a82c8"
+  }
+}

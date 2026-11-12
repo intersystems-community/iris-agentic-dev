@@ -1,0 +1,97 @@
+{
+  "derived": [
+    {
+      "fact": "no delimiter: node read as $LIST",
+      "path": "/maps/Master/data/BookIds"
+    },
+    {
+      "fact": "no delimiter: node read as $LIST",
+      "path": "/maps/Master/data/MemberId"
+    },
+    {
+      "fact": "table is writable: master global starts with ^, $, or @",
+      "path": "/storage"
+    }
+  ],
+  "storage": {
+    "default_storage": null,
+    "description": null,
+    "editable": true,
+    "extra": [],
+    "keywords": {
+      "SqlIdExpression": "$i(^IadSm172LoanList)",
+      "StreamLocation": "^IadSm172LoanListS"
+    },
+    "maps": [
+      {
+        "block_count": null,
+        "condition": null,
+        "condition_fields": null,
+        "conditional_with_host_vars": null,
+        "data": {
+          "BookIds": {
+            "delimiter": null,
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "$LIST"
+            },
+            "extra": [],
+            "name": "BookIds",
+            "node": null,
+            "piece": null,
+            "retrieval_code": null
+          },
+          "MemberId": {
+            "delimiter": null,
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "$LIST"
+            },
+            "extra": [],
+            "name": "MemberId",
+            "node": null,
+            "piece": "1",
+            "retrieval_code": null
+          }
+        },
+        "deferred": null,
+        "extra": [],
+        "global": "^IadSm172LoanList",
+        "master": true,
+        "name": "Master",
+        "population_pct": null,
+        "population_type": null,
+        "row_id": [],
+        "row_reference": null,
+        "structure": null,
+        "subscripts": [
+          {
+            "access_type": "Sub",
+            "access_vars": [],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "{ID}",
+            "extra": [],
+            "invalid_conditions": [],
+            "level": 1,
+            "loop_init_value": null,
+            "next_code": null,
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": null,
+            "stop_value": null
+          }
+        ],
+        "type": "data",
+        "used": true,
+        "version": "46b63eaf88fb1fc4"
+      }
+    ],
+    "name": "SQLStorage",
+    "not_editable_reason": null,
+    "type": "%Storage.SQL",
+    "version": "a2aea0dc3abf70a0"
+  }
+}
