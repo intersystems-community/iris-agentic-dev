@@ -132,6 +132,21 @@ overall = 88
 "src/tools/param_check.rs"            = 93
 "src/tools/params/mod.rs"             = 98
 "src/tools/storage_guard.rs"          = 98
+# storage_map/ (spec 172): unit-only region coverage, measured 2026-11-14 on 45660344, minus 2pp. mod.rs, uses.rs
+# and write.rs are dispatch and IRIS paths; the merged run with live IRIS covers them (T117).
+"src/tools/storage_map/code.rs"       = 98
+"src/tools/storage_map/diagram.rs"    = 96
+"src/tools/storage_map/explain.rs"    = 96
+"src/tools/storage_map/globals.rs"    = 98
+"src/tools/storage_map/mod.rs"        = 12
+"src/tools/storage_map/model.rs"      = 89
+"src/tools/storage_map/path.rs"       = 87
+"src/tools/storage_map/sample.rs"     = 59
+"src/tools/storage_map/shape.rs"      = 83
+"src/tools/storage_map/tree.rs"       = 90
+"src/tools/storage_map/uses.rs"       = 4
+"src/tools/storage_map/validate.rs"   = 93
+"src/tools/storage_map/write.rs"      = 34
 "src/tools/scm.rs"                    = 58
 "src/tools/search.rs"                 = 53
 # server_tools.rs: same story. The probe success path (reachable + authenticated,
