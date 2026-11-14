@@ -203,6 +203,13 @@ pub async fn handle(
             )
         }));
     }
+    // A call that runs as the service account is refused before any IRIS contact when that
+    // account cannot be used, as every other tool that runs the agent's code is.
+    if crate::tools::exec::needs_service_account("iris_storage_map", p) {
+        if let Err(e) = tools.exec_context() {
+            return err_result(e.to_json());
+        }
+    }
 
     match shape.action {
         Action::Read => read(iris, client, p).await,

@@ -192,3 +192,22 @@ stays case-sensitive (`DATA` fails with #5511).
   rig builds it after the compile, and the plan for `WHERE Popular = 1` reads "bitmap index IadSm172.Genre.PopularBitmap".
   FR-023's `build_indexes` must use the Index name for the same reason.
   question goes through the master map.
+
+## R18. Service-account identity on the build box (measured 2026-11-14, IRIS Community 2026.2, amd64)
+
+- **A disabled service account keeps working for the life of its CSP session.** `compare` ran as `iadT172Svc`
+  (`identity.verified: true`), the account was disabled with `Security.Users.Modify(...,Enabled=0)`, and the next
+  `compare` in the same process ran as the account again and returned the shape. IRIS does not end the sessions an
+  account already holds, and iad keeps one cookie store per (endpoint, account). Disabling the account is no way to
+  stop a running iad; restarting it or ending the account's sessions is. T089 refuses with an account that never logs
+  in instead.
+- **`compare` read the class before the identity refusal.** On a server with no service account while
+  `IRIS_SERVICE_USERNAME` was set, `compare` sent `GET /doc/<class>.cls` as the primary user and answered
+  `IRIS_UNREACHABLE`, where every other tool that runs the agent's code answers `SERVICE_ACCOUNT_UNCONFIGURED_FOR_SERVER`
+  before any IRIS contact. `handle` now resolves the execute identity first for every call `needs_service_account`
+  names (`test_identity_binary_141`).
+- **The launch env opens the destructive tier for the whole process.** `IRIS_DESTRUCTIVE_TOOLS_ENABLED` is read once,
+  at start (`operator_env_gates`), and outranks the operator file for the default connection, so neither
+  `destructive_tools_enabled = false` nor `[policy.default] destructiveTools = false` closes it in a process launched
+  with it set, as CI's e2e job is (both tried on the box). The refusal of `build_indexes` with the tier closed is
+  therefore a binary test (`test_storage_map_gates_172`), which states its own launch environment.

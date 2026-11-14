@@ -51,6 +51,7 @@ mod test_read_only_strict_141;
 mod test_scm_opt_ins_141;
 mod test_server_probe_141;
 mod test_skill_override_141;
+mod test_storage_map_gates_172;
 mod test_storage_map_schema_172;
 mod test_target_gates_141;
 mod test_telemetry_sink_binary_141;

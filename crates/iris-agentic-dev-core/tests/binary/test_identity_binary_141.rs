@@ -227,7 +227,7 @@ fn ssh_host_from_a_repository_file_is_dropped_and_never_called() {
 
 // ── B03 ───────────────────────────────────────────────────────────────────────
 
-fn nine_calls(server: &str) -> Vec<(&'static str, Value)> {
+fn agent_code_calls(server: &str) -> Vec<(&'static str, Value)> {
     vec![
         ("iris_execute", json!({"code": "Write 1", "server": server})),
         (
@@ -259,6 +259,10 @@ fn nine_calls(server: &str) -> Vec<(&'static str, Value)> {
             json!({"mode": "run", "test_path": "T141.Tests", "classes": ["T141.A"], "server": server}),
         ),
         ("iris_ws_open", json!({"server": server})),
+        (
+            "iris_storage_map",
+            json!({"action": "compare", "class": "T141.A", "server": server}),
+        ),
     ]
 }
 
@@ -277,7 +281,7 @@ fn a_server_with_no_service_account_is_refused_every_tool_that_runs_the_agents_c
     ]);
     let mut seen = std::collections::BTreeSet::new();
     for spelling in ["qa", " qa ", "QA"] {
-        for (tool, args) in nine_calls(spelling) {
+        for (tool, args) in agent_code_calls(spelling) {
             let answer = s.call(tool, &args);
             let b = body(&answer);
             let code = b["error_code"].as_str().unwrap_or("");

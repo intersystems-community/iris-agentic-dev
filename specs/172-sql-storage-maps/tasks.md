@@ -540,12 +540,15 @@ Value>` through `execute_via_generator` (service account per T036). Test first
       Done 2026-11-12, in the handler only (`sample::values_refusal`). Deviation: `iris_storage_map` is not added
       to `HANDLER_ENFORCED_TOOLS`/`ACKNOWLEDGED_BODY_READS`, because `names_argument` treats `include_values:
 false` as naming the argument, so every call sending it would need `acknowledgePhi` under `allow`.
-- [ ] T089 [US5] Identity: in `test_storage_map_data_172_live.rs`, with a service account configured (see
+- [x] T089 [US5] Identity: in `test_storage_map_data_172_live.rs`, with a service account configured (see
       `test_scratch_cleanup_141_live.rs` for the throwaway setup), `compare`/`preview` answers carry the service
       account in `identity`, and refuse when the service account cannot be used. Prove: `L test_storage_map_data_172`.
       Deferred 2026-11-12: needs the throwaway container (`ThrowawayIris`), which is not started on the laptop
       under the build-load rules. compare/preview take identity from `exec_context`, the path the 141 identity
       tests cover; run this on a build box.
+      Done 2026-11-14 on the AWS build box: `test_storage_map_data_172_compare_and_preview_run_as_the_service_account`
+      uses the live server and `support_identity_141::Account`, not the throwaway. A disabled account is no test of
+      the refusal (IRIS keeps its CSP session, research R18), so the refusal uses an account that cannot log in.
 
 ---
 
@@ -716,8 +719,15 @@ question, answer }`. Names `IadSm172Gen.C<nnn>`, globals `^IadSm172Gen<nnn>`, in
 - [x] T115 Every `#[ignore]` test in this feature appears in `quickstart.md`'s commands. Prove: lead check.
       Done 2026-11-12: the integration command also filters `storage172` and `doc_put_result_status_172`.
 - [ ] T116 Full suite: `cargo test --features testing -- --test-threads=1 --include-ignored` (all targets) green.
+      2026-11-14, build box (Community 2026.2, CI env and skip list): 7,330 passed, 8 failed. All 8 fixed and re-run
+      green: the skill counts (35 with `iris-storage-mapping`), `iris_storage_map` refused before any IRIS contact
+      without a service account, the `build_indexes` refusal moved to a binary test (R18), the two local-only tests on
+      CI's skip list, the throwaway on the official 2026.2 image (2025.3 Community expired). A last full run waits for
+      T117's tests.
 - [ ] T117 Coverage: the canonical `cargo llvm-cov --summary-only -p iris-agentic-dev-core -- --include-ignored`
       command from the constitution; TOTAL line coverage ≥ 90%, and every file under `storage_map/` ≥ 90%.
+      2026-11-14: TOTAL lines 90.35%. Under 90%: `write.rs` 84.69%, `shape.rs` 85.43%, `tree.rs` 86.75%, `uses.rs`
+      83.33%, `model.rs` 89.94%.
 - [x] T118 Lead: `/CLAUDE.md` Recent Changes entry, release-notes draft through `/wordcraft` and `/no-ai-slop`, and
       clean up the throwaway `Iad172.*` classes and globals in USER on iris-dev-iris.
       Done 2026-11-12: Recent Changes entry, `release-notes-draft.md` (through the slop reviewer), and the four

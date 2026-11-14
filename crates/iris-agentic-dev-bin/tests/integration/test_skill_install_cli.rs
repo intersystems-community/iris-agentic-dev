@@ -139,7 +139,7 @@ fn all_installs_core_and_extra_but_not_internal() {
     }
     assert!(got.contains(&"iris-query-plans".to_string()), "{got:?}");
     assert!(!got.contains(&"opencode-introspect".to_string()), "{got:?}");
-    assert_eq!(got.len(), 34, "{got:?}");
+    assert_eq!(got.len(), 35, "{got:?}");
 }
 
 #[test]
@@ -173,12 +173,12 @@ fn leftovers_get_a_hint_and_prune_removes_only_managed_copies() {
         "user file is no leftover: {}",
         r.stdout
     );
-    assert_eq!(installed(home.path()).len(), 35, "hint deletes nothing");
+    assert_eq!(installed(home.path()).len(), 36, "hint deletes nothing");
 
     let r = install(home.path(), &["--prune", "--dry-run"]);
     assert!(r.ok, "{}", r.stderr);
     assert!(r.stdout.contains("would remove"), "{}", r.stdout);
-    assert_eq!(installed(home.path()).len(), 35, "dry run deletes nothing");
+    assert_eq!(installed(home.path()).len(), 36, "dry run deletes nothing");
 
     let r = install(home.path(), &["--prune"]);
     assert!(r.ok, "{}", r.stderr);

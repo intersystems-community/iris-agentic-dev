@@ -584,11 +584,11 @@ async fn genre_storage(r: &Rig) -> serde_json::Value {
 
 /// T093/T094: a new index map over existing data with an empty index is refused; with
 /// `build_indexes` it is built and the known question answers; a build over an index that already
-/// holds nodes is refused (FR-023a); with the destructive tier off the opt-in is refused.
+/// holds nodes is refused (FR-023a). With the destructive tier off the opt-in is refused: that is
+/// `binary::test_storage_map_gates_172`, because this process's launch env may hold the tier open.
 #[tokio::test]
 #[ignore = "live IRIS"]
 async fn test_storage_map_data_172_unbuilt_index_and_build_indexes() {
-    use crate::live_rig_171::rig_with;
     use crate::storage172_rig::ask;
     let r = rig(&Where::live(), Toolset::Merged).await;
     let f = Fixture::read("Genre");
@@ -623,14 +623,6 @@ async fn test_storage_map_data_172_unbuilt_index_and_build_indexes() {
     };
     let v1 = genre_storage(&r).await["version"].clone();
     let unbuilt = r.call("iris_storage_map", add(false, v1.clone())).await;
-    let no_destructive = rig_with(
-        &Where::live(),
-        Toolset::Merged,
-        "write_tools_enabled = true\ndestructive_tools_enabled = false\n",
-    )
-    .await
-    .call("iris_storage_map", add(true, v1.clone()))
-    .await;
     let built = r.call("iris_storage_map", add(true, v1)).await;
     let rows = ask(&r, &f).await;
     // The index is built now; take the map out again and try a build over the filled range.
@@ -656,7 +648,6 @@ async fn test_storage_map_data_172_unbuilt_index_and_build_indexes() {
         unbuilt["error_code"], "STORAGE_MAP_INDEX_UNBUILT",
         "{unbuilt}"
     );
-    assert!(no_destructive["refusal"].is_object(), "{no_destructive}");
     assert_eq!(built["success"], true, "{built}");
     assert_eq!(
         built["opt_ins_run"]["build_indexes"]["built"],
@@ -763,5 +754,68 @@ async fn test_storage_map_data_172_propose_drafts_a_working_map() {
         rows, expected,
         "the saved draft does not answer the known question"
     );
+    assert!(problems.is_empty(), "cleanup: {problems:?}");
+}
+
+// ── T089: compare and preview run as the service account ────────────────────
+
+/// With a service account set, `compare` and `preview` read the globals as that account and say
+/// so in `identity`; with an account that cannot log in they refuse, and never fall back to the
+/// primary connection's user.
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn test_storage_map_data_172_compare_and_preview_run_as_the_service_account() {
+    use crate::support_identity_141::{Account, Container};
+    use iris_agentic_dev_core::testing::EnvGuard;
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let f = Fixture::read("Member");
+    load_fixture(&r, &f).await;
+    let c = Container::live();
+    let user = "iadT172Svc";
+    let acct = Account::create(&c, user, "Pw172Svcx", "%DB_USER:RW,%Development:U");
+    let (compared, previewed) = {
+        let _u = EnvGuard::with("IRIS_SERVICE_USERNAME", user);
+        let _p = EnvGuard::with("IRIS_SERVICE_PASSWORD", "Pw172Svcx");
+        let compared = compare(&r, &f).await;
+        let previewed = r
+            .call(
+                "iris_storage_map",
+                json!({"action": "preview", "class": f.class, "namespace": "USER"}),
+            )
+            .await;
+        (compared, previewed)
+    };
+    drop(acct);
+    // An account that cannot log in. (A disabled account is no test of this: IRIS keeps the CSP
+    // session it already holds, measured 2026-11-14, so the next call still runs.)
+    let refused = {
+        let _u = EnvGuard::with("IRIS_SERVICE_USERNAME", "iadT172NoSuch");
+        let _p = EnvGuard::with("IRIS_SERVICE_PASSWORD", "Pw172Nonex");
+        compare(&r, &f).await
+    };
+    let problems = drop_fixture(&r, &f).await;
+
+    let ran_as = |v: &serde_json::Value| {
+        v["identity"]["user"]
+            .as_str()
+            .is_some_and(|u| u.eq_ignore_ascii_case(user))
+    };
+    // Seed: three rows; the account read them.
+    assert_eq!(compared["success"], true, "{compared}");
+    assert_eq!(compared["shape"]["depths"]["1"], 3, "{compared}");
+    assert!(ran_as(&compared), "{compared}");
+    assert_eq!(compared["identity"]["verified"], true, "{compared}");
+    assert_eq!(previewed["success"], true, "{previewed}");
+    assert_eq!(previewed["row_count"], 3, "{previewed}");
+    assert!(ran_as(&previewed), "{previewed}");
+    // Disabled: refused, no shape, and not answered as the primary user instead.
+    assert_ne!(refused["success"], true, "{refused}");
+    assert!(refused["shape"].is_null(), "{refused}");
+    let refused_user = refused["identity"]["user"].as_str().unwrap_or("");
+    assert!(
+        refused_user.is_empty() || refused_user.eq_ignore_ascii_case("iadT172NoSuch"),
+        "fell back to another identity: {refused}"
+    );
+    eprintln!("T089 refusal: {refused}");
     assert!(problems.is_empty(), "cleanup: {problems:?}");
 }

@@ -502,6 +502,11 @@ jobs:
       #   - test_mdx_142_samples_bi_live: needs a namespace with Samples-BI built
       #     (`IAD_SAMPLES_BI_NS`), which takes a ZPM install and a cube build a runner does not
       #     have; it fails rather than passing empty without one, and runs locally before each release.
+      #   - test_storage_map_corpus_172_coverage_against_a_local_corpus: reads a corpus of feature
+      #     vectors that never enters the repository (`IAD_STORAGE_CORPUS`); local only.
+      #   - test_storage_map_diagram_render_172_live: renders every diagram with `mmdc`, which needs
+      #     mermaid-cli and a headless Chrome; it fails rather than passing empty without them, and
+      #     runs locally before each release.
       # --test-threads=1: same cross-binary env-var race as the `test` job above (e.g.
       # OBJECTSCRIPT_SKILLMCP_NAMESPACE) — observed here too, intermittently, once in
       # ~5 full runs. The IRIS container startup dominates this job's wall-clock time
@@ -540,7 +545,9 @@ jobs:
             --skip test_query_stats_139_live:: \
             --skip test_csp_logout_132:: \
             --skip test_mdx_142_samples_bi_live:: \
-            --skip test_sql_param_audit_141_live::
+            --skip test_sql_param_audit_141_live:: \
+            --skip test_storage_map_corpus_172_coverage_against_a_local_corpus \
+            --skip test_storage_map_diagram_render_172_live::
         env:
           IRIS_HOST: ${{ env.IRIS_HOST }}
           IRIS_WEB_PORT: "52773"
