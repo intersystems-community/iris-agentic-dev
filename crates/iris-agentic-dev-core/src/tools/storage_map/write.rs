@@ -442,7 +442,7 @@ pub async fn scratch_compile(
 ) -> Result<(String, Option<anyhow::Result<Value>>), Value> {
     let (scratch, result, answer) = iris
         .compile_scratch_class_then(
-            |name| scratch_source(text, nodes, name).unwrap_or_default(),
+            |name| scratch_source(text, nodes, name),
             ns,
             client,
             "Sm",
@@ -455,7 +455,7 @@ pub async fn scratch_compile(
                 Some(refused) => refused.0.clone(),
                 None => body(
                     "UPLOAD_FAILED",
-                    format!("the scratch copy could not be sent to IRIS: {e}"),
+                    format!("the scratch copy was not compiled: {e}"),
                     json!({}),
                 ),
             },
@@ -477,6 +477,34 @@ pub async fn scratch_compile(
     Ok((scratch, answer))
 }
 
+/// IRIS answered a document read with an error status.
+#[derive(Debug)]
+pub struct DocReadStatus {
+    pub doc: String,
+    pub status: reqwest::StatusCode,
+}
+
+impl std::fmt::Display for DocReadStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "GET {}: HTTP {}", self.doc, self.status)
+    }
+}
+
+impl std::error::Error for DocReadStatus {}
+
+/// The error code of a failed [`get_doc`]: `IRIS_UNREACHABLE` only when the request never got an
+/// answer; an error status by its status, as `iris_doc` names it; an answer iad cannot read is
+/// `HTTP_ERROR`.
+pub fn read_failure(e: &anyhow::Error) -> &'static str {
+    if let Some(s) = e.downcast_ref::<DocReadStatus>() {
+        crate::tools::doc::http_status_code(s.status)
+    } else if e.downcast_ref::<reqwest::Error>().is_some() {
+        "IRIS_UNREACHABLE"
+    } else {
+        "HTTP_ERROR"
+    }
+}
+
 /// The document's text and timestamp (`result.ts`), or `None` when IRIS has no such document.
 pub async fn get_doc(
     iris: &IrisConnection,
@@ -494,7 +522,11 @@ pub async fn get_doc(
         return Ok(None);
     }
     if !resp.status().is_success() {
-        anyhow::bail!("GET {doc}: HTTP {}", resp.status());
+        return Err(DocReadStatus {
+            doc: doc.to_string(),
+            status: resp.status(),
+        }
+        .into());
     }
     let b: Value = crate::iris::http::json_or_default(resp).await;
     let lines: Vec<&str> = b["result"]["content"]
@@ -578,9 +610,9 @@ pub struct WriteCtx<'a> {
     pub shape: &'a super::CallShape,
     pub policy: &'a crate::policy::effective::EffectivePolicy,
     pub server: &'a str,
-    /// The identity the opt-ins run as (the service account when set, T036); `None` when the
-    /// call asks for no opt-in.
-    pub exec: Option<(&'a IrisConnection, &'a reqwest::Client)>,
+    /// The identity the data checks and the opt-ins run as: the service account when one is set
+    /// (FR-029, T036). The PUT and the compile stay on `iris`.
+    pub exec: (&'a IrisConnection, &'a reqwest::Client),
 }
 
 /// The class as iad read it before the write: its text and timestamp, the Storage span, and the
@@ -814,8 +846,8 @@ pub async fn write_map(
     }
     let plan = data_checks(
         &CheckCtx {
-            iris: w.iris,
-            client: w.client,
+            iris: w.exec.0,
+            client: w.exec.1,
             ns: w.ns,
             class: w.class,
             seed_counter: w.shape.seed_counter,
@@ -1263,7 +1295,7 @@ pub async fn doc_precheck(
     };
     let previous = get_doc(iris, client, doc, ns)
         .await
-        .map_err(|e| body("IRIS_UNREACHABLE", e.to_string(), json!({})))?
+        .map_err(|e| body(read_failure(&e), e.to_string(), json!({})))?
         .map(|(text, _)| text);
     let mut warnings = Vec::new();
     let before_blocks = match previous.as_deref().map(all_blocks) {
@@ -1539,10 +1571,20 @@ fn plain_global(name: &str) -> Option<String> {
     .then(|| format!("^{bare}"))
 }
 
+/// Run iad's own `code` (a data check or an opt-in) in `ns` as `iris`'s user.
+async fn run_iad_code(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    ns: &str,
+    code: &str,
+) -> anyhow::Result<String> {
+    iris.execute_via_generator_prefixed(code, ns, client, "IrisDevSm")
+        .await
+}
+
 /// Run iad's own ObjectScript on the write's connection and return what it wrote.
 async fn run_code(w: &CheckCtx<'_>, code: &str) -> Result<String, Value> {
-    w.iris
-        .execute_via_generator_prefixed(code, w.ns, w.client, "IrisDevSm")
+    run_iad_code(w.iris, w.client, w.ns, code)
         .await
         .map_err(|e| body("IRIS_EXECUTE_ERROR", format!("data check: {e}"), json!({})))
 }
@@ -1599,7 +1641,7 @@ async fn used_by_another_class(w: &CheckCtx<'_>, global: &str) -> Result<bool, V
     .map(|found| found.iter().any(|u| u.class != w.class))
     .map_err(|e| {
         body(
-            "IRIS_UNREACHABLE",
+            "USES_QUERY_FAILED",
             format!(
                 "iad could not check which other classes use {global}, so it changed nothing: {e}"
             ),
@@ -1768,14 +1810,15 @@ async fn counter_check(
             ));
             return Ok(());
         }
+        // The check did not run: IRIS's answer, not a rule the map breaks.
         return Err(body(
-            "STORAGE_MAP_INVALID",
+            "IRIS_EXECUTE_ERROR",
             format!(
-                "the ID counter {counter_ref} could not be checked against the highest ID in {g}; \
-                 IRIS answered: {}",
+                "the ID counter {counter_ref} could not be checked against the highest ID in {g}, \
+                 so nothing was written; IRIS answered: {}",
                 out.trim()
             ),
-            json!({"rules": [{"path": "/keywords/SqlIdExpression", "rule": "counter_unreadable"}]}),
+            json!({"check": "id_counter", "counter": counter_ref}),
         ));
     };
     let behind = !highest.is_empty()
@@ -1893,17 +1936,14 @@ async fn index_check(
 const SEEDED: &str = "~IAD-SEEDED~";
 
 async fn run_opt_ins(w: &WriteCtx<'_>, plan: &DataPlan) -> Value {
-    let (iris, client) = w.exec.unwrap_or((w.iris, w.client));
+    let (iris, client) = w.exec;
     let mut done = serde_json::Map::new();
     if let Some((counter, highest)) = &plan.seed {
         // The marker tells a set counter from IRIS's error text, which also comes back as output.
         let code = format!("Set c={counter},old=$Get(@c),@c={highest} Write \"{SEEDED}\",old");
         done.insert(
             "seed_counter".into(),
-            match iris
-                .execute_via_generator_prefixed(&code, w.ns, client, "IrisDevSm")
-                .await
-            {
+            match run_iad_code(iris, client, w.ns, &code).await {
                 Ok(out) => match out.trim().strip_prefix(SEEDED) {
                     Some(old) => json!({"set_to": highest, "replaced": old}),
                     None => json!({"error": out.trim()}),
@@ -1925,10 +1965,7 @@ async fn run_opt_ins(w: &WriteCtx<'_>, plan: &DataPlan) -> Value {
         );
         done.insert(
             "build_indexes".into(),
-            match iris
-                .execute_via_generator_prefixed(&code, w.ns, client, "IrisDevSm")
-                .await
-            {
+            match run_iad_code(iris, client, w.ns, &code).await {
                 Ok(out) if out.trim() == "OK" => json!({"built": plan.build}),
                 Ok(out) => json!({"error": out.trim()}),
                 Err(e) => json!({"error": e.to_string()}),

@@ -803,11 +803,40 @@ async fn test_storage_map_data_172_propose_drafts_a_working_map() {
     assert!(problems.is_empty(), "cleanup: {problems:?}");
 }
 
+async fn storage_version(r: &Rig, f: &Fixture) -> serde_json::Value {
+    r.call(
+        "iris_storage_map",
+        json!({"action": "read", "class": f.class, "namespace": "USER"}),
+    )
+    .await["storage"]["version"]
+        .clone()
+}
+
+/// Edit the master map's `Age` piece: a change to the master map, so the walk and counter checks
+/// read the global. An edit inside one map carries that map's version.
+async fn edit_age_piece(r: &Rig, f: &Fixture, piece: &str) -> serde_json::Value {
+    let version = r
+        .call(
+            "iris_storage_map",
+            json!({"action": "read", "class": f.class, "namespace": "USER"}),
+        )
+        .await["storage"]["maps"][0]["version"]
+        .clone();
+    r.call(
+        "iris_storage_map",
+        json!({"action": "edit", "class": f.class, "version": version, "namespace": "USER",
+               "ops": [{"op": "set", "path": "/maps/Master/data/Age/piece", "value": piece}]}),
+    )
+    .await
+}
+
 // ── T089: compare and preview run as the service account ────────────────────
 
 /// With a service account set, `compare` and `preview` read the globals as that account and say
 /// so in `identity`; with an account that cannot log in they refuse, and never fall back to the
-/// primary connection's user.
+/// primary connection's user. An `edit`'s data checks read the same globals the same way
+/// (FR-029, amended 2026-11-14): it answers with the account's identity, and with an account that
+/// cannot log in it is refused and writes nothing.
 #[tokio::test]
 #[ignore = "live IRIS"]
 async fn test_storage_map_data_172_compare_and_preview_run_as_the_service_account() {
@@ -819,7 +848,7 @@ async fn test_storage_map_data_172_compare_and_preview_run_as_the_service_accoun
     let c = Container::live();
     let user = "iadT172Svc";
     let acct = Account::create(&c, user, "Pw172Svcx", "%DB_USER:RW,%Development:U");
-    let (compared, previewed) = {
+    let (compared, previewed, edited) = {
         let _u = EnvGuard::with("IRIS_SERVICE_USERNAME", user);
         let _p = EnvGuard::with("IRIS_SERVICE_PASSWORD", "Pw172Svcx");
         let compared = compare(&r, &f).await;
@@ -829,15 +858,23 @@ async fn test_storage_map_data_172_compare_and_preview_run_as_the_service_accoun
                 json!({"action": "preview", "class": f.class, "namespace": "USER"}),
             )
             .await;
-        (compared, previewed)
+        let edited = edit_age_piece(&r, &f, "4").await;
+        (compared, previewed, edited)
     };
     drop(acct);
     // An account that cannot log in. (A disabled account is no test of this: IRIS keeps the CSP
     // session it already holds, measured 2026-11-14, so the next call still runs.)
-    let refused = {
+    let (refused, edit_refused, version_kept) = {
         let _u = EnvGuard::with("IRIS_SERVICE_USERNAME", "iadT172NoSuch");
         let _p = EnvGuard::with("IRIS_SERVICE_PASSWORD", "Pw172Nonex");
-        compare(&r, &f).await
+        let before = storage_version(&r, &f).await;
+        let refused = compare(&r, &f).await;
+        let edit_refused = edit_age_piece(&r, &f, "5").await;
+        (
+            refused,
+            edit_refused,
+            storage_version(&r, &f).await == before,
+        )
     };
     let problems = drop_fixture(&r, &f).await;
 
@@ -861,6 +898,13 @@ async fn test_storage_map_data_172_compare_and_preview_run_as_the_service_accoun
     assert!(
         refused_user.is_empty() || refused_user.eq_ignore_ascii_case("iadT172NoSuch"),
         "fell back to another identity: {refused}"
+    );
+    assert_eq!(edited["success"], true, "{edited}");
+    assert!(ran_as(&edited), "{edited}");
+    assert_ne!(edit_refused["success"], true, "{edit_refused}");
+    assert!(
+        version_kept,
+        "the refused edit changed the class: {edit_refused}"
     );
     eprintln!("T089 refusal: {refused}");
     assert!(problems.is_empty(), "cleanup: {problems:?}");

@@ -1005,6 +1005,17 @@ pub fn normalize_dispatch_args(args: &mut serde_json::Map<String, serde_json::Va
     }
 }
 
+/// The shape of an `iris_storage_map` call, read by the one reader every consumer uses (FR-030a).
+/// No arguments reads as an unreadable action, which `call_shape` judges strictest.
+fn storage_map_shape(
+    args: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> crate::tools::storage_map::CallShape {
+    let params = args.map_or(serde_json::Value::Null, |a| {
+        serde_json::Value::Object(a.clone())
+    });
+    crate::tools::storage_map::call_shape(&params)
+}
+
 /// Look up the class for a call.
 ///
 /// Returns `None` for a tool with no `CLASSIFICATION` entry. Callers must treat that as
@@ -1018,11 +1029,7 @@ pub fn classify(
 
     // T035: iris_storage_map uses call_shape to determine classification
     if tool == "iris_storage_map" {
-        // No arguments reads as an unreadable action, which `call_shape` judges strictest.
-        let params = args.map_or(serde_json::Value::Null, |a| {
-            serde_json::Value::Object(a.clone())
-        });
-        let shape = crate::tools::storage_map::call_shape(&params);
+        let shape = storage_map_shape(args);
         use crate::tools::storage_map::Action;
         return Some(match shape.action {
             Action::Read | Action::Diagram | Action::Uses | Action::Check => WriteClass::ReadOnly,
@@ -1108,10 +1115,7 @@ pub fn is_scratch_call(
 
     // T035: iris_storage_map is scratch for every action except read, diagram, uses
     if tool == "iris_storage_map" {
-        let params = args.map_or(serde_json::Value::Null, |a| {
-            serde_json::Value::Object(a.clone())
-        });
-        let shape = crate::tools::storage_map::call_shape(&params);
+        let shape = storage_map_shape(args);
         use crate::tools::storage_map::Action;
         return !matches!(shape.action, Action::Read | Action::Diagram | Action::Uses);
     }
@@ -1177,10 +1181,7 @@ pub fn effective_category(
     // categories needs both allowed.
     if tool == "iris_storage_map" {
         use crate::tools::storage_map::Action;
-        let params = args.map_or(serde_json::Value::Null, |a| {
-            serde_json::Value::Object(a.clone())
-        });
-        let shape = crate::tools::storage_map::call_shape(&params);
+        let shape = storage_map_shape(args);
         return match shape.action {
             Action::Read | Action::Diagram | Action::Uses => vec![base],
             Action::Check => vec![ToolCategory::Compile],

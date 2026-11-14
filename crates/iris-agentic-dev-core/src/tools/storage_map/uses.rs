@@ -93,7 +93,7 @@ pub async fn uses(
 }
 
 /// The rows of an Atelier query response.
-fn rows(resp: &Value) -> impl Iterator<Item = &Value> {
+pub(super) fn rows(resp: &Value) -> impl Iterator<Item = &Value> {
     resp["result"]["content"].as_array().into_iter().flatten()
 }
 

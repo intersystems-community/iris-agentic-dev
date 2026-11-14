@@ -857,7 +857,8 @@ async fn test_storage_map_paths_172_iris_doc_warns_of_a_counter_behind_the_ids()
 
 /// FR-023: a counter iad can name but IRIS cannot read stops the write. `$i(^G(""))` passes iad's
 /// literal check, and reading a null subscript fails in IRIS (`<SUBSCRIPT>`), so the check answers
-/// with IRIS's error instead of the counter: `iris_storage_map` refuses and changes nothing, and
+/// with IRIS's error instead of the counter: `iris_storage_map` refuses with that error
+/// (`IRIS_EXECUTE_ERROR`, not a map rule) and changes nothing, and
 /// `iris_doc` (warnings only, FR-031) writes the class and says the counter was not checked.
 #[tokio::test]
 #[ignore = "live IRIS"]
@@ -899,11 +900,9 @@ async fn test_storage_map_paths_172_a_counter_iris_cannot_read() {
     let put_got = put(&r, class, &text).await;
     delete(&r, class).await;
 
-    assert_eq!(refused["error_code"], "STORAGE_MAP_INVALID", "{refused}");
-    assert_eq!(
-        refused["rules"][0]["rule"], "counter_unreadable",
-        "{refused}"
-    );
+    // The check did not run: IRIS's error, named as such, not a rule of the map.
+    assert_eq!(refused["error_code"], "IRIS_EXECUTE_ERROR", "{refused}");
+    assert_eq!(refused["check"], "id_counter", "{refused}");
     assert!(
         refused["error"]
             .as_str()

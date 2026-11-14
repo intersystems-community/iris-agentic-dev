@@ -48,6 +48,11 @@ A write goes through these steps in order, and stops at the first that fails:
 7. The real compile. If it fails, iad puts the previous text back and compiles it.
 8. The opt-ins, if asked: `seed_counter` sets the ID counter, `build_indexes` builds a new index.
 
+The data checks and the opt-ins run as the service account when one is set, as `preview`,
+`compare` and `propose` do, and the answer carries the `identity` block; the PUT and the compiles
+run as the connection's user. A server whose service account cannot be used refuses the edit
+before anything is read.
+
 The data checks refuse three kinds of damage:
 
 - A map that walks a level as row IDs while that level holds named nodes that are not IDs: a
@@ -63,7 +68,8 @@ The data checks refuse three kinds of damage:
 
 An `iris_doc` put of a class with an SQL map goes through steps 1 to 4 (step 4 only when the put
 compiles), 6 and 7, and answers with a warning that names `iris_storage_map`. It has no opt-ins, so
-there ID reuse and an unbuilt index are warnings, not refusals.
+there ID reuse and an unbuilt index are warnings, not refusals. Its data checks run as the
+connection's user, the account its write runs as.
 
 ## Error codes
 

@@ -1527,7 +1527,7 @@ impl IrisConnection {
         client: &reqwest::Client,
         prefix: &str,
     ) -> anyhow::Result<(String, CompileResult)> {
-        self.compile_scratch_class_then(source, namespace, client, prefix, None)
+        self.compile_scratch_class_then(|n| Ok(source(n)), namespace, client, prefix, None)
             .await
             .map(|(name, result, _)| (name, result))
     }
@@ -1537,7 +1537,7 @@ impl IrisConnection {
     /// The query's answer is the third item; the class is deleted afterwards on every path.
     pub async fn compile_scratch_class_then(
         &self,
-        source: impl FnOnce(&str) -> String,
+        source: impl FnOnce(&str) -> Result<String, String>,
         namespace: &str,
         client: &reqwest::Client,
         prefix: &str,
@@ -1561,7 +1561,12 @@ impl IrisConnection {
             .collect();
         let class_name = format!("IrisDevTmp.{prefix}{id}");
         let doc_name = format!("{class_name}.cls");
-        let content: Vec<String> = source(&class_name).lines().map(str::to_string).collect();
+        // A copy that cannot be built is never sent: nothing reaches IRIS.
+        let content: Vec<String> = source(&class_name)
+            .map_err(|e| anyhow::anyhow!("the scratch copy could not be built: {e}"))?
+            .lines()
+            .map(str::to_string)
+            .collect();
 
         let mut scratch = ScratchGuard::new(self, &doc_name, namespace);
         let put_url = self.versioned_ns_url(

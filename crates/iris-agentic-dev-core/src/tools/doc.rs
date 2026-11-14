@@ -207,13 +207,10 @@ fn require_name(p: &IrisDocParams, mode: &str) -> Result<String, rmcp::model::Ca
         )),
     }
 }
-/// Map a non-2xx HTTP status to an accurate error code.
+/// The error code of a non-2xx HTTP status from IRIS.
 /// IRIS_UNREACHABLE is reserved for transport errors (reqwest send() failures).
-fn http_err_json(
-    status: reqwest::StatusCode,
-    body_hint: &str,
-) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
-    let code = match status.as_u16() {
+pub fn http_status_code(status: reqwest::StatusCode) -> &'static str {
+    match status.as_u16() {
         400 => "BAD_REQUEST",
         401 | 403 => "AUTH_ERROR",
         409 => "CONFLICT",
@@ -221,7 +218,15 @@ fn http_err_json(
         404 => "NOT_FOUND",
         s if s >= 500 => "SERVER_ERROR",
         _ => "HTTP_ERROR",
-    };
+    }
+}
+
+/// Map a non-2xx HTTP status to an accurate error code ([`http_status_code`]).
+fn http_err_json(
+    status: reqwest::StatusCode,
+    body_hint: &str,
+) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+    let code = http_status_code(status);
     let msg = if body_hint.is_empty() {
         format!("HTTP {status}")
     } else {

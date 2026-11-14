@@ -289,14 +289,16 @@ fn test_needs_service_account_check() {
 
 #[test]
 fn test_needs_service_account_edit() {
+    // FR-029 (amended 2026-11-14): its data checks read the map's globals through iad's code.
     let args = json!({"action": "edit"});
-    assert!(!needs_service_account("iris_storage_map", &args));
+    assert!(needs_service_account("iris_storage_map", &args));
 }
 
 #[test]
 fn test_needs_service_account_replace() {
+    // FR-029 (amended 2026-11-14): its data checks read the map's globals through iad's code.
     let args = json!({"action": "replace"});
-    assert!(!needs_service_account("iris_storage_map", &args));
+    assert!(needs_service_account("iris_storage_map", &args));
 }
 
 #[test]

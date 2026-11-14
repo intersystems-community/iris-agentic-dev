@@ -263,6 +263,12 @@ fn agent_code_calls(server: &str) -> Vec<(&'static str, Value)> {
             "iris_storage_map",
             json!({"action": "compare", "class": "T141.A", "server": server}),
         ),
+        // An edit's data checks read the map's globals through iad's code (172 FR-029).
+        (
+            "iris_storage_map",
+            json!({"action": "edit", "class": "T141.A", "version": "v", "server": server,
+                   "ops": [{"op": "set", "path": "/maps/Master/data/Name/piece", "value": "2"}]}),
+        ),
     ]
 }
 

@@ -46,11 +46,11 @@ pub struct CallShape {
 
 impl CallShape {
     /// The call runs as the service account (FR-029): the actions that read data through code
-    /// iad runs, and the opt-ins that write it.
+    /// iad runs (a write's data checks among them), and the opt-ins that write it.
     pub fn needs_service_account(&self) -> bool {
         matches!(
             self.action,
-            Action::Compare | Action::Preview | Action::Propose
+            Action::Compare | Action::Preview | Action::Propose | Action::Edit | Action::Replace
         ) || self.seed_counter
             || self.build_indexes
     }
@@ -468,17 +468,6 @@ fn map_name_for(
     }
 }
 
-/// The opt-ins write as the execute identity (T036); a call without them needs none.
-fn opt_in_exec_context(
-    tools: &crate::tools::IrisTools,
-    shape: &CallShape,
-) -> Result<Option<crate::tools::exec::ExecContext>, Value> {
-    (shape.seed_counter || shape.build_indexes)
-        .then(|| tools.exec_context())
-        .transpose()
-        .map_err(|e| e.to_json())
-}
-
 /// The class as a write needs it: name, namespace, and what [`write::Loaded`] holds, or the
 /// answer to send back. Default storage and other read-only storage are refused here.
 async fn load_for_write<'p>(
@@ -492,7 +481,7 @@ async fn load_for_write<'p>(
     let (text, ts) = match write::get_doc(iris, client, &format!("{class}.cls"), &ns).await {
         Ok(Some(found)) => found,
         Ok(None) => return Err(no_class(class, &ns)),
-        Err(e) => return Err(fail("IRIS_UNREACHABLE", e.to_string(), json!({}))),
+        Err(e) => return Err(fail(write::read_failure(&e), e.to_string(), json!({}))),
     };
     let (span, nodes) = parsed_storage(class, &text)?;
     let m = model::from_tree(class, &span.name, &nodes);
@@ -1001,9 +990,9 @@ async fn edit_action(
         Err(e) => return fail("INVALID_PARAMS", e, json!({})),
     };
     let t = tools.target()?;
-    let cx = match opt_in_exec_context(tools, shape) {
+    let cx = match tools.exec_context() {
         Ok(cx) => cx,
-        Err(e) => return err_result(e),
+        Err(e) => return err_result(e.to_json()),
     };
     let w = write::WriteCtx {
         iris,
@@ -1013,11 +1002,14 @@ async fn edit_action(
         shape,
         policy: &t.primary.effective,
         server: &t.primary.key,
-        exec: cx.as_ref().map(|cx| (cx.conn.as_ref(), cx.client.as_ref())),
+        exec: (cx.conn.as_ref(), cx.client.as_ref()),
     };
     let result = write::write_map(&w, &loaded, after).await;
     audit_write(tools, class, one_map.as_deref(), &stored, &result, &changed);
-    written("edit", class, &ns, result, json!({"changed": changed}))
+    crate::tools::exec::attach_identity(
+        written("edit", class, &ns, result, json!({"changed": changed})),
+        &cx.helper_report(),
+    )
 }
 
 /// `replace` (US3, FR-011): the whole map from `model`. The first call that would remove
@@ -1099,9 +1091,9 @@ async fn replace_action(
         .cloned()
         .collect();
     let t = tools.target()?;
-    let cx = match opt_in_exec_context(tools, shape) {
+    let cx = match tools.exec_context() {
         Ok(cx) => cx,
-        Err(e) => return err_result(e),
+        Err(e) => return err_result(e.to_json()),
     };
     let w = write::WriteCtx {
         iris,
@@ -1111,16 +1103,19 @@ async fn replace_action(
         shape,
         policy: &t.primary.effective,
         server: &t.primary.key,
-        exec: cx.as_ref().map(|cx| (cx.conn.as_ref(), cx.client.as_ref())),
+        exec: (cx.conn.as_ref(), cx.client.as_ref()),
     };
     let result = write::write_map(&w, &loaded, after).await;
     audit_write(tools, class, Some(&name), &stored, &result, &changed);
-    written(
-        "replace",
-        class,
-        &ns,
-        result,
-        json!({"changed": changed, "removed": removed}),
+    crate::tools::exec::attach_identity(
+        written(
+            "replace",
+            class,
+            &ns,
+            result,
+            json!({"changed": changed, "removed": removed}),
+        ),
+        &cx.helper_report(),
     )
 }
 
@@ -1190,7 +1185,7 @@ async fn classes_on_globals(
         let sql = "SELECT DISTINCT $PIECE(parent,'||',1) AS Cls FROM %Dictionary.CompiledStorageSQLMap WHERE _Global = ? AND Type = 'data'";
         match iris.query(sql, vec![json!(g)], ns, client).await {
             Ok(resp) => {
-                for row in resp["result"]["content"].as_array().into_iter().flatten() {
+                for row in uses::rows(&resp) {
                     if let Some(c) = row["Cls"].as_str() {
                         if c != except && !out.iter().any(|o: &String| o == c) {
                             out.push(c.to_string());

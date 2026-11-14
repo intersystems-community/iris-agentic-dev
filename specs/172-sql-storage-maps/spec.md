@@ -438,7 +438,9 @@ answer.
 - **FR-015**: Every map change MUST compile a scratch copy first; the real class MUST be written only if the copy
   compiles.
 - **FR-015a**: The scratch copy MUST be built from the model: the class header, properties, indices, the keywords the
-  map needs and the Storage block, nothing else from the caller's text. It MUST pass the same compile-time gate as an
+  map needs and the Storage block, nothing else from the caller's text. (Amended 2026-11-14, from the code review: the
+  class's `Import` lines are kept too. They name packages, run no code, and decide which classes the property types
+  name, so a copy without them would not compile the same properties.) It MUST pass the same compile-time gate as an
   `iris_doc` put, MUST hold no credentials, and compiling and deleting it MUST leave every global unchanged (a live
   checksum test proves it).
 - **FR-016**: When the real compile fails, iad MUST restore and recompile the previous version and say so.
@@ -496,6 +498,10 @@ answer.
 - **FR-029**: `preview`, `compare` and `propose` run code on the server built from a map or for one. They MUST be
   judged as execute calls (write tier, execute category), and MUST run as the service account when one is configured,
   through the same identity path as `iris_execute`, refusing when they cannot. Their answers carry the identity block.
+  (Amended 2026-11-14, from the code review: the data checks of `edit` and `replace` read the map's globals through
+  the same sampler, so those two actions run their data checks and opt-ins the same way, and answer with the
+  identity block; the PUT and the compiles stay on the connection's user. An `iris_doc` put is not an execute call
+  and runs its data checks as the connection's user, the account its write runs as.)
 - **FR-030**: Map writes MUST pass the same write gates as other document writes, with no extra acknowledgement.
 - **FR-030a**: One function MUST read the action and opt-ins of an `iris_storage_map` call for every consumer:
   write classification, strict read-only, the service-account decision and the handler. An action it cannot read is
