@@ -763,3 +763,161 @@ async fn test_storage_map_paths_172_an_indented_class_is_judged_as_iris_stores_i
     );
     assert_eq!(good["success"], true, "{good}");
 }
+
+/// A new class through `iris_doc` (FR-031, warnings only): its master map's first subscript is a
+/// constant, so iad cannot read the highest ID and says the counter was not checked; its index
+/// map's first subscript is not a plain literal, so the index range is not checked either. The
+/// class is written.
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn test_storage_map_paths_172_iris_doc_warns_what_it_could_not_check() {
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let class = "IadSm172.Unchecked";
+    delete(&r, class).await;
+    let text = format!(
+        "Class {class} Extends %Persistent [ StorageStrategy = SQLStorage ]\n{{\n\n\
+         Property Name As %String;\n\nIndex NameIdx On Name;\n\n\
+         Storage SQLStorage\n{{\n<SqlIdExpression>$i(^IadSm172Unchecked)</SqlIdExpression>\n\
+         <SQLMap name=\"Master\">\n<Data name=\"Name\">\n<Delimiter>\"^\"</Delimiter>\n\
+         <Piece>1</Piece>\n</Data>\n<Global>^IadSm172Unchecked</Global>\n\
+         <Subscript name=\"1\">\n<Expression>\"x\"</Expression>\n</Subscript>\n\
+         <Subscript name=\"2\">\n<Expression>{{ID}}</Expression>\n</Subscript>\n\
+         <Type>data</Type>\n</SQLMap>\n<SQLMap name=\"NameIdx\">\n\
+         <Global>^IadSm172UncheckedI</Global>\n\
+         <Subscript name=\"1\">\n<Expression>\"a\"_\"b\"</Expression>\n</Subscript>\n\
+         <Subscript name=\"2\">\n<Expression>{{Name}}</Expression>\n</Subscript>\n\
+         <Subscript name=\"3\">\n<Expression>{{ID}}</Expression>\n</Subscript>\n\
+         <Type>index</Type>\n</SQLMap>\n<StreamLocation>^IadSm172UncheckedS</StreamLocation>\n\
+         <Type>%Storage.SQL</Type>\n}}\n\n}}\n"
+    );
+    let got = put(&r, class, &text).await;
+    let stored = exists(&r, class).await;
+    delete(&r, class).await;
+
+    assert_eq!(got["success"], true, "{got}");
+    let warnings = got["warnings"].to_string();
+    assert!(
+        warnings.contains("the highest ID could not be read from the master map"),
+        "{got}"
+    );
+    assert!(
+        warnings.contains("index map NameIdx: its range could not be checked"),
+        "{got}"
+    );
+    assert!(stored, "the class was not written: {got}");
+}
+
+/// FR-031: through `iris_doc` an ID counter behind the highest stored ID is a warning, not a
+/// refusal (no opt-ins there), and it names the fix.
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn test_storage_map_paths_172_iris_doc_warns_of_a_counter_behind_the_ids() {
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let class = "IadSm172.Behind";
+    let global = "IadSm172Behind";
+    delete(&r, class).await;
+    let kill = || async {
+        r.call(
+            "iris_global",
+            json!({"action": "kill", "global_name": global, "namespace": "USER"}),
+        )
+        .await
+    };
+    kill().await;
+    let seeded = r
+        .call(
+            "iris_global",
+            json!({"action": "set", "global_name": global, "subscripts": ["5"], "value": "Ann",
+                   "namespace": "USER"}),
+        )
+        .await;
+    let text = format!(
+        "Class {class} Extends %Persistent [ StorageStrategy = SQLStorage ]\n{{\n\n\
+         Property Name As %String;\n\n\
+         Storage SQLStorage\n{{\n<SqlIdExpression>$i(^{global})</SqlIdExpression>\n\
+         <SQLMap name=\"Master\">\n<Data name=\"Name\">\n<Delimiter>\"^\"</Delimiter>\n\
+         <Piece>1</Piece>\n</Data>\n<Global>^{global}</Global>\n\
+         <Subscript name=\"1\">\n<Expression>{{ID}}</Expression>\n</Subscript>\n\
+         <Type>data</Type>\n</SQLMap>\n<StreamLocation>^{global}S</StreamLocation>\n\
+         <Type>%Storage.SQL</Type>\n}}\n\n}}\n"
+    );
+    let got = put(&r, class, &text).await;
+    delete(&r, class).await;
+    kill().await;
+
+    assert_eq!(seeded["success"], true, "{seeded}");
+    assert_eq!(got["success"], true, "{got}");
+    let warnings = got["warnings"].to_string();
+    assert!(
+        warnings.contains("the highest ID in ^IadSm172Behind is 5"),
+        "{got}"
+    );
+    assert!(warnings.contains("seed_counter: true"), "{got}");
+}
+
+/// FR-023: a counter iad can name but IRIS cannot read stops the write. `$i(^G(""))` passes iad's
+/// literal check, and reading a null subscript fails in IRIS (`<SUBSCRIPT>`), so the check answers
+/// with IRIS's error instead of the counter: `iris_storage_map` refuses and changes nothing, and
+/// `iris_doc` (warnings only, FR-031) writes the class and says the counter was not checked.
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn test_storage_map_paths_172_a_counter_iris_cannot_read() {
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let f = Fixture::read("Member");
+    load_fixture(&r, &f).await;
+    let read = || async {
+        r.call(
+            "iris_storage_map",
+            json!({"action": "read", "class": f.class, "namespace": "USER"}),
+        )
+        .await["storage"]["version"]
+            .clone()
+    };
+    let version = read().await;
+    let refused = r
+        .call(
+            "iris_storage_map",
+            json!({"action": "edit", "class": f.class, "version": version, "namespace": "USER",
+                   "ops": [{"op": "set", "path": "/keywords/SqlIdExpression",
+                            "value": "$i(^IadSm172Member(\"\"))"}]}),
+        )
+        .await;
+    let after = read().await;
+    let problems = drop_fixture(&r, &f).await;
+
+    let class = "IadSm172.NullCtr";
+    delete(&r, class).await;
+    let text = Fixture::read("Member")
+        .cls_text
+        .replacen("Class IadSm172.Member ", &format!("Class {class} "), 1)
+        .replacen(
+            "<SqlIdExpression>$i(^IadSm172Member)</SqlIdExpression>",
+            "<SqlIdExpression>$i(^IadSm172NullCtr(\"\"))</SqlIdExpression>",
+            1,
+        )
+        .replace("^IadSm172Member", "^IadSm172NullCtr");
+    let put_got = put(&r, class, &text).await;
+    delete(&r, class).await;
+
+    assert_eq!(refused["error_code"], "STORAGE_MAP_INVALID", "{refused}");
+    assert_eq!(
+        refused["rules"][0]["rule"], "counter_unreadable",
+        "{refused}"
+    );
+    assert!(
+        refused["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("SUBSCRIPT"),
+        "{refused}"
+    );
+    assert_eq!(after, version, "the refused edit changed the class");
+    assert!(problems.is_empty(), "cleanup: {problems:?}");
+    assert_eq!(put_got["success"], true, "{put_got}");
+    assert!(
+        put_got["warnings"]
+            .to_string()
+            .contains("could not be checked against the highest ID"),
+        "{put_got}"
+    );
+}

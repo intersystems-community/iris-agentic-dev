@@ -663,6 +663,52 @@ async fn test_storage_map_data_172_unbuilt_index_and_build_indexes() {
     assert!(problems.is_empty(), "cleanup: {problems:?}");
 }
 
+/// FR-023: a new index map whose leading subscripts are constants is checked over that range
+/// only, the constants re-quoted by iad: the empty range `^IadSm172GenreIdx(1,"Pop")` under a
+/// table with rows is an unbuilt index, and nothing is written.
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn test_storage_map_data_172_index_range_under_constant_subscripts() {
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let f = Fixture::read("Genre");
+    load_fixture(&r, &f).await;
+    let kill = || async {
+        r.call(
+            "iris_global",
+            json!({"action": "kill", "global_name": "^IadSm172GenreIdx", "namespace": "USER"}),
+        )
+        .await
+    };
+    kill().await;
+    let before = genre_storage(&r).await["version"].clone();
+    let got = r
+        .call(
+            "iris_storage_map",
+            json!({"action": "edit", "class": f.class, "version": before, "namespace": "USER",
+                   "ops": [{"op": "add", "path": "/maps/PopularConst",
+                            "value": {"type": "bitmap", "global": "^IadSm172GenreIdx",
+                                      "subscripts": [{"level": 1, "expression": "1"},
+                                                     {"level": 2, "expression": "\"Pop\""},
+                                                     {"level": 3, "expression": "{Popular}"},
+                                                     {"level": 4, "expression": "{ID}"}]}}]}),
+        )
+        .await;
+    let after = genre_storage(&r).await["version"].clone();
+    kill().await;
+    let problems = drop_fixture(&r, &f).await;
+
+    assert_eq!(got["error_code"], "STORAGE_MAP_INDEX_UNBUILT", "{got}");
+    assert!(
+        got["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("^IadSm172GenreIdx(1,\"Pop\") is empty"),
+        "{got}"
+    );
+    assert_eq!(after, before, "the refused edit changed the class");
+    assert!(problems.is_empty(), "cleanup: {problems:?}");
+}
+
 // ── T111: propose ────────────────────────────────────────────────────────────
 
 async fn member_crc(r: &Rig) -> serde_json::Value {

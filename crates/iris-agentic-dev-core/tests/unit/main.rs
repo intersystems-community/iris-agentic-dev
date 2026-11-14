@@ -257,6 +257,7 @@ mod test_storage_map_unreachable_172;
 mod test_storage_map_uses_cov_172;
 mod test_storage_map_validate_172;
 mod test_storage_map_write_172;
+mod test_storage_map_write_cov_172;
 mod test_storage_mapping_skill_172;
 mod test_storage_maps_doc_172;
 mod test_stored_check_141;

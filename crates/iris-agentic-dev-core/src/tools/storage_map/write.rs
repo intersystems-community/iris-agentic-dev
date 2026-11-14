@@ -1182,16 +1182,18 @@ fn doc_gates(nodes: &[Node]) -> Option<Value> {
         include_values: false,
         code_changed: None,
     };
-    match crate::tools::target::CALL_TARGET
-        .try_with(|t| (t.primary.effective.clone(), t.primary.key.clone()))
-    {
-        Ok((policy, server)) => super::code::gate_tree(nodes, &shape, &policy, &server),
-        Err(_) => Some(body(
-            "TARGET_NOT_RESOLVED",
-            "no call is in progress, so the storage-map gates cannot judge this put".into(),
-            json!({}),
-        )),
-    }
+    crate::tools::target::CALL_TARGET
+        .try_with(|t| super::code::gate_tree(nodes, &shape, &t.primary.effective, &t.primary.key))
+        .unwrap_or_else(|_| Some(no_call_in_progress()))
+}
+
+/// The refusal of the `iris_doc` gates when no call is in progress to judge by.
+fn no_call_in_progress() -> Value {
+    body(
+        "TARGET_NOT_RESOLVED",
+        "no call is in progress, so the storage-map gates cannot judge this put".into(),
+        json!({}),
+    )
 }
 
 /// The environment template and `allow` of the call's server, judging an `iris_doc` put as
@@ -1218,13 +1220,7 @@ fn doc_execute_gate() -> Option<Value> {
                 &judged,
             )
         })
-        .unwrap_or_else(|_| {
-            Some(body(
-                "TARGET_NOT_RESOLVED",
-                "no call is in progress, so the storage-map gates cannot judge this put".into(),
-                json!({}),
-            ))
-        })
+        .unwrap_or_else(|_| Some(no_call_in_progress()))
 }
 
 /// Before an `iris_doc` PUT of `content` as `doc` (FR-031): class XML with a map is refused

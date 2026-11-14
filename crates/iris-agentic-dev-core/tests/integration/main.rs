@@ -134,6 +134,7 @@ mod test_storage_map_golden_172_live;
 mod test_storage_map_paths_172_live;
 mod test_storage_map_random_172_live;
 mod test_storage_map_read_172_live;
+mod test_storage_map_refusals_172_live;
 mod test_storage_map_scratch_172_live;
 mod test_storage_map_sys_roundtrip_172_live;
 mod test_storage_map_uses_172_live;
