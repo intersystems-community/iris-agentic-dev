@@ -1,0 +1,38 @@
+{
+  "graph": {
+    "edges": [
+      {
+        "from": "G2",
+        "to": "S3"
+      },
+      {
+        "from": "S3",
+        "to": "D4"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "G1",
+        "kind": "global",
+        "label": "^IadSm172BadgeX"
+      },
+      {
+        "id": "G2",
+        "kind": "global",
+        "label": "^IadSm172Badge"
+      },
+      {
+        "id": "S3",
+        "kind": "subscript",
+        "label": "sub 1: {ID} (Sub)"
+      },
+      {
+        "id": "D4",
+        "kind": "data",
+        "label": "Holder: piece 1, Level: piece 2"
+      }
+    ]
+  },
+  "markdown": "# Storage of IadSm172.Badge\n\nStorage `SQLStorage`, type `%Storage.SQL`, editable with iris_storage_map.\n\n| Keyword | Value |\n| --- | --- |\n| `SqlIdExpression` | `$i(^IadSm172Badge)` |\n| `StreamLocation` | `^IadSm172BadgeS` |\n\n- table is writable: master global starts with ^, $, or @\n\n## Map `BadgeExtent` (bitmapextent)\n\nGlobal layout: `^IadSm172BadgeX`\n\n```mermaid\nflowchart LR\n  G1[\"^IadSm172BadgeX\"]\n```\n\n## Map `Master` (data, master map)\n\nGlobal layout: `^IadSm172Badge({ID})`\n\n| Level | Expression | Access type | Delimiter | Other |\n| --- | --- | --- | --- | --- |\n| 1 | `{ID}` | Sub | — | — |\n\n| Field | Node | Delimiter | Piece | Format | Filed |\n| --- | --- | --- | --- | --- | --- |\n| `Holder` | row node | `\"^\"` | `1` | delimited | yes |\n| `Level` | row node | `\"^\"` | `2` | delimited | yes |\n\n```mermaid\nflowchart LR\n  G1[\"^IadSm172Badge\"]\n  S2[\"sub 1: {ID} (Sub)\"]\n  D3[\"Holder: piece 1, Level: piece 2\"]\n  G1 --> S2\n  S2 --> D3\n```\n",
+  "mermaid": "flowchart LR\n  G1[\"^IadSm172BadgeX\"]\n  G2[\"^IadSm172Badge\"]\n  S3[\"sub 1: {ID} (Sub)\"]\n  D4[\"Holder: piece 1, Level: piece 2\"]\n  G2 --> S3\n  S3 --> D4\n"
+}

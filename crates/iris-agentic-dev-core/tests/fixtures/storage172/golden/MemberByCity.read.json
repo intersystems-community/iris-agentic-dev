@@ -1,5 +1,10 @@
 {
-  "derived": [],
+  "derived": [
+    {
+      "fact": "table is writable: master global starts with ^, $, or @",
+      "path": "/storage"
+    }
+  ],
   "storage": {
     "default_storage": null,
     "description": null,

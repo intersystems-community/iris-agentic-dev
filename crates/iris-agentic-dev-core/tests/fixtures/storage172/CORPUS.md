@@ -1,44 +1,48 @@
-# Storage-map corpus: patterns still without a fixture
+# Storage-map corpus: patterns and their fixtures
 
-The fixtures in `classes/` cover the common shapes. These patterns occur in real SQL storage maps
-and have no public fixture yet. Each line is a pattern, in words; each group is one fixture to
-write (T101a, T101b, …), invented from scratch with its own seed and known answer, like the others.
+The fixtures in `classes/` cover the common shapes. These patterns occur in real SQL storage maps. Each group was one
+task (T101a, T101b, …), invented from scratch with its own seed and known answer, like the others. A pattern with no
+fixture says why.
 
-## T101a: delimiters and piece forms
+## T101a: delimiters and piece forms (`Ledger`)
 
-- a field delimited by a printable character other than `^` (for example `|` or `,`)
-- a field delimited by a control character written as `$C(n)`
+- a field delimited by a printable character other than `^` (`|`)
+- a field delimited by a control character written as `$C(n)` (`$C(1)`)
 - one map whose fields use different delimiters
-- a field with no `Piece`: the whole node is the value
-- a `Piece` given as an expression rather than an integer
+- a field with no `Piece`: the whole node is the value (`Memo`)
+- a `Piece` given as an expression rather than an integer (`1+1`)
 
-## T101b: access types and subscript code
+## T101b: access types and subscript code (`Route`)
 
-- `AccessType` written in lower case (`sub`, `other`), which IRIS reads as `Sub` and `Other`
-- `AccessType Piece` and `AccessType Other`
-- a subscript with an access variable (`Accessvar` with `Code`)
-- a subscript with `DataAccess`
+- `AccessType` written in lower case (`sub`), which IRIS reads as `Sub`
+- a subscript with an access variable (`Accessvar` with `Code`), read by the next level: an Accessvar is not visible
+  at its own level (#5524)
 - a subscript with `StopExpression`
 - a subscript with an `Invalidcondition`
+- not yet: `AccessType Piece` and `AccessType Other`, and a subscript with `DataAccess`, whose semantics are not
+  measured
 
-## T101c: map options
+## T101c: map options (`Shipment`)
 
 - `BlockCount`, `PopulationPct` and `Structure` on a map
-- a conditional map with `ConditionFields` and `ConditionalWithHostVars`
+- a conditional map with `Condition`, `ConditionFields` and `ConditionalWithHostVars` (IRIS stores
+  `ConditionalWithHostVars` first)
 
 ## T101d: node layout
 
-- a field whose node is a subscript level of the row, not a constant
-- a parent table with a child table stored under the parent's row node (parent-child), where the
-  parent's row node also holds a value
+- not yet: a field whose node is a subscript level of the row, not a constant
+- not yet: a parent table with a child table stored under the parent's row node through a parent-child
+  `Relationship`. It is two classes that must load together, and the rig loads one class per fixture. (`Loan` and
+  `LoanEvent` cover a child stored under a parent's row node that holds a value, with a composite key.)
 
-## T101e: map types and storage types
+## T101e: map types and storage types (`Badge`)
 
-- a `bitmapextent` map
-- the storage type written with the older class name (`%CacheSQLStorage`)
+- a `bitmapextent` map. It has no subscripts (IRIS adds the chunk), and until it is built `COUNT(*)` answers 0
+- the storage type written with the older class name (`%CacheSQLStorage`): IRIS stores it as `%Storage.SQL`, so there
+  is no fixture text to keep; `test_storage_map_paths_172_the_old_storage_type_name_is_accepted` puts it
 
 ## T101f: global forms (read side only)
 
-- a map whose `Global` is an extended reference (`^|"NS"|G`): iad reads it and refuses to write it
-- a map whose `Global` is an expression: iad reads it and refuses it unless the operator allows
-  dynamic globals
+- not yet: a map whose `Global` is an extended reference (`^|"NS"|G`), and one whose `Global` is an expression. The
+  `iris_doc` map check refuses both, so the rig cannot load them; they need a raw load, as
+  `test_storage_map_d11_172_live` does

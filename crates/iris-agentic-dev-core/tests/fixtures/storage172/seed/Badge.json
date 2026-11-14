@@ -1,0 +1,42 @@
+{
+  "class": "IadSm172.Badge",
+  "globals": [
+    {
+      "global": "^IadSm172Badge",
+      "subscripts": [
+        "1"
+      ],
+      "value": "Ana^gold"
+    },
+    {
+      "global": "^IadSm172Badge",
+      "subscripts": [
+        "2"
+      ],
+      "value": "Ben^silver"
+    },
+    {
+      "global": "^IadSm172Badge",
+      "subscripts": [
+        "3"
+      ],
+      "value": "Cy^gold"
+    },
+    {
+      "global": "^IadSm172Badge",
+      "value": "3"
+    }
+  ],
+  "build_indexes": [
+    "BadgeExtent"
+  ],
+  "question": "SELECT COUNT(*) AS n FROM IadSm172.Badge",
+  "answer": [
+    {
+      "n": 3
+    }
+  ],
+  "kill": [
+    "^IadSm172BadgeX"
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "derived": [
+    {
+      "fact": "table is writable: master global starts with ^, $, or @",
+      "path": "/storage"
+    }
+  ],
+  "storage": {
+    "default_storage": null,
+    "description": null,
+    "editable": true,
+    "extra": [],
+    "keywords": {
+      "StreamLocation": "^IadSm172RouteS"
+    },
+    "maps": [
+      {
+        "block_count": null,
+        "condition": null,
+        "condition_fields": null,
+        "conditional_with_host_vars": null,
+        "data": {
+          "Name": {
+            "delimiter": "\"^\"",
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "delimited"
+            },
+            "extra": [],
+            "name": "Name",
+            "node": null,
+            "piece": "1",
+            "retrieval_code": null
+          },
+          "Stops": {
+            "delimiter": "\"^\"",
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "delimited"
+            },
+            "extra": [],
+            "name": "Stops",
+            "node": null,
+            "piece": "2",
+            "retrieval_code": null
+          }
+        },
+        "deferred": null,
+        "extra": [],
+        "global": "^IadSm172Route",
+        "master": true,
+        "name": "Master",
+        "population_pct": null,
+        "population_type": null,
+        "row_id": [],
+        "row_reference": null,
+        "structure": null,
+        "subscripts": [
+          {
+            "access_type": "sub",
+            "access_vars": [
+              {
+                "code": " s {1D1}=$g(^IadSm172Route({L1}))",
+                "level": 1,
+                "variable": "{1D1}"
+              }
+            ],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "{Depot}",
+            "extra": [],
+            "invalid_conditions": [],
+            "level": 1,
+            "loop_init_value": null,
+            "next_code": null,
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": null,
+            "stop_value": null
+          },
+          {
+            "access_type": "Sub",
+            "access_vars": [],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "{Seq}",
+            "extra": [],
+            "invalid_conditions": [
+              {
+                "expression": "'{1D1}",
+                "level": 1
+              }
+            ],
+            "level": 2,
+            "loop_init_value": null,
+            "next_code": null,
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": "{L2}\\900",
+            "stop_value": null
+          }
+        ],
+        "type": "data",
+        "used": true,
+        "version": "ba9236b5e3eea67e"
+      }
+    ],
+    "name": "SQLStorage",
+    "not_editable_reason": null,
+    "type": "%Storage.SQL",
+    "version": "531f4a8c576b3400"
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "class": "IadSm172.Ledger",
+  "globals": [
+    {
+      "global": "^IadSm172Ledger",
+      "subscripts": [
+        "1"
+      ],
+      "value": "A100|25"
+    },
+    {
+      "global": "^IadSm172Ledger",
+      "subscripts": [
+        "1",
+        "memo"
+      ],
+      "value": "first entry"
+    },
+    {
+      "global": "^IadSm172Ledger",
+      "subscripts": [
+        "1",
+        "t"
+      ],
+      "value": "red\u0001blue"
+    },
+    {
+      "global": "^IadSm172Ledger",
+      "subscripts": [
+        "2"
+      ],
+      "value": "B200|40"
+    },
+    {
+      "global": "^IadSm172Ledger",
+      "subscripts": [
+        "2",
+        "memo"
+      ],
+      "value": "second entry"
+    },
+    {
+      "global": "^IadSm172Ledger",
+      "subscripts": [
+        "2",
+        "t"
+      ],
+      "value": "green\u0001gold"
+    },
+    {
+      "global": "^IadSm172Ledger",
+      "value": "2"
+    }
+  ],
+  "question": "SELECT Code, Amount, Memo, Tag1, Tag2 FROM IadSm172.Ledger ORDER BY ID",
+  "answer": [
+    {
+      "Code": "A100",
+      "Amount": 25,
+      "Memo": "first entry",
+      "Tag1": "red",
+      "Tag2": "blue"
+    },
+    {
+      "Code": "B200",
+      "Amount": 40,
+      "Memo": "second entry",
+      "Tag1": "green",
+      "Tag2": "gold"
+    }
+  ]
+}

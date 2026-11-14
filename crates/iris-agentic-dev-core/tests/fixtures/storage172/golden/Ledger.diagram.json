@@ -1,0 +1,33 @@
+{
+  "graph": {
+    "edges": [
+      {
+        "from": "G1",
+        "to": "S2"
+      },
+      {
+        "from": "S2",
+        "to": "D3"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "G1",
+        "kind": "global",
+        "label": "^IadSm172Ledger"
+      },
+      {
+        "id": "S2",
+        "kind": "subscript",
+        "label": "sub 1: {ID} (Sub)"
+      },
+      {
+        "id": "D3",
+        "kind": "data",
+        "label": "Amount: piece 2, Code: piece 1, Memo: node, Tag1: piece 1, Tag2: piece 1#43;1"
+      }
+    ]
+  },
+  "markdown": "# Storage of IadSm172.Ledger\n\nStorage `SQLStorage`, type `%Storage.SQL`, editable with iris_storage_map.\n\n| Keyword | Value |\n| --- | --- |\n| `SqlIdExpression` | `$i(^IadSm172Ledger)` |\n| `StreamLocation` | `^IadSm172LedgerS` |\n\n- table is writable: master global starts with ^, $, or @\n\n## Map `Master` (data, master map)\n\nGlobal layout: `^IadSm172Ledger({ID})`\n\n| Level | Expression | Access type | Delimiter | Other |\n| --- | --- | --- | --- | --- |\n| 1 | `{ID}` | Sub | — | — |\n\n| Field | Node | Delimiter | Piece | Format | Filed |\n| --- | --- | --- | --- | --- | --- |\n| `Amount` | row node | `\"\\|\"` | `2` | delimited | yes |\n| `Code` | row node | `\"\\|\"` | `1` | delimited | yes |\n| `Memo` | `\"memo\"` | — | — | whole node | yes |\n| `Tag1` | `\"t\"` | `$C(1)` | `1` | delimited | yes |\n| `Tag2` | `\"t\"` | `$C(1)` | `1+1` | delimited | yes |\n\nFacts:\n\n- no delimiter: node read as $LIST\n- row node holds fields (Amount, Code) and has sub-nodes (\"memo\", \"t\"): $Data 11\n\n```mermaid\nflowchart LR\n  G1[\"^IadSm172Ledger\"]\n  S2[\"sub 1: {ID} (Sub)\"]\n  D3[\"Amount: piece 2, Code: piece 1, Memo: node, Tag1: piece 1, Tag2: piece 1#43;1\"]\n  G1 --> S2\n  S2 --> D3\n```\n",
+  "mermaid": "flowchart LR\n  G1[\"^IadSm172Ledger\"]\n  S2[\"sub 1: {ID} (Sub)\"]\n  D3[\"Amount: piece 2, Code: piece 1, Memo: node, Tag1: piece 1, Tag2: piece 1#43;1\"]\n  G1 --> S2\n  S2 --> D3\n"
+}

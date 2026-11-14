@@ -625,6 +625,12 @@ false` as naming the argument, so every call sending it would need `acknowledgeP
       fixtures and taking the coverage-list items none of them has.
 - [ ] T101 [P] [US11] One task per class in `CORPUS.md` (the lead splits this into T101a, T101b, …): an invented
       fixture plus seed with its known answer, as T012. Prove: rig case per class.
+      2026-11-14: T101a `Ledger`, T101b `Route` (lowercase `sub`, Accessvar, Invalidcondition, StopExpression),
+      T101c `Shipment`, T101e `Badge` (`bitmapextent`; `%CacheSQLStorage` is a live test, IRIS renames it). Rig
+      cases green on the box. Not fixtured, with why, in `CORPUS.md`: AccessType Piece/Other and DataAccess, T101d
+      (parent-child Relationship needs a two-class rig, a node as a subscript level), T101f (extended or expression
+      `Global` needs a raw load). Two iad bugs found and fixed: an unbuilt `bitmapextent` map was let through
+      (`COUNT(*)` answers 0), and the read-back called IRIS's `%CacheSQLStorage` rename a writer mismatch.
 - [x] T102 [P] [US11] Dimensions file `/crates/iris-agentic-dev-core/tests/fixtures/storage172/dimensions.toml`
       (lead supplies the dimension names and values from the catalogue; values only, no counts): map type, subscript
       depth, delimiter class per field, node layout, row-node state (value only / children only / value and

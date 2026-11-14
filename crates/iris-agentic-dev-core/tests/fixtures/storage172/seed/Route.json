@@ -1,0 +1,66 @@
+{
+  "class": "IadSm172.Route",
+  "globals": [
+    {
+      "global": "^IadSm172Route",
+      "subscripts": [
+        "east"
+      ],
+      "value": "1"
+    },
+    {
+      "global": "^IadSm172Route",
+      "subscripts": [
+        "east",
+        "1"
+      ],
+      "value": "Harbor^4"
+    },
+    {
+      "global": "^IadSm172Route",
+      "subscripts": [
+        "east",
+        "2"
+      ],
+      "value": "Ridge^6"
+    },
+    {
+      "global": "^IadSm172Route",
+      "subscripts": [
+        "east",
+        "900"
+      ],
+      "value": "Test^1"
+    },
+    {
+      "global": "^IadSm172Route",
+      "subscripts": [
+        "west"
+      ],
+      "value": "0"
+    },
+    {
+      "global": "^IadSm172Route",
+      "subscripts": [
+        "west",
+        "1"
+      ],
+      "value": "Old Mill^3"
+    }
+  ],
+  "question": "SELECT Depot, Seq, Name, Stops FROM IadSm172.Route ORDER BY Depot, Seq",
+  "answer": [
+    {
+      "Depot": "east",
+      "Seq": 1,
+      "Name": "Harbor",
+      "Stops": 4
+    },
+    {
+      "Depot": "east",
+      "Seq": 2,
+      "Name": "Ridge",
+      "Stops": 6
+    }
+  ]
+}

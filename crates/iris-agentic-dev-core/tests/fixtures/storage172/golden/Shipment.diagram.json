@@ -1,0 +1,56 @@
+{
+  "graph": {
+    "edges": [
+      {
+        "from": "G1",
+        "to": "S2"
+      },
+      {
+        "from": "S2",
+        "to": "D3"
+      },
+      {
+        "from": "G4",
+        "to": "S5"
+      },
+      {
+        "from": "S5",
+        "to": "S6"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "G1",
+        "kind": "global",
+        "label": "^IadSm172Ship"
+      },
+      {
+        "id": "S2",
+        "kind": "subscript",
+        "label": "sub 1: {ID} (Sub)"
+      },
+      {
+        "id": "D3",
+        "kind": "data",
+        "label": "Dest: piece 1, Status: piece 2"
+      },
+      {
+        "id": "G4",
+        "kind": "global",
+        "label": "^IadSm172ShipI"
+      },
+      {
+        "id": "S5",
+        "kind": "subscript",
+        "label": "sub 1: {Dest} (Sub)"
+      },
+      {
+        "id": "S6",
+        "kind": "subscript",
+        "label": "sub 2: {ID} (Sub)"
+      }
+    ]
+  },
+  "markdown": "# Storage of IadSm172.Shipment\n\nStorage `SQLStorage`, type `%Storage.SQL`, editable with iris_storage_map.\n\n| Keyword | Value |\n| --- | --- |\n| `SqlIdExpression` | `$i(^IadSm172Ship)` |\n| `StreamLocation` | `^IadSm172ShipS` |\n\n- table is writable: master global starts with ^, $, or @\n\n## Map `Master` (data, master map)\n\nGlobal layout: `^IadSm172Ship({ID})`\n\n| Level | Expression | Access type | Delimiter | Other |\n| --- | --- | --- | --- | --- |\n| 1 | `{ID}` | Sub | — | — |\n\n| Field | Node | Delimiter | Piece | Format | Filed |\n| --- | --- | --- | --- | --- | --- |\n| `Dest` | row node | `\"^\"` | `1` | delimited | yes |\n| `Status` | row node | `\"^\"` | `2` | delimited | yes |\n\n- structure: `delimited`\n- population_pct: `100`\n- block_count: `-4`\n\n```mermaid\nflowchart LR\n  G1[\"^IadSm172Ship\"]\n  S2[\"sub 1: {ID} (Sub)\"]\n  D3[\"Dest: piece 1, Status: piece 2\"]\n  G1 --> S2\n  S2 --> D3\n```\n\n## Map `OpenByDest` (index)\n\nGlobal layout: `^IadSm172ShipI({Dest},{ID})`\n\n| Level | Expression | Access type | Delimiter | Other |\n| --- | --- | --- | --- | --- |\n| 1 | `{Dest}` | Sub | — | — |\n| 2 | `{ID}` | Sub | — | — |\n\n- condition: `{Status}=\"open\"`\n- condition_fields: `Status`\n- conditional_with_host_vars: `1`\n- population_type: `conditional`\n\n```mermaid\nflowchart LR\n  G1[\"^IadSm172ShipI\"]\n  S2[\"sub 1: {Dest} (Sub)\"]\n  S3[\"sub 2: {ID} (Sub)\"]\n  G1 --> S2\n  S2 --> S3\n```\n",
+  "mermaid": "flowchart LR\n  G1[\"^IadSm172Ship\"]\n  S2[\"sub 1: {ID} (Sub)\"]\n  D3[\"Dest: piece 1, Status: piece 2\"]\n  G4[\"^IadSm172ShipI\"]\n  S5[\"sub 1: {Dest} (Sub)\"]\n  S6[\"sub 2: {ID} (Sub)\"]\n  G1 --> S2\n  S2 --> D3\n  G4 --> S5\n  S5 --> S6\n"
+}

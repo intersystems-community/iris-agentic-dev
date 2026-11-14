@@ -1,0 +1,143 @@
+{
+  "derived": [
+    {
+      "fact": "table is writable: master global starts with ^, $, or @",
+      "path": "/storage"
+    }
+  ],
+  "storage": {
+    "default_storage": null,
+    "description": null,
+    "editable": true,
+    "extra": [],
+    "keywords": {
+      "SqlIdExpression": "$i(^IadSm172Ship)",
+      "StreamLocation": "^IadSm172ShipS"
+    },
+    "maps": [
+      {
+        "block_count": "-4",
+        "condition": null,
+        "condition_fields": null,
+        "conditional_with_host_vars": null,
+        "data": {
+          "Dest": {
+            "delimiter": "\"^\"",
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "delimited"
+            },
+            "extra": [],
+            "name": "Dest",
+            "node": null,
+            "piece": "1",
+            "retrieval_code": null
+          },
+          "Status": {
+            "delimiter": "\"^\"",
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "delimited"
+            },
+            "extra": [],
+            "name": "Status",
+            "node": null,
+            "piece": "2",
+            "retrieval_code": null
+          }
+        },
+        "deferred": null,
+        "extra": [],
+        "global": "^IadSm172Ship",
+        "master": true,
+        "name": "Master",
+        "population_pct": "100",
+        "population_type": null,
+        "row_id": [],
+        "row_reference": null,
+        "structure": "delimited",
+        "subscripts": [
+          {
+            "access_type": "Sub",
+            "access_vars": [],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "{ID}",
+            "extra": [],
+            "invalid_conditions": [],
+            "level": 1,
+            "loop_init_value": null,
+            "next_code": null,
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": null,
+            "stop_value": null
+          }
+        ],
+        "type": "data",
+        "used": true,
+        "version": "5e275e3935ff8d99"
+      },
+      {
+        "block_count": null,
+        "condition": "{Status}=\"open\"",
+        "condition_fields": "Status",
+        "conditional_with_host_vars": "1",
+        "data": {},
+        "deferred": null,
+        "extra": [],
+        "global": "^IadSm172ShipI",
+        "master": false,
+        "name": "OpenByDest",
+        "population_pct": null,
+        "population_type": "conditional",
+        "row_id": [],
+        "row_reference": null,
+        "structure": null,
+        "subscripts": [
+          {
+            "access_type": "Sub",
+            "access_vars": [],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "{Dest}",
+            "extra": [],
+            "invalid_conditions": [],
+            "level": 1,
+            "loop_init_value": null,
+            "next_code": null,
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": null,
+            "stop_value": null
+          },
+          {
+            "access_type": "Sub",
+            "access_vars": [],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "{ID}",
+            "extra": [],
+            "invalid_conditions": [],
+            "level": 2,
+            "loop_init_value": null,
+            "next_code": null,
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": null,
+            "stop_value": null
+          }
+        ],
+        "type": "index",
+        "used": false,
+        "version": "fc806aec15801efe"
+      }
+    ],
+    "name": "SQLStorage",
+    "not_editable_reason": null,
+    "type": "%Storage.SQL",
+    "version": "2fcf52e38ff976fa"
+  }
+}

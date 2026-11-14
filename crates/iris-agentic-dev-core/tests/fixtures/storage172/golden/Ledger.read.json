@@ -1,0 +1,136 @@
+{
+  "derived": [
+    {
+      "fact": "no delimiter: node read as $LIST",
+      "path": "/maps/Master/data/Memo"
+    },
+    {
+      "fact": "table is writable: master global starts with ^, $, or @",
+      "path": "/storage"
+    },
+    {
+      "fact": "row node holds fields (Amount, Code) and has sub-nodes (\"memo\", \"t\"): $Data 11",
+      "path": "/maps/Master"
+    }
+  ],
+  "storage": {
+    "default_storage": null,
+    "description": null,
+    "editable": true,
+    "extra": [],
+    "keywords": {
+      "SqlIdExpression": "$i(^IadSm172Ledger)",
+      "StreamLocation": "^IadSm172LedgerS"
+    },
+    "maps": [
+      {
+        "block_count": null,
+        "condition": null,
+        "condition_fields": null,
+        "conditional_with_host_vars": null,
+        "data": {
+          "Amount": {
+            "delimiter": "\"|\"",
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "delimited"
+            },
+            "extra": [],
+            "name": "Amount",
+            "node": null,
+            "piece": "2",
+            "retrieval_code": null
+          },
+          "Code": {
+            "delimiter": "\"|\"",
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "delimited"
+            },
+            "extra": [],
+            "name": "Code",
+            "node": null,
+            "piece": "1",
+            "retrieval_code": null
+          },
+          "Memo": {
+            "delimiter": null,
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "whole node"
+            },
+            "extra": [],
+            "name": "Memo",
+            "node": "\"memo\"",
+            "piece": null,
+            "retrieval_code": null
+          },
+          "Tag1": {
+            "delimiter": "$C(1)",
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "delimited"
+            },
+            "extra": [],
+            "name": "Tag1",
+            "node": "\"t\"",
+            "piece": "1",
+            "retrieval_code": null
+          },
+          "Tag2": {
+            "delimiter": "$C(1)",
+            "derived": {
+              "computed": false,
+              "filed": true,
+              "format": "delimited"
+            },
+            "extra": [],
+            "name": "Tag2",
+            "node": "\"t\"",
+            "piece": "1+1",
+            "retrieval_code": null
+          }
+        },
+        "deferred": null,
+        "extra": [],
+        "global": "^IadSm172Ledger",
+        "master": true,
+        "name": "Master",
+        "population_pct": null,
+        "population_type": null,
+        "row_id": [],
+        "row_reference": null,
+        "structure": null,
+        "subscripts": [
+          {
+            "access_type": "Sub",
+            "access_vars": [],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "{ID}",
+            "extra": [],
+            "invalid_conditions": [],
+            "level": 1,
+            "loop_init_value": null,
+            "next_code": null,
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": null,
+            "stop_value": null
+          }
+        ],
+        "type": "data",
+        "used": true,
+        "version": "bf14064e7caabb28"
+      }
+    ],
+    "name": "SQLStorage",
+    "not_editable_reason": null,
+    "type": "%Storage.SQL",
+    "version": "2978116997dc55d0"
+  }
+}

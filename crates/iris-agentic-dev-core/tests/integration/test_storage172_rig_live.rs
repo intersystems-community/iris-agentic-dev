@@ -32,3 +32,8 @@ fixture_case!(copy, "Copy");
 fixture_case!(loan_union, "LoanUnion");
 fixture_case!(notes, "Notes");
 fixture_case!(default_book, "DefaultBook");
+// T101a–e: patterns from CORPUS.md.
+fixture_case!(ledger, "Ledger");
+fixture_case!(route, "Route");
+fixture_case!(shipment, "Shipment");
+fixture_case!(badge, "Badge");

@@ -1,0 +1,72 @@
+{
+  "class": "IadSm172.Shipment",
+  "globals": [
+    {
+      "global": "^IadSm172Ship",
+      "subscripts": [
+        "1"
+      ],
+      "value": "Oslo^open"
+    },
+    {
+      "global": "^IadSm172Ship",
+      "subscripts": [
+        "2"
+      ],
+      "value": "Lima^closed"
+    },
+    {
+      "global": "^IadSm172Ship",
+      "subscripts": [
+        "3"
+      ],
+      "value": "Oslo^open"
+    },
+    {
+      "global": "^IadSm172Ship",
+      "subscripts": [
+        "4"
+      ],
+      "value": "Pune^open"
+    },
+    {
+      "global": "^IadSm172Ship",
+      "value": "4"
+    },
+    {
+      "global": "^IadSm172ShipI",
+      "subscripts": [
+        "Oslo",
+        "1"
+      ],
+      "value": ""
+    },
+    {
+      "global": "^IadSm172ShipI",
+      "subscripts": [
+        "Oslo",
+        "3"
+      ],
+      "value": ""
+    },
+    {
+      "global": "^IadSm172ShipI",
+      "subscripts": [
+        "Pune",
+        "4"
+      ],
+      "value": ""
+    }
+  ],
+  "question": "SELECT ID, Dest FROM IadSm172.Shipment WHERE Status = 'open' AND Dest = 'Oslo' ORDER BY ID",
+  "answer": [
+    {
+      "ID": 1,
+      "Dest": "Oslo"
+    },
+    {
+      "ID": 3,
+      "Dest": "Oslo"
+    }
+  ]
+}
