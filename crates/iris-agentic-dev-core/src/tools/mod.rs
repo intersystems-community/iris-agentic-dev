@@ -3969,14 +3969,14 @@ impl IrisTools {
     /// The audit entry of an `iris_storage_map` write that went through (FR-030c), on the server
     /// the call acted on: status `written`, the record as its params, and the `%SYS.Audit`
     /// emission when `irisAudit` is on. Outside a call there is no server to record against.
-    pub(crate) fn audit_map_write(&self, record: serde_json::Value) {
+    pub(crate) fn audit_map_write(&self, tool: &str, record: serde_json::Value) {
         let Ok(t) = self.target() else {
             return;
         };
         let server = &t.primary;
         let policy = server.audited.then_some(&server.policy);
         self.write_audit_entry_on(
-            "iris_storage_map",
+            tool,
             &server.key,
             server.conn.clone(),
             policy,
@@ -4340,6 +4340,40 @@ impl IrisTools {
                         return err_result(err);
                     }
                 }
+                // A class with an SQL storage map gets the map's safeguards before its upload,
+                // as an `iris_doc` put does (spec 172 FR-026, FR-031): this path stores the class.
+                let stored_form =
+                    match storage_map::write::as_iris_stores(&iris, client, &namespace, &content)
+                        .await
+                    {
+                        Ok(text) => text,
+                        Err(answer) => {
+                            self.record_call("iris_compile", false);
+                            return err_result(answer);
+                        }
+                    };
+                let map_guard = if doc_name.to_ascii_lowercase().ends_with(".cls")
+                    && storage_map::write::content_has_sql_map(&stored_form)
+                {
+                    match storage_map::write::doc_precheck(
+                        &iris,
+                        client,
+                        &doc_name,
+                        &stored_form,
+                        &namespace,
+                        true,
+                    )
+                    .await
+                    {
+                        Ok(guard) => Some(guard),
+                        Err(answer) => {
+                            self.record_call("iris_compile", false);
+                            return err_result(answer);
+                        }
+                    }
+                } else {
+                    None
+                };
                 // Upload via Atelier PUT
                 let put_url = iris.versioned_ns_url(
                     &namespace,
@@ -4364,11 +4398,27 @@ impl IrisTools {
                 // SetTextFromString NULL namespace bug).
                 let put_body: serde_json::Value =
                     crate::iris::http::json_or_default(put_resp).await;
-                if let Some(errs) = put_body["status"]["errors"].as_array() {
-                    if !errs.is_empty() {
-                        let msg = errs[0]["error"].as_str().unwrap_or("Upload failed");
-                        self.record_call("iris_compile", false);
-                        return err_json("UPLOAD_FAILED", msg);
+                // Both places IRIS reports a failed upload: `status.errors`, and `result.status`
+                // on a 200 with empty errors (2026.2), as `iris_doc` reads them.
+                if let Some(msg) = crate::iris::connection::check_atelier_put_errors(&put_body) {
+                    self.record_call("iris_compile", false);
+                    return err_json("UPLOAD_FAILED", &msg);
+                }
+                // What IRIS stored, judged again (FR-012, FR-012a); put back when it differs.
+                let mut written = String::new();
+                if let Some(guard) = &map_guard {
+                    match guard.read_back(&iris, client, &doc_name, &namespace).await {
+                        Ok(text) => written = text,
+                        Err(mut answer) => {
+                            let class = doc_name.strip_suffix(".cls").unwrap_or(&doc_name);
+                            let mut record = guard.write_record(class, &stored_form);
+                            record["outcome"] = answer["error_code"].clone();
+                            record["restored"] = answer["restored"].clone();
+                            self.audit_map_write("iris_compile", record.clone());
+                            answer["storage_map_write"] = record;
+                            self.record_call("iris_compile", false);
+                            return err_result(answer);
+                        }
                     }
                 }
                 // The upload put the class in the dictionary, so its `Extends` is now readable
@@ -4425,6 +4475,28 @@ impl IrisTools {
                     "console": console,
                     "content": content,
                 });
+                if let Some(guard) = &map_guard {
+                    let class = doc_name.strip_suffix(".cls").unwrap_or(&doc_name);
+                    let mut record = guard.write_record(class, &written);
+                    record["compiled"] = serde_json::Value::Bool(success);
+                    if success {
+                        guard.warn_if_changed(&mut resp);
+                    } else {
+                        // FR-017: IRIS's errors explained; FR-016: the previous text put back.
+                        resp["explanations"] =
+                            serde_json::json!(storage_map::explain::explanations(&cr.errors));
+                        let restored = guard
+                            .restore(&iris, client, &doc_name, &namespace, &written)
+                            .await;
+                        record["restored"] = serde_json::Value::Bool(restored.is_ok());
+                        resp["storage_map"] = match restored {
+                            Ok(()) => serde_json::json!({"restored": true}),
+                            Err(e) => serde_json::json!({"restored": false, "restore_error": e}),
+                        };
+                    }
+                    self.audit_map_write("iris_compile", record.clone());
+                    resp["storage_map_write"] = record;
+                }
                 if success {
                     let source = resp["content"].as_str().map(str::to_string);
                     add_source_hint(&mut resp, source.as_deref());
@@ -5253,6 +5325,15 @@ impl IrisTools {
         )
         .await;
         self.record_call("iris_doc", result.is_ok());
+        // A put of a class with an SQL map is audited as a map write (spec 172 FR-031, FR-030c).
+        if let Some(record) = result
+            .as_ref()
+            .ok()
+            .and_then(|r| r.structured_content.as_ref())
+            .and_then(|v| v.get("storage_map_write"))
+        {
+            self.audit_map_write("iris_doc", record.clone());
+        }
         // A gate the handler runs (the storage-map gates on a class with an SQL map, spec 172
         // FR-031) leaves with its `refusal` block.
         result.map(|r| self.classify_answer(r))

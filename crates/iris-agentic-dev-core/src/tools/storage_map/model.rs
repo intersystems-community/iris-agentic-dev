@@ -190,7 +190,7 @@ pub fn from_tree(class: &str, storage_name: &str, nodes: &[Node]) -> StorageMode
                 description = node.value.clone();
             }
             "SQLMap" => {
-                let (map, warnings) = parse_sql_map(node, class);
+                let (map, warnings) = parse_sql_map(node);
                 maps.push(map);
                 derived_warnings.extend(warnings);
             }
@@ -277,7 +277,7 @@ pub fn from_tree(class: &str, storage_name: &str, nodes: &[Node]) -> StorageMode
     }
 }
 
-fn parse_sql_map(node: &Node, class: &str) -> (SqlMap, Vec<Derived>) {
+fn parse_sql_map(node: &Node) -> (SqlMap, Vec<Derived>) {
     let map_name = node.name.clone().unwrap_or_else(|| "Unknown".to_string());
     let mut map_type = String::new();
     let mut global = String::new();
@@ -311,8 +311,7 @@ fn parse_sql_map(node: &Node, class: &str) -> (SqlMap, Vec<Derived>) {
                 "RowReference" => row_reference = child.value.clone(),
                 "Deferred" => deferred = child.value.clone(),
                 "Subscript" => {
-                    let (sub, warn) =
-                        parse_subscript(child, class, &map_name, subscripts.len() + 1);
+                    let (sub, warn) = parse_subscript(child, &map_name, subscripts.len() + 1);
                     subscripts.push(sub);
                     if let Some(w) = warn {
                         warnings.push(w);
@@ -325,7 +324,7 @@ fn parse_sql_map(node: &Node, class: &str) -> (SqlMap, Vec<Derived>) {
                 }
                 "RowIdSpec" => {
                     let (row_id, warn) =
-                        parse_row_id_spec(child, class, &map_name, row_id_parts.len() + 1);
+                        parse_row_id_spec(child, &map_name, row_id_parts.len() + 1);
                     row_id_parts.push(row_id);
                     if let Some(w) = warn {
                         warnings.push(w);
@@ -375,7 +374,6 @@ fn parse_sql_map(node: &Node, class: &str) -> (SqlMap, Vec<Derived>) {
 
 fn parse_subscript(
     node: &Node,
-    _class: &str,
     map_name: &str,
     expected_level: usize,
 ) -> (Subscript, Option<Derived>) {
@@ -575,7 +573,6 @@ fn parse_data_field(node: &Node, field_name: &str) -> DataField {
 
 fn parse_row_id_spec(
     node: &Node,
-    _class: &str,
     map_name: &str,
     expected_position: usize,
 ) -> (RowIdPart, Option<Derived>) {
@@ -724,8 +721,9 @@ pub fn derived_facts(model: &StorageModel) -> Vec<Derived> {
             }
         }
 
-        // Check if table is writable (master global starts with ^, $ or @)
-        if map.master && map_idx == 0 {
+        // Check if table is writable (master global starts with ^, $ or @). Maps are stored by
+        // name, so the master map is the first one marked master, not the first map.
+        if map.master && model.storage.maps.iter().position(|m| m.master) == Some(map_idx) {
             let starts_with_writable = map.global.starts_with('^')
                 || map.global.starts_with('$')
                 || map.global.starts_with('@');

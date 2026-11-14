@@ -211,3 +211,23 @@ stays case-sensitive (`DATA` fails with #5511).
   `destructive_tools_enabled = false` nor `[policy.default] destructiveTools = false` closes it in a process launched
   with it set, as CI's e2e job is (both tried on the box). The refusal of `build_indexes` with the tier closed is
   therefore a binary test (`test_storage_map_gates_172`), which states its own launch environment.
+
+## R19. Corpus fixtures (T101, measured 2026-11-14, IRIS Community 2026.2)
+
+- **A new `bitmapextent` map over rows makes `COUNT(*)` answer 0.** The planner reads "extent bitmap
+  IadSm172.Badge.BadgeExtent, looping on bitmap chunks" and finds it empty; after `%BuildIndices($lb("BadgeExtent"))`
+  the count is 3. iad's unbuilt-index check covered `index` and `bitmap` only; it now covers `bitmapextent` too.
+- **A `bitmapextent` map has no subscripts.** IRIS adds the chunk itself. With a `{ID}` subscript it wrote
+  `^G(id,chunk)`, one bitmap per row, and the count stayed 0 after the build.
+- **An Accessvar is not visible at its own level** (#5524, "{1D1} cannot be referenced in Level 1"). Level 1's
+  Accessvar is read by level 2's Invalidcondition (`Route`).
+- **Map code is stored raw.** `&lt;` in UDL is kept as the four characters, inside CDATA; write `<` raw, and IRIS
+  stores CDATA when the code has `<`, `>` or `&` (as R17).
+- **IRIS stores `ConditionalWithHostVars` before `ConditionFields`**, whatever order was sent.
+- **`SqlIdExpression` must be `$i(` one global reference `)`.** IRIS splices the argument into `$g(...)` and a second
+  `$INCREMENT(...)`: `$i(^G)+0` and `$INCREMENT(^G,1)` fail to compile (#1054, #1013); an extended reference compiles.
+- A conditional index map (`PopulationType conditional`) was not used for a parameterized query on its condition;
+  the plan read the master map. The answer is the same either way.
+- Not fixtured yet: a parent-child `Relationship` (two classes that must load together; the rig loads one class per
+  fixture), `AccessType Piece`/`Other` and `DataAccess` (semantics not measured), and the read-only global forms of
+  T101f (an extended or expression `Global` is refused by `iris_doc`'s map check, so they need a raw load).

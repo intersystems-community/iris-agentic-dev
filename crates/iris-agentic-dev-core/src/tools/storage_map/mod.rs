@@ -44,6 +44,18 @@ pub struct CallShape {
     pub code_changed: Option<bool>,
 }
 
+impl CallShape {
+    /// The call runs as the service account (FR-029): the actions that read data through code
+    /// iad runs, and the opt-ins that write it.
+    pub fn needs_service_account(&self) -> bool {
+        matches!(
+            self.action,
+            Action::Compare | Action::Preview | Action::Propose
+        ) || self.seed_counter
+            || self.build_indexes
+    }
+}
+
 /// Parses the action and opt-ins from params into a CallShape.
 ///
 /// Per FR-030a: an unreadable action (missing, not a string, unknown, any whitespace or case
@@ -205,7 +217,7 @@ pub async fn handle(
     }
     // A call that runs as the service account is refused before any IRIS contact when that
     // account cannot be used, as every other tool that runs the agent's code is.
-    if crate::tools::exec::needs_service_account("iris_storage_map", p) {
+    if shape.needs_service_account() {
         if let Err(e) = tools.exec_context() {
             return err_result(e.to_json());
         }
@@ -584,8 +596,28 @@ fn audit_write(
     result: &Result<Value, Value>,
     changed: &[String],
 ) {
-    let Ok(ans) = result else {
-        return;
+    let ans = match result {
+        Ok(ans) => ans,
+        // A failed write that changed the class on IRIS is audited too (FR-030c): a put that
+        // was restored, a restore that failed, a write whose opt-in failed. A refusal before the
+        // PUT changed nothing and is not a write.
+        Err(err) if err.get("restored").is_some() || err["written"] == true => {
+            let mut record = write::map_write_record(
+                class,
+                map,
+                stored.storage.version.as_str(),
+                err["versions"]["after"].as_str().unwrap_or(""),
+                changed,
+                err["code_changed"] == true,
+            );
+            record["outcome"] = err["error_code"].clone();
+            if let Some(restored) = err.get("restored") {
+                record["restored"] = restored.clone();
+            }
+            tools.audit_map_write("iris_storage_map", record);
+            return;
+        }
+        Err(_) => return,
     };
     let (before, after) = match map {
         Some(name) => (
@@ -606,14 +638,17 @@ fn audit_write(
             ans["versions"]["after"].as_str().unwrap_or(""),
         ),
     };
-    tools.audit_map_write(write::map_write_record(
-        class,
-        map,
-        before,
-        after,
-        changed,
-        ans["code_changed"] == true,
-    ));
+    tools.audit_map_write(
+        "iris_storage_map",
+        write::map_write_record(
+            class,
+            map,
+            before,
+            after,
+            changed,
+            ans["code_changed"] == true,
+        ),
+    );
 }
 
 /// `compare` (US5, FR-020, FR-020a): sample the map's global and set what the data shows
@@ -820,16 +855,37 @@ async fn preview_action(
     .await;
     let result = match compiled {
         Err(answer) => err_result(answer),
-        Ok((_, Some(Err(e)))) => fail(
+        Ok((_, Some(Err(e)))) => match e.downcast_ref::<crate::iris::connection::QueryTimedOut>() {
+            // FR-022: the time cap stopped the scan, and the answer says so.
+            Some(cap) => fail(
+                "STORAGE_MAP_TIME_CAP",
+                format!(
+                    "preview stopped at its time cap: {cap}. Lower max_rows or narrow the map."
+                ),
+                json!({"capped": true, "cap": {"rows": max_rows, "seconds": cap.0}}),
+            ),
+            None => fail(
+                "SQL_ERROR",
+                format!("reading through the proposed map failed: {e}"),
+                json!({}),
+            ),
+        },
+        Ok((_, None)) => fail(
             "SQL_ERROR",
-            format!("reading through the proposed map failed: {e}"),
+            "the scratch copy compiled but the preview query did not run".into(),
             json!({}),
         ),
-        Ok((scratch, answer)) => {
-            let rows: Vec<Value> = answer
-                .and_then(Result::ok)
-                .and_then(|a| a["result"]["content"].as_array().cloned())
-                .unwrap_or_default();
+        Ok((scratch, Some(Ok(answer)))) => {
+            let Some(rows) = answer["result"]["content"].as_array().cloned() else {
+                return crate::tools::exec::attach_identity(
+                    fail(
+                        "SQL_ERROR",
+                        format!("IRIS answered the preview query with no rows: {answer}"),
+                        json!({}),
+                    ),
+                    &cx.helper_report(),
+                );
+            };
             let columns: Vec<String> = rows
                 .first()
                 .and_then(Value::as_object)
@@ -1080,6 +1136,21 @@ async fn class_text(
     Ok(lines.map(|l| l.join("\n")))
 }
 
+/// The message of a reply `class_text` failed with.
+fn reply_error(reply: &CallToolResult) -> String {
+    reply
+        .structured_content
+        .as_ref()
+        .and_then(|v| v["error"].as_str().map(str::to_string))
+        .or_else(|| {
+            reply
+                .content
+                .iter()
+                .find_map(|c| c.as_text().map(|t| t.text.clone()))
+        })
+        .unwrap_or_else(|| "no detail".into())
+}
+
 /// The storage model of `class`'s first Storage block: `Ok(None)` when the class has no Storage
 /// block, `Err(ParseError)` when one cannot be parsed.
 fn model_of(class: &str, text: &str) -> Result<Option<model::StorageModel>, tree::ParseError> {
@@ -1112,18 +1183,25 @@ async fn classes_on_globals(
     globals: &[String],
     ns: &str,
     except: &str,
+    warnings: &mut Vec<String>,
 ) -> Vec<String> {
     let mut out = Vec::new();
     for g in globals {
         let sql = "SELECT DISTINCT $PIECE(parent,'||',1) AS Cls FROM %Dictionary.CompiledStorageSQLMap WHERE _Global = ? AND Type = 'data'";
-        if let Ok(resp) = iris.query(sql, vec![json!(g)], ns, client).await {
-            for row in resp["result"]["content"].as_array().into_iter().flatten() {
-                if let Some(c) = row["Cls"].as_str() {
-                    if c != except && !out.iter().any(|o: &String| o == c) {
-                        out.push(c.to_string());
+        match iris.query(sql, vec![json!(g)], ns, client).await {
+            Ok(resp) => {
+                for row in resp["result"]["content"].as_array().into_iter().flatten() {
+                    if let Some(c) = row["Cls"].as_str() {
+                        if c != except && !out.iter().any(|o: &String| o == c) {
+                            out.push(c.to_string());
+                        }
                     }
                 }
             }
+            Err(e) => warnings.push(format!(
+                "the other classes on {g} could not be read ({e}), so facts about rows nested \
+                 with theirs may be missing"
+            )),
         }
     }
     out
@@ -1137,10 +1215,19 @@ pub async fn sql_maps_json(
     class: &str,
     storage: &str,
     ns: &str,
-) -> Option<Value> {
-    let text = class_text(iris, client, class, ns).await.ok()??;
-    let m = model_of(class, &text).ok()??;
-    (m.storage.name == storage).then(|| json!(m.storage.maps))
+) -> Result<Option<Value>, String> {
+    let Some(text) = class_text(iris, client, class, ns)
+        .await
+        .map_err(|e| format!("the class text could not be read: {}", reply_error(&e)))?
+    else {
+        return Ok(None);
+    };
+    let Some(m) = model_of(class, &text)
+        .map_err(|e| format!("the Storage block does not parse: {}", e.reason))?
+    else {
+        return Ok(None);
+    };
+    Ok((m.storage.name == storage).then(|| json!(m.storage.maps)))
 }
 
 /// `read` (FR-002, FR-003, FR-003a): the class's storage as the JSON model, with derived facts,
@@ -1163,11 +1250,19 @@ async fn read(
         .map(|map| map.global.clone())
         .collect();
     let mut models = vec![m.clone()];
-    for other in classes_on_globals(iris, client, &globals, &ns, class).await {
-        if let Ok(Some(t)) = class_text(iris, client, &other, &ns).await {
-            if let Ok(Some(om)) = model_of(&other, &t) {
-                models.push(om);
-            }
+    let mut warnings = Vec::new();
+    for other in classes_on_globals(iris, client, &globals, &ns, class, &mut warnings).await {
+        match class_text(iris, client, &other, &ns).await.map(|t| t.map(|t| model_of(&other, &t))) {
+            Ok(Some(Ok(Some(om)))) => models.push(om),
+            Ok(Some(Ok(None))) | Ok(None) => {}
+            Ok(Some(Err(e))) => warnings.push(format!(
+                "{other} shares a global with {class} and its Storage block does not parse ({}), so facts about rows nested with its may be missing",
+                e.reason
+            )),
+            Err(e) => warnings.push(format!(
+                "{other} shares a global with {class} and could not be read ({}), so facts about rows nested with its may be missing",
+                reply_error(&e)
+            )),
         }
     }
     let prefix = format!("{class}.");
@@ -1196,6 +1291,7 @@ async fn read(
         "namespace": ns,
         "storage": m.storage,
         "derived": m.derived,
+        "warnings": warnings,
     })))
 }
 

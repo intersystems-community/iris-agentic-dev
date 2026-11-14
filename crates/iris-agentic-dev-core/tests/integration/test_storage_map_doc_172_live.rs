@@ -93,6 +93,20 @@ async fn test_storage_map_doc_172_a_map_change_is_written_with_the_warning() {
     assert_eq!(changed["success"], true, "{changed}");
     assert_eq!(changed["compiled"], true, "{changed}");
     assert!(warned(&changed), "no warning on a map change: {changed}");
+    // FR-031, FR-030c: the put is recorded as a map write.
+    let record = &changed["storage_map_write"];
+    assert_eq!(record["class"], f.class, "{changed}");
+    assert_eq!(
+        record["changed_paths"],
+        serde_json::json!(["/maps/Master"]),
+        "{changed}"
+    );
+    assert_eq!(record["code_changed"], false, "{changed}");
+    assert_eq!(record["compiled"], true, "{changed}");
+    assert_ne!(
+        record["version_before"], record["version_after"],
+        "{changed}"
+    );
     assert_eq!(unchanged["success"], true, "{unchanged}");
     assert!(
         !warned(&unchanged),
@@ -169,6 +183,18 @@ async fn test_storage_map_doc_172_a_failed_compile_restores_the_previous_text() 
     assert_eq!(got["success"], false, "{got}");
     assert_eq!(got["compiled"], false, "{got}");
     assert_eq!(got["storage_map"]["restored"], true, "{got}");
+    // FR-031 with FR-017: IRIS's errors come with the explanations a map edit gives.
+    // The generator's error is #5001, which the explanation table does not cover: no
+    // explanation, and IRIS's own text is there.
+    assert_eq!(got["explanations"], serde_json::json!([]), "{got}");
+    assert!(
+        got["compile_errors"]
+            .to_string()
+            .contains("piece 9 is refused"),
+        "{got}"
+    );
+    assert_eq!(got["storage_map_write"]["compiled"], false, "{got}");
+    assert_eq!(got["storage_map_write"]["restored"], true, "{got}");
     assert_eq!(
         after.trim_end(),
         before.trim_end(),

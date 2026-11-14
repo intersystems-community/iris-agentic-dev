@@ -449,13 +449,17 @@ pub async fn scratch_compile(
             query,
         )
         .await
-        .map_err(|e| {
-            body(
-                "UPLOAD_FAILED",
-                format!("the scratch copy could not be sent to IRIS: {e}"),
-                json!({}),
-            )
-        })?;
+        .map_err(
+            |e| match e.downcast_ref::<crate::iris::connection::ScratchRefused>() {
+                // A gate refused the copy before its compile (the superclass check): its own answer.
+                Some(refused) => refused.0.clone(),
+                None => body(
+                    "UPLOAD_FAILED",
+                    format!("the scratch copy could not be sent to IRIS: {e}"),
+                    json!({}),
+                ),
+            },
+        )?;
     if !result.success() {
         return Err(body(
             "STORAGE_MAP_COMPILE_FAILED",
@@ -588,29 +592,174 @@ pub struct Loaded {
     pub nodes: Vec<Node>,
 }
 
-/// The storage tree of a stored class text, if it parses.
-fn stored_tree(text: &str) -> Option<Vec<Node>> {
-    super::storage_tree(text)
-        .ok()
-        .flatten()
-        .map(|(_, nodes)| nodes)
+/// Run `gate` on every Storage block of `text` (FR-012a: every block, not only the first): the
+/// first refusal, or `STORAGE_MAP_PARSE_FAILED` naming a block that does not parse, so a block iad
+/// cannot read is never let through unjudged.
+pub fn gate_blocks(text: &str, mut gate: impl FnMut(&[Node]) -> Option<Value>) -> Option<Value> {
+    let spans = match split_class(text) {
+        Ok(spans) => spans,
+        Err(e) => {
+            return Some(body(
+                "STORAGE_MAP_PARSE_FAILED",
+                format!("cannot find the Storage blocks: {}", e.reason),
+                json!({"offset": e.offset, "context": e.context}),
+            ))
+        }
+    };
+    for span in spans {
+        let nodes = match parse_body(&text[span.body_start..span.body_end]) {
+            Ok(nodes) => nodes,
+            Err(e) => {
+                return Some(body(
+                    "STORAGE_MAP_PARSE_FAILED",
+                    format!("cannot parse Storage {}: {}", span.name, e.reason),
+                    json!({"offset": e.offset, "context": e.context}),
+                ))
+            }
+        };
+        if let Some(refusal) = gate(&nodes) {
+            return Some(refusal);
+        }
+    }
+    None
 }
 
-/// Put `text` back as `doc` over whatever IRIS holds now, and compile it. `Ok` when it compiled.
-async fn put_back(
+/// Every Storage block of `text`, by name, parsed.
+fn all_blocks(text: &str) -> Result<Vec<(String, Vec<Node>)>, super::tree::ParseError> {
+    split_class(text)?
+        .into_iter()
+        .map(|span| {
+            Ok((
+                span.name.clone(),
+                parse_body(&text[span.body_start..span.body_end])?,
+            ))
+        })
+        .collect()
+}
+
+/// Every Storage block of `text` that holds an SQL map, by name (FR-012a: all of them, not only
+/// the first). Default storage holds no `SQLMap` and is not one of them.
+pub fn map_blocks(text: &str) -> Result<Vec<(String, Vec<Node>)>, super::tree::ParseError> {
+    Ok(all_blocks(text)?
+        .into_iter()
+        .filter(|(_, nodes)| nodes.iter().any(|n| n.tag == "SQLMap"))
+        .collect())
+}
+
+/// Whether the map code of any map block of `after` differs from the same-named block of
+/// `before` (`None`: a new class, whose map code is all new) (FR-027).
+pub fn map_code_changed(
+    before: Option<&str>,
+    after: &str,
+) -> Result<bool, super::tree::ParseError> {
+    let old = match before {
+        Some(t) => all_blocks(t)?,
+        None => Vec::new(),
+    };
+    Ok(map_blocks(after)?.iter().any(|(name, nodes)| {
+        let was = old
+            .iter()
+            .find(|(n, _)| n == name)
+            .map_or(&[][..], |(_, n)| n.as_slice());
+        super::code::code_changed(was, nodes)
+    }))
+}
+
+/// What IRIS stored for `doc`, judged against the Storage blocks iad `sent`, by name (FR-012,
+/// FR-012a): the stored blocks when they are what was sent, else the answer. `gate` is the call's
+/// gates, run again on every block IRIS kept. Both writers judge with this; each decides how to
+/// undo.
+pub fn judge_stored(
+    sent: &[(String, Vec<Node>)],
+    stored_text: Option<&str>,
+    doc: &str,
+    gate: impl FnMut(&[Node]) -> Option<Value>,
+) -> Result<Vec<(String, Vec<Node>)>, Value> {
+    let unreadable = || {
+        body(
+            "STORAGE_MAP_WRITER_MISMATCH",
+            format!("iad cannot read back the Storage block IRIS stored for {doc}"),
+            json!({}),
+        )
+    };
+    let Some(text) = stored_text else {
+        return Err(unreadable());
+    };
+    let stored = match all_blocks(text) {
+        Ok(blocks) if !blocks.is_empty() => blocks,
+        _ => return Err(unreadable()),
+    };
+    if let Some(refusal) = gate_blocks(text, gate) {
+        return Err(refusal);
+    }
+    // One block keeps the map's own paths; several say which block each path is in.
+    let label = |name: &str, path: String| {
+        if sent.len() > 1 {
+            format!("Storage {name}{path}")
+        } else {
+            path
+        }
+    };
+    let mut dropped = Vec::new();
+    let mut unexplained = Vec::new();
+    let mut kept = Vec::new();
+    for (name, nodes) in sent {
+        match stored.iter().find(|(n, _)| n == name) {
+            None => dropped.push(format!("Storage {name}")),
+            Some((_, have)) => {
+                let diff = readback_diff(nodes, have);
+                dropped.extend(diff.dropped.into_iter().map(|p| label(name, p)));
+                unexplained.extend(diff.unexplained.into_iter().map(|p| label(name, p)));
+                kept.push((name.clone(), have.clone()));
+            }
+        }
+    }
+    if !dropped.is_empty() {
+        return Err(body(
+            "STORAGE_MAP_DROPPED",
+            format!("IRIS dropped {} element(s) iad sent", dropped.len()),
+            json!({"dropped": dropped}),
+        ));
+    }
+    if !unexplained.is_empty() {
+        return Err(body(
+            "STORAGE_MAP_WRITER_MISMATCH",
+            format!(
+                "IRIS stored a different map than iad sent ({} difference(s)); this is an iad bug",
+                unexplained.len()
+            ),
+            json!({"differences": unexplained}),
+        ));
+    }
+    Ok(kept)
+}
+
+/// Put `previous` back as `doc` and compile it, only over the version iad wrote (FR-010a): IRIS
+/// must still hold `ours` (what iad's read-back saw, or the text it sent when the read-back
+/// failed). A class someone changed since is refused, never overwritten; the guarded PUT on the
+/// timestamp read with it covers a change between that read and the PUT. `Ok` when it compiled.
+pub async fn restore_over(
     iris: &IrisConnection,
     client: &reqwest::Client,
     doc: &str,
-    text: &str,
+    previous: &str,
     ns: &str,
+    ours: &str,
 ) -> Result<(), String> {
-    let (_, ts) = get_doc(iris, client, doc, ns)
+    let (now, ts) = get_doc(iris, client, doc, ns)
         .await
         .map_err(|e| e.to_string())?
         .ok_or("the class is gone")?;
-    guarded_put(iris, client, doc, text, ns, &ts)
-        .await
-        .map_err(|b| b["error"].as_str().unwrap_or("PUT failed").to_string())?;
+    if now.trim_end() != ours.trim_end() {
+        return Err(CHANGED_SINCE.into());
+    }
+    if let Err(b) = guarded_put(iris, client, doc, previous, ns, &ts).await {
+        return Err(if b["error_code"] == "STORAGE_MAP_VERSION_CONFLICT" {
+            CHANGED_SINCE.into()
+        } else {
+            b["error"].as_str().unwrap_or("PUT failed").to_string()
+        });
+    }
     let compiled = iris
         .compile_document(doc, ns, "cuk", client)
         .await
@@ -622,15 +771,19 @@ async fn put_back(
     }
 }
 
-/// Put the text iad read back and compile it (R8). `Ok` when the class is as it was.
-async fn restore(w: &WriteCtx<'_>, loaded: &Loaded) -> Result<(), String> {
+/// Why a restore was refused: the class is no longer the version iad wrote.
+pub const CHANGED_SINCE: &str = "the class changed after iad wrote it, so iad did not put the \
+     previous version back over that change; read it and decide";
+
+/// Put the text iad read back and compile it (R8), over the version iad wrote only (FR-010a).
+async fn restore(w: &WriteCtx<'_>, loaded: &Loaded, ours: &str) -> Result<(), String> {
     let doc = format!("{}.cls", w.class);
-    put_back(w.iris, w.client, &doc, &loaded.text, w.ns).await
+    restore_over(w.iris, w.client, &doc, &loaded.text, w.ns, ours).await
 }
 
 /// `err` after a failed step that left new text on the server: restore, and say what came of it.
-async fn undo(w: &WriteCtx<'_>, loaded: &Loaded, mut err: Value) -> Value {
-    match restore(w, loaded).await {
+async fn undo(w: &WriteCtx<'_>, loaded: &Loaded, ours: &str, mut err: Value) -> Value {
+    match restore(w, loaded, ours).await {
         Ok(()) => err["restored"] = json!(true),
         Err(e) => {
             err["restored"] = json!(false);
@@ -677,12 +830,18 @@ pub async fn write_map(
 
     let doc = format!("{}.cls", w.class);
     let new_text = new_class_text(&loaded.text, &loaded.span, &after);
+    // FR-012a: the other Storage blocks go out in the same PUT, so they are judged too.
+    if let Some(refusal) = gate_blocks(&new_text, |nodes| {
+        super::code::gate_tree(nodes, w.shape, w.policy, w.server)
+    }) {
+        return Err(refusal);
+    }
     if let Some(refusal) = compile_time_refusal(&new_text, &doc) {
         return Err(refusal);
     }
     if let Err(e) = guarded_put(w.iris, w.client, &doc, &new_text, w.ns, &loaded.ts).await {
         return Err(if e["stored"] == true {
-            undo(w, loaded, e).await
+            undo(w, loaded, &new_text, e).await
         } else {
             e
         });
@@ -700,52 +859,28 @@ pub async fn write_map(
         }
         Err(e) => {
             let err = body("UPLOAD_FAILED", format!("read-back: {e}"), json!({}));
-            return Err(undo(w, loaded, err).await);
+            return Err(undo(w, loaded, &new_text, err).await);
         }
     };
-    let Some(stored_nodes) = stored_tree(&stored) else {
-        let err = body(
-            "STORAGE_MAP_WRITER_MISMATCH",
-            format!("IRIS stored a Storage block iad cannot parse in {doc}"),
-            json!({}),
-        );
-        return Err(undo(w, loaded, err).await);
+    let sent = [(loaded.span.name.clone(), after.clone())];
+    let stored_nodes = match judge_stored(&sent, Some(&stored), &doc, |nodes| {
+        super::code::gate_tree(nodes, w.shape, w.policy, w.server)
+    }) {
+        Ok(mut blocks) => blocks.pop().map(|(_, nodes)| nodes).unwrap_or_default(),
+        Err(err) => return Err(undo(w, loaded, &stored, err).await),
     };
-    if let Some(refusal) = super::code::gate_tree(&stored_nodes, w.shape, w.policy, w.server) {
-        return Err(undo(w, loaded, refusal).await);
-    }
-    let diff = readback_diff(&after, &stored_nodes);
-    if !diff.dropped.is_empty() {
-        let err = body(
-            "STORAGE_MAP_DROPPED",
-            format!("IRIS dropped {} element(s) iad sent", diff.dropped.len()),
-            json!({"dropped": diff.dropped}),
-        );
-        return Err(undo(w, loaded, err).await);
-    }
-    if !diff.unexplained.is_empty() {
-        let err = body(
-            "STORAGE_MAP_WRITER_MISMATCH",
-            format!(
-                "IRIS stored a different map than iad sent ({} difference(s)); this is an iad bug",
-                diff.unexplained.len()
-            ),
-            json!({"differences": diff.unexplained}),
-        );
-        return Err(undo(w, loaded, err).await);
-    }
 
     let compiled = match w.iris.compile_document(&doc, w.ns, "cuk", w.client).await {
         Ok(c) => c,
         Err(e) => {
             let err = body("UPLOAD_FAILED", format!("compile: {e}"), json!({}));
-            return Err(undo(w, loaded, err).await);
+            return Err(undo(w, loaded, &stored, err).await);
         }
     };
     if !compiled.success() {
         let errors = compiled.errors;
         let explanations = super::explain::explanations(&errors);
-        return Err(match restore(w, loaded).await {
+        return Err(match restore(w, loaded, &stored).await {
             Ok(()) => body(
                 "STORAGE_MAP_RESTORED",
                 format!(
@@ -770,25 +905,62 @@ pub async fn write_map(
     }
 
     let opt_ins_run = run_opt_ins(w, &plan).await;
+    let mut warnings = plan.warnings.clone();
 
     // The final text (a compile may add a StreamLocation, R3.7) gives the model the caller sees.
-    let (final_text, _) = get_doc(w.iris, w.client, &doc, w.ns)
-        .await
+    let final_text =
+        match get_doc(w.iris, w.client, &doc, w.ns).await {
+            Ok(Some((text, _))) => text,
+            other => {
+                warnings.push(format!(
+                "the class could not be read after its compile ({}), so the model shown is the \
+                 one iad wrote",
+                other.err().map_or("it is gone".to_string(), |e| e.to_string())
+            ));
+                stored
+            }
+        };
+    let final_nodes = super::storage_tree(&final_text)
         .ok()
         .flatten()
-        .unwrap_or((stored, String::new()));
-    let final_nodes = stored_tree(&final_text).unwrap_or(stored_nodes);
+        .map(|(_, nodes)| nodes)
+        .unwrap_or(stored_nodes);
     let before = super::model::from_tree(w.class, &loaded.span.name, &loaded.nodes);
     let now = super::model_with_facts(w.class, &loaded.span.name, &final_nodes);
-    Ok(json!({
+    let answer = json!({
         "storage": now.storage,
         "derived": now.derived,
         "versions": {"before": before.storage.version, "after": now.storage.version},
         "code_changed": super::code::code_changed(&loaded.nodes, &after),
         "scratch_class": scratch,
         "opt_ins_run": opt_ins_run,
-        "warnings": plan.warnings,
-    }))
+        "warnings": warnings,
+    });
+    // The map is written and compiled; an opt-in that failed left the data it guards unready
+    // (a counter behind the IDs, an empty index), so the call does not answer success.
+    let failed: Vec<&String> = opt_ins_run
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(_, v)| v.get("error").is_some())
+        .map(|(k, _)| k)
+        .collect();
+    if !failed.is_empty() {
+        let mut err =
+            body(
+                "STORAGE_MAP_OPT_IN_FAILED",
+                format!(
+                "the map was written and compiled, but {} failed: {}. Run it again, or fix the \
+                 data by hand, before the table takes rows",
+                failed.iter().map(|k| k.as_str()).collect::<Vec<_>>().join(" and "),
+                opt_ins_run
+            ),
+                answer,
+            );
+        err["written"] = json!(true);
+        return Err(err);
+    }
+    Ok(answer)
 }
 
 /// The audit record of one map write (FR-030c): what changed, by path, and whether map code
@@ -811,6 +983,70 @@ pub fn map_write_record(
     })
 }
 
+/// The map audit record of an `iris_doc` put (FR-031, FR-030c), from the text IRIS held before
+/// (`None` for a new class) and the text it holds now: the storage versions, the maps that
+/// changed, and whether map code changed.
+pub fn doc_write_record(class: &str, before: Option<&str>, after: &str) -> Value {
+    // The version of a set of map blocks: one block's is what `read` reports for it; several are
+    // hashed together. A text iad cannot parse has no version, and the record says so.
+    let version = |blocks: &[(String, Vec<Node>)]| {
+        let canonical: Vec<String> = blocks
+            .iter()
+            .map(|(_, nodes)| emit_body(&normalize(nodes.clone())))
+            .collect();
+        super::model::version_hex(&canonical.join("\n"))
+    };
+    let mut unparsed = Vec::new();
+    let mut blocks_of = |label: &str, text: &str| match map_blocks(text) {
+        Ok(b) => Some(b),
+        Err(e) => {
+            unparsed.push(format!("{label}: {}", e.reason));
+            None
+        }
+    };
+    let old = before.map(|t| blocks_of("before", t));
+    let new = blocks_of("after", after);
+    let empty = Vec::new();
+    let new_blocks = new.as_ref().unwrap_or(&empty);
+    let old_blocks = old.as_ref().and_then(|o| o.as_ref()).unwrap_or(&empty);
+    let old_of = |name: &str| {
+        old_blocks
+            .iter()
+            .find(|(n, _)| n == name)
+            .map_or(&[][..], |(_, nodes)| nodes.as_slice())
+    };
+    let mut changed = Vec::new();
+    for (name, nodes) in new_blocks {
+        for m in changed_maps(old_of(name), nodes) {
+            if let Some(map) = &m.name {
+                changed.push(if new_blocks.len() > 1 {
+                    format!("/storage/{name}/maps/{map}")
+                } else {
+                    format!("/maps/{map}")
+                });
+            }
+        }
+    }
+    let code_changed = new_blocks
+        .iter()
+        .any(|(name, nodes)| super::code::code_changed(old_of(name), nodes));
+    let mut record = map_write_record(
+        class,
+        None,
+        &match &old {
+            Some(Some(b)) => version(b),
+            _ => String::new(),
+        },
+        &new.as_ref().map(|b| version(b)).unwrap_or_default(),
+        &changed,
+        code_changed,
+    );
+    if !unparsed.is_empty() {
+        record["unparsed"] = json!(unparsed);
+    }
+    record
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // The iris_doc hand-off (FR-031, T078, T079)
 // ───────────────────────────────────────────────────────────────────────────
@@ -828,20 +1064,80 @@ pub fn is_class_xml(text: &str) -> bool {
 /// Whether any Storage block of `text` holds an `SQLMap`, of any storage type. Class XML is
 /// read as `<SQLMap` inside a `<Storage>` element. A Storage block iad cannot parse counts when
 /// the text names an `SQLMap` at all, so the safeguards see it and report the parse failure.
+/// The text IRIS stores for `content`: `iris_doc` sends its lines, so a `\r\n` line ending
+/// arrives as `\n`. The hand-off judges this text, never the raw content.
+pub fn stored_form(content: &str) -> String {
+    content.lines().collect::<Vec<_>>().join("\n")
+}
+
+/// The class text the hand-off judges: as IRIS will store it (FR-031). The lines rejoined
+/// ([`stored_form`]); and when a mapped class is not in the form IRIS stores (an indented
+/// `Storage` or map line, or a map no block reader takes), IRIS's own canonical text, read
+/// through an uncompiled scratch copy. A class iad cannot have canonicalized is refused.
+pub async fn as_iris_stores(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    ns: &str,
+    content: &str,
+) -> Result<String, Value> {
+    let text = stored_form(content);
+    if !content_has_sql_map(&text) || is_class_xml(&text) {
+        return Ok(text);
+    }
+    let indented = text.lines().any(|l| {
+        l.starts_with([' ', '\t']) && {
+            let t = l.trim_start();
+            t.starts_with("Storage ") || t.starts_with("<SQLMap")
+        }
+    });
+    let readable = matches!(map_blocks(&text), Ok(b) if !b.is_empty());
+    if readable && !indented {
+        return Ok(text);
+    }
+    iris.canonical_class_text(&text, ns, client)
+        .await
+        .map_err(
+            |e| match e.downcast_ref::<crate::iris::connection::ClassTextRefused>() {
+                // IRIS refused the text itself: the error its own PUT gives, and nothing is stored.
+                Some(refused) => body("UPLOAD_FAILED", refused.0.clone(), json!({"stored": false})),
+                None => body(
+                    "STORAGE_MAP_PARSE_FAILED",
+                    format!(
+                    "the class is not in the form IRIS stores, and iad could not have IRIS put it \
+                     in that form to check its map: {e}. Nothing was written."
+                ),
+                    json!({}),
+                ),
+            },
+        )
+}
+
 pub fn content_has_sql_map(text: &str) -> bool {
+    let text = stored_form(text);
+    let text = text.as_str();
     if is_class_xml(text) {
         return text.split("<Storage").skip(1).any(|after| {
             let inside = after.split("</Storage>").next().unwrap_or(after);
             inside.contains("<SQLMap")
         });
     }
-    match split_class(text) {
+    let in_blocks = match split_class(text) {
         Ok(spans) => spans.iter().any(|sp| {
             text[sp.body_start..sp.body_end]
                 .lines()
-                .any(|l| l.starts_with("<SQLMap"))
+                .any(|l| l.trim_start().starts_with("<SQLMap"))
         }),
         Err(_) => text.contains("<SQLMap"),
+    };
+    // A map after a `Storage` line the block reader did not take (an indented header) still goes
+    // to the safeguards, which refuse a block they cannot read (fail closed).
+    in_blocks || {
+        let mut storage = false;
+        text.lines().any(|l| {
+            let l = l.trim_start();
+            storage |= l.starts_with("Storage ");
+            storage && l.starts_with("<SQLMap")
+        })
     }
 }
 
@@ -849,7 +1145,10 @@ pub fn content_has_sql_map(text: &str) -> bool {
 /// before (none for a new class), the tree that was sent, and whether the map changed.
 pub struct DocGuard {
     previous: Option<String>,
-    sent: Vec<Node>,
+    /// The text of the put, which a restore may replace when the read-back saw nothing.
+    content: String,
+    /// Every Storage block of the put that holds a map, by name.
+    sent: Vec<(String, Vec<Node>)>,
     changed: bool,
     /// What the data checks could only warn about (FR-023 without opt-ins).
     warnings: Vec<String>,
@@ -895,6 +1194,39 @@ fn doc_gates(nodes: &[Node]) -> Option<Value> {
     }
 }
 
+/// The environment template and `allow` of the call's server, judging an `iris_doc` put as
+/// Compile and Execute (FR-027). Fails closed outside a call, like [`doc_gates`].
+fn doc_execute_gate() -> Option<Value> {
+    use crate::iris::workspace_config::ToolCategory;
+    let judged = [ToolCategory::Compile, ToolCategory::Execute];
+    crate::tools::target::CALL_TARGET
+        .try_with(|t| {
+            let server = &t.primary;
+            if let Err(gate) = crate::policy::gate::dispatch_gate_for(
+                "iris_doc",
+                &server.key,
+                &server.policy,
+                &judged,
+                &Value::Null,
+            ) {
+                return Some(gate);
+            }
+            crate::iris::server_manager::policy_gate_for(
+                "iris_doc",
+                &server.key,
+                &server.policy,
+                &judged,
+            )
+        })
+        .unwrap_or_else(|_| {
+            Some(body(
+                "TARGET_NOT_RESOLVED",
+                "no call is in progress, so the storage-map gates cannot judge this put".into(),
+                json!({}),
+            ))
+        })
+}
+
 /// Before an `iris_doc` PUT of `content` as `doc` (FR-031): class XML with a map is refused
 /// (FR-012a); the map is validated (FR-014), gated (FR-026–FR-028) and, when the put compiles,
 /// compiled in a scratch copy (FR-015). No version check and no confirm-removal.
@@ -915,12 +1247,13 @@ pub async fn doc_precheck(
             json!({}),
         ));
     }
-    let sent = match super::storage_tree(content) {
-        Ok(Some((_, nodes))) => nodes,
-        Ok(None) => {
+    // FR-012a: every Storage block that holds a map, not only the first.
+    let sent = match map_blocks(content) {
+        Ok(blocks) if !blocks.is_empty() => blocks,
+        Ok(_) => {
             return Err(body(
                 "STORAGE_MAP_PARSE_FAILED",
-                "the text names an SQLMap but iad finds no Storage block".into(),
+                "the text names an SQLMap but iad finds no Storage block holding it".into(),
                 json!({}),
             ))
         }
@@ -936,43 +1269,96 @@ pub async fn doc_precheck(
         .await
         .map_err(|e| body("IRIS_UNREACHABLE", e.to_string(), json!({})))?
         .map(|(text, _)| text);
-    let before = previous
-        .as_deref()
-        .and_then(stored_tree)
-        .unwrap_or_default();
-    doc_validate(&before, &sent)?;
-    if let Some(refusal) = doc_gates(&sent) {
+    let mut warnings = Vec::new();
+    let before_blocks = match previous.as_deref().map(all_blocks) {
+        Some(Ok(blocks)) => blocks,
+        Some(Err(e)) => {
+            // Said, not hidden: every block is then judged as new.
+            warnings.push(format!(
+                "the class IRIS holds now has a Storage block iad cannot parse ({}), so the \
+                 put was judged as if the class were new",
+                e.reason
+            ));
+            Vec::new()
+        }
+        None => Vec::new(),
+    };
+    let before_of = |name: &str| {
+        before_blocks
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, nodes)| nodes.clone())
+            .unwrap_or_default()
+    };
+    for (name, nodes) in &sent {
+        doc_validate(&before_of(name), nodes)?;
+    }
+    // FR-012a: every Storage block of the put, not only the maps'.
+    if let Some(refusal) = gate_blocks(content, doc_gates) {
         return Err(refusal);
+    }
+    // FR-027: a put that adds or changes map code in any block is judged as Execute as well as
+    // Compile, as an `iris_storage_map` edit is. Only a put can tell, because only it reads what
+    // was there.
+    if sent
+        .iter()
+        .any(|(name, nodes)| super::code::code_changed(&before_of(name), nodes))
+    {
+        if let Some(refusal) = doc_execute_gate() {
+            return Err(refusal);
+        }
     }
     let class = doc.strip_suffix(".cls").unwrap_or(doc);
     // FR-031 includes the data checks (FR-023); iris_doc has no opt-ins, so a refusal here is
     // lifted by making the change with iris_storage_map.
-    let plan = data_checks(
-        &CheckCtx {
-            iris,
-            client,
-            ns,
-            class,
-            seed_counter: false,
-            build_indexes: false,
-            warn_only: true,
-        },
-        &before,
-        &sent,
-    )
-    .await?;
-    // The scratch compile protects the real compile. A put without `compile` compiles nothing,
-    // so the compiled class keeps working whatever the source says; storing a class with a new
-    // property before its map is the usual way to add a field (#5502 until it is mapped).
-    if compile {
-        scratch_check(iris, client, content, &sent, ns, class).await?;
+    for (name, nodes) in &sent {
+        let plan = data_checks(
+            &CheckCtx {
+                iris,
+                client,
+                ns,
+                class,
+                seed_counter: false,
+                build_indexes: false,
+                warn_only: true,
+            },
+            &before_of(name),
+            nodes,
+        )
+        .await?;
+        warnings.extend(plan.warnings);
     }
-    let changed = emit_body(&normalize(before)) != emit_body(&normalize(sent.clone()));
+    // The scratch compile protects the real compile, on the block the class uses: the one its
+    // `StorageStrategy` names, else the first with a map (a scratch copy holds one Storage
+    // block). A put without `compile` compiles nothing, so the compiled class keeps working
+    // whatever the source says; storing a class with a new property before its map is the usual
+    // way to add a field (#5502 until it is mapped).
+    if compile {
+        let used = storage_strategy(content)
+            .and_then(|s| sent.iter().find(|(n, _)| *n == s))
+            .unwrap_or(&sent[0]);
+        scratch_check(iris, client, content, &used.1, ns, class).await?;
+    }
+    let changed = sent.iter().any(|(name, nodes)| {
+        emit_body(&normalize(before_of(name))) != emit_body(&normalize(nodes.clone()))
+    });
     Ok(DocGuard {
         previous,
+        content: content.to_string(),
         sent,
         changed,
-        warnings: plan.warnings,
+        warnings,
+    })
+}
+
+/// The Storage block the `Class` line's `StorageStrategy` keyword names, if any.
+fn storage_strategy(text: &str) -> Option<String> {
+    let line = text.lines().find(|l| l.starts_with("Class "))?;
+    parse_header(line).1.into_iter().find_map(|kw| {
+        let (k, v) = kw.split_once('=')?;
+        k.trim()
+            .eq_ignore_ascii_case("StorageStrategy")
+            .then(|| v.trim().trim_matches('"').to_string())
     })
 }
 
@@ -985,23 +1371,17 @@ impl DocGuard {
         client: &reqwest::Client,
         doc: &str,
         ns: &str,
-    ) -> Result<(), Value> {
+    ) -> Result<String, Value> {
         let stored = match get_doc(iris, client, doc, ns).await {
-            Ok(Some((text, _))) => stored_tree(&text),
+            Ok(Some((text, _))) => Some(text),
             _ => None,
         };
-        let failure = match &stored {
-            None => Some(body(
-                "STORAGE_MAP_WRITER_MISMATCH",
-                format!("iad cannot read back the Storage block of {doc}"),
-                json!({}),
-            )),
-            Some(nodes) => doc_gates(nodes).or_else(|| self.stored_mismatch(nodes)),
+        let Err(mut err) = judge_stored(&self.sent, stored.as_deref(), doc, doc_gates) else {
+            return Ok(stored.unwrap_or_default());
         };
-        let Some(mut err) = failure else {
-            return Ok(());
-        };
-        match self.restore(iris, client, doc, ns).await {
+        // What iad wrote: the read-back, or the text sent when there was none to read.
+        let ours = stored.as_deref().unwrap_or(&self.content);
+        match self.restore(iris, client, doc, ns, ours).await {
             Ok(()) => err["restored"] = json!(true),
             Err(e) => {
                 err["restored"] = json!(false);
@@ -1011,40 +1391,25 @@ impl DocGuard {
         Err(err)
     }
 
-    /// How the map IRIS stored differs from the one sent: dropped elements first, then any other
-    /// difference.
-    fn stored_mismatch(&self, stored: &[Node]) -> Option<Value> {
-        let diff = readback_diff(&self.sent, stored);
-        if !diff.dropped.is_empty() {
-            Some(body(
-                "STORAGE_MAP_DROPPED",
-                format!("IRIS dropped {} element(s) of the map", diff.dropped.len()),
-                json!({"dropped": diff.dropped}),
-            ))
-        } else if !diff.unexplained.is_empty() {
-            Some(body(
-                "STORAGE_MAP_WRITER_MISMATCH",
-                "IRIS stored a different map than was sent".into(),
-                json!({"differences": diff.unexplained}),
-            ))
-        } else {
-            None
-        }
-    }
-
-    /// Put back the text IRIS held before the PUT and compile it (FR-016). A new class has nothing
-    /// to put back.
+    /// Put back the text IRIS held before the PUT and compile it (FR-016), only while IRIS still
+    /// holds `ours`, the version this put wrote (FR-010a). A new class has nothing to put back.
     pub async fn restore(
         &self,
         iris: &IrisConnection,
         client: &reqwest::Client,
         doc: &str,
         ns: &str,
+        ours: &str,
     ) -> Result<(), String> {
         let Some(previous) = &self.previous else {
             return Err("the class is new, so there is no previous version to put back".into());
         };
-        put_back(iris, client, doc, previous, ns).await
+        restore_over(iris, client, doc, previous, ns, ours).await
+    }
+
+    /// The audit record of this put, `written` being the text IRIS held after it (FR-030c).
+    pub fn write_record(&self, class: &str, written: &str) -> Value {
+        doc_write_record(class, self.previous.as_deref(), written)
     }
 
     /// The answer's warnings: the map-change warning when the map changed, and what the data
@@ -1225,7 +1590,9 @@ fn whole_global_ref(name: &str) -> super::globals::GlobalRef {
 }
 
 /// Whether a map of a class other than the one being written uses `global` in the namespace.
-async fn used_by_another_class(w: &CheckCtx<'_>, global: &str) -> bool {
+/// A search that fails is the refusal, never "no other class": the opt-ins it guards rewrite
+/// shared data (FR-023a).
+async fn used_by_another_class(w: &CheckCtx<'_>, global: &str) -> Result<bool, Value> {
     super::uses::uses(
         w.iris,
         w.client,
@@ -1233,9 +1600,16 @@ async fn used_by_another_class(w: &CheckCtx<'_>, global: &str) -> bool {
         &[w.ns.to_string()],
     )
     .await
-    .unwrap_or_default()
-    .iter()
-    .any(|u| u.class != w.class)
+    .map(|found| found.iter().any(|u| u.class != w.class))
+    .map_err(|e| {
+        body(
+            "IRIS_UNREACHABLE",
+            format!(
+                "iad could not check which other classes use {global}, so it changed nothing: {e}"
+            ),
+            json!({}),
+        )
+    })
 }
 
 /// The data checks of a write (FR-023, FR-023a, FR-023b), on the real globals, before anything is
@@ -1386,7 +1760,28 @@ async fn counter_check(
         "Set c={c},h=$Order({g}(\"\"),-1) For {{ Quit:h=\"\"  Quit:h=+h  Set h=$Order({g}(h),-1) }} Write $Get(@c),\"|\",h"
     );
     let out = run_code(w, &code).await?;
-    let (value, highest) = out.trim().split_once('|').unwrap_or(("", ""));
+    // An answer without the separator is IRIS's error text: the check did not run, so the write
+    // waits rather than passing unchecked.
+    let Some((value, highest)) = out.trim().split_once('|') else {
+        if w.warn_only {
+            // iris_doc has no opt-ins: its ID checks warn (FR-031 as amended).
+            plan.warnings.push(format!(
+                "the ID counter {counter_ref} could not be checked against the highest ID in {g}; \
+                 IRIS answered: {}",
+                out.trim()
+            ));
+            return Ok(());
+        }
+        return Err(body(
+            "STORAGE_MAP_INVALID",
+            format!(
+                "the ID counter {counter_ref} could not be checked against the highest ID in {g}; \
+                 IRIS answered: {}",
+                out.trim()
+            ),
+            json!({"rules": [{"path": "/keywords/SqlIdExpression", "rule": "counter_unreadable"}]}),
+        ));
+    };
     let behind = !highest.is_empty()
         && value.parse::<f64>().unwrap_or(0.0) < highest.parse::<f64>().unwrap_or(0.0);
     if !behind {
@@ -1413,7 +1808,7 @@ async fn counter_check(
         ));
     }
     // FR-023a: another class counting with the same global must not be reseeded.
-    if used_by_another_class(w, &counter.name).await {
+    if used_by_another_class(w, &counter.name).await? {
         return Err(body(
             "STORAGE_MAP_INVALID",
             format!(
@@ -1446,7 +1841,8 @@ async fn index_check(
         None => false,
     };
     for map in m.storage.maps.iter().filter(|x| {
-        matches!(x.r#type.as_str(), "index" | "bitmap")
+        // An unbuilt extent bitmap is as wrong as an index: COUNT(*) reads it and answers 0.
+        matches!(x.r#type.as_str(), "index" | "bitmap" | "bitmapextent")
             && !old.storage.maps.iter().any(|o| o.name == x.name)
     }) {
         let (Some(g), Some(prefix)) = (plain_global(&map.global), constant_prefix(map)) else {
@@ -1459,7 +1855,7 @@ async fn index_check(
         let range = format!("{g}{prefix}");
         let filled = run_code(w, &format!("Write $Data({range})")).await?.trim() != "0";
         if w.build_indexes {
-            let shared = used_by_another_class(w, &g).await;
+            let shared = used_by_another_class(w, &g).await?;
             if filled || shared {
                 return Err(body(
                     "STORAGE_MAP_INVALID",
@@ -1497,18 +1893,25 @@ async fn index_check(
 
 /// The opt-ins after the real compile (T094), as the call's execute identity: seed the counter
 /// (reporting the value it replaced) and build the new indexes.
+/// What the seed writes before the value it replaced, so its answer is told from an error.
+const SEEDED: &str = "~IAD-SEEDED~";
+
 async fn run_opt_ins(w: &WriteCtx<'_>, plan: &DataPlan) -> Value {
     let (iris, client) = w.exec.unwrap_or((w.iris, w.client));
     let mut done = serde_json::Map::new();
     if let Some((counter, highest)) = &plan.seed {
-        let code = format!("Set c={counter},old=$Get(@c),@c={highest} Write old");
+        // The marker tells a set counter from IRIS's error text, which also comes back as output.
+        let code = format!("Set c={counter},old=$Get(@c),@c={highest} Write \"{SEEDED}\",old");
         done.insert(
             "seed_counter".into(),
             match iris
                 .execute_via_generator_prefixed(&code, w.ns, client, "IrisDevSm")
                 .await
             {
-                Ok(old) => json!({"set_to": highest, "replaced": old.trim()}),
+                Ok(out) => match out.trim().strip_prefix(SEEDED) {
+                    Some(old) => json!({"set_to": highest, "replaced": old}),
+                    None => json!({"error": out.trim()}),
+                },
                 Err(e) => json!({"error": e.to_string()}),
             },
         );

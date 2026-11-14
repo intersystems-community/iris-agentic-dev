@@ -907,14 +907,20 @@ async fn do_write(
     // A class with an SQL storage map gets the map's safeguards (spec 172 FR-031): validated,
     // gated and compiled in a scratch copy before the PUT, read back after it, and put back if
     // its compile fails. Default storage keeps the path below unchanged (FR-032).
+    // Judged as IRIS will store it: the lines, whatever their endings, in IRIS's own form.
+    let stored_form =
+        match super::storage_map::write::as_iris_stores(iris, client, namespace, content).await {
+            Ok(text) => text,
+            Err(answer) => return crate::tools::err_result(answer),
+        };
     let map_guard = if name.to_ascii_lowercase().ends_with(".cls")
-        && super::storage_map::write::content_has_sql_map(content)
+        && super::storage_map::write::content_has_sql_map(&stored_form)
     {
         match super::storage_map::write::doc_precheck(
             iris,
             client,
             name,
-            content,
+            &stored_form,
             namespace,
             compile_after,
         )
@@ -957,9 +963,21 @@ async fn do_write(
         return err_json("UPLOAD_FAILED", &err_msg);
     }
 
+    // What the read-back saw: the version this put wrote, the only one a restore may replace.
+    let mut written = String::new();
     if let Some(guard) = &map_guard {
-        if let Err(answer) = guard.read_back(iris, client, name, namespace).await {
-            return crate::tools::err_result(answer);
+        match guard.read_back(iris, client, name, namespace).await {
+            Ok(text) => written = text,
+            Err(mut answer) => {
+                // The PUT changed the class even though the read-back refused it: audited
+                // (FR-030c), with whether the previous text went back.
+                let class = name.strip_suffix(".cls").unwrap_or(name);
+                let mut record = guard.write_record(class, &stored_form);
+                record["outcome"] = answer["error_code"].clone();
+                record["restored"] = answer["restored"].clone();
+                answer["storage_map_write"] = record;
+                return crate::tools::err_result(answer);
+            }
         }
     }
 
@@ -1056,14 +1074,23 @@ async fn do_write(
             "content": content,
         });
         if let Some(guard) = &map_guard {
+            let class = name.strip_suffix(".cls").unwrap_or(name);
+            let mut record = guard.write_record(class, &written);
+            record["compiled"] = serde_json::Value::Bool(compile_ok);
             if compile_ok {
                 guard.warn_if_changed(&mut resp);
             } else {
-                resp["storage_map"] = match guard.restore(iris, client, name, namespace).await {
+                // FR-031 with FR-017: IRIS's errors with a plain explanation, as a map edit gives.
+                resp["explanations"] =
+                    serde_json::json!(super::storage_map::explain::explanations(&compile_errors));
+                let restored = guard.restore(iris, client, name, namespace, &written).await;
+                record["restored"] = serde_json::Value::Bool(restored.is_ok());
+                resp["storage_map"] = match restored {
                     Ok(()) => serde_json::json!({"restored": true}),
                     Err(e) => serde_json::json!({"restored": false, "restore_error": e}),
                 };
             }
+            resp["storage_map_write"] = record;
         }
         if compile_ok {
             super::add_source_hint(&mut resp, content.as_deref());
@@ -1080,6 +1107,10 @@ async fn do_write(
     let mut resp = serde_json::json!({"success": true, "name": name, "open_uri": open_uri});
     if let Some(guard) = &map_guard {
         guard.warn_if_changed(&mut resp);
+        let class = name.strip_suffix(".cls").unwrap_or(name);
+        let mut record = guard.write_record(class, &written);
+        record["compiled"] = serde_json::Value::Bool(false);
+        resp["storage_map_write"] = record;
     }
     gate.note_if_off(&mut resp);
     ok_json(resp)

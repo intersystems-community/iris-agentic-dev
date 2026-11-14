@@ -1588,6 +1588,33 @@ impl IrisConnection {
             anyhow::bail!("PUT {doc_name} failed: HTTP {}", put.status());
         }
         let put_body: serde_json::Value = crate::iris::http::json_or_default(put).await;
+        // Spec 141 FR-015a on the copy itself: stored now, so the dictionary has its `Extends`,
+        // and a stale superclass it would compile (and whose generators would run) is refused
+        // before the compile, as the same check refuses it for a real class.
+        if check_atelier_put_errors(&put_body).is_none()
+            && crate::tools::target::compile_gate().map_or(true, |g| g.on)
+        {
+            let refused = match crate::tools::superclass_check::check_http(
+                self,
+                client,
+                namespace,
+                std::slice::from_ref(&doc_name),
+            )
+            .await
+            {
+                crate::tools::stored_check::Outcome::Clear => None,
+                crate::tools::stored_check::Outcome::Refused(body) => Some(body),
+                crate::tools::stored_check::Outcome::Transport(msg) => Some(serde_json::json!({
+                    "success": false,
+                    "error_code": "SUPERCLASS_CHECK_FAILED",
+                    "error": format!("the superclass check could not run: {msg}"),
+                })),
+            };
+            if let Some(body) = refused {
+                scratch.release(self, client).await;
+                return Err(ScratchRefused(body).into());
+            }
+        }
         let result = match check_atelier_put_errors(&put_body) {
             Some(err) => Ok(CompileResult {
                 errors: vec![err],
@@ -1599,13 +1626,109 @@ impl IrisConnection {
             }
         };
         let answer = match (&result, query) {
-            (Ok(compiled), Some(q)) if compiled.success() => {
-                Some(self.query(&q(&class_name), vec![], namespace, client).await)
-            }
+            (Ok(compiled), Some(q)) if compiled.success() => Some(
+                // The time cap of a scan through a map (spec 172 FR-022): iad stops waiting;
+                // the class is deleted below either way.
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(SCRATCH_QUERY_SECS),
+                    self.query(&q(&class_name), vec![], namespace, client),
+                )
+                .await
+                {
+                    Ok(answer) => answer,
+                    Err(_) => Err(QueryTimedOut(SCRATCH_QUERY_SECS).into()),
+                },
+            ),
             _ => None,
         };
         scratch.release(self, client).await;
         Ok((class_name, result?, answer))
+    }
+
+    /// The text IRIS stores for the class `text`, with nothing compiled (spec 172 FR-031): `text`
+    /// is put under a scratch class name, read back in IRIS's own canonical form (members and
+    /// Storage elements at the start of a line), and the scratch class is deleted. The `Class`
+    /// line comes back with the original name.
+    pub async fn canonical_class_text(
+        &self,
+        text: &str,
+        namespace: &str,
+        client: &reqwest::Client,
+    ) -> anyhow::Result<String> {
+        if let Some((tool, from)) = crate::tools::target::call_read_only_source() {
+            anyhow::bail!(
+                "READ_ONLY_STRICT (scratch-class put): {tool} would put a scratch class on the \
+                 server, and read-only mode is strict ({from}), so iad sent nothing."
+            );
+        }
+        let id: String = uuid::Uuid::new_v4()
+            .simple()
+            .to_string()
+            .chars()
+            .take(12)
+            .collect();
+        let class_name = format!("IrisDevTmp.SmC{id}");
+        let doc_name = format!("{class_name}.cls");
+        let mut original = None;
+        let lines: Vec<String> = text
+            .lines()
+            .map(|l| {
+                let t = l.trim_start();
+                match (original.is_none(), t.strip_prefix("Class ")) {
+                    (true, Some(rest)) => {
+                        let name = rest.split_whitespace().next().unwrap_or("").to_string();
+                        let renamed = format!("Class {class_name}{}", &rest[name.len()..]);
+                        original = Some(name);
+                        renamed
+                    }
+                    _ => l.to_string(),
+                }
+            })
+            .collect();
+        let Some(original) = original else {
+            anyhow::bail!("the text has no Class line");
+        };
+        let mut scratch = ScratchGuard::new(self, &doc_name, namespace);
+        let put = client
+            .put(self.versioned_ns_url(
+                namespace,
+                &format!("/doc/{}?ignoreConflict=1", urlencoding::encode(&doc_name)),
+            ))
+            .header(reqwest::header::USER_AGENT, user_agent(caller_mode()))
+            .basic_auth(&self.username, Some(&self.password))
+            .json(&serde_json::json!({"enc": false, "content": lines}))
+            .send()
+            .await;
+        let stored = match put {
+            Ok(r) if r.status().is_success() => {
+                let body: serde_json::Value = crate::iris::http::json_or_default(r).await;
+                match check_atelier_put_errors(&body) {
+                    Some(err) => Err(ClassTextRefused(err).into()),
+                    None => crate::tools::doc::fetch_doc_lines(self, client, &doc_name, namespace)
+                        .await
+                        .map_err(|_| anyhow::anyhow!("the scratch copy could not be read back"))
+                        .and_then(|l| l.ok_or_else(|| anyhow::anyhow!("the scratch copy is gone"))),
+                }
+            }
+            Ok(r) => Err(anyhow::anyhow!("PUT {doc_name}: HTTP {}", r.status())),
+            Err(e) => Err(e.into()),
+        };
+        scratch.release(self, client).await;
+        let lines = stored?;
+        let mut renamed = false;
+        Ok(lines
+            .into_iter()
+            .map(
+                |l| match (renamed, l.strip_prefix(&format!("Class {class_name}"))) {
+                    (false, Some(rest)) => {
+                        renamed = true;
+                        format!("Class {original}{rest}")
+                    }
+                    _ => l,
+                },
+            )
+            .collect::<Vec<_>>()
+            .join("\n"))
     }
 
     /// A tool-call client for the connection the launch settings describe: `IRIS_INSECURE` and
@@ -2847,3 +2970,53 @@ mod additional_tests {
         assert!(!classify_error_as_retryable("   "));
     }
 }
+
+/// How long a query through a scratch class may run (spec 172 FR-022: `preview`'s time cap).
+pub const SCRATCH_QUERY_SECS: u64 = 10;
+
+/// A query through a scratch class that ran past [`SCRATCH_QUERY_SECS`].
+#[derive(Debug)]
+pub struct QueryTimedOut(pub u64);
+
+impl std::fmt::Display for QueryTimedOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "the query ran longer than {} s, so iad stopped waiting",
+            self.0
+        )
+    }
+}
+
+impl std::error::Error for QueryTimedOut {}
+
+/// A scratch copy a gate refused after its PUT and before its compile; the refusal's body.
+#[derive(Debug)]
+pub struct ScratchRefused(pub serde_json::Value);
+
+impl std::fmt::Display for ScratchRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            self.0["error"]
+                .as_str()
+                .unwrap_or("the scratch copy was refused")
+        )
+    }
+}
+
+impl std::error::Error for ScratchRefused {}
+
+/// IRIS refused a class text it was given to store (a scratch put, spec 172 FR-031): its error,
+/// which the real PUT of the same text would report too.
+#[derive(Debug)]
+pub struct ClassTextRefused(pub String);
+
+impl std::fmt::Display for ClassTextRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for ClassTextRefused {}

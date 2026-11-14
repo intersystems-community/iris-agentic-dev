@@ -69,13 +69,7 @@ pub fn needs_service_account(tool: &str, args: &Value) -> bool {
 
     // T036: iris_storage_map needs service account for specific actions and opt-ins
     if tool == "iris_storage_map" {
-        let shape = crate::tools::storage_map::call_shape(args);
-        use crate::tools::storage_map::Action;
-        return matches!(
-            shape.action,
-            Action::Compare | Action::Preview | Action::Propose
-        ) || shape.seed_counter
-            || shape.build_indexes;
+        return crate::tools::storage_map::call_shape(args).needs_service_account();
     }
 
     match tool {

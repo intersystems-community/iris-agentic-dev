@@ -67,3 +67,23 @@ fn test_storage_map_doc_gate_172_other_text() {
     let broken = fixture("Member").replacen("</SQLMap>", "", 1);
     assert!(content_has_sql_map(&broken));
 }
+
+#[test]
+fn test_storage_map_doc_gate_172_crlf_and_indentation_still_hand_off() {
+    use iris_agentic_dev_core::tools::storage_map::write::stored_form;
+    let member = fixture("Member");
+    // Windows line endings: IRIS stores the lines, so the hand-off judges them as IRIS will.
+    let crlf = member.replace('\n', "\r\n");
+    assert!(
+        content_has_sql_map(&crlf),
+        "CRLF content skipped the hand-off"
+    );
+    assert_eq!(stored_form(&crlf), stored_form(&member));
+    assert!(!stored_form(&crlf).contains('\r'));
+    // An indented map line, and an indented Storage header the block reader does not take: both
+    // go through the safeguards, where a block iad cannot read is refused.
+    let indented_map = member.replace("<SQLMap name=\"Master\">", "  <SQLMap name=\"Master\">");
+    assert!(content_has_sql_map(&indented_map));
+    let indented_header = member.replace("\nStorage SQLStorage\n", "\n  Storage SQLStorage\n");
+    assert!(content_has_sql_map(&indented_header));
+}

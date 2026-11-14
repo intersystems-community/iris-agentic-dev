@@ -2401,12 +2401,15 @@ pub async fn resolve_storage_impl(
             for s in storages.iter_mut() {
                 if s["type"] == "%Storage.SQL" {
                     let name = s["name"].as_str().unwrap_or_default();
-                    if let Some(maps) = crate::tools::storage_map::sql_maps_json(
+                    match crate::tools::storage_map::sql_maps_json(
                         iris, client, class, name, namespace,
                     )
                     .await
                     {
-                        s["sql_maps"] = maps;
+                        Ok(Some(maps)) => s["sql_maps"] = maps,
+                        Ok(None) => {}
+                        // Said, not dropped: an error is not "this storage has no maps".
+                        Err(e) => s["sql_maps_error"] = serde_json::json!(e),
                     }
                 }
             }
@@ -2432,7 +2435,7 @@ mod tests {
     async fn confirm_token_fresh_is_valid() {
         let tokens: tokio::sync::Mutex<HashMap<String, ConfirmEntry>> =
             tokio::sync::Mutex::new(HashMap::new());
-        let token = "test-token-1".to_string();
+        let token = String::from("test-token-1");
         {
             let mut map = tokens.lock().await;
             map.insert(
@@ -2547,7 +2550,7 @@ mod tests {
             GlobalKillParams {
                 global: "TestGlobal".to_string(),
                 server: None,
-                confirm_token: "nonexistent-token".to_string(),
+                confirm_token: String::from("nonexistent-token"),
                 iris: conn,
                 client,
             },
@@ -2581,7 +2584,7 @@ mod tests {
             DiscoverySource::EnvVar,
         ));
         let client = Arc::new(reqwest::Client::new());
-        let token = "expired-token".to_string();
+        let token = String::from("expired-token");
         let tokens: tokio::sync::Mutex<HashMap<String, ConfirmEntry>> = {
             let mut map = HashMap::new();
             map.insert(
@@ -2634,7 +2637,7 @@ mod tests {
             DiscoverySource::EnvVar,
         ));
         let client = Arc::new(reqwest::Client::new());
-        let token = "mismatch-token".to_string();
+        let token = String::from("mismatch-token");
         let tokens: tokio::sync::Mutex<HashMap<String, ConfirmEntry>> = {
             let mut map = HashMap::new();
             map.insert(

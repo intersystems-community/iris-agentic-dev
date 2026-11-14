@@ -529,3 +529,24 @@ fn test_default_storage_t042() {
     assert!(!default.nodes.is_empty());
     assert_eq!(default.nodes[0].value_name, "DefaultBookDefaultData");
 }
+
+/// FR-003: the writable fact comes from the master map wherever it sorts. IRIS stores maps by
+/// name, so an index map named before `Master` (`CityIdx`, `BadgeExtent`) comes first.
+#[test]
+fn test_derived_writable_fact_follows_the_master_map_not_the_first_map_t040() {
+    for name in ["MemberByCity", "Badge", "Member"] {
+        let (class, storage, nodes) = load_fixture(name);
+        let m = from_tree(&class, &storage, &nodes);
+        assert!(!m.storage.maps.is_empty(), "{name}");
+        let facts: Vec<String> = derived_facts(&m)
+            .into_iter()
+            .filter(|d| d.path == "/storage" && d.fact.starts_with("table is "))
+            .map(|d| d.fact)
+            .collect();
+        assert_eq!(
+            facts,
+            ["table is writable: master global starts with ^, $, or @"],
+            "{name}"
+        );
+    }
+}

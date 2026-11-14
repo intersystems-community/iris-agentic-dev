@@ -92,3 +92,67 @@ async fn uses_returns_empty_for_unused_global() {
     let ns_searched = got["namespaces_searched"].as_array().unwrap();
     assert!(ns_searched.contains(&json!("USER")), "{got}");
 }
+
+/// Default storage counts: a class whose `DataLocation` and `IdLocation` are the global is two
+/// uses, `default_data` and `default_id`; its `IndexLocation` global is a `default_index` use.
+#[tokio::test]
+#[ignore]
+async fn uses_finds_default_storage_locations() {
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let book = Fixture::read("DefaultBook");
+    load_fixture(&r, &book).await;
+    let ask = |g: &str| json!({"action": "uses", "global": g, "namespaces": ["USER"], "namespace": "USER"});
+    let data = r
+        .call("iris_storage_map", ask("^IadSm172.DefaultBookD"))
+        .await;
+    let index = r
+        .call("iris_storage_map", ask("^IadSm172.DefaultBookI"))
+        .await;
+    let p = drop_fixture(&r, &book).await;
+    assert!(p.is_empty(), "{p:?}");
+
+    let maps = |v: &serde_json::Value| -> Vec<(String, String, String)> {
+        let mut out: Vec<_> = v["uses"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|u| u["class"] == "IadSm172.DefaultBook")
+            .map(|u| {
+                (
+                    u["storage"].as_str().unwrap_or("").to_string(),
+                    u["map"].as_str().unwrap_or("").to_string(),
+                    u["type"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect();
+        out.sort();
+        out
+    };
+    let d = |m: &str, t: &str| ("default".to_string(), m.to_string(), t.to_string());
+    assert_eq!(
+        maps(&data),
+        vec![d("default_data", "data"), d("default_id", "id")],
+        "{data}"
+    );
+    assert_eq!(maps(&index), vec![d("default_index", "index")], "{index}");
+}
+
+/// A namespace that does not exist fails the search and says so; it is not an empty answer.
+#[tokio::test]
+#[ignore]
+async fn uses_in_a_namespace_that_does_not_exist_fails() {
+    let r = rig(&Where::live(), Toolset::Merged).await;
+    let got = r
+        .call(
+            "iris_storage_map",
+            json!({"action": "uses", "global": "^IadSm172Member",
+                   "namespaces": ["IADNOSUCHNS172"], "namespace": "USER"}),
+        )
+        .await;
+    assert_ne!(got["success"], true, "{got}");
+    assert!(got["uses"].is_null(), "{got}");
+    assert!(
+        got.to_string().contains("Query failed"),
+        "the answer does not say the search failed: {got}"
+    );
+}

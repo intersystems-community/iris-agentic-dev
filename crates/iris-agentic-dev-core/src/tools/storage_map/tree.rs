@@ -560,7 +560,8 @@ fn emit_value(value: &str, tag: &str) -> String {
     }
 }
 
-/// Normalizes a tree by removing empty leaves and default-valued keywords.
+/// Normalizes a tree as IRIS stores it: no empty leaves, no default-valued keywords, and the old
+/// storage type name `%CacheSQLStorage` read as `%Storage.SQL`.
 pub fn normalize(nodes: Vec<Node>) -> Vec<Node> {
     let mut result = Vec::new();
 
@@ -575,6 +576,10 @@ pub fn normalize(nodes: Vec<Node>) -> Vec<Node> {
             // Drop BlockCount 0 and ConditionalWithHostVars 0
             if (node.tag == "BlockCount" || node.tag == "ConditionalWithHostVars") && value == "0" {
                 continue;
+            }
+            // IRIS stores the old storage type name as the current one.
+            if node.tag == "Type" && value == "%CacheSQLStorage" {
+                node.value = Some("%Storage.SQL".into());
             }
         } else if let Some(children) = node.children {
             node.children = Some(normalize(children));

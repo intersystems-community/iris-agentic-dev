@@ -305,7 +305,8 @@ is unchanged and the response carries the warning.
 
 1. **Given** an `iris_doc` put of a class whose SQL storage map changed, **Then** the scratch compile, the read-back
    drop check and the restore all run, and the response warns that `iris_storage_map` exists for map edits.
-2. **Given** an `iris_doc` put whose map did not change, **Then** nothing new runs and no warning is added.
+2. **Given** an `iris_doc` put whose map did not change, **Then** no warning is added (the safeguards still run,
+   FR-031).
 3. **Given** an edit to default storage, **Then** today's behaviour is unchanged.
 4. **Given** `tools/list`, **Then** `iris_doc`'s description says default storage is off-limits and SQL storage maps
    are edited with `iris_storage_map`.
@@ -397,7 +398,8 @@ answer.
   nested map stored under it (measured, research R17). iad does not change or block this behaviour; `diagram` shows the
   nesting, and `docs/storage-maps.md` and the skill state the hazard with the test that measured it.
 - **FR-004**: `resolve_storage` MUST use the same reader and return the maps for a `%Storage.SQL` class.
-- **FR-005**: `diagram` MUST return Mermaid flowchart text and the same content as JSON. Labels MUST be built
+- **FR-005**: `diagram` MUST return Mermaid flowchart text and the same content as JSON, and a Markdown document of
+  each map (added 2026-11-12 at Tom's request, a cheap step toward a GUI). Labels MUST be built
   from a fixed set of characters, with everything else escaped; no Mermaid directive, link or click handler may come
   from class or map text.
 - **FR-006**: `uses` MUST return every class and map in the searched namespaces whose global is the given one, with the
@@ -456,6 +458,7 @@ answer.
   and redact, and needing `acknowledgePhi` under allow. `include_values: false` or absent is not a body read. The
   shared body-read predicate other tools use MUST NOT change.
 - **FR-022**: Scans MUST stop at the caps in User Story 5, and the response MUST say when a cap stopped one.
+  `preview`'s time cap is 10 s on its query through the scratch copy (`STORAGE_MAP_TIME_CAP`).
 - **FR-023**: `edit` MUST refuse by default an ID expression that would reuse existing IDs, and an index map over
   existing data whose index is empty; `seed_counter` and `build_indexes` opt in to the fix. Each opt-in is judged by
   the normal gate pipeline: `seed_counter` as a write, `build_indexes` as a destructive write (an index build purges
@@ -481,7 +484,9 @@ answer.
 - **FR-027**: Map code is treated like class code written through `iris_doc`. Every code-bearing element MUST pass
   the same lexical code-edit check as `iris_execute` code, from both entry points, along with source control and the
   compile-time gate. An edit or `iris_doc` put that adds or changes a code-bearing element is judged in the Execute
-  category as well as Compile, so a server whose `allow` list has Compile but not Execute refuses it. The audit
+  category as well as Compile, so a server whose `allow` list has Compile but not Execute refuses it. For
+  `iris_doc` the hand-off decides this when it reads what the class held, by comparing code elements (amended
+  2026-11-14: the call's static category cannot see the previous version). The audit
   record marks `code_changed`. `docs/storage-maps.md` MUST say that saved map code later runs as whoever queries or
   files rows, and that the service account does not cover it.
 - **FR-028**: A dynamic global (`AccessType Global`, `@` indirection, or a `$Name`-built reference in a map's
@@ -506,7 +511,11 @@ answer.
 - **FR-031**: Every `iris_doc` write path that stores a class (put, the line-edit modes, and the resume after a
   confirmation) MUST hand a class whose content holds a SQL map, of any storage type, to the same safeguards: FR-012,
   FR-012a, FR-014 to FR-018, FR-023 and FR-026 to FR-028. The hand-off sits at the single point where `iris_doc`
-  writes. FR-010 and FR-011 do not apply to `iris_doc`. The answer carries a warning that names `iris_storage_map`.
+  writes. FR-010 and FR-011 do not apply to `iris_doc`. The answer carries a warning that names `iris_storage_map`,
+  and a `storage_map_write` record that is also audited (FR-030c); a failed compile carries FR-017's explanations.
+  Amended 2026-11-14 to match what ships: `iris_doc` has no opt-ins, so FR-023's ID-reuse and unbuilt-index checks
+  are warnings there, not refusals (the walk check still refuses), and the scratch compile runs only when the put
+  compiles. The safeguards run whenever the content holds a SQL map, whether or not the map changed.
 - **FR-032**: `iris_doc`'s handling of default storage MUST NOT change, and its description MUST distinguish default
   storage from SQL storage maps.
 

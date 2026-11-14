@@ -11,17 +11,17 @@ model is carried through untouched and a one-field edit changes one line.
 
 ## Actions
 
-| Action    | What it does                                                                              | Writes            |
-| --------- | ----------------------------------------------------------------------------------------- | ----------------- |
-| `read`    | The class's storage as JSON: maps, subscripts, fields, row ID, and the facts IRIS applies | no                |
-| `diagram` | A Mermaid flowchart, a JSON graph, and a Markdown document of each map                    | no                |
-| `uses`    | Every class whose maps use a global, in one or more namespaces                            | no                |
-| `check`   | Compiles the class's map, or a proposed `model`, in a scratch copy that is deleted after  | no (scratch only) |
-| `compare` | Samples the map's global and lists where the map and the data disagree                    | no                |
-| `preview` | The rows a map would return, read through a scratch copy; values masked by default        | no (scratch only) |
-| `propose` | Samples a global with no map and drafts one, listing every element it had to guess        | no                |
-| `edit`    | Path operations (`set`, `add`, `remove`, `move`) on the map, then the write path below    | yes               |
-| `replace` | A whole map from `model`; asks before removing anything (`confirm_removal`)               | yes               |
+| Action    | What it does                                                                               | Writes            |
+| --------- | ------------------------------------------------------------------------------------------ | ----------------- |
+| `read`    | The class's storage as JSON: maps, subscripts, fields, row ID, and the facts IRIS applies  | no                |
+| `diagram` | A Mermaid flowchart, a JSON graph, and a Markdown document of each map                     | no                |
+| `uses`    | Every class whose maps use a global, in one or more namespaces                             | no                |
+| `check`   | Compiles the class's map, or a proposed `model`, in a scratch copy that is deleted after   | no (scratch only) |
+| `compare` | Samples the map's global and lists where the map and the data disagree                     | no                |
+| `preview` | The rows a map would return, read through a scratch copy; masked by default; 10 s time cap | no (scratch only) |
+| `propose` | Samples a global with no map and drafts one, listing every element it had to guess         | no                |
+| `edit`    | Path operations (`set`, `add`, `remove`, `move`) on the map, then the write path below     | yes               |
+| `replace` | A whole map from `model`; asks before removing anything (`confirm_removal`)                | yes               |
 
 `edit` and `replace` carry the `version` that `read` returned for the map, or for the storage when
 the change is outside one map. A class that changed since is refused with the current map.
@@ -56,7 +56,8 @@ The data checks refuse three kinds of damage:
 - An ID counter behind the highest ID already stored, when the write sets the ID expression or the
   master map (`STORAGE_MAP_ID_REUSE`). `seed_counter: true` sets the counter and reports the value it
   replaced.
-- A new index map over a table with rows while the index is empty (`STORAGE_MAP_INDEX_UNBUILT`).
+- A new index, bitmap or extent-bitmap map over a table with rows while it is empty
+  (`STORAGE_MAP_INDEX_UNBUILT`). An unbuilt extent bitmap makes `COUNT(*)` answer 0.
   `build_indexes: true` builds it; it is a destructive write, refused when the index range already
   holds nodes or another map uses it.
 
@@ -66,21 +67,23 @@ there ID reuse and an unbuilt index are warnings, not refusals.
 
 ## Error codes
 
-| Code                           | Meaning                                                                         |
-| ------------------------------ | ------------------------------------------------------------------------------- |
-| `STORAGE_MAP_NOT_FOUND`        | no such class, map or Storage block                                             |
-| `STORAGE_MAP_PARSE_FAILED`     | the Storage block cannot be parsed; the answer quotes where                     |
-| `STORAGE_MAP_INVALID`          | a rule in step 1 or a data check failed; the answer names the rule and path     |
-| `STORAGE_MAP_READ_ONLY`        | default storage, a storage type other than `%Storage.SQL`, or a columnar map    |
-| `STORAGE_MAP_VERSION_CONFLICT` | the version given is not the stored one, or the class changed during the write  |
-| `STORAGE_MAP_CONFIRM_REMOVAL`  | `replace` would remove the elements listed; repeat with `confirm_removal: true` |
-| `STORAGE_MAP_COMPILE_FAILED`   | the scratch copy did not compile; IRIS's errors with a plain explanation        |
-| `STORAGE_MAP_RESTORED`         | the real compile failed and the previous version was put back                   |
-| `STORAGE_MAP_RESTORE_FAILED`   | the real compile failed and putting the previous version back failed too        |
-| `STORAGE_MAP_DROPPED`          | IRIS did not keep an element iad sent; the previous version was put back        |
-| `STORAGE_MAP_WRITER_MISMATCH`  | IRIS stored something iad did not send (an iad bug); put back                   |
-| `STORAGE_MAP_ID_REUSE`         | the ID counter is behind the highest stored ID                                  |
-| `STORAGE_MAP_INDEX_UNBUILT`    | a new index map over rows with an empty index                                   |
+| Code                           | Meaning                                                                                                                            |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `STORAGE_MAP_NOT_FOUND`        | no such class, map or Storage block                                                                                                |
+| `STORAGE_MAP_PARSE_FAILED`     | the Storage block cannot be parsed; the answer quotes where                                                                        |
+| `STORAGE_MAP_INVALID`          | a rule in step 1 or a data check failed; the answer names the rule and path                                                        |
+| `STORAGE_MAP_READ_ONLY`        | default storage, a storage type other than `%Storage.SQL`, or a columnar map                                                       |
+| `STORAGE_MAP_VERSION_CONFLICT` | the version given is not the stored one, or the class changed during the write                                                     |
+| `STORAGE_MAP_CONFIRM_REMOVAL`  | `replace` would remove the elements listed; repeat with `confirm_removal: true`                                                    |
+| `STORAGE_MAP_COMPILE_FAILED`   | the scratch copy did not compile; IRIS's errors with a plain explanation                                                           |
+| `STORAGE_MAP_RESTORED`         | the real compile failed and the previous version was put back                                                                      |
+| `STORAGE_MAP_RESTORE_FAILED`   | the real compile failed and putting the previous version back failed too                                                           |
+| `STORAGE_MAP_DROPPED`          | IRIS did not keep an element iad sent; the previous version was put back                                                           |
+| `STORAGE_MAP_WRITER_MISMATCH`  | IRIS stored something iad did not send (an iad bug); put back                                                                      |
+| `STORAGE_MAP_ID_REUSE`         | the ID counter is behind the highest stored ID                                                                                     |
+| `STORAGE_MAP_INDEX_UNBUILT`    | a new index map over rows with an empty index                                                                                      |
+| `STORAGE_MAP_OPT_IN_FAILED`    | the map was written and compiled, but an opt-in (`seed_counter`, `build_indexes`) failed; run it again before the table takes rows |
+| `STORAGE_MAP_TIME_CAP`         | `preview` stopped at its time cap (10 s); lower `max_rows` or narrow the map                                                       |
 
 `STORAGE_MAP_DYNAMIC_GLOBAL_BLOCKED` is a refusal: a map names a global known only at run time, and
 the operator has not set `allowDynamicMapGlobals`. Values in `compare`, `preview` and `propose`
@@ -96,6 +99,7 @@ live test that shows it.
 | ------------------------------------------------------------------------------------ | --------------------------------------------------- | -------------------------------------------------------------------- |
 | With rows 1 to 3 and no counter node, the first INSERT through a `$i` map gets ID 1  | it overwrites row 1, with no error                  | `test_storage_map_data_172_counterless_insert_overwrites_row_1`      |
 | A new index map over existing data answers nothing for a value that is there         | queries return no rows until the index is built     | `test_storage_map_data_172_unbuilt_index_finds_nothing`              |
+| A new extent-bitmap map over existing rows makes `COUNT(*)` answer 0                 | the table looks empty until the bitmap is built     | `test_storage_map_paths_172_a_new_extent_bitmap_must_be_built`       |
 | A map that walks level 2 of a global returns a parent's named node (`"EV"`) as a row | the table shows rows that are not rows              | `d11_a_level2_walk_returns_the_literal_node_as_a_row`                |
 | A SQL DELETE of a row deletes the rows another map stores under it                   | a delete reaches a second table                     | `d11_delete_of_a_parent_row_kills_its_child_rows`                    |
 | An UPDATE through a map keeps the fields another node of the row holds               | partial maps are safe to update through             | `d11_update_preserves_other_fields`                                  |
