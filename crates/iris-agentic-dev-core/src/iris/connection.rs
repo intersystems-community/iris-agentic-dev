@@ -534,6 +534,10 @@ impl std::fmt::Display for RequestTimedOut {
 
 impl std::error::Error for RequestTimedOut {}
 
+/// How much longer the request that runs code waits than the caller's own timeout, so the caller's
+/// `TIMEOUT` fires first and a run that is merely slow is never reported as "may have run".
+pub const REQUEST_TIMEOUT_MARGIN: std::time::Duration = std::time::Duration::from_secs(5);
+
 pub fn code_may_have_run(e: &anyhow::Error) -> bool {
     e.downcast_ref::<CodeMayHaveRun>().is_some() || e.downcast_ref::<RequestTimedOut>().is_some()
 }
@@ -853,7 +857,7 @@ impl IrisConnection {
         client: &reqwest::Client,
         prefix: &str,
     ) -> anyhow::Result<(String, Option<String>)> {
-        self.execute_generator_with(code, namespace, client, prefix, &[])
+        self.execute_generator_with(code, namespace, client, prefix, &[], None)
             .await
     }
 
@@ -866,9 +870,31 @@ impl IrisConnection {
         namespace: &str,
         client: &reqwest::Client,
     ) -> anyhow::Result<String> {
-        self.execute_generator_with(&call.code, namespace, client, "IrisDevRun", &call.args)
+        self.execute_generator_with(
+            &call.code,
+            namespace,
+            client,
+            "IrisDevRun",
+            &call.args,
+            None,
+        )
+        .await
+        .map(|(out, _)| out)
+    }
+
+    /// [`Self::execute_via_generator_identified`] for a caller that gives the run `timeout`: the
+    /// request that runs the code waits that long (plus [`REQUEST_TIMEOUT_MARGIN`]) instead of the
+    /// client's 30 s.
+    pub async fn execute_via_generator_timed(
+        &self,
+        code: &str,
+        namespace: &str,
+        client: &reqwest::Client,
+        prefix: &str,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<(String, Option<String>)> {
+        self.execute_generator_with(code, namespace, client, prefix, &[], Some(timeout))
             .await
-            .map(|(out, _)| out)
     }
 
     /// [`Self::execute_via_generator`] with the scratch class named `IrisDevTmp.<prefix><id>`.
@@ -891,6 +917,7 @@ impl IrisConnection {
         client: &reqwest::Client,
         prefix: &str,
         args: &[Secret],
+        timeout: Option<std::time::Duration>,
     ) -> anyhow::Result<(String, Option<String>)> {
         // Strict read-only means iad compiles nothing on the server. The pipeline refuses every call
         // it knows compiles; this refuses one it does not know, before any request is sent (S17).
@@ -919,7 +946,7 @@ impl IrisConnection {
 
         for (attempt, delay) in delays.iter().enumerate() {
             match self
-                .execute_via_generator_once(code, namespace, client, prefix, args)
+                .execute_via_generator_once(code, namespace, client, prefix, args, timeout)
                 .await
             {
                 Ok(output) => {
@@ -959,6 +986,7 @@ impl IrisConnection {
         client: &reqwest::Client,
         prefix: &str,
         args: &[Secret],
+        timeout: Option<std::time::Duration>,
     ) -> anyhow::Result<(String, Option<String>)> {
         let id: String = uuid::Uuid::new_v4()
             .simple()
@@ -1052,6 +1080,12 @@ impl IrisConnection {
             .json(&serde_json::json!({"query": sql}));
         if !args.is_empty() {
             query_req = query_req.header(IAD_ARGS_HEADER, encode_args_header(args));
+        }
+        // This request runs the code, so it is the one that has to outlast it. The client's own
+        // 30 s cap would end a longer run as "may have run" before the caller's timeout; the
+        // margin keeps the caller's own `TIMEOUT` the first to fire.
+        if let Some(t) = timeout {
+            query_req = query_req.timeout(t + REQUEST_TIMEOUT_MARGIN);
         }
         let query_resp = query_req.send().await;
         // The class is compiled by now, so a failed send must still remove it before returning.

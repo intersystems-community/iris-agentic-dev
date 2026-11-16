@@ -5173,6 +5173,10 @@ impl IrisTools {
             resp["auth_user"] = serde_json::json!(outcome.identity.user);
             resp["service_account_env"] =
                 serde_json::json!(non_blank_env_value("IRIS_SERVICE_USERNAME"));
+            // A run over HTTP is held to a cap; a caller that asked for more is told what applied.
+            if p.timeout > exec::MAX_HTTP_TIMEOUT_S {
+                resp["timeout_effective_s"] = serde_json::json!(exec::MAX_HTTP_TIMEOUT_S);
+            }
         }
         if is_runtime_error {
             resp["error_code"] = serde_json::Value::String("IRIS_RUNTIME_ERROR".into());

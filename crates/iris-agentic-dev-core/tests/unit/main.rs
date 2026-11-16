@@ -117,6 +117,7 @@ mod test_hl7_redact_141;
 mod test_hl7_redact_fields_141;
 mod test_host_fs_141;
 mod test_host_paths_141;
+mod test_http_timeout_191;
 mod test_info_unit;
 mod test_interop_body_gate_141;
 mod test_interop_depth_unit;

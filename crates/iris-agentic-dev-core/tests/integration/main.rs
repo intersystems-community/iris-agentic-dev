@@ -60,6 +60,7 @@ mod test_enum_tools_work_live;
 mod test_environment_restriction_live;
 mod test_exec_sql_131_live;
 mod test_execute_runs_once_live;
+mod test_execute_timeout_191_live;
 mod test_fresh_container_setup_live;
 mod test_gate_enforcement_live;
 mod test_generate_class_141_live;
