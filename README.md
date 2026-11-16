@@ -736,6 +736,11 @@ iris-agentic-dev --version                        # Print version
 
 ---
 
+## Roadmap
+
+What is planned next, and what is specified but not yet scheduled, is in
+[ROADMAP.md](./ROADMAP.md). It is reviewed at every release.
+
 ## Contributing
 
 Issues and pull requests are welcome. File bugs at the
