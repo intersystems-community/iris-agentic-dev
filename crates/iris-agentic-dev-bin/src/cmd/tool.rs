@@ -34,6 +34,8 @@ pub const TOOL_NAMES: &[&str] = &[
     "iris_add_server",
     "iris_admin",
     "iris_business_rule_info",
+    "iris_check",
+    "iris_check_compile_execute",
     "iris_compile",
     "iris_containers",
     "iris_coverage",
@@ -260,8 +262,10 @@ impl ToolCommand {
         // Named `server=` / pool-only tools can run from `[instance.*]` even when
         // there is no top-level host (operate-mode fleet). check_config / iris_servers
         // never need a live default connection.
+        // iris_check with `source` answers without a connection: the bundled declarations suffice.
         let allow_no_default = name == "check_config"
             || name == "iris_servers"
+            || (name == "iris_check" && args_json.get("source").is_some())
             || args_json
                 .get("server")
                 .and_then(|v| v.as_str())

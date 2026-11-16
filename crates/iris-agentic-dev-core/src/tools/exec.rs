@@ -49,6 +49,7 @@ pub const SERVICE_ACCOUNT_TOOLS: &[&str] = &[
     "iris_coverage",
     "iris_ws_open",
     "iris_ws_exec",
+    "iris_check_compile_execute",
 ];
 
 fn arg<'a>(args: &'a Value, keys: &[&str]) -> Option<&'a str> {
@@ -60,8 +61,8 @@ fn arg<'a>(args: &'a Value, keys: &[&str]) -> Option<&'a str> {
 /// Does this call run the agent's code, so that it must run as the service account?
 ///
 /// `iris_query` does when it writes or forces; `iris_global` when it sets or kills;
-/// `iris_coverage` when it starts or runs the agent's test path. Both spellings of the action
-/// argument are read.
+/// `iris_coverage` when it starts or runs the agent's test path; `iris_check_compile_execute` when
+/// it has `code` to run. Both spellings of the action argument are read.
 pub fn needs_service_account(tool: &str, args: &Value) -> bool {
     let action = arg(args, &["action", "mode"]).map(str::to_ascii_lowercase);
     let action = action.as_deref().unwrap_or("");
@@ -77,6 +78,7 @@ pub fn needs_service_account(tool: &str, args: &Value) -> bool {
         }
         "iris_global" => matches!(action, "set" | "kill"),
         "iris_coverage" => matches!(action, "run" | "start"),
+        "iris_check_compile_execute" => arg(args, &["code"]).is_some(),
         _ => false,
     }
 }
@@ -208,7 +210,7 @@ impl OptInSource {
     }
 }
 
-fn truthy(v: &str) -> bool {
+pub(crate) fn truthy(v: &str) -> bool {
     matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes")
 }
 

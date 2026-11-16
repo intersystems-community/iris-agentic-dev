@@ -394,6 +394,11 @@ const ENV_WRITES: &[(&str, &str, &str)] = &[
         "a file's enabled_tools; an allowlist can only remove tools",
     ),
     (
+        "iris/workspace_config.rs",
+        "IRIS_ASCOT",
+        "a file's ascot switch; its tools are gated",
+    ),
+    (
         "cmd/mcp.rs",
         "IRIS_SUPPRESS_TOOL_DESCRIPTION",
         "the --suppress-tool-description flag of this launch",

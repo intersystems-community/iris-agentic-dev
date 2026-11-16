@@ -26,7 +26,7 @@ use crate::tools::write_gate::{
     self, classify, effective_category, member_needs_mode, operator_env_gates, tool_class,
     GateResolution, MemberDeclaration, TargetKind, TargetSource, WriteClass,
 };
-use crate::tools::{err_result, resolve_namespace, IrisTools};
+use crate::tools::{check, err_result, resolve_namespace, IrisTools};
 use rmcp::model::CallToolResult;
 use rmcp::ErrorData as McpError;
 use serde_json::{json, Map, Value};
@@ -990,6 +990,11 @@ impl IrisTools {
     /// tail is the router.
     pub async fn call_gated(&self, tool: &str, params: Value) -> Result<CallToolResult, String> {
         if self.strict_toolset && !self.accepted_params.contains_key(tool) {
+            if matches!(tool, "iris_check" | "iris_check_compile_execute") && !check::enabled() {
+                return Err(format!(
+                    "{tool} is off until the operator sets `ascot = true` or IRIS_ASCOT=1"
+                ));
+            }
             return Err(format!("unknown tool: {tool}"));
         }
         let args = match params {

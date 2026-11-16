@@ -714,18 +714,34 @@ pub(crate) async fn fetch_doc_content(
     name: &str,
     namespace: &str,
 ) -> Option<String> {
+    fetch_doc(iris, client, name, namespace)
+        .await
+        .ok()
+        .flatten()
+}
+
+/// A document's text; `Ok(None)` is a missing document, `Err` a failed request.
+pub(crate) async fn fetch_doc(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    name: &str,
+    namespace: &str,
+) -> Result<Option<String>, String> {
     let url = iris.versioned_ns_url(namespace, &format!("/doc/{}", urlencoding::encode(name)));
     let resp = client
         .get(&url)
         .basic_auth(&iris.username, Some(&iris.password))
         .send()
         .await
-        .ok()?;
-    if !resp.status().is_success() {
-        return None;
+        .map_err(|e| format!("GET {url}: {e}"))?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
     }
+    let resp = resp
+        .error_for_status()
+        .map_err(|e| format!("GET {url}: {e}"))?;
     let body: serde_json::Value = crate::iris::http::json_or_default(resp).await;
-    Some(doc_content_to_string(&body))
+    Ok(Some(doc_content_to_string(&body)))
 }
 
 /// Server-side storage state fetched once before a write. Empty/`Unsupported`

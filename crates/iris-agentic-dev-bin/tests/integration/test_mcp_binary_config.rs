@@ -1161,8 +1161,12 @@ fn every_write_capable_tool_refuses_with_the_gate_off() {
     // `debug_*` tools and the container trio into dispatchers, baseline is the only tier that still
     // advertises the four skill stubs. Testing one tier would leave the other's exclusive tools
     // enrolled in the table and never called.
+    // The ascot pair is advertised only with its switch on; on, so their rows are called too.
     for toolset in ["merged", "baseline"] {
-        let mut s = Session::start_with_env(dir.path(), &[("IRIS_TOOLSET", toolset)]);
+        let mut s = Session::start_with_env(
+            dir.path(),
+            &[("IRIS_TOOLSET", toolset), ("IRIS_ASCOT", "1")],
+        );
         let report = s.call("check_config", serde_json::json!({}));
         assert_eq!(
             report["write_tools_enabled"],

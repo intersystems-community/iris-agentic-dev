@@ -96,6 +96,7 @@ pub use crate::iris::connection::{mcp_peer, MCP_PEER};
 
 pub mod admin;
 pub mod admin_tools;
+pub mod check;
 pub mod comparison_tools;
 pub mod coverage;
 pub mod dict;
@@ -141,7 +142,8 @@ pub use scm::{ScmAction, ScmParams};
 /// happened and how it's now derived instead of hand-maintained.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Toolset {
-    /// 84 tools — 93 total `#[tool]` methods minus the 9 that are Merged-tier-only
+    /// 84 tools — 95 total `#[tool]` methods minus the 2 ascot tools (registered only with
+    /// `IRIS_ASCOT`) and the 9 that are Merged-tier-only
     /// dispatchers (iris_admin, iris_debug, iris_containers, iris_get_log, iris_global,
     /// iris_execute_method, iris_message_body, iris_business_rule_info,
     /// iris_production_diff — added by later specs and deliberately scoped to Merged
@@ -150,7 +152,7 @@ pub enum Toolset {
     /// 80 tools — Baseline (84) minus the 4 stub tools (skill_propose/skill_optimize/
     /// skill_share/skill_community_install).
     Nostub,
-    /// 81 tools — 93 total minus the 4 stubs minus 8 tools replaced by 2 consolidated
+    /// 81 tools — 95 total minus 2 ascot tools, 4 stubs and 8 tools replaced by 2 consolidated
     /// dispatchers (4 debug_* tools → iris_debug; agent_info/iris_list_containers/
     /// iris_select_container/iris_start_sandbox → iris_containers). The 9
     /// Merged-tier-only dispatchers from Baseline's note above are present here, which
@@ -3286,6 +3288,12 @@ impl IrisTools {
             }
         }
 
+        if !check::enabled() {
+            for name in ["iris_check", "iris_check_compile_execute"] {
+                router.remove_route(name);
+            }
+        }
+
         // Apply user-specified tool allowlist from IRIS_ENABLED_TOOLS env var or toml
         // enabled_tools field (config loader sets the env var from toml before this runs).
         // Comma-separated tool names — when non-empty, ONLY these remain, regardless of
@@ -6252,6 +6260,48 @@ impl IrisTools {
             "truncated": result.truncated.is_some(),
             "truncated_reason": result.truncated,
         }))
+    }
+
+    #[tool(
+        description = "Check an ObjectScript document with ascot (https://github.com/intersystems-community/ascot), a static analyzer and type checker: undefined labels, macros, classes and members, wrong argument counts, possibly undefined values, unreachable code. `name`: the document with its extension. `source` (optional): its text; omitted, the stored document is checked. `level` (optional): error (default), warning or information, each including the ones above. IRIS's own classes resolve from declarations bundled in the binary, the rest from the target namespace by read-only Atelier requests (nothing runs on IRIS); without a connection the rest go unchecked and `note` says so. Returns LSP-style diagnostics with zero-based ranges. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        annotations(read_only_hint = true),
+        output_schema = output_schemas::oneof_output_schema::<check::IrisCheckResponse>()
+    )]
+    async fn iris_check(
+        &self,
+        Parameters(p): Parameters<check::CheckParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = check::handle_iris_check(
+            self,
+            &p.name,
+            p.source.as_deref(),
+            p.level,
+            p.namespace.as_deref(),
+        )
+        .await;
+        self.record_call("iris_check", result.is_ok());
+        result
+    }
+
+    #[tool(
+        description = "Check a document with ascot as iris_check does, save and compile it, then run `code` only on a clean compile. `name` and `content` (optional, together): the document with its extension and its whole text; `level` as in iris_check. `code` (optional): ObjectScript run as the body of a class method, as iris_execute runs its code (several lines, blocks and macros are fine; Write what you want to see). Result: `analysis` (ascot's diagnostics), `compile` (the compiler's errors), and the code's `output` or `error`. Same gates as iris_doc, iris_compile and iris_execute. Skill: objectscript-tdd. `server` (optional): name of a registered IRIS instance. If omitted, uses the default connection. Use `iris_servers` to list available instances.",
+        output_schema = output_schemas::oneof_output_schema::<check::IrisCheckCompileExecuteResponse>()
+    )]
+    async fn iris_check_compile_execute(
+        &self,
+        Parameters(p): Parameters<check::CheckCompileExecuteParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let result = check::handle_check_compile_execute(
+            self,
+            p.name,
+            p.content,
+            p.code,
+            p.level,
+            p.namespace.as_deref(),
+        )
+        .await;
+        self.record_call("iris_check_compile_execute", result.is_ok());
+        result
     }
 
     #[tool(
@@ -12029,6 +12079,12 @@ impl IrisTools {
             };
         }
         dispatch!("iris_compile", CompileParams, iris_compile);
+        dispatch!("iris_check", check::CheckParams, iris_check);
+        dispatch!(
+            "iris_check_compile_execute",
+            check::CheckCompileExecuteParams,
+            iris_check_compile_execute
+        );
         dispatch!("iris_execute", ExecuteParams, iris_execute);
         dispatch!("iris_test", TestParams, iris_test);
         dispatch!("iris_query", QueryParams, iris_query);
