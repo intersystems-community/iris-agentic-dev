@@ -404,11 +404,11 @@ jobs:
           docker logs iris-e2e 2>&1 | head -40 || true
       - name: Set the _SYSTEM password and enable CallIn (what the image's hook did)
         run: |
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             docker exec iris-e2e iris qlist 2>/dev/null | grep -q '\^running' && break
             sleep 3
           done
-          for i in $(seq 1 20); do
+          for _ in $(seq 1 20); do
             out=$(docker exec -i iris-e2e iris session IRIS -U %SYS <<'OS'
           Set p("Password")="SYS",p("ChangePassword")=0 Write "PW:",##class(Security.Users).Modify("_SYSTEM",.p),!
           Set s("Enabled")=1 Write "CALLIN:",##class(Security.Services).Modify("%Service_CallIn",.s),!

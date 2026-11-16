@@ -109,9 +109,7 @@ fn collect_bpl_steps(
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                let tag = std::str::from_utf8(e.name().as_ref())
-                    .unwrap_or("")
-                    .to_lowercase();
+                let tag = e.name().as_ref().to_lowercase();
                 match tag.as_str() {
                     "sequence" => {
                         collect_bpl_steps(reader, _source, steps, dynamic, depth + 1)?;
@@ -164,9 +162,7 @@ fn collect_bpl_steps(
                 }
             }
             Ok(Event::Empty(ref e)) => {
-                let tag = std::str::from_utf8(e.name().as_ref())
-                    .unwrap_or("")
-                    .to_lowercase();
+                let tag = e.name().as_ref().to_lowercase();
                 match tag.as_str() {
                     "call" => {
                         let name = attr_value(e, "name");
@@ -198,9 +194,7 @@ fn collect_bpl_steps(
                 }
             }
             Ok(Event::End(ref e)) => {
-                let tag = std::str::from_utf8(e.name().as_ref())
-                    .unwrap_or("")
-                    .to_lowercase();
+                let tag = e.name().as_ref().to_lowercase();
                 if depth == 0 {
                     return Ok(());
                 }
@@ -225,17 +219,17 @@ fn read_cdata_content(reader: &mut Reader<&[u8]>) -> Result<String> {
     loop {
         match reader.read_event() {
             Ok(Event::CData(ref cd)) => {
-                let text = std::str::from_utf8(cd.as_ref()).unwrap_or("").to_string();
-                content.push_str(&text);
+                let text: &str = cd.as_ref();
+                content.push_str(text);
             }
             Ok(Event::Text(ref t)) => {
-                let text = t.decode().unwrap_or_default();
-                content.push_str(&text);
+                let text: &str = t.as_ref();
+                content.push_str(text);
             }
             Ok(Event::GeneralRef(ref r)) => content.push_str(&resolve_reference(r)),
             Ok(Event::End(ref e)) => {
-                let name_bytes = e.name().as_ref().to_vec();
-                let tag = String::from_utf8_lossy(&name_bytes);
+                let qname = e.name();
+                let tag: &str = qname.as_ref();
                 if tag.eq_ignore_ascii_case("code") {
                     return Ok(content);
                 }
@@ -256,8 +250,7 @@ fn skip_element(reader: &mut Reader<&[u8]>, close_tag: &str) -> Result<()> {
             Ok(Event::End(ref e)) => {
                 depth -= 1;
                 if depth == 0 {
-                    let name_bytes = e.name().as_ref().to_vec();
-                    let tag = String::from_utf8_lossy(&name_bytes).to_lowercase();
+                    let tag = e.name().as_ref().to_lowercase();
                     if tag.eq_ignore_ascii_case(close_tag) {
                         return Ok(());
                     }
@@ -287,9 +280,7 @@ pub fn parse_dtl(xml: &str) -> Result<DtlFlow> {
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e) | Event::Empty(ref e)) => {
-                let tag = std::str::from_utf8(e.name().as_ref())
-                    .unwrap_or("")
-                    .to_lowercase();
+                let tag = e.name().as_ref().to_lowercase();
                 match tag.as_str() {
                     "transform" => {
                         source_class = attr_value(e, "sourceClass");
@@ -348,9 +339,7 @@ pub fn extract_xdata_content(class_xml: &str, xdata_name: &str) -> Option<String
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref e)) => {
-                let tag = std::str::from_utf8(e.name().as_ref())
-                    .unwrap_or("")
-                    .to_lowercase();
+                let tag = e.name().as_ref().to_lowercase();
                 if tag == "xdata" {
                     let name = attr_value(e, "name");
                     inside_target = name.eq_ignore_ascii_case(xdata_name);
@@ -360,10 +349,11 @@ pub fn extract_xdata_content(class_xml: &str, xdata_name: &str) -> Option<String
                 }
             }
             Ok(Event::CData(ref cd)) if inside_data => {
-                accumulated.push_str(&String::from_utf8_lossy(cd.as_ref()));
+                let text: &str = cd.as_ref();
+                accumulated.push_str(text);
             }
             Ok(Event::Text(ref t)) if inside_data => {
-                let text = t.decode().unwrap_or_default().to_string();
+                let text = AsRef::<str>::as_ref(t).to_string();
                 if after_ref || !text.trim().is_empty() {
                     accumulated.push_str(&text);
                 }
@@ -374,9 +364,7 @@ pub fn extract_xdata_content(class_xml: &str, xdata_name: &str) -> Option<String
                 after_ref = true;
             }
             Ok(Event::End(ref e)) => {
-                let tag = std::str::from_utf8(e.name().as_ref())
-                    .unwrap_or("")
-                    .to_lowercase();
+                let tag = e.name().as_ref().to_lowercase();
                 if tag == "data" && inside_data {
                     inside_data = false;
                     if !accumulated.trim().is_empty() {
@@ -415,8 +403,8 @@ fn resolve_reference(r: &quick_xml::events::BytesRef) -> String {
     if let Ok(Some(ch)) = r.resolve_char_ref() {
         return ch.to_string();
     }
-    let name = r.decode().unwrap_or_default();
-    quick_xml::escape::resolve_predefined_entity(&name)
+    let name: &str = r.as_ref();
+    quick_xml::escape::resolve_predefined_entity(name)
         .unwrap_or_default()
         .to_string()
 }
@@ -424,7 +412,7 @@ fn resolve_reference(r: &quick_xml::events::BytesRef) -> String {
 fn attr_value(e: &quick_xml::events::BytesStart, name: &str) -> String {
     e.attributes()
         .filter_map(|a| a.ok())
-        .find(|a| a.key.as_ref().eq_ignore_ascii_case(name.as_bytes()))
+        .find(|a| a.key.as_ref().eq_ignore_ascii_case(name))
         .and_then(|a| a.normalized_value(quick_xml::XmlVersion::Implicit1_0).ok())
         .map(|v| v.to_string())
         .unwrap_or_default()
