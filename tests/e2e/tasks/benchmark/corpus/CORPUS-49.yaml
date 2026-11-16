@@ -1,0 +1,64 @@
+id: CORPUS-49
+prompt: |
+  Bench.Temp in the BENCHMARK namespace converts Celsius to Fahrenheit. ToFahrenheit(pCelsius)
+  converts a value and needs nothing from an instance; Fahrenheit() converts an instance's Celsius
+  property by calling it. Boiling() should return the Fahrenheit value of 100 degrees Celsius, which
+  is 212. It raises <METHOD DOES NOT EXIST>. Fix it and leave the class compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+fixtures:
+  - name: Bench.Temp
+    content: |
+      Class Bench.Temp Extends %RegisteredObject
+      {
+
+      Property Celsius As %Numeric;
+
+      /// The Fahrenheit reading of this instance's Celsius.
+      Method Fahrenheit() As %Numeric
+      {
+          Quit ..ToFahrenheit(..Celsius)
+      }
+
+      /// The Fahrenheit value of a Celsius reading.
+      Method ToFahrenheit(pCelsius As %Numeric) As %Numeric
+      {
+          Quit (pCelsius * 9 / 5) + 32
+      }
+
+      ClassMethod Boiling() As %Numeric
+      {
+          Quit ##class(Bench.Temp).ToFahrenheit(100)
+      }
+
+      }
+check: |
+  try { set t=##class(Bench.Temp).%New() set t.Celsius=0 set ok=((##class(Bench.Temp).Boiling()=212)&&(t.Fahrenheit()=32)) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Temp
+    content: |
+      Class Bench.Temp Extends %RegisteredObject
+      {
+
+      Property Celsius As %Numeric;
+
+      /// The Fahrenheit reading of this instance's Celsius.
+      Method Fahrenheit() As %Numeric
+      {
+          Quit ..ToFahrenheit(..Celsius)
+      }
+
+      /// The Fahrenheit value of a Celsius reading.
+      ClassMethod ToFahrenheit(pCelsius As %Numeric) As %Numeric
+      {
+          Quit (pCelsius * 9 / 5) + 32
+      }
+
+      ClassMethod Boiling() As %Numeric
+      {
+          Quit ##class(Bench.Temp).ToFahrenheit(100)
+      }
+
+      }
+tags: [method-calls, instance-vs-class]

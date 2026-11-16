@@ -594,17 +594,19 @@ blocked and how to permit it.
 
 ### Code
 
-| Tool                    | What it does                                                                                     |
-| ----------------------- | ------------------------------------------------------------------------------------------------ |
-| `iris_compile`          | Compile a class, routine, or wildcard. Returns errors with line numbers.                         |
-| `iris_doc`              | Read, write, delete, or check any IRIS document.                                                 |
-| `iris_execute`          | Run ObjectScript, return output.                                                                 |
-| `iris_execute_method`   | Invoke a `ClassMethod` directly by class+method+args, no boilerplate.                            |
-| `iris_query`            | Execute SQL, return rows as JSON. `mode=explain\|count\|write` for plans, counts, and gated DML. |
-| `iris_test`             | Run `%UnitTest` tests, return structured pass/fail results.                                      |
-| `iris_global`           | Read, write, kill, or list IRIS global nodes. Patient-data and system globals are gated.         |
-| `iris_coverage`         | Measure ObjectScript line coverage via `%Monitor.System.LineByLine`.                             |
-| `iris_source_control` ✦ | Check lock status, checkout, execute SCM actions.                                                |
+| Tool                         | What it does                                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| `iris_compile`               | Compile a class, routine, or wildcard. Returns errors with line numbers.                         |
+| `iris_doc`                   | Read, write, delete, or check any IRIS document.                                                 |
+| `iris_execute`               | Run ObjectScript, return output.                                                                 |
+| `iris_execute_method`        | Invoke a `ClassMethod` directly by class+method+args, no boilerplate.                            |
+| `iris_query`                 | Execute SQL, return rows as JSON. `mode=explain\|count\|write` for plans, counts, and gated DML. |
+| `iris_test`                  | Run `%UnitTest` tests, return structured pass/fail results.                                      |
+| `iris_check`                 | Check a document with [ascot](https://github.com/intersystems-community/ascot), no compile.      |
+| `iris_check_compile_execute` | Check with ascot, compile, then run code, in one call. Both are off until `ascot = true`.        |
+| `iris_global`                | Read, write, kill, or list IRIS global nodes. Patient-data and system globals are gated.         |
+| `iris_coverage`              | Measure ObjectScript line coverage via `%Monitor.System.LineByLine`.                             |
+| `iris_source_control` ✦      | Check lock status, checkout, execute SCM actions.                                                |
 
 ### Search and introspection
 

@@ -35,8 +35,11 @@ pub type GateResult = Result<(), serde_json::Value>;
 /// parameter).
 ///
 /// `iris_execute_method` and `iris_query` are not here — they carry the code to run as
-/// `class`/`method` and `query`, and have their own branches below.
-pub const CODE_EXEC_TOOLS: &[&str] = &["iris_execute", "iris_ws_exec"];
+/// `class`/`method` and `query`, and have their own branches below. `iris_check_compile_execute`
+/// is: it hands `code` to `iris_execute`'s handler inside its own call, so this gate sees only the
+/// outer name.
+pub const CODE_EXEC_TOOLS: &[&str] =
+    &["iris_check_compile_execute", "iris_execute", "iris_ws_exec"];
 
 /// Run all security gates for a tool call before any IRIS operation executes, on the server the
 /// pipeline resolved: its policy, never absent, and the categories the call has to be permitted in

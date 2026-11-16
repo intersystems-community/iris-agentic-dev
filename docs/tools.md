@@ -24,6 +24,8 @@ unless there is something non-obvious to say about it.
 | [`iris_import_servers`](#iris_import_servers)                                                                             | Server Management         |
 | [`iris_doc`](#iris_doc)                                                                                                   | Code                      |
 | [`iris_compile`](#iris_compile)                                                                                           | Code                      |
+| [`iris_check`](#iris_check)                                                                                               | Code                      |
+| [`iris_check_compile_execute`](#iris_check_compile_execute)                                                               | Code                      |
 | [`iris_execute`](#iris_execute)                                                                                           | Code                      |
 | [`iris_execute_method`](#iris_execute_method)                                                                             | Code                      |
 | [`iris_query`](#iris_query)                                                                                               | Code                      |
@@ -465,6 +467,61 @@ cannot run is refused with `SUPERCLASS_CHECK_FAILED`. See the
 ```text
 iris_compile(target="MyApp.MyClass.cls")
 iris_compile(target="MyApp.*.cls", flags="cukd")
+```
+
+---
+
+### `iris_check`
+
+Check an ObjectScript document with [ascot](https://github.com/intersystems-community/ascot)
+without compiling it; off by default, `ascot = true` in the configuration file or `IRIS_ASCOT=1`
+registers it and `iris_check_compile_execute`.
+
+| Parameter   | Type   | Default   | Notes                                                                                                                                                                                    |
+| ----------- | ------ | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`      | string | —         | **Required.** The document with its extension: `Pkg.Class.cls`, `Routine.mac`, `.int`, `.inc`                                                                                            |
+| `source`    | string | —         | The document's text, to check code before saving it; omit to check it as stored, which answers `DOCUMENT_NOT_FOUND` when the server lacks it and `IRIS_UNREACHABLE` without a connection |
+| `level`     | string | `"error"` | The least severe diagnostic reported: `"error"`, `"warning"` or `"information"`                                                                                                          |
+| `namespace` | string | —         | Namespace that resolves the document's references; defaults to the connection's                                                                                                          |
+| `server`    | string | —         | Named server; omit for default                                                                                                                                                           |
+
+What the document refers to but does not define is looked up in two places in turn: IRIS's own
+classes in the declarations ascot bundles in the binary, iris-community:2026.2, so they resolve
+with or without a connection; everything else on the target server with read-only Atelier
+requests, so nothing runs on IRIS. Without a connection, classes other than IRIS's own are not
+checked and `note` says why. Returns LSP-style diagnostics (zero-based `range`, `severity`, `code`,
+`code_description`), the counts `errors`, `warnings` and `information`, `level`, `declarations`
+(the release resolved against) and `iris`, false with a `note` when a class outside IRIS's own went
+unchecked.
+
+```text
+iris_check(name="MyApp.Service.cls")
+iris_check(name="MyApp.Service.cls", source="Class MyApp.Service { ... }", level="warning")
+```
+
+---
+
+### `iris_check_compile_execute`
+
+Check a document with ascot, save and compile it, then run `code`: the compile-execute-fix loop in
+one round trip, registered with `iris_check`.
+
+| Parameter   | Type   | Default   | Notes                                                                                                          |
+| ----------- | ------ | --------- | -------------------------------------------------------------------------------------------------------------- |
+| `name`      | string | —         | The document with its extension; goes with `content`; omit both to run `code` against what is already compiled |
+| `content`   | string | —         | The document's whole text                                                                                      |
+| `code`      | string | —         | ObjectScript run as the body of a class method, as `iris_execute` runs its `code`; Write what you want to see  |
+| `level`     | string | `"error"` | As for `iris_check`                                                                                            |
+| `namespace` | string | —         | Namespace to save, compile and run in; defaults to the connection's                                            |
+| `server`    | string | —         | Named server; omit for default                                                                                 |
+
+The response carries `analysis` (ascot's diagnostics on the document), `compile` (`ok` and the compiler's
+`errors`) and the code's `output`, or `error` when it failed or was not run because the document
+did not compile. Writing and running pass the same gates as `iris_doc`, `iris_compile` and
+`iris_execute`.
+
+```text
+iris_check_compile_execute(name="MyApp.Util.cls", content="Class MyApp.Util { ... }", code="Write ##class(MyApp.Util).Reverse(\"abc\")")
 ```
 
 ---
@@ -2313,7 +2370,7 @@ can act on before calling the tool.
 
 | Annotation         | Set on                                                                                                                                               | What it means                                      |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
-| `read_only_hint`   | 52 tools — all query, inspect, list, history, and comparison tools                                                                                   | The tool makes no changes to IRIS state            |
+| `read_only_hint`   | 53 tools — all query, inspect, list, history, and comparison tools                                                                                   | The tool makes no changes to IRIS state            |
 | `destructive_hint` | 7 tools — `global_kill`, `iris_admin`, `iris_credential_manage`, `iris_lookup_manage`, `iris_namespace_create`, `iris_remove_server`, `skill_forget` | The tool can irreversibly delete or overwrite data |
 
 MCP clients that respect `read_only_hint` can run read-only tools in parallel or in

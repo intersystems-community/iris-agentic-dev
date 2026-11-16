@@ -323,6 +323,7 @@ fn router() -> &'static Router {
     R.get_or_init(|| {
         let mut input_schemas = BTreeMap::new();
         let mut annotations = BTreeMap::new();
+        iris_agentic_dev_core::tools::check::override_on_this_thread(Some(true));
         for toolset in [Toolset::Baseline, Toolset::Nostub, Toolset::Merged] {
             for no_skills in [false, true] {
                 let tools = IrisTools::with_registry_and_toolset(
@@ -349,6 +350,7 @@ fn router() -> &'static Router {
                 }
             }
         }
+        iris_agentic_dev_core::tools::check::override_on_this_thread(None);
         assert!(
             input_schemas.len() > 50,
             "only {} tools were read off the router — the schema side of this contract is empty",

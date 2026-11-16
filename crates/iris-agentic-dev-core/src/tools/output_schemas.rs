@@ -1883,7 +1883,7 @@ pub struct IrisUnreachableWithUrlError {
     pub hint: String,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Debug, Serialize, serde::Deserialize, JsonSchema)]
 pub struct CompileErrorEntry {
     pub severity: String,
     pub code: String,

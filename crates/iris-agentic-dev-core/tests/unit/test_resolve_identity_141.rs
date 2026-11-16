@@ -127,7 +127,7 @@ fn a_member_with_its_own_account_is_not_held_back_by_a_withheld_env_account() {
 }
 
 #[test]
-fn the_nine_tools_need_the_service_account_and_reads_do_not() {
+fn the_ten_tools_need_the_service_account_and_reads_do_not() {
     let yes = [
         ("iris_execute", json!({})),
         ("iris_query", json!({"mode": "write"})),
@@ -141,6 +141,7 @@ fn the_nine_tools_need_the_service_account_and_reads_do_not() {
         ("iris_coverage", json!({"mode": "start"})),
         ("iris_ws_open", json!({})),
         ("iris_ws_exec", json!({})),
+        ("iris_check_compile_execute", json!({"code": "Write 1"})),
     ];
     for (tool, args) in &yes {
         assert!(needs_service_account(tool, args), "{tool} {args}");
@@ -154,6 +155,10 @@ fn the_nine_tools_need_the_service_account_and_reads_do_not() {
         ("iris_coverage", json!({"mode": "check"})),
         ("iris_doc", json!({})),
         ("iris_compile", json!({})),
+        (
+            "iris_check_compile_execute",
+            json!({"name": "A.cls", "content": "Class A {}"}),
+        ),
     ];
     for (tool, args) in &no {
         assert!(!needs_service_account(tool, args), "{tool} {args}");

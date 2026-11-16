@@ -1,0 +1,49 @@
+id: CORPUS-53
+prompt: |
+  Bench.Basket in the BENCHMARK namespace keeps its items in a list collection. Add(pItem) appends
+  one, and First() should return the first item added, or an empty string when nothing has been
+  added. First() raises <OBJECT DISPATCH>. Fix it and leave the class compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+fixtures:
+  - name: Bench.Basket
+    content: |
+      Class Bench.Basket Extends %RegisteredObject
+      {
+
+      Property Items As list Of %String;
+
+      Method Add(pItem As %String) As %Status
+      {
+          Quit ..Items.Insert(pItem)
+      }
+
+      Method First() As %String
+      {
+          Quit ..Items(1)
+      }
+
+      }
+check: |
+  try { set b=##class(Bench.Basket).%New() do b.Add("pear") do b.Add("fig") set ok=((b.First()="pear")&&(##class(Bench.Basket).%New().First()="")) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Basket
+    content: |
+      Class Bench.Basket Extends %RegisteredObject
+      {
+
+      Property Items As list Of %String;
+
+      Method Add(pItem As %String) As %Status
+      {
+          Quit ..Items.Insert(pItem)
+      }
+
+      Method First() As %String
+      {
+          Quit ..Items.GetAt(1)
+      }
+
+      }
+tags: [collections, properties]

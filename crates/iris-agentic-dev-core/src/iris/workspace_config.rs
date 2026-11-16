@@ -70,6 +70,9 @@ pub struct WorkspaceConfig {
     /// match any real tool is silently ignored, same as `disabled_tools` today.
     #[serde(default)]
     pub enabled_tools: Vec<String>,
+    /// Registers the ascot tools `iris_check` and `iris_check_compile_execute`, off by default.
+    #[serde(default)]
+    pub ascot: bool,
     /// Override the write-tools gate. When `false`, all tools that mutate IRIS state
     /// (iris_doc put/delete, iris_compile, etc.) are removed from the tool list.
     /// When unset, the gate is derived from SystemMode / namespace heuristics.
@@ -825,7 +828,7 @@ pub fn build_workspace_config_json(
     }
 }
 
-/// Export disabled_tools/enabled_tools to env so IrisTools::with_registry_and_toolset picks them
+/// Export disabled/enabled_tools and ascot to env for IrisTools::with_registry_and_toolset to pick
 /// up. Only set if the field is non-empty and the variable is not already set by the user. Runs
 /// for every loaded file, including a home-directory file that yields its connection to
 /// `IRIS_HOST` (`file_chooses_connection`).
@@ -835,6 +838,9 @@ pub fn export_tool_lists(cfg: &WorkspaceConfig) {
     }
     if !cfg.enabled_tools.is_empty() && std::env::var("IRIS_ENABLED_TOOLS").is_err() {
         std::env::set_var("IRIS_ENABLED_TOOLS", cfg.enabled_tools.join(","));
+    }
+    if cfg.ascot && std::env::var("IRIS_ASCOT").is_err() {
+        std::env::set_var("IRIS_ASCOT", "1");
     }
 }
 
@@ -1400,6 +1406,7 @@ mod tests {
             ssh_strict: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
+            ascot: false,
             write_tools_enabled: None,
             destructive_tools_enabled: None,
         };
@@ -1428,6 +1435,7 @@ mod tests {
             ssh_strict: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
+            ascot: false,
             write_tools_enabled: None,
             destructive_tools_enabled: None,
         };
@@ -1461,6 +1469,7 @@ mod tests {
             ssh_strict: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
+            ascot: false,
             write_tools_enabled: None,
             destructive_tools_enabled: None,
         };
@@ -1511,6 +1520,7 @@ mod tests {
             ssh_strict: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
+            ascot: false,
             write_tools_enabled: None,
             destructive_tools_enabled: None,
         };
@@ -1543,6 +1553,7 @@ mod tests {
             ssh_strict: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
+            ascot: false,
             write_tools_enabled: None,
             destructive_tools_enabled: None,
         };
@@ -1580,6 +1591,7 @@ mod tests {
             ssh_strict: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
+            ascot: false,
             write_tools_enabled: None,
             destructive_tools_enabled: None,
         };
@@ -1614,6 +1626,7 @@ mod tests {
             ssh_strict: false,
             disabled_tools: vec![],
             enabled_tools: vec![],
+            ascot: false,
             write_tools_enabled: None,
             destructive_tools_enabled: None,
         };
