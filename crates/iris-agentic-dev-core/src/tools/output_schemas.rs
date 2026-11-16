@@ -2124,6 +2124,10 @@ pub struct IrisExecuteHttpOk {
     pub translated_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub translation_warning: Option<Vec<String>>,
+    /// Present only when the call asked for a `timeout` above the 600 s cap on a run over HTTP:
+    /// the timeout that applied.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_effective_s: Option<u64>,
     /// Who ran the code. `auth_user` and `service_account_env` repeat part of it and are removed
     /// in 1.8.0.
     #[serde(skip_serializing_if = "Option::is_none")]

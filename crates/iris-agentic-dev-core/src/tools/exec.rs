@@ -626,6 +626,16 @@ pub struct ExecContext {
     pub ssh_strict: bool,
 }
 
+/// The longest a run over Atelier may take, in seconds. A run over HTTP holds one web gateway
+/// worker and one CSP process for as long as it lasts; a terminal run holds neither, and keeps
+/// whatever timeout its caller gave.
+pub const MAX_HTTP_TIMEOUT_S: u64 = 600;
+
+/// `timeout` held to [`MAX_HTTP_TIMEOUT_S`], for a run over HTTP.
+pub fn http_timeout(timeout: Duration) -> Duration {
+    timeout.min(Duration::from_secs(MAX_HTTP_TIMEOUT_S))
+}
+
 pub struct RunOpts<'a> {
     pub timeout: Duration,
     /// Scratch class prefix: `IrisDevTmp.<prefix><id>`.
@@ -732,16 +742,18 @@ impl ExecContext {
         }
     }
 
-    /// The Atelier leg: one generated class, run as this context's identity.
+    /// The Atelier leg: one generated class, run as this context's identity. The request that
+    /// runs the code waits `timeout`, which the caller has already held to [`http_timeout`].
     pub async fn generate(
         &self,
         code: &str,
         ns: &str,
         prefix: &str,
+        timeout: Duration,
     ) -> anyhow::Result<(String, IdentityReport)> {
         let (out, ran_as) = self
             .conn
-            .execute_via_generator_identified(code, ns, &self.client, prefix)
+            .execute_via_generator_timed(code, ns, &self.client, prefix, timeout)
             .await?;
         // The connection has already refused an answer from another user (`expect_user`).
         Ok((out, self.report(ran_as, ExecPath::Atelier, self.source)))
@@ -818,13 +830,13 @@ impl ExecContext {
             _ => {}
         }
 
-        let attempt =
-            tokio::time::timeout(opts.timeout, self.generate(code, ns, opts.prefix)).await;
+        let wait = http_timeout(opts.timeout);
+        let attempt = tokio::time::timeout(wait, self.generate(code, ns, opts.prefix, wait)).await;
         let err = match attempt {
             Err(_) => {
                 return Err(ExecError::new(
                     "TIMEOUT",
-                    format!("execution timed out after {}s", opts.timeout.as_secs()),
+                    format!("execution timed out after {}s", wait.as_secs()),
                 ))
             }
             Ok(Ok((output, identity))) => return Ok(ExecOutcome { output, identity }),
@@ -922,7 +934,8 @@ impl ExecContext {
             Err(e) if e.code == "TIMEOUT" || is_identity_failure(&e.code) => return Err(e),
             Err(e) => e,
         };
-        match tokio::time::timeout(opts.timeout, self.generate(code, ns, opts.prefix)).await {
+        let wait = http_timeout(opts.timeout);
+        match tokio::time::timeout(wait, self.generate(code, ns, opts.prefix, wait)).await {
             Ok(Ok((output, identity))) => Ok(ExecOutcome { output, identity }),
             Ok(Err(http)) => Err(ExecError::new(
                 "DOCKER_REQUIRED",
@@ -935,7 +948,7 @@ impl ExecContext {
             )),
             Err(_) => Err(ExecError::new(
                 "TIMEOUT",
-                format!("execution timed out after {}s", opts.timeout.as_secs()),
+                format!("execution timed out after {}s", wait.as_secs()),
             )),
         }
     }

@@ -477,7 +477,7 @@ Run arbitrary ObjectScript and return the output.
 | --------------- | ------ | -------- | --------------------------------------------------------------------------------------------------- |
 | `code`          | string | —        | **Required.** ObjectScript to execute                                                               |
 | `namespace`     | string | `"USER"` |                                                                                                     |
-| `timeout`       | int    | `120`    | Seconds; overridden by `OBJECTSCRIPT_TEST_TIMEOUT` env var                                          |
+| `timeout`       | int    | `120`    | Seconds; `OBJECTSCRIPT_TEST_TIMEOUT` is the default. Over HTTP, max 600 (`timeout_effective_s`)     |
 | `translate_sql` | bool   | `true`   | Rewrite `&sql(...)` macros to `%SQL.Statement` on the docker exec path; HTTP runs `&sql` as written |
 | `use_session`   | bool   | `false`  | Enable `%ctx` session carrier (see below)                                                           |
 | `session_state` | string | —        | Token from a prior call; restores `%ctx`                                                            |
