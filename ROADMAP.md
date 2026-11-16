@@ -35,8 +35,6 @@ vulnerability, follow [SECURITY.md](SECURITY.md) instead.
   serve a new formula, a check confirms that each download comes from the project's own GitHub
   release and matches its checksum, and that an iad binary carries that release's build
   provenance. The release job opens that pull request instead of writing to the tap directly.
-- **A signed Windows binary.** Until it is signed, SmartScreen may block it; the Docker image is
-  the workaround ([docs/windows-docker.md](docs/windows-docker.md)).
 
 Also this month, outside the theme:
 
@@ -86,6 +84,9 @@ Specified or asked for, not scheduled.
 
 - **Submit each release to winget automatically**, once a dedicated bot account exists
   ([spec 152](specs/152-winget/spec.md), decision D2).
+- **A signed Windows binary.** It waits on code signing outside this project, so it has no month
+  yet. Until it is signed, SmartScreen may block the binary; the Docker image is the workaround
+  ([docs/windows-docker.md](docs/windows-docker.md)).
 - **MCP sampling for log analysis.** (#24)
 - **AI Hub deployment mode.** Ship iad's tools and skills as AI Hub tools and skills, served by the
   IRIS instance that runs AI Hub, and add a relay so that instance can also manage other IRIS
