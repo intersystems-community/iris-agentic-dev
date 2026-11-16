@@ -5,7 +5,7 @@
 //! now carries the call's timeout (plus a margin, so the outer `TIMEOUT` still fires first), up to
 //! a cap, and a call above the cap is told what applied.
 //!
-//! IRIS_WEB_PORT=52780 cargo test --features testing --test integration \
+//! IRIS_WEB_PORT=52780 IRIS_PASSWORD=... cargo test --features testing --test integration \
 //!   test_execute_timeout_191_live -- --include-ignored --test-threads=1
 
 use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
@@ -15,11 +15,14 @@ use std::time::{Duration, Instant};
 
 fn tools() -> IrisTools {
     let live = LiveTarget::from_env();
+    // No default: a password literal in test code, or one flowing from the helper's default into
+    // a credential, is a CodeQL alert (rust/hard-coded-cryptographic-value).
+    let password = std::env::var("IRIS_PASSWORD").expect("IRIS_PASSWORD must be set");
     let conn = IrisConnection::new(
         live.base_url(),
         "USER",
         live.username,
-        live.password,
+        password,
         DiscoverySource::EnvVar,
     );
     IrisTools::for_test_gates_open(Some(conn), Toolset::Merged).unwrap()
