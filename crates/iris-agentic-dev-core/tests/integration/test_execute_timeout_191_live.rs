@@ -5,26 +5,21 @@
 //! now carries the call's timeout (plus a margin, so the outer `TIMEOUT` still fires first), up to
 //! a cap, and a call above the cap is told what applied.
 //!
-//! IRIS_HOST=localhost IRIS_WEB_PORT=52780 cargo test --features testing --test integration \
+//! IRIS_WEB_PORT=52780 cargo test --features testing --test integration \
 //!   test_execute_timeout_191_live -- --include-ignored --test-threads=1
 
 use iris_agentic_dev_core::iris::connection::{DiscoverySource, IrisConnection};
+use iris_agentic_dev_core::testing::LiveTarget;
 use iris_agentic_dev_core::tools::{IrisTools, Toolset};
 use std::time::{Duration, Instant};
 
 fn tools() -> IrisTools {
-    let host = std::env::var("IRIS_HOST").expect("IRIS_HOST must name the live IRIS");
-    let port: u16 = std::env::var("IRIS_WEB_PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(52780);
-    let user = std::env::var("IRIS_USERNAME").unwrap_or_else(|_| "_SYSTEM".into());
-    let pass = std::env::var("IRIS_PASSWORD").unwrap_or_else(|_| "SYS".into());
+    let live = LiveTarget::from_env();
     let conn = IrisConnection::new(
-        format!("http://{host}:{port}"),
+        live.base_url(),
         "USER",
-        user,
-        pass,
+        live.username,
+        live.password,
         DiscoverySource::EnvVar,
     );
     IrisTools::for_test_gates_open(Some(conn), Toolset::Merged).unwrap()
