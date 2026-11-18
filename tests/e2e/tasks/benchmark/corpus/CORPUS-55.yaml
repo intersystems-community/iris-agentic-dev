@@ -1,0 +1,56 @@
+id: CORPUS-55
+prompt: |
+  Bench.Pieces.Count(pText) in the BENCHMARK namespace should return how many comma-separated
+  pieces pText has, so Count("a,b,c") is 3. It calls Split(pText, Output pCount), which is meant to
+  hand the count back through pCount. Count("a,b,c") raises <UNDEFINED>. Fix it and leave the class
+  compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+fixtures:
+  - name: Bench.Pieces
+    content: |
+      Class Bench.Pieces Extends %RegisteredObject
+      {
+
+      ClassMethod Split(pText As %String, Output pCount As %Integer) As %Status
+      {
+          Set tCount = $Length(pText, ",")
+          Quit $$$OK
+      }
+
+      ClassMethod Count(pText As %String) As %Integer
+      {
+          Set tSC = ..Split(pText, .tCount)
+          If $$$ISERR(tSC) {
+              Quit 0
+          }
+          Quit tCount
+      }
+
+      }
+check: |
+  try { set ok=((##class(Bench.Pieces).Count("a,b,c")=3)&&(##class(Bench.Pieces).Count("x")=1)) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Pieces
+    content: |
+      Class Bench.Pieces Extends %RegisteredObject
+      {
+
+      ClassMethod Split(pText As %String, Output pCount As %Integer) As %Status
+      {
+          Set pCount = $Length(pText, ",")
+          Quit $$$OK
+      }
+
+      ClassMethod Count(pText As %String) As %Integer
+      {
+          Set tSC = ..Split(pText, .tCount)
+          If $$$ISERR(tSC) {
+              Quit 0
+          }
+          Quit tCount
+      }
+
+      }
+tags: [output-parameters, undefined]

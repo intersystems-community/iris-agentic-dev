@@ -1,0 +1,42 @@
+id: CORPUS-43
+prompt: |
+  Bench.Label.Describe(pScore) in the BENCHMARK namespace should return "pass" for a score of 50 or
+  more and "fail" for anything lower. It raises <UNDEFINED> for every score below 50. Fix it and
+  leave the class compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+fixtures:
+  - name: Bench.Label
+    content: |
+      Class Bench.Label Extends %RegisteredObject
+      {
+
+      ClassMethod Describe(pScore As %Integer) As %String
+      {
+          If pScore >= 50 {
+              Set tLabel = "pass"
+          }
+          Quit tLabel
+      }
+
+      }
+check: |
+  try { set ok=((##class(Bench.Label).Describe(70)="pass")&&(##class(Bench.Label).Describe(20)="fail")) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: Bench.Label
+    content: |
+      Class Bench.Label Extends %RegisteredObject
+      {
+
+      ClassMethod Describe(pScore As %Integer) As %String
+      {
+          Set tLabel = "fail"
+          If pScore >= 50 {
+              Set tLabel = "pass"
+          }
+          Quit tLabel
+      }
+
+      }
+tags: [undefined, branches]

@@ -96,9 +96,10 @@ a `mode` other than `operate` is set aside until you trust the file.
 
 With `IRIS_SERVICE_USERNAME` set, or a `service_username` on a server, the tools that run the
 agent's code (`iris_execute`, `iris_query` writes, `iris_global` set/kill, `iris_execute_method`,
-`global_kill`, `iris_test`, `iris_coverage` run/start, `iris_ws_open` and `iris_ws_exec`) run as
-that account on every path, or the call is refused. They never fall back to the connection
-account. `check_config.identity` lists the user each path would run as and each server's account.
+`global_kill`, `iris_test`, `iris_coverage` run/start, `iris_ws_open`, `iris_ws_exec` and
+`iris_check_compile_execute` with `code`) run as that account on every path, or the call is
+refused. They never fall back to the connection account. `check_config.identity` lists the user
+each path would run as and each server's account.
 
 | Code                                                                                              | Cause                                                                                                                                               | Fix                                                                                                                                                                                              |
 | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

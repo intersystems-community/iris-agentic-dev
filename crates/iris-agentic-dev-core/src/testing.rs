@@ -357,6 +357,7 @@ pub const BEHAVIOR_ENV_VARS: &[&str] = &[
     "IRIS_ENABLED_TOOLS",
     "IRIS_DISABLED_TOOLS",
     "IRIS_TOOLSET",
+    "IRIS_ASCOT",
     "IRIS_NO_SKILLS",
     "IRIS_LIST_TOOLS_PAGE_SIZE",
     "IRIS_SUPPRESS_TOOL_DESCRIPTION",
@@ -1612,14 +1613,16 @@ pub fn handler_match_arms(tool: &str, param: &str) -> BTreeSet<String> {
 /// Asserts on the listing a running server emits, after `normalize_schema_openapi3` — not on
 /// `schema_for!`, which would test schemars rather than this server (FR-013).
 pub fn advertised_schemas() -> BTreeMap<String, serde_json::Value> {
-    advertised_tools()
+    schemas_of(advertised_tools())
+}
+
+/// Each tool's `inputSchema`, by name.
+fn schemas_of(tools: BTreeMap<String, serde_json::Value>) -> BTreeMap<String, serde_json::Value> {
+    tools
         .into_iter()
-        .map(|(name, tool)| {
-            let schema = tool
-                .get("inputSchema")
-                .cloned()
-                .unwrap_or_else(|| panic!("`{name}` has no inputSchema in tools/list"));
-            (name, schema)
+        .map(|(name, mut tool)| match tool["inputSchema"].take() {
+            serde_json::Value::Null => panic!("`{name}` has no inputSchema in tools/list"),
+            schema => (name, schema),
         })
         .collect()
 }
@@ -1655,7 +1658,7 @@ pub fn advertised_tools_in_toolset_with(
     toolset: Option<&str>,
     suppress: &[&str],
 ) -> BTreeMap<String, serde_json::Value> {
-    advertised_tools_spawned(toolset, suppress, &[])
+    advertised_tools_spawned(toolset, suppress, &[], &[])
 }
 
 /// `advertised_tools_in_toolset`, with extra arguments handed to the `mcp` subcommand.
@@ -1664,13 +1667,14 @@ pub fn advertised_tools_in_toolset_with(
 /// reads it; only passing `--suppress-tool-description` proves the flag reaches `list_tools` at
 /// all, which is the half that broke in #111.
 pub fn advertised_tools_with_flags(flags: &[&str]) -> BTreeMap<String, serde_json::Value> {
-    advertised_tools_spawned(None, &[], flags)
+    advertised_tools_spawned(None, &[], flags, &[])
 }
 
 fn advertised_tools_spawned(
     toolset: Option<&str>,
     suppress: &[&str],
     flags: &[&str],
+    env: &[(&str, &str)],
 ) -> BTreeMap<String, serde_json::Value> {
     let bin = iad_binary_path();
     assert!(
@@ -1690,6 +1694,7 @@ fn advertised_tools_spawned(
         cmd.env("IRIS_SUPPRESS_TOOL_DESCRIPTION", suppress.join(","));
     }
     cmd.args(flags);
+    cmd.envs(env.iter().copied());
     let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -2295,6 +2300,12 @@ pub fn answer_text(answer: &serde_json::Value) -> String {
     serde_json::to_string(answer).unwrap_or_default()
 }
 
+/// The JSON a tool answered, parsed from the `tools/call` answer's text content.
+pub fn tool_body(answer: &serde_json::Value) -> serde_json::Value {
+    let text = answer["result"]["content"][0]["text"].as_str();
+    serde_json::from_str(text.unwrap_or("")).unwrap_or_else(|e| panic!("not JSON ({e}): {answer}"))
+}
+
 /// One tool's parameter contract: the tool name and its wire name → advertised JSON type pairs.
 ///
 /// Eight conversion batches assert the same five things about their tools. Stating those five in one
@@ -2333,6 +2344,58 @@ impl ParamContract {
 /// receives is the only thing worth asserting on (FR-013).
 pub fn assert_advertised_contracts(contracts: &[ParamContract]) {
     let schemas = advertised_schemas();
+    for contract in contracts {
+        let schema = schemas
+            .get(contract.tool)
+            .unwrap_or_else(|| panic!("`{}` must appear in tools/list", contract.tool));
+
+        assert_eq!(
+            advertised_properties(schema),
+            contract.names(),
+            "`{}` advertises a different parameter set than its contract states; schema was {schema}",
+            contract.tool
+        );
+
+        for (name, expected_type) in contract.params {
+            let prop = resolve_property(schema, name);
+            assert_advertised_type(contract.tool, name, expected_type, &prop);
+        }
+
+        assert_eq!(
+            schema.get("additionalProperties"),
+            Some(&serde_json::json!(false)),
+            "`{}` must advertise a closed parameter set; schema was {schema}",
+            contract.tool
+        );
+
+        // FR-004/FR-007: a parameter that can be omitted today must stay omittable, because
+        // omitting it reaches a handler error that says what to do next and `required` would replace
+        // that with a serde message naming a Rust struct. Contracts state their required set
+        // explicitly so requiring one more is a test failure, not a silent tightening.
+        let advertised_required: BTreeSet<String> = schema
+            .get("required")
+            .and_then(serde_json::Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(
+            advertised_required,
+            contract.required_names(),
+            "`{}` advertises a different required set than its contract states \
+             (FR-004/FR-007); schema was {schema}",
+            contract.tool
+        );
+    }
+}
+
+/// `assert_advertised_contracts` against a server started with `env`: for tools behind a switch. The
+/// loop is repeated because the empty-tests gate credits a test's helper with an assertion only when
+/// the helper's own body carries one.
+pub fn assert_advertised_contracts_with_env(contracts: &[ParamContract], env: &[(&str, &str)]) {
+    let schemas = schemas_of(advertised_tools_spawned(None, &[], &[], env));
     for contract in contracts {
         let schema = schemas
             .get(contract.tool)

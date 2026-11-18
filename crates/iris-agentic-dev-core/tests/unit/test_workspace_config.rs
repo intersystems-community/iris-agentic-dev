@@ -2609,3 +2609,17 @@ fn unparsable_file_is_a_config_error() {
     );
     assert!(!r.write_enabled);
 }
+
+// ── ascot config field ────────────────────────────────────────────────────────
+
+#[test]
+fn test_ascot_switch_is_off_by_default_parsed_and_exported() {
+    let mut env_guard = EnvGuard::new();
+    env_guard.unset("IRIS_ASCOT");
+    let fleet = load_fleet_config_from_str("container = \"iris-dev\"").unwrap();
+    assert!(!fleet.workspace.ascot);
+    let fleet = load_fleet_config_from_str("host = \"localhost\"\nascot = true\n").unwrap();
+    assert!(fleet.workspace.ascot);
+    let _ = workspace_config_to_connection(&fleet.workspace, "USER");
+    assert_eq!(std::env::var("IRIS_ASCOT").unwrap_or_default(), "1");
+}

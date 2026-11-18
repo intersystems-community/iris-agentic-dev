@@ -699,6 +699,7 @@ pub const CLASSIFICATION: &[ToolClass] = &[
         .local_default("lists the server registry from the launch settings and files on disk"),
     ro("iris_symbols"),
     ro("iris_symbols_local").local("parses source files under the project directory on the host"),
+    ro("iris_check"),
     mixed(
         "iris_system_performance",
         &[
@@ -748,6 +749,7 @@ pub const CLASSIFICATION: &[ToolClass] = &[
     // (FR-015a).
     wr("iris_compile").scratch(),
     wr("iris_execute").scratch(),
+    wr("iris_check_compile_execute").scratch(),
     // Verified ungated against 1.2.6 with the gate provably active.
     wr("iris_execute_method").scratch(),
     wr("iris_generate"),
