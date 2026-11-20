@@ -16,6 +16,7 @@ Run: scripts/gates/test_antipatterns.py     (exit 0 = all canaries pass)
 
 from __future__ import annotations
 
+import collections
 import pathlib
 import sys
 
@@ -1327,6 +1328,70 @@ def test_zz_every_canary_passed() -> None:
     assert not FAILURES, f"{len(FAILURES)} canary failure(s): " + "; ".join(FAILURES)
 
 
+# ---------------------------------------------------------------------------
+# read_text: one read per file and mode, and what Path.read_text returned before
+# ---------------------------------------------------------------------------
+
+
+def test_each_file_is_read_once() -> None:
+    """The cache behind `read_text` is what makes a full scan fast, so it is pinned two ways.
+
+    The contract: the text is exactly what `Path.read_text` returns, a second call in the same
+    run reuses the first read (a scan sees one snapshot of the tree), and the two error modes
+    do not share an entry. The budget: a full run of every check opens each (file, mode) at
+    most once. Without it a detector can go back to its own `path.read_text` and every canary
+    still passes while the run slows to what the PR that added the cache measured away.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        path = pathlib.Path(d) / "a.rs"
+        path.write_text("first")
+        ap.read_text.cache_clear()
+        check(
+            "read_text returns what Path.read_text returns",
+            ap.read_text(path) == path.read_text(errors="replace") == "first",
+        )
+        path.write_text("second")
+        check(
+            "a second call in the same run reuses the first read",
+            ap.read_text(path) == "first",
+            ap.read_text(path),
+        )
+        ap.read_text.cache_clear()
+        check(
+            "after the cache is cleared the file is read again",
+            ap.read_text(path) == "second",
+        )
+        path.write_bytes(b"ok \xff")
+        ap.read_text.cache_clear()
+        check(
+            "the two error modes are cached apart",
+            ap.read_text(path, "replace") != ap.read_text(path, "ignore"),
+        )
+
+    opens: collections.Counter = collections.Counter()
+    real = pathlib.Path.read_text
+
+    def counting(self, *args, **kwargs):
+        opens[(str(self), kwargs.get("errors"))] += 1
+        return real(self, *args, **kwargs)
+
+    ap.read_text.cache_clear()
+    pathlib.Path.read_text = counting
+    try:
+        for name, run in ap.CHECKS.items():
+            run()
+    finally:
+        pathlib.Path.read_text = real
+    twice = {k: n for k, n in opens.items() if n > 1}
+    check(
+        "a full run of every check opens each file once per error mode",
+        not twice and len(opens) > 100,
+        f"{len(opens)} files opened; opened more than once: {dict(list(twice.items())[:5])}",
+    )
+
+
 def main() -> int:
     test_undeclared_params()
     test_prose_only_enum()
@@ -1343,6 +1408,7 @@ def main() -> int:
     test_both_classes_are_never_baselined()
     test_baseline_key_ignores_line_numbers()
     test_baseline_counts_repeats()
+    test_each_file_is_read_once()
     if FAILURES:
         print(f"\n{len(FAILURES)} canary failure(s):")
         for f in FAILURES:
