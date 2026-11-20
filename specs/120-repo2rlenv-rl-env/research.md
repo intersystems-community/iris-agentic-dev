@@ -653,6 +653,67 @@ is not a shortcut past that work; it is downstream of it. The corpus stays hand-
 T031 grows it, and this measurement is recorded once so it is not re-litigated. Total cost: $0.012
 and about eight minutes. The bootstrap image was deleted afterwards.
 
+## Upstream status check — 2026-11-20
+
+Everything above was written against `repo2rlenv` 0.9.1 and Harbor as it stood in mid-September.
+Both moved. Versions and dates read off the two release pages on 2026-11-20.
+
+| Project        | Then (2026-09) | Now             | What changed that touches this file                                                                                                                                                                           |
+| -------------- | -------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `repo2rlenv`   | 0.9.1 (15 Sep) | 0.9.6 (10 Nov)  | Rust and `cargo-nextest` log parsing (0.9.2, 0.9.4); Harbor 0.24 then 0.25 adapters (0.9.4, 0.9.5); isolated verifiers and contradictory-assertion checks that catch forged passes (0.9.6); three new recipes |
+| Harbor         | 0.22/0.23-era  | 0.26.0 (13 Nov) | Compose on cloud sandboxes (Tensorlake Docker-in-Docker and network policy 0.23, Modal CPU Compose on VMs 0.26); `harbor lint` (0.25); an HCP v0 rollout server and inference relay (0.26)                    |
+| FlashREINFORCE | PR open        | merged          | OpenRLHF #1339 merged to `main` on 2026-09-14. No release tag names it; it is a configuration, as predicted.                                                                                                  |
+
+Three claims above are now wrong or weaker, and one is confirmed:
+
+- **"An IRIS sidecar rules all cloud backends out" no longer holds.** Compose tasks run on
+  Tensorlake and Modal now. _Harbor execution backends_ and the AWS table both assume otherwise.
+  This reopens Tier 2 on a cloud backend and makes open decision 1 a real choice rather than a
+  forced one.
+- **"Rust parsers aren't production-ready" was never our blocker and is now partly fixed anyway.**
+  The T022 probe already found Rust was not the problem. 0.9.2 and 0.9.4 add the parsers regardless.
+- **Regenerating with 0.9.6 would not change the T022 result.** `f2p=0` came from a sandbox image
+  with no IRIS and no `--features testing`, not from a parser. The finding stands until the image
+  is the Tier 1 environment; nothing in 0.9.2–0.9.6 builds that for us.
+- **Trajectory generation (0.9.6) is new and is the one thing worth a second probe.** It converts
+  Claude Code, Codex and Pi sessions into repair, build, extend and QA Harbor tasks. Corpus breadth
+  is this programme's binding constraint, and we generate agent sessions as a by-product of every
+  benchmark run. Experimental, and its own notes say generated tasks are unverified until evaluated.
+
+### Where the self-improvement loop actually is
+
+There is one, and it is not RL. Spec 128's `tests/e2e/skill_eval/optimize/` is a reflective
+optimiser over skill descriptions and tool hints: propose, score on train, gate on a frozen
+holdout, write only on SHIP.
+
+- **Split** `sha256(id) mod 100 < 60`, recorded in `routing-split.toml`, with `load_split` raising
+  when file and rule disagree — the committed split this plan's Slice 1 step 5 asked for.
+- **Four gates** (`optimize/gate.py`): paired bootstrap 95% lower bound above 0, false-hint rate not
+  up, exact-name Recall@1 not down, live ladder within 0.05. All four or HOLD.
+- **A priced ledger** with a hard cap, and `apply` that refuses anything but SHIP.
+- **Status: HOLD.** The 2026-09-26 run moved holdout Recall@1 from 0.242 to 0.606 (paired diff
+  +0.364, 95% [+0.182, +0.545]) and halved the false-hint rate, then failed on exact-name (one miss
+  of seven) and on a missing ladder run. Nothing has been written to `skills/`.
+
+So the mechanism exists end to end and has produced a candidate worth shipping on two of four
+gates. What it has not produced is a shipped change, and the two things standing in the way are a
+ladder run and a corpus relabel — see `specs/128-skill-routing-loop/results.md` § Next.
+
+**Half of the nightly is dark.** `optimize drift` runs nightly at a $2 cap and has been passing.
+The nightly canary behind it has not run since 2026-11-13: `skill-regression.yml` still starts
+`intersystemsdc/iris-community:2025.3`, whose community license expired on exactly that date, so
+"Wait for Atelier API" fails and the canary step is skipped. Eight consecutive red runs, 159
+through 166. `ci.yml` was moved to 2026.1 with the `--entrypoint /tini -- /iris-main` workaround in
+5381d17; the nightly never got the same treatment. A drift guard over a corpus nothing is measuring
+is the 118 shape again, one layer up.
+
+### What is still missing for RL proper
+
+The pieces that only matter for policy training are the ones still absent: a vLLM-backed driver
+(`DriverRun.logprobs` is `None` from every driver that exists), a rollout server, and a corpus an
+order of magnitude larger. Harbor 0.26's HCP rollout server is new since this file was written and
+is the first upstream piece that would plug into the exporter we already have.
+
 ## Open decisions
 
 1. **Shared remote IRIS or compose sidecar** as the primary shape (drives the NoPWS question,
