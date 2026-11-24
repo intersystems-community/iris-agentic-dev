@@ -59,7 +59,7 @@ iris-agentic-dev --version
 ```
 
 ```text
-iris-agentic-dev 1.4.2
+iris-agentic-dev 1.7.1
 ```
 
 Linux, direct download and Windows are in the README's [Install](../README.md#install) section.
@@ -144,7 +144,7 @@ iris-agentic-dev init        # writes ./.iris-agentic-dev.toml
 Set `container` or `host`/`web_port` in it and commit it; credentials stay in the environment,
 not in the file. A file like this is a project file: its connection settings work at once, but a
 setting that widens what the agent may do (`write_tools_enabled = true`, `tls_verify = false`) is
-set aside until you run `iris-agentic-dev trust`, and `check_config` says so. The full precedence
+set aside until you run `iris-agentic-dev trust` and restart the MCP server, and `check_config` says so. The full precedence
 order and every field are in [connecting.md](connecting.md).
 
 ## Step 4 — Run a query
@@ -286,9 +286,9 @@ iris-agentic-dev skill list
 ```
 
 ```text
-SKILL                        CLAUDE CODE      OPENCODE     COPILOT
-objectscript-review          installed        installed    n/a
-objectscript-guardrails      installed        installed    n/a
+SKILL                              TIER     CLAUDE CODE      OPENCODE       COPILOT
+objectscript-review                core     installed        installed      n/a
+objectscript-guardrails            core     installed        installed      n/a
 ...
 ```
 
@@ -334,13 +334,16 @@ The same 401 reaching you through a different tool looks worse than it is:
 ```
 
 Trust the `error` line and ignore the `hint`: 401 is your credentials, and the host and port in
-`attempted_url` were both fine. The code and hint are wrong for this case and are being fixed.
+`attempted_url` were both fine. The code and hint are generic: any non-2xx answer from IRIS gets them, 401, 403 and redirects included.
 
 **Wrong field name.** The message lists the fields that exist, which is faster than the docs:
 
-```text
-error: bad params for iris_query: unknown field `sql`, expected one of `query`, `parameters`,
-`namespace`, `force`, `confirm`, `mode`, `table`, `max_rows_affected`, `server`
+```json
+{
+  "success": false,
+  "error_code": "UNKNOWN_PARAMETER",
+  "error": "iris_query does not accept \"sql\". Accepted parameters: confirm, force, max_rows_affected, mode, namespace, parameters, query, server, table."
+}
 ```
 
 **Wrong tool name.** Same idea, and it prints the catalogue rather than guessing:

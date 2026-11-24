@@ -17,8 +17,19 @@ docker pull ghcr.io/intersystems-community/iris-agentic-dev:latest
 
 ## Configure Claude Code
 
-Add the following to your Claude Code MCP config (`.claude/mcp.json` in your project, or
-`~/.claude/mcp.json` globally):
+Register the server with `claude mcp add`; the `-e NAME=value` flags go to `docker run`:
+
+```bash
+claude mcp add iris-agentic-dev --scope user \
+  -- docker run --rm -i \
+     -e IRIS_HOST=host.docker.internal -e IRIS_WEB_PORT=52773 \
+     -e IRIS_USERNAME=_SYSTEM -e IRIS_PASSWORD -e IRIS_NAMESPACE=USER \
+     ghcr.io/intersystems-community/iris-agentic-dev:latest mcp
+```
+
+`--scope user` writes to `~/.claude.json`; `--scope project` writes a `.mcp.json` in the current
+directory. Claude Code reads no `mcp.json` under `.claude/`. The same server as a hand-written
+entry, in `.mcp.json` (project) or `~/.claude.json` (user), is:
 
 ```json
 {
@@ -37,6 +48,8 @@ Add the following to your Claude Code MCP config (`.claude/mcp.json` in your pro
         "IRIS_USERNAME",
         "-e",
         "IRIS_PASSWORD",
+        "-e",
+        "IRIS_NAMESPACE",
         "ghcr.io/intersystems-community/iris-agentic-dev:latest",
         "mcp"
       ],
@@ -44,7 +57,8 @@ Add the following to your Claude Code MCP config (`.claude/mcp.json` in your pro
         "IRIS_HOST": "host.docker.internal",
         "IRIS_WEB_PORT": "52773",
         "IRIS_USERNAME": "_SYSTEM",
-        "IRIS_PASSWORD": "SYS"
+        "IRIS_PASSWORD": "<the _SYSTEM password>",
+        "IRIS_NAMESPACE": "USER"
       }
     }
   }
@@ -58,8 +72,13 @@ Add the following to your Claude Code MCP config (`.claude/mcp.json` in your pro
 | `IRIS_HOST`      | IRIS server hostname | `host.docker.internal` (your local machine) |
 | `IRIS_WEB_PORT`  | Atelier REST port    | `52773`                                     |
 | `IRIS_USERNAME`  | IRIS username        | `_SYSTEM`                                   |
-| `IRIS_PASSWORD`  | IRIS password        | `SYS`                                       |
+| `IRIS_PASSWORD`  | IRIS password        | `<the _SYSTEM password>`                    |
 | `IRIS_NAMESPACE` | Default namespace    | `USER` (if not set)                         |
+
+`docker run` passes a variable into the container only when it carries its own `-e NAME`, so
+forward every variable you set, including `IRIS_SCHEME` and `IRIS_WEB_PREFIX` for a TLS or
+prefixed gateway. A fresh container's default password is expired and must be replaced first; see
+[Getting started, step 1](getting-started.md#step-1--get-an-iris-running).
 
 ### Connecting to a remote IRIS instance
 
@@ -89,12 +108,20 @@ Inside the container, `IRIS_*` variables in the `env` block above are launch set
 trusts. A project's `.iris-agentic-dev.toml` is not: if you mount one in, its connection settings
 apply, but anything that would widen what the agent may do (`write_tools_enabled = true`,
 `tls_verify = false`, and so on) is set aside until you trust the file with
-`iris-agentic-dev trust`, and `trust` needs a terminal and writes the entry to the operator file
+`iris-agentic-dev trust` and a restart, and `trust` needs a terminal and writes the entry to the operator file
 (`~/.iris-agentic-dev.toml`) in the home directory of the process that reads it. A container started
 with `--rm` has no operator file of its own to record it in, so put such settings in the `env`
 block instead. The container has no OS keychain either, so a password given to `iris_add_server`
 is written to `servers.json` inside the container, which `--rm` removes with it.
 `check_config` shows what was set aside.
+
+## Limits
+
+The image holds only the binary, with no `docker` or `ssh` and no OS keychain. Over Docker, iad
+reaches IRIS by HTTP only: `container`, `docker_only`, `nopws`, `ssh_host` and the `docker exec`
+fallback do not work. Tools that read your project files (`iris_compile` with a path, `kb index`,
+`iris_symbols_local`) see only the container's file system, so mount the project into the
+container with `-v` and point `--workspace` at the mount, or use the native binary.
 
 ## Verify the connection
 
@@ -111,8 +138,10 @@ Claude will call `check_config` through the Docker MCP server and report the con
 **`docker: command not found`** — Docker Desktop is not installed or not on PATH. Install
 Docker Desktop and restart your terminal.
 
-**`Error response from daemon: pull access denied`** — Image not yet published. Run
-`docker pull ghcr.io/intersystems-community/iris-agentic-dev:latest` manually to check.
+**`Error response from daemon: pull access denied`** — The image is public, so check the image
+name, run `docker logout ghcr.io` (a stale token causes this on a public image), and try
+`docker pull ghcr.io/intersystems-community/iris-agentic-dev:latest` by hand. To pin a version and
+verify its signature, see [verifying-releases.md](verifying-releases.md).
 
 **Connection refused to IRIS** — On Windows/macOS, `host.docker.internal` should resolve
 to your host machine. Verify your IRIS instance is running on the port you specified. On
