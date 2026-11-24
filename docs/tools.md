@@ -1694,9 +1694,12 @@ schema tools, Mermaid diagrams, and `resolve_storage` all originate from his des
 ### `global_preview`
 
 Preview the top N subscripts of an IRIS global and mint a confirmation token for a
-subsequent `global_kill`. Returns up to 100 entries, the total subscript count, and a
-`confirm_token` that expires in 5 minutes. The system blocklist and the PHI name gate apply
-before anything is read; a refused preview returns no entries and no token.
+subsequent `global_kill`. Returns up to `count` entries (`{key, value}`), `total_subscripts`
+(how many entries this preview read, so never more than `count`), the `confirm_token` and
+`confirm_expires`; the token expires in 5 minutes. The system blocklist and the PHI name gate apply
+before anything is read; a refused preview returns no entries and no token. A global whose name
+matches the PHI patterns cannot be previewed or killed with these two tools, because neither
+accepts `acknowledgePhi`; use `iris_global`.
 
 | Parameter | Type   | Default | Notes                                          |
 | --------- | ------ | ------- | ---------------------------------------------- |
@@ -1728,13 +1731,15 @@ List all namespaces on the connected IRIS instance.
 
 ### `iris_namespace_create` 🔒 ☠
 
-Create a new namespace and its backing database. Write-gated and destructive-gated.
+Create a namespace that maps its globals to the database `db_path` (default: a database named
+like the namespace) and its routines to a database named like the namespace. Both databases must
+already exist; this tool does not create them. Write-gated and destructive-gated.
 
-| Parameter | Type   | Default | Notes                                        |
-| --------- | ------ | ------- | -------------------------------------------- |
-| `name`    | string | —       | **Required.** Namespace name (A–Z, 0–9, `-`) |
-| `db_path` | string | —       | Database directory path; defaults to `name`  |
-| `server`  | string | —       | Named server; omit for default               |
+| Parameter | Type   | Default | Notes                                                                              |
+| --------- | ------ | ------- | ---------------------------------------------------------------------------------- |
+| `name`    | string | —       | **Required.** A letter, then letters, digits, `_` or `-`; a leading `%` is allowed |
+| `db_path` | string | `name`  | Name of an existing database to use for globals (not a directory path)             |
+| `server`  | string | —       | Named server; omit for default                                                     |
 
 ### `iris_database_list`
 
@@ -1758,10 +1763,13 @@ operations that require a primary.
 **Response fields:** `is_member` (bool), `mirror_name` (string or null),
 `member_type` (string or null — primary/backup/async), `is_primary` (bool).
 
-### `iris_system_performance`
+<a id="iris_system_performance"></a>
+
+### `iris_system_performance` 🔒
 
 Manage IRIS SystemPerformance (pbuttons) profiles, start and poll runs, and locate the report a
-finished run wrote.
+finished run wrote. `start`, `add_profile` and `delete_profile` need the write tier; the other
+modes do not.
 
 | Parameter          | Type    | Default | Notes                                                                                                                         |
 | ------------------ | ------- | ------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -1807,12 +1815,13 @@ a started profile runs to completion, so prefer `test` unless you need a longer 
 
 ### `iris_database_stats`
 
-Show size, free space, and block stats for a specific database directory.
+Show free space and free blocks for one database directory, or all of them. Each row is
+`{directory, free_space_mb, free_blocks}`.
 
-| Parameter | Type   | Default | Notes                                 |
-| --------- | ------ | ------- | ------------------------------------- |
-| `db`      | string | —       | **Required.** Database directory path |
-| `server`  | string | —       | Named server; omit for default        |
+| Parameter | Type   | Default | Notes                                            |
+| --------- | ------ | ------- | ------------------------------------------------ |
+| `db`      | string | —       | Database directory path. Omit for every database |
+| `server`  | string | —       | Named server; omit for default                   |
 
 ### `journal_search`
 
@@ -1871,17 +1880,17 @@ stream still answers with `class`, `size` and `line_count`. Under `allow` the ca
 `acknowledgePhi=true`, as `iris_message_body` does, and is refused with `PHI_ACK_REQUIRED` without
 it.
 
-| Parameter        | Type    | Default  | Notes                                                               |
-| ---------------- | ------- | -------- | ------------------------------------------------------------------- |
-| `oid`            | string  | —        | **Required.** Stream OID                                            |
-| `max_chars`      | integer | `20000`  | Most characters to return from the start, at most `1000000` (min 1) |
-| `namespace`      | string  | `"USER"` | Namespace that contains the stream                                  |
-| `acknowledgePhi` | bool    | `false`  | Required when `dataPolicy` is `allow`; `acknowledge_phi` also works |
-| `server`         | string  | —        | Named server; omit for default                                      |
+| Parameter        | Type    | Default          | Notes                                                               |
+| ---------------- | ------- | ---------------- | ------------------------------------------------------------------- |
+| `oid`            | string  | —                | **Required.** Stream OID                                            |
+| `max_chars`      | integer | `20000`          | Most characters to return from the start, at most `1000000` (min 1) |
+| `namespace`      | string  | the connection's | Namespace that contains the stream                                  |
+| `acknowledgePhi` | bool    | `false`          | Required when `dataPolicy` is `allow`; `acknowledge_phi` also works |
+| `server`         | string  | —                | Named server; omit for default                                      |
 
 ### `my_access`
 
-Show current user, roles, and privileges for the connected session.
+Show the current user's name, full name and roles for the connected session.
 
 | Parameter | Type   | Default | Notes                          |
 | --------- | ------ | ------- | ------------------------------ |
@@ -1903,68 +1912,72 @@ List available HL7 2.x schema versions. Returns `HL7_NOT_AVAILABLE` if
 `EnsLib.HL7.Schema` is absent. Requires HealthShare or IRIS for Health — not present on
 plain IRIS regardless of edition.
 
-| Parameter   | Type   | Default | Notes                          |
-| ----------- | ------ | ------- | ------------------------------ |
-| `namespace` | string | —       | Namespace to list from         |
-| `server`    | string | —       | Named server; omit for default |
+| Parameter   | Type   | Default          | Notes                          |
+| ----------- | ------ | ---------------- | ------------------------------ |
+| `namespace` | string | the connection's | Namespace to list from         |
+| `server`    | string | —                | Named server; omit for default |
 
 ### `hl7_schema_inspect`
 
-Show segment definitions, field names, and data types for a specific HL7 schema version
-and optional segment filter.
+With `segment`, list that segment's fields (`field`, `description`) for a specific HL7 schema
+version. Without it, list the message structure names for the schema.
 
-| Parameter   | Type   | Default | Notes                                        |
-| ----------- | ------ | ------- | -------------------------------------------- |
-| `schema`    | string | —       | **Required.** e.g. `"2.6"`                   |
-| `segment`   | string | —       | Segment name filter, e.g. `"PID"` (optional) |
-| `namespace` | string | —       | Namespace to read the schema from            |
-| `server`    | string | —       | Named server; omit for default               |
+| Parameter   | Type   | Default          | Notes                                        |
+| ----------- | ------ | ---------------- | -------------------------------------------- |
+| `schema`    | string | —                | **Required.** e.g. `"2.6"`                   |
+| `segment`   | string | —                | Segment name filter, e.g. `"PID"` (optional) |
+| `namespace` | string | the connection's | Namespace to read the schema from            |
+| `server`    | string | —                | Named server; omit for default               |
 
 ### `mermaid_class`
 
 Generate a Mermaid class diagram showing inheritance for one class. Walks the `Super`
-hierarchy and strips `%`-prefixed system class names.
+hierarchy up to `depth` levels. A `%` in a class name is written `Pct_` in the diagram, so
+`%Library.Persistent` appears as `Pct_Library.Persistent`. The response is
+`{success, class, depth, diagram}`.
 
-| Parameter   | Type   | Default  | Notes                          |
-| ----------- | ------ | -------- | ------------------------------ |
-| `class`     | string | —        | **Required.** Starting class   |
-| `depth`     | number | `3`      | Levels of `Super` to walk      |
-| `namespace` | string | `"USER"` | Namespace to query             |
-| `server`    | string | —        | Named server; omit for default |
+| Parameter   | Type   | Default          | Notes                                   |
+| ----------- | ------ | ---------------- | --------------------------------------- |
+| `class`     | string | —                | **Required.** Starting class            |
+| `depth`     | number | `3`              | Levels of `Super` to walk (clamped 1–5) |
+| `namespace` | string | the connection's | Namespace to query                      |
+| `server`    | string | —                | Named server; omit for default          |
 
 ### `mermaid_production`
 
-Generate a Mermaid flowchart of an Ensemble/IRIS Interoperability production — hosts,
-connections, and enabled/disabled state.
+Generate a Mermaid flowchart with the production as the root and one node per configured item
+(name and class), each linked to the production; disabled items carry `:::disabled`. It does not
+draw routing between items. The response also has `item_count`.
 
-| Parameter    | Type   | Default  | Notes                               |
-| ------------ | ------ | -------- | ----------------------------------- |
-| `production` | string | —        | **Required.** Production class name |
-| `namespace`  | string | `"USER"` | Namespace that hosts the production |
-| `server`     | string | —        | Named server; omit for default      |
+| Parameter    | Type   | Default          | Notes                               |
+| ------------ | ------ | ---------------- | ----------------------------------- |
+| `production` | string | —                | **Required.** Production class name |
+| `namespace`  | string | the connection's | Namespace that hosts the production |
+| `server`     | string | —                | Named server; omit for default      |
 
 ### `resolve_storage`
 
-Show the storage definition (`^oddDEF` structure) for a persistent class. Helps diagnose
+Return the compiled storage entries for a class: `name`, `type`, `data_location`,
+`id_location` and `index_location` (from `%Dictionary.CompiledStorage`). Helps diagnose
 global layout, extents, and index locations.
 
-| Parameter   | Type   | Default  | Notes                          |
-| ----------- | ------ | -------- | ------------------------------ |
-| `class`     | string | —        | **Required.** Class name       |
-| `namespace` | string | `"USER"` | Namespace to query             |
-| `server`    | string | —        | Named server; omit for default |
+| Parameter   | Type   | Default          | Notes                          |
+| ----------- | ------ | ---------------- | ------------------------------ |
+| `class`     | string | —                | **Required.** Class name       |
+| `namespace` | string | the connection's | Namespace to query             |
+| `server`    | string | —                | Named server; omit for default |
 
 ### `compare_document`
 
 Compare a single document (class, routine, or include file) between two IRIS servers.
 Returns `same: true/false` and a unified diff when different.
 
-| Parameter   | Type   | Default  | Notes                                         |
-| ----------- | ------ | -------- | --------------------------------------------- |
-| `document`  | string | —        | **Required.** Document name, e.g. `MyApp.cls` |
-| `server_a`  | string | —        | **Required.** First server name               |
-| `server_b`  | string | —        | **Required.** Second server name              |
-| `namespace` | string | `"USER"` | Namespace on both servers                     |
+| Parameter   | Type   | Default                | Notes                                         |
+| ----------- | ------ | ---------------------- | --------------------------------------------- |
+| `document`  | string | —                      | **Required.** Document name, e.g. `MyApp.cls` |
+| `server_a`  | string | —                      | **Required.** First server name               |
+| `server_b`  | string | —                      | **Required.** Second server name              |
+| `namespace` | string | `server_a`'s namespace | Namespace on both servers                     |
 
 ### `compare_namespace`
 
@@ -1972,19 +1985,19 @@ Compare all classes in a namespace between two IRIS servers. Lists classes only 
 only in B, and classes present in both that differ. Caps comparison at 200 classes to
 avoid overload — `unchecked_count` reports how many were skipped.
 
-| Parameter   | Type   | Default  | Notes                            |
-| ----------- | ------ | -------- | -------------------------------- |
-| `namespace` | string | `"USER"` | Namespace to compare             |
-| `server_a`  | string | —        | **Required.** First server name  |
-| `server_b`  | string | —        | **Required.** Second server name |
+| Parameter   | Type   | Default                | Notes                            |
+| ----------- | ------ | ---------------------- | -------------------------------- |
+| `namespace` | string | `server_a`'s namespace | Namespace to compare             |
+| `server_a`  | string | —                      | **Required.** First server name  |
+| `server_b`  | string | —                      | **Required.** Second server name |
 
 ### System observability
 
 Five read-only `iris_admin` actions give a real-time view into IRIS internals. All run
 against `%SYS` directly — no external monitoring stack required.
 
-**`view_locks`** — lists all active IRIS locks. Each row shows the lock name, lock type
-(shared/exclusive), the owning process ID, and the caller's job ID. Useful for debugging
+**`view_locks`** — lists all active IRIS locks. Each row has `resource` (the lock name),
+`owner_pid`, `lock_type`, `lock_mode` and `owner_username`. Useful for debugging
 contention during long-running transactions or BPL routes that hold locks across
 `Await` calls.
 
@@ -1992,16 +2005,16 @@ contention during long-running transactions or BPL routes that hold locks across
 iris_admin(action="view_locks")
 ```
 
-**`view_processes`** — shows running IRIS processes. Columns include process ID,
-namespace, routine+label (i.e. where the process is executing), CPU time, and whether
-the process is suspended. The `namespace` parameter narrows results to a single
-namespace. Process user names are redacted in the response (PHI precaution) unless the
-call passes `dataPolicy = "allow"`; the default is `block`, which refuses the call
-outright.
+**`view_processes`** — lists running processes from `%SYS.ProcessQuery`: `pid`, `username`,
+`namespace`, `state`, `client_node_name`, `client_ip` and `routine`. The `namespace` parameter
+narrows results to a single namespace. The server's `dataPolicy` decides what you get: `block`
+(the default) refuses the call with `DATA_POLICY_BLOCKED`, `redact` returns the rows with
+`username`, `client_node_name` and `client_ip` replaced by `[REDACTED]`, and `allow` returns them
+as they are. It is not a call parameter.
 
 ```text
-iris_admin(action="view_processes", dataPolicy="redact")
-iris_admin(action="view_processes", dataPolicy="redact", namespace="MYAPP")
+iris_admin(action="view_processes")
+iris_admin(action="view_processes", namespace="MYAPP")
 ```
 
 **`namespace_mappings`** — returns the global, package, and routine mappings for a
@@ -2013,9 +2026,10 @@ EXIST>` errors that turn out to be mapping gaps.
 iris_admin(action="namespace_mappings", namespace="MYAPP")
 ```
 
-**`database_status`** — calls `SYS.Database:FreeSpace` and returns size, free space, and
-journal state for every database. Pass `name` to narrow to a substring match on
-the database path.
+**`database_status`** — calls `SYS.Database:FreeSpace` and returns, for each database,
+`name`, `directory`, `mounted`, `status`, `free_space_mb`, `read_only` and `mirror_state`
+(`none` unless the database is mirrored). Pass `name` to ask `SYS.Database:FreeSpace` about one
+database; a name that matches none is `DATABASE_NOT_FOUND`.
 
 ```text
 iris_admin(action="database_status")
@@ -2061,13 +2075,16 @@ and the records found so far; a truncated answer has not seen the rest of the fi
 
 ---
 
-### `iris_admin` ☠
+<a id="iris_admin-"></a>
+
+### `iris_admin` 🔒 ☠
 
 List namespaces, databases, users, roles, and web apps. Read actions have no tier gate.
-Write actions need the target server's write tier on. The user, namespace and web application
-actions, `clear_password_change_flag`, `unlock_user` and `fresh_container_setup` also need
-`IRIS_ADMIN_TOOLS=1` in the launch settings, which the handler checks after the tier gate
-(`ADMIN_WRITE_DISABLED`).
+Write actions need the target server's write tier on. Create, update and delete of users,
+namespaces and web applications, and `mirror_failover`, need the destructive tier. Those seven
+actions and the three first-boot actions (`clear_password_change_flag`, `unlock_user` and
+`fresh_container_setup`) also need `IRIS_ADMIN_TOOLS=1` in the launch settings, which the
+handler checks after the tier gate (`ADMIN_WRITE_DISABLED`).
 
 **Read actions** (no env gate):
 
@@ -2079,7 +2096,7 @@ actions, `clear_password_change_flag`, `unlock_user` and `fresh_container_setup`
 | `list_roles`         | —                                                                                                          |
 | `list_webapps`       | `type` (string, optional)                                                                                  |
 | `get_webapp`         | `path` (string, required)                                                                                  |
-| `check_permission`   | `resource` (string, required), `permission` (string, required)                                             |
+| `check_permission`   | `resource` (string, required), `permission` (string, optional, default `USE`)                              |
 | `view_locks`         | —                                                                                                          |
 | `view_processes`     | `namespace` (string, optional)                                                                             |
 | `namespace_mappings` | `namespace` (string, optional)                                                                             |
@@ -2107,13 +2124,6 @@ rather than a no-op. `journal_search` needs `dataPolicy = "allow"` on the connec
 
 | Action                       | Parameters                                                                                                                                                                |
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `create_user`                | `username`, `password` (required); `full_name`, `roles` (optional)                                                                                                        |
-| `update_user`                | `username` (required); `password`, `enabled`, `roles` (optional)                                                                                                          |
-| `delete_user`                | `username` (required)                                                                                                                                                     |
-| `create_namespace`           | `name`, `code_database`, `data_database` (all required)                                                                                                                   |
-| `delete_namespace`           | `name` (required)                                                                                                                                                         |
-| `create_webapp`              | `path`, `namespace`, `enabled` (required); `dispatch_class` (optional)                                                                                                    |
-| `delete_webapp`              | `path` (required)                                                                                                                                                         |
 | `clear_password_change_flag` | `username` (default `_SYSTEM`), `password` (default `SYS`), `new_password` (optional, default same as password)                                                           |
 | `unlock_user`                | `username` (required)                                                                                                                                                     |
 | `fresh_container_setup`      | `username` (default `_SYSTEM`), `password` (default `SYS`), `new_password` (optional)                                                                                     |
@@ -2121,9 +2131,16 @@ rather than a no-op. `journal_search` needs `dataPolicy = "allow"` on the connec
 
 **Destructive actions** (require the destructive tier):
 
-| Action            | Parameters                                                                 |
-| ----------------- | -------------------------------------------------------------------------- |
-| `mirror_failover` | `confirm` (bool, required — must be `true`; prevents accidental promotion) |
+| Action             | Parameters                                                                 |
+| ------------------ | -------------------------------------------------------------------------- |
+| `create_user`      | `username`, `password` (required); `full_name`, `roles` (optional)         |
+| `update_user`      | `username` (required); `password`, `enabled`, `roles` (optional)           |
+| `delete_user`      | `username` (required)                                                      |
+| `create_namespace` | `name`, `code_database`, `data_database` (all required)                    |
+| `delete_namespace` | `name` (required)                                                          |
+| `create_webapp`    | `path`, `namespace`, `enabled` (required); `dispatch_class` (optional)     |
+| `delete_webapp`    | `path` (required)                                                          |
+| `mirror_failover`  | `confirm` (bool, required — must be `true`; prevents accidental promotion) |
 
 **Fresh container setup actions** clear the first-boot blockers on a newly-started IRIS
 community container:
@@ -2162,20 +2179,29 @@ iris_admin(action="mirror_failover", confirm=true)
 
 ---
 
-### `iris_containers` ✦
+<a id="iris_containers-"></a>
+
+### `iris_containers` 🔒 ✦
 
 List, select, or start IRIS Docker containers.
 
-| Parameter | Type   | Default | Notes                                                       |
-| --------- | ------ | ------- | ----------------------------------------------------------- |
-| `action`  | string | —       | **Required.** `"list"` \| `"select"` \| `"start"`           |
-| `name`    | string | `""`    | Container name; required for `select`, optional for `start` |
+| Parameter | Type   | Default  | Notes                                                       |
+| --------- | ------ | -------- | ----------------------------------------------------------- |
+| `action`  | string | `"list"` | `"list"` \| `"select"` \| `"start"`                         |
+| `name`    | string | `""`     | Container name; required for `select`, optional for `start` |
 
 Those two are the only parameters this tool reads. `list` scans
 `$OBJECTSCRIPT_WORKSPACE` (falling back to the process working directory) — there is no
 `workspace_root` override. `select` and `start` connect as `_SYSTEM`/`SYS` on the
-`community` edition and take the namespace from the container, so passing `namespace`,
-`username`, `password`, or `edition` has no effect.
+`community` edition, so passing `namespace`, `username`, `password`, or `edition` has no
+effect. `select` uses `IRIS_NAMESPACE` (else `USER`) as the namespace, and re-resolves the write
+and destructive gates for the new container; the response has `write_tools_enabled`. `start` runs
+`idt container up --name <name> --edition community`, and the default name is
+`<project directory name>-iris`.
+
+This is a connection tool: all three actions are judged on the default server. The `live` and
+`test` templates refuse them and an `allow` list needs `admin`. `select` and `start` also need
+the write tier.
 
 ```text
 iris_containers(action="list")
@@ -2221,19 +2247,22 @@ replaces:
 Open a new WebSocket terminal session. Returns a `session` token to pass to subsequent
 calls.
 
-| Parameter   | Type   | Default  | Notes                          |
-| ----------- | ------ | -------- | ------------------------------ |
-| `namespace` | string | `"USER"` | Namespace for the session      |
-| `server`    | string | —        | Named server; omit for default |
+| Parameter   | Type   | Default          | Notes                          |
+| ----------- | ------ | ---------------- | ------------------------------ |
+| `namespace` | string | the connection's | Namespace for the session      |
+| `server`    | string | —                | Named server; omit for default |
 
 The session logs in with the service account's credentials when one is set, and asks IRIS for
 `$USERNAME` once after the prompt; the response carries `identity`. A session whose identity later
-differs from the configured one is refused (`SESSION_IDENTITY_CHANGED`).
+differs from the configured one is refused with `SESSION_IDENTITY_CHANGED` and closed; open a new
+session.
 
-### `iris_ws_exec`
+<a id="iris_ws_exec"></a>
+
+### `iris_ws_exec` 🔒
 
 Execute ObjectScript in an existing session. The session context (variables, open
-devices) persists across calls.
+devices) persists across calls. It needs the write tier, like `iris_execute`.
 
 | Parameter | Type    | Default | Notes                                                                           |
 | --------- | ------- | ------- | ------------------------------------------------------------------------------- |
@@ -2272,7 +2301,9 @@ idempotent: a token that is already closed, or that came from another process, r
 
 ## Learning agent, skills, and knowledge base
 
-### `skill`
+<a id="skill"></a>
+
+### `skill` 🔒 ☠
 
 Manage the learning agent skill registry.
 
@@ -2282,7 +2313,15 @@ Manage the learning agent skill registry.
 | `name`    | string | —       | For `describe`/`forget`                                                           |
 | `query`   | string | —       | For `search`                                                                      |
 
-`action=forget` is ☠ destructive-gated — requires `destructive_tools_enabled = true`.
+`list`, `describe` and `search` are reads. `propose` and any other action need the write tier,
+and `action=forget` is ☠ destructive-gated — requires `destructive_tools_enabled = true`.
+
+`propose` writes a stub skill named `auto-<tool>-<n>` that records the latest tool names; it needs
+at least five calls in the session (`INSUFFICIENT_HISTORY` otherwise). It does not analyze the
+calls.
+
+Set `OBJECTSCRIPT_LEARNING=false` to turn off `skill`, `skill_community`, `kb` and `kb_index`;
+they then return `LEARNING_DISABLED`. The default is on.
 
 Every action runs ObjectScript on the default server through a scratch class, so the default
 server's policy judges the call: `allow` has to list `skill`, `live` and `test` refuse it as
@@ -2293,24 +2332,29 @@ server's policy judges the call: `allow` has to list `skill`, `live` and `test` 
 skill(action="list")
 skill(action="describe", name="objectscript-review")
 skill(action="search", query="status handling")
-skill(action="propose")   # mine recent tool calls into a new skill
+skill(action="propose")   # write a stub skill from the latest tool names
 skill(action="forget", name="outdated-skill")
 ```
 
 ---
 
-### `skill_list`, `skill_search`, `skill_describe`, `skill_forget`
+<a id="skill_list-skill_search-skill_describe-skill_forget"></a>
+
+### `skill_list`, `skill_search`, `skill_describe`, `skill_forget` 🔒 ☠
 
 The same registry as `skill`, one tool per action. `skill_list` and `skill_search` cover the
 skills bundled with the binary (no IRIS needed) and any synthesized ones in `^SKILLS`; each result
 carries `source` (`bundled` or `synthesized`) and `tier`, and the response says how many skills
 each source held, so a zero never means only one place was checked. The bundled copies are what
 the binary embeds. A directory on disk replaces an embedded copy only when it comes from the
-operator; see [skills.md](skills.md#serving-skills-from-a-directory). `skill_forget` is ☠.
+operator; see [skills.md](skills.md#serving-skills-from-a-directory). `skill_list` and `skill_search`
+leave out skills in the `internal` tier; `skill_describe` still returns them by name. Of the four,
+only `skill_forget` is gated: it is ☠.
 
-They read and kill `^SKILLS` through the container's terminal, which is ObjectScript on the default
-server: its template (`live` and `test` refuse them as `execute`), `allow` (`skill`) and write gates
-judge them. When the policy refuses that read, `skill_list`, `skill_search` and `skill_describe`
+They read `^SKILLS` over Atelier SQL and fall back to the container's terminal when the server has
+no Atelier REST; `skill_forget` kills through the terminal and answers `DOCKER_REQUIRED` without a
+container (`IRIS_CONTAINER`). That is ObjectScript on the default server: its template (`live` and
+`test` refuse them as `execute`), `allow` (`skill`) and write gates judge them. When the policy refuses that read, `skill_list`, `skill_search` and `skill_describe`
 still answer from the bundled skills, with `sources.synthesized.searched = false` and
 `sources.synthesized.refused` giving the refusal's `error_code`, `kind` and `lift`. They compile no scratch class, so strict read-only leaves `skill_list`, `skill_search`
 and `skill_describe` answering and refuses `skill_forget` as a destructive call.
@@ -2323,7 +2367,9 @@ and `skill_describe` answering and refuses `skill_forget` as a destructive call.
 | `skill_describe` | `name`    | string | —       | **Required.**                            |
 | `skill_forget`   | `name`    | string | —       | **Required.**                            |
 
-### `skill_community`
+<a id="skill_community"></a>
+
+### `skill_community` 🔒
 
 Browse or install community skills from subscribed GitHub repos. `skill_community_list` lists the
 skills loaded from `--subscribe` packages and takes no parameters.
@@ -2335,11 +2381,17 @@ skills loaded from `--subscribe` packages and takes no parameters.
 
 The `skill_community` dispatcher (both actions) and `agent_info` run on the default server through
 a scratch class and are judged as `skill` does: its `allow`, template and strict rules. The
-registry-only `skill_community_list` is not.
+registry-only `skill_community_list` is not. `install` copies a skill held by a subscribed
+package into `^SKILLS` and needs the write tier; `list` does not. An unknown name is `NOT_FOUND`.
+
+The separate tools `skill_propose`, `skill_optimize`, `skill_share` and
+`skill_community_install` are registered but answer `NOT_IMPLEMENTED`.
 
 ---
 
-### `kb` / `kb_index` / `kb_recall`
+<a id="kb--kb_index--kb_recall"></a>
+
+### `kb` / `kb_index` / `kb_recall` 🔒
 
 Index markdown/text into the IRIS knowledge base, or recall content by keyword.
 
@@ -2379,18 +2431,25 @@ project is skipped and counted in `skipped_outside`. The reply has `truncated` a
 `kb` (both actions) and `kb_index` store and search `^KBCHUNKS` through a scratch class on the
 default server, so that server's policy judges them: `allow` has to list `kb`, `live` and `test`
 refuse them as `execute`, `kb_index` and `kb action=index` need the write tier, and
-`read_only = "strict"` hides them. `kb_recall` reads only the subscribed packages and the local
-registry; no server judges it.
+`read_only = "strict"` hides them. `kb action=index` stores the first 2,000 characters of each
+file, one entry per file name, and `kb action=recall` returns `{file, excerpt}` from what it
+stored. `kb_recall` reads only the knowledge-base items from `--subscribe` packages and the local
+registry; no server judges it. It does not see what `kb_index` or `kb action=index` stored; use
+`kb action=recall` for that. The four dispatchers `skill`, `skill_community`, `kb` and `kb_index`
+are off, answering `LEARNING_DISABLED`, when `OBJECTSCRIPT_LEARNING=false`.
 
 ---
 
 ### `agent_history` / `agent_stats`
 
-Recent tool-call history, and learning agent status. `agent_stats` takes no parameters.
+Recent tool-call history, and learning agent status. `agent_stats` takes no parameters and
+reports `learning_enabled`. `agent_info` returns either view, chosen by `what`.
 
-| Tool            | Parameter | Type | Default |
-| --------------- | --------- | ---- | ------- |
-| `agent_history` | `limit`   | int  | `20`    |
+| Tool            | Parameter | Type   | Default | Notes                                  |
+| --------------- | --------- | ------ | ------- | -------------------------------------- |
+| `agent_history` | `limit`   | int    | `20`    |                                        |
+| `agent_info`    | `what`    | string | —       | **Required.** `"stats"` \| `"history"` |
+| `agent_info`    | `limit`   | int    | `20`    | For `what=history`                     |
 
 ```text
 agent_history(limit=50)
@@ -2408,13 +2467,13 @@ targets where that server's writes are on, read-only mode is not strict and its 
 `subject`, and returns a call that both hold once. `check_config.telemetry_sink` says which is
 set.
 
-| Parameter    | Type   | Default | Notes          |
-| ------------ | ------ | ------- | -------------- |
-| `tool_name`  | string | —       | Filter by tool |
-| `session_id` | string | —       |                |
-| `since`      | string | —       | ISO8601        |
-| `until`      | string | —       | ISO8601        |
-| `limit`      | int    | `500`   |                |
+| Parameter    | Type   | Default | Notes                                     |
+| ------------ | ------ | ------- | ----------------------------------------- |
+| `tool_name`  | string | —       | Filter by tool                            |
+| `session_id` | string | —       | A UUID; anything else is `INVALID_PARAMS` |
+| `since`      | string | —       | ISO8601                                   |
+| `until`      | string | —       | ISO8601                                   |
+| `limit`      | int    | `500`   | Clamped to 5000                           |
 
 ```text
 telemetry_query(tool_name="iris_doc", since="2025-01-01T00:00:00Z")
@@ -2426,10 +2485,10 @@ telemetry_query(tool_name="iris_doc", since="2025-01-01T00:00:00Z")
 
 Export tool calls as `{from, to, via, count, ts}` dispatch-trace records.
 
-| Parameter    | Type   | Default | Notes   |
-| ------------ | ------ | ------- | ------- |
-| `session_id` | string | —       |         |
-| `since`      | string | —       | ISO8601 |
+| Parameter    | Type   | Default | Notes                                     |
+| ------------ | ------ | ------- | ----------------------------------------- |
+| `session_id` | string | —       | A UUID; anything else is `INVALID_PARAMS` |
+| `since`      | string | —       | ISO8601                                   |
 
 ---
 
@@ -2446,9 +2505,10 @@ iris_coverage(mode="run", package="MyApp", test_path="MyApp.Tests", target_pct=8
 iris_test(pattern="MyApp.Tests", coverage=true, coverage_target_pct=80)
 ```
 
-Every response includes `testcoverage_available`. When the
-[TestCoverage](https://github.com/intersystems/TestCoverage) IPM package is installed,
-`cobertura_path` writes Cobertura XML output.
+The `check` and `run` modes include `testcoverage_available`. `cobertura_path` is accepted but
+no file is written; when the [TestCoverage](https://github.com/intersystems/TestCoverage) IPM
+package is not installed, a `run` response carries `cobertura_skipped`, and when it is installed
+the argument has no effect.
 
 **VS Code:** The [InterSystems Testing Manager](https://marketplace.visualstudio.com/items?itemName=intersystems-community.intersystems-testingmanager)
 extension surfaces the same `%UnitTest` classes in the Test Explorer view. Use
