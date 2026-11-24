@@ -933,15 +933,23 @@ The guard is non-configurable and applies to all connections. Error code:
 
 ## Search and introspection
 
+Most tools here read through a scratch class that iad compiles on the server and deletes after the
+call. `read_only = "strict"` refuses those: `docs_introspect`, `resolve_dynamic_dispatch`,
+`extract_message_map_routing`, `find_subclass_implementations`, `iris_table_info` and `iris_debug`.
+`iris_symbols`, `iris_search`, `iris_info`, `iris_macro`, `iris_doc_search`, `iris_get_log` and
+`check_config` still answer.
+
 ### `iris_symbols`
 
-Search classes and methods via `%Dictionary`.
+Search class names in `%Dictionary.ClassDefinition`. A plain term is a substring match, `Pkg.*` a
+package prefix, `*` a glob. Returns `symbols` (rows with a `Name` column) and `count`. It lists no
+methods; use `docs_introspect` for those.
 
-| Parameter   | Type   | Default  | Notes                     |
-| ----------- | ------ | -------- | ------------------------- |
-| `query`     | string | —        | **Required.** Search term |
-| `limit`     | int    | `20`     |                           |
-| `namespace` | string | `"USER"` |                           |
+| Parameter   | Type   | Default                | Notes                     |
+| ----------- | ------ | ---------------------- | ------------------------- |
+| `query`     | string | —                      | **Required.** Search term |
+| `limit`     | int    | `20`                   |                           |
+| `namespace` | string | connection's namespace |                           |
 
 ```text
 iris_symbols(query="IRISDemo.*")
@@ -958,7 +966,7 @@ Search `.cls`/`.mac`/`.inc` files on disk by glob pattern. No IRIS connection re
 | ---------------- | -------- | ------- | ---------------------------------------------------------------------------------------------------------- |
 | `query`          | string   | —       | **Required.** Search string                                                                                |
 | `workspace_path` | string   | —       | Directory to search, inside the [project directory](#project-directory); defaults to the project directory |
-| `limit`          | int      | `50`    |                                                                                                            |
+| `limit`          | int      | `50`    | Clamped to 1 to 500                                                                                        |
 | `kinds`          | string[] | —       | Filter by symbol kind                                                                                      |
 
 ```text
@@ -969,19 +977,22 @@ iris_symbols_local(query="GetStatus", workspace_path="/home/user/myapp")
 The crawl has a budget: 200,000 directory entries, 32 levels and 10 seconds. A crawl that runs out
 stops and returns `truncated: true` with `truncated_reason` set to `file_budget`, `depth_budget` or
 `time_budget`. Stopping at `limit` is not truncation. A path outside the project directory is
-refused with `HOST_PATH_BLOCKED`.
+refused with `HOST_PATH_BLOCKED`. A `workspace_path` that does not exist returns
+`WORKSPACE_NOT_FOUND`. The response carries `count` and `parse_warnings` (for example
+`DUPLICATE_CLASS`).
 
 ---
 
 ### `docs_introspect`
 
-Deep class inspection: methods, properties, parameters, XData blocks, superclasses.
-Returns `xdata_flow` for BPL and DTL classes showing the step tree.
+Class inspection: methods, with `FormalSpec` parsed into `{name, type, byref, output, default}`
+and `ReturnType`, and properties with their types. For BPL and DTL classes it also returns
+`xdata_flow`, the step tree. It returns no class parameters, XData blocks or superclass list.
 
-| Parameter    | Type   | Default  | Notes         |
-| ------------ | ------ | -------- | ------------- |
-| `class_name` | string | —        | **Required.** |
-| `namespace`  | string | `"USER"` |               |
+| Parameter    | Type   | Default                | Notes         |
+| ------------ | ------ | ---------------------- | ------------- |
+| `class_name` | string | —                      | **Required.** |
+| `namespace`  | string | connection's namespace |               |
 
 ```text
 docs_introspect(class_name="MyApp.BP.PatientProcess")
@@ -994,16 +1005,16 @@ docs_introspect(class_name="Ens.BusinessProcess")
 
 Full-text search within a document scope. Supports regex and category filters.
 
-| Parameter        | Type     | Default  | Notes                                                                        |
-| ---------------- | -------- | -------- | ---------------------------------------------------------------------------- |
-| `query`          | string   | —        | **Required.** Search string                                                  |
-| `documents`      | string[] | —        | **Required.** Scope, e.g. `["MyApp.*.cls"]`; empty triggers `SCOPE_REQUIRED` |
-| `regex`          | bool     | `false`  |                                                                              |
-| `case_sensitive` | bool     | `false`  |                                                                              |
-| `category`       | string   | —        | `"CLS"` \| `"MAC"` \| `"INT"` \| `"INC"` \| `"ALL"`                          |
-| `namespace`      | string   | `"USER"` |                                                                              |
-| `limit`          | int      | `200`    | Most matches, 1 to 10000; 200 is Atelier's own default                       |
-| `inline`         | bool     | `false`  | Bypass log store                                                             |
+| Parameter        | Type     | Default                | Notes                                                                        |
+| ---------------- | -------- | ---------------------- | ---------------------------------------------------------------------------- |
+| `query`          | string   | —                      | **Required.** Search string                                                  |
+| `documents`      | string[] | —                      | **Required.** Scope, e.g. `["MyApp.*.cls"]`; empty triggers `SCOPE_REQUIRED` |
+| `regex`          | bool     | `false`                |                                                                              |
+| `case_sensitive` | bool     | `false`                |                                                                              |
+| `category`       | string   | —                      | `"CLS"` \| `"MAC"` \| `"INT"` \| `"INC"` \| `"ALL"`                          |
+| `namespace`      | string   | connection's namespace |                                                                              |
+| `limit`          | int      | `200`                  | Most matches, 1 to 10000; 200 is Atelier's own default                       |
+| `inline`         | bool     | `false`                | Bypass log store                                                             |
 
 Namespace-wide grep times out — always provide a `documents` scope.
 
@@ -1026,13 +1037,14 @@ iris_search(query="##class\(.*Patient", documents=["MyApp.*.cls"], regex=true)
 
 Namespace discovery: documents, jobs, CSP apps, metadata.
 
-| Parameter   | Type   | Default  | Notes                                                                                                                                      |
-| ----------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `what`      | string | —        | **Required.** `"documents"` \| `"modified"` \| `"namespace"` \| `"metadata"` \| `"jobs"` \| `"csp_apps"` \| `"csp_debug"` \| `"sa_schema"` |
-| `doc_type`  | string | —        | `"CLS"` \| `"MAC"` \| `"INT"` \| `"INC"` \| `"CSP"` \| `"ALL"`                                                                             |
-| `name`      | string | —        | For `what=sa_schema`: an XData namespace URL, e.g. `http://www.intersystems.com/deepsee`. Not a cube name                                  |
-| `namespace` | string | `"USER"` |                                                                                                                                            |
-| `inline`    | bool   | `false`  |                                                                                                                                            |
+| Parameter         | Type   | Default                | Notes                                                                                                                                      |
+| ----------------- | ------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `what`            | string | —                      | **Required.** `"documents"` \| `"modified"` \| `"namespace"` \| `"metadata"` \| `"jobs"` \| `"csp_apps"` \| `"csp_debug"` \| `"sa_schema"` |
+| `doc_type`        | string | —                      | `"CLS"` \| `"MAC"` \| `"INT"` \| `"INC"` \| `"CSP"` \| `"ALL"`                                                                             |
+| `name`            | string | —                      | For `what=sa_schema`: an XData namespace URL, e.g. `http://www.intersystems.com/deepsee`. Not a cube name                                  |
+| `namespace`       | string | connection's namespace |                                                                                                                                            |
+| `inline`          | bool   | `false`                | Return the document list in the response instead of the log store; capped at 500 documents (`truncated` and `total_count` say so)          |
+| `include_scratch` | bool   | `false`                | `what=documents` only: also list iad's own `IrisDevTmp.*` scratch classes. Hidden otherwise, and `scratch_hidden` counts them              |
 
 ```text
 iris_info(what="namespace")
@@ -1040,6 +1052,10 @@ iris_info(what="documents", doc_type="CLS")
 iris_info(what="jobs")
 iris_info(what="sa_schema", name="http://www.intersystems.com/deepsee")
 ```
+
+For `what=documents` the list comes back under a top-level `documents` key. Without `inline` it goes to
+the log store above 30 entries (`IRIS_INLINE_INFO` changes that), and `iris_get_log` reads the rest. With
+`inline=true` it is cut at 500 (`IRIS_INFO_MAX_DOCUMENTS` changes that), and `hint` says how to narrow it.
 
 `what=sa_schema` returns the Studio Assist grammar for that XData namespace. It does not list or describe BI cubes: run `%DeepSee.Utils` `%GetCubeList` and `%GetDimensionList` through `iris_execute` for those. A name that is not a URL is refused with `INVALID_PARAMS`, and a URL with no grammar returns `SA_SCHEMA_NOT_FOUND`. While IRIS is still building a grammar (fresh instance, or a cube class compiled since the last build), iad waits up to ten seconds, then returns `SA_SCHEMA_PENDING`.
 
@@ -1049,7 +1065,9 @@ iris_info(what="sa_schema", name="http://www.intersystems.com/deepsee")
 
 Search the InterSystems documentation site (docs.intersystems.com) through its Algolia index.
 This is the one tool that sends text to a third party: the search text the agent wrote goes to
-that service, with no IRIS credentials or data. It belongs to the `docs` category.
+that service, with no IRIS credentials or data. On first use it also fetches a docs.intersystems.com
+page to read the search key, and answers `DOC_SEARCH_KEY_UNAVAILABLE` if it cannot. It belongs to the
+`docs` category.
 
 | Parameter | Type   | Default | Notes                             |
 | --------- | ------ | ------- | --------------------------------- |
@@ -1058,7 +1076,8 @@ that service, with no IRIS credentials or data. It belongs to the `docs` categor
 | `product` | string | none    | e.g. `"InterSystems IRIS"`        |
 | `hits`    | int    | `5`     | Most hits to return; capped at 10 |
 
-Returns `{query, total_hits, hits: [{title, url, excerpt, breadcrumbs, version, product}]}`.
+Returns `{query, total_hits, hits: [{title, url, excerpt, breadcrumbs, version, product}]}`. An excerpt
+is cut at 600 bytes.
 
 ---
 
@@ -1066,13 +1085,13 @@ Returns `{query, total_hits, hits: [{title, url, excerpt, breadcrumbs, version, 
 
 Inspect `$$$` macros: list, signature, location, definition, expand.
 
-| Parameter   | Type     | Default  | Notes                                                                                   |
-| ----------- | -------- | -------- | --------------------------------------------------------------------------------------- |
-| `action`    | string   | —        | **Required.** `"list"` \| `"signature"` \| `"location"` \| `"definition"` \| `"expand"` |
-| `name`      | string   | —        | Macro name, with or without `$$$`. Required for every action but `list`                 |
-| `args`      | string[] | `[]`     | Arguments for `expand`                                                                  |
-| `includes`  | string[] | —        | Include files to look in, e.g. `["EnsConstants"]`. See below                            |
-| `namespace` | string   | `"USER"` |                                                                                         |
+| Parameter   | Type     | Default                | Notes                                                                                   |
+| ----------- | -------- | ---------------------- | --------------------------------------------------------------------------------------- |
+| `action`    | string   | —                      | **Required.** `"list"` \| `"signature"` \| `"location"` \| `"definition"` \| `"expand"` |
+| `name`      | string   | —                      | Macro name, with or without `$$$`. Required for every action but `list`                 |
+| `args`      | string[] | `[]`                   | Arguments for `expand`                                                                  |
+| `includes`  | string[] | —                      | Include files to look in, e.g. `["EnsConstants"]`. See below                            |
+| `namespace` | string   | connection's namespace |                                                                                         |
 
 System macros such as `$$$OK` resolve without an include. Other macros need the include that defines them. If you leave `includes` out, iad searches every include file in the namespace and answers from the one that defines the macro. The answer names that file in `document` and `line`. If you pass `includes`, iad looks only there.
 
@@ -1092,13 +1111,16 @@ iris_macro(action="expand", name="ISERR", args=["sc"])
 
 ### `iris_table_info`
 
-Inspect a SQL table: storage type, backing globals, optional row count.
+Inspect a SQL table: storage type, backing globals, optional row count. A table projected from a class
+returns `type: "class_projection"` with the class's real global names. A table created by DDL has no
+class, so iad infers the global names from the table name (`^Schema.TableD`, `I`, `C`) and returns
+`type: "ddl_table"`.
 
-| Parameter           | Type   | Default  | Notes                                 |
-| ------------------- | ------ | -------- | ------------------------------------- |
-| `table`             | string | —        | **Required.** `"Schema.Table"` format |
-| `include_row_count` | bool   | `false`  |                                       |
-| `namespace`         | string | `"USER"` |                                       |
+| Parameter           | Type   | Default                | Notes                                 |
+| ------------------- | ------ | ---------------------- | ------------------------------------- |
+| `table`             | string | —                      | **Required.** `"Schema.Table"` format |
+| `include_row_count` | bool   | `false`                |                                       |
+| `namespace`         | string | connection's namespace |                                       |
 
 ```text
 iris_table_info(table="MyApp.Patient")
@@ -1109,15 +1131,18 @@ iris_table_info(table="MyApp.Patient", include_row_count=true)
 
 ### `resolve_dynamic_dispatch`
 
-Resolve `$classmethod`/`##class({var})` polymorphic dispatch to concrete candidate
-classes, with confidence scores.
+List the classes that define a method of this name, as candidates for a dynamic call
+(`$classmethod`, `##class({var})`). It reads no call site. `confidence` depends on the candidate
+count alone: 0.90 for one, 0.75 for 2 to 5, 0.55 for 6 to 20, 0.30 above that. `truncated` is true when
+the count reaches `limit`. The answer is cached for 60 seconds, so a class compiled a moment ago may
+not show.
 
-| Parameter        | Type   | Default  | Notes                                            |
-| ---------------- | ------ | -------- | ------------------------------------------------ |
-| `method_name`    | string | —        | **Required.**                                    |
-| `package_prefix` | string | —        | Restrict candidates to a package, e.g. `"MyApp"` |
-| `limit`          | int    | `50`     |                                                  |
-| `namespace`      | string | `"USER"` |                                                  |
+| Parameter        | Type   | Default                | Notes                                            |
+| ---------------- | ------ | ---------------------- | ------------------------------------------------ |
+| `method_name`    | string | —                      | **Required.**                                    |
+| `package_prefix` | string | —                      | Restrict candidates to a package, e.g. `"MyApp"` |
+| `limit`          | int    | `50`                   |                                                  |
+| `namespace`      | string | connection's namespace |                                                  |
 
 ```text
 resolve_dynamic_dispatch(method_name="ProcessRequest", package_prefix="MyApp")
@@ -1127,12 +1152,17 @@ resolve_dynamic_dispatch(method_name="ProcessRequest", package_prefix="MyApp")
 
 ### `extract_message_map_routing`
 
-Extract a compiled Ensemble `MessageMap` routing table from a BusinessProcess or Router.
+Extract the routing table from a business process or router. A class with a `MessageMap` XData block
+returns its routes. A BPL class returns `kind: "bpl"` with routes taken from its `Call` steps
+(confidence 0.8), and a DTL class returns `kind: "dtl"` with `source_class` and `target_class` and no
+routes. A class that is none of these returns `NOT_FOUND`. The `MessageMap` is read as the first 32,000
+characters of the XData, and routes past that are dropped without a flag. The answer is cached for 60
+seconds.
 
-| Parameter    | Type   | Default  | Notes         |
-| ------------ | ------ | -------- | ------------- |
-| `class_name` | string | —        | **Required.** |
-| `namespace`  | string | `"USER"` |               |
+| Parameter    | Type   | Default                | Notes         |
+| ------------ | ------ | ---------------------- | ------------- |
+| `class_name` | string | —                      | **Required.** |
+| `namespace`  | string | connection's namespace |               |
 
 ```text
 extract_message_map_routing(class_name="MyApp.BP.PatientProcess")
@@ -1142,14 +1172,15 @@ extract_message_map_routing(class_name="MyApp.BP.PatientProcess")
 
 ### `find_subclass_implementations`
 
-Find all concrete subclass implementations of a method across the inheritance hierarchy.
+Find all concrete subclass implementations of a method across the inheritance hierarchy. `limit` caps
+the matches after the hierarchy filter, not the walk. The answer is cached for 60 seconds.
 
-| Parameter      | Type     | Default  | Notes                        |
-| -------------- | -------- | -------- | ---------------------------- |
-| `method_name`  | string   | —        | **Required.**                |
-| `base_classes` | string[] | —        | **Required.** Non-empty list |
-| `limit`        | int      | `100`    |                              |
-| `namespace`    | string   | `"USER"` |                              |
+| Parameter      | Type     | Default                | Notes                        |
+| -------------- | -------- | ---------------------- | ---------------------------- |
+| `method_name`  | string   | —                      | **Required.**                |
+| `base_classes` | string[] | —                      | **Required.** Non-empty list |
+| `limit`        | int      | `100`                  |                              |
+| `namespace`    | string   | connection's namespace |                              |
 
 ```text
 find_subclass_implementations(method_name="OnProcessInput",
@@ -1162,22 +1193,27 @@ find_subclass_implementations(method_name="OnProcessInput",
 
 ### `iris_debug`
 
-Map INT offsets to source lines, fetch error logs, capture error state.
+Map INT offsets to source lines, report a class's source map, and capture `$ZERROR` and `$ZPOSITION`.
 
-| Parameter      | Type   | Default  | Notes                                                                        |
-| -------------- | ------ | -------- | ---------------------------------------------------------------------------- |
-| `action`       | string | —        | **Required.** `"map_int"` \| `"error_logs"` \| `"capture"` \| `"source_map"` |
-| `error_string` | string | —        | For `action=map_int`, e.g. `"^MyApp.Patient.1+42"`                           |
-| `class_name`   | string | —        | For `action=source_map`                                                      |
-| `limit`        | int    | `20`     |                                                                              |
-| `namespace`    | string | `"USER"` |                                                                              |
+| Parameter      | Type   | Default                | Notes                                                                                                       |
+| -------------- | ------ | ---------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `action`       | string | —                      | **Required.** `"map_int"` \| `"error_logs"` \| `"capture"` \| `"source_map"`                                |
+| `error_string` | string | —                      | For `action=map_int`: the IRIS error text with its `<NAME>` prefix, e.g. `"<UNDEFINED>x+3^MyApp.Patient.1"` |
+| `class_name`   | string | —                      | For `action=source_map`                                                                                     |
+| `limit`        | int    | `20`                   | Read by no action                                                                                           |
+| `namespace`    | string | connection's namespace |                                                                                                             |
 
 ObjectScript errors report INT line numbers. `map_int` resolves them to source
-locations.
+locations. A string that does not name a place (`<NAME>label+offset^routine`) returns
+`INVALID_PARAMS`.
+
+`error_logs` returns an empty `logs` list and a note: it does not read the IRIS error log. `capture`
+reads `$ZERROR` and `$ZPOSITION` in the scratch process iad starts for the call, not in the process
+whose error you want.
 
 ```text
-iris_debug(action="map_int", error_string="^MyApp.Patient.1+42^MyApp.Patient")
-iris_debug(action="error_logs", limit=50)
+iris_debug(action="map_int", error_string="<UNDEFINED>x+3^MyApp.Patient.1")
+iris_debug(action="source_map", class_name="MyApp.Patient")
 iris_debug(action="capture")
 ```
 
@@ -1187,11 +1223,14 @@ iris_debug(action="capture")
 
 Retrieve a full result when a tool returns `truncated: true`.
 
-| Parameter | Type   | Default | Notes                                           |
-| --------- | ------ | ------- | ----------------------------------------------- |
-| `id`      | string | —       | Log entry UUID; omit to list all stored entries |
-| `limit`   | int    | —       | Max entries; must be > 0 if provided            |
-| `offset`  | int    | `0`     | Start index into stored results                 |
+| Parameter | Type   | Default | Notes                                                    |
+| --------- | ------ | ------- | -------------------------------------------------------- |
+| `id`      | string | —       | Log entry UUID; omit to list all stored entries          |
+| `limit`   | int    | —       | Page size for one stored result; needs `id`; must be > 0 |
+| `offset`  | int    | `0`     | Start index into that result; needs `id`                 |
+
+An unknown `id` returns `LOG_NOT_FOUND`, and one past its time to live returns `LOG_EXPIRED`. The
+listing without `id` ignores `limit` and `offset`.
 
 ```text
 iris_get_log(id="a1b2c3d4-...")
@@ -1207,31 +1246,33 @@ everything else does not. It makes no IRIS network call, except one `GET /api/at
 service account (sending no code) when `IRIS_SERVICE_USERNAME` is set, to report whether that
 account can log in. Run this first if anything seems misconfigured.
 
-| Field                                                              | What it says                                                                                                                                                                                                                                                                                                                                              |
-| ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `server_version`, `connected`, `connection_source`, `iris_version` | Which build is running, and how the default server was found: `connection_source` is `config_file`, `env_vars`, `iris_select_container` or `auto_discovered`                                                                                                                                                                                              |
-| `host`, `port`, `namespace`, `container`, `capabilities`           | The resolved default connection and what it can do (`atelier_rest`, `compile_path`, `private_web_server`, `webgateway_url`)                                                                                                                                                                                                                               |
-| `config_file`, `config_watch_path`, `config_loaded_at`             | The file that chose the connection (a file names one only through `host` or `container`), the path iad watches for a new project file (never the operator file), and when it last loaded. A file that holds neither is `config_file_named_no_target`, with a `config_file_warning` saying so and that `connection_source` names what chose the connection |
-| `config_sources`                                                   | `operator_file` (`path`, `loaded`) and `workspace_file` (`path`, `kind`, `named_by`, `trust`, and `changed`/`lift` when trust lapsed or is missing)                                                                                                                                                                                                       |
-| `effective_policy`                                                 | One entry per server, `default` first: each part (`mcpTemplate`, `allow`, `dataPolicy`, `globalBlocklist`, `irisAudit`, `writeTools`, `destructiveTools`, `role`, `compileTimeGate`) as `{value, from, file?, set_aside?}`, where `from` is `launch`, `operator_file`, `trusted_file`, `workspace_file`, `system_mode` or `strict_default`                |
-| `set_aside`                                                        | Everything iad read and did not act on: `{id, kind, setting, server, file, reason, lift}`; see [Set-aside items](connecting.md#set-aside-items)                                                                                                                                                                                                           |
-| `write_tools_enabled`, `write_tools_source`                        | The default server's write tier and what decided it: `operator_env`, `config_file`, `legacy_allow_prod`, `inferred_system_mode`, `inferred_namespace`, `inferred_default` or `fail_closed`                                                                                                                                                                |
-| `destructive_tools_enabled`, `destructive_tools_source`            | The same for the destructive tier                                                                                                                                                                                                                                                                                                                         |
-| `compile_time_gate`                                                | `{enabled, from, file, set_aside}` for the [compile-time gate](connecting.md#compile-time-gate)                                                                                                                                                                                                                                                           |
-| `identity`                                                         | Who the agent's code would run as: `service_account`, `os_user_opt_in` (`enabled`, `source`, `ignored`), `paths` (`http`, `docker_local`, `docker_ssh`, `ws_terminal`), `servers` and the `tools` covered. `http` reports `login` from one `GET /api/atelier/` that sends no code                                                                         |
-| `tls_verify`, `tls`                                                | The default connection's certificate check, and every server's with its `source` (`default`, `launch_env`, `config_file`, `servers_json`, `server_manager`)                                                                                                                                                                                               |
-| `discovery`                                                        | `skipped`: listeners the localhost scan did not send a credential to, with port and reason                                                                                                                                                                                                                                                                |
-| `credentials_withheld`                                             | The environment credentials kept from a host a project file named, and what to do                                                                                                                                                                                                                                                                         |
-| `ungated_tools`                                                    | The tools no category gate judges, an explicit list (`check_config`, which makes no IRIS call). Every other tool has a category; a tool with none is treated as `execute` and `admin` by the environment template and `allow`, so a tool added without a category is blocked, not open                                                                    |
-| `read_only`, `read_only_from`                                      | `strict` or `off`, and what asked for it                                                                                                                                                                                                                                                                                                                  |
-| `telemetry_sink`                                                   | `local` (the default) or `iris`: telemetry always goes to the local file, and `iris` adds the IRIS global where the call's server allows it                                                                                                                                                                                                               |
-| `audit`                                                            | The local audit log: its `path` and whether it keeps `payloads` as `sizes` or `full`                                                                                                                                                                                                                                                                      |
-| `skills`                                                           | Where served skills came from: `override_dir`, `override_kind`, `local_skills`, `ignored_dir` (a project's `skills/skills` left unread)                                                                                                                                                                                                                   |
-| `server_manager`                                                   | Whether Server Manager profiles were found and whether each credential resolved                                                                                                                                                                                                                                                                           |
-| `config_errors`                                                    | Values iad corrected or did not understand, and strict read-only combined with `irisAudit`                                                                                                                                                                                                                                                                |
-| `config_parse_error`                                               | Present when a configuration file does not parse; every IRIS tool then answers `CONFIG_INVALID`                                                                                                                                                                                                                                                           |
-| _(failure count)_                                                  | Present when `irisAudit` emission has failed; the field is named in [connecting.md](connecting.md#irisaudit--opt-in-sysaudit-emission)                                                                                                                                                                                                                    |
-| `fallback_warning`                                                 | Present when the connection came from discovery with no configuration file, so the agent may be attached to the wrong instance                                                                                                                                                                                                                            |
+| Field                                                              | What it says                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `server_version`, `connected`, `connection_source`, `iris_version` | Which build is running, and how the default server was found: `connection_source` is `config_file`, `env_vars`, `iris_select_container` or `auto_discovered`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `host`, `port`, `namespace`, `container`, `capabilities`           | The resolved default connection and what it can do (`atelier_rest`, `compile_path`, `private_web_server`, `webgateway_url`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `config_file`, `config_watch_path`, `config_loaded_at`             | The file that chose the connection (a file names one only through `host` or `container`), the path iad watches for a new project file (never the operator file), and when it last loaded. A file that holds neither is `config_file_named_no_target`, with a `config_file_warning` saying so and that `connection_source` names what chose the connection                                                                                                                                                                                                                                                                                                                  |
+| `config_sources`                                                   | `operator_file` (`path`, `loaded`) and `workspace_file` (`path`, `kind`, `named_by`, `trust`, and `changed`/`lift` when trust lapsed or is missing)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `effective_policy`                                                 | One entry per server, `default` among them: each part (`mcpTemplate`, `allow`, `dataPolicy`, `globalBlocklist`, `dataPolicyKillAllowlist`, `irisAudit`, `writeTools`, `destructiveTools`, `role`, `compileTimeGate`) as `{value, from, file?, set_aside?}`, where `from` is `launch`, `operator_file`, `trusted_file`, `workspace_file`, `system_mode`, `strict_default` or, for `writeTools` and `destructiveTools` that strict read-only closed, `read_only_strict`. A part that combines two files (the blocklists, `irisAudit`) lists both in `from`. `compileTimeGate.value` is `"on"` or `"off"`, and `mcpTemplate` carries a `detail` when the system mode chose it |
+| `set_aside`                                                        | Everything iad read and did not act on: `{id, kind, setting, server, file, reason, lift}`; see [Set-aside items](connecting.md#set-aside-items)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `write_tools_enabled`, `write_tools_source`                        | The default server's write tier and what decided it: `read_only_strict`, `operator_env`, `operator_file`, `config_file`, `legacy_allow_prod`, `inferred_system_mode`, `inferred_namespace`, `inferred_default` or `fail_closed`                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `destructive_tools_enabled`, `destructive_tools_source`            | The same for the destructive tier                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `compile_time_gate`                                                | `{enabled, from, file, set_aside}` for the [compile-time gate](connecting.md#compile-time-gate)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `identity`                                                         | Who the agent's code would run as: `service_account`, `os_user_opt_in` (`enabled`, `source`, `ignored`), `paths` (`http`, `docker_local`, `docker_ssh`, `ws_terminal`), `servers` and the `tools` covered. `http` reports `login` from one `GET /api/atelier/` that sends no code                                                                                                                                                                                                                                                                                                                                                                                          |
+| `tls_verify`, `tls`                                                | The default connection's certificate check, and every server's with its `source` (`default`, `launch_env`, `config_file`, `servers_json`, `server_manager`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `discovery`                                                        | `skipped`: listeners the localhost scan did not send a credential to, with port and reason                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `credentials_withheld`                                             | The reason text for any credential kept from the default server: environment credentials kept from a host a project file named, a Server Manager secret for another endpoint, or a `.vscode` entry with no password                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `ungated_tools`                                                    | The tools no category gate judges, an explicit list (`check_config`, which makes no IRIS call). Every other tool has a category; a tool with none is treated as `execute` and `admin` by the environment template and `allow`, so a tool added without a category is blocked, not open                                                                                                                                                                                                                                                                                                                                                                                     |
+| `read_only`, `read_only_from`                                      | `strict` or `off`, and what asked for it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `scm_opt_ins`                                                      | `{checkin, disconnect}`: whether each source-control opt-in is on                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `objectscript_workspace`                                           | The `OBJECTSCRIPT_WORKSPACE` value, or null                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `telemetry_sink`                                                   | `local` (the default) or `iris`: telemetry always goes to the local file, and `iris` adds the IRIS global where the call's server allows it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `audit`                                                            | The local audit log: its `path` and whether it keeps `payloads` as `sizes` or `full`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `skills`                                                           | Where served skills came from: `override_dir`, `override_kind`, `local_skills`, `ignored_dir` (a project's `skills/skills` left unread) and `ignored_hint`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `server_manager`                                                   | Whether Server Manager profiles were found and whether each credential resolved                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `config_errors`                                                    | Values iad corrected or did not understand, and strict read-only combined with `irisAudit`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `config_parse_error`                                               | Present when a configuration file does not parse; every IRIS tool then answers `CONFIG_INVALID`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| _(failure count)_                                                  | Present when `irisAudit` emission has failed; the field is named in [connecting.md](connecting.md#irisaudit--opt-in-sysaudit-emission)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `fallback_warning`                                                 | Present when the connection came from discovery with no configuration file, so the agent may be attached to the wrong instance                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 A call to a project that has a file with loosening settings it has not trusted shows them here
 before anything is refused:
@@ -1248,7 +1289,7 @@ before anything is refused:
       "kind": "workspace_file",
       "named_by": null,
       "trust": "untrusted",
-      "lift": "run `iris-agentic-dev trust /work/app/.iris-agentic-dev.toml` in a terminal"
+      "lift": "run `iris-agentic-dev trust /work/app/.iris-agentic-dev.toml` in a terminal, then restart iad"
     }
   },
   "set_aside": [
@@ -1259,7 +1300,7 @@ before anything is refused:
       "server": "default",
       "file": "/work/app/.iris-agentic-dev.toml",
       "reason": "the file is not trusted",
-      "lift": "run `iris-agentic-dev trust /work/app/.iris-agentic-dev.toml` in a terminal"
+      "lift": "run `iris-agentic-dev trust /work/app/.iris-agentic-dev.toml` in a terminal, then restart iad"
     }
   ]
 }
@@ -1269,41 +1310,50 @@ before anything is refused:
 
 ## Generation
 
-### `iris_generate`
+<a id="iris_generate"></a>
 
-Build a context-rich prompt for generating ObjectScript. Pulls relevant class
-definitions and coding conventions into a structured prompt. No API key required.
+### `iris_generate` 🔒
 
-| Parameter     | Type   | Default   | Notes                          |
-| ------------- | ------ | --------- | ------------------------------ |
-| `description` | string | —         | **Required.** What to generate |
-| `gen_type`    | string | `"class"` | `"class"` \| `"test"`          |
-| `class_name`  | string | —         | Source class for context       |
-| `namespace`   | string | `"USER"`  |                                |
+Build a prompt for generating ObjectScript. With `gen_type="class"` it reads the names of ten
+non-system classes to guess a package prefix; with `gen_type="test"` it reads the methods of
+`class_name`. The rest is a fixed prompt. No API key required. It needs the write tier although it
+only reads and writes nothing.
+
+| Parameter     | Type   | Default                | Notes                                                          |
+| ------------- | ------ | ---------------------- | -------------------------------------------------------------- |
+| `description` | string | —                      | **Required.** What to generate                                 |
+| `gen_type`    | string | `"class"`              | `"class"` \| `"test"`                                          |
+| `class_name`  | string | —                      | The class to write tests for; used only with `gen_type="test"` |
+| `namespace`   | string | connection's namespace |                                                                |
 
 ```text
-iris_generate(description="A REST API handler that validates patient demographics",
-              class_name="MyApp.Patient")
+iris_generate(description="A REST API handler that validates patient demographics")
+iris_generate(description="Cover the happy path", gen_type="test", class_name="MyApp.Patient")
 ```
 
 ---
 
-### `iris_generate_class`
+<a id="iris_generate_class"></a>
 
-Generate a class from a description, store it and compile it. Requires an LLM API key in the
-connection config. The generated text is stored under the name it declares, replacing any class of
+### `iris_generate_class` 🔒
+
+Generate a class from a description, store it and compile it. Requires `IRIS_GENERATE_CLASS_MODEL`
+and the matching key in iad's environment: `ANTHROPIC_API_KEY` for a Claude model, `OPENAI_API_KEY` for
+any other. `IRIS_GENERATE_TIMEOUT` sets the call timeout (default 60 seconds). Without them the call
+fails with `LLM_UNAVAILABLE`. The description is sent to that provider. The generated text is stored under the name it declares, replacing any class of
 that name, and compiled the way `iris_doc` put with `compile` does it: the compile-time gate reads
 the text, the stored `.inc` files it includes are checked, and a superclass IRIS would compile with
 it must be up to date. A refusal comes back as an error result and nothing is compiled. When IRIS
 reports compile errors the model gets them once to fix the class, and the fixed text goes through
 the same checks. The response carries `class_name`, `class_text`, `compiled`, `retried` and
-`compile_errors`.
+`compile_errors`. Model output with no usable class name, or that fails syntax validation, returns
+`INVALID_OUTPUT`. It stores through a scratch class, so `read_only = "strict"` refuses it.
 
-| Parameter     | Type   | Default  | Notes                                                                                          |
-| ------------- | ------ | -------- | ---------------------------------------------------------------------------------------------- |
-| `description` | string | —        | **Required.**                                                                                  |
-| `overwrite`   | bool   | `false`  | Accepted and not read: the generated class replaces a stored class of the same name either way |
-| `namespace`   | string | `"USER"` |                                                                                                |
+| Parameter     | Type   | Default                | Notes                                                                                          |
+| ------------- | ------ | ---------------------- | ---------------------------------------------------------------------------------------------- |
+| `description` | string | —                      | **Required.**                                                                                  |
+| `overwrite`   | bool   | `false`                | Accepted and not read: the generated class replaces a stored class of the same name either way |
+| `namespace`   | string | connection's namespace |                                                                                                |
 
 ```text
 iris_generate_class(description="A %Persistent class storing patient visit records with indexes on PatientID and VisitDate")
@@ -1311,14 +1361,20 @@ iris_generate_class(description="A %Persistent class storing patient visit recor
 
 ---
 
-### `iris_generate_test`
+<a id="iris_generate_test"></a>
 
-Generate `%UnitTest` scaffolding for an existing class.
+### `iris_generate_test` 🔒
 
-| Parameter    | Type   | Default  | Notes         |
-| ------------ | ------ | -------- | ------------- |
-| `class_name` | string | —        | **Required.** |
-| `namespace`  | string | `"USER"` |               |
+Ask the configured model for a `%UnitTest.TestCase` for `class_name`. It needs `IRIS_GENERATE_CLASS_MODEL`
+and a key, as `iris_generate_class` does, and answers `LLM_UNAVAILABLE` without them. It introspects the
+class's methods, then returns `class_name`, `test_class_name`, `test_text` and `introspected`. It stores
+and compiles nothing: put the text with `iris_doc`. Model output that fails syntax validation returns
+`INVALID_OUTPUT`.
+
+| Parameter    | Type   | Default                | Notes         |
+| ------------ | ------ | ---------------------- | ------------- |
+| `class_name` | string | —                      | **Required.** |
+| `namespace`  | string | connection's namespace |               |
 
 ```text
 iris_generate_test(class_name="MyApp.Service")
@@ -1328,26 +1384,32 @@ iris_generate_test(class_name="MyApp.Service")
 
 ## Interoperability
 
-### `iris_production` ✦
+These tools work over HTTP, with no container. With no HTTP route (a NoPWS instance) they run through
+`docker exec`, as `iris_execute` does. Most read through a scratch class that iad compiles on the
+server and deletes after the call, and `read_only = "strict"` refuses those: `iris_production`,
+`iris_production_item`, `iris_production_diff`, `iris_message_body`, `iris_business_rule_info`,
+`iris_credential_manage`, `iris_lookup_manage` and `iris_lookup_transfer`. `iris_interop_query` and
+`iris_credential_list` still answer.
 
-Start, stop, update, check, or recover a production.
+### `iris_production` 🔒
 
-| Parameter         | Type   | Default  | Notes                                                                                                                                 |
-| ----------------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `action`          | string | —        | **Required.** `"status"` \| `"start"` \| `"stop"` \| `"update"` \| `"check"` \| `"recover"` \| `"get_autostart"` \| `"set_autostart"` |
-| `production_name` | string | —        | Production class name for `start` and `stop`; defaults to the currently running production                                            |
-| `production`      | string | —        | `set_autostart` only — the class name to autostart. **No other action reads this key**                                                |
-| `timeout`         | int    | `30`     | Seconds; `stop` only                                                                                                                  |
-| `force`           | bool   | `false`  | `stop` only                                                                                                                           |
-| `full`            | bool   | `false`  | `status` only: include per-item state                                                                                                 |
-| `enabled`         | bool   | —        | `set_autostart` only                                                                                                                  |
-| `namespace`       | string | `"USER"` |                                                                                                                                       |
+Start, stop, update, check, or recover a production. `status`, `check` and `get_autostart` read and
+need no write tier. `start`, `stop`, `update`, `recover` and `set_autostart` need the write tier.
+
+| Parameter         | Type   | Default                | Notes                                                                                                                   |
+| ----------------- | ------ | ---------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `action`          | string | `"status"`             | `"status"` \| `"start"` \| `"stop"` \| `"update"` \| `"check"` \| `"recover"` \| `"get_autostart"` \| `"set_autostart"` |
+| `production_name` | string | —                      | `start` only: the production class name. `stop`, `update` and `recover` act on the running production                   |
+| `production`      | string | —                      | `set_autostart` only — the class name to autostart. **No other action reads this key**                                  |
+| `timeout`         | int    | `30`                   | Seconds; `stop` only. `update` always uses 30                                                                           |
+| `force`           | bool   | `false`                | `stop` only. `update` never forces                                                                                      |
+| `enabled`         | bool   | `true`                 | `set_autostart` only; `false` clears the autostart production                                                           |
+| `namespace`       | string | connection's namespace |                                                                                                                         |
 
 `production_name` and `production` are two distinct keys, and each action reads exactly
 one of them. Passing `production` to `start` is silently ignored — the production name
-comes out empty and the call starts nothing.
-
-Actions that modify production state require `IRIS_CONTAINER`.
+goes out empty. With `set_autostart` and no `production`, the running production is used
+(`NO_PRODUCTION` if none runs).
 
 ```text
 iris_production(action="status")
@@ -1358,28 +1420,30 @@ iris_production(action="set_autostart", production="MyApp.Production", enabled=t
 
 ---
 
-### `iris_interop_query` ✦
+<a id="iris_interop_query-"></a>
+
+### `iris_interop_query`
 
 Query production logs, queue depths, or message archive.
 
-| Parameter        | Type            | Default           | Notes                                                                                                                                |
-| ---------------- | --------------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `what`           | string          | `"logs"`          | Enum: `"logs"` \| `"queues"` \| `"messages"`                                                                                         |
-| `component`      | string          | —                 | `logs`: filter by business host name                                                                                                 |
-| `log_type`       | string          | `"error,warning"` | `logs` only; comma-separated, see below                                                                                              |
-| `limit`          | int             | `50`              | Applies to `logs` and `messages`                                                                                                     |
-| `source`         | string          | —                 | `messages`: filter by source                                                                                                         |
-| `target`         | string          | —                 | `messages`: filter by target                                                                                                         |
-| `message_class`  | string          | —                 | `messages`: filter by message class                                                                                                  |
-| `session_id`     | int \| string   | —                 | `messages`: one session's messages; decimal string accepted                                                                          |
-| `since_id`       | int \| string   | —                 | `messages`: tail after this header ID                                                                                                |
-| `body_class`     | string          | —                 | `messages`: body class to join, e.g. `Ens.StringContainer`                                                                           |
-| `body_where`     | string          | —                 | `messages`: SQL predicate on the joined body table                                                                                   |
-| `body_select`    | array\<string\> | —                 | `messages`: body-table columns to add to each row                                                                                    |
-| `search_table`   | object          | —                 | `messages`: indexed Search Table search — see below                                                                                  |
-| `acknowledgePhi` | bool            | `false`           | Required with `body_class`, `body_where`, `body_select` or `search_table` when `dataPolicy` is `allow`; `acknowledge_phi` also works |
-| `namespace`      | string          | `"USER"`          |                                                                                                                                      |
-| `server`         | string          | —                 | Named server; omit for default                                                                                                       |
+| Parameter        | Type            | Default                | Notes                                                                                                                                |
+| ---------------- | --------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `what`           | string          | `"logs"`               | Enum: `"logs"` \| `"queues"` \| `"messages"`                                                                                         |
+| `component`      | string          | —                      | `logs`: filter by business host name                                                                                                 |
+| `log_type`       | string          | `"error,warning"`      | `logs` only; comma-separated, see below                                                                                              |
+| `limit`          | int             | `50`                   | Applies to `logs` and `messages`                                                                                                     |
+| `source`         | string          | —                      | `messages`: filter by source                                                                                                         |
+| `target`         | string          | —                      | `messages`: filter by target                                                                                                         |
+| `message_class`  | string          | —                      | `messages`: filter by message class                                                                                                  |
+| `session_id`     | int \| string   | —                      | `messages`: one session's messages; decimal string accepted                                                                          |
+| `since_id`       | int \| string   | —                      | `messages`: tail after this header ID                                                                                                |
+| `body_class`     | string          | —                      | `messages`: body class to join, e.g. `Ens.StringContainer`                                                                           |
+| `body_where`     | string          | —                      | `messages`: SQL predicate on the joined body table                                                                                   |
+| `body_select`    | array\<string\> | —                      | `messages`: body-table columns to add to each row                                                                                    |
+| `search_table`   | object          | —                      | `messages`: indexed Search Table search — see below                                                                                  |
+| `acknowledgePhi` | bool            | `false`                | Required with `body_class`, `body_where`, `body_select` or `search_table` when `dataPolicy` is `allow`; `acknowledge_phi` also works |
+| `namespace`      | string          | connection's namespace | `messages` only; `logs` and `queues` read the connection's namespace                                                                 |
+| `server`         | string          | —                      | Named server; omit for default                                                                                                       |
 
 `log_type` takes any comma-separated subset of `assert`, `error`, `warning`, `info`, `trace`,
 `alert` — the six values of `Ens.Util.Log.Type`, matched case-insensitively. A name that is not one
@@ -1389,12 +1453,20 @@ than quietly widening the query to every severity.
 `search_table` takes `prop` (required), one of `value` or `value_like`, and optional
 `class` and `extent` (default `EnsLib.HL7.SearchTable`).
 
+The body arguments and `search_table` are separate modes: passing both returns `INVALID_PARAMS`.
+`body_where` and `body_select` need `body_class`, and each `body_select` entry must be a plain column
+name. The response carries `body_table` and `sql`. A `search_table` search can answer
+`SEARCH_PROP_NOT_FOUND` (with `available_props`), `SEARCH_TABLE_NOT_FOUND` or `BODY_CLASS_NOT_FOUND`.
+A Search Table indexes only the messages received after it was configured, so a search can match
+nothing for older ones.
+
 A call that names `body_class`, `body_where`, `body_select` or `search_table` reads message
 bodies (a Search Table search returns the indexed field's value, such as a patient identifier taken
 from an HL7 message), so it is a bulk-data call: it is refused with `DATA_POLICY_BLOCKED` unless the target server's `dataPolicy`
 is `allow` (`redact` does not admit it, because the rows are not HL7 text iad could redact).
 Under `allow` each of those four also needs `acknowledgePhi=true`, as `iris_message_body` does, and
-is refused with `PHI_ACK_REQUIRED` without it. An empty `body_select` selects nothing and needs no
+is refused with `PHI_ACK_REQUIRED` without it. The value must be the JSON boolean `true`; the string
+`"true"` does not count. An empty `body_select` selects nothing and needs no
 acknowledgement. Without those arguments the tool lists headers, logs and
 queues under any policy.
 
@@ -1414,15 +1486,19 @@ iris_interop_query(what="messages", source="MyApp.BS.HL7Listener", limit=20)
 
 ### `iris_production_item` 🔒
 
-Enable, disable, or get/set settings on an individual production config item.
+Enable, disable, or get/set settings on an individual production config item. All four actions, `get_settings`
+included, need the write tier. They act on the running production (`NO_PRODUCTION` if none runs), and an
+unknown item returns `ITEM_NOT_FOUND`. `enable`, `disable` and `set_settings` change the live production and
+apply it at once with `UpdateProduction` (10 second timeout, no force); `UPDATE_FAILED` reports a failed
+apply. `get_settings` returns only the settings stored on the item.
 
-| Parameter   | Type                 | Default  | Notes                                                                           |
-| ----------- | -------------------- | -------- | ------------------------------------------------------------------------------- |
-| `action`    | string               | —        | **Required.** `"enable"` \| `"disable"` \| `"get_settings"` \| `"set_settings"` |
-| `item`      | string               | —        | **Required.** Production item name                                              |
-| `settings`  | map\<string,string\> | `{}`     | For `set_settings`                                                              |
-| `namespace` | string               | `"USER"` |                                                                                 |
-| `server`    | string               | —        | Named server; omit for default                                                  |
+| Parameter   | Type                 | Default                | Notes                                                                           |
+| ----------- | -------------------- | ---------------------- | ------------------------------------------------------------------------------- |
+| `action`    | string               | —                      | **Required.** `"enable"` \| `"disable"` \| `"get_settings"` \| `"set_settings"` |
+| `item`      | string               | —                      | **Required.** Production item name                                              |
+| `settings`  | map\<string,string\> | `{}`                   | For `set_settings`                                                              |
+| `namespace` | string               | connection's namespace |                                                                                 |
+| `server`    | string               | —                      | Named server; omit for default                                                  |
 
 Works via Atelier HTTP — no Docker required.
 
@@ -1437,13 +1513,16 @@ iris_production_item(action="disable", item="MyApp.BS.HL7Listener")
 
 ### `iris_production_diff`
 
-Diff the running production config against the last source-controlled version.
+Compare the running production's items with the production class as stored in IRIS: item names,
+classes and `Enabled` flags only, not settings. It needs source control configured for the production
+class and returns `NO_SCM` without it. A production that does not exist returns `PRODUCTION_NOT_FOUND`, and
+none running returns `NO_PRODUCTION`.
 
-| Parameter    | Type   | Default  | Notes                                    |
-| ------------ | ------ | -------- | ---------------------------------------- |
-| `production` | string | —        | Defaults to currently running production |
-| `namespace`  | string | `"USER"` |                                          |
-| `server`     | string | —        | Named server; omit for default           |
+| Parameter    | Type   | Default                | Notes                                    |
+| ------------ | ------ | ---------------------- | ---------------------------------------- |
+| `production` | string | —                      | Defaults to currently running production |
+| `namespace`  | string | connection's namespace |                                          |
+| `server`     | string | —                      | Named server; omit for default           |
 
 ```text
 iris_production_diff()
@@ -1457,14 +1536,14 @@ iris_production_diff(production="MyApp.Production")
 Read a message body by ID. A bulk-data tool: what it returns depends on the target server's
 `dataPolicy`, see [Data safety gates](#data-safety-gates).
 
-| Parameter        | Type   | Default  | Notes                                                                 |
-| ---------------- | ------ | -------- | --------------------------------------------------------------------- |
-| `message_id`     | string | —        | **Required.** `Ens.MessageHeader` ID                                  |
-| `max_bytes`      | int    | `65536`  | Clamped to 1 MB (1048576)                                             |
-| `acknowledgePhi` | bool   | `false`  | Required with `dataPolicy = "allow"`                                  |
-| `dataPolicy`     | string | none     | `block` \| `redact` \| `allow`; omitted means the server's own policy |
-| `namespace`      | string | `"USER"` |                                                                       |
-| `server`         | string | —        | Named server; omit for default                                        |
+| Parameter        | Type   | Default                | Notes                                                                 |
+| ---------------- | ------ | ---------------------- | --------------------------------------------------------------------- |
+| `message_id`     | string | —                      | **Required.** `Ens.MessageHeader` ID                                  |
+| `max_bytes`      | int    | `65536`                | Clamped to 1 MB (1048576)                                             |
+| `acknowledgePhi` | bool   | `false`                | Required with `dataPolicy = "allow"`                                  |
+| `dataPolicy`     | string | none                   | `block` \| `redact` \| `allow`; omitted means the server's own policy |
+| `namespace`      | string | connection's namespace |                                                                       |
+| `server`         | string | —                      | Named server; omit for default                                        |
 
 The policy that applies is the stricter of the server's `dataPolicy` and the call's, so passing
 `allow` here cannot widen what a configuration file restricted, and a call that passes none gets
@@ -1473,14 +1552,14 @@ body). The value is read trimmed and in any case (`Allow` is `allow`); any other
 `INVALID_PARAMS`. `acknowledge_phi` and `data_policy` are accepted for `acknowledgePhi` and
 `dataPolicy`. The result of the policy:
 
-| Policy   | Result                                                                                                                                                                                                 |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `block`  | `PHI_POLICY_BLOCKED`; nothing of the body is returned                                                                                                                                                  |
-| `redact` | An HL7 v2 body with the identifying fields of PID, NK1, GT1, IN1, IN2 and MSH-3 replaced by `[REDACTED]` (list below); any other content (XML, JSON, plain text) is refused with `BODY_NOT_REDACTABLE` |
-| `allow`  | The body, once the call carries `acknowledgePhi: true` (`PHI_ACK_REQUIRED` otherwise)                                                                                                                  |
+| Policy   | Result                                                                                                                                                                                                                             |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `block`  | `DATA_POLICY_BLOCKED` when the server's policy is `block`, answered before the tool runs; `PHI_POLICY_BLOCKED` when the call's own `dataPolicy` is `block` on a server set to `redact` or `allow`. Nothing of the body is returned |
+| `redact` | An HL7 v2 body with the identifying fields of PID, NK1, GT1, IN1, IN2 and MSH-3 replaced by `[REDACTED]` (list below); any other content (XML, JSON, plain text) is refused with `BODY_NOT_REDACTABLE`                             |
+| `allow`  | The body, once the call carries `acknowledgePhi: true` (`PHI_ACK_REQUIRED` otherwise)                                                                                                                                              |
 
-`redact` is a field mask, not de-identification. `redacted: true` on a result means the mask ran. It
-replaces these HL7 v2.5 fields with `[REDACTED]` and leaves every other field, segment and line of
+`redact` is a field mask, not de-identification. The result has no `redacted` field; the sign that the
+mask ran is `[REDACTED]` in `body`. It replaces these HL7 v2.5 fields with `[REDACTED]` and leaves every other field, segment and line of
 free text (PV1, OBX, NTE and the rest) as stored; an empty field stays empty:
 
 | Segment | Masked fields                                                                                                                                                                            |
@@ -1491,6 +1570,10 @@ free text (PV1, OBX, NTE and the rest) as stored; an empty field stays empty:
 | GT1     | GT1-2 guarantor number, 3 name, 4 spouse name, 5 address, 6 and 7 phones, 8 birth date, 12 SSN, 16 employer name, 17 employer address, 18 employer phone, 19 employee id, 29 employer id |
 | IN1     | IN1-10 group employee id, 16 insured's name, 18 birth date, 19 address, 36 policy number, 43 sex, 44 employer address, 49 insured's id                                                   |
 | IN2     | IN2-1 insured's employee id, 2 insured's SSN                                                                                                                                             |
+
+The result is `{success, message_id, content_type, body, truncated, actual_size}`, plus
+`max_bytes_clamped: true` when `max_bytes` was cut to 1 MB. Other errors are `INVALID_MESSAGE_ID`,
+`MESSAGE_NOT_FOUND`, `UNSUPPORTED_BODY_CLASS` and `STREAM_READ_ERROR`.
 
 A segment is recognised after blanks, `\x0b` (MLLP start) or `\x1c` in front of its name are set
 aside, and a stray `\x0b` or `\x1c` between segments counts as a segment break.
@@ -1512,12 +1595,12 @@ from before 2012. Each result says which with `kind: "class"` or `kind: "legacy"
 `EnsLib.MsgRouter.RuleAssist`, ...), its context class, and each rule set's rules with their `when`
 conditions and actions. On a legacy rule set it returns condition and action counts only. Earlier versions read the legacy table alone, so it answered `RULE_NOT_FOUND` for every rule class.
 
-| Parameter   | Type   | Default  | Notes                             |
-| ----------- | ------ | -------- | --------------------------------- |
-| `action`    | string | —        | **Required.** `"list"` \| `"get"` |
-| `rule_name` | string | —        |                                   |
-| `namespace` | string | `"USER"` |                                   |
-| `server`    | string | —        | Named server; omit for default    |
+| Parameter   | Type   | Default                | Notes                             |
+| ----------- | ------ | ---------------------- | --------------------------------- |
+| `action`    | string | —                      | **Required.** `"list"` \| `"get"` |
+| `rule_name` | string | —                      |                                   |
+| `namespace` | string | connection's namespace |                                   |
+| `server`    | string | —                      | Named server; omit for default    |
 
 ```text
 iris_business_rule_info(action="list")
@@ -1530,40 +1613,47 @@ iris_business_rule_info(action="get", rule_name="MyApp.RoutingRule")   # the rul
 
 List Ensemble credentials. Passwords are never returned.
 
-| Parameter   | Type   | Default  |
-| ----------- | ------ | -------- |
-| `namespace` | string | `"USER"` |
+| Parameter   | Type   | Default                |
+| ----------- | ------ | ---------------------- |
+| `namespace` | string | connection's namespace |
 
-No other parameters.
+No other parameters, and no `server`: it uses the default server. The list is cut at 100 rows (`truncated` and
+`total_count` say so).
 
 ---
 
 ### `iris_credential_manage` 🔒 ☠
 
-Create, update, or delete an Ensemble credential.
+Create, update, or delete an Ensemble credential. All three actions need the destructive tier. `create` needs both `username` and `password` (`INVALID_PARAMS` without them), `update`
+takes either, and a clash returns `CREDENTIAL_EXISTS` or `CREDENTIAL_NOT_FOUND`. The password travels in the
+`X-IAD-Args` header, never in scratch-class source. It takes no `server`: it uses the default server.
 
-| Parameter   | Type   | Default  | Notes                                                |
-| ----------- | ------ | -------- | ---------------------------------------------------- |
-| `action`    | string | —        | **Required.** `"create"` \| `"update"` \| `"delete"` |
-| `id`        | string | —        | **Required.** Credential ID                          |
-| `username`  | string | —        |                                                      |
-| `password`  | string | —        |                                                      |
-| `namespace` | string | `"USER"` |                                                      |
+| Parameter   | Type   | Default                | Notes                                                |
+| ----------- | ------ | ---------------------- | ---------------------------------------------------- |
+| `action`    | string | —                      | **Required.** `"create"` \| `"update"` \| `"delete"` |
+| `id`        | string | —                      | **Required.** Credential ID                          |
+| `username`  | string | —                      |                                                      |
+| `password`  | string | —                      |                                                      |
+| `namespace` | string | connection's namespace |                                                      |
 
 ---
 
-### `iris_lookup_manage` ☠
+<a id="iris_lookup_manage-"></a>
 
-Read, write, delete, or list Ensemble lookup table entries. Write and delete actions are
-🔒 ☠ gated. Read actions (`get`, `list_keys`, `list_tables`) are unrestricted.
+### `iris_lookup_manage` 🔒 ☠
 
-| Parameter   | Type   | Default  | Notes                                                                              |
-| ----------- | ------ | -------- | ---------------------------------------------------------------------------------- |
-| `action`    | string | —        | **Required.** `"get"` \| `"set"` \| `"delete"` \| `"list_keys"` \| `"list_tables"` |
-| `table`     | string | —        | Table name                                                                         |
-| `key`       | string | —        |                                                                                    |
-| `value`     | string | —        | For `action=set`                                                                   |
-| `namespace` | string | `"USER"` |                                                                                    |
+Read, write, delete, or list Ensemble lookup table entries. `set` and `delete` are 🔒 ☠ gated, and so is
+any unknown `action`. The read actions (`get`, `list_keys`, `list_tables`) need neither the write nor the
+destructive tier, but they still pass the category and template gates, and `list_tables` is cut at 100
+(`truncated`, `total_count`). It takes no `server`: it uses the default server.
+
+| Parameter   | Type   | Default                | Notes                                                                              |
+| ----------- | ------ | ---------------------- | ---------------------------------------------------------------------------------- |
+| `action`    | string | —                      | **Required.** `"get"` \| `"set"` \| `"delete"` \| `"list_keys"` \| `"list_tables"` |
+| `table`     | string | —                      | Table name                                                                         |
+| `key`       | string | —                      |                                                                                    |
+| `value`     | string | —                      | For `action=set`                                                                   |
+| `namespace` | string | connection's namespace |                                                                                    |
 
 A key set to an empty value exists: `get` returns `value: ""`. `get` or `delete` of a key that was
 never set answers `KEY_NOT_FOUND`, and either action on a missing table answers `TABLE_NOT_FOUND`.
@@ -1576,17 +1666,22 @@ iris_lookup_manage(action="get", table="FacilityMap", key="MGH")
 
 ---
 
-### `iris_lookup_transfer`
+<a id="iris_lookup_transfer"></a>
+
+### `iris_lookup_transfer` 🔒 ☠
 
 Export or import an Ensemble lookup table as XML. Import replaces the whole table, so it is in
-the destructive tier (☠); export is a read.
+the destructive tier (☠); export is a read. `export` returns `xml` and `entry_count`, and answers
+`TABLE_NOT_FOUND` for a missing table. `import` needs `xml` (`INVALID_PARAMS` without it, `INVALID_XML` for
+text IRIS cannot read) and writes it to a temporary file on the IRIS host's file system. It takes no
+`server`: it uses the default server.
 
-| Parameter   | Type   | Default  | Notes                                  |
-| ----------- | ------ | -------- | -------------------------------------- |
-| `action`    | string | —        | **Required.** `"export"` \| `"import"` |
-| `table`     | string | —        | **Required.**                          |
-| `xml`       | string | —        | For `action=import`                    |
-| `namespace` | string | `"USER"` |                                        |
+| Parameter   | Type   | Default                | Notes                                  |
+| ----------- | ------ | ---------------------- | -------------------------------------- |
+| `action`    | string | —                      | **Required.** `"export"` \| `"import"` |
+| `table`     | string | —                      | **Required.**                          |
+| `xml`       | string | —                      | For `action=import`                    |
+| `namespace` | string | connection's namespace |                                        |
 
 ---
 
