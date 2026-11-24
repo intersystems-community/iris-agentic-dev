@@ -664,8 +664,8 @@ blocked and how to permit it.
 
 | Tool                      | What it does                                                                      |
 | ------------------------- | --------------------------------------------------------------------------------- |
-| `iris_production` ✦       | Start, stop, update, check, or recover a production.                              |
-| `iris_interop_query` ✦    | Query production logs, queue depths, or message archive.                          |
+| `iris_production` 🔒      | Start, stop, update, check, or recover a production.                              |
+| `iris_interop_query`      | Query production logs, queue depths, or message archive.                          |
 | `iris_production_item` 🔒 | Enable, disable, or get/set settings on a production config item.                 |
 | `iris_production_diff`    | Diff the running production config against the last source-controlled version.    |
 | `iris_message_body`       | Read a message body by ID. Blocked unless the connection permits patient data.    |
