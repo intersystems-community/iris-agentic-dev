@@ -27,6 +27,12 @@ password = "SYS"
 iad watches `$CWD/.iris-agentic-dev.toml` and hot-reloads when it changes. No
 MCP server restart required.
 
+The file is throwaway: do not commit a password. The connection details above need
+no trust. A setting that loosens a limit, such as `mode`, `service_username` or
+`tls_verify = false`, waits until the operator runs `iris-agentic-dev trust` on
+the file ([connecting.md](connecting.md)). The config walk stops at the repository
+root, so write the file inside the repository your tool runs from.
+
 **IRISConnectionInfo contract**:
 
 | Field         | Required | Notes                                       |
@@ -49,6 +55,16 @@ private web server. Set this flag so iad uses `$SYSTEM.OBJ.Compile` via
 
 A package ships its own `skills/<name>/SKILL.md` and registers with iad so
 `skill` and `skill_community` can surface it.
+
+> **What works in 1.7.1.** Ship `skills/<name>/SKILL.md` in your repo and list it in
+> your repo's `iris-agentic-dev.toml`: `[provides] skills = ["skills/<name>"]`. A user
+> adds it with `iris-agentic-dev mcp --subscribe owner/repo`, and `skill_community`
+> lists and installs it. To ship a skill inside iad itself, open a PR that adds
+> `skills/skills/<name>/SKILL.md` with a `tier:` line and an entry in `skills.sh.json`.
+>
+> **Not implemented: step 2's `skills-lock.json`.** No `skills-lock.json` exists in
+> iad and no code reads `sourceType` or `skillPath`. The text below describes the
+> planned design. Do not rely on it yet.
 
 **Step 1** — Add a skill file to your repo:
 
@@ -81,7 +97,7 @@ grouping:
 }
 ```
 
-And add a corresponding entry to `skills-lock.json`:
+And add a corresponding entry to `skills-lock.json` (planned, not implemented):
 
 ```json
 "your-package": {
@@ -103,6 +119,9 @@ until the repo ships the file.
 A Python package that wraps IRIS functionality can list iad as an optional
 development dependency so users get MCP tooling when they opt in.
 
+> Nothing in the iad repository publishes an `iris-agentic-dev` package to PyPI. Confirm
+> that one exists before you depend on it.
+
 **`pyproject.toml`**:
 
 ```toml
@@ -116,16 +135,24 @@ Users install it with:
 pip install your-package[ai]
 ```
 
-This installs the `iris-dev` binary. They then wire it into their MCP client
+This installs the `iris-agentic-dev` binary. They then wire it into their MCP client
 (Claude Code, VS Code Copilot, OpenCode, or [Cursor](cursor-quickstart.md))
 following the
-[getting-started guide](https://github.com/intersystems-community/iris-agentic-dev#install).
+[getting-started guide](getting-started.md).
 For Cursor-specific MCP wiring and limitations vs Copilot, see
 [cursor-quickstart.md](cursor-quickstart.md).
 
 ---
 
 ## Pattern D: Tool subset consumer
+
+> **Planned, not implemented in 1.7.1.** `iris-agentic-dev install` resolves
+> `[dependencies]` and writes `iris-agentic-dev.lock`. It does not read
+> `[provides] tools`, validate the names or write `enabled_tools`; the code that
+> would is a `TODO` in `manifest/resolve.rs`. What works today is setting
+> `enabled_tools = ["iris_query", ...]` in `.iris-agentic-dev.toml` or
+> `IRIS_ENABLED_TOOLS` in the environment by hand. The rest of this section
+> describes the planned behavior.
 
 A downstream project that only needs a specific set of iad tools can declare
 that subset in its manifest. The install command validates the names and writes
@@ -172,8 +199,8 @@ Run through this before shipping or opening the iad PR.
 
 - [ ] Entry added to `skills.sh.json` under `"Ecosystem Projects"`
 - [ ] Entry added to `skills-lock.json` with correct `source` and
-      `sourceType: "github"`
-- [ ] `cargo test` passes (no live IRIS required for skill registry changes)
+      `sourceType: "github"` (planned; the file does not exist yet)
+- [ ] `cargo test --features testing` passes (no live IRIS required for skill registry changes)
 - [ ] `markdownlint-cli2 --fix` + `prettier --write` run on any `.md` touched
 
 ### Connection handoff (Pattern A)

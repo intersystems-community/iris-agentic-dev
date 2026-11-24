@@ -38,22 +38,12 @@ blocks legitimate use is a gate people route around.
 
 - **84 `call_for_test_*_no_iris` tests** assert nothing beyond "the call returned". They are the
   `empty-tests` and `vacuous-tests` classes at scale.
-- **Zero-iteration loops** at `crates/iris-agentic-dev-core/tests/unit/symbols_local_tests.rs:181`
-  and `:218` — a loop over a collection that may be empty is not a test.
-- **11 tests gated on `IRIS_ADMIN_TOOLS`**, which the suite never sets. They have never run.
-
-## The baseline is anchored on line numbers
-
-`scripts/gates/antipatterns-baseline.txt` keys each known finding as `check\tpath:line`. Any
-edit above a baselined line makes that entry stale _and_ produces a "new" finding at the shifted
-line, so an unrelated change can fail the gate with dozens of findings that are the same known
-instances. During the 1.3.2 fix pass this produced 31 new findings and 27 stale lines, none of
-them real.
-
-That is the "gate that cries wolf" failure the suite's own docstring warns about. The fix is to
-anchor on content rather than position: key on `check + path + fingerprint of the matched line`,
-with an occurrence index to keep repeated identical lines distinguishable. It requires
-regenerating the whole baseline, so it wants its own change, not a release-eve edit.
+- **Zero-iteration loops** in `crates/iris-agentic-dev-core/tests/symbols_local_tests.rs` (the
+  `for sym in &symbols` loop near line 185 and the `for sym in symbols.iter().filter(...)` loop
+  near line 222) — a loop over a collection that may be empty is not a test.
+- **Tests gated on `IRIS_ADMIN_TOOLS`.** The suite never sets it globally. Each admin test in
+  `crates/iris-agentic-dev-core/tests/admin_e2e_tests.rs` passes it itself and is an `#[ignore]`
+  live test, so it runs only under `--include-ignored` against a container.
 
 ## The coverage floors are calibrated against test code
 
