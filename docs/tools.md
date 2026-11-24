@@ -54,8 +54,8 @@ about it.
 | [`iris_generate`](#iris_generate) 🔒                                                                                                             | Generation                |
 | [`iris_generate_class`](#iris_generate_class) 🔒                                                                                                 | Generation                |
 | [`iris_generate_test`](#iris_generate_test) 🔒                                                                                                   | Generation                |
-| [`iris_production`](#iris_production-) ✦ 🔒                                                                                                      | Interoperability          |
-| [`iris_interop_query`](#iris_interop_query-) ✦                                                                                                   | Interoperability          |
+| [`iris_production`](#iris_production-) 🔒                                                                                                        | Interoperability          |
+| [`iris_interop_query`](#iris_interop_query-)                                                                                                     | Interoperability          |
 | [`iris_production_item`](#iris_production_item-) 🔒                                                                                              | Interoperability          |
 | [`iris_production_diff`](#iris_production_diff)                                                                                                  | Interoperability          |
 | [`iris_message_body`](#iris_message_body)                                                                                                        | Interoperability          |
@@ -63,7 +63,7 @@ about it.
 | [`iris_credential_list`](#iris_credential_list)                                                                                                  | Interoperability          |
 | [`iris_credential_manage`](#iris_credential_manage--) 🔒 ☠                                                                                       | Interoperability          |
 | [`iris_lookup_manage`](#iris_lookup_manage-) 🔒 ☠                                                                                                | Interoperability          |
-| [`iris_lookup_transfer`](#iris_lookup_transfer) 🔒                                                                                               | Interoperability          |
+| [`iris_lookup_transfer`](#iris_lookup_transfer) 🔒 ☠                                                                                             | Interoperability          |
 | [`iris_ws_open`](#iris_ws_open)                                                                                                                  | WebSocket sessions        |
 | [`iris_ws_exec`](#iris_ws_exec) 🔒                                                                                                               | WebSocket sessions        |
 | [`iris_ws_close`](#iris_ws_close)                                                                                                                | WebSocket sessions        |
@@ -89,7 +89,7 @@ about it.
 | [`compare_namespace`](#compare_namespace)                                                                                                        | Administration            |
 | [`iris_admin`](#iris_admin-) 🔒 ☠                                                                                                                | Administration            |
 | [`iris_containers`](#iris_containers-) ✦ 🔒                                                                                                      | Administration            |
-| [`skill`](#skill) 🔒                                                                                                                             | Skills and knowledge base |
+| [`skill`](#skill) 🔒 ☠                                                                                                                           | Skills and knowledge base |
 | [`skill_list` / `skill_search` / `skill_describe` / `skill_forget`](#skill_list-skill_search-skill_describe-skill_forget) (`skill_forget`: 🔒 ☠) | Skills and knowledge base |
 | [`skill_community`](#skill_community) 🔒 / `skill_community_list`                                                                                | Skills and knowledge base |
 | [`kb` / `kb_index` / `kb_recall`](#kb--kb_index--kb_recall) (`kb`, `kb_index`: 🔒)                                                               | Skills and knowledge base |
