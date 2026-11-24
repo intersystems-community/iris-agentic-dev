@@ -2,94 +2,100 @@
 
 Most tools work over the Atelier REST API and connect to any IRIS instance — no Docker
 required unless noted. Tools marked ✦ require `IRIS_CONTAINER`. Tools marked 🔒 are
-write-gated: they run when the target server's write tier is on, which by default it is not on a
-Live instance (see [Write protection](#write-protection)). Tools marked ☠ are
-destructive-gated — they require `destructive_tools_enabled = true` in addition to the write
-tier.
+write-gated: the gate table classes them as anything other than read-only, so they run when the
+target server's write tier is on, which by default it is not on a Live instance, on a pool member
+whose system mode iad could not read, or under `read_only = "strict"` (see
+[Write protection](#write-protection)). A tool with a read mode (`iris_doc`, `iris_query`,
+`iris_source_control`, `iris_coverage`) is gated only for its writing modes, and a tool with
+per-action classes (`iris_global`, `iris_admin`) is gated for the actions its section names; the
+section says which. Tools marked ☠ are destructive-gated — they require
+`destructive_tools_enabled = true` in addition to the write tier.
 
-`namespace` defaults to `"USER"` on every tool. It is omitted from parameter tables below
-unless there is something non-obvious to say about it.
+`namespace` defaults to the target server's own namespace on every tool that takes one: `USER`
+unless the server's configuration or `IRIS_NAMESPACE` says otherwise. The parameter tables below
+show `"USER"` for that default, and omit `namespace` unless there is something non-obvious to say
+about it.
 
 ---
 
 ## Quick reference
 
-| Tool                                                                                                                      | Section                   |
-| ------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| [`iris_servers`](#iris_servers)                                                                                           | Server Management         |
-| [`iris_add_server`](#iris_add_server)                                                                                     | Server Management         |
-| [`iris_remove_server`](#iris_remove_server-) ☠                                                                            | Server Management         |
-| [`iris_reload_pool`](#iris_reload_pool)                                                                                   | Server Management         |
-| [`iris_test_server`](#iris_test_server)                                                                                   | Server Management         |
-| [`iris_import_servers`](#iris_import_servers)                                                                             | Server Management         |
-| [`iris_doc`](#iris_doc)                                                                                                   | Code                      |
-| [`iris_compile`](#iris_compile)                                                                                           | Code                      |
-| [`iris_execute`](#iris_execute)                                                                                           | Code                      |
-| [`iris_execute_method`](#iris_execute_method)                                                                             | Code                      |
-| [`iris_query`](#iris_query)                                                                                               | Code                      |
-| [`iris_test`](#iris_test)                                                                                                 | Code                      |
-| [`iris_coverage`](#iris_coverage)                                                                                         | Code                      |
-| [`iris_global`](#iris_global-) 🔒                                                                                         | Code                      |
-| [`iris_source_control`](#iris_source_control-) ✦                                                                          | Code                      |
-| [`iris_symbols`](#iris_symbols)                                                                                           | Search and introspection  |
-| [`iris_doc_search`](#iris_doc_search)                                                                                     | Search and introspection  |
-| [`iris_symbols_local`](#iris_symbols_local)                                                                               | Search and introspection  |
-| [`docs_introspect`](#docs_introspect)                                                                                     | Search and introspection  |
-| [`iris_search`](#iris_search)                                                                                             | Search and introspection  |
-| [`iris_info`](#iris_info)                                                                                                 | Search and introspection  |
-| [`iris_macro`](#iris_macro)                                                                                               | Search and introspection  |
-| [`iris_table_info`](#iris_table_info)                                                                                     | Search and introspection  |
-| [`resolve_dynamic_dispatch`](#resolve_dynamic_dispatch)                                                                   | Search and introspection  |
-| [`extract_message_map_routing`](#extract_message_map_routing)                                                             | Search and introspection  |
-| [`find_subclass_implementations`](#find_subclass_implementations)                                                         | Search and introspection  |
-| [`iris_debug`](#iris_debug)                                                                                               | Debugging                 |
-| [`iris_get_log`](#iris_get_log)                                                                                           | Debugging                 |
-| [`check_config`](#check_config)                                                                                           | Debugging                 |
-| [`iris_generate`](#iris_generate)                                                                                         | Generation                |
-| [`iris_generate_class`](#iris_generate_class)                                                                             | Generation                |
-| [`iris_generate_test`](#iris_generate_test)                                                                               | Generation                |
-| [`iris_production`](#iris_production-) ✦                                                                                  | Interoperability          |
-| [`iris_interop_query`](#iris_interop_query-) ✦                                                                            | Interoperability          |
-| [`iris_production_item`](#iris_production_item-) 🔒                                                                       | Interoperability          |
-| [`iris_production_diff`](#iris_production_diff)                                                                           | Interoperability          |
-| [`iris_message_body`](#iris_message_body)                                                                                 | Interoperability          |
-| [`iris_business_rule_info`](#iris_business_rule_info)                                                                     | Interoperability          |
-| [`iris_credential_list`](#iris_credential_list)                                                                           | Interoperability          |
-| [`iris_credential_manage`](#iris_credential_manage--) 🔒 ☠                                                                | Interoperability          |
-| [`iris_lookup_manage`](#iris_lookup_manage-) ☠                                                                            | Interoperability          |
-| [`iris_lookup_transfer`](#iris_lookup_transfer)                                                                           | Interoperability          |
-| [`iris_ws_open`](#iris_ws_open)                                                                                           | WebSocket sessions        |
-| [`iris_ws_exec`](#iris_ws_exec)                                                                                           | WebSocket sessions        |
-| [`iris_ws_close`](#iris_ws_close)                                                                                         | WebSocket sessions        |
-| [`global_preview`](#global_preview)                                                                                       | Administration            |
-| [`global_kill`](#global_kill--) 🔒 ☠                                                                                      | Administration            |
-| [`iris_namespace_list`](#iris_namespace_list)                                                                             | Administration            |
-| [`iris_namespace_create`](#iris_namespace_create--) 🔒 ☠                                                                  | Administration            |
-| [`iris_database_list`](#iris_database_list)                                                                               | Administration            |
-| [`iris_mirror_status`](#iris_mirror_status)                                                                               | Administration            |
-| [`iris_system_performance`](#iris_system_performance)                                                                     | Administration            |
-| [`iris_database_stats`](#iris_database_stats)                                                                             | Administration            |
-| [`journal_search`](#journal_search)                                                                                       | Administration            |
-| [`query_audit_log`](#query_audit_log)                                                                                     | Administration            |
-| [`stream_inspect`](#stream_inspect)                                                                                       | Administration            |
-| [`my_access`](#my_access)                                                                                                 | Administration            |
-| [`capability_matrix`](#capability_matrix)                                                                                 | Administration            |
-| [`hl7_schema_list`](#hl7_schema_list)                                                                                     | Administration            |
-| [`hl7_schema_inspect`](#hl7_schema_inspect)                                                                               | Administration            |
-| [`mermaid_class`](#mermaid_class)                                                                                         | Administration            |
-| [`mermaid_production`](#mermaid_production)                                                                               | Administration            |
-| [`resolve_storage`](#resolve_storage)                                                                                     | Administration            |
-| [`compare_document`](#compare_document)                                                                                   | Administration            |
-| [`compare_namespace`](#compare_namespace)                                                                                 | Administration            |
-| [`iris_admin`](#iris_admin-) ☠                                                                                            | Administration            |
-| [`iris_containers`](#iris_containers-) ✦                                                                                  | Administration            |
-| [`skill`](#skill)                                                                                                         | Skills and knowledge base |
-| [`skill_list` / `skill_search` / `skill_describe` / `skill_forget`](#skill_list-skill_search-skill_describe-skill_forget) | Skills and knowledge base |
-| [`skill_community`](#skill_community)                                                                                     | Skills and knowledge base |
-| [`kb` / `kb_index` / `kb_recall`](#kb--kb_index--kb_recall)                                                               | Skills and knowledge base |
-| [`agent_history` / `agent_stats`](#agent_history--agent_stats)                                                            | Skills and knowledge base |
-| [`telemetry_query`](#telemetry_query)                                                                                     | Skills and knowledge base |
-| [`telemetry_export_trace`](#telemetry_export_trace)                                                                       | Skills and knowledge base |
+| Tool                                                                                                                                             | Section                   |
+| ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| [`iris_servers`](#iris_servers)                                                                                                                  | Server Management         |
+| [`iris_add_server`](#iris_add_server) 🔒                                                                                                         | Server Management         |
+| [`iris_remove_server`](#iris_remove_server-) 🔒 ☠                                                                                                | Server Management         |
+| [`iris_reload_pool`](#iris_reload_pool) 🔒                                                                                                       | Server Management         |
+| [`iris_test_server`](#iris_test_server)                                                                                                          | Server Management         |
+| [`iris_import_servers`](#iris_import_servers) 🔒                                                                                                 | Server Management         |
+| [`iris_doc`](#iris_doc) 🔒                                                                                                                       | Code                      |
+| [`iris_compile`](#iris_compile) 🔒                                                                                                               | Code                      |
+| [`iris_execute`](#iris_execute) 🔒                                                                                                               | Code                      |
+| [`iris_execute_method`](#iris_execute_method) 🔒                                                                                                 | Code                      |
+| [`iris_query`](#iris_query) 🔒                                                                                                                   | Code                      |
+| [`iris_test`](#iris_test) 🔒                                                                                                                     | Code                      |
+| [`iris_coverage`](#iris_coverage) 🔒                                                                                                             | Code                      |
+| [`iris_global`](#iris_global-) 🔒                                                                                                                | Code                      |
+| [`iris_source_control`](#iris_source_control-) 🔒                                                                                                | Code                      |
+| [`iris_symbols`](#iris_symbols)                                                                                                                  | Search and introspection  |
+| [`iris_doc_search`](#iris_doc_search)                                                                                                            | Search and introspection  |
+| [`iris_symbols_local`](#iris_symbols_local)                                                                                                      | Search and introspection  |
+| [`docs_introspect`](#docs_introspect)                                                                                                            | Search and introspection  |
+| [`iris_search`](#iris_search)                                                                                                                    | Search and introspection  |
+| [`iris_info`](#iris_info)                                                                                                                        | Search and introspection  |
+| [`iris_macro`](#iris_macro)                                                                                                                      | Search and introspection  |
+| [`iris_table_info`](#iris_table_info)                                                                                                            | Search and introspection  |
+| [`resolve_dynamic_dispatch`](#resolve_dynamic_dispatch)                                                                                          | Search and introspection  |
+| [`extract_message_map_routing`](#extract_message_map_routing)                                                                                    | Search and introspection  |
+| [`find_subclass_implementations`](#find_subclass_implementations)                                                                                | Search and introspection  |
+| [`iris_debug`](#iris_debug)                                                                                                                      | Debugging                 |
+| [`iris_get_log`](#iris_get_log)                                                                                                                  | Debugging                 |
+| [`check_config`](#check_config)                                                                                                                  | Debugging                 |
+| [`iris_generate`](#iris_generate) 🔒                                                                                                             | Generation                |
+| [`iris_generate_class`](#iris_generate_class) 🔒                                                                                                 | Generation                |
+| [`iris_generate_test`](#iris_generate_test) 🔒                                                                                                   | Generation                |
+| [`iris_production`](#iris_production-) ✦ 🔒                                                                                                      | Interoperability          |
+| [`iris_interop_query`](#iris_interop_query-) ✦                                                                                                   | Interoperability          |
+| [`iris_production_item`](#iris_production_item-) 🔒                                                                                              | Interoperability          |
+| [`iris_production_diff`](#iris_production_diff)                                                                                                  | Interoperability          |
+| [`iris_message_body`](#iris_message_body)                                                                                                        | Interoperability          |
+| [`iris_business_rule_info`](#iris_business_rule_info)                                                                                            | Interoperability          |
+| [`iris_credential_list`](#iris_credential_list)                                                                                                  | Interoperability          |
+| [`iris_credential_manage`](#iris_credential_manage--) 🔒 ☠                                                                                       | Interoperability          |
+| [`iris_lookup_manage`](#iris_lookup_manage-) 🔒 ☠                                                                                                | Interoperability          |
+| [`iris_lookup_transfer`](#iris_lookup_transfer) 🔒                                                                                               | Interoperability          |
+| [`iris_ws_open`](#iris_ws_open)                                                                                                                  | WebSocket sessions        |
+| [`iris_ws_exec`](#iris_ws_exec) 🔒                                                                                                               | WebSocket sessions        |
+| [`iris_ws_close`](#iris_ws_close)                                                                                                                | WebSocket sessions        |
+| [`global_preview`](#global_preview)                                                                                                              | Administration            |
+| [`global_kill`](#global_kill--) 🔒 ☠                                                                                                             | Administration            |
+| [`iris_namespace_list`](#iris_namespace_list)                                                                                                    | Administration            |
+| [`iris_namespace_create`](#iris_namespace_create--) 🔒 ☠                                                                                         | Administration            |
+| [`iris_database_list`](#iris_database_list)                                                                                                      | Administration            |
+| [`iris_mirror_status`](#iris_mirror_status)                                                                                                      | Administration            |
+| [`iris_system_performance`](#iris_system_performance) 🔒                                                                                         | Administration            |
+| [`iris_database_stats`](#iris_database_stats)                                                                                                    | Administration            |
+| [`journal_search`](#journal_search)                                                                                                              | Administration            |
+| [`query_audit_log`](#query_audit_log)                                                                                                            | Administration            |
+| [`stream_inspect`](#stream_inspect)                                                                                                              | Administration            |
+| [`my_access`](#my_access)                                                                                                                        | Administration            |
+| [`capability_matrix`](#capability_matrix)                                                                                                        | Administration            |
+| [`hl7_schema_list`](#hl7_schema_list)                                                                                                            | Administration            |
+| [`hl7_schema_inspect`](#hl7_schema_inspect)                                                                                                      | Administration            |
+| [`mermaid_class`](#mermaid_class)                                                                                                                | Administration            |
+| [`mermaid_production`](#mermaid_production)                                                                                                      | Administration            |
+| [`resolve_storage`](#resolve_storage)                                                                                                            | Administration            |
+| [`compare_document`](#compare_document)                                                                                                          | Administration            |
+| [`compare_namespace`](#compare_namespace)                                                                                                        | Administration            |
+| [`iris_admin`](#iris_admin-) 🔒 ☠                                                                                                                | Administration            |
+| [`iris_containers`](#iris_containers-) ✦ 🔒                                                                                                      | Administration            |
+| [`skill`](#skill) 🔒                                                                                                                             | Skills and knowledge base |
+| [`skill_list` / `skill_search` / `skill_describe` / `skill_forget`](#skill_list-skill_search-skill_describe-skill_forget) (`skill_forget`: 🔒 ☠) | Skills and knowledge base |
+| [`skill_community`](#skill_community) 🔒 / `skill_community_list`                                                                                | Skills and knowledge base |
+| [`kb` / `kb_index` / `kb_recall`](#kb--kb_index--kb_recall) (`kb`, `kb_index`: 🔒)                                                               | Skills and knowledge base |
+| [`agent_history` / `agent_stats`](#agent_history--agent_stats)                                                                                   | Skills and knowledge base |
+| [`telemetry_query`](#telemetry_query)                                                                                                            | Skills and knowledge base |
+| [`telemetry_export_trace`](#telemetry_export_trace)                                                                                              | Skills and knowledge base |
 
 ---
 
@@ -117,6 +123,9 @@ invented parameter was dropped in silence — `stream_inspect` was documented wi
 character cap that no code read, and a caller asking for 10,000 characters got the whole
 stream and no warning. The cap is real now (`max_chars`, spec 141): a handler reads it, the
 schema declares it, and a test in each place fails if one of the three goes.
+
+The rule has two exceptions: `acknowledge_phi` and `data_policy` are read as `acknowledgePhi` and
+`dataPolicy`, so either spelling is accepted although the schema lists only the camelCase one.
 
 Six tools take no parameters at all and declare an empty property set: `agent_stats`,
 `check_config`, `iris_import_servers`, `iris_reload_pool`, `skill_community_list`,
@@ -159,6 +168,9 @@ cost, and you don't have to pick just one:
   omit `cursor` on the first call and pass back whatever `nextCursor` you last received to get
   the next page, until a response with no `nextCursor` signals the end.
 
+The counts above are for the default configuration. Strict read-only mode,
+`enabled_tools`/`disabled_tools` and `--no-skills` remove tools from `tools/list`.
+
 ---
 
 ## Discovery from a shell
@@ -173,7 +185,7 @@ a closed port:
 
 ```bash
 iris-agentic-dev tool --list                      # 81 names + summaries
-iris-agentic-dev tool --list --json               # same, as {"count": 81, "tools": [...]}
+iris-agentic-dev tool --list --json               # same, as {"toolset": "merged", "count": 81, "tools": [...]}
 iris-agentic-dev tool iris_query --schema         # one tool's contract
 iris-agentic-dev tool iris_query --schema --json  # same, as one JSON document
 ```
@@ -201,15 +213,22 @@ accepted name, the same suggestion `UNKNOWN_PARAMETER` uses for misspelled param
 
 ## Server Management
 
-Tools for registering, testing, and managing IRIS server connections. All other tools
+Tools for registering, testing, and managing IRIS server connections. Most other tools
 accept an optional `server` parameter that routes to a named instance — see `iris_servers`
-to list what's registered.
+to list what's registered. The tools below act on iad's own configuration and take none;
+`iris_test_server` names its target with `name`.
+
+`iris_add_server`, `iris_import_servers` and `iris_reload_pool` are write-gated and
+`iris_remove_server` is destructive-gated, all judged on the default server
+(`WRITE_TOOLS_DISABLED` when its write tier is off). Each is an `admin` call for `allow` lists and
+is refused when the default server's `mcpTemplate` is `live` or `test`.
 
 ### `iris_servers`
 
 List all registered IRIS instances from all configuration sources (iad-native config, VS
 Code Server Manager settings, workspace fleet config, environment variables). Shows name,
-host, port, namespace, source, and reachability status.
+host, port, namespace, username, source, and reachability status. An entry whose password is
+stored in `servers.json` also carries `has_plaintext_credential: true`.
 
 Every entry carries `base_url`, the URL iad actually calls. Entries served under a web path
 prefix also carry `web_prefix` (the key is absent when there is no prefix). Two instances
@@ -234,7 +253,7 @@ reports `auth: true` for a wrong password because another call has the account's
 ### `iris_add_server`
 
 Register a new IRIS instance. Writes the server's details to
-`~/.config/iris-agentic-dev/servers.json` and stores the password in the OS keychain, under
+`~/.config/iris-agentic-dev/servers.json` (`%APPDATA%\iris-agentic-dev\servers.json` on Windows) and stores the password in the OS keychain, under
 iad's own service (`iris-agentic-dev`). The entry in `servers.json` holds no password when the
 keychain took it. The keychain account includes the server's address, so a password saved for
 one address cannot be found for another. iad never writes to or deletes from the Server Manager's
@@ -242,12 +261,12 @@ keychain service.
 
 | Parameter          | Type   | Default  | Notes                                                                                                                                    |
 | ------------------ | ------ | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`             | string | —        | Referenced by the `server` param of every other tool. A name that is a Server Manager profile is refused with `NAME_CONFLICT`            |
-| `host`             | string | —        | Hostname or IP                                                                                                                           |
-| `port`             | number | —        | Web port                                                                                                                                 |
-| `namespace`        | string | —        | Default namespace for calls to this server                                                                                               |
-| `username`         | string | —        | IRIS username                                                                                                                            |
-| `password`         | string | —        | Goes to the keychain; on a host with no keychain, to `servers.json` (owner-only), tied to the address                                    |
+| `name`             | string | —        | **Required.** Referenced by the `server` param of other tools. A name that is a Server Manager profile is refused with `NAME_CONFLICT`   |
+| `host`             | string | —        | **Required.** Hostname or IP                                                                                                             |
+| `port`             | number | —        | **Required.** Web port                                                                                                                   |
+| `namespace`        | string | —        | **Required.** Default namespace for calls to this server                                                                                 |
+| `username`         | string | —        | **Required.** IRIS username                                                                                                              |
+| `password`         | string | —        | **Required** (may be empty). Goes to the keychain; on a host with no keychain, to `servers.json` (owner-only), tied to the address       |
 | `description`      | string | none     | Free text                                                                                                                                |
 | `scheme`           | string | `"http"` | `"http"` or `"https"`; anything else is `INVALID_PARAMS`                                                                                 |
 | `web_prefix`       | string | none     | Path prefix the web server is served under, e.g. `/hs20261`                                                                              |
@@ -256,7 +275,10 @@ keychain service.
 | `service_password` | string | none     | The service account's password, stored the way `password` is                                                                             |
 
 The response says where the password went: `credential_store` is `keychain`, `file` or `none`,
-and `stored_plaintext: true` with a warning marks the headless fallback. Registering a name again
+and `stored_plaintext: true` with a warning marks the headless fallback. When a service account is
+given, the response also carries `service_username` and `service_credential_store`. An unusable
+`service_username` is refused with `SERVICE_ACCOUNT_INVALID`, and a file that cannot be written
+with `SAVE_FAILED`. Registering a name again
 at a different address drops the password the old address had (`password_cleared: true`), so a
 moved entry never sends it to a new host; a re-registration at the same address keeps the stored
 password. See [Adding servers](connecting.md#adding-servers-via-iris_add_server).
@@ -277,10 +299,11 @@ running pool. No restart is needed.
 
 ### `iris_remove_server` ☠
 
-Remove a server from the iad-native config and iad's own keychain item for it (never the
-Server Manager's). Requires `destructive_tools_enabled = true`. Cannot remove servers sourced
-from VS Code settings, the environment or a fleet file (`REMOVE_NOT_ALLOWED`) — edit those
-sources directly.
+Remove a server from the iad-native config and iad's own keychain items for it, the service
+account's included (never the Server Manager's). Requires `destructive_tools_enabled = true`.
+Cannot remove servers sourced from VS Code settings, the environment or a fleet file
+(`REMOVE_NOT_ALLOWED`) — edit those sources directly. A name that is not in `servers.json` is
+`SERVER_NOT_FOUND`. If the removed server was the `default`, `default` is cleared.
 
 | Parameter | Type   | Default | Notes                                      |
 | --------- | ------ | ------- | ------------------------------------------ |
@@ -288,9 +311,11 @@ sources directly.
 
 ### `iris_reload_pool`
 
-Hot-reload the connection pool from disk without restarting iad. Re-reads the operator file,
-the workspace file, their trust state and the iad-native servers list, then atomically replaces
-the in-memory pool.
+Hot-reload the connection pool without restarting iad. Rebuilds it from the iad-native servers
+list (`servers.json`), the Server Manager profiles and the fleet iad already holds, then
+atomically replaces the in-memory pool. It does not re-read the operator or workspace file; iad
+does that before each call when a file changed, and a loosening edit to the operator file still
+waits for a restart.
 Returns `{success, servers_loaded, servers, note}`. Parse errors preserve the existing pool
 and return `{success: false, error_code: "TOML_PARSE_ERROR", ...}`.
 
@@ -298,23 +323,27 @@ This is a write: it makes every server declared since startup routable, so it ne
 gate open on the default server (`WRITE_TOOLS_DISABLED` otherwise) and is refused under
 `read_only = "strict"`. It is an `admin` call for `allow` lists.
 
-**Background reload**: iad also reloads the pool automatically when the workspace TOML
-changes on disk. The change is detected via file mtime on each call to `iris_servers`,
-`iris_compile`, `iris_execute`, and similar tools. A parse error during background reload
-is silently swallowed — the existing pool is kept.
+**Background reload**: iad also reloads the operator and workspace files, checking their mtime
+before every tool call. If a file no longer parses mid-session, the last good configuration
+stays in force and `check_config` reports the error as `config_parse_error`.
 
 ### `iris_test_server`
 
 Probe an IRIS server for reachability. Returns `reachable`, `auth`, `iris_version`,
-`atelier_version`, and `latency_ms`.
+`atelier_version`, and `latency_ms`. A named server also answers `nopws` and `web_available`. A
+non-2xx answer adds `http_status`, and a transport failure adds `error`. On a NoPWS or
+docker_only target no HTTP call is made: the answer is `reachable: false, nopws: true` with
+`nopws_detected` and a `suggestion`. Errors: `SERVER_NOT_FOUND` (`name` not in the pool),
+`MISSING_PARAMS` (neither `name` nor `host`), `INVALID_PARAMS` (a `host` that carries a scheme,
+port, path or whitespace).
 
-| Parameter  | Type   | Default   | Notes                                               |
-| ---------- | ------ | --------- | --------------------------------------------------- |
-| `name`     | string | —         | A registered server; mutually exclusive with `host` |
-| `host`     | string | —         | Ad-hoc probe of a server not in the pool            |
-| `web_port` | number | `52773`   | Ad-hoc probe only                                   |
-| `username` | string | `_SYSTEM` | Ad-hoc probe only                                   |
-| `password` | string | `""`      | Ad-hoc probe only                                   |
+| Parameter  | Type   | Default   | Notes                                                    |
+| ---------- | ------ | --------- | -------------------------------------------------------- |
+| `name`     | string | —         | A registered server; if `host` is also sent, `host` wins |
+| `host`     | string | —         | Ad-hoc probe of a server not in the pool                 |
+| `web_port` | number | `52773`   | Ad-hoc probe only                                        |
+| `username` | string | `_SYSTEM` | Ad-hoc probe only                                        |
+| `password` | string | `""`      | Ad-hoc probe only                                        |
 
 Two modes:
 
@@ -333,7 +362,10 @@ iad-native config. It copies no password: each entry is marked `credential = "se
 its password stays in the Server Manager's keychain item, and iad reads that item only while the
 entry's address equals the profile's. Reports servers imported, skipped (already present), and
 those with no keychain entry (`no_keychain`). A profile's `webServer.pathPrefix` is carried
-across as `web_prefix`.
+across as `web_prefix`. Server Manager profiles carry no namespace, so imported entries use
+`USER`; call `iris_add_server` to change it. The response is
+`{success, imported, skipped, no_keychain, note}`, and a file that cannot be written is
+`SAVE_FAILED`.
 
 ---
 
@@ -343,42 +375,46 @@ across as `web_prefix`.
 
 Read, write, delete, insert lines, or list IRIS documents.
 
-| Parameter                    | Type     | Default  | Notes                                                                                                         |
-| ---------------------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------- |
-| `mode` (alias: `action`)     | string   | `"get"`  | See modes below                                                                                               |
-| `name` (alias: `document`)   | string   | —        | Document name, e.g. `"MyApp.MyClass.cls"`                                                                     |
-| `names`                      | string[] | `[]`     | Batch get/delete                                                                                              |
-| `content`                    | string   | —        | Document content for `put`/`insert`                                                                           |
-| `compile`                    | bool     | `false`  | Compile after `put`                                                                                           |
-| `start`                      | int      | —        | Start line for `get` (fragment) or `delete_lines`                                                             |
-| `end`                        | int      | —        | End line for `get` (fragment) or `delete_lines`                                                               |
-| `line`                       | int      | —        | Insert-before line for `insert`                                                                               |
-| `expected`                   | string   | —        | CAS guard: current content at `start`–`end`; fails with `STALE_CONTENT` if mismatch                           |
-| `pattern`                    | string   | —        | Glob filter for `list`, e.g. `"MyApp.*.cls"`                                                                  |
-| `category`                   | string   | —        | `"CLS"` \| `"MAC"` \| `"INT"` \| `"INC"` \| `"ALL"`                                                           |
-| `max_results`                | int      | `200`    | Max 1000; for `list`                                                                                          |
-| `compiled_type`              | string   | `"INT"`  | `"INT"` is the only value; for `compiled` mode. OBJ returns `INVALID_PARAMS`                                  |
-| `allow_storage_regeneration` | bool     | `false`  | Confirms a `put` that drops a class's existing Storage block                                                  |
-| `elicitation_id`             | string   | —        | SCM checkout dialog resume ID                                                                                 |
-| `elicitation_answer`         | string   | —        | SCM checkout dialog answer                                                                                    |
-| `include_scratch`            | bool     | `false`  | `list`: include iad's own `IrisDevTmp.*` scratch classes (hidden unless the pattern starts with `IrisDevTmp`) |
-| `confirm`                    | bool     | `false`  | Acknowledges a write on a `subject` server                                                                    |
-| `server`                     | string   | —        | Named server; omit for default                                                                                |
-| `namespace`                  | string   | `"USER"` |                                                                                                               |
+| Parameter                    | Type     | Default  | Notes                                                                                                                                                                |
+| ---------------------------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode` (alias: `action`)     | string   | `"get"`  | See modes below                                                                                                                                                      |
+| `name` (alias: `document`)   | string   | —        | Document name, e.g. `"MyApp.MyClass.cls"`                                                                                                                            |
+| `names`                      | string[] | `[]`     | Batch get/delete                                                                                                                                                     |
+| `content`                    | string   | —        | Document content for `put`/`insert`                                                                                                                                  |
+| `compile`                    | bool     | `false`  | Compile after `put`                                                                                                                                                  |
+| `start`                      | int      | —        | Start line for `get` (fragment) or `delete_lines`                                                                                                                    |
+| `end`                        | int      | —        | End line for `get` (fragment) or `delete_lines`                                                                                                                      |
+| `line`                       | int      | —        | Insert-before line for `insert`                                                                                                                                      |
+| `expected`                   | string   | —        | Required for `delete_lines` and for `insert` with `line`: the current text at the targeted lines; a mismatch fails with `STALE_CONTENT`. Optional only for an append |
+| `pattern`                    | string   | —        | Glob filter for `list`, e.g. `"MyApp.*.cls"`                                                                                                                         |
+| `category`                   | string   | —        | `"CLS"` \| `"MAC"` \| `"INT"` \| `"INC"` \| `"ALL"`                                                                                                                  |
+| `max_results`                | int      | `200`    | Max 1000; for `list`                                                                                                                                                 |
+| `compiled_type`              | string   | `"INT"`  | `"INT"` is the only value; for `compiled` mode. OBJ returns `INVALID_PARAMS`                                                                                         |
+| `allow_storage_regeneration` | bool     | `false`  | Confirms a `put` that drops a class's existing Storage block                                                                                                         |
+| `elicitation_id`             | string   | —        | SCM checkout dialog resume ID                                                                                                                                        |
+| `elicitation_answer`         | string   | —        | SCM checkout dialog answer                                                                                                                                           |
+| `include_scratch`            | bool     | `false`  | `list`: include iad's own `IrisDevTmp.*` scratch classes (hidden unless the pattern starts with `IrisDevTmp`)                                                        |
+| `confirm`                    | bool     | `false`  | Acknowledges a write on a `subject` server                                                                                                                           |
+| `server`                     | string   | —        | Named server; omit for default                                                                                                                                       |
+| `namespace`                  | string   | `"USER"` |                                                                                                                                                                      |
 
 **Modes:**
 
-| Mode           | What it does                                                    |
-| -------------- | --------------------------------------------------------------- |
-| `get`          | Read document content                                           |
-| `put`          | Write document content (SCM-gated; Storage is written as given) |
-| `delete`       | Delete document                                                 |
-| `head`         | Return metadata only (size, timestamp) without content          |
-| `fragment`     | Read lines `start`–`end`                                        |
-| `compiled`     | Read compiled INT or OBJ source                                 |
-| `list`         | List documents matching `pattern`/`category`                    |
-| `insert`       | Insert `content` before `line` (use `expected` for a CAS check) |
-| `delete_lines` | Delete lines `start`–`end` (use `expected` for a CAS check)     |
+| Mode           | What it does                                                            |
+| -------------- | ----------------------------------------------------------------------- |
+| `get`          | Read document content                                                   |
+| `put`          | Write document content (SCM-gated; Storage is written as given)         |
+| `delete`       | Delete document                                                         |
+| `head`         | Return metadata only (size, timestamp) without content                  |
+| `fragment`     | Read lines `start`–`end`                                                |
+| `compiled`     | Read the compiled INT routine (`OBJ` is not implemented)                |
+| `list`         | List documents matching `pattern`/`category`                            |
+| `insert`       | Insert `content` before `line` (`expected` required when `line` is set) |
+| `delete_lines` | Delete lines `start`–`end` (`expected` required)                        |
+
+`put`, `delete`, `insert` and `delete_lines` are writes and need the write gate open on the target
+server; every other mode is a read. Under `read_only = "strict"`, `mode=compiled` is refused with
+`READ_ONLY_STRICT`, because it compiles a scratch class; the other modes still work.
 
 **Examples:**
 
@@ -429,7 +465,7 @@ Compile a class, routine, or wildcard pattern.
 | `target`         | string | —        | **Required.** Class name, routine, glob like `"MyApp.*.cls"`, or a local source file inside the project directory |
 | `flags`          | string | `"cuk"`  | Compile flags                                                                                                     |
 | `namespace`      | string | `"USER"` |                                                                                                                   |
-| `force_writable` | bool   | `false`  | Override read-only check                                                                                          |
+| `force_writable` | bool   | `false`  | Override read-only check; an `admin` call as well as `compile`, so an `allow` list needs both                     |
 | `inline`         | bool   | `false`  | Return all errors inline (bypass log store)                                                                       |
 | `confirm`        | bool   | `false`  | Acknowledges a compile on a `subject` server                                                                      |
 | `server`         | string | —        | Named server; omit for default                                                                                    |
@@ -437,16 +473,19 @@ Compile a class, routine, or wildcard pattern.
 A `target` with a path separator is a file on the machine iad runs on: iad uploads it, then
 compiles it. It must be a `.cls`, `.mac`, `.inc` or `.int` file inside the
 [project directory](#project-directory), and is refused with `HOST_PATH_BLOCKED` before it is read
-when it is not. The compile hook passes an absolute path inside the project, which is allowed.
+when it is not. A `target` with no separator that ends in `.cls` and exists relative to iad's
+working directory is a file too. The compile hook passes an absolute path inside the project,
+which is allowed.
 
-Returns errors with line numbers. Before IRIS compiles a target by name, iad reads its stored
+Returns errors with line numbers. A successful single-document compile also returns `content`,
+the source as stored after the compile; wildcard compiles omit it. Before IRIS compiles a target by name, iad reads its stored
 source and the `.inc` files it includes and applies the compile-time gate to them. A stored
 document that exists but cannot be read is refused with `STORED_SOURCE_UNREADABLE`; a wildcard
 whose members cannot be listed is refused the same way.
 
 `flags` takes the letters `c`, `d`, `k` and `u` (with `-` to turn one off) and the qualifiers
 `/checkuptodate`, `/display`, `/displayerror`, `/displaylog`, `/keepsource`, `/quiet`, `/silent` and
-`/verbose`. Anything else is refused with `INVALID_PARAMS`. IRIS compiles more than the target when
+`/verbose`, each also with a `no` prefix (`/noquiet`). Anything else is refused with `INVALID_PARAMS`. IRIS compiles more than the target when
 told to (`b` and `/subclasses` add every subclass, `r` and `/predecessorclasses` the classes it
 depends on, `y` and `/relatedclasses` the ones it shares SQL with, `/expand` all three), and iad has
 read only the target and its includes; a subclass stored some other way would run its compile-time
@@ -507,7 +546,8 @@ repeat part of it and go away in 1.8.0. The same `identity` block comes back fro
 
 **Destructive-tier gate** — `iris_execute` requires `write_tools_enabled = true` (it is
 write-gated). Additionally, if the literal code string contains a `Kill ^<global>` pattern
-(any case variant), `destructive_tools_enabled = true` is also required. This check catches
+(in any case and spelling: `k ^G`, `Kill:cond ^G`, `Kill x,^Y`), `destructive_tools_enabled = true`
+is also required. This check catches
 direct global kills written literally in the code. Indirect operations — `Kill @variable`,
 `Xecute`-dispatched code, or class method calls that internally kill a global — are not
 detected; the service account's IRIS privileges and the `mcpTemplate` environment gate are the
@@ -562,7 +602,10 @@ uses the default connection. Use `iris_servers` to list available instances.
    method bodies support it.
 
 2. **docker exec (fallback)** — used when `IRIS_CONTAINER` is set and HTTP fails, or when
-   `docker_only = true` in config. This path pipes code into `iris session` stdin, which is
+   `docker_only = true` in config. A call with `server` uses that server's own `container`, never
+   `IRIS_CONTAINER`, and answers `NO_DOCKER_ROUTE_FOR_SERVER` when it has none. A refusal of the
+   service account on HTTP (`SERVICE_ACCOUNT_HTTP_DENIED`) is final: the call does not retry over
+   `docker exec` as another user. This path pipes code into `iris session` stdin, which is
    a line-by-line terminal interpreter. **Block syntax is not supported in terminal mode.**
    `If cond { Write x }` causes `<SYNTAX>` with no explanation.
 
@@ -630,17 +673,17 @@ iris_execute_method(class="%Library.Integer", method="IsValid", args=["42"])
 
 Execute SQL and return rows as JSON.
 
-| Parameter           | Type     | Default  | Notes                                                |
-| ------------------- | -------- | -------- | ---------------------------------------------------- |
-| `query`             | string   | `""`     | SQL statement; required for `read`/`explain`/`write` |
-| `parameters`        | string[] | `[]`     | Bind parameters (positional `?`)                     |
-| `mode`              | string   | `"read"` | `"read"` \| `"explain"` \| `"count"` \| `"write"`    |
-| `table`             | string   | —        | For `mode=count` without a `query`                   |
-| `max_rows_affected` | int      | `1000`   | Write mode only; clamped to [1, 10000]               |
-| `namespace`         | string   | `"USER"` |                                                      |
-| `force`             | bool     | `false`  | Bypass SQL safety validation                         |
-| `confirm`           | bool     | `false`  | Acknowledges a write on a `subject` server           |
-| `server`            | string   | —        | Named server; omit for default                       |
+| Parameter           | Type     | Default  | Notes                                                   |
+| ------------------- | -------- | -------- | ------------------------------------------------------- |
+| `query`             | string   | `""`     | SQL statement; required for `read`/`explain`/`write`    |
+| `parameters`        | string[] | `[]`     | Bind parameters (positional `?`)                        |
+| `mode`              | string   | `"read"` | `"read"` \| `"explain"` \| `"count"` \| `"write"`       |
+| `table`             | string   | —        | For `mode=count` without a `query`                      |
+| `max_rows_affected` | int      | `1000`   | Write mode only; clamped to [1, 10000]                  |
+| `namespace`         | string   | `"USER"` |                                                         |
+| `force`             | bool     | `false`  | Bypass SQL safety validation; ignored in `mode="write"` |
+| `confirm`           | bool     | `false`  | Acknowledges a write on a `subject` server              |
+| `server`            | string   | —        | Named server; omit for default                          |
 
 ```text
 # Read
@@ -656,6 +699,9 @@ iris_query(table="MyApp.Patient", mode="count")
 iris_query(query="UPDATE MyApp.Patient SET Status = 'Archived' WHERE ID = ?",
            parameters=["123"], mode="write")
 ```
+
+`mode="write"` is a write and needs the write gate open on the target server. A read call with
+`force=true` is judged as a write too, because it runs what a write runs.
 
 **What read mode refuses.** `mode="read"` runs one statement that starts with `SELECT`, `WITH` or
 `EXPLAIN`, the first word outside comments. It refuses everything else before IRIS sees the query:
@@ -726,25 +772,25 @@ spliced in without a `..` check. `iris_coverage` takes `test_path` through the s
 
 Standalone line coverage via `%Monitor.System.LineByLine`.
 
-| Parameter        | Type     | Default  | Notes                                                                                       |
-| ---------------- | -------- | -------- | ------------------------------------------------------------------------------------------- |
-| `mode`           | string   | —        | **Required.** See modes below                                                               |
-| `classes`        | string[] | —        | Classes to monitor; used with `start`/`run`                                                 |
-| `package`        | string   | —        | Package prefix — alternative to explicit `classes`                                          |
-| `test_path`      | string   | —        | `%UnitTest` class pattern to run (same rule as `iris_test`'s `pattern`); required for `run` |
-| `target_pct`     | float    | —        | Fail threshold %                                                                            |
-| `cobertura_path` | string   | —        | Write Cobertura XML here (requires TestCoverage IPM)                                        |
-| `namespace`      | string   | `"USER"` |                                                                                             |
-| `confirm`        | bool     | `false`  | Acknowledges a run on a `subject` server                                                    |
-| `server`         | string   | —        | Named server; omit for default                                                              |
+| Parameter        | Type     | Default  | Notes                                                                                                         |
+| ---------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------- |
+| `mode`           | string   | —        | **Required.** See modes below                                                                                 |
+| `classes`        | string[] | —        | Classes to monitor; used with `start`/`run`                                                                   |
+| `package`        | string   | —        | Package prefix — alternative to explicit `classes`                                                            |
+| `test_path`      | string   | —        | `%UnitTest` class pattern to run (same rule as `iris_test`'s `pattern`); required for `run`                   |
+| `target_pct`     | float    | —        | Fail threshold %                                                                                              |
+| `cobertura_path` | string   | —        | Accepted, but no Cobertura file is written; `run` adds `cobertura_skipped` when TestCoverage is not installed |
+| `namespace`      | string   | `"USER"` |                                                                                                               |
+| `confirm`        | bool     | `false`  | Acknowledges a run on a `subject` server                                                                      |
+| `server`         | string   | —        | Named server; omit for default                                                                                |
 
-| Mode     | What it does                                                           |
-| -------- | ---------------------------------------------------------------------- |
-| `check`  | Pre-flight: verify `gmheap ≥ 256 MB`; returns `testcoverage_available` |
-| `run`    | All-in-one: start → RunTest → stop → report                            |
-| `start`  | Start monitoring the given classes                                     |
-| `stop`   | Stop monitoring                                                        |
-| `report` | Collect results from a previously stopped run                          |
+| Mode     | What it does                                                                       |
+| -------- | ---------------------------------------------------------------------------------- |
+| `check`  | Pre-flight: verify `gmheap ≥ 256 MB`; returns `testcoverage_available`             |
+| `run`    | All-in-one: start → RunTest → stop → report; also returns `testcoverage_available` |
+| `start`  | Start monitoring the given classes                                                 |
+| `stop`   | Stop monitoring                                                                    |
+| `report` | Collect results from a previously stopped run                                      |
 
 ```text
 iris_coverage(mode="check")
@@ -780,6 +826,8 @@ it they answer `COVERAGE_PRIVILEGE_DENIED`.
 ### `iris_global` 🔒
 
 Read, write, kill, or list IRIS global nodes. Gated — see [Data safety gates](#data-safety-gates).
+`get` and `list` are reads, `set` is write-tier, and `kill` is destructive-tier (it needs
+`destructive_tools_enabled = true` as well).
 
 | Parameter        | Type     | Default | Notes                                                    |
 | ---------------- | -------- | ------- | -------------------------------------------------------- |
@@ -810,9 +858,11 @@ namespace in `namespace`. The same rules apply to `global_preview` and `global_k
 
 ---
 
-### `iris_source_control` ✦
+### `iris_source_control` 🔒
 
-Check lock status, checkout, or execute SCM actions.
+Check lock status, checkout, or execute SCM actions. Needs Atelier REST: on a docker_only or
+NoPWS connection it answers `NOPWS_ATELIER_REQUIRED`. `status` and `menu` are reads; every other
+action is a write (see `Diff` below).
 
 | Parameter        | Type   | Default  | Notes                                                               |
 | ---------------- | ------ | -------- | ------------------------------------------------------------------- |
@@ -825,8 +875,9 @@ Check lock status, checkout, or execute SCM actions.
 | `server`         | string | —        | Named server; omit for default                                      |
 | `namespace`      | string | `"USER"` |                                                                     |
 
-CheckIn is opt-in via `IRIS_SCM_ALLOW_CHECKIN=1`. Disconnect and Reconnect are opt-in via
-`IRIS_SCM_ALLOW_DISCONNECT=1`, a separate switch: turning one on leaves the other off. Both apply
+CheckIn is opt-in via `IRIS_SCM_ALLOW_CHECKIN=1`, and refused as `CHECKIN_BLOCKED` without it.
+Disconnect and Reconnect are opt-in via `IRIS_SCM_ALLOW_DISCONNECT=1`, refused as
+`SCM_ADMIN_BLOCKED` without it; it is a separate switch: turning one on leaves the other off. Both apply
 in `action=execute` and in the `menu` listing, and `check_config` reports each under
 `scm_opt_ins`. Source control answers `UserAction` with a code from 0 to 7. 0 means no dialog is needed, 1 a
 yes/no dialog and 7 a prompt for text (`action=execute` can take that one). 6 is the provider
@@ -856,13 +907,18 @@ iris_source_control(action="menu")   # list available actions
 
 ### Code-edit guard
 
-`iris_execute` rejects any code matching class- or routine-editing patterns. The check
-runs before execution — a compound line mixing innocent data work with one blocked token
-is rejected entirely; nothing executes.
+`iris_execute`, `iris_ws_exec`, `iris_execute_method` and `iris_query` (`mode="write"`, or
+`force`) reject text that reaches class or routine code. The check runs before execution — a
+compound line mixing innocent data work with one blocked token is rejected entirely; nothing
+executes. `iris_execute_method` is judged as `##class(<class>).<method>()`, and `iris_query` through
+the SQL form of the check.
 
-Blocked patterns: `%Dictionary.*Definition`, `$system.OBJ` (Load, Compile, Delete, and
-variants), `%RoutineMgr`, and direct writes to code-storage globals (`^rOBJ`, `^rINDEX`,
-`^%occRoutine`, etc.).
+Blocked patterns: `%Dictionary.*Definition`, `$system.OBJ` / `%SYSTEM.OBJ` (Load, Compile,
+UnCompile, Delete, Import, and variants), `%RoutineMgr`, `%Routine`, the routine-buffer commands
+`ZLOAD`, `ZINSERT`, `ZREMOVE` and `ZSAVE`, and any reference to a code-storage or system global
+(`^oddDEF`, `^rOBJ`, `^rINDEX`, `^ROUTINE`, `^%SYS*`, etc.), reads included. Comments are
+ignored; string literals are scanned. The check is lexical: a name built at run time gets past
+it, and the service account is the boundary that holds.
 
 The error response includes a `matched` field naming the specific token and a
 `remediation` field pointing to the correct tools:
