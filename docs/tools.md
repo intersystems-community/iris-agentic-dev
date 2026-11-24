@@ -2527,6 +2527,10 @@ can act on before calling the tool.
 | `read_only_hint`   | 52 tools — all query, inspect, list, history, and comparison tools                                                                                   | The tool makes no changes to IRIS state            |
 | `destructive_hint` | 7 tools — `global_kill`, `iris_admin`, `iris_credential_manage`, `iris_lookup_manage`, `iris_namespace_create`, `iris_remove_server`, `skill_forget` | The tool can irreversibly delete or overwrite data |
 
+Many read-only tools run their ObjectScript through a scratch class in the `IrisDevTmp` package
+that iad puts, compiles and deletes within the call. It leaves nothing behind, so those tools keep
+`read_only_hint`; `read_only = "strict"` turns them off.
+
 MCP clients that respect `read_only_hint` can run read-only tools in parallel or in
 background without approval prompts. Clients that respect `destructive_hint` can surface
 an extra confirmation step before calling the destructive tools.
@@ -2543,7 +2547,7 @@ only further restrict the write tier, never expand it.
 ### `write_tools_enabled`
 
 Every write-capable tool returns `WRITE_TOOLS_DISABLED` when the target server's write tier is
-off. Declare it in a configuration file:
+off (`READ_ONLY_STRICT` when strict read-only mode closed it). Declare it in a configuration file:
 
 ```toml
 write_tools_enabled = true      # the default server
@@ -2554,22 +2558,36 @@ write_tools_enabled = true      # the default server
 writeTools = false              # one server
 ```
 
-Editing a file changes the gate on the next tool call, in both directions — no restart. What
-decides the answer, strongest first:
+iad reads the files again on every call. An edit that tightens (writes switched off,
+`read_only = "strict"` added, a stricter template or `allow`) applies on the next tool call. An
+edit to the operator file that loosens (writes switched on, strict removed, a looser template,
+`allow` or `dataPolicy`, the file deleted) is held until you restart iad; `check_config.set_aside`
+lists it as `held_for_restart`. See
+[Editing the operator file while iad runs](connecting.md#editing-the-operator-file-while-iad-runs).
+What decides the answer, strongest first:
 
-1. The launch settings: `IRIS_WRITE_TOOLS_ENABLED=1` or `0` (and the legacy `IRIS_ALLOW_PROD=1`).
-   They outrank every file.
+1. `IRIS_WRITE_TOOLS_ENABLED=1` or `0` in the launch settings. It outranks every file.
 2. The operator file, then the workspace file, combined part by part. A file you have not trusted
    can turn writes **off** but cannot turn them **on**; its `write_tools_enabled = true` is set
    aside until you run `iris-agentic-dev trust`. See
    [Effective policy](connecting.md#effective-policy).
-3. With nothing declared, the server's IRIS system mode: off on Live, on on Development and Test,
-   and for an unset or unreadable mode, off when the namespace looks like production.
+3. The legacy `IRIS_ALLOW_PROD=1` opens the write tier when no launch setting and no file
+   declares one. A file's `write_tools_enabled = false` outranks it.
+4. With nothing declared, the server's IRIS system mode: off on Live, on on Development and Test,
+   and for an unset mode, off when the namespace looks like production. For the default server, an
+   unreadable mode is judged by the namespace the same way.
+
+A server in the pool other than the default starts write-closed: it opens only when you declare
+`[policy.<name>] writeTools = true` or iad reads its system mode as Development or Test.
+`IRIS_WRITE_TOOLS_ENABLED=1` and the top-level `write_tools_enabled = true` open the default
+server and nothing else; `= false` closes every server.
 
 `check_config` reports which decided, per server in `effective_policy` and for the default
 server in `write_tools_source`, so an unexpected answer names its own cause. Strict
-read-only mode (`read_only = "strict"`) goes further and refuses every tool that can write a
-scratch class; see [Strict read-only](connecting.md#strict-read-only-no-scratch-classes).
+read-only mode (`read_only = "strict"`) goes further: it refuses every tool that can write a
+scratch class, and it closes the write and destructive tiers on every server whatever opens them
+(`READ_ONLY_STRICT`, source `read_only_strict`, not `WRITE_TOOLS_DISABLED`); see
+[Strict read-only](connecting.md#strict-read-only-no-scratch-classes).
 
 ### `destructive_tools_enabled`
 
@@ -2579,6 +2597,11 @@ The tools marked ☠ require an additional opt-in. Even with the write tier on, 
 ```toml
 destructive_tools_enabled = true      # or [policy.<server>] destructiveTools = true
 ```
+
+A few tools are destructive only for some arguments: `iris_global` with `action=kill`,
+`iris_lookup_transfer` with `action=import`, `skill` with `action=forget`, `iris_admin`'s create,
+update and delete actions, and `iris_execute` when its code holds a literal `Kill ^name` (the text
+check does not see `Kill @var` or `Xecute`).
 
 Default: `false`, and never inferred — the destructive tier stays off until you declare it, from
 the operator file, a trusted file or `IRIS_DESTRUCTIVE_TOOLS_ENABLED=1`. Declaring it with the
@@ -2599,12 +2622,14 @@ on. (A `compare_document` call that names two servers must pass on both.)
 ```text
 1. configuration valid        — CONFIG_INVALID if a file does not parse
 2. target server resolved     — a server name not in the pool is refused here
-3. write_tools_enabled        — if off, WRITE_TOOLS_DISABLED
+3. write_tools_enabled        — if off, WRITE_TOOLS_DISABLED (READ_ONLY_STRICT under strict)
 4. destructive_tools_enabled  — if off and the tool is ☠, DESTRUCTIVE_TOOLS_DISABLED
+                                (READ_ONLY_STRICT under strict)
 5. read_only = "strict"       — READ_ONLY_STRICT for a scratch-class tool
 6. parameters and namespace   — UNKNOWN_PARAMETER, INVALID_PARAMS
-7. data safety gates          — environment template, bulk-data tools, system globals,
-                                sensitive-named globals, policy.<server>.allow, server role
+7. data safety gates          — code-edit block, environment template, bulk-data tools,
+                                body-read acknowledgement, system globals, sensitive-named
+                                globals, policy.<server>.allow, server role
 8. execute
 ```
 
@@ -2622,8 +2647,13 @@ PHI is Protected Health Information — the patient-identifying data HIPAA gover
 
 Some tools can reach PHI, and some can reach the globals IRIS uses to store its own code
 and configuration. Those calls are checked before they run and refused by default. Four
-checks run in order; the first one that refuses wins. Each is judged against the **target
+checks run in order, after a code-edit block that nothing configures away; the first one that
+refuses wins. Each is judged against the **target
 server** of the call, using its [effective policy](connecting.md#effective-policy).
+
+**0. Code edits.** `iris_execute`, `iris_ws_exec`, `iris_execute_method` and write SQL that would
+create or change a class or routine are refused (`CODE_EDIT_BLOCKED`). Nothing lifts this; use
+`iris_doc` and `iris_compile`.
 
 **1. Environment template.** A server's `mcpTemplate` says what kind of instance it is: `dev`
 permits everything, `test` blocks code execution and compiles, and `live` blocks those plus source
@@ -2632,6 +2662,12 @@ control. When no file declares one, the server's IRIS system mode chooses it (Li
 configuration. Writes count as execution here: `iris_global` with `action=set` or `kill`, and
 `iris_query` with `mode=write`, are treated as execution even though reads from the same
 tools are not. Error code: `ENV_GATE_BLOCKED`.
+
+A server's `allow` list names the tool categories that may run (`compile`, `execute`, `query`,
+`search`, `docs`, `source_control`, `debug`, `admin`, `skill`, `kb`). A tool outside the list is
+refused with `POLICY_GATE`, after the four checks and before the server role. A tool that has no
+category is judged as `execute` and `admin`, so a new tool is blocked, not open;
+`check_config.ungated_tools` lists the exceptions.
 
 **2. Bulk-data tools.** `journal_search`, `iris_message_body` and `stream_inspect` return stored
 message, stream or journal content, so there is no field to inspect before the call. The server's
@@ -2653,18 +2689,22 @@ interoperability config in globals such as `^oddDEF`, `^ROUTINE`, `^%Dictionary*
 start. The list names the code-storage globals an instance holds, as exact names (`^rMAC` for
 routine source, `^rINC` for include source, and the `^odd*` class-dictionary globals), so an
 application global that merely starts the same way, such as `^oddments`, is not blocked. This
-blocklist is hardcoded and cannot be switched off — `globalBlocklist` in your
-config adds to it, never replaces it. The one exception is `dataPolicyKillAllowlist`,
-which exempts named patterns from this check on kill operations only. Error code:
-`SYSTEM_BLOCKLIST`.
+blocklist is hardcoded and cannot be switched off or exempted — `globalBlocklist` in your
+config adds patterns to it, never replaces it. The check applies to every call that names a
+global, whether it reads, writes or kills: `iris_global` get and list and `global_preview` are
+refused too. It does not look inside `iris_query` or `iris_execute`, which carry no global name.
+`dataPolicyKillAllowlist` can exempt patterns you added through `globalBlocklist` from the check
+for an `iris_global` kill; it never exempts a built-in entry. Error code: `SYSTEM_BLOCKLIST`.
 
-**4. Globals whose names suggest PHI.** Reading `^PAPMI*`, `^PAADM*`, `^MRADM*`,
+**4. Globals whose names suggest PHI.** Reading, writing or killing `^PAPMI*`, `^PAADM*`, `^MRADM*`,
 `^ORDER*`, and similar requires `acknowledgePhi: true` on the call. This is a speed bump,
 not a lock — it exists so nobody pulls a patient record into a chat transcript by
 accident. Error code: `PHI_GATE_BLOCKED`.
 
 `iris_message_body` is gated by the stricter of the server's `dataPolicy` and the call's
-`dataPolicy` alone: `block` refuses the call (`PHI_POLICY_BLOCKED`), `allow` requires
+`dataPolicy` alone. A server set to `block` refuses it at step 2 (`DATA_POLICY_BLOCKED`). A call
+that passes `dataPolicy: "block"` to a server that would allow or redact is refused by the
+handler (`PHI_POLICY_BLOCKED`). `allow` requires
 `acknowledgePhi: true` (`PHI_ACK_REQUIRED`), and `redact` returns the body with the standard HL7 v2
 identifying fields replaced by `[REDACTED]`, whatever mix of `\r`, `\n` and `\r\n` ends its segments
 (and whatever blanks, `\x0b` or `\x1c` precede a segment name). Redaction only recognizes HL7 v2, so under `redact` anything
@@ -2678,15 +2718,19 @@ returned as it is.
 `iris_compile` (a local file), `kb` index and `iris_symbols_local` read the disk of the machine iad
 runs on. They are held to one directory, the project directory: `OBJECTSCRIPT_WORKSPACE`, else
 `--workspace`, else the directory of the project file (`.iris-agentic-dev.toml`) found by walking up
-from the working directory, else the working directory. It is made canonical.
+from the working directory (the walk stops at the repository root and never climbs above your
+home directory), else the working directory. It is made canonical.
 
 - A path is allowed when it is inside that directory with symbolic links followed. A link that leads
   out is refused through its target.
 - A path with a `..` segment is refused even when it lands inside. A relative path is taken from the
   working directory.
-- When no project directory is known, every host path is refused (`reason: "no_workspace"`). The
-  filesystem root, the home directory and a directory that does not exist do not count as one; set
-  `OBJECTSCRIPT_WORKSPACE` to the project.
+- When no project directory is known, every host path is refused (`reason: "no_workspace"`). None of
+  these counts as one: the filesystem root, your home directory or a directory that holds it, a
+  directory that does not exist, and the shared locations `/Users`, `/home`, `/tmp`, `/var/tmp`,
+  `/Users/Shared`, `/Users/Public`, `/Volumes`, `/mnt` and `/media`, with a mount point directly
+  under the last three (`/Volumes/Backup`). A project one level further down, such as
+  `/Volumes/work/proj`, works. Set `OBJECTSCRIPT_WORKSPACE` to the project.
 - The refusal is `HOST_PATH_BLOCKED`, a fixed rule, with `reason` set to `outside_workspace`,
   `parent_reference`, `extension` or `no_workspace`. It comes before the file is read. For a file,
   the extension is judged first, so the reply does not say whether a file outside the project exists.
@@ -2711,12 +2755,12 @@ A **refusal** is iad declining a call before IRIS runs anything. Every refusal i
 }
 ```
 
-| `refusal.kind`             | Meaning                                                                                                                                                         | Who lifts it, and `lift`                                                         |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `acknowledgement_required` | The call needs the agent to repeat it with an acknowledgement                                                                                                   | The agent: `lift.argument` is `confirm` or `acknowledgePhi`                      |
-| `operator_limit`           | A setting in the operator file, launch settings or a trusted file stands in the way                                                                             | The operator: `lift` is `{setting}`                                              |
-| `untrusted_setting`        | A loosening setting would have lifted it, but the file holding it is not trusted                                                                                | The operator, by trusting the file: `refusal.set_aside` names the set-aside item |
-| `fixed_rule`               | Nothing in configuration or in the call lifts it (the system blocklist, `SQL_WRITE_BLOCKED`, a source-control write on a `subject` server, the code-edit guard) | Nobody; `lift` is `null`                                                         |
+| `refusal.kind`             | Meaning                                                                                                                                                                  | Who lifts it, and `lift`                                                         |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| `acknowledgement_required` | The call needs the agent to repeat it with an acknowledgement                                                                                                            | The agent: `lift.argument` is `confirm` or `acknowledgePhi`                      |
+| `operator_limit`           | A setting in the operator file, launch settings or a trusted file stands in the way                                                                                      | The operator: `lift` is `{setting}`                                              |
+| `untrusted_setting`        | A loosening setting would have lifted it, but the file holding it is not trusted                                                                                         | The operator, by trusting the file: `refusal.set_aside` names the set-aside item |
+| `fixed_rule`               | Nothing in configuration or in the call lifts it (the built-in system blocklist, `SQL_WRITE_BLOCKED`, a source-control write on a `subject` server, the code-edit guard) | Nobody; `lift` is `null`                                                         |
 
 A refusal names the setting and never the operator file's path or the edit that lifts it. An agent
 with a file tool that is told "put `write_tools_enabled = true` in `~/.iris-agentic-dev.toml`"
@@ -2736,8 +2780,8 @@ called a refusal.
 | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POLICY_GATE`                         | Call blocked by per-connection policy — see `allow` in `.iris-agentic-dev.toml`                                                                                                                                                                                                         |
 | `ENV_GATE_BLOCKED`                    | Tool not permitted by this connection's `mcpTemplate` — see [gates](#data-safety-gates)                                                                                                                                                                                                 |
-| `DATA_POLICY_BLOCKED`                 | Bulk-PHI tool called without `dataPolicy = "allow"`                                                                                                                                                                                                                                     |
-| `SYSTEM_BLOCKLIST`                    | Global is on the system blocklist — not bypassable                                                                                                                                                                                                                                      |
+| `DATA_POLICY_BLOCKED`                 | Bulk-PHI tool called without `dataPolicy = "allow"` (`redact` admits `iris_message_body` and `stream_inspect`)                                                                                                                                                                          |
+| `SYSTEM_BLOCKLIST`                    | Global matches the built-in blocklist (a fixed rule: nothing lifts it) or a pattern in the server's `globalBlocklist` (an operator limit; the response has `custom_pattern: true`)                                                                                                      |
 | `INVALID_GLOBAL_NAME`                 | `global_name` / `global` is not a global name — no subscripts, extended references, or spaces in the name                                                                                                                                                                               |
 | `PHI_GATE_BLOCKED`                    | Global name matches a PHI pattern — pass `acknowledgePhi: true`                                                                                                                                                                                                                         |
 | `SCOPE_REQUIRED`                      | `iris_search` called without a document scope — pass a `documents` wildcard list                                                                                                                                                                                                        |
@@ -2769,7 +2813,7 @@ called a refusal.
 | `SQL_ERROR`                           | `iris_query` statement failed; IRIS's message is in `error`                                                                                                                                                                                                                             |
 | `IRIS_RUNTIME_ERROR`                  | `iris_execute` code raised an ObjectScript error; IRIS's text is in `output`                                                                                                                                                                                                            |
 | `CONFIG_INVALID`                      | A configuration file or entry does not parse or validate; the message names the file, line and column                                                                                                                                                                                   |
-| `PHI_POLICY_BLOCKED`                  | `iris_message_body` under `dataPolicy = "block"`                                                                                                                                                                                                                                        |
+| `PHI_POLICY_BLOCKED`                  | `iris_message_body` called with `dataPolicy: "block"` on a server whose own policy is looser (a server set to `block` answers `DATA_POLICY_BLOCKED`)                                                                                                                                    |
 | `PHI_ACK_REQUIRED`                    | `iris_message_body`, `stream_inspect`, or `iris_interop_query` with `body_class`, `body_where`, `body_select` or `search_table`, under `allow` without `acknowledgePhi: true`                                                                                                           |
 | `BODY_NOT_REDACTABLE`                 | Content under `dataPolicy = "redact"` that iad cannot redact (anything but HL7 v2)                                                                                                                                                                                                      |
 | `COMPILE_TIME_EXEC_BLOCKED`           | A document would run code while it compiles — see the [compile-time gate](connecting.md#compile-time-gate)                                                                                                                                                                              |
@@ -2780,7 +2824,11 @@ called a refusal.
 | `SUPERCLASS_CHECK_FAILED`             | The superclass walk before a compile could not run or did not finish, so nothing was compiled                                                                                                                                                                                           |
 | `SUBJECT_CONFIRM_REQUIRED`            | A write on a `subject` server without `confirm: true`                                                                                                                                                                                                                                   |
 | `SUBJECT_SCM_WRITE_BLOCKED`           | A source-control write on a `subject` server; `confirm` does not lift it                                                                                                                                                                                                                |
-| `READ_ONLY_STRICT`                    | A scratch-class tool called under `read_only = "strict"`                                                                                                                                                                                                                                |
+| `READ_ONLY_STRICT`                    | A scratch-class tool, or a write or destructive tool on any server, called under `read_only = "strict"`                                                                                                                                                                                 |
+| `READ_ONLY_STRICT_WITH_AUDIT`         | `read_only = "strict"` together with `irisAudit = true`: the `tool` command refuses every tool that talks to IRIS, and `check_config` reports it (a configuration error, not a refusal)                                                                                                 |
+| `ADMIN_WRITE_DISABLED`                | An `iris_admin` write action called without `IRIS_ADMIN_TOOLS=1` in the launch settings                                                                                                                                                                                                 |
+| `SQL_WRITE_BLOCKED`                   | `iris_query` in read, count or explain mode given a statement that writes. A fixed rule                                                                                                                                                                                                 |
+| `RESPONSE_TOO_LARGE`                  | An IRIS answer over the size cap, `IAD_MAX_RESPONSE_BYTES` in the launch settings                                                                                                                                                                                                       |
 | `NAME_CONFLICT`                       | `iris_add_server` named an existing Server Manager profile                                                                                                                                                                                                                              |
 | `SERVICE_ACCOUNT_*`                   | The agent's code could not run as the service account: `_UNCONFIGURED_FOR_SERVER`, `_WITHHELD`, `_HTTP_DENIED`, `_TERMINAL_DENIED`, `_LOGIN_FAILED`, `_IDENTITY_MISMATCH`, `_INVALID` — see [Troubleshooting](troubleshooting.md#service_account_-errors)                               |
 | `SESSION_IDENTITY_CHANGED`            | A WebSocket session's identity no longer matches the configured service account                                                                                                                                                                                                         |

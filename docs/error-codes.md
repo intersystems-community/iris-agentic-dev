@@ -6,6 +6,9 @@ object whose `kind` says who can lift it: `acknowledgement_required` (repeat the
 settings), `untrusted_setting` (trust the file with `iris-agentic-dev trust`) or `fixed_rule`
 (not lifted). A code marked "not a refusal" is an ordinary error.
 
+Codes older than 1.7.0, such as `WRITE_TOOLS_DISABLED` and `POLICY_GATE`, are in the
+[tools reference](tools.md#common-error-codes).
+
 The HTTP transport's refusals (a missing or wrong token, a bad `Host` or `Origin`) are HTTP
 401, 403 or 421 responses before MCP, not tool errors.
 
@@ -29,7 +32,7 @@ The HTTP transport's refusals (a missing or wrong token, a bad `Host` or `Origin
 | `NO_DOCKER_ROUTE_FOR_SERVER`              | operator limit           | a named server has no docker route and HTTP failed                                                                                                                                                                        |
 | `SSH_HOST_KEY_MISMATCH`                   | fixed rule               | the SSH host key does not match the known key                                                                                                                                                                             |
 | `NAME_CONFLICT`                           | operator limit           | `iris_add_server` names an existing Server Manager profile                                                                                                                                                                |
-| `READ_ONLY_STRICT`                        | operator limit           | a scratch-class tool is called under `read_only = "strict"`                                                                                                                                                               |
+| `READ_ONLY_STRICT`                        | operator limit           | a scratch-class tool, or a write or destructive tool on any server, is called under `read_only = "strict"`                                                                                                                |
 | `BODY_NOT_REDACTABLE`                     | operator limit           | content under `redact` that iad cannot redact                                                                                                                                                                             |
 | `ELICITATION_NOT_FOUND`                   | not a refusal            | a resume names no pending entry for this tool and server                                                                                                                                                                  |
 | `BPL_TOO_DEEP`                            | not a refusal            | BPL nesting exceeds the parser's depth limit                                                                                                                                                                              |
@@ -42,3 +45,5 @@ The HTTP transport's refusals (a missing or wrong token, a bad `Host` or `Origin
 | `SERVICE_ACCOUNT_TERMINAL_DENIED`         | operator limit           | the docker/SSH terminal ends the session after the drop: the service account lacks `%Development:USE`                                                                                                                     |
 | `JOURNAL_SEARCH_TIMEOUT`                  | not a refusal            | `journal_search` ran past the HTTP timeout; names the journal file and size                                                                                                                                               |
 | `INVALID_MANIFEST`                        | not a refusal            | a manifest or lock name contains control characters                                                                                                                                                                       |
+| `READ_ONLY_STRICT_WITH_AUDIT`             | not a refusal            | `read_only = "strict"` together with `irisAudit = true`; the `tool` command refuses every tool that talks to IRIS, and `check_config` reports it                                                                          |
+| `RESPONSE_TOO_LARGE`                      | not a refusal            | an IRIS answer was over the size cap (`IAD_MAX_RESPONSE_BYTES`, a launch setting)                                                                                                                                         |

@@ -18,13 +18,13 @@ HTTP request as:
 Write %request.CgiEnvs("HTTP_USER_AGENT")
 ```
 
-Before this feature, `iris-agentic-dev` sent no `User-Agent` header. IRIS saw
-`HTTP_USER_AGENT` as empty, so the Postman-vs-Chrome filtering technique the Web Gateway docs
-describe could not work — the gap was in the tool, not in IRIS.
+Without a marker, IRIS sees `HTTP_USER_AGENT` as empty, so the Postman-vs-Chrome filtering
+technique the Web Gateway docs describe cannot work. `iris-agentic-dev` therefore sends one on
+every IRIS-bound request.
 
 ## The caller marker
 
-Every IRIS-bound request from `iris-agentic-dev` now sends a `User-Agent` header in this form:
+Every IRIS-bound request from `iris-agentic-dev` sends a `User-Agent` header in this form:
 
 ```text
 iris-agentic-dev/<version> (<mode>[; <label>][; <client>/<version>])
@@ -185,7 +185,9 @@ irisAudit = true   # emit %SYS.Audit records for every tool call
 `irisAudit` only adds records, so it counts from any configuration file, a project's included, and
 combines with the other file's setting: it is on if either file turns it on.
 `irisAudit` cannot be combined with `read_only = "strict"`: the emission compiles a class on the
-server, so `iris-agentic-dev mcp` names both settings on stderr and exits 2.
+server, so `iris-agentic-dev mcp` names both settings on stderr and exits 2. The `tool` command
+refuses every tool that talks to IRIS with `READ_ONLY_STRICT_WITH_AUDIT`, and `check_config`
+reports the conflict.
 
 For flat single-server configs (no named server entry), use the `default` catchall key:
 
@@ -319,20 +321,20 @@ private web server (DPP-1192). On those instances, agent attribution depends ent
 
 ## Reference: which requests carry the marker
 
-| Path                              | Marker present after this release |
-| --------------------------------- | --------------------------------- |
-| Atelier document read/write       | Yes (was already present)         |
-| Atelier action/query (execute)    | Yes (was already present)         |
-| Discovery probe (`/api/atelier/`) | Yes — T013                        |
-| Localhost port scan               | Yes — T013                        |
-| Docker container probe            | Yes — T013                        |
-| Search `sync_client`              | Yes — T016                        |
-| Batch document fetch              | Yes — T017                        |
-| CSP cookie fetch (WS pre-auth)    | Yes — T014                        |
-| WebSocket upgrade handshake       | Yes — T015                        |
-| `docker exec` (docker_only)       | No — no HTTP request exists       |
-| LLM provider calls                | No — not IRIS-bound               |
-| Registry / package downloads      | No — not IRIS-bound               |
+| Path                              | Marker present              |
+| --------------------------------- | --------------------------- |
+| Atelier document read/write       | Yes                         |
+| Atelier action/query (execute)    | Yes                         |
+| Discovery probe (`/api/atelier/`) | Yes                         |
+| Localhost port scan               | Yes                         |
+| Docker container probe            | Yes                         |
+| Search `sync_client`              | Yes                         |
+| Batch document fetch              | Yes                         |
+| CSP cookie fetch (WS pre-auth)    | Yes                         |
+| WebSocket upgrade handshake       | Yes                         |
+| `docker exec` (docker_only)       | No — no HTTP request exists |
+| LLM provider calls                | No — not IRIS-bound         |
+| Registry / package downloads      | No — not IRIS-bound         |
 
 ## FAQ
 
