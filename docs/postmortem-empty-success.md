@@ -100,11 +100,15 @@ Nine detectors in `scripts/gates/antipatterns.py`, one per class above, running 
 boundaries: the agent Stop hook, git pre-commit, and CI. Details in
 `specs/112-antipattern-gates/spec.md`.
 
+That was the count when this was written: nine. `scripts/gates/antipatterns.py` has 18 detectors
+as of 1.7.1.
+
 The first run found 1444 instances. A gate that fails 1444 times is a gate people learn to
 bypass, so known instances live in `scripts/gates/antipatterns-baseline.txt` and the gate
 enforces _no new instances_. It also fails on a baseline line that no longer fires, so the list
 shrinks instead of rotting. Three checks are never baselined and stay at zero:
 `error-sentinels`, `self-referential-gates`, `version-consistency`.
+As of 1.7.1, twelve classes are never baselined (`NO_BASELINE` in the same script).
 
 Constitution v1.5.0 adds the three principles this cost me: XI No Vacuous Tests, XII Hermetic
 Test Environment, XIII Single-Source Failure Detection — plus the Bug Class Registry, whose

@@ -24,9 +24,9 @@ vulnerability, follow [SECURITY.md](SECURITY.md) instead.
   only as good as its parser.
 - **No plain-text password on Windows** for an MCP client that runs outside VS Code. Today the
   fallback is a password in a file. (#141)
-- **TLS that works behind a corporate proxy.** Trust the operating system's certificate store,
-  not only the bundled roots, so nobody has to switch verification off to get through a proxy
-  that re-signs traffic. (#127)
+- **TLS that works behind a corporate proxy.** Shipped in 1.4.1: iad trusts the operating
+  system's certificate store, not only the bundled roots, so nobody has to switch verification
+  off to get through a proxy that re-signs traffic. (#127)
 - **Discovery stops sending a password to a server it found by scanning.** Today the first
   local listener that looks like IRIS gets one login attempt, and any local process can fake
   that look. Discovery will list what it found and connect only to a server you
@@ -41,8 +41,8 @@ Also this month, outside the theme:
 - **winget package.** `winget install InterSystemsCommunity.IrisAgenticDev`. Built and tested
   ([spec 152](specs/152-winget/spec.md)); the first submission to Microsoft's package repository
   is next, then Microsoft's review. (#102)
-- **Servers behind a web-gateway path prefix**, which `servers.json` cannot describe today.
-  (#129)
+- **Servers behind a web-gateway path prefix.** Shipped in 1.4.2: `servers.json` and
+  `iris_add_server` take a `web_prefix`. (#129)
 - **AI Hub EAP images** detected as having no web server when their REST API works. (#165)
 - **Bugs:** `iris_global` with `subtree=true` returns nothing (#146); `iris_doc mode=list` fails
   for MAC, INT and INC (#140); the first message to the agent points at the wrong place for

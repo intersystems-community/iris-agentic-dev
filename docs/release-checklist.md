@@ -4,9 +4,12 @@ Run this before tagging any release. Each item is a gate — don't move on if it
 
 ## 1. Version numbers (do these first — everything downstream depends on them)
 
-- [ ] Bump `[workspace.package] version` in `Cargo.toml`
+- [ ] Bump `[workspace.package] version` in `Cargo.toml`, and commit the `Cargo.lock` change it causes
+      (the `iris-agentic-dev` and `iris-agentic-dev-core` entries; CI builds with `--locked`)
 - [ ] Bump `"irisAgenticDev.serverVersion"` in `vscode-iris-agentic-dev/package.json`
-- [ ] Bump `"version"` (VS Code extension semver) in `vscode-iris-agentic-dev/package.json`
+- [ ] Bump `"version"` (VS Code extension semver) in `vscode-iris-agentic-dev/package.json`, and the
+      two `version` fields at the top of `vscode-iris-agentic-dev/package-lock.json`
+      (`extension_package_lock_version_matches_package_json` fails until they match)
 - [ ] Bump `"version"` in `.claude-plugin/plugin.json`
 - [ ] Bump the pinned tag in the direct-download commands in `README.md`,
       `docs/cursor-quickstart.md`, `skills/BENCHMARKING.md` and the `VERSION=` line in
@@ -120,8 +123,11 @@ git push github vX.Y.Z
 ```
 
 - [ ] GitHub release workflow triggered (`Actions → Release`)
+- [ ] `verify-tag` job passes (the tagged commit is on master and its `Cargo.toml` version matches the tag)
 - [ ] `build-vsix` job passes (npm test includes `serverVersion.test.cjs` — it checks package.json matches Cargo.toml)
-- [ ] `publish-vsix` job passes (VS Code Marketplace upload)
+- [ ] `publish-marketplace` job passes (VS Code Marketplace upload). Its publish step is
+      `continue-on-error`, so a green workflow does not prove the upload: open the job and check it. "Version already
+      published" is the usual silent case
 - [ ] `update-homebrew-tap` job passes
 - [ ] Approve the `release` environment when the run asks (twice: before `docker-publish`, then
       before `publish-marketplace` and `update-homebrew-tap`)
@@ -135,7 +141,7 @@ git push github vX.Y.Z
       The reporter closes; if nobody answers within a week, close it then.
 - [ ] Comment on contributor PRs
 - [ ] Verify Homebrew tap: `brew tap intersystems-community/tap && brew install iris-agentic-dev` installs the new version
-- [ ] Smoke test: `iris-agentic-dev --version` prints `vX.Y.Z`
+- [ ] Smoke test: `iris-agentic-dev --version` prints `iris-agentic-dev X.Y.Z`
 - [ ] winget: `gh auth switch -u isc-tdyar && scripts/winget-submit.sh X.Y.Z` (dry run: downloads,
       verifies against `SHA256SUMS`, prints the manifests), then the same with `--submit` to open the
       `microsoft/winget-pkgs` pull request. Switch gh back afterwards. Spec 152: no winget token is

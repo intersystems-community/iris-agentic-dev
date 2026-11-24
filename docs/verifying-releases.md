@@ -6,8 +6,9 @@ that workflow, at that tag, and was not changed afterwards. The checks below nee
 the signatures are keyless (Sigstore), and the certificate inside each one names the workflow
 file and the tag that produced it.
 
-Releases cut before this workflow change carry `SHA256SUMS` only. For those, use the checksum
-step at the end of this page.
+Releases before 1.7.1 carry `SHA256SUMS` only, with no signature or attestation. For those, use
+the checksum step at the end of this page. From 1.7.1 on, a release also carries the CycloneDX SBOM,
+`iris-agentic-dev-vX.Y.Z.cdx.json`.
 
 ## Binaries and the `.vsix`, with the GitHub CLI
 

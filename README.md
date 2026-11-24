@@ -12,16 +12,17 @@ Requires IRIS 2023.1 or later. Works with native IRIS on Windows or Linux, and w
 
 ### Mode 1 — MCP server
 
-90+ tools exposed over the Model Context Protocol. Connect once; your agent calls tools
+81 tools exposed over the Model Context Protocol by default (`iris-agentic-dev tool --list` prints them). Connect once; your agent calls tools
 by name. Works with Claude Code, GitHub Copilot, OpenCode, or any MCP client.
 
 ```bash
 iris-agentic-dev mcp
 ```
 
-To expose only the IRIS tools without the skill/KB/learning-agent surface, pass
-`--no-skills` (or set `IRIS_NO_SKILLS=true`). Useful when skills are installed
-separately and you want to avoid duplicate tool names in the MCP client:
+To expose only the IRIS tools without the skill, learning-agent and `kb_index`/`kb_recall`
+tools, pass `--no-skills` (or set `IRIS_NO_SKILLS=true`). The `kb` tool stays; add it to
+`IRIS_DISABLED_TOOLS` to remove it too. Useful when skills are installed separately and you
+want to avoid duplicate tool names in the MCP client:
 
 ```bash
 iris-agentic-dev mcp --no-skills
@@ -123,15 +124,17 @@ sha256sum -c --ignore-missing SHA256SUMS &&
 ```
 
 **Windows (winget)**: `winget install InterSystemsCommunity.IrisAgenticDev` puts
-`iris-agentic-dev` on your PATH. The package is waiting for review in Microsoft's winget
-repository; until it is accepted, `winget` answers "No package found" and the manual install
-below is the way in.
+`iris-agentic-dev` on your PATH. The package has not been submitted to Microsoft's winget
+repository yet, so for now `winget` answers "No package found" and the manual install below is
+the way in.
 
 **Windows (manual)**: download `iris-agentic-dev-windows-x86_64.exe` and `SHA256SUMS` from the
 [v1.7.1 release](https://github.com/intersystems-community/iris-agentic-dev/releases/tag/v1.7.1),
 check that `(Get-FileHash .\iris-agentic-dev-windows-x86_64.exe).Hash` matches the
 line for that file in `SHA256SUMS` (the comparison is case-insensitive), and place
-it on your PATH.
+it on your PATH. The Windows binary is not yet signed by the corporate pipeline; the
+[Docker image](docs/windows-docker.md) is the alternative. `SHA256SUMS` is itself signed, and
+the binaries carry build attestations: see [Verifying a release](docs/verifying-releases.md).
 
 ---
 
@@ -200,8 +203,9 @@ binary:
 > set up iris-agentic-dev against a local IRIS container
 ```
 
-That brings the MCP server, the ten core skills plus the no-PWS setup skill, and the compile-on-save
-hooks. The other bundled skills stay one `skill_describe` call away. The binary still has
+That brings the MCP server, the ten core skills, the setup skill (`iris-agentic-dev-setup`), the
+coverage and pyprod skills, the no-PWS setup note, the compile-on-save hooks and a version check at
+session start. The other bundled skills stay one `skill_describe` call away. The binary still has
 to land on your PATH, which is what the third line is for: the setup skill installs it, finds or
 starts an IRIS, clears the expired default password on a fresh container, and verifies with a
 query. If you would rather do that part yourself, follow [Install](#install) first and the skill
@@ -548,28 +552,31 @@ into `.github/instructions/`.
 
 → [Full skill docs](docs/skills.md)
 
-### Skill inventory
+### Skills at a glance
 
-| Skill                        | What it does                                                                                    | Benchmark   |
-| ---------------------------- | ----------------------------------------------------------------------------------------------- | ----------- |
-| `objectscript-review`        | Hard-gate checklist: 10 most common AI mistakes in ObjectScript                                 | 100% repair |
-| `objectscript-guardrails`    | All-in-one hard gate, works without MCP                                                         | 86% repair  |
-| `objectscript-sql-patterns`  | IRIS SQL quirks: reserved words, SQLCODE, table naming, NULL handling                           | 100% SQL    |
-| `iris-query-plans`           | Reading query plans; stale indexes, `%BuildIndices`, `TUNE TABLE`, outlier selectivity          |             |
-| `objectscript-unit-test`     | Generates `%UnitTest` scaffolding from live class introspection                                 | 86% repair  |
-| `objectscript-list-patterns` | `%List`, `$LISTBUILD`, `$LISTNEXT`, `$LISTTOSTRING` patterns                                    | 91% repair  |
-| `objectscript-navigation`    | Codebase discovery using MCP introspection tools                                                | 82% repair  |
-| `objectscript-tdd`           | Compile-test-fix loop for iterative development                                                 |             |
-| `objectscript-debugging`     | Maps `.INT` offsets to `.CLS` source lines, reads error logs                                    |             |
-| `objectscript-repair`        | Coordinated fixes across multiple dependent classes                                             |             |
-| `iris-docs`                  | Fetches live IRIS class reference before implementing any API — eliminates hallucinated methods |             |
-| `iris-vector-ai`             | IRIS vector search syntax (HNSW, `VECTOR_COSINE`, `TO_VECTOR`)                                  | domain      |
-| `iris-connectivity`          | IRIS connection APIs from Python, Java, JDBC, ODBC                                              | domain      |
-| `ensemble-production`        | Interoperability production lifecycle, logs, queues                                             | domain      |
-| `iris-devtester`             | `IRISContainer` factory methods and test fixture patterns                                       | domain      |
+35 skills ship in the binary: 10 core, 24 extra, 1 internal. The table shows 15.
+[docs/skills.md](docs/skills.md#skill-inventory) lists all of them with their tier.
 
-> **Where the Benchmark column comes from**: the model-judged repair and SQL suites, not the
-> graded holdout above. Treat it as a description of what each skill was aimed at, not as a
+| Skill                        | What it does                                                                                                                             | Benchmark   |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `objectscript-review`        | Hard-gate checklist: the 11 most common AI mistakes in ObjectScript                                                                      | 100% repair |
+| `objectscript-guardrails`    | All-in-one hard gate, works without MCP                                                                                                  | 86% repair  |
+| `objectscript-sql-patterns`  | IRIS SQL quirks: reserved words, SQLCODE, table naming, NULL handling                                                                    | 100% SQL    |
+| `iris-query-plans`           | Reading query plans; stale indexes, `%BuildIndices`, `TUNE TABLE`, outlier selectivity                                                   |             |
+| `objectscript-unit-test`     | Generates `%UnitTest` scaffolding from live class introspection                                                                          | 86% repair  |
+| `objectscript-list-patterns` | `%List`, `$LISTBUILD`, `$LISTNEXT`, `$LISTTOSTRING` patterns                                                                             | 91% repair  |
+| `objectscript-navigation`    | Codebase discovery using MCP introspection tools                                                                                         | 82% repair  |
+| `objectscript-tdd`           | Compile-test-fix loop for iterative development                                                                                          |             |
+| `objectscript-debugging`     | Maps `.INT` offsets to `.CLS` source lines, reads error logs                                                                             |             |
+| `objectscript-repair`        | Coordinated fixes across multiple dependent classes                                                                                      |             |
+| `iris-docs`                  | Which documentation tool to use (`iris_doc_search`, `docs_introspect`, `iris_doc`), the Algolia search recipe, the Documatic URL pattern |             |
+| `iris-vector-ai`             | IRIS vector search syntax (HNSW, `VECTOR_COSINE`, `TO_VECTOR`)                                                                           | domain      |
+| `iris-connectivity`          | IRIS connection APIs from Python, Java, JDBC, ODBC                                                                                       | domain      |
+| `ensemble-production`        | Interoperability production lifecycle, logs, queues                                                                                      | domain      |
+| `iris-devtester`             | `IRISContainer` factory methods and test fixture patterns                                                                                | domain      |
+
+> **Where the Benchmark column comes from**: the model-judged repair and SQL suites, run in
+> April 2026 on earlier text of each skill, not the graded holdout above. Treat it as a description of what each skill was aimed at, not as a
 > measured effect — the graded run found no distinguishable lift from the skills as a set.
 > One skill is known to hurt: `objectscript-loop-patterns` measured −19% when loaded for all
 > tasks, which is why domain skills should load only in their domain. See
@@ -585,8 +592,15 @@ run the graded benchmark yourself.
 
 Most tools work over the Atelier REST API and connect to any IRIS instance — no Docker
 required unless noted. Tools marked ✦ require `IRIS_CONTAINER`. Tools marked 🔒 are
-write-gated: they run only when the target server's write tier is on, which by default it is not on a
-Live instance (see [Write protection](./docs/tools.md#write-protection)).
+write-gated whatever arguments they get: they run only when the target server's write tier is
+on, or its destructive tier for `global_kill`, `iris_namespace_create`, `iris_remove_server` and
+`skill_forget`. By default neither is on for a Live instance. A tool that mixes reads and writes
+(`iris_doc`, `iris_global`, `iris_query`, `iris_admin` and others) is gated only for its writing
+actions and carries no mark. See [Write protection](./docs/tools.md#write-protection).
+`capability_matrix` and `check_config` show the gate state for the server you are connected to.
+
+The tables list the common tools. `iris-agentic-dev tool --list` prints all 81 and
+[docs/tools.md](docs/tools.md) documents each.
 
 Tools that can reach patient data or IRIS internals are blocked before they run unless
 you opt in. See [Data safety gates](./docs/tools.md#data-safety-gates) for what is
@@ -594,32 +608,41 @@ blocked and how to permit it.
 
 ### Code
 
-| Tool                    | What it does                                                                                     |
-| ----------------------- | ------------------------------------------------------------------------------------------------ |
-| `iris_compile`          | Compile a class, routine, or wildcard. Returns errors with line numbers.                         |
-| `iris_doc`              | Read, write, delete, or check any IRIS document.                                                 |
-| `iris_execute`          | Run ObjectScript, return output.                                                                 |
-| `iris_execute_method`   | Invoke a `ClassMethod` directly by class+method+args, no boilerplate.                            |
-| `iris_query`            | Execute SQL, return rows as JSON. `mode=explain\|count\|write` for plans, counts, and gated DML. |
-| `iris_test`             | Run `%UnitTest` tests, return structured pass/fail results.                                      |
-| `iris_global`           | Read, write, kill, or list IRIS global nodes. Patient-data and system globals are gated.         |
-| `iris_coverage`         | Measure ObjectScript line coverage via `%Monitor.System.LineByLine`.                             |
-| `iris_source_control` ✦ | Check lock status, checkout, execute SCM actions.                                                |
+| Tool                     | What it does                                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------------ |
+| `iris_compile` 🔒        | Compile a class, routine, or wildcard. Returns errors with line numbers.                         |
+| `iris_doc`               | Read, write, delete, or check any IRIS document.                                                 |
+| `iris_execute` 🔒        | Run ObjectScript, return output.                                                                 |
+| `iris_execute_method` 🔒 | Invoke a `ClassMethod` directly by class+method+args, no boilerplate.                            |
+| `iris_query`             | Execute SQL, return rows as JSON. `mode=explain\|count\|write` for plans, counts, and gated DML. |
+| `iris_test` 🔒           | Run `%UnitTest` tests, return structured pass/fail results.                                      |
+| `iris_global`            | Read, write, kill, or list IRIS global nodes. Patient-data and system globals are gated.         |
+| `iris_coverage`          | Measure ObjectScript line coverage via `%Monitor.System.LineByLine`.                             |
+| `iris_source_control` ✦  | Check lock status, checkout, execute SCM actions.                                                |
 
 ### Search and introspection
 
-| Tool                            | What it does                                                                       |
-| ------------------------------- | ---------------------------------------------------------------------------------- |
-| `iris_symbols`                  | Search classes and methods via `%Dictionary`.                                      |
-| `iris_symbols_local`            | Search `.cls`/`.mac`/`.inc` files on disk by glob — no IRIS connection required.   |
-| `docs_introspect`               | Deep class inspection: methods, properties, XData, superclasses.                   |
-| `iris_search`                   | Full-text search across the namespace. Supports regex and category filters.        |
-| `iris_info`                     | Namespace discovery: documents, jobs, CSP apps, metadata.                          |
-| `iris_macro`                    | Macro inspection: list, signature, definition, expand.                             |
-| `iris_table_info`               | Inspect a SQL table: class-projected vs. DDL, backing storage globals.             |
-| `resolve_dynamic_dispatch`      | Resolve `$classmethod`/`##class({var})` polymorphic dispatch to candidate classes. |
-| `extract_message_map_routing`   | Extract a compiled Ensemble `MessageMap` routing table.                            |
-| `find_subclass_implementations` | Find all concrete subclass implementations of a method.                            |
+| Tool                            | What it does                                                                           |
+| ------------------------------- | -------------------------------------------------------------------------------------- |
+| `iris_symbols`                  | Search classes and methods via `%Dictionary`.                                          |
+| `iris_symbols_local`            | Search `.cls`/`.mac`/`.inc` files on disk by glob — no IRIS connection required.       |
+| `docs_introspect`               | Deep class inspection: methods, properties, XData, superclasses.                       |
+| `iris_search`                   | Full-text search across the namespace. Supports regex and category filters.            |
+| `iris_info`                     | Namespace discovery: documents, jobs, CSP apps, metadata.                              |
+| `iris_macro`                    | Macro inspection: list, signature, definition, expand.                                 |
+| `iris_table_info`               | Inspect a SQL table: class-projected vs. DDL, backing storage globals.                 |
+| `resolve_dynamic_dispatch`      | Resolve `$classmethod`/`##class({var})` polymorphic dispatch to candidate classes.     |
+| `extract_message_map_routing`   | Extract a compiled Ensemble `MessageMap` routing table.                                |
+| `find_subclass_implementations` | Find all concrete subclass implementations of a method.                                |
+| `iris_doc_search`               | Search docs.intersystems.com through its Algolia index; ranked hits with excerpts.     |
+| `resolve_storage`               | Global maps (data, id, index locations) of a class from `%Dictionary.CompiledStorage`. |
+| `stream_inspect`                | Read the content of a stream object by OID.                                            |
+| `compare_document`              | Diff one document's source across two registered servers.                              |
+| `compare_namespace`             | Compare the classes of a namespace across two registered servers.                      |
+| `mermaid_class`                 | Mermaid `classDiagram` of a class and its superclass chain.                            |
+| `mermaid_production`            | Mermaid flowchart of a production's configured items.                                  |
+| `hl7_schema_list`               | List the HL7 schemas on the instance.                                                  |
+| `hl7_schema_inspect`            | Message structures of an HL7 schema, or the fields of one segment.                     |
 
 ### Debugging
 
@@ -631,52 +654,78 @@ blocked and how to permit it.
 
 ### Generation
 
-| Tool                  | What it does                                                                  |
-| --------------------- | ----------------------------------------------------------------------------- |
-| `iris_generate`       | Build a context-rich prompt for generating ObjectScript. No API key required. |
-| `iris_generate_class` | Generate and compile a class from a description (requires LLM API key).       |
-| `iris_generate_test`  | Generate `%UnitTest` scaffolding for an existing class.                       |
+| Tool                     | What it does                                                                  |
+| ------------------------ | ----------------------------------------------------------------------------- |
+| `iris_generate` 🔒       | Build a context-rich prompt for generating ObjectScript. No API key required. |
+| `iris_generate_class` 🔒 | Generate and compile a class from a description (requires LLM API key).       |
+| `iris_generate_test` 🔒  | Generate `%UnitTest` scaffolding for an existing class.                       |
 
 ### Interoperability
 
-| Tool                        | What it does                                                                      |
-| --------------------------- | --------------------------------------------------------------------------------- |
-| `iris_production` ✦         | Start, stop, update, check, or recover a production.                              |
-| `iris_interop_query` ✦      | Query production logs, queue depths, or message archive.                          |
-| `iris_production_item` 🔒   | Enable, disable, or get/set settings on a production config item.                 |
-| `iris_production_diff`      | Diff the running production config against the last source-controlled version.    |
-| `iris_message_body`         | Read a message body by ID. Blocked unless the connection permits patient data.    |
-| `iris_business_rule_info`   | List or inspect Ensemble business rules.                                          |
-| `iris_credential_list`      | List Ensemble credentials (IDs/usernames only — passwords never returned).        |
-| `iris_credential_manage` 🔒 | Create, update, or delete an Ensemble credential.                                 |
-| `iris_lookup_manage`        | Read, write, delete, or list Ensemble lookup table entries (write actions gated). |
-| `iris_lookup_transfer`      | Export or import an Ensemble lookup table as XML (import gated).                  |
+| Tool                      | What it does                                                                      |
+| ------------------------- | --------------------------------------------------------------------------------- |
+| `iris_production` ✦       | Start, stop, update, check, or recover a production.                              |
+| `iris_interop_query` ✦    | Query production logs, queue depths, or message archive.                          |
+| `iris_production_item` 🔒 | Enable, disable, or get/set settings on a production config item.                 |
+| `iris_production_diff`    | Diff the running production config against the last source-controlled version.    |
+| `iris_message_body`       | Read a message body by ID. Blocked unless the connection permits patient data.    |
+| `iris_business_rule_info` | List or inspect Ensemble business rules.                                          |
+| `iris_credential_list`    | List Ensemble credentials (IDs/usernames only — passwords never returned).        |
+| `iris_credential_manage`  | Create, update, or delete an Ensemble credential (gated).                         |
+| `iris_lookup_manage`      | Read, write, delete, or list Ensemble lookup table entries (write actions gated). |
+| `iris_lookup_transfer`    | Export or import an Ensemble lookup table as XML (import gated).                  |
 
 ### Administration
 
-| Tool                       | What it does                                                                                      |
-| -------------------------- | ------------------------------------------------------------------------------------------------- |
-| `iris_admin`               | List namespaces, databases, users, roles, web apps; create/delete users; real-time observability. |
-| `journal_search`           | Search the IRIS journal for SetKill records by global pattern and/or time range.                  |
-| `iris_namespace_list`      | List all namespaces on the connected instance.                                                    |
-| `iris_namespace_create` 🔒 | Create a new namespace.                                                                           |
-| `iris_database_list`       | List databases and their paths.                                                                   |
-| `iris_database_stats`      | Disk usage and block-level stats for a database.                                                  |
-| `query_audit_log`          | Query the IRIS SQL audit log for recent activity.                                                 |
-| `my_access`                | Show the current user's roles and resource permissions.                                           |
-| `capability_matrix`        | Show which tools are enabled/disabled and why (gates, policy, container availability).            |
-| `iris_containers` ✦        | List, select, or start IRIS Docker containers.                                                    |
+| Tool                       | What it does                                                                                         |
+| -------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `iris_admin`               | List namespaces, databases, users, roles, web apps; create/delete users; real-time observability.    |
+| `journal_search`           | Search the IRIS journal for SetKill records by global pattern and/or time range.                     |
+| `iris_namespace_list`      | List all namespaces on the connected instance.                                                       |
+| `iris_namespace_create` 🔒 | Create a new namespace.                                                                              |
+| `iris_database_list`       | List databases and their paths.                                                                      |
+| `iris_database_stats`      | Disk usage and block-level stats for a database.                                                     |
+| `query_audit_log`          | Query the IRIS SQL audit log for recent activity.                                                    |
+| `my_access`                | Show the current user's roles and resource permissions.                                              |
+| `capability_matrix`        | Show which tools are enabled/disabled and why (gates, policy, container availability).               |
+| `iris_containers` ✦        | List, select, or start IRIS Docker containers.                                                       |
+| `iris_mirror_status`       | Mirror membership and role of the connected instance; `{is_member: false}` when not mirrored.        |
+| `iris_system_performance`  | Start, list and read SystemPerformance (pbuttons) profiles and runs (start and profile edits gated). |
+| `global_preview`           | Show the first entries of a global and a `confirm_token` valid for five minutes.                     |
+| `global_kill` 🔒           | Kill a whole global; needs the `confirm_token` from `global_preview`.                                |
+
+### Servers and sessions
+
+| Tool                     | What it does                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------ |
+| `iris_servers`           | List the servers in the connection pool with name, host, port, namespace and reachability. |
+| `iris_test_server`       | Probe a server for reachability and report the Atelier and IRIS versions.                  |
+| `iris_add_server` 🔒     | Add a server to iad's own server list; `web_prefix` names a gateway path prefix.           |
+| `iris_import_servers` 🔒 | Import server definitions from VS Code or Cursor Server Manager.                           |
+| `iris_remove_server` 🔒  | Remove a server iad added itself; Server Manager entries stay.                             |
+| `iris_reload_pool` 🔒    | Rebuild the connection pool from the files on disk without restarting.                     |
+| `iris_ws_open`           | Open a persistent WebSocket terminal session and return its token.                         |
+| `iris_ws_exec` 🔒        | Run ObjectScript in an open session; variables persist across calls.                       |
+| `iris_ws_close`          | Close a terminal session and release its server resources.                                 |
 
 ### Learning agent, skills, and knowledge base
 
-| Tool              | What it does                                                                          |
-| ----------------- | ------------------------------------------------------------------------------------- |
-| `agent_history`   | Recent tool-call history for the current session.                                     |
-| `agent_stats`     | Learning agent status: skill count, pattern count, KB size.                           |
-| `telemetry_query` | Query the durable telemetry record beyond the in-memory session.                      |
-| `skill`           | Manage the learning agent skill registry: list, describe, search, forget, or propose. |
-| `skill_community` | Browse or install community skills published to subscribed GitHub repos.              |
-| `kb`              | Index markdown/text into the IRIS knowledge base, or recall content by keyword.       |
+| Tool                     | What it does                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------- |
+| `agent_history`          | Recent tool-call history for the current session.                                     |
+| `agent_stats`            | Learning agent status: skill count, pattern count, KB size.                           |
+| `telemetry_query`        | Query the durable telemetry record beyond the in-memory session.                      |
+| `skill`                  | Manage the learning agent skill registry: list, describe, search, forget, or propose. |
+| `skill_community`        | Browse or install community skills published to subscribed GitHub repos.              |
+| `kb`                     | Index markdown/text into the IRIS knowledge base, or recall content by keyword.       |
+| `skill_list`             | List the bundled skills and any synthesized ones in the IRIS `^SKILLS` global.        |
+| `skill_describe`         | Show one skill by name, bundled or from `^SKILLS`.                                    |
+| `skill_search`           | Search skills by name, description and tags.                                          |
+| `skill_forget` 🔒        | Remove a skill from the registry by name.                                             |
+| `skill_community_list`   | List the skills loaded from `--subscribe owner/repo` packages.                        |
+| `kb_index` 🔒            | Index markdown files into the knowledge base.                                         |
+| `kb_recall`              | Search the knowledge base for guidance.                                               |
+| `telemetry_export_trace` | Export recorded tool calls as dispatch-trace records.                                 |
 
 → [Full tool reference with error codes](docs/tools.md)
 
@@ -684,15 +733,13 @@ blocked and how to permit it.
 
 ## Troubleshooting
 
-| Symptom                                      | Likely cause                        | Fix                                                                       |
-| -------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------- |
-| 404 on `/api/atelier` (Windows)              | IIS missing `/api` web application  | See [Windows IIS setup](#windows-iis-api-web-application-required)        |
-| `check_config` works but compile/search fail | Atelier `Recurse=0`                 | Management Portal → Security → Web Apps → `/api/atelier` → enable Recurse |
-| All tools fail, namespace listing works      | API version mismatch                | Verify IRIS supports Atelier v8                                           |
-| 403 on write operations                      | Insufficient permissions            | Use a user with `%DB_USER` or `%All` role                                 |
-| Connection delays on Windows                 | `localhost` DNS issue               | Use `host = "127.0.0.1"` in `.iris-agentic-dev.toml`                      |
-| `SERVER_MANAGER_CREDENTIAL_ERROR`            | Credential not in OS keychain       | VS Code → Server Manager → right-click server → **Reconnect**             |
-| `SERVER_MANAGER_AMBIGUOUS`                   | Multiple SM servers, no server name | Set `IRIS_SERVER_NAME=<server-key>`                                       |
+| Symptom                                      | Likely cause                       | Fix                                                                       |
+| -------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------- |
+| 404 on `/api/atelier` (Windows)              | IIS missing `/api` web application | See [Windows IIS setup](#windows-iis-api-web-application-required)        |
+| `check_config` works but compile/search fail | Atelier `Recurse=0`                | Management Portal → Security → Web Apps → `/api/atelier` → enable Recurse |
+| All tools fail, namespace listing works      | API version mismatch               | Verify IRIS supports Atelier v8                                           |
+| 403 on write operations                      | Insufficient permissions           | Use a user with `%DB_USER` or `%All` role                                 |
+| Connection delays on Windows                 | `localhost` DNS issue              | Use `host = "127.0.0.1"` in `.iris-agentic-dev.toml`                      |
 
 For verbose HTTP logging:
 
@@ -712,9 +759,16 @@ iris-agentic-dev tool <name> --args <json>        # Call a tool directly (no ser
 iris-agentic-dev tool --list                      # List every tool, no connection
 iris-agentic-dev tool <name> --schema             # Print one tool's parameters
 iris-agentic-dev batch --file steps.json          # Several tool calls in one process
+iris-agentic-dev exec 'Write 1'                   # Run ObjectScript
+iris-agentic-dev query "SELECT 1"                 # Run SQL, print TSV
+iris-agentic-dev doc get MyApp.Foo                # Print a class document
+iris-agentic-dev doc put MyApp.Foo --file Foo.cls # Write a class document
 iris-agentic-dev compile MyApp.Foo.cls            # Compile from the terminal
+iris-agentic-dev trust                            # Trust a project's .iris-agentic-dev.toml (needs a terminal)
+iris-agentic-dev capability-matrix                # Roles, grants and policies for this connection
 iris-agentic-dev skill install [names|--all]      # Install core, all, or named skills
-iris-agentic-dev skill list                       # Check skill install status
+iris-agentic-dev skill list                       # Skills in the pack, their tier and install status
+iris-agentic-dev skill status                     # Install paths of the local skill files
 iris-agentic-dev init                             # Generate .iris-agentic-dev.toml
 iris-agentic-dev benchmark --skill <path>         # Run the skill benchmark harness
 iris-agentic-dev --version                        # Print version
@@ -733,6 +787,13 @@ iris-agentic-dev --version                        # Print version
 | [docs/troubleshooting.md](docs/troubleshooting.md)             | Symptom table, CLI commands, verbose logging                                  |
 | [docs/ecosystem-integration.md](docs/ecosystem-integration.md) | Patterns for downstream projects and skill repos                              |
 | [docs/cursor-quickstart.md](docs/cursor-quickstart.md)         | Cursor IDE and Cursor CLI setup, fleet routing, vs VS Code + Copilot          |
+| [docs/verifying-releases.md](docs/verifying-releases.md)       | Check a download's checksum, signature and build provenance                   |
+| [docs/windows-docker.md](docs/windows-docker.md)               | Run iris-agentic-dev as a Docker container on Windows                         |
+| [docs/error-codes.md](docs/error-codes.md)                     | Error codes and the `refusal` object a caller can act on                      |
+| [docs/agent-attribution.md](docs/agent-attribution.md)         | Caller marker in `User-Agent` and the IRIS audit guide                        |
+| [docs/production-profile.md](docs/production-profile.md)       | What the program does with data, for a security or compliance review          |
+| [docs/invariants.md](docs/invariants.md)                       | What to declare when you add a tool, command, config key or HTTP client       |
+| [SECURITY.md](SECURITY.md)                                     | Reporting a vulnerability                                                     |
 
 ---
 

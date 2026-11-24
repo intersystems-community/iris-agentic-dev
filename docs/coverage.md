@@ -14,15 +14,16 @@ The checker runs on every PR without a live IRIS instance:
 
 ## Why some floors are low
 
-Files in the `tools/` dispatch layer have floors in the 20–60% range. That is not
+The MCP handlers in the `tools/` dispatch layer have low floors (`comparison_tools.rs`
+11, `admin_tools.rs` 12, `observability.rs` 17, `mod.rs` 35). That is not
 a quality gap — it is a measurement gap. Most of those code paths only run when
 the MCP server is exercised over the wire: the `test_e2e` integration tests spawn
 an `iris-agentic-dev` subprocess, call it via MCP protocol, and verify output. The
 subprocess binary is not instrumented in the unit-test run, so its execution never
 feeds back into `llvm-cov`.
 
-Files with pure logic (policy gates, `execute_session.rs`, parsers) have floors at
-97–100% and must stay there.
+Files with pure logic (policy gates, `execute_session.rs`, `storage_guard.rs`) have
+floors from 87% to 98% and must stay there.
 
 ## Adding a new source file
 
@@ -46,8 +47,11 @@ The full picture requires launching an instrumented binary and merging its profr
 output into the report. `scripts/coverage.sh` has this wired up for local use:
 
 ```bash
-IRIS_HOST=localhost ./scripts/coverage.sh
+IRIS_HOST=localhost IRIS_WEB_PORT=52780 bash scripts/coverage.sh
 ```
+
+That script also enforces the `overall` floor in `coverage-floors.toml` (88 today), which the
+CI check does not. Only `iris-agentic-dev-core` is measured; the bin crate has no floors.
 
 Wiring this into CI (so the per-file floors can eventually reflect true coverage) is
 tracked as a future project.

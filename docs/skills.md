@@ -13,14 +13,22 @@ pattern for opinionated or team-specific skills.
 
 ## Benchmark results
 
-Tested with Claude Sonnet 4.6 on the ObjectScript repair suite (22 tasks):
+**There is no measured effect yet, in either direction.** An earlier run reported the skills at
++0.098 [-0.034, +0.229] and the tools at +0.829 [+0.714, +0.944] over a bare model, on 41 graded
+task-pairs. Both figures are void: that harness did not set `OPENCODE_DISABLE_CLAUDE_CODE=1`, so
+opencode loaded the operator's own `~/.claude/CLAUDE.md` and personal skills into every session, in
+every arm (the finding is in
+[`specs/130-content-skills/research.md`](../specs/130-content-skills/research.md)).
 
-| Benchmark suite                | Baseline | With top skill | Lift |
-| ------------------------------ | -------- | -------------- | ---- |
-| ObjectScript repair (22 tasks) | 73%      | **100%**       | +27% |
+On clean isolation, a 19-task ladder at three repeats passed 11 of 19 with the tools alone and 12 of
+19 with the tools plus the matching skill (b=3, c=2). That is below the run's power floor, so it
+supports no claim either way. Every task is scored by an ObjectScript check against live IRIS, not
+by a model.
 
-The top skill is **`objectscript-review`** — a 205-word checklist that catches the 10 most
-common ObjectScript mistakes before the AI writes any code.
+Older figures, including a +27% for `objectscript-review` on the 22-task repair suite, came from
+`iris-agentic-dev benchmark`, which uses a model as the judge on a different corpus. They are not
+comparable and should not be read as current. That suite is still useful as a fast signal while you
+iterate on a skill you are writing.
 
 The multi-file and SQL-quirks suites referenced in earlier versions of this table are not
 yet ported to the current native benchmark harness (`iris-agentic-dev benchmark`) — only
@@ -35,7 +43,7 @@ risk, single-run variance, and single-model validation caveats.
 
 Every skill has a tier, set by `tier:` in its `SKILL.md` frontmatter:
 
-- **core**: the ten skills most ObjectScript work needs. The Claude Code plugin ships these, and a bare `skill install` installs these.
+- **core**: the ten skills most ObjectScript work needs. The Claude Code plugin ships these (and its own setup, coverage and pyprod skills), and a bare `skill install` installs these.
 - **extra**: the other 24. Install them by name or with `--all`. The `iris-agentic-dev` skill lists each one with a line on when to load it, and `skill_describe` reads any of them over MCP without installing anything.
 - **internal**: skills for working on iad itself (today only `opencode-introspect`). No list shows them. Install one by name if you want it.
 
@@ -140,7 +148,7 @@ missing from the table, so any skill in the binary belongs here.
 | `iris-container-graceful-shutdown` | extra    | Why `docker stop` leaves a dirty WIJ, and how to stop IRIS so data survives a restart                                   |             |
 | `iris-cpf-merge`                   | extra    | Configuring containers via `ISC_CPF_MERGE_FILE` instead of `docker exec`                                                |             |
 | `iris-devtester`                   | extra    | `IRISContainer` factory methods and test fixture patterns                                                               | domain      |
-| `iris-docs`                        | extra    | Fetches live IRIS class reference before implementing any API — eliminates hallucinated methods                         |             |
+| `iris-docs`                        | extra    | Which documentation tool to use, the Algolia search recipe and the Documatic URL pattern                                |             |
 | `iris-embedded-python`             | extra    | Running Python inside IRIS: the native API, calling Python from ObjectScript                                            |             |
 | `iris-linux-docker`                | extra    | The UID 51773 bind-mount permission failure that crashes IRIS containers on Linux                                       |             |
 | `iris-mdx`                         | extra    | MDX queries against IRIS BI cubes: discovery with `%DeepSee.Utils`, running through `iris_execute`, 2026.2 `%MDX()` bug |             |
@@ -163,7 +171,7 @@ missing from the table, so any skill in the binary belongs here.
 | `objectscript-mac-routines`        | extra    | MAC routine syntax: labels, `#include`, `$ZTRAP`, extrinsic functions                                                   |             |
 | `objectscript-navigation`          | extra    | Codebase discovery using MCP introspection tools                                                                        | 82% repair  |
 | `objectscript-repair`              | extra    | Coordinated fixes across multiple dependent classes                                                                     |             |
-| `objectscript-review`              | core     | Hard-gate checklist: 10 most common AI mistakes in ObjectScript                                                         | 100% repair |
+| `objectscript-review`              | core     | Hard-gate checklist: the 11 most common AI mistakes in ObjectScript                                                     | 100% repair |
 | `objectscript-sql-patterns`        | core     | IRIS SQL quirks: reserved words, SQLCODE, table naming, NULL handling                                                   | 100% SQL    |
 | `objectscript-tdd`                 | core     | Compile-test-fix loop for iterative development                                                                         |             |
 | `objectscript-unit-test`           | core     | Generates `%UnitTest` scaffolding from live class introspection                                                         | 86% repair  |
@@ -171,9 +179,11 @@ missing from the table, so any skill in the binary belongs here.
 
 `skills/skills/iris-agentic-dev/nopws-setup/SKILL.md` is a repo reference file, not a
 bundled skill: discovery globs `<skills dir>/*/SKILL.md`, so a file one level deeper is
-never loaded, and it is not in the embedded catalog. Read it in the repo.
+never loaded by the binary, and it is not in the embedded catalog, so `skill_list` does not
+show it. The Claude Code plugin names its path explicitly, so plugin users get it. Everyone
+else can read it in the repo.
 
-"repair" scores are reproducible today via `iris-agentic-dev benchmark --suite jira`.
+The Benchmark column is April 2026 data, scored by a model on earlier text of each skill. "repair" scores are reproducible today via `iris-agentic-dev benchmark --suite jira`.
 "SQL" and "domain" scores predate the current native harness and are not yet
 re-verifiable — see [BENCHMARKING.md](../skills/BENCHMARKING.md#additional-suites-not-yet-ported).
 
@@ -194,16 +204,16 @@ See [BENCHMARKING.md](../skills/BENCHMARKING.md) for detailed per-skill results.
 
 ## MCP-backed skill registry
 
-When the MCP server is running, the learning agent can mine your session history to propose
-new skills and optimize existing ones. Use the `skill` tool:
+When the MCP server is running, the learning agent can turn your last tool calls into a stub
+skill and keeps skills in the `^SKILLS` global on the server. Use the `skill` tool:
 
-| Tool                   | What it does                                   |
-| ---------------------- | ---------------------------------------------- |
-| `skill` with `list`    | Show all skills in the registry                |
-| `skill` with `propose` | Mine recent tool calls to propose a new skill  |
-| `skill` with `search`  | Find skills relevant to a topic                |
-| `skill` with `forget`  | Remove a skill from the registry               |
-| `skill_community`      | Browse or install community skills from GitHub |
+| Tool                   | What it does                                                           |
+| ---------------------- | ---------------------------------------------------------------------- |
+| `skill` with `list`    | Show all skills in the registry                                        |
+| `skill` with `propose` | Save a stub skill from the last tool calls (needs at least five calls) |
+| `skill` with `search`  | Find skills relevant to a topic                                        |
+| `skill` with `forget`  | Remove a skill from the registry                                       |
+| `skill_community`      | List or install skills from repos named with `--subscribe owner/repo`  |
 
 ### Serving skills from a directory
 
