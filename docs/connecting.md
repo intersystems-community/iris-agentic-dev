@@ -27,25 +27,39 @@ iris-agentic-dev tool check_config --args '{}'
 iad reads settings from four places, and they are not equal. The difference decides what a
 repository can make your agent do.
 
-| Source                | What it is                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Trusted                                                                      |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| **Launch settings**   | The environment variables and flags iad was started with (`IRIS_*`, `IAD_*`, `--host`, `--config`). Approving a project's MCP server in a client means trusting the settings it launches iad with.                                                                                                                                                                                                                                                                                                                                                                                                                                            | Always                                                                       |
-| **Operator file**     | `~/.iris-agentic-dev.toml` in your home directory. Read wherever the project lives, never mistaken for a workspace file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Always                                                                       |
-| **Workspace file**    | The nearest `.iris-agentic-dev.toml` found by walking up from the working directory. The walk stops after the repository root (the first directory with a `.git`) and before your home directory, so it never finds the operator file and never reads a file above your home, in `/` or in `/tmp`. `/`, `/Users`, `/home`, `/tmp`, `/Users/Shared`, `C:\Users\Public`, the mount roots `/Volumes`, `/mnt` and `/media` with the mount points directly under them (`/Volumes/Backup`, `/mnt/c`), and any directory that holds your home are never the project directory. A project further down a mount, such as `/Volumes/work/proj`, is one. | Only after you run `iris-agentic-dev trust`                                  |
-| **Named config file** | A file given by `--config`, or a directory or file given by `OBJECTSCRIPT_WORKSPACE` or `--workspace`. Judged exactly like a workspace file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Only after you run `iris-agentic-dev trust` (unless it is the operator file) |
+| Source                | What it is                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Trusted                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| **Launch settings**   | The environment variables and flags iad was started with (`IRIS_*`, `IAD_*`, `--host`, `--config`). Approving a project's MCP server in a client means trusting the settings it launches iad with.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Always                                                                       |
+| **Operator file**     | `~/.iris-agentic-dev.toml` in your home directory. Read wherever the project lives, never mistaken for a workspace file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Always                                                                       |
+| **Workspace file**    | The nearest `.iris-agentic-dev.toml` found by walking up from the working directory. The walk stops after the repository root (the first directory with a `.git`) and before your home directory, so it never finds the operator file and never reads a file above your home, in `/` or in `/tmp`. `/`, `/Users`, `/home`, `/tmp` (and `/var/tmp`, `/private/tmp`, `C:\Windows\Temp`), `/Users/Shared`, `C:\Users\Public`, the mount roots `/Volumes`, `/mnt` and `/media` with the mount points directly under them (`/Volumes/Backup`, `/mnt/c`), and any directory that holds your home are never the project directory. A project further down a mount, such as `/Volumes/work/proj`, is one. | Only after you run `iris-agentic-dev trust`                                  |
+| **Named config file** | A file given by `--config`, or a directory or file given by `OBJECTSCRIPT_WORKSPACE`. Judged exactly like a workspace file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Only after you run `iris-agentic-dev trust` (unless it is the operator file) |
 
 iad reads the operator file every time and at most one workspace-layer file. The workspace-layer
 file is, in order, `--config`, `OBJECTSCRIPT_WORKSPACE`, `--workspace`, then the walk up from the
 working directory. A directory named that way means the `.iris-agentic-dev.toml` inside it. A
 workspace-layer file that turns out to be the operator file is read once, as the operator file.
-The legacy name `.iris-dev.toml` is read only when no `.iris-agentic-dev.toml` is found.
+`--config` and `--workspace` are flags of `iris-agentic-dev mcp`; the other subcommands read
+`OBJECTSCRIPT_WORKSPACE` only. The legacy name `.iris-dev.toml` is read only when no
+`.iris-agentic-dev.toml` is found, and never in your home directory: `check_config` lists a
+`~/.iris-dev.toml` in `config_errors` and asks you to rename it.
 
 **Which one wins.** For the connection (host, port, namespace, container), a workspace-layer
 file is the file that chooses; with none, the operator file does, and `IRIS_HOST` outranks the
 operator file's connection settings. Flags outrank every file. For gates and policy the two files
-are combined, not replaced; see [Effective policy](#effective-policy). A file that does not parse
-is an error, not a missing file: iad builds no connection, closes both write tiers, and every
-IRIS tool answers `CONFIG_INVALID` with the file, line and column until it is fixed.
+are combined, not replaced; see [Effective policy](#effective-policy).
+
+A workspace-layer file that names no `host`, `container`, `docker_only` or `nopws` (one that holds
+only a `namespace`, say) chooses no connection, yet it still takes the operator file's place, so
+the operator file's connection settings go unused as well. The connection then comes from
+`IRIS_HOST`, `IRIS_CONTAINER` or discovery, and `check_config` lists the file as
+`config_file_named_no_target` with a warning. Put a `host` or `container` in the project file, or
+leave the file out.
+
+A file that does not parse at startup is an error, not a missing file: iad builds no connection,
+closes both write tiers, and every IRIS tool answers `CONFIG_INVALID` with the file, line and
+column until it is fixed. If a file stops parsing while iad runs, iad keeps the last good
+configuration and `check_config` shows `config_parse_error`; restart to get the `CONFIG_INVALID`
+behaviour.
 
 There is no other global file. `~/.config/iris-agentic-dev/config.toml` is not read. (The
 registry of servers added with `iris_add_server` is `~/.config/iris-agentic-dev/servers.json`;
@@ -62,8 +76,9 @@ go:
 - raising the write or destructive tier (`write_tools_enabled = true`,
   `destructive_tools_enabled = true`, `[policy.<s>] writeTools = true` or `destructiveTools = true`);
 - turning the compile-time gate off (`compile_time_gate = false`, `compileTimeGate = false`);
-- a looser policy: `[policy.<s>] mcpTemplate = "dev"` or `"test"`, an `allow` list (it loosens
-  when it names a category the operator file's list leaves out), `dataPolicy = "allow"` or
+- a looser policy: `[policy.<s>] mcpTemplate = "dev"` or `"test"`, an `allow` list (`trust`
+  records any `allow` list, but one that only narrows the operator file's list applies without
+  trust; a category the operator file's list leaves out is set aside), `dataPolicy = "allow"` or
   `"redact"`, a `dataPolicyKillAllowlist`;
 - `tls_verify = false`, on the connection or on an `[instance.<name>]` block;
 - `ssh_host`, which names the machine your code runs on;
@@ -94,8 +109,11 @@ ordering in that file are kept.
 Trust is exact. Change a loosening setting, add one, or repoint it at another address, and the
 entry no longer matches: trust has **lapsed**, every loosening setting of that file is set aside
 again, and `check_config` names what changed (`trust lapsed: policy.prod.allow changed from
-["query"] to ["query", "execute"]`). A file whose only change is a tightening, a comment or a connection detail keeps
-its trust. A file with no loosening settings needs none; `trust` says so and writes nothing.
+["query"] to ["query", "execute"]`). A file whose only change is a tightening, a comment, a
+credential or another setting that is not part of the address keeps its trust. The server address
+(scheme, host, port, prefix, container and namespace) is part of what you trusted, so changing any
+of them in a file that has loosening settings lapses its trust. A file with no loosening settings
+needs none; `trust` says so and writes nothing.
 
 A trust entry loosens, so a running iad holds it back: the file is trusted at the next start. Run
 `trust`, then restart the MCP server.
@@ -113,12 +131,15 @@ terminal, since they can only reveal or tighten.
 ### Editing the operator file while iad runs
 
 iad reads the operator file again on every call, and applies an edit at once only where it
-**tightens**: a gate switched off, `read_only = "strict"` added, a template moved toward `live`,
-a narrower `allow`, a `[[trust]]` entry removed. An edit that **loosens** waits for the next start:
-a gate switched on, `read_only = "strict"` removed or the file deleted, a looser template, `allow`
-or `dataPolicy`, a shorter blocklist, a role of `workbench`, `tls_verify = false`, `ssh_host`, a
-service account, `exec_as_os_user`, `local_skills`, `audit_payloads`, `telemetry_sink = "iris"`, a removed `http_token`, or a
-new or changed `[[trust]]` entry. iad writes one stderr line for each held setting, and
+**tightens**: a write or destructive tier closed, the compile-time gate switched on,
+`read_only = "strict"` added, a template moved toward `live`, a narrower `allow`, a `[[trust]]`
+entry removed. An edit that **loosens** waits for the next start: a write or destructive tier
+opened, the compile-time gate switched off, `read_only = "strict"` removed or the file deleted, a
+looser template, `allow` or `dataPolicy`, a longer `dataPolicyKillAllowlist`, a shorter
+`globalBlocklist`, `irisAudit` switched off, a `subject` server changed to `workbench`, `mode`
+changed from `operate` or removed, `tls_verify = false`, `ssh_host`, a service account,
+`exec_as_os_user`, `local_skills`, `audit_payloads`, `telemetry_sink = "iris"`, a removed
+`http_token`, or a new or changed `[[trust]]` entry. iad writes one stderr line for each held setting, and
 `check_config.set_aside` lists it with kind `held_for_restart` and the lift `restart iad`.
 
 The reason is that an agent with a file tool can write the operator file. Restart the MCP server
@@ -147,23 +168,26 @@ the default server. The policy for that server is built part by part from the op
 the workspace file, and the result is the **effective policy**. `check_config` shows every part
 with where it came from.
 
-| Part                                                | An untrusted or lapsed workspace file                      | A trusted workspace file      |
-| --------------------------------------------------- | ---------------------------------------------------------- | ----------------------------- |
-| `mcpTemplate`                                       | the stricter of the two wins: dev, then test, then live    | replaces the operator file's  |
-| `allow` (tool categories)                           | intersection; absent means every category                  | replaces the operator file's  |
-| `dataPolicy`                                        | the stricter wins: block, then redact, then allow          | replaces the operator file's  |
-| `writeTools`, `destructiveTools`, `compileTimeGate` | the stricter wins                                          | replaces the operator file's  |
-| `globalBlocklist`                                   | union of both files                                        | union of both files           |
-| `irisAudit`                                         | on if either file turns it on                              | on if either file turns it on |
-| `dataPolicyKillAllowlist`                           | operator file or a trusted file only, custom patterns only | as the operator file's        |
-| `role`                                              | `subject` wins over `workbench`                            | replaces the operator file's  |
+| Part                                                | An untrusted or lapsed workspace file                   | A trusted workspace file             |
+| --------------------------------------------------- | ------------------------------------------------------- | ------------------------------------ |
+| `mcpTemplate`                                       | the stricter of the two wins: dev, then test, then live | replaces the operator file's         |
+| `allow` (tool categories)                           | intersection; absent means every category               | replaces the operator file's         |
+| `dataPolicy`                                        | the stricter wins: block, then redact, then allow       | replaces the operator file's         |
+| `writeTools`, `destructiveTools`, `compileTimeGate` | the stricter wins                                       | replaces the operator file's         |
+| `globalBlocklist`                                   | union of both files                                     | union of both files                  |
+| `irisAudit`                                         | on if either file turns it on                           | on if either file turns it on        |
+| `dataPolicyKillAllowlist`                           | the operator file's list only                           | the operator file's, plus the file's |
+| `role`                                              | `subject` wins over `workbench`                         | replaces the operator file's         |
 
 A loosening part from an untrusted file is dropped by itself; the rest of that file's policy still
 applies. Launch settings (`IRIS_WRITE_TOOLS_ENABLED`, `IRIS_DESTRUCTIVE_TOOLS_ENABLED`,
 `IAD_COMPILE_TIME_GATE`) outrank every file. One exception keeps a repository from borrowing your
-authority: when a workspace file points the connection at a remote host that your environment's
-credentials may not go to, your looser launch settings stay behind with the credentials, and
-`check_config` lists them in `set_aside`.
+authority: when an untrusted workspace file points the connection at a remote host that your
+environment's credentials may not go to, your looser settings stay behind with the credentials.
+That covers the launch settings and the looser values in `~/.iris-agentic-dev.toml` for that
+server (a template other than `live`, a `dataPolicy` other than `block`, a kill allowlist, an open
+write or destructive tier, the compile-time gate off). `check_config` lists each in `set_aside`.
+Trusting the file, or pointing `IRIS_HOST` at that server, lifts it.
 
 **The template comes from the system mode when you declare none.** IRIS labels each instance
 with a **system mode**: Live, Test, Development or Failover. When no file declares `mcpTemplate`
@@ -181,7 +205,8 @@ judged by its namespace for the default server (a production-looking name is `li
 Writes count as `execute` here: `iris_global` `set`/`kill` and `iris_query` `mode="write"` are
 refused on a `test` or `live` server. The write tier follows the same mode when you declare
 nothing: off on Live, on on Development and Test, and decided by the namespace name when the mode
-is unset or unreadable. The destructive tier is never inferred; it stays off until you declare it.
+is unset (and, for the default server, when it cannot be read). A named server whose mode cannot be
+read has writes off. The destructive tier is never inferred; it stays off until you declare it.
 `check_config` reports what decided each in `write_tools_source` and `destructive_tools_source`.
 
 ### Server roles
@@ -192,13 +217,17 @@ a server under study: a source-control write is refused outright
 `confirm: true` (`SUBJECT_CONFIRM_REQUIRED`).
 
 ```toml
+mode = "operate"
+
 [instance.legacy-prod]
 host = "10.1.2.3"
 web_port = 52773
 role = "subject"
 ```
 
-The role is set on an `[instance.<name>]` block. `workspace` (the pre-1.7 spelling) and
+The role is set on an `[instance.<name>]` block. These blocks are read only when the file says
+`mode = "operate"`; with no `mode`, or any other value, they are ignored, and no server of that
+name or role exists. `workspace` (the pre-1.7 spelling) and
 `control-plane` read as `workbench` with a note, and `workspace` is accepted through 1.7.x; any
 other value reads as `subject`, because an unknown word fails closed. `check_config` lists the
 note in `config_errors`. `confirm` is an
@@ -229,8 +258,10 @@ A refusal that a set-aside item would have prevented carries the item's id in
 
 ## Native IRIS on Windows or Linux (no Docker)
 
-Run `iris-agentic-dev init` in your project root to generate a documented
-`.iris-agentic-dev.toml` template with all available options:
+Run `iris-agentic-dev init` in your project root to generate a commented
+`.iris-agentic-dev.toml` starter file. It lists the connection, credential and tool-filtering
+keys, not every option, and it leaves the `host`, `web_port` and `scheme` lines commented out for
+you to fill in:
 
 ```bash
 iris-agentic-dev init
@@ -283,8 +314,11 @@ config to `host = "127.0.0.1"`.
 
 ## Docker (community image)
 
-Run `iris-agentic-dev init` in your project directory — it detects any running IRIS
-containers and writes `.iris-agentic-dev.toml` automatically:
+Run `iris-agentic-dev init` in your project directory. It looks for running IRIS containers,
+writes a commented `.iris-agentic-dev.toml` and prints the best-matching container name. The
+`container` line in the file is still commented out: uncomment it (or set `host` and `web_port`)
+to use it. `init` refuses to overwrite an existing file without `--force`, and `--mode operate`
+writes a fleet template instead.
 
 ```bash
 iris-agentic-dev init
@@ -352,11 +386,10 @@ VS Code Insiders). If a credential is missing, iris-agentic-dev fails fast with 
 directing you to reconnect in VS Code (right-click the server → **Reconnect**) rather than
 silently falling through to other discovery sources.
 
-> **Windows limitation:** VS Code's `SecretStorage` on Windows uses DPAPI-encrypted blobs
-> stored inside VS Code's own process. Those blobs are not accessible to external processes,
-> so iris-agentic-dev cannot read Server Manager credentials on Windows regardless of whether
-> they are stored. Use `.iris-agentic-dev.toml` instead — see
-> [Native IRIS on Windows or Linux](#native-iris-on-windows-or-linux-no-docker) above.
+> **Windows:** Server Manager keeps the password in VS Code's `state.vscdb`, and
+> iris-agentic-dev reads it there when Windows Credential Manager has no entry.
+> `iris-agentic-dev check-sm-credential <server-name> <username>` shows each step. See
+> [troubleshooting](troubleshooting.md#windows-server-manager-credentials-cannot-be-read).
 
 Use `check_config` to see which servers were detected and whether credentials resolved:
 
@@ -376,8 +409,9 @@ Use `check_config` to see which servers were detected and whether credentials re
 ## Adding servers via iris_add_server
 
 `iris_add_server` registers an IRIS instance in
-`~/.config/iris-agentic-dev/servers.json` so it can be referenced by name in any tool
-call via the `server` parameter.
+`~/.config/iris-agentic-dev/servers.json` (on Windows,
+`%APPDATA%\iris-agentic-dev\servers.json`) so it can be referenced by name in any tool call via
+the `server` parameter.
 
 **Keychain path (macOS / Windows with keychain):** the credential is stored in the OS
 keychain under iad's own service, `iris-agentic-dev`, and the entry in `servers.json` holds no
@@ -395,9 +429,10 @@ warning:
 ```json
 {
   "added": true,
+  "name": "dev",
   "credential_store": "file",
   "stored_plaintext": true,
-  "warning": "No OS keychain here: the password is in servers.json (owner-only, used only for this endpoint).",
+  "warning": "No usable OS keychain here: the password is in servers.json (owner-only, used only for this endpoint).",
   "note": "Call iris_reload_pool to make this server routable via the `server` param."
 }
 ```
@@ -441,14 +476,16 @@ iad saves it for the address you give.
 On macOS the first read of an item by a new binary (after an upgrade, for one) can raise an
 approval dialog from the Keychain. Choose **Always Allow** once. A session with no one at the screen
 cannot answer it, and a call that needs the item waits. On such a host, and in CI, set
-`IAD_NO_KEYCHAIN=1` and keep the password in the environment or in `servers.json`, which iad writes
-owner-only and ties to the address. See
+`IAD_NO_KEYCHAIN=1` and keep the password in the environment, or have `iris_add_server` put it in
+`servers.json`, which iad writes owner-only and ties to the address. See
 [The keychain prompt](troubleshooting.md#the-keychain-prompt-blocks-a-call).
 
 ### The servers.json file
 
 Each entry holds the parts of one base URL plus the namespace and username to use with it.
-Only `host`, `port`, `namespace`, and `username` are required; `scheme` defaults to `http`.
+Only `host`, `port`, `namespace`, and `username` are required in an entry; `scheme` defaults to
+`http`. The file itself needs a `version` (a number) and a `servers` object. A file missing either,
+or one that does not parse, is ignored as a whole: iad logs a warning and uses an empty registry.
 
 ```json
 {
@@ -474,9 +511,12 @@ Only `host`, `port`, `namespace`, and `username` are required; `scheme` defaults
 }
 ```
 
-You can edit the file by hand — iad picks the change up on the next call, and
-`iris_reload_pool` forces it immediately. Unknown keys are ignored, so a file written by a
-newer iad still loads on an older one.
+You can edit the file by hand, but iad does not watch it: call `iris_reload_pool` (or restart)
+to pick the change up. Unknown keys are ignored, so a file written by a newer iad still loads on
+an older one. A `password` typed into an entry by hand is used only when the entry's
+`password_endpoint` equals its address; with no `password_endpoint` it is withheld and listed in
+`set_aside` as `<name>:stored_password`. Let `iris_add_server` write the password, since it records
+`password_endpoint`.
 
 ### Instances behind a web gateway
 
@@ -491,12 +531,13 @@ symptom of a missing one is a 404 from every tool while the host and port look r
 
 Leading and trailing slashes are optional and multi-segment prefixes work, so `hs20261`,
 `/hs20261/`, and `/gw/hs20261` are all fine. The value is a path only: a scheme or host in it
-is refused at registration. `webServer.pathPrefix`, the VS Code Server Manager spelling, is
-accepted as an alias for the same key, so a block copied out of `settings.json` loads
-unchanged. `iris_import_servers` carries the prefix across automatically.
+is refused at registration. `pathPrefix` is accepted as an alias for `web_prefix` in a
+`servers.json` entry. A Server Manager profile nests it differently (`webServer.pathPrefix`), so a
+block copied out of `settings.json` does not load as an entry: bring profiles in with
+`iris_import_servers`, which carries the prefix across.
 
 The equivalent for a server declared in `.iris-agentic-dev.toml` is `web_prefix` on the
-`[instance.<name>]` block.
+`[instance.<name>]` block, which is read only when the file says `mode = "operate"`.
 
 ---
 
@@ -521,8 +562,8 @@ irisAudit = true
 | `allow`                          | list of categories                         | Only these tool categories run. Omit it to permit every category.                                                                                                                                            |
 | `mcpTemplate`                    | `"dev"`, `"test"`, `"live"`                | Which categories the environment blocks; see [Effective policy](#effective-policy). Omit it and the server's system mode chooses.                                                                            |
 | `dataPolicy`                     | `"block"` (default), `"redact"`, `"allow"` | What the bulk-data tools (`journal_search`, `iris_message_body`, `stream_inspect`, and `iris_interop_query` calls that name a body) may return. Under `allow` each needs `acknowledgePhi: true` on the call. |
-| `globalBlocklist`                | list of global names or patterns           | Globals writes and kills may not touch, added to the built-in list. It never stops a read.                                                                                                                   |
-| `dataPolicyKillAllowlist`        | list of patterns                           | Globals a kill may touch although the built-in list would stop it. Custom patterns only.                                                                                                                     |
+| `globalBlocklist`                | list of global names or patterns           | Global patterns the global tools refuse, whether the call reads, writes or kills, added to the built-in list. It does not look inside `iris_query` or `iris_execute`.                                        |
+| `dataPolicyKillAllowlist`        | list of patterns                           | Patterns from your own `globalBlocklist` that an `iris_global` kill may still touch. It never exempts a built-in entry.                                                                                      |
 | `writeTools`, `destructiveTools` | `true` / `false`                           | The write and destructive tiers for this server only.                                                                                                                                                        |
 | `compileTimeGate`                | `true` / `false`                           | The compile-time gate for this server; see [Compile-time gate](#compile-time-gate).                                                                                                                          |
 | `irisAudit`                      | `true` / `false`                           | Emit a `%SYS.Audit` record per call.                                                                                                                                                                         |
@@ -639,11 +680,15 @@ format and role-gate behavior.
 
 iris-agentic-dev resolves the IRIS connection in this order, and the first match wins:
 
-1. CLI flags (`--host`, `--web-port`, `--scheme`)
+1. CLI flags (`--host`, `--web-port`, `--scheme`, `--web-prefix`, `--username`, `--password`,
+   `--namespace` on `iris-agentic-dev mcp`; the flags build a connection only when `--host` is
+   given)
 2. The workspace-layer file, when it names a host or container: the nearest `.iris-agentic-dev.toml`
    walking up from the working directory, or the file `--config`, `OBJECTSCRIPT_WORKSPACE` or
    `--workspace` names. Its connection settings apply whether or not it is trusted; only its
-   loosening settings wait for trust
+   loosening settings wait for trust. A file that names a `host` outranks `IRIS_HOST`. A file that
+   names only a `container` (and neither `docker_only` nor `nopws`) is a hint to discovery: `IRIS_HOST`, if set, still wins, and otherwise
+   the container is looked up before the port scan
 3. Environment variables (`IRIS_HOST`, etc.). A server named by `IRIS_HOST` is used even when it
    does not answer, so calls fail against it rather than reach another server
 4. `~/.iris-agentic-dev.toml`, when the walk up finds no workspace file: your personal default.
@@ -653,7 +698,7 @@ iris-agentic-dev resolves the IRIS connection in this order, and the first match
 5. `IRIS_CONTAINER`: the web port of the named Docker container
 6. A scan of localhost ports (52773, 80, 8080, 41773, 51773, 8443, 443)
 7. Running Docker containers (scored by workspace name similarity)
-8. VS Code `settings.json` (`objectscript.conn`)
+8. `.vscode/settings.json` in the working directory (`objectscript.conn`)
 9. VS Code Server Manager (`intersystems.servers` plus the OS keychain credential)
 
 A workspace `.iris-agentic-dev.toml` comes with the repository, so the host it names is the
@@ -697,39 +742,43 @@ shell](tools.md#discovery-from-a-shell).
 
 ## Environment variables
 
-| Variable                         | Default               | Description                                                                                                                                                                                   |
-| -------------------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `IRIS_HOST`                      | `localhost`           | IRIS web gateway hostname                                                                                                                                                                     |
-| `IRIS_WEB_PORT`                  | `52773`               | Web gateway port                                                                                                                                                                              |
-| `IRIS_SCHEME`                    | `http`                | `http` or `https`                                                                                                                                                                             |
-| `IRIS_WEB_PREFIX`                | _(empty)_             | URL path prefix for non-root gateway installs                                                                                                                                                 |
-| `IRIS_USERNAME`                  | `_SYSTEM`             | IRIS username                                                                                                                                                                                 |
-| `IRIS_PASSWORD`                  | `SYS`                 | IRIS password                                                                                                                                                                                 |
-| `IRIS_NAMESPACE`                 | `USER`                | Default namespace                                                                                                                                                                             |
-| `IRIS_CONTAINER`                 | _(empty)_             | Docker container name — required for Docker-dependent tools. It belongs to the default connection: a server named with `server=` needs a `container` of its own.                              |
-| `IRIS_SERVICE_USERNAME`          | _(empty)_             | Least-privilege account the tools that run your code use on the default connection; see [Service account](#service-account-for-the-agents-code)                                               |
-| `IRIS_SERVICE_PASSWORD`          | _(empty)_             | Password for `IRIS_SERVICE_USERNAME`                                                                                                                                                          |
-| `IAD_EXEC_AS_OS_USER`            | _(empty)_             | `1` runs the agent's code as the container's OS user when the service account cannot log in to a terminal. Environment or home-file only; a project file cannot set it.                       |
-| `IRIS_SERVER_NAME`               | _(empty)_             | Server Manager server name when multiple are configured                                                                                                                                       |
-| `IRIS_TLS_VERIFY`                | `true`                | Set `false` (or `0`) to skip TLS certificate validation for the server the launch settings name (`IRIS_HOST`, `--host`, discovery). Other servers have their own `tls_verify`.                |
-| `IRIS_INSECURE`                  | `false`               | Blunter alias: `true` (or `1`) skips TLS certificate validation for that same server and outranks `IRIS_TLS_VERIFY`. Any other value, including a typo, means validate.                       |
-| `IRIS_WRITE_TOOLS_ENABLED`       | _(unset)_             | `1` or `0`: the write tier, outranking every file. Unset, the files and the system mode decide.                                                                                               |
-| `IRIS_DESTRUCTIVE_TOOLS_ENABLED` | _(unset)_             | `1` or `0`: the destructive tier, outranking every file. Unset, it is off until a file declares it.                                                                                           |
-| `IRIS_ADMIN_TOOLS`               | _(unset)_             | `1` allows `iris_admin`'s user, namespace and web application actions after the tier gate.                                                                                                    |
-| `IRIS_ALLOW_PROD`                | _(unset)_             | Legacy: `1` opens the write tier on a Live instance when nothing else declares it. Prefer `write_tools_enabled`.                                                                              |
-| `IAD_COMPILE_TIME_GATE`          | _(on)_                | `0` or `off` turns the [compile-time gate](#compile-time-gate) off for the default server; `1` or `on` keeps it on everywhere.                                                                |
-| `IAD_READ_ONLY`                  | _(unset)_             | `strict` for [strict read-only](#strict-read-only-no-scratch-classes).                                                                                                                        |
-| `IAD_HTTP_TOKEN`                 | _(unset)_             | Bearer token for the [HTTP transport](#http-transport) (at least 32 bytes). Operator-only.                                                                                                    |
-| `IAD_MAX_RESPONSE_BYTES`         | `134217728` (128 MiB) | The most bytes iad reads from one IRIS response. A larger one is refused as `RESPONSE_TOO_LARGE`; the largest answer measured on a live instance was 1.6 MB. Operator-only.                   |
-| `IAD_LOCAL_SKILLS`               | _(unset)_             | `1` serves `skills/skills` from the working directory. Operator-only; see [skills.md](skills.md#serving-skills-from-a-directory).                                                             |
-| `IAD_AUDIT_PAYLOADS`             | _(unset)_             | `1` keeps full `code`, `query` and `args` text in the local audit log. Operator-only.                                                                                                         |
-| `IAD_TELEMETRY_SINK`             | `local`               | `iris` also keeps telemetry in the IRIS global; see [Telemetry](#telemetry). Operator-only.                                                                                                   |
-| `IAD_NO_KEYCHAIN`                | _(unset)_             | Set to `1` to skip the OS keychain: passwords given to `iris_add_server` go to `servers.json` (mode `0600`), bound to the address they were saved for.                                        |
-| `OBJECTSCRIPT_WORKSPACE`         | `$PWD`                | Workspace root for `.iris-agentic-dev.toml` lookup                                                                                                                                            |
-| `IRIS_SEARCH_SYNC_TIMEOUT`       | `30`                  | Seconds to wait for synchronous search before falling back to async polling                                                                                                                   |
-| `IRIS_DISABLED_TOOLS`            | _(empty)_             | Comma-separated tool names to exclude, e.g. `iris_source_control,iris_admin`                                                                                                                  |
-| `IRIS_ENABLED_TOOLS`             | _(empty)_             | Comma-separated allowlist — when set, ONLY these tools remain, regardless of `--toolset`. Empty means no allowlist, not "expose zero tools." `IRIS_DISABLED_TOOLS` wins for any name in both. |
-| `IRIS_NO_SKILLS`                 | `false`               | Set to `true` to remove all skill, KB, and learning-agent tools from `tools/list` and skip `--subscribe` fetching. Equivalent to `--no-skills`.                                               |
+| Variable                         | Default               | Description                                                                                                                                                                                                                                                    |
+| -------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IRIS_HOST`                      | `localhost`           | IRIS web gateway hostname                                                                                                                                                                                                                                      |
+| `IRIS_WEB_PORT`                  | `52773`               | Web gateway port                                                                                                                                                                                                                                               |
+| `IRIS_SCHEME`                    | `http`                | `http` or `https`                                                                                                                                                                                                                                              |
+| `IRIS_WEB_PREFIX`                | _(empty)_             | URL path prefix for non-root gateway installs                                                                                                                                                                                                                  |
+| `IRIS_USERNAME`                  | `_SYSTEM`             | IRIS username                                                                                                                                                                                                                                                  |
+| `IRIS_PASSWORD`                  | `SYS`                 | IRIS password                                                                                                                                                                                                                                                  |
+| `IRIS_NAMESPACE`                 | `USER`                | Default namespace                                                                                                                                                                                                                                              |
+| `IRIS_CONTAINER`                 | _(empty)_             | Docker container name — required for Docker-dependent tools. It belongs to the default connection: a server named with `server=` needs a `container` of its own.                                                                                               |
+| `IRIS_SERVICE_USERNAME`          | _(empty)_             | Least-privilege account the tools that run your code use on the default connection; see [Service account](#service-account-for-the-agents-code)                                                                                                                |
+| `IRIS_SERVICE_PASSWORD`          | _(empty)_             | Password for `IRIS_SERVICE_USERNAME`                                                                                                                                                                                                                           |
+| `IAD_EXEC_AS_OS_USER`            | _(empty)_             | `1` runs the agent's code as the container's OS user when the service account cannot log in to a terminal. Environment or home-file only; a project file cannot set it.                                                                                        |
+| `IRIS_SERVER_NAME`               | _(empty)_             | Server Manager server name when multiple are configured                                                                                                                                                                                                        |
+| `IRIS_TLS_VERIFY`                | `true`                | Set `false` (or `0`) to skip TLS certificate validation for the server the launch settings name (`IRIS_HOST`, `--host`, discovery). Other servers have their own `tls_verify`.                                                                                 |
+| `IRIS_INSECURE`                  | `false`               | Blunter alias: `true` (or `1`) skips TLS certificate validation for that same server. Either variable can turn validation off; `IRIS_INSECURE=false` does not undo `IRIS_TLS_VERIFY=false`. Any other value, including a typo or `TRUE`, leaves validation on. |
+| `IRIS_WRITE_TOOLS_ENABLED`       | _(unset)_             | `1` or `0`: the write tier, outranking every file. Unset, the files and the system mode decide.                                                                                                                                                                |
+| `IRIS_DESTRUCTIVE_TOOLS_ENABLED` | _(unset)_             | `1` or `0`: the destructive tier, outranking every file. Unset, it is off until a file declares it.                                                                                                                                                            |
+| `IRIS_ADMIN_TOOLS`               | _(unset)_             | `1` allows `iris_admin`'s user, namespace and web application actions after the tier gate.                                                                                                                                                                     |
+| `IRIS_ALLOW_PROD`                | _(unset)_             | Legacy: `1` opens the write tier on a Live instance when nothing else declares it. Prefer `write_tools_enabled`.                                                                                                                                               |
+| `IAD_COMPILE_TIME_GATE`          | _(on)_                | `0` or `off` turns the [compile-time gate](#compile-time-gate) off for the default server; `1` or `on` keeps it on everywhere.                                                                                                                                 |
+| `IAD_READ_ONLY`                  | _(unset)_             | `strict` for [strict read-only](#strict-read-only-no-scratch-classes).                                                                                                                                                                                         |
+| `IAD_HTTP_TOKEN`                 | _(unset)_             | Bearer token for the [HTTP transport](#http-transport) (at least 32 bytes). Operator-only.                                                                                                                                                                     |
+| `IAD_MAX_RESPONSE_BYTES`         | `134217728` (128 MiB) | The most bytes iad reads from one IRIS response. A larger one is refused as `RESPONSE_TOO_LARGE`; the largest answer measured on a live instance was 1.6 MB. Operator-only.                                                                                    |
+| `IAD_LOCAL_SKILLS`               | _(unset)_             | `1` serves `skills/skills` from the working directory. Operator-only; see [skills.md](skills.md#serving-skills-from-a-directory).                                                                                                                              |
+| `IAD_AUDIT_PAYLOADS`             | _(unset)_             | `1` keeps full `code`, `query` and `args` text in the local audit log. Operator-only.                                                                                                                                                                          |
+| `IAD_TELEMETRY_SINK`             | `local`               | `iris` also keeps telemetry in the IRIS global; see [Telemetry](#telemetry). Operator-only.                                                                                                                                                                    |
+| `IAD_NO_KEYCHAIN`                | _(unset)_             | Set to `1` to skip the OS keychain: passwords given to `iris_add_server` go to `servers.json` (mode `0600`), bound to the address they were saved for.                                                                                                         |
+| `OBJECTSCRIPT_WORKSPACE`         | _(unset)_             | A directory or file to read instead of walking up from the working directory; judged like `--config`, so it needs trust to loosen anything                                                                                                                     |
+| `IRIS_SEARCH_SYNC_TIMEOUT`       | `30`                  | Seconds to wait for synchronous search before falling back to async polling                                                                                                                                                                                    |
+| `IRIS_DISABLED_TOOLS`            | _(empty)_             | Comma-separated tool names to exclude, e.g. `iris_source_control,iris_admin`                                                                                                                                                                                   |
+| `IRIS_ENABLED_TOOLS`             | _(empty)_             | Comma-separated allowlist — when set, ONLY these tools remain, regardless of `--toolset`. Empty means no allowlist, not "expose zero tools." `IRIS_DISABLED_TOOLS` wins for any name in both.                                                                  |
+| `IRIS_NO_SKILLS`                 | `false`               | Set to `true` to remove all skill, KB, and learning-agent tools from `tools/list` and skip `--subscribe` fetching. Equivalent to `--no-skills`.                                                                                                                |
+
+Other variables are documented where they apply: `IRIS_SCM_ALLOW_CHECKIN` and
+`IRIS_SCM_ALLOW_DISCONNECT` in [tools.md](tools.md), `IRIS_TOOLSET` and `IRIS_LIST_TOOLS_PAGE_SIZE`
+in [tools.md](tools.md), and `IRIS_AGENT_LABEL` in [agent-attribution.md](agent-attribution.md).
 
 ---
 
@@ -740,13 +789,13 @@ shell](tools.md#discovery-from-a-shell).
 `iris_ws_open` and `iris_ws_exec` run the code the agent wrote. With a service account set
 they run as it on every path, or the call is refused.
 
-| Where                             | Service account                                                                                |
-| --------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Default connection, `_env`        | `IRIS_SERVICE_USERNAME` / `IRIS_SERVICE_PASSWORD`                                              |
-| A server in `servers.json`        | its `service_username`, password in the keychain (`service_password` is the headless fallback) |
-| An `[instance.<name>]` block      | its `service_username`; honoured from your own file or a trusted project file only             |
-| Any other server, env account set | none: refused, `SERVICE_ACCOUNT_UNCONFIGURED_FOR_SERVER`                                       |
-| Any other server, no env account  | the server's own user, as before                                                               |
+| Where                             | Service account                                                                                                                    |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Default connection, `_env`        | `IRIS_SERVICE_USERNAME` / `IRIS_SERVICE_PASSWORD`                                                                                  |
+| A server in `servers.json`        | its `service_username`, password in the keychain (`service_password` is the headless fallback)                                     |
+| An `[instance.<name>]` block      | its `service_username`; honoured from your own file or a trusted project file only, and only when the file says `mode = "operate"` |
+| Any other server, env account set | none: refused, `SERVICE_ACCOUNT_UNCONFIGURED_FOR_SERVER`                                                                           |
+| Any other server, no env account  | the server's own user, as before                                                                                                   |
 
 `iris_add_server` takes `service_username`, `service_password` and `container`. The service
 password is stored the way the server's own password is: in iad's keychain item for that
@@ -788,7 +837,7 @@ state is system-wide; without it they answer `COVERAGE_PRIVILEGE_DENIED`.
 
 **Per-server accounts.** A server you name with `server=` uses its own account, never the
 environment's. Give it `service_username` in `servers.json` (or `iris_add_server`) or in an
-`[instance.<name>]` block of your own `~/.iris-agentic-dev.toml`; a `service_username` in a project
+`[instance.<name>]` block of your own `~/.iris-agentic-dev.toml` (with `mode = "operate"`); a `service_username` in a project
 file counts only after you trust that file, since it names the account your code runs as. Its
 password goes in the keychain. A server with no account of its own while `IRIS_SERVICE_USERNAME`
 is set is refused (`SERVICE_ACCOUNT_UNCONFIGURED_FOR_SERVER`); iad does not fall back to that
@@ -838,13 +887,14 @@ tls_verify = false
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | The server the launch settings name (`IRIS_HOST`, `--host`) | `IRIS_TLS_VERIFY` / `IRIS_INSECURE`. A project file naming that same server (same scheme, host, port, prefix) gets the same setting.  |
 | The file's own connection                                   | `tls_verify` in that file. `false` counts only from `~/.iris-agentic-dev.toml` or a project file you ran `iris-agentic-dev trust` on. |
-| An `[instance.<name>]` block                                | `tls_verify` in the block, under the same rule.                                                                                       |
+| An `[instance.<name>]` block                                | `tls_verify` in the block, under the same rule. The block is read only when the file says `mode = "operate"`.                         |
 | A `servers.json` entry                                      | `"tls_verify": false` on the entry. You edit that file by hand; `iris_add_server` has no such parameter.                              |
 | A Server Manager profile                                    | Always validates. Profiles carry no such setting.                                                                                     |
 
-Leave `tls_verify` out to validate. `IRIS_INSECURE=true` outranks `IRIS_TLS_VERIFY`; any
-unrecognised value means validate, so a typo fails closed with a handshake error rather than
-quietly skipping the check. A project file's `tls_verify = false` that you have not trusted is
+Leave `tls_verify` out to validate. Either launch variable can turn validation off:
+`IRIS_INSECURE` set to `true` or `1`, or `IRIS_TLS_VERIFY` set to `false` or `0`. If either says
+off, validation is off. Any other value (`TRUE`, `False`, a typo) leaves validation on, so a typo
+fails closed with a handshake error rather than quietly skipping the check. A project file's `tls_verify = false` that you have not trusted is
 listed in `set_aside` and does nothing.
 
 `check_config` reports the default connection's state as `tls_verify`, and every server's
@@ -868,16 +918,23 @@ place to see that validation is off before a bad cert goes unremarked:
 
 ## Credentials you don't want to repeat in every project
 
-Put them in the operator file, `~/.iris-agentic-dev.toml`. It is read wherever the project lives,
-and a project's own `.iris-agentic-dev.toml` outranks it for the connection. Do not put a
-password in a file that is committed with a project; use `IRIS_PASSWORD` in your client's launch
+Put them in the operator file, `~/.iris-agentic-dev.toml`, next to the server they belong to. It
+is read wherever the project lives, and a project's own `.iris-agentic-dev.toml` outranks it for
+the connection (and, even when it names no server, takes its place for the connection). Do not put
+a password in a file that is committed with a project; use `IRIS_PASSWORD` in your client's launch
 settings or the OS keychain through `iris_add_server`.
 
 ```toml
-# ~/.iris-agentic-dev.toml: defaults for every project without its own host
+# ~/.iris-agentic-dev.toml: the server and account for every project without its own file
+host = "localhost"
+web_port = 52773
 username = "_SYSTEM"
-password = "<password>"
+password = "<your password>"
 ```
+
+The account applies to the server the file names. A file that holds only `username` and
+`password` names no server, so no connection takes them, and `check_config` lists it as
+`config_file_named_no_target`.
 
 The operator file is the only place a trusted setting can come from for every project at once, so
 keep it owner-only (`chmod 600`).
@@ -903,6 +960,10 @@ write_tools_enabled = false
 
 This is the recommended default for any server that more than one person connects to, or any
 server that isn't purely local.
+
+`destructive_tools_enabled = true` together with `write_tools_enabled = false` is a contradiction:
+the destructive tier is a subset of the write tier. `iris-agentic-dev mcp` prints
+`DESTRUCTIVE_REQUIRES_WRITES` on stderr and exits 2.
 
 The opposite direction needs you. Where nothing is declared, the write tier follows the server's
 system mode (off on Live, on on Development and Test; see [Effective policy](#effective-policy)),
@@ -996,11 +1057,14 @@ Restrict the tool surface to a named set:
 ```toml
 # .iris-agentic-dev.toml
 # Expose only these tools; empty means no allowlist (all tools visible)
-enabled_tools = "iris_query,iris_search,iris_compile"
+enabled_tools = ["iris_query", "iris_search", "iris_compile"]
 ```
 
-The equivalent env var is `IRIS_ENABLED_TOOLS` (see the table above). `IRIS_DISABLED_TOOLS`
-wins for any name present in both lists.
+In the file the key is a TOML array; a string is a type error and makes the whole file invalid
+(`CONFIG_INVALID`). The equivalent env var is `IRIS_ENABLED_TOOLS`, a comma-separated string (see
+the table above). If `IRIS_ENABLED_TOOLS` (or `IRIS_DISABLED_TOOLS`) is set, it is used and the
+file's list is ignored; the two are not merged. `IRIS_DISABLED_TOOLS` wins for any name present in
+both lists.
 
 See also: `provides.tools` in a project manifest (`docs/ecosystem-integration.md`) for
 declaring a team-wide tool subset that installs automatically.
@@ -1113,8 +1177,9 @@ address; a bind to anything but loopback needs a token (see below).
 Every request passes a guard before the MCP server sees it, on every bind address:
 
 - **Host.** `localhost`, `127.0.0.1` and `[::1]` are always served. A bind to a single address
-  serves that address too. A bind to `0.0.0.0` or `::` also serves `host.docker.internal`, any IP
-  literal, and each `--allowed-host <name>` (repeatable). Any other `Host` gets `403`.
+  serves that address too. `--allowed-host <name>` (repeatable) adds a name on any bind. A bind to
+  `0.0.0.0` or `::` also serves `host.docker.internal` and any IP literal. Any other `Host` gets
+  `403`.
 - **Origin.** A request with no `Origin` header passes, since command-line and SDK clients send
   none. An `Origin` passes only when it is the same origin as the `Host` or is listed with
   `--allowed-origin <origin>` (repeatable). `Origin: null` and every other origin get `403`.
@@ -1219,8 +1284,8 @@ or a project file you have trusted with `iris-agentic-dev trust`; an untrusted p
 cannot choose the host your code runs on.
 
 Every `iris_execute` and `iris_compile` response includes an `execution_path` field
-(`"atelier"`, `"docker_exec_local"`, or `"docker_exec_ssh"`) to confirm which path
-ran. See [skills/nopws-setup](../skills/skills/iris-agentic-dev/nopws-setup/SKILL.md)
+(`"atelier"`, `"docker_exec_local"`, `"docker_exec_ssh"` or `"ws_terminal"`) to confirm which
+path ran. See [skills/nopws-setup](../skills/skills/iris-agentic-dev/nopws-setup/SKILL.md)
 for the full setup guide.
 
 ---
