@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "iris-agentic-dev/141/check-config.schema.json",
-  "title": "check_config additions in 1.7.0",
+  "title": "check_config fields added in 1.7.0 and 1.7.1",
   "description": "Fields added to the check_config response. All existing fields stay.",
   "type": "object",
   "required": [
@@ -35,7 +35,8 @@
         "trusted_file",
         "workspace_file",
         "system_mode",
-        "strict_default"
+        "strict_default",
+        "read_only_strict"
       ]
     },
     "part": {
@@ -58,7 +59,7 @@
       "type": "object",
       "required": ["path"],
       "properties": {
-        "path": { "type": "string" },
+        "path": { "type": ["string", "null"] },
         "loaded": { "type": "boolean" },
         "kind": { "enum": ["workspace_file", "named_config_file"] },
         "named_by": {
@@ -191,6 +192,15 @@
     "read_only": {
       "description": "`strict` when the scratch-class tools are refused (READ_ONLY_STRICT) and unlisted. `read_only_from` names the file or IAD_READ_ONLY that asked.",
       "enum": ["off", "strict"]
+    },
+    "read_only_from": {
+      "type": ["string", "null"],
+      "description": "What asked for strict read-only (a file or IAD_READ_ONLY); null when `read_only` is `off`."
+    },
+    "ungated_tools": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "1.7.1: the tools no gate judges. Every other tool has a category, and one without is judged as `execute` and `admin` by the template and `allow`."
     },
     "telemetry_sink": {
       "description": "telemetry always goes to the local JSONL file; `iris` adds the ^IRISDEV(\"telemetry\") global on the server a call acts on, where that server's writes are on, read-only is not strict and its role is not `subject`. Operator opt-in only: telemetry_sink in the operator file or IAD_TELEMETRY_SINK.",

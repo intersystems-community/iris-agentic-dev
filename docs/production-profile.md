@@ -51,14 +51,17 @@ administrators can change it.
 ```toml
 [policy.prod-live]
 # Only the categories the task needs. No admin, no execute, no source_control.
-allow = ["compile", "search", "skill"]
-# live: the most restrictive template. Leave it out and the server's IRIS system mode chooses it
-# (a Live or Failover instance gets "live"), so a Live instance is covered even without this line.
+allow = ["query", "search"]
+# live: the most restrictive template. It refuses execute, compile and source_control even when
+# `allow` lists them, so compiling here needs a dev template. Leave it out and the server's IRIS
+# system mode chooses it (a Live or Failover instance gets "live"), so a Live instance is covered
+# even without this line.
 mcpTemplate = "live"
 # block (the default): journal_search, iris_message_body and stream_inspect, which return whole
 # records, are refused or return metadata only.
 dataPolicy = "block"
-# Adds to the built-in list of globals that writes and kills may not touch. It does not stop reads.
+# Adds to the built-in list of globals the global tools refuse, whether the call reads, writes or
+# kills. It does not look inside iris_query or iris_execute.
 globalBlocklist = ["^AppHealthData"]
 # Write an audit record for every tool call (one-time setup in docs/agent-attribution.md).
 irisAudit = true
@@ -140,6 +143,31 @@ could get more than the operator chose. The ones a reviewer asks about:
   tied to the server's address, and a repository cannot name a host to receive your password.
 - **The HTTP transport** requires a bearer token off loopback and checks `Host` and `Origin`.
 
+## What 1.7.1 changed
+
+1.7.1 closed gaps that 1.7.0 left open in its own fixes (see the
+[1.7.1 release notes](release-notes/v1.7.1.md)). The ones a reviewer asks about:
+
+- **Edits to the operator file that loosen wait for a restart.** A gate switched on, `read_only = "strict"`
+  removed, a looser template, `allow` or `dataPolicy`, or a new `[[trust]]` entry is held until iad restarts;
+  edits that tighten apply at once. `check_config.set_aside` lists what is held. See
+  [connecting.md](connecting.md#editing-the-operator-file-while-iad-runs).
+- **A project file's `mode` is a loosening setting.** A file whose `mode` is not `operate` is set aside until
+  you trust it, so a cloned repository cannot turn an `operate` fleet into a workbench. The config-file search
+  stops at the repository root, and directories such as `/`, `/Users`, `/tmp` and `/Volumes` are never the
+  project directory.
+- **Reading message bodies needs `acknowledgePhi: true` under `dataPolicy = "allow"`:** `iris_message_body`,
+  `stream_inspect`, and `iris_interop_query` with `body_class`, `body_where`, `body_select` or `search_table`.
+- **`iris_query` `mode="write"` refuses a write it cannot count** (`ROWS_NOT_COUNTABLE`), and one call changes
+  at most 10,000 rows.
+- **More tools meet `allow` and the template.** A tool with no category is judged as `execute` and `admin`.
+  The connection tools (`iris_select_container`, `iris_add_server` and the rest) need `admin`, and `skill`,
+  `kb`, `kb_index`, `skill_community` and `agent_info` run code on the default server, so the template, `allow`
+  and the write gate judge them.
+- **No redirects and a size cap on outbound fetches.** iad does not follow a redirect from an IRIS server or
+  the LLM provider, and a body over 8 MiB from an LLM, GitHub or docs host fails.
+- **Each endpoint and account pair has its own web session**, so two accounts on one host no longer share one.
+
 ## What no setting protects
 
 - **`iris_query` and `iris_execute` are free-form.** They run SQL or ObjectScript the assistant composes.
@@ -168,7 +196,7 @@ tag, check the hash, and put the binary where only administrators can change it.
 platform; `linux-x86_64` is shown.
 
 ```sh
-base=https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.5.0
+base=https://github.com/intersystems-community/iris-agentic-dev/releases/download/v1.7.1
 curl -fsSLO $base/iris-agentic-dev-linux-x86_64
 curl -fsSLO $base/SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
