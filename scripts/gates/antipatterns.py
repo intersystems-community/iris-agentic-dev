@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import ast
 import collections
+import functools
 import hashlib
 import pathlib
 import re
@@ -300,6 +301,20 @@ def strip_comments(code: str) -> str:
     return "".join(out)
 
 
+
+@functools.lru_cache(maxsize=None)
+def read_text(path: pathlib.Path, errors: str = "replace") -> str:
+    """`path.read_text(errors=errors)`, once per file and mode.
+
+    Most detectors walk the same files. Read separately, a full run opened about 6,000 files to
+    see 1,743, and where each open is scanned on access that was most of the run: about 36 of
+    63 seconds, which pushed the spec 112 accept block past its 90 s limit on a loaded machine.
+    The scanner only reads, so one copy per file serves every detector.
+    """
+    return path.read_text(errors=errors)
+
+
+@functools.lru_cache(maxsize=None)
 def mask_comments(code: str) -> str:
     """Blank out comment text, keeping every byte offset and newline where it was.
 
@@ -409,7 +424,7 @@ def empty_tests_findings(files: dict[str, str]) -> list[Finding]:
 
 def check_empty_tests() -> list[Finding]:
     return empty_tests_findings(
-        {rel(p): p.read_text(errors="replace") for p in src_files() + test_files()}
+        {rel(p): read_text(p) for p in src_files() + test_files()}
     )
 
 
@@ -438,7 +453,7 @@ BARE_RETURN = re.compile(r"\breturn\s*;")
 def check_vacuous_tests() -> list[Finding]:
     found = []
     for path in src_files() + test_files():
-        raw = path.read_text(errors="replace")
+        raw = read_text(path)
         # `testing.rs` documents the bug by quoting the path it replaced; masked so the
         # explanation is not itself a finding.
         text = mask_comments(raw)
@@ -511,7 +526,7 @@ def spawn_exprs(text: str):
 def check_mcp_subcommand() -> list[Finding]:
     found = []
     for path in test_files():
-        text = path.read_text(errors="replace")
+        text = read_text(path)
         for line, expr in spawn_exprs(text):
             if re.search(r'\.arg\("(mcp|tool|check|--)', expr) or ".args(" in expr:
                 continue
@@ -533,7 +548,7 @@ def check_mcp_subcommand() -> list[Finding]:
 def check_env_pinning() -> list[Finding]:
     found = []
     for path in test_files():
-        text = path.read_text(errors="replace")
+        text = read_text(path)
         for line, expr in spawn_exprs(text):
             if "clean_command" in expr or "clean_mcp_command" in expr:
                 continue
@@ -577,7 +592,7 @@ def check_error_sentinels() -> list[Finding]:
     for path in src_files():
         if path.name == "connection.rs" or path.name == "global.rs":
             continue  # is_generator_error lives in one; the other strips after calling it
-        text = mask_comments(path.read_text(errors="replace"))
+        text = mask_comments(read_text(path))
         for m in HAND_ROLLED.finditer(text):
             found.append(
                 Finding(
@@ -685,10 +700,10 @@ REGISTRY_TOKENS = ("CLASSIFICATION", "registered_tool_names")
 
 
 def check_self_referential_gates() -> list[Finding]:
-    tests_text = {p: p.read_text(errors="replace") for p in test_files()}
+    tests_text = {p: read_text(p) for p in test_files()}
     found = []
     for path in src_files():
-        text = path.read_text(errors="replace")
+        text = read_text(path)
         for m in GATE_LIST.finditer(text):
             name = m.group(1)
             line = text.count("\n", 0, m.start()) + 1
@@ -789,7 +804,7 @@ def check_binary_path() -> list[Finding]:
     for path in test_files() + src_files():
         if path.name in RESOLVER_FILES:
             continue
-        text = mask_comments(path.read_text(errors="replace"))
+        text = mask_comments(read_text(path))
         for m in RAW_IAD_BINARY.finditer(text):
             found.append(
                 Finding(
@@ -841,7 +856,7 @@ def check_empty_config_value() -> list[Finding]:
     for path in sorted(ROOT.glob(".cargo/config.toml")) + sorted(
         ROOT.glob("crates/*/.cargo/config.toml")
     ):
-        text = path.read_text(errors="replace")
+        text = read_text(path)
         for m in EMPTY_TOML_VALUE.finditer(text):
             key = m.group(1)
             if key in EMPTY_VALUE_OK:
@@ -883,7 +898,7 @@ COVERAGE_SCRIPT_GLOB = "scripts/*coverage*.sh"
 def check_stale_coverage_objects() -> list[Finding]:
     found = []
     for path in sorted(ROOT.glob(COVERAGE_SCRIPT_GLOB)):
-        text = path.read_text(errors="replace")
+        text = read_text(path)
         # Only scripts that produce a report can be diluted by stale objects.
         if "llvm-cov" not in text:
             continue
@@ -1795,11 +1810,11 @@ def unpowered_result_findings(files: dict[str, str]) -> list[Finding]:
 
 
 def _src_texts() -> dict[str, str]:
-    return {rel(p): p.read_text(errors="replace") for p in src_files()}
+    return {rel(p): read_text(p) for p in src_files()}
 
 
 def _py_texts() -> dict[str, str]:
-    return {rel(p): p.read_text(errors="replace") for p in py_files()}
+    return {rel(p): read_text(p) for p in py_files()}
 
 
 def check_undeclared_params() -> list[Finding]:
@@ -1978,7 +1993,7 @@ def check_committed_api_key() -> list[Finding]:
     files = {}
     for path in filter(None, out.split("\0")):
         try:
-            files[path] = (ROOT / path).read_text(errors="ignore")
+            files[path] = read_text((ROOT / path), "ignore")
         except (IsADirectoryError, FileNotFoundError):
             continue
     return committed_api_key_findings(files)
