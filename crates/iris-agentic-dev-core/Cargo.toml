@@ -47,6 +47,8 @@ futures-util = { version = "0.3", features = ["sink"] }
 base64 = "0.23"
 aes-gcm = "0.11"
 similar = "3"
+# Checker only, no CLI, LSP or network stack; pinned to main until 0.6.0, the first release with it.
+ascot = { version = "0.7.0", default-features = false, features = ["bundled-declarations"] }
 
 
 # Platform keychain store crates — already in the dep tree via keyring v4.

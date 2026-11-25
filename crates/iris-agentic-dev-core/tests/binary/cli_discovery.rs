@@ -52,11 +52,13 @@ fn scratch_dir() -> PathBuf {
     dir
 }
 
-/// Run `iris-agentic-dev tool <args>` with no IRIS environment and no config file in reach.
+/// Run `iris-agentic-dev tool <args>` with no IRIS environment and no config file in reach, and
+/// the ascot pair switched on, so the surface is every tool the CLI can dispatch.
 fn run_tool(bin: &Path, args: &[&str]) -> Output {
     clean_command(bin)
         .arg("tool")
         .args(args)
+        .env("IRIS_ASCOT", "1")
         .current_dir(scratch_dir())
         .output()
         .expect("spawn iris-agentic-dev")

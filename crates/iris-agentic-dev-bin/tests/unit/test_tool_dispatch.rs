@@ -3,8 +3,11 @@ use iris_agentic_dev_core::tools::{IrisTools, Toolset};
 
 #[test]
 fn test_dispatch_map_keys_match_registered_tool_names() {
-    // Build the Merged toolset (same as MCP server uses) and compare names
+    // Build the Merged toolset (same as MCP server uses), with the ascot switch on so the
+    // registry is every tool the server can serve, and compare names
+    iris_agentic_dev_core::tools::check::override_on_this_thread(Some(true));
     let tools = IrisTools::new_with_toolset(None, Toolset::Merged).unwrap();
+    iris_agentic_dev_core::tools::check::override_on_this_thread(None);
     let registered = tools.registered_tool_names();
     let dispatch = dispatch_map_keys();
 

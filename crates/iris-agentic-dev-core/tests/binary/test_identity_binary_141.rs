@@ -227,7 +227,7 @@ fn ssh_host_from_a_repository_file_is_dropped_and_never_called() {
 
 // ── B03 ───────────────────────────────────────────────────────────────────────
 
-fn nine_calls(server: &str) -> Vec<(&'static str, Value)> {
+fn ten_calls(server: &str) -> Vec<(&'static str, Value)> {
     vec![
         ("iris_execute", json!({"code": "Write 1", "server": server})),
         (
@@ -259,6 +259,10 @@ fn nine_calls(server: &str) -> Vec<(&'static str, Value)> {
             json!({"mode": "run", "test_path": "T141.Tests", "classes": ["T141.A"], "server": server}),
         ),
         ("iris_ws_open", json!({"server": server})),
+        (
+            "iris_check_compile_execute",
+            json!({"code": "Write 1", "server": server}),
+        ),
     ]
 }
 
@@ -274,10 +278,11 @@ fn a_server_with_no_service_account_is_refused_every_tool_that_runs_the_agents_c
         ("IRIS_SERVICE_USERNAME", "svc"),
         ("IRIS_HOST", "127.0.0.1"),
         ("IRIS_WEB_PORT", "2"),
+        ("IRIS_ASCOT", "1"),
     ]);
     let mut seen = std::collections::BTreeSet::new();
     for spelling in ["qa", " qa ", "QA"] {
-        for (tool, args) in nine_calls(spelling) {
+        for (tool, args) in ten_calls(spelling) {
             let answer = s.call(tool, &args);
             let b = body(&answer);
             let code = b["error_code"].as_str().unwrap_or("");

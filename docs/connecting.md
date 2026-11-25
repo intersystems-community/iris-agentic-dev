@@ -774,6 +774,7 @@ shell](tools.md#discovery-from-a-shell).
 | `IRIS_SEARCH_SYNC_TIMEOUT`       | `30`                  | Seconds to wait for synchronous search before falling back to async polling                                                                                                                                                                                    |
 | `IRIS_DISABLED_TOOLS`            | _(empty)_             | Comma-separated tool names to exclude, e.g. `iris_source_control,iris_admin`                                                                                                                                                                                   |
 | `IRIS_ENABLED_TOOLS`             | _(empty)_             | Comma-separated allowlist — when set, ONLY these tools remain, regardless of `--toolset`. Empty means no allowlist, not "expose zero tools." `IRIS_DISABLED_TOOLS` wins for any name in both.                                                                  |
+| `IRIS_ASCOT`                     | _(unset)_             | `1` registers `iris_check` and `iris_check_compile_execute`, off by default; file key `ascot = true`. They report ascot's Errors unless a call sets `level`; the gates apply as to any tool.                                                                   |
 | `IRIS_NO_SKILLS`                 | `false`               | Set to `true` to remove all skill, KB, and learning-agent tools from `tools/list` and skip `--subscribe` fetching. Equivalent to `--no-skills`.                                                                                                                |
 
 Other variables are documented where they apply: `IRIS_SCM_ALLOW_CHECKIN` and
@@ -786,8 +787,8 @@ in [tools.md](tools.md), and `IRIS_AGENT_LABEL` in [agent-attribution.md](agent-
 
 `iris_execute`, `iris_query` (`write`/`force`), `iris_global` (`set`/`kill`),
 `iris_execute_method`, `global_kill`, `iris_test`, `iris_coverage` (`run`/`start`),
-`iris_ws_open` and `iris_ws_exec` run the code the agent wrote. With a service account set
-they run as it on every path, or the call is refused.
+`iris_ws_open`, `iris_ws_exec` and `iris_check_compile_execute` (with `code`) run the code the
+agent wrote. With a service account set they run as it on every path, or the call is refused.
 
 | Where                             | Service account                                                                                                                    |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |

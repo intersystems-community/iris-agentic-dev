@@ -35,6 +35,7 @@ mod test_aihub_139_live;
 mod test_attribution_live;
 mod test_benchmark_live;
 mod test_body_read_ack_171_live;
+mod test_check_ascot_live;
 mod test_cmd_live;
 mod test_codemode_gate_live;
 mod test_comparison_e2e;

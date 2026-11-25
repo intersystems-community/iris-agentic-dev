@@ -83,6 +83,12 @@ fn every_surface() -> Vec<(String, IrisTools)> {
             ));
         }
     }
+    iris_agentic_dev_core::tools::check::override_on_this_thread(Some(true));
+    out.push((
+        "merged+ascot".to_string(),
+        tools_with_declared_skills(Toolset::Merged, false, WRITES_OFF),
+    ));
+    iris_agentic_dev_core::tools::check::override_on_this_thread(None);
     out
 }
 

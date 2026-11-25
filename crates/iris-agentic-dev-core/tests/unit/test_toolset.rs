@@ -118,7 +118,8 @@ fn test_nostub_tool_count() {
     );
 }
 
-/// Baseline is 93 total `#[tool]` methods minus the 9 that are Merged-tier-only
+/// Baseline is 95 total `#[tool]` methods minus the 2 ascot tools (registered only with
+/// `IRIS_ASCOT`) and the 9 that are Merged-tier-only
 /// dispatchers (iris_admin, iris_debug, iris_containers, iris_get_log, iris_global,
 /// iris_execute_method, iris_message_body, iris_business_rule_info,
 /// iris_production_diff) = 84. Pinned to a specific number for the same reason as
@@ -134,7 +135,7 @@ fn test_baseline_tool_count() {
     let count = tools.registered_tool_names().len();
     assert_eq!(
         count, 84,
-        "Baseline toolset must have exactly 84 tools (93 total #[tool] methods - 9 \
+        "Baseline toolset must have exactly 84 tools (95 #[tool] methods - 2 ascot tools - 9 \
          Merged-tier-only dispatchers), got {}. If this changed on purpose, update this \
          number — do not just silence the assertion.",
         count
@@ -267,7 +268,7 @@ fn test_merged_tool_count() {
     let count = tools.registered_tool_names().len();
     assert_eq!(
         count, 81,
-        "Merged toolset must have exactly 81 tools (93 total #[tool] methods - stubs 4 - \
+        "Merged toolset must have exactly 81 tools (95 #[tool] methods - 2 ascot tools - stubs 4 - \
          replaced-by-dispatcher 8), got {}. If this changed on purpose (a tool was added, \
          removed, or moved tiers), update this number — do not just silence the assertion.",
         count
