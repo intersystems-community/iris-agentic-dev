@@ -583,6 +583,6 @@ answer.
   until someone needs to edit them.
 - Columnar maps are read-only in 172.
 - A GUI is not part of 172; the contract and docs are what a community GUI would build on.
-- Before 172: `iris_doc` put reads `result.status` (its own branch, committed locally), and a separate security
-  check, tracked privately, is settled before 172's implementation starts. 172 builds on both.
+- Before 172: `iris_doc` put reads `result.status` (its own branch, committed locally), and a separate check,
+  tracked outside this repository, is settled before 172's write path ships. 172 builds on both.
 - No comment on vscode-objectscript #1701 is part of this spec; any reply is drafted and waits for Tom.

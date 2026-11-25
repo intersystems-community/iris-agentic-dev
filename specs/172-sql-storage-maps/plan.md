@@ -64,8 +64,8 @@ build_indexes, include_values }` is the only reader of the call's action and opt
 
 1. `iris_doc` put reads `result.status`: on master as `87e2cab7`; 172 is based on it and uses
    `check_atelier_put_errors` for every PUT.
-2. A separate security check, tracked privately, settled before phase 1 starts (the review found 172 makes its path
-   easier to reach). Its outcome may add a guard test that FR-026's tests extend.
+2. A separate check, tracked outside this repository, settled before the write path starts. Its outcome may add a
+   guard test that FR-026's tests extend.
 
 ## Project Structure
 

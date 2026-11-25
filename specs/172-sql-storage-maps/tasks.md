@@ -37,8 +37,8 @@ Every task ends with `LINT` clean.
 ## Phase 0: Prerequisites (blocking)
 
 - [ ] T001 Lead only: confirm the private prerequisite tracked outside this repository is settled (spec Assumptions,
-      plan "Prerequisites" item 2). It gates Phase 6 onward (the write path) and any push of this branch; Phases
-      1–5 (read side) may start before it.
+      plan "Prerequisites" item 2). It gates Phase 6 onward (the write path); Phases 1–5 (read side) may start
+      before it.
 - [x] T002 Lead only: rebase `172-sql-storage-maps` onto master once `fix/doc-put-result-status` is merged, so
       `iris::connection::check_atelier_put_errors` exists. Prove: `U doc_put_result_status`.
 
@@ -775,3 +775,6 @@ question, answer }`. Names `IadSm172Gen.C<nnn>`, globals `^IadSm172Gen<nnn>`, in
 3. Contract, corpus, propose, lift, polish.
 
 Optional git hooks (`before_tasks`, `after_tasks`) were not run: commits happen only when Tom asks.
+
+- [ ] T120 Lead: delete `.github/workflows/prerelease-build.yml` (the throwaway all-platform build for the
+      `prerelease/**` branch) before the branch merges. Prove: the file is absent in the merge diff.

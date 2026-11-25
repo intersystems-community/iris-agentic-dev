@@ -1,0 +1,72 @@
+name: Prerelease build
+
+# THROWAWAY. Builds the release binaries for every platform from a prerelease/** branch and keeps
+# them as workflow artifacts, so a feature can be tried before its release. It publishes nothing and
+# the binaries are not signed. Delete this file before the branch merges (tasks.md T120).
+
+on:
+  push:
+    branches: ["prerelease/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            artifact: iris-agentic-dev-linux-x86_64
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            artifact: iris-agentic-dev-linux-aarch64
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: iris-agentic-dev-macos-arm64
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            artifact: iris-agentic-dev-macos-x86_64
+          - target: x86_64-pc-windows-gnu
+            os: ubuntu-latest
+            artifact: iris-agentic-dev-windows-x86_64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The version string carries `git describe --tags`, so the history and tags come too.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@d124f86f28ff42855784ff3319f48ac182c248f8 # 1.99.1
+        with:
+          targets: ${{ matrix.target }}
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: "0.16.0"
+          use-cache: false
+      - run: cargo install cargo-zigbuild --locked --version 0.24.0
+      - run: cargo zigbuild --locked --release --target "$TARGET" -p iris-agentic-dev
+        env:
+          TARGET: ${{ matrix.target }}
+      - name: Stage artifact
+        shell: bash
+        run: |
+          src="target/${TARGET}/release/iris-agentic-dev"
+          [[ -f "${src}.exe" ]] && src="${src}.exe"
+          cp "$src" "$ARTIFACT"
+          sha256sum "$ARTIFACT" 2>/dev/null || shasum -a 256 "$ARTIFACT"
+        env:
+          TARGET: ${{ matrix.target }}
+          ARTIFACT: ${{ matrix.artifact }}
+      - name: Ad-hoc codesign (macOS only)
+        if: runner.os == 'macOS'
+        run: codesign --force --deep --sign - "$ARTIFACT"
+        env:
+          ARTIFACT: ${{ matrix.artifact }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          retention-days: 14
