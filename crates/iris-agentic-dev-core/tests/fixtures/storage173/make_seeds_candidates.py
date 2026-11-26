@@ -85,7 +85,56 @@ def f48():
     )
 
 
-ALL = {"F32": f32, "F47": f47, "F48": f48}
+def f35():
+    # A class with a master map and no index map; the index global beside it is written by hand
+    # (what the map would have filed), so the class has nothing that maps it.
+    post = (
+        'For id=1:1:40 { Set n=$Piece(^IadSm173F35(id),"^",1) '
+        'Set ^IadSm173F35X(##class(%SYSTEM.SQL.Functions).SQLUPPER(n),id)="" }'
+    )
+    cls = person_class("IadSm173.F35", "IadSm173F35", "", "")
+    write(
+        "F35",
+        "class mode: a master map and an unmapped index global ^IadSm173F35X over upper-cased Name",
+        cls,
+        people(40),
+        {
+            "index_global": "^IadSm173F35X",
+            "id_positions": [2],
+            "link_verdict": "inferred",
+            "subscripts": [
+                {
+                    "position": 1,
+                    "verdict": "inferred",
+                    "field": "Name",
+                    "transform": "sqlupper",
+                }
+            ],
+        },
+        indexes=["^IadSm173F35X"],
+        extra={"post_load": post},
+    )
+
+
+def f36():
+    # The same class with the index already mapped: the map X files ^IadSm173F36X itself.
+    cls = person_class(
+        "IadSm173.F36",
+        "IadSm173F36",
+        "",
+        index_map("X", "IadSm173F36X", ["$$SQLUPPER({Name})", "{ID}"]),
+    )
+    write(
+        "F36",
+        "class mode: the index global is already mapped by the class's map X",
+        cls,
+        people(40),
+        {"already_mapped": {"^IadSm173F36X": "X"}},
+        indexes=["^IadSm173F36X"],
+    )
+
+
+ALL = {"F32": f32, "F35": f35, "F36": f36, "F47": f47, "F48": f48}
 
 if __name__ == "__main__":
     for want in sys.argv[1:] or sorted(ALL):
