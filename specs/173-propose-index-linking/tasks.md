@@ -256,18 +256,18 @@ Signatures come from `data-model.md`.
 ID form and null marker. **Independent test**: F01 to F18 each return their known answer, and each drafted map compiles
 in a scratch copy and returns a known row through an indexed query.
 
-- [X] T026 [US1] Test first, `tests/integration/test_storage_map_link_173_live.rs` (+ `mod`): for each of F01 to F10, load
+- [x] T026 [US1] Test first, `tests/integration/test_storage_map_link_173_live.rs` (+ `mod`): for each of F01 to F10, load
       the fixture, call `propose` with `global=^IadSm173Person` and `index_globals=[<index global>]`, assert
       `indexes[0].subscripts[0]` has the known `field`, `transform`, `length` and `agreement ≥ 0.95`, assert
       `indexes[0].id.positions` and `verdict == inferred`. All fail now. Prove (red): `L test_storage_map_link_173_live`.
-- [X] T027 [US1] Implement the linker body in `src/tools/storage_map/link_code.rs`: counting pass then every k-th key
+- [x] T027 [US1] Implement the linker body in `src/tools/storage_map/link_code.rs`: counting pass then every k-th key
       over the first subscript (FR-004a, `distinct_first_values`), master row by direct `$Get` on the master reference, ID position
       search over runs of k subscripts and the node value (FR-005), per-field per-position scoring over the transform
       set through `##class(%SYSTEM.SQL.Functions)` (FR-006/007), length variants confirmed on every node (FR-008),
       JSON lines out as in data-model.md. Wire `propose_action` in `mod.rs`: after the master draft, for each
       `index_globals` entry run `link_code::build_code` through `execute_via_generator_prefixed(…, "IrisDevSm")`, parse,
       and add `indexes` to the answer. Prove: `L test_storage_map_link_173_live` green for F01 to F10.
-- [X] T028 [US1] Draft and verify: for each `inferred` link call `link::draft_index_map`, run it through `model::validate`
+- [x] T028 [US1] Draft and verify: for each `inferred` link call `link::draft_index_map`, run it through `model::validate`
       and the no-IRIS write checks (FR-014), then verify it in a scratch copy: compile the master class text with the
       draft added through `compile_scratch_class` and query for a known row by the indexed field
       (`verified {compiled, row_found}`); a failed verification demotes the draft to `not_inferred_detail` with the
@@ -412,21 +412,23 @@ tests.
 
 **Goal**: bitmaps are recognised, decoded and drafted. **Independent test**: F19, F20, F21.
 
-- [ ] T048 [US4] Fixtures F19 to F21. Test first, `tests/integration/test_storage_map_bitmap_173_live.rs` (+ `mod`): F19
+- [x] T048 [US4] Fixtures F19 to F21. Test first, `tests/integration/test_storage_map_bitmap_173_live.rs` (+ `mod`): F19
       `bitmaps[0]` has the chunk as its last subscript, `ids_checked == ids_found_in_master`, the drafted
       map is `Type bitmap` with the field as its only subscript and `verified.row_found`; F20 has the same with the
-      index name first; a bitmap whose decoded IDs are not in the master is `not_linked`; a decode that needs an
+      index name first (`index_name`, and the drafted map's first subscript is that name, `"StatusIdx"`); a bitmap whose decoded IDs are not in the master is `not_linked`; a decode that needs an
       unconfirmed chunk size is `ambiguous` with `assumed` naming it; F21 returns `chunk_map_draft` whose
       scratch-compiled table returns the IDs the bits name. Prove (red): `L test_storage_map_bitmap_173_live`.
-- [ ] T049 [US4] Recognise a bit-string master in the linker (plan.md: the sampler and `ShapeReport` do not change). Test
+- [x] T049 [US4] Recognise a bit-string master in the linker (plan.md: the sampler and `ShapeReport` do not change). Test
       first, `tests/unit/test_storage_map_link_code_173.rs`: `master_bit_probe(global, caps)` quotes the global through
       `os_str_expr`, writes only counts and positions, and decodes with `$BitFind`; live in T048's file: F21's master
       is recognised and an ordinary delimited master (F01) is not. Implement `link_code::master_bit_probe` and call it
       from `propose_action` only when the master sample shows depth-2 nodes with a numeric last subscript and no
-      delimiter or `$LIST` shape. Prove: `U test_storage_map_link_code_173`, `L test_storage_map_bitmap_173_live`, and
+      `$LIST` shape (a dense bit string holds the delimiter bytes the sampler looks for, so `delimited` does not rule
+      it out; the probe decides). Prove: `U test_storage_map_link_code_173`, `L test_storage_map_bitmap_173_live`, and
       `U test_storage_map_golden_172` unchanged.
-- [ ] T050 [US4] Implement bitmap detection and decode in `link_code.rs` (`$BitFind`, the chunk as last subscript, up to 1,000
-      IDs in 5 chunks) and the drafts in `bitmap.rs` wired into `propose_action` (`bitmaps`, `chunk_map_draft`, each
+- [x] T050 [US4] Implement bitmap detection and decode in `link_code.rs` (`$BitFind`, the chunk as last subscript, up to 1,000
+      IDs, at most 40 from one node so the sample spans values; IDs from chunk 2 on are counted apart because only
+      they confirm the chunk size) and the drafts in `bitmap.rs` wired into `propose_action` (`bitmaps`, `chunk_map_draft`, each
       verified in a scratch copy before `inferred`). Prove: `L test_storage_map_bitmap_173_live` green.
 
 ---

@@ -1,4 +1,5 @@
 pub mod bitmap;
+pub mod bitmap_run;
 pub mod candidates;
 pub mod code;
 pub mod diagram;
@@ -1060,6 +1061,19 @@ async fn propose_action(
         "draft_note": "a draft to check against real data: every name, delimiter and piece count is a guess from a sample",
     });
     let mut examined: Vec<Value> = Vec::new();
+    let chunk = bitmap_run::chunk_map(
+        &cx.conn,
+        cx.client.as_ref(),
+        &ns,
+        &global.name,
+        &report,
+        node_cap,
+    )
+    .await;
+    if let Some(draft) = chunk.draft {
+        answer["chunk_map_draft"] = draft;
+    }
+    examined.extend(chunk.details);
     if let (false, Some(spec)) = (index_names.is_empty(), &spec) {
         let run = link_run::Run {
             conn: &cx.conn,
@@ -1076,8 +1090,11 @@ async fn propose_action(
         let linked = link_run::link_all(&run, &index_names).await;
         answer["index_candidates"] = linked.index_candidates;
         answer["indexes"] = Value::Array(linked.indexes);
+        if !linked.bitmaps.is_empty() {
+            answer["bitmaps"] = Value::Array(linked.bitmaps);
+        }
         answer["limits"] = linked.limits;
-        examined = linked.not_inferred_detail;
+        examined.extend(linked.not_inferred_detail);
     }
     // The first item (field names are placeholders) no longer applies when the caller named them.
     let (mut strings, mut details) = shape::not_inferred_lists(&examined, !index_names.is_empty());

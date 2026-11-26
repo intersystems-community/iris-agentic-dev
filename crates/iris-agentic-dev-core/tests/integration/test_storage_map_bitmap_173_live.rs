@@ -171,10 +171,13 @@ async fn a_decode_that_needs_an_unconfirmed_chunk_size_is_ambiguous_and_says_so(
     done(&r, &f).await;
 }
 
-async fn load_f21(r: &Rig) -> Fixture {
-    let f = Fixture::read("F21");
-    exec(r, f.seed["post_load"].as_str().unwrap()).await;
-    f
+/// F21 has no class: its seed holds the code that writes the bit strings by hand.
+async fn load_f21(r: &Rig) -> Value {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/storage173/seed/F21.json");
+    let seed: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    exec(r, seed["post_load"].as_str().unwrap()).await;
+    seed
 }
 
 /// F21: `^IadSm173Bits(0, chunk) = $BIT` gets a data map with the computed third level, and the
@@ -183,11 +186,11 @@ async fn load_f21(r: &Rig) -> Fixture {
 #[ignore]
 async fn f21_a_bit_string_master_gets_a_chunk_data_map_that_returns_the_ids() {
     let r = live().await;
-    let f = load_f21(&r).await;
+    let seed = load_f21(&r).await;
     let out = ask_propose(&r, json!({"global": "^IadSm173Bits"})).await;
     assert_eq!(out["success"], true, "{out}");
     let draft = &out["chunk_map_draft"];
-    let answer = &f.seed["answer"];
+    let answer = &seed["answer"];
     let map = &draft["map"];
     assert_eq!(map["type"], "data", "{draft}");
     assert_eq!(map["global"], "^IadSm173Bits", "{draft}");
@@ -219,12 +222,12 @@ async fn f21_a_bit_string_master_gets_a_chunk_data_map_that_returns_the_ids() {
 #[ignore]
 async fn the_master_probe_recognises_a_bit_master_and_not_a_delimited_one() {
     let r = live().await;
-    let f = load_f21(&r).await;
+    let seed = load_f21(&r).await;
     let code = master_bit_probe("^IadSm173Bits", Caps::for_node_cap(200)).unwrap();
     let probed = parse_master_bits(&exec(&r, &code).await)
         .unwrap()
         .expect("a bit master");
-    let answer = &f.seed["answer"];
+    let answer = &seed["answer"];
     assert_eq!(json!(probed.constant), answer["constant"]);
     assert_eq!(json!(probed.ids), answer["id_count"]);
     assert_eq!(json!(probed.id_sum), answer["id_sum"]);

@@ -473,6 +473,12 @@ pub struct BitmapLine {
     pub chunk_position: u32,
     pub ids_checked: u32,
     pub ids_found: u32,
+    /// Of the IDs decoded from chunk 2 on, how many and how many found a master row: the chunk size
+    /// is confirmed only by these.
+    pub later_checked: u32,
+    pub later_found: u32,
+    /// The constant first subscript of a class-compiled bitmap: the index name.
+    pub lead: Option<String>,
 }
 
 /// Everything one linker run wrote, after its `done` line.
@@ -546,6 +552,12 @@ enum Line {
         chunk_position: u32,
         ids_checked: u32,
         ids_found: u32,
+        #[serde(default)]
+        later_checked: u32,
+        #[serde(default)]
+        later_found: u32,
+        #[serde(default)]
+        lead: Option<String>,
     },
     Error {
         text: String,
@@ -716,13 +728,21 @@ pub fn parse_link_output(out: &str) -> Result<LinkReport, String> {
                 chunk_position,
                 ids_checked,
                 ids_found,
+                later_checked,
+                later_found,
+                lead,
             } => {
                 at_least_one("chunk position", chunk_position)?;
                 within("IDs found", ids_found, ids_checked)?;
+                within("later IDs checked", later_checked, ids_checked)?;
+                within("later IDs found", later_found, later_checked)?;
                 bitmaps.push(BitmapLine {
                     chunk_position,
                     ids_checked,
                     ids_found,
+                    later_checked,
+                    later_found,
+                    lead,
                 });
             }
             Line::Error { text } => return Err(format!("IRIS error in the linker: {text}")),
@@ -1255,7 +1275,7 @@ pub(super) fn storage_type_node() -> Node {
 }
 
 /// The model validator on `map` in a Storage tree, as the write path will see it.
-fn check_with_validator(map: &Value) -> Result<(), String> {
+pub(super) fn check_with_validator(map: &Value) -> Result<(), String> {
     let nodes = vec![storage_type_node(), map_node(map)?];
     validate(&nodes).map_err(|found| {
         let broken: Vec<String> = found

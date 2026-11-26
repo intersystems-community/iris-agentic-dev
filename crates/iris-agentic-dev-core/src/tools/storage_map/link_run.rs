@@ -20,6 +20,8 @@ use serde_json::{json, Value};
 pub struct Linked {
     pub index_candidates: Value,
     pub indexes: Vec<Value>,
+    /// One item per candidate whose nodes hold bit strings (`bitmap_run`).
+    pub bitmaps: Vec<Value>,
     pub limits: Value,
     /// `{what, why}`: what was not examined, not explained or not drafted, for
     /// `not_inferred_detail`.
@@ -80,6 +82,7 @@ pub async fn link_all(run: &Run<'_>, names: &[String]) -> Linked {
     let view = master_view(run.master);
     let mut details = Vec::new();
     let mut indexes = Vec::new();
+    let mut bitmaps = Vec::new();
     let mut stopped = Vec::new();
     let mut taken = vec![run.master.map_name.clone()];
     let fields: Result<Vec<FieldAccess>, String> =
@@ -108,6 +111,15 @@ pub async fn link_all(run: &Run<'_>, names: &[String]) -> Linked {
         }
         let name = map_name(&c.global, &taken);
         taken.push(name.clone());
+        if !report.bitmaps.is_empty() {
+            if let Some(items) =
+                super::bitmap_run::bitmap_items(run, c, &name, &report, &view, &mut details).await
+            {
+                indexes.push(items.index);
+                bitmaps.push(items.bitmap);
+                continue;
+            }
+        }
         let assembled = assemble(&c.global, &name, &report);
         indexes.push(index_item(run, c, &assembled, &view, &report, &mut details).await);
     }
@@ -119,6 +131,7 @@ pub async fn link_all(run: &Run<'_>, names: &[String]) -> Linked {
     Linked {
         index_candidates: json!({"candidates": candidates, "not_examined": not_examined}),
         indexes,
+        bitmaps,
         limits: json!({
             "node_cap": run.node_cap,
             "time_cap_seconds": Caps::for_node_cap(run.node_cap).time_cap_secs,
