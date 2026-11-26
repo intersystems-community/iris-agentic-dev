@@ -1,0 +1,19 @@
+<plans>
+ <plan>
+   SQL:
+    SELECT %ID FROM IadSm173 . Q3 WHERE Name = ? /*#OPTIONS {"DynamicSQL":1} */ /*#OPTIONS {"DynamicSQLTypeList":"1"} */
+   
+   Warning:
+   Table IadSm173.Q3 is not tuned.
+   Index map IadSm173.Q3.M cannot be used to satisfy the equal condition on %SQLUPPER(Name) because the index subscript collation is %SQLUPPER(4).
+   
+   Cost: 1560400
+   
+   Module-FIRST:
+     Module-B:
+     Read master map IadSm173.Q3.Master, looping on ID.
+     For each row:
+         Test the = condition on %SQLUPPER(Name) and the NOT NULL condition on %SQLUPPER(Name).
+         Output the row.
+ </plan>
+</plans>

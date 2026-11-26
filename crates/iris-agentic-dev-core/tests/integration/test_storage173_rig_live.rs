@@ -128,3 +128,47 @@ Write "CHECKED ",n," BAD ",bad
     }
     drop_all(&r).await;
 }
+
+/// The skeleton of the linker runs on IRIS and writes a sample line and a done line: 40 nodes,
+/// 39 distinct first values, and nothing else. (T027 grows the generator; this holds its start.)
+#[tokio::test]
+#[ignore]
+async fn the_linker_skeleton_samples_a_fixture() {
+    use iris_agentic_dev_core::tools::storage_map::link_code::{
+        build_code, Caps, FieldAccess, LinkRequest,
+    };
+    let r = live().await;
+    let f = Fixture::read("F02");
+    load_fixture_173(&r, &f).await;
+    let fields: Vec<FieldAccess> = (1..=5)
+        .map(|piece| FieldAccess {
+            node: None,
+            delimiter: Some(94),
+            piece,
+        })
+        .collect();
+    let code = build_code(&LinkRequest {
+        master: "^IadSm173F02",
+        candidate: "^IadSm173F02X",
+        sub_prefix: &[],
+        key_parts: 1,
+        fields: &fields,
+        caps: Caps::for_node_cap(200),
+        with_values: false,
+    })
+    .unwrap();
+    let out = exec(&r, &code).await;
+    let lines: Vec<serde_json::Value> = out
+        .lines()
+        .filter_map(|l| serde_json::from_str(l.trim()).ok())
+        .collect();
+    assert_eq!(lines.len(), 2, "{out}");
+    assert_eq!(lines[0]["t"], "sample", "{out}");
+    assert_eq!(lines[0]["nodes"], 40, "{out}");
+    // "Brown, Cy" and "brown, cy" share one key under SQLUPPER: 40 nodes, 39 distinct values.
+    assert_eq!(lines[0]["distinct_first"], 39, "{out}");
+    assert_eq!(lines[0]["stopped"], "none", "{out}");
+    assert_eq!(lines[1]["t"], "done", "{out}");
+    drop_fixture_173(&r, &f).await;
+    drop_all(&r).await;
+}

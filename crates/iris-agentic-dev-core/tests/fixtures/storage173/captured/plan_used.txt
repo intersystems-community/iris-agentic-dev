@@ -1,0 +1,17 @@
+<plans>
+ <plan>
+   SQL:
+    SELECT %ID FROM IadSm173 . Q2 WHERE Name = ? /*#OPTIONS {"DynamicSQL":1} */ /*#OPTIONS {"DynamicSQLTypeList":"1"} */
+   
+   Warning:
+   Table IadSm173.Q2 is not tuned.
+   
+   Cost: 3000
+   
+   Module-FIRST:
+     Module-B:
+     Read index map IadSm173.Q2.M, using the given %SQLUPPER(Name), and looping on ID.
+     For each row:
+         Output the row.
+ </plan>
+</plans>

@@ -118,7 +118,7 @@ items). A failure stops the piece it guards and goes to Tom; the spec is amended
       an empty number and `" "_$c(0)` under `$$SQLUPPER`; a class-compiled SQLUPPER index stores `" "`; a subscript
       with its own `NullMarker` stores that marker. Prove: `L fact_5`.
 - [x] T005 Same file: `fact_6_planner_words`: `EXPLAIN` of `WHERE Name = ?` over `{Name}` contains "no index
-      subscript collation"; over `$$SQLUPPER({Name})` contains "Read index map"; over `$$SQLUPPER({Name},4)` contains
+      subscript collation"; over `$$SQLUPPER({Name})` contains "Read index map <map>, using the given"; over `$$SQLUPPER({Name},4)` contains
       "%SQLUPPER(4)". Pin the three strings (they are `usability.rs`'s matchers). Prove: `L fact_6`.
 - [x] T006 Same file: `fact_7_bitmap_decode` (ID = (chunk − 1) × 64000 + position − 1, using `$BitFind`, with a
       chunk-2 bit to prove the multiplier) and `fact_8_chunk_data_map` (`IadSm172.Bits`-shaped class returns the IDs
@@ -222,19 +222,19 @@ Signatures come from `data-model.md`.
       for the length variant; `class_source(name, properties)` builds text that contains no sampled value (the
       evidence struct has no value field, so assert by type) and marks each property in `guesses`. Implement
       `src/tools/storage_map/typing.rs` (pure half). Prove: `U test_storage_map_typing_173`.
-- [ ] T023 [P] Test first, `tests/unit/test_storage_map_bitmap_173.rs` (+ `mod`): `decode_id(chunk, position)` equals
+- [x] T023 [P] Test first, `tests/unit/test_storage_map_bitmap_173.rs` (+ `mod`): `decode_id(chunk, position)` equals
       `(chunk-1)*64000 + position - 1` for (1,2)→1, (2,1)→64000, (1,64000)→63999; `bitmap_map(field_spelling)` returns
       a map of `Type bitmap` with the one subscript `{Field}`; `chunk_map_draft(const)` returns a data
       map equal to the structure of `tests/fixtures/storage172/classes/Bits.cls` (third level `AccessType Other`, one
       access variable, `NextCode`, one `Invalidcondition`), parsed back through `model::from_tree`. Implement
       `src/tools/storage_map/bitmap.rs`. Prove: `U test_storage_map_bitmap_173`.
-- [ ] T024 [P] Test first, `tests/unit/test_storage_map_usability_173.rs` (+ `mod`): `explain_query(class, field)` builds
+- [x] T024 [P] Test first, `tests/unit/test_storage_map_usability_173.rs` (+ `mod`): `explain_query(class, field)` builds
       `EXPLAIN SELECT %ID FROM <scratch table> WHERE <field> = ?` with the field name validated;
-      `parse_plan(text)` returns `Used(map)` for text containing "Read index map" with the map's name, `Unused(text)`
+      `parse_plan(text, map)` returns `Used(map)` for text containing "Read index map <map>, using the given" (the planner may also scan a map whole, with the warning: the warning decides), `Unused(text)`
       for each of the two warning forms pinned in T005, and `Unknown` for anything else, using plan texts captured in
       T005 (copy them into `tests/fixtures/storage173/captured/plan_*.txt`). Implement
       `src/tools/storage_map/usability.rs`. Prove: `U test_storage_map_usability_173`.
-- [ ] T025 [P] Test first, `tests/unit/test_storage_map_link_code_173.rs` (+ `mod`): `build_code(master, candidate, caps)`
+- [x] T025 [P] Test first, `tests/unit/test_storage_map_link_code_173.rs` (+ `mod`): `build_code(master, candidate, caps)`
       for F02's master and a hostile-looking candidate returns `Err` for a name that fails `validate_global_name`;
       for a good name the text contains the quoted global, contains `%SYSTEM.SQL.Functions` for each transform in the
       set, contains no `$ZU` and no `$ZCVT` and no ObjectScript `$ZCONVERT` (iad implements no collation), contains

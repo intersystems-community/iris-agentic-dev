@@ -42,7 +42,7 @@ in the corpus (User Story 9); a line without one is an assumption until that tes
    can also declare its own `NullMarker`. So a marker has two kinds, empty string and NULL, and the linker reports which.
 6. The SQL planner tells you when an index map cannot serve a query: "cannot be used to satisfy the equal condition on
    %SQLUPPER(Name) because there is no index subscript collation", or "...because the index subscript collation is
-   %SQLUPPER(4)". With a matching map it reads the index.
+   %SQLUPPER(4)". With a matching map it reads the index "using the given" value; a map it cannot use may still be scanned whole ("looping on"), with the warning, so the warning decides.
 7. A bitmap index global holds `(value, chunk)` subscripts with a `$BIT` string as the node value (a class-compiled one
    has the index name first): the chunk is always the last subscript, and row ID = (chunk - 1) x 64000 + bit position
    - 1 (bit 1 is ID 0).

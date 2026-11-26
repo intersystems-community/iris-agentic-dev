@@ -227,7 +227,18 @@ async fn fact_6_planner_words() {
     let len = plan(&r, &q("Q3")).await;
     eprintln!("RAW PLAN:\n{raw}\nUPPER PLAN:\n{up}\nLEN PLAN:\n{len}");
     assert!(raw.contains("no index subscript collation"), "{raw}");
-    assert!(up.contains("Read index map IadSm173.Q2.M"), "{up}");
+    // "Used" is the planner reading the map WITH the given value; a plain `Read index map ...,
+    // looping on` is a scan of the whole index and comes with the warning.
+    assert!(
+        up.contains("Read index map IadSm173.Q2.M, using the given %SQLUPPER(Name)"),
+        "{up}"
+    );
+    assert!(!up.contains("cannot be used"), "{up}");
+    assert!(
+        raw.contains("Read index map IadSm173.Q1.M, looping on"),
+        "{raw}"
+    );
+    assert!(!raw.contains("using the given"), "{raw}");
     assert!(len.contains("%SQLUPPER(4)"), "{len}");
     drop_all(&r).await;
 }
