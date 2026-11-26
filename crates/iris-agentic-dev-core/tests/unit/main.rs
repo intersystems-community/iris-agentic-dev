@@ -230,6 +230,7 @@ mod test_sql_validators_141;
 mod test_ssh_spawn_171;
 mod test_storage_map_audit_172;
 mod test_storage_map_bitmap_173;
+mod test_storage_map_bitmap_link_173;
 mod test_storage_map_blocks_172;
 mod test_storage_map_call_shape_172;
 mod test_storage_map_candidates_173;

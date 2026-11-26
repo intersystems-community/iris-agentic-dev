@@ -2,7 +2,7 @@
 //! own collation functions, and writes only JSON lines of counts, positions and names.
 
 use iris_agentic_dev_core::tools::storage_map::link_code::{
-    build_code, Caps, FieldAccess, LinkRequest, FUNCTION_METHODS,
+    build_code, master_bit_probe, Caps, FieldAccess, LinkRequest, FUNCTION_METHODS,
 };
 
 fn fields() -> Vec<FieldAccess> {
@@ -144,4 +144,65 @@ fn a_field_table_entry_per_master_field() {
     assert!(code.contains("Set fa(3)=$ListBuild(\"\",0,3)"), "{code}");
     assert!(code.contains("Set fa(4)=$ListBuild(\"EV\",94,4)"), "{code}");
     assert!(build_code(&request("^X", &[], &[])).is_err());
+}
+
+// ── T049: the bit-string master probe, and the bitmap branch of the linker ─────────────────────
+
+#[test]
+fn the_master_probe_quotes_its_global_and_refuses_a_bad_name() {
+    let code = master_bit_probe("^IadSm173Bits", Caps::for_node_cap(200)).unwrap();
+    assert!(code.contains("Set g=\"^IadSm173Bits\""), "{code}");
+    for bad in ["^X) Kill ^Y", "^A(\"x\")", "^A B", "", "^1abc"] {
+        assert!(
+            master_bit_probe(bad, Caps::for_node_cap(200)).is_err(),
+            "{bad:?}"
+        );
+    }
+}
+
+#[test]
+fn the_master_probe_decodes_with_bitfind_and_writes_only_counts_and_positions() {
+    let code = master_bit_probe("^IadSm173Bits", Caps::for_node_cap(200)).unwrap();
+    assert!(code.contains("$BitFind("), "{code}");
+    assert!(code.contains("$BitCount("), "{code}");
+    assert!(code.contains("64000"), "the chunk size is named: {code}");
+    for forbidden in ["$ZU(", "$ZCVT", "$ZCONVERT", "$zu(", "$zcvt"] {
+        assert!(!code.contains(forbidden), "{forbidden} in {code}");
+    }
+    for w in code.match_indices("Write ").map(|(i, _)| &code[i..]) {
+        let stmt = w.lines().next().unwrap();
+        assert!(stmt.starts_with("Write o.%ToJSON(),!"), "{stmt}");
+    }
+    assert!(code.contains("o.t=\"masterbits\""), "{code}");
+    assert!(code.contains("o.t=\"done\""), "{code}");
+    // Quoted property names: a bare `_` would be the concatenation operator.
+    assert!(
+        code.contains("o.\"idsum\"") || code.contains("o.idsum"),
+        "{code}"
+    );
+    assert!(
+        code.contains("secs=5") && code.contains("$ZH-t0"),
+        "the time cap: {code}"
+    );
+}
+
+#[test]
+fn the_linker_branches_to_a_bitmap_decode_when_the_nodes_hold_bit_strings() {
+    let f = fields();
+    let code = build_code(&request("^IadSm173F19X", &[], &f)).unwrap();
+    assert!(code.contains("$BitCount("), "{code}");
+    assert!(code.contains("$BitFind("), "{code}");
+    // The chunk is the last subscript, and 64000 IDs make a chunk.
+    assert!(code.contains("*64000"), "{code}");
+    assert!(code.contains("o.t=\"bitmap\""), "{code}");
+    // An underscore name is quoted.
+    assert!(code.contains("o.\"chunk_position\""), "{code}");
+    assert!(code.contains("o.\"ids_checked\""), "{code}");
+    assert!(code.contains("o.\"ids_found\""), "{code}");
+    assert!(!code.contains("o.chunk_position"), "{code}");
+    // Still only JSON lines.
+    for w in code.match_indices("Write ").map(|(i, _)| &code[i..]) {
+        let stmt = w.lines().next().unwrap();
+        assert!(stmt.starts_with("Write o.%ToJSON(),!"), "{stmt}");
+    }
 }

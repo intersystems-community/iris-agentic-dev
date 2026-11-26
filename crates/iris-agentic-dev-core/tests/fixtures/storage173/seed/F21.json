@@ -1,0 +1,21 @@
+{
+ "name": "F21",
+ "description": "master ^IadSm173Bits(0, chunk) = $BIT",
+ "master_global": "^IadSm173Bits",
+ "index_globals": [],
+ "post_load": "Kill ^IadSm173Bits Set b=\"\" Set $Bit(b,3)=1 Set $Bit(b,5)=1 Set $Bit(b,8)=1 Set $Bit(b,64000)=1 Set ^IadSm173Bits(0,1)=b Set b=\"\" Set $Bit(b,1)=1 Set $Bit(b,2)=1 Set ^IadSm173Bits(0,2)=b",
+ "answer": {
+  "constant": "0",
+  "ids": [
+   2,
+   4,
+   7,
+   63999,
+   64000,
+   64001
+  ],
+  "id_count": 6,
+  "id_sum": 192013,
+  "chunks": 2
+ }
+}
