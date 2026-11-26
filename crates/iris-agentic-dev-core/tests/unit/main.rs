@@ -261,6 +261,7 @@ mod test_storage_map_read_errors_172;
 mod test_storage_map_readback_172;
 mod test_storage_map_sample_172;
 mod test_storage_map_shape_cov_172;
+mod test_storage_map_sparse_173;
 mod test_storage_map_tree_172;
 mod test_storage_map_tree_cov_172;
 mod test_storage_map_typing_173;
