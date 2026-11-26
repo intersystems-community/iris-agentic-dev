@@ -66,8 +66,8 @@ Master is `^IadSm173Person(id) = Name^City^Age^Born^Status` unless stated; each 
 | F16 | numeric nulls under `{Age}`                                                                        | marker kind `minus1e14`                                                     |
 | F17 | class-compiled index, SQLUPPER default, empty values                                               | marker kind `space`                                                         |
 | F18 | hand-written index with one constant marker of length 5                                            | `discovered`, length 5, no literal without `include_values`                 |
-| F19 | map-compiled bitmap `Type bitmap`, `{Status}`, `{ID}\64000+1`                                      | `bitmaps`: chunk position 2, trailing constant, all IDs found               |
-| F20 | class-compiled bitmap over Status (default storage master)                                         | chunk is the last subscript, no trailing constant                           |
+| F19 | map-compiled bitmap `Type bitmap`, `{Status}` only                                                 | `bitmaps`: chunk is the last subscript, all IDs found                       |
+| F20 | class-compiled bitmap over Status (default storage master)                                         | chunk is the last subscript, index name first                               |
 | F21 | master `^IadSm173Bits(0, chunk) = $BIT`                                                            | `chunk_map_draft` returns the IDs the bits name                             |
 | F22 | sparse: index skips NULL City                                                                      | rule NULL, draft `{City}'=""`                                               |
 | F23 | sparse: index skips empty-string City                                                              | rule empty string                                                           |
@@ -99,48 +99,48 @@ Master is `^IadSm173Person(id) = Name^City^Age^Born^Status` unless stated; each 
 **Purpose**: the facts the rest rests on, as live tests (spec Context facts 1 to 12, research R1 to R7, three open
 items). A failure stops the piece it guards and goes to Tom; the spec is amended only with his decision.
 
-- [ ] T001 Create `tests/integration/storage173_rig.rs` (declare it in `tests/integration/main.rs`): `Fixture` read
+- [x] T001 Create `tests/integration/storage173_rig.rs` (declare it in `tests/integration/main.rs`): `Fixture` read
       from `tests/fixtures/storage173/seed/<name>.json` (class file, rows, hand globals, known answer), plus
       `load_fixture_173(r, f)` (load class, INSERT rows, delete class, keep globals), `drop_fixture_173` (kill every
       `^IadSm173*` the fixture names and delete the class), `ask_propose(r, args)` and `ask_check(r, args)` returning
       the tool's JSON. Model it on `storage172_rig.rs`. Test first: a fixture with one row loads, the global exists,
       and `drop_fixture_173` leaves `$Order(^IadSm173...)` empty. Prove: `L storage173_rig`.
-- [ ] T002 Create `tests/integration/test_storage_map_measured_173_live.rs` (+ `mod` line). Test
+- [x] T002 Create `tests/integration/test_storage_map_measured_173_live.rs` (+ `mod` line). Test
       `fact_1_closed_set_of_collation_functions`: compile one class per function in `$$SQLUPPER`, `$$SQLSTRING`,
       `$$STRING`, `$$ALPHAUP`, `$$UPPER`, `$$MVR`, `$$TRUNCATE({F},3)` (each compiles) and `$$EXACT`, `$$PLUS`,
       `$$MINUS`, `$$SPACE` (each fails to compile). Prove: `L fact_1`.
-- [ ] T003 Same file: `fact_2_stored_forms` asserts the stored subscript for `"  Smith, Anna  "`-style values under
+- [x] T003 Same file: `fact_2_stored_forms` asserts the stored subscript for `"  Smith, Anna  "`-style values under
       each function (`" SMITH, ANNA"` with the leading blanks kept, `" Smith, Anna"`, upper-case with spaces removed,
       letters and digits only, upper-case keeping blanks, `$$TRUNCATE({F},3)` cutting to 3); `fact_3_length_variant`
       (`$$SQLUPPER({F},4)` stores `" SMI"`); `fact_4_name_piece` (`$p($$SQLUPPER({F}),",",1)` compiles and stores
       `" SMITH"`). Prove: `L fact_2 fact_3 fact_4`.
-- [ ] T004 Same file: `fact_5_null_markers`: a map-compiled index stores `$c(0)` for an empty string, `-1E14` for
+- [x] T004 Same file: `fact_5_null_markers`: a map-compiled index stores `$c(0)` for an empty string, `-1E14` for
       an empty number and `" "_$c(0)` under `$$SQLUPPER`; a class-compiled SQLUPPER index stores `" "`; a subscript
       with its own `NullMarker` stores that marker. Prove: `L fact_5`.
-- [ ] T005 Same file: `fact_6_planner_words`: `EXPLAIN` of `WHERE Name = ?` over `{Name}` contains "no index
+- [x] T005 Same file: `fact_6_planner_words`: `EXPLAIN` of `WHERE Name = ?` over `{Name}` contains "no index
       subscript collation"; over `$$SQLUPPER({Name})` contains "Read index map"; over `$$SQLUPPER({Name},4)` contains
       "%SQLUPPER(4)". Pin the three strings (they are `usability.rs`'s matchers). Prove: `L fact_6`.
-- [ ] T006 Same file: `fact_7_bitmap_decode` (ID = (chunk − 1) × 64000 + position − 1, using `$BitFind`, with a
+- [x] T006 Same file: `fact_7_bitmap_decode` (ID = (chunk − 1) × 64000 + position − 1, using `$BitFind`, with a
       chunk-2 bit to prove the multiplier) and `fact_8_chunk_data_map` (`IadSm172.Bits`-shaped class returns the IDs
       its bits name). Prove: `L fact_7 fact_8`.
-- [ ] T007 Same file: `fact_9_function_class` (for each of the 8 methods of `%SYSTEM.SQL.Functions` that matches a
+- [x] T007 Same file: `fact_9_function_class` (for each of the 8 methods of `%SYSTEM.SQL.Functions` that matches a
       map function, the method's result equals the subscript a map-compiled index filed for the same value, including
-      the length variants and an empty string), `fact_10_bitmap_map_layout` (research R1: `{ID}\64000+1` files
-      `(value, chunk, 1)` holding the bits of IDs 1 and 3; `{ID}` files one node per ID),
+      the length variants and an empty string), `fact_10_bitmap_map_layout` (research R1: one subscript files
+      `(value, chunk)` holding the bits; `{ID}` and `{ID}\64000+1` append a subscript before the chunk),
       `fact_11_id_in_value` (R2: the map with `<Data name="Id"/>` and RowIdSpec `{Id}` returns row 2 for
       `Name='bob'` and the plan says "Read index map"), `fact_12_conditional_filing` (R3: `Status="A"` skips B rows;
       `{City}'=""` skips NULL and keeps the empty string). Prove: `L fact_9 fact_10 fact_11 fact_12`.
-- [ ] T008 Same file: `r4_collate_forms` (`$$COLLATE({Name},"SQLUPPER")` and `$$COLLATE({Name})` store the value
+- [x] T008 Same file: `r4_collate_forms` (`$$COLLATE({Name},"SQLUPPER")` and `$$COLLATE({Name})` store the value
       unchanged; `$$COLLATE({Name},7)` fails to compile; `" "_{Name}` files the same string as `$$SQLSTRING` on
       clean values), `r6_multipart_key` (composite IdKey `(A,B)`, master with RowIdSpec `{L1}` `{L2}`, index map
       `$$SQLUPPER({Name})`, `{A}`, `{B}`; query returns both rows). Prove: `L r4 r6`.
-- [ ] T009 Same file, the three open items, each a test that holds both outcomes and records which it saw in its
-      failure message: `open_listing_as_service_account` (the listing query through the generator path as the
-      configured service account: either it lists the fixture's globals, or it fails and the test asserts the failure
+- [x] T009 Same file, the three open items, each a test that holds both outcomes and records which it saw in its
+      failure message: `open_listing_as_the_connection_user` (the listing query as the rig user; the no-admin-role case stays open and is
+      held by T040: either it lists the fixture's globals, or it fails and the test asserts the failure
       text is non-empty so FR-004's message can quote it), `open_c0_condition` (`{City}'=$c(0)` compiles in a
       conditional map and skips exactly the empty-string rows), `open_spread_beats_prefix` (fixture F34: build it, walk
-      the first 200 nodes in order and in spread, score `$$UPPER` against `$$ALPHAUP` both ways; the test asserts the
-      prefix walk cannot separate them and the spread can). Prove: `L open_`.
+      count the keys, then walk the first 200 in order and 200 by stride, score `$$UPPER` against `$$ALPHAUP`; the test
+      asserts the prefix walk cannot separate them and the stride can). Prove: `L open_`.
 - [ ] T010 Lead only: read T002 to T009. Any failure stops the piece it guards (a map form fails → its draft goes to
       `not_inferred`; the spread does not beat the prefix → FR-004a is amended) and goes to Tom with the output before
       Phase 3. Record each outcome in `specs/173-propose-index-linking/research.md` (a line under the item).
@@ -224,7 +224,7 @@ Signatures come from `data-model.md`.
       `src/tools/storage_map/typing.rs` (pure half). Prove: `U test_storage_map_typing_173`.
 - [ ] T023 [P] Test first, `tests/unit/test_storage_map_bitmap_173.rs` (+ `mod`): `decode_id(chunk, position)` equals
       `(chunk-1)*64000 + position - 1` for (1,2)→1, (2,1)→64000, (1,64000)→63999; `bitmap_map(field_spelling)` returns
-      a map of `Type bitmap` with subscripts `{Field…}` and `{ID}\64000+1`; `chunk_map_draft(const)` returns a data
+      a map of `Type bitmap` with the one subscript `{Field}`; `chunk_map_draft(const)` returns a data
       map equal to the structure of `tests/fixtures/storage172/classes/Bits.cls` (third level `AccessType Other`, one
       access variable, `NextCode`, one `Invalidcondition`), parsed back through `model::from_tree`. Implement
       `src/tools/storage_map/bitmap.rs`. Prove: `U test_storage_map_bitmap_173`.
@@ -257,8 +257,8 @@ in a scratch copy and returns a known row through an indexed query.
       the fixture, call `propose` with `global=^IadSm173Person` and `index_globals=[<index global>]`, assert
       `indexes[0].subscripts[0]` has the known `field`, `transform`, `length` and `agreement ≥ 0.95`, assert
       `indexes[0].id.positions` and `verdict == inferred`. All fail now. Prove (red): `L test_storage_map_link_173_live`.
-- [ ] T027 [US1] Implement the linker body in `src/tools/storage_map/link_code.rs`: spread walk over the first
-      subscript (FR-004a, `distinct_first_values`), master row by direct `$Get` on the master reference, ID position
+- [ ] T027 [US1] Implement the linker body in `src/tools/storage_map/link_code.rs`: counting pass then every k-th key
+      over the first subscript (FR-004a, `distinct_first_values`), master row by direct `$Get` on the master reference, ID position
       search over runs of k subscripts and the node value (FR-005), per-field per-position scoring over the transform
       set through `##class(%SYSTEM.SQL.Functions)` (FR-006/007), length variants confirmed on every node (FR-008),
       JSON lines out as in data-model.md. Wire `propose_action` in `mod.rs`: after the master draft, for each
@@ -410,9 +410,9 @@ tests.
 **Goal**: bitmaps are recognised, decoded and drafted. **Independent test**: F19, F20, F21.
 
 - [ ] T048 [US4] Fixtures F19 to F21. Test first, `tests/integration/test_storage_map_bitmap_173_live.rs` (+ `mod`): F19
-      `bitmaps[0]` has `chunk_position` 2, `trailing_constant true`, `ids_checked == ids_found_in_master`, the drafted
-      map is `Type bitmap` with `{ID}\64000+1` and `verified.row_found`; F20 has the chunk as the last subscript and no
-      trailing constant; a bitmap whose decoded IDs are not in the master is `not_linked`; a decode that needs an
+      `bitmaps[0]` has the chunk as its last subscript, `ids_checked == ids_found_in_master`, the drafted
+      map is `Type bitmap` with the field as its only subscript and `verified.row_found`; F20 has the same with the
+      index name first; a bitmap whose decoded IDs are not in the master is `not_linked`; a decode that needs an
       unconfirmed chunk size is `ambiguous` with `assumed` naming it; F21 returns `chunk_map_draft` whose
       scratch-compiled table returns the IDs the bits name. Prove (red): `L test_storage_map_bitmap_173_live`.
 - [ ] T049 [US4] Recognise a bit-string master in the linker (plan.md: the sampler and `ShapeReport` do not change). Test
@@ -422,7 +422,7 @@ tests.
       from `propose_action` only when the master sample shows depth-2 nodes with a numeric last subscript and no
       delimiter or `$LIST` shape. Prove: `U test_storage_map_link_code_173`, `L test_storage_map_bitmap_173_live`, and
       `U test_storage_map_golden_172` unchanged.
-- [ ] T050 [US4] Implement bitmap detection and decode in `link_code.rs` (`$BitFind`, both chunk positions, up to 1,000
+- [ ] T050 [US4] Implement bitmap detection and decode in `link_code.rs` (`$BitFind`, the chunk as last subscript, up to 1,000
       IDs in 5 chunks) and the drafts in `bitmap.rs` wired into `propose_action` (`bitmaps`, `chunk_map_draft`, each
       verified in a scratch copy before `inferred`). Prove: `L test_storage_map_bitmap_173_live` green.
 
@@ -499,7 +499,7 @@ tests.
       `fact_*` and `r*_` test name the doc cites exists in `test_storage_map_measured_173_live.rs`, and every test in
       that file is cited. Prove: `U test_storage_map_docs_173`.
 - [ ] T061 [US9] Skill: `skills/skills/iris-storage-mapping/SKILL.md` gains "What `propose` infers and what it does not"
-      (verdicts, the closed expression set, bitmap `{ID}\64000+1`, the empty-string versus NULL condition, drafts are
+      (verdicts, the closed expression set, bitmap map with the field alone, the empty-string versus NULL condition, drafts are
       guesses to `check`, `class` mode); each claim names its live test. Bump the skill version. Prove: the existing
       skill tests (`U test_skill_tiers`, `U storage_map_skill`) and a new assertion in T060's file that each claim line
       cites an existing test.
@@ -532,7 +532,7 @@ tests.
 - [ ] T066 [P] `docs/tools.md` and `docs/error-codes.md`: the `iris_storage_map` row names the three params; no new
       code, so the error-code guard must stay green. Prove: `U docs_tools error_codes`.
 - [ ] T067 [P] `CLAUDE.md` Recent Changes: one entry for 173 inside the 172 entry's neighbourhood (what `propose` and
-      `check` now return, the `{ID}\64000+1` finding, the NULL versus empty-string finding, `%SYSTEM.SQL.Functions`
+      `check` now return, the bitmap layout finding, the NULL versus empty-string finding, `%SYSTEM.SQL.Functions`
       as the server's own collation, plan path). Prove: `markdownlint-cli2 --fix CLAUDE.md`.
 - [ ] T068 [P] Release notes: add the 173 lines to `specs/172-sql-storage-maps/release-notes-draft.md`, then `/wordcraft`
       and `/no-ai-slop` on the finished text, apply, and show Tom. Prove: the reviewer block is empty or addressed.

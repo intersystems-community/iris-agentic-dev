@@ -6,29 +6,29 @@ list, Phase 0). A claim without its test is an assumption.
 
 ## R1. How a hand-written bitmap index map is declared
 
-**Decision**: the draft is a map of `Type bitmap` with subscript 1 `{Field}` and subscript 2 `{ID}\64000+1`.
+**Decision**: the draft is a map of `Type bitmap` with one subscript, `{Field}` (through the Link's transform). The
+chunk is appended by IRIS as the last subscript.
 
-**Measured**:
+**Measured** (`fact_10_bitmap_map_layout`), rows 1 and 3 with status `A`, row 2 with `B`:
 
-| Map subscript 2                                      | Class declares an `Index … [Type = bitmap]` | What IRIS files for rows 1 and 3 with status `A`                                  |
-| ---------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------- |
-| `{ID}`                                               | no and yes (same result)                    | `("A",1,1)` and `("A",3,1)`, one node per row ID, each with one bit               |
-| `{ID}\64000+1`                                       | yes                                         | `("A",1,1)` holding the bits for IDs 1 and 3 (`$bit(2,4)`)                        |
-| (class-compiled, `Type = bitmap` in default storage) | n/a                                         | `("<IndexName>"," A",1)` holding `$bit(2,4)`: index name, value, chunk, no suffix |
-
-`%BuildIndices` on the class gave the same nodes as INSERT for both map shapes.
+| Map subscripts                 | What IRIS files                                                                 |
+| ------------------------------ | ------------------------------------------------------------------------------- |
+| `{Status}`                     | `("A",1)` holding `$bit(2,4)` and `("B",1)` holding `$bit(3)`: `(value, chunk)` |
+| `{Status}`, `{ID}`             | `("A",1,1)`, `("A",3,1)`, `("B",2,1)`: one node per row ID, the chunk last      |
+| `{Status}`, `{ID}\64000+1`     | `("A",1,1)` holding the bits of IDs 1 and 3: the chunk repeated                 |
+| class-compiled `Type = bitmap` | `("<IndexName>"," A",1)` holding `$bit(2,4)`: index name, value, chunk          |
 
 **Consequences**:
 
-1. A map whose subscript 2 is `{ID}` compiles and files, but it is not a chunked bitmap: each node is one row. A draft
-   that used it would be silently wrong. The draft uses `{ID}\64000+1`.
-2. A hand-written bitmap map files `(value, chunk, 1)`: the chunk is the second-to-last subscript and the last
-   subscript is a constant `1`. The linker finds the chunk subscript as the numeric position whose decoded IDs resolve
-   to master rows, and tries both the last subscript and the one before a constant last subscript. A class-compiled
-   bitmap has no trailing constant. Both shapes are fixtures.
-3. Decode, spec context fact 7: ID = (chunk − 1) × 64000 + bit position − 1. Holds for both.
+1. The chunk is always the last subscript, in every shape. The linker takes it as the last subscript and confirms it by
+   decoding: the IDs the bits name must resolve to master rows.
+2. A second subscript only multiplies nodes, so the draft carries the field alone. An earlier draft of this note
+   (`{ID}\64000+1` as subscript 2) filed a repeated chunk and is dropped. The scratch verification of FR-017 still
+   decides whether a drafted bitmap map is called inferred.
+3. Decode, spec context fact 7: ID = (chunk − 1) × 64000 + bit position − 1, checked with an ID in chunk 2
+   (`A@64000`). Holds for map-compiled and class-compiled shapes.
 
-**Alternatives**: a bitmap map with `{ID}` alone (rejected: not chunked); drafting from the class-compiled layout
+**Alternatives**: a bitmap map with `{ID}` as a second subscript (rejected: one node per row); drafting from the class-compiled layout
 (rejected: that layout belongs to default storage, a different index name prefix).
 
 ## R2. How a map reads the row ID from the node value
@@ -139,6 +139,24 @@ Only counts, positions, names and verdicts come back, as JSON lines the pure par
 **Cost shape** (budget test): one IRIS call for the listing, one per candidate (at most 8), one for typing, one for
 the class-draft scratch compile and one per drafted index for its verification. A test fails if a `propose` over a
 master and two candidates makes more than the table in `plan.md` allows.
+
+## T010 outcomes (2026-11-26, IRIS 2026.2, `test_storage_map_measured_173_live`)
+
+All 17 tests pass (`fact_1` to `fact_12`, `r4_collate_forms`, `r6_multipart_key`, three `open_`). Four findings change
+the design, each now written into the spec and tasks:
+
+1. **NULL and empty string are different markers** (fact 5). Map-compiled: `$c(0)` for an empty string; class-compiled:
+   `" "_$c(0)` for an empty string and a lone `" "` for a NULL. The linker reports the kind.
+2. **Bitmap layout** (R1, fact 10): one subscript files `(value, chunk)`; the chunk is always last; a second subscript
+   only adds nodes. The draft carries the field alone. The `{ID}\64000+1` draft this spec first named was wrong.
+3. **Spread** (R8, `open_spread_beats_prefix`): a prefix walk cannot separate `$$UPPER` from `$$ALPHAUP` when they
+   differ only late, and a stride over the whole key range can, but a stride needs the key list first. FR-004a now has
+   a counting pass under its own cap (10 times the node cap).
+4. **`{City}'=$c(0)`** (R3, `open_c0_condition`): compiles in a conditional map and skips exactly the empty-string rows.
+   The empty-string rule is drafted as `{F}'=$c(0)`.
+
+Still open: the listing as a user with no administrative role (R5). `open_listing_as_the_connection_user` lists the
+fixture's globals as the rig user. The failure path is built and tested in the candidates phase (T040) either way.
 
 ## Not decided here
 

@@ -78,8 +78,8 @@ policy; otherwise they are absent and the draft's `guesses` and `not_inferred` s
 
 ### Bitmap item (an item of `bitmaps`)
 
-`{global, chunk_position, trailing_constant: bool, ids_checked, ids_found_in_master, verdict, map?, verified?}`. The
-drafted map is `Type bitmap`, subscript 1 `{Field}` through the Link's transform, subscript 2 `{ID}\64000+1` (research
+`{global, chunk_position, ids_checked, ids_found_in_master, verdict, map?, verified?}`. The
+drafted map is `Type bitmap`, the one subscript `{Field}` through the Link's transform (research
 R1). A decoded ID set not found in the master is `not_linked`. A chunk size or offset the data does not confirm is
 `ambiguous` and `assumed` names it.
 

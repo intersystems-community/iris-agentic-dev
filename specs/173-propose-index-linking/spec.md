@@ -38,19 +38,22 @@ in the corpus (User Story 9); a line without one is an assumption until that tes
 3. A length variant, `$$SQLUPPER({Name},4)`, stores `" SMI"`: the length counts the leading space.
 4. `$p($$SQLUPPER({Name}),",",1)` compiles and stores `" SMITH"` (the surname of a `Smith, Anna` name).
 5. A map-compiled index stores `$c(0)` for an empty string and `-1E14` for an empty number, and `" "_$c(0)` under
-   `$$SQLUPPER`. A class-compiled index stores `" "` for an empty string under the default collation. A subscript can
-   also declare its own `NullMarker`.
+   `$$SQLUPPER`. A class-compiled index stores `" "_$c(0)` for an empty string and a lone `" "` for a NULL. A subscript
+   can also declare its own `NullMarker`. So a marker has two kinds, empty string and NULL, and the linker reports which.
 6. The SQL planner tells you when an index map cannot serve a query: "cannot be used to satisfy the equal condition on
    %SQLUPPER(Name) because there is no index subscript collation", or "...because the index subscript collation is
    %SQLUPPER(4)". With a matching map it reads the index.
-7. A bitmap index global holds `(value, chunk)` subscripts with a `$BIT` string as the node value: row ID = (chunk - 1)
-   x 64000 + bit position - 1 (bit 1 is ID 0).
+7. A bitmap index global holds `(value, chunk)` subscripts with a `$BIT` string as the node value (a class-compiled one
+   has the index name first): the chunk is always the last subscript, and row ID = (chunk - 1) x 64000 + bit position
+   - 1 (bit 1 is ID 0).
 8. A table over a `^G(const, chunk) = $BIT` global is a data map whose third level is `AccessType Other` with an access
    variable, a `NextCode` and an `Invalidcondition`, and returns the IDs its bits name (`IadSm172.Bits`, spec 172).
 9. The server's documented SQL function class (`%SYSTEM.SQL.Functions`) has exactly the collation functions of fact 1
    (plus `COLLATE`), and its results equal what a map-compiled index files for the same values.
-10. A hand-written bitmap map chunks IDs only when subscript 2 is `{ID}\64000+1`, and then files `(value, chunk, 1)`;
-    with `{ID}` alone it files one node per row ID, which is not a chunked bitmap.
+10. A hand-written `Type bitmap` map with one subscript, the field, files `(value, chunk)` with the bits of every row
+    in the chunk. A second subscript is appended before the chunk: `{ID}` files one node per row, and `{ID}\64000+1`
+    repeats the chunk, `(value, chunk, chunk)`. The chunk is always the last subscript, so a bitmap draft has the field
+    as its only subscript.
 11. A map can read the row ID from the node value: `<Data name="Id"/>` with a `RowIdSpec` of `{Id}`; the planner reads
     the index map and returns the row.
 12. A conditional index map (`PopulationType conditional`) skips rows at filing time. SQL stores an empty string as
@@ -345,9 +348,12 @@ bundled skill and the response keys are updated and held to the code by the exis
 
 #### Linking
 
-- **FR-004a**: Each candidate MUST be sampled as a spread: up to 3 nodes per distinct value of the first subscript,
-  hopping from one value to the next in order, until the node cap. A candidate whose first subscript has fewer
-  than 7 distinct values MUST be sampled in order to the cap instead. The report MUST say how many distinct first
+- **FR-004a**: Each candidate MUST be sampled as a spread across its whole key range, not from its start (a prefix walk
+  cannot tell two collations apart when they differ only on later values, measured). A counting pass first walks the
+  first subscript under its own cap (10 times the node cap, inside the 5 s total) and keeps every k-th value so the
+  sample reaches the node cap; up to 3 nodes are read per kept value. A candidate with fewer than 7 distinct first
+  values MUST be sampled in order to the cap instead, and one whose counting pass hits its cap MUST say the spread
+  covers only the part walked. The report MUST say how many distinct first
   values were seen, and the sample MUST NOT be used for any claim about uniqueness or cardinality.
 - **FR-005**: For each candidate, `propose` MUST find the row-ID position or positions: a run of consecutive
   subscripts as long as the master's key (one or more), or the node value. It MUST count the nodes whose ID resolves
@@ -362,8 +368,8 @@ bundled skill and the response keys are updated and held to the code by the exis
   Rust or ObjectScript text of iad's may re-implement one.
 - **FR-008**: A length variant's length MUST be found from the data (the longest subscript seen at that position) and
   MUST be confirmed on every node before it is reported.
-- **FR-009**: Null markers MUST be matched per field: `$c(0)`, `-1E14`, `" "`, `" "_$c(0)`, and any single constant
-  that every empty-field node shares, which MUST be reported as a discovered marker: its length always, its literal
+- **FR-009**: Null markers MUST be matched per field and reported with their kind, empty string or NULL: `$c(0)`,
+  `-1E14`, `" "`, `" "_$c(0)`, and any single constant that every empty-field node shares, which MUST be reported as a discovered marker: its length always, its literal
   only under `include_values` and the data policy of FR-021 of spec 172 (refused under `block` and `redact`,
   `acknowledgePhi` under `allow`). Without the literal the draft leaves `NullMarker` unset and says what is missing.
 - **FR-010**: An index node whose value is a `$LIST` MUST be tested element by element against the master's fields
@@ -392,11 +398,10 @@ bundled skill and the response keys are updated and held to the code by the exis
 #### Bitmaps
 
 - **FR-016**: A candidate whose nodes hold bit strings MUST be reported as a bitmap index. The chunk subscript is the
-  numeric position whose decoded IDs resolve to master rows, tried as the last subscript and as the one before a
-  constant last subscript (fact 10). The decoded IDs are checked against the master (up to 1000 IDs in 5 chunks),
+  last subscript (fact 10); the linker confirms it by decoding and checking the IDs against the master. The decoded IDs are checked against the master (up to 1000 IDs in 5 chunks),
   `ids_checked` and `ids_found_in_master` reported, and the subscripts before the chunk explained as in FR-006.
 - **FR-017**: A bitmap index map MUST be drafted when the link is `inferred`, as `Type bitmap` with the field's
-  expression and `{ID}\64000+1` (fact 10), and MUST be verified in a scratch copy before it is called inferred.
+  expression as its only subscript (fact 10), and MUST be verified in a scratch copy before it is called inferred.
 - **FR-018**: A master global of the shape `^G(const, chunk) = $BIT` MUST be recognised and its data map drafted with
   the computed level (access variable, `NextCode`, `Invalidcondition`) of spec 172's `IadSm172.Bits`; the draft MUST
   be checked, in a scratch copy, to return the IDs the bits name before it is called inferred.

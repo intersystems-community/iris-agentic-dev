@@ -179,10 +179,14 @@ into `warnings`, never into the pass or fail decision.
 
 ### The spread walk (FR-004a)
 
-The generated walk steps the first subscript with `$Order`, takes up to three nodes under each value with a nested
-`$Order`, and stops at the node cap or the time cap. If the first `$Order` pass sees fewer than seven distinct values it
-restarts as an ordered walk to the cap. It reports `distinct_first_values`. Nothing in the answer claims uniqueness or
-cardinality.
+A prefix walk is not enough (measured, `open_spread_beats_prefix`): over 1,000 keys whose first 800 are plain and last
+200 contain blanks and hyphens, the first 200 nodes score `$$UPPER` and `$$ALPHAUP` equally, and a stride over all keys
+separates them. So the generated walk is two passes. A counting pass steps the first subscript with `$Order`, under its
+own cap of 10 times the node cap and inside the time cap, keeping the key list. A second pass reads every k-th kept key
+(k so the sample reaches the node cap) and up to three nodes under it with a nested `$Order`. If the counting pass sees
+fewer than seven distinct values it restarts as an ordered walk to the cap. When the counting pass stops at its cap the
+answer says the spread covers only the part walked. It reports `distinct_first_values`. Nothing in the answer claims
+uniqueness or cardinality.
 
 ### Position scoring
 
