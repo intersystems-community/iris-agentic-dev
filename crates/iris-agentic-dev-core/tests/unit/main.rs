@@ -246,6 +246,7 @@ mod test_storage_map_gen_172;
 mod test_storage_map_golden_172;
 mod test_storage_map_link_173;
 mod test_storage_map_link_code_173;
+mod test_storage_map_link_run_173;
 mod test_storage_map_map_node_172;
 mod test_storage_map_markdown_172;
 mod test_storage_map_master_173;

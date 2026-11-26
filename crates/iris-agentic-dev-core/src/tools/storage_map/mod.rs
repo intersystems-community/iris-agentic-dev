@@ -6,6 +6,7 @@ pub mod explain;
 pub mod globals;
 pub mod link;
 pub mod link_code;
+pub mod link_run;
 pub mod master;
 pub mod model;
 pub mod path;
@@ -978,23 +979,87 @@ async fn propose_action(
     if let Some(refusal) = values_refusal(shape, &t.primary) {
         return err_result(refusal);
     }
-    sampled_answer(tools, p, shape, &ns, &global, |report| {
-        let (draft, guesses) = shape::draft(&report);
-        json!({
-            "success": true,
-            "model_version": model::MODEL_VERSION,
-            "action": "propose",
-            "namespace": ns,
-            "global": global.name,
-            "capped": report.capped,
-            "shape": report,
-            "draft": draft,
-            "guesses": guesses,
-            "draft_note": "a draft to check against real data: every name, delimiter and piece count is a guess from a sample",
-            "not_inferred": shape::not_inferred(),
-        })
-    })
+    let index_names = match p.get("index_globals").filter(|v| !v.is_null()) {
+        None => Vec::new(),
+        Some(v) => {
+            let given: Vec<String> = v
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            if v.as_array().is_none_or(|a| a.len() != given.len()) {
+                return fail(
+                    "INVALID_PARAMS",
+                    "index_globals is a list of global names".into(),
+                    json!({}),
+                );
+            }
+            match candidates::validate_index_globals(&given) {
+                Ok(names) => names,
+                Err(why) => return fail("INVALID_PARAMS", why, json!({})),
+            }
+        }
+    };
+    let cx = match tools.exec_context() {
+        Ok(cx) => cx,
+        Err(e) => return err_result(e.to_json()),
+    };
+    let cap = sample::caps(p.get("max_nodes").and_then(Value::as_u64));
+    let node_cap = cap.nodes;
+    let report = match sample::sample(
+        &cx.conn,
+        cx.client.as_ref(),
+        &ns,
+        &global,
+        cap,
+        shape.include_values,
+    )
     .await
+    {
+        Ok(report) => report,
+        Err(answer) => {
+            return crate::tools::exec::attach_identity(err_result(answer), &cx.helper_report())
+        }
+    };
+    let (draft, guesses) = shape::draft(&report);
+    let mut answer = json!({
+        "success": true,
+        "model_version": model::MODEL_VERSION,
+        "action": "propose",
+        "namespace": ns,
+        "global": global.name,
+        "capped": report.capped,
+        "shape": report,
+        "draft": draft,
+        "guesses": guesses,
+        "draft_note": "a draft to check against real data: every name, delimiter and piece count is a guess from a sample",
+        "not_inferred": shape::not_inferred(),
+    });
+    if !index_names.is_empty() {
+        let spec = match master::MasterSpec::from_draft(&report, &[]) {
+            Ok(spec) => spec,
+            Err(refusal) => return fail(refusal.code, refusal.message, json!({})),
+        };
+        let run = link_run::Run {
+            conn: &cx.conn,
+            client: cx.client.as_ref(),
+            ns: &ns,
+            master: &spec,
+            node_cap,
+            policy: &t.primary.effective,
+            server: &t.primary.key,
+            acknowledge_phi: shape.acknowledge_phi,
+        };
+        let linked = link_run::link_all(&run, &index_names).await;
+        answer["index_candidates"] = linked.index_candidates;
+        answer["indexes"] = Value::Array(linked.indexes);
+        answer["limits"] = linked.limits;
+        answer["not_inferred_detail"] = Value::Array(linked.not_inferred_detail);
+    }
+    crate::tools::exec::attach_identity(Ok(CallToolResult::structured(answer)), &cx.helper_report())
 }
 
 /// `edit` (US3, FR-010): path operations on the class's tree, then the write path. The version

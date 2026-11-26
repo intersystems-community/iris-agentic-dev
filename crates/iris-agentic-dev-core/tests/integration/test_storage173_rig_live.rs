@@ -129,8 +129,8 @@ Write "CHECKED ",n," BAD ",bad
     drop_all(&r).await;
 }
 
-/// The skeleton of the linker runs on IRIS and writes a sample line and a done line: 40 nodes,
-/// 39 distinct first values, and nothing else. (T027 grows the generator; this holds its start.)
+/// The linker runs on IRIS: a sample line first (40 nodes, 39 distinct first values, all 40
+/// usable) and a done line last.
 #[tokio::test]
 #[ignore]
 async fn the_linker_skeleton_samples_a_fixture() {
@@ -162,13 +162,18 @@ async fn the_linker_skeleton_samples_a_fixture() {
         .lines()
         .filter_map(|l| serde_json::from_str(l.trim()).ok())
         .collect();
-    assert_eq!(lines.len(), 2, "{out}");
-    assert_eq!(lines[0]["t"], "sample", "{out}");
+    let kinds: Vec<&str> = lines
+        .iter()
+        .map(|l| l["t"].as_str().unwrap_or(""))
+        .collect();
+    assert_eq!(kinds.first(), Some(&"sample"), "{out}");
+    assert_eq!(kinds.last(), Some(&"done"), "{out}");
     assert_eq!(lines[0]["nodes"], 40, "{out}");
     // "Brown, Cy" and "brown, cy" share one key under SQLUPPER: 40 nodes, 39 distinct values.
     assert_eq!(lines[0]["distinct_first"], 39, "{out}");
     assert_eq!(lines[0]["stopped"], "none", "{out}");
-    assert_eq!(lines[1]["t"], "done", "{out}");
+    // Every node's ID found its master row, so all 40 are usable.
+    assert_eq!(lines[0]["usable"], 40, "{out}");
     drop_fixture_173(&r, &f).await;
     drop_all(&r).await;
 }

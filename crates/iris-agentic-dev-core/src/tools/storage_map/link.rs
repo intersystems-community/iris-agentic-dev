@@ -718,6 +718,194 @@ pub fn parse_link_output(out: &str) -> Result<LinkReport, String> {
     })
 }
 
+// ── from the report to a link ──────────────────────────────────────────────
+
+/// One non-ID position's verdict, with the distinct count it rested on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PositionJudgement {
+    pub position: u32,
+    pub judgement: Judgement,
+    pub distinct: u32,
+}
+
+/// A link built from a report, and what its JSON form needs beyond the link itself.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Assembled {
+    pub link: Link,
+    /// IDs that found a master row, over nodes read at the ID's depth (0 with no ID line).
+    pub id_agreement: f64,
+    pub judgements: Vec<PositionJudgement>,
+}
+
+/// The link's one verdict (FR-011): no ID position at 0.9 is `not_linked`, fewer than 20 usable
+/// nodes `too_few_nodes`; otherwise the weakest position decides, in the order `not_explained`,
+/// `constant`, `ambiguous`, `inferred`. An index with no position to explain is `not_explained`:
+/// there is no map to draft from it.
+pub fn overall_verdict(id_agreement: f64, usable_nodes: u32, positions: &[Verdict]) -> Verdict {
+    if !(id_agreement.is_finite() && id_agreement + EPS >= ID_FLOOR) {
+        return Verdict::NotLinked;
+    }
+    if usable_nodes < MIN_NODES {
+        return Verdict::TooFewNodes;
+    }
+    if positions.is_empty() {
+        return Verdict::NotExplained;
+    }
+    [
+        Verdict::NotLinked,
+        Verdict::TooFewNodes,
+        Verdict::NotExplained,
+        Verdict::Constant,
+        Verdict::Ambiguous,
+    ]
+    .into_iter()
+    .find(|v| positions.contains(v))
+    .unwrap_or(Verdict::Inferred)
+}
+
+/// The link for `global` from one linker run: the best ID line is the row ID, each non-ID
+/// position is judged by [`verdict`], and the link's verdict follows from them. The covering data
+/// lines are not read here yet.
+pub fn assemble(global: &str, map: &str, report: &LinkReport) -> Assembled {
+    let best_id = report.ids.first();
+    let id_agreement = best_id.map_or(0.0, |l| {
+        if l.total == 0 {
+            0.0
+        } else {
+            f64::from(l.resolved) / f64::from(l.total)
+        }
+    });
+    let id = best_id.map_or(
+        IdLink {
+            form: IdForm::Subscript,
+            positions: Vec::new(),
+        },
+        |l| IdLink {
+            form: l.form,
+            positions: l.positions.clone(),
+        },
+    );
+    let usable = report.sample.usable;
+    let mut judgements = Vec::new();
+    let mut subscripts = Vec::new();
+    for line in &report.positions {
+        let judgement = verdict(&VerdictInput {
+            usable_nodes: usable,
+            id_agreement,
+            distinct: line.distinct,
+            scores: &line.scores,
+        });
+        let explained = matches!(judgement.verdict, Verdict::Inferred | Verdict::Ambiguous);
+        subscripts.push(SubscriptLink {
+            position: line.position,
+            verdict: judgement.verdict,
+            pick: if explained {
+                judgement.best.clone()
+            } else {
+                None
+            },
+            alternatives: judgement.alternatives.clone(),
+        });
+        judgements.push(PositionJudgement {
+            position: line.position,
+            judgement,
+            distinct: line.distinct,
+        });
+    }
+    subscripts.sort_by_key(|s| s.position);
+    judgements.sort_by_key(|j| j.position);
+    let verdicts: Vec<Verdict> = subscripts.iter().map(|s| s.verdict).collect();
+    Assembled {
+        link: Link {
+            global: global.to_string(),
+            map_name: map.to_string(),
+            verdict: overall_verdict(id_agreement, usable, &verdicts),
+            id,
+            subscripts,
+            data_in_value: Vec::new(),
+        },
+        id_agreement,
+        judgements,
+    }
+}
+
+/// An agreement as the answer carries it: four decimals.
+fn rounded(x: f64) -> f64 {
+    (x * 10_000.0).round() / 10_000.0
+}
+
+/// A pair as the answer spells it: field name, transform, and a length and piece only when it has
+/// one.
+fn pair_json(score: &PositionScore, master: &MasterView) -> Value {
+    let mut o = Map::new();
+    let name = master_field(master, score.field)
+        .map_or_else(|_| format!("Field{}", score.field), str::to_string);
+    o.insert("field".into(), json!(name));
+    o.insert("transform".into(), json!(score.transform.name()));
+    if let Some(n) = score.length {
+        o.insert("length".into(), json!(n));
+    }
+    if let Some(p) = score.piece {
+        o.insert("piece".into(), json!(p));
+    }
+    o.insert("agreement".into(), json!(rounded(score.agreement())));
+    Value::Object(o)
+}
+
+/// The item of `indexes` for a link: the keys of data-model.md that come from the linker's report.
+/// `found_by`, `map`, `verified` and `guesses` are added by the caller.
+pub fn link_json(a: &Assembled, master: &MasterView, report: &LinkReport) -> Value {
+    let subscripts: Vec<Value> = a
+        .judgements
+        .iter()
+        .map(|j| {
+            let mut o = Map::new();
+            o.insert("position".into(), json!(j.position));
+            o.insert("verdict".into(), json!(j.judgement.verdict.as_str()));
+            o.insert("agreement".into(), json!(rounded(j.judgement.agreement)));
+            let explained = matches!(j.judgement.verdict, Verdict::Inferred | Verdict::Ambiguous);
+            if let (true, Some(best)) = (explained, &j.judgement.best) {
+                if let Value::Object(pair) = pair_json(best, master) {
+                    for (k, v) in pair {
+                        if k != "agreement" {
+                            o.insert(k, v);
+                        }
+                    }
+                }
+            }
+            let alternatives: Vec<Value> = j
+                .judgement
+                .alternatives
+                .iter()
+                .map(|s| pair_json(s, master))
+                .collect();
+            o.insert("alternatives".into(), Value::Array(alternatives));
+            Value::Object(o)
+        })
+        .collect();
+    let not_explained: Vec<Value> = a
+        .judgements
+        .iter()
+        .filter(|j| j.judgement.verdict == Verdict::NotExplained)
+        .map(|j| json!({"position": j.position, "best_agreement": rounded(j.judgement.agreement)}))
+        .collect();
+    json!({
+        "global": a.link.global,
+        "nodes_sampled": report.sample.nodes,
+        "distinct_first_values": report.sample.distinct_first,
+        "usable_nodes": report.sample.usable,
+        "id": {
+            "form": match a.link.id.form { IdForm::Subscript => "subscript", IdForm::Value => "value" },
+            "positions": a.link.id.positions,
+            "agreement": rounded(a.id_agreement),
+        },
+        "subscripts": subscripts,
+        "data_in_value": [],
+        "verdict": a.link.verdict.as_str(),
+        "not_explained": not_explained,
+    })
+}
+
 // ── drafting ───────────────────────────────────────────────────────────────
 
 /// What the master draft (or the class) calls things: the global, the field names by position

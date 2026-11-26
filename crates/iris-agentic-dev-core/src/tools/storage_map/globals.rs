@@ -106,52 +106,85 @@ pub fn check_map_globals(
     action: Action,
     acknowledge_phi: bool,
 ) -> Option<Value> {
-    let reads_only = matches!(action, Action::Read | Action::Diagram | Action::Uses);
     for (tag, raw) in named_globals(nodes) {
-        let r = match normalize_global(&raw) {
-            Ok(r) => r,
-            Err(e) if e == "dynamic" => continue,
-            Err(e) => return Some(invalid(&tag, &raw, "global_reference", &e)),
-        };
-        if r.extended.is_some() && !reads_only {
-            return Some(invalid(
-                &tag,
-                &raw,
-                "extended_reference",
-                "a reference to another namespace or database cannot be written or sampled",
-            ));
-        }
-        let name = match canonical_global_name(&r.name) {
-            Ok(n) => n,
-            Err(body) => return Some(body),
-        };
-        let caret_name = format!("^{name}");
-        if matches_any(&caret_name, CODE_STORAGE_GLOBALS) {
-            return Some(json!({
-                "success": false,
-                "error_code": "CODE_EDIT_BLOCKED",
-                "error": format!(
-                    "{tag} names {caret_name}, which holds class or routine code; a storage map \
-                     cannot be laid over it"
-                ),
-                "global": caret_name,
-                "tag": tag,
-            }));
-        }
-        if let Some(body) = check_system_blocklist(
-            &name,
-            &policy.global_blocklist.value,
-            &policy.kill_allowlist.value,
-            false,
-            server,
-        ) {
-            return Some(body);
-        }
-        if let Some(body) = check_phi_name_gate(&name, acknowledge_phi, server) {
+        if let Some(body) = check_global_ref(&tag, &raw, policy, server, action, acknowledge_phi) {
             return Some(body);
         }
     }
     None
+}
+
+/// One global the call names, through the rules of [`check_map_globals`]: the same body for a
+/// name in a map and for a name the caller hands `propose` as an index global, so no route to a
+/// global skips a gate.
+fn check_global_ref(
+    tag: &str,
+    raw: &str,
+    policy: &EffectivePolicy,
+    server: &str,
+    action: Action,
+    acknowledge_phi: bool,
+) -> Option<Value> {
+    let reads_only = matches!(action, Action::Read | Action::Diagram | Action::Uses);
+    let r = match normalize_global(raw) {
+        Ok(r) => r,
+        Err(e) if e == "dynamic" => return None,
+        Err(e) => return Some(invalid(tag, raw, "global_reference", &e)),
+    };
+    if r.extended.is_some() && !reads_only {
+        return Some(invalid(
+            tag,
+            raw,
+            "extended_reference",
+            "a reference to another namespace or database cannot be written or sampled",
+        ));
+    }
+    let name = match canonical_global_name(&r.name) {
+        Ok(n) => n,
+        Err(body) => return Some(body),
+    };
+    let caret_name = format!("^{name}");
+    if matches_any(&caret_name, CODE_STORAGE_GLOBALS) {
+        return Some(json!({
+            "success": false,
+            "error_code": "CODE_EDIT_BLOCKED",
+            "error": format!(
+                "{tag} names {caret_name}, which holds class or routine code; a storage map \
+                 cannot be laid over it"
+            ),
+            "global": caret_name,
+            "tag": tag,
+        }));
+    }
+    if let Some(body) = check_system_blocklist(
+        &name,
+        &policy.global_blocklist.value,
+        &policy.kill_allowlist.value,
+        false,
+        server,
+    ) {
+        return Some(body);
+    }
+    check_phi_name_gate(&name, acknowledge_phi, server)
+}
+
+/// An index global the caller named for `propose` (`index_globals`), through the same gates as the
+/// master: the system and the server's blocklists, the code-storage globals, and the PHI name
+/// patterns unless `acknowledge_phi`. `None` lets it through; the body is the refusal.
+pub fn check_index_global(
+    name: &str,
+    policy: &EffectivePolicy,
+    server: &str,
+    acknowledge_phi: bool,
+) -> Option<Value> {
+    check_global_ref(
+        "index_globals",
+        name,
+        policy,
+        server,
+        Action::Propose,
+        acknowledge_phi,
+    )
 }
 
 fn invalid(tag: &str, raw: &str, rule: &str, why: &str) -> Value {

@@ -58,6 +58,7 @@
 //!   decoded from up to 1,000 set bits, and how many of them found a master row.
 //! - `error`: any IRIS error. A run that ends without a `done` line is a failed run.
 
+use super::master::MasterField;
 use crate::objectscript::{os_str_expr, validate_global_name};
 
 /// How far one `propose` goes on one candidate (spec FR-004a, SC-005).
@@ -112,6 +113,63 @@ pub struct FieldAccess {
     pub piece: u32,
 }
 
+/// The linker's table entry for a master field, or why the linker cannot read it. A delimiter is
+/// one character, quoted (`"^"`) or a `$c(n)` call with a constant; nothing else is evaluated, so
+/// an expression in a map never reaches the generated code. `$c(0)` is refused, since delimiter 0
+/// means a `$LIST` in the table.
+pub fn field_access(f: &MasterField) -> Result<FieldAccess, String> {
+    let name = &f.name;
+    let delimiter = match f.delimiter.as_deref().map(str::trim) {
+        None => None,
+        Some(text) => Some(
+            delimiter_code(text)
+                .map_err(|why| format!("field {name}: the delimiter {text}: {why}"))?,
+        ),
+    };
+    let piece = f
+        .piece
+        .as_deref()
+        .ok_or_else(|| format!("field {name} has no piece or element number"))?
+        .trim()
+        .parse::<u32>()
+        .ok()
+        .filter(|p| *p >= 1)
+        .ok_or_else(|| format!("field {name}: the piece {:?} is not 1 or more", f.piece))?;
+    Ok(FieldAccess {
+        node: f.node.clone(),
+        delimiter,
+        piece,
+    })
+}
+
+/// The character code of a delimiter written as `"x"` (a doubled quote is a quote) or `$c(n)`.
+fn delimiter_code(text: &str) -> Result<u32, String> {
+    if let Some(inner) = text.strip_prefix('"') {
+        let body = inner
+            .strip_suffix('"')
+            .ok_or("it does not end at its closing quote")?;
+        let chars: Vec<char> = body.replace("\"\"", "\"").chars().collect();
+        // A lone quote inside would have been doubled.
+        if body.replace("\"\"", "").contains('"') {
+            return Err("it has text after the closing quote".into());
+        }
+        return match chars.as_slice() {
+            [c] if *c != '\0' => Ok(u32::from(*c)),
+            _ => Err("it is not one character".into()),
+        };
+    }
+    let lower = text.to_ascii_lowercase();
+    let args = lower
+        .strip_prefix("$char(")
+        .or_else(|| lower.strip_prefix("$c("))
+        .and_then(|r| r.strip_suffix(')'))
+        .ok_or("it is neither a quoted character nor $c(n)")?;
+    match args.trim().parse::<u32>() {
+        Ok(n) if (1..=0x10FFFF).contains(&n) && char::from_u32(n).is_some() => Ok(n),
+        _ => Err("it is not a character code of 1 or more".into()),
+    }
+}
+
 /// The `%SYSTEM.SQL.Functions` methods the transforms call, by name, in the order of the
 /// `transform` field of the output (`exact` calls none).
 pub const FUNCTION_METHODS: [&str; 7] = [
@@ -139,9 +197,10 @@ pub fn build_code(req: &LinkRequest<'_>) -> Result<String, String> {
     code.push_str(&prelude(&master, &candidate, req));
     code.push_str(&fields_table(req.fields)?);
     code.push_str(&transform_table());
+    code.push_str(TRY_OPEN);
     code.push_str(&spread_walk());
-    // T027 adds, between the walk and the epilogue: the master lookup, the ID position search,
-    // the per-position scoring, null markers, covering data, bitmap decode and missing rows.
+    code.push_str(LINK_BODY);
+    code.push_str(TRY_CLOSE);
     code.push_str(EPILOGUE);
     Ok(code)
 }
@@ -202,7 +261,8 @@ fn transform_table() -> String {
 
 /// The spread sample (FR-004a): a counting pass over the first subscript, then every k-th value
 /// with up to three nodes under it; fewer than seven values means an ordered walk to the node cap.
-/// Fills `nd(1..nn)` with node references and sets `distinct`, `stopped`. No value is written.
+/// Fills `nd(1..nn)` with node references and sets `distinct`, `stopped`; the sample line is
+/// written once the IDs are resolved, because it carries the count of usable nodes. No value is written.
 fn spread_walk() -> String {
     String::from(
         " Set k=\"\",nk=0,stopped=\"none\"
@@ -218,10 +278,82 @@ fn spread_walk() -> String {
      Set nn=nn+1,nd(nn)=n,got=got+1 } }
  If (nn>=nodecap)&&(stopped=\"none\") { Set stopped=\"nodes\" }
  If ($ZH-t0)>secs { Set stopped=\"time\" }
- Set o={},o.t=\"sample\",o.nodes=nn,o.\"distinct_first\"=distinct,o.usable=0,o.stopped=stopped
- Write o.%ToJSON(),!
 ",
     )
 }
 
-const EPILOGUE: &str = " Set o={},o.t=\"done\"\n Write o.%ToJSON(),!\n";
+const TRY_OPEN: &str = " Set failed=0,ol=0\n Try {\n";
+
+/// The catch writes the error's name and location, never its data: a run that fails writes an
+/// `error` line and no `done` line.
+const TRY_CLOSE: &str = " For i=0:1:ol { Set o=ob(i) Write o.%ToJSON(),! }
+ } Catch ex {
+ Set failed=1,o={},o.t=\"error\",o.text=ex.Name_\" \"_ex.Location
+ Write o.%ToJSON(),!
+ }
+";
+
+const EPILOGUE: &str = " If 'failed { Set o={},o.t=\"done\" Write o.%ToJSON(),! }\n";
+
+/// The linker proper, between the walk and the flush. Lines are buffered in `ob(0..ol)` (the
+/// sample line is `ob(0)`) because the time cap can still trip while scoring, and `stopped` is
+/// part of the first line. A master field's value is read into `fv(i,j)` and compared on the
+/// server; no value is ever written.
+const LINK_BODY: &str = r#" Set tot=0,bestd=0,bestn=0
+ For i=1:1:nn { Set d=$QLength(nd(i))-base,dc(d)=$Get(dc(d))+1 }
+ Set d="" For { Set d=$Order(dc(d)) Quit:d=""  If (d>0)&&(dc(d)>bestn) { Set bestn=dc(d),bestd=d } }
+ For i=1:1:nn { If ($QLength(nd(i))-base)=bestd { Set tot=tot+1 For p=1:1:bestd { Set sb(tot,p)=$QSubscript(nd(i),base+p) } } }
+ Set bst=0,bres=-1
+ For st=1:1:(bestd-kp+1) { Quit:($ZH-t0)>secs
+   Set res=0
+   For i=1:1:tot { Set mr=mst For q=0:1:kp-1 { Set mr=$Name(@mr@(sb(i,st+q))) } If $Data(@mr) { Set res=res+1,hit(st,i)=1 } }
+   Set way(st)=res
+   If res>=bres { Set bres=res,bst=st } }
+ Set nu=0
+ If bst>0 { For i=1:1:tot { If $Get(hit(bst,i)) { Set nu=nu+1,ok(i)=1,mr=mst For q=0:1:kp-1 { Set mr=$Name(@mr@(sb(i,bst+q))) } Set mrow(i)=mr } } }
+ Set npos=0
+ If nu>0 { For p=1:1:bestd { If '((p>=bst)&&(p<(bst+kp))) { Set npos=npos+1,pp(npos)=p } } }
+ Merge w2=way
+ For { Set st="",bs=0,br=-1 For { Set st=$Order(w2(st)) Quit:st=""  If w2(st)>=br { Set br=w2(st),bs=st } } Quit:bs=0
+   Set o={},o.t="id",o.form="subscript",pa=[] For q=0:1:kp-1 { Do pa.%Push(bs+q) }
+   Do o.%Set("positions",pa) Set o.resolved=w2(bs),o.total=tot,ol=ol+1,ob(ol)=o
+   Kill w2(bs) }
+ For j=1:1:nf { Set fnode=$List(fa(j),1),fd=$List(fa(j),2),fp=$List(fa(j),3)
+   For i=1:1:tot { If $Get(ok(i)) { Set r=mrow(i) Set:fnode'="" r=$Name(@r@(fnode))
+     Set raw=$Get(@r)
+     If fd=0 { Set fv(i,j)=$Select($ListValid(raw)&&($ListLength(raw)>=fp):$ListGet(raw,fp),1:"") } Else { Set fv(i,j)=$Piece(raw,$Char(fd),fp) } } } }
+ For a=1:1:npos { Set p=pp(a),np(p)=0,dn=0 Kill dv
+   For i=1:1:tot { If $Get(ok(i)) { Set s=sb(i,p) Set:$Length(s)>np(p) np(p)=$Length(s)
+     If '$Data(dv($Extract(s,1,300))) { Set dv($Extract(s,1,300))=1,dn=dn+1 } } }
+   Set dist(p)=dn }
+ Set seq=0
+ If npos>0 { For j=1:1:nf { For tt=1:1:8 {
+   If ($ZH-t0)>secs { Set stopped="time" Quit }
+   Kill cb,cp1,cp2,cl
+   For i=1:1:tot { If $Get(ok(i)) { Set v=fv(i,j)
+     If tt=1 { Set b=v } ElseIf tt<8 { Set b=$ClassMethod(fc,tm(tt),v) } Else { Set b="" }
+     Set b1=$Piece(b,",",1),b2=$Piece(b,",",2)
+     For a=1:1:npos { Set p=pp(a),s=sb(i,p)
+       If (tt<8)&&(b=s) { Set cb(p)=$Get(cb(p))+1 }
+       If (tt>1)&&(tt<8) { If b1=s { Set cp1(p)=$Get(cp1(p))+1 } If b2=s { Set cp2(p)=$Get(cp2(p))+1 } }
+       If (tt=2)||(tt=3)||(tt=4)||(tt=8) { If $ClassMethod(fc,tm(tt),v,np(p))=s { Set cl(p)=$Get(cl(p))+1 } } } } }
+   For a=1:1:npos { Set p=pp(a),mb=$Get(cb(p))
+     If tt=1 { Set exm(p,j)=mb }
+     If tt<8 { If mb>0 { Set seq=seq+1,rk(p,-mb,seq)=$ListBuild(j,tn(tt),"","") } }
+     If (tt>1)&&(tt<8) {
+       If $Get(cp1(p))>mb { Set seq=seq+1,rk(p,-cp1(p),seq)=$ListBuild(j,tn(tt),"",1) }
+       If $Get(cp2(p))>mb { Set seq=seq+1,rk(p,-cp2(p),seq)=$ListBuild(j,tn(tt),"",2) } }
+     Set bm=$Select(tt=8:$Get(exm(p,j)),1:mb)
+     If $Get(cl(p))>bm { Set seq=seq+1,rk(p,-cl(p),seq)=$ListBuild(j,tn(tt),np(p),"") } } } } }
+ For a=1:1:npos { Set p=pp(a)
+   Set o={},o.t="pos",o.position=p,o.total=nu,o.distinct=dist(p),sa=[],k2=0
+   Set mk="" For { Set mk=$Order(rk(p,mk)) Quit:mk=""  Quit:k2>=5
+     Set sq="" For { Set sq=$Order(rk(p,mk,sq)) Quit:sq=""  Quit:k2>=5
+       Set e=rk(p,mk,sq),x={},x.field=+$List(e,1),x.transform=$List(e,2)
+       If $List(e,3)="" { Do x.%Set("length","","null") } Else { Set x.length=+$List(e,3) }
+       If $List(e,4)="" { Do x.%Set("piece","","null") } Else { Set x.piece=+$List(e,4) }
+       Set x.matches=-mk Do sa.%Push(x) Set k2=k2+1 } }
+   Do o.%Set("scores",sa) Set ol=ol+1,ob(ol)=o }
+ If ($ZH-t0)>secs { Set stopped="time" }
+ Set o={},o.t="sample",o.nodes=nn,o."distinct_first"=distinct,o.usable=nu,o.stopped=stopped,ob(0)=o
+"#;

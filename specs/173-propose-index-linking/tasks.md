@@ -253,11 +253,11 @@ Signatures come from `data-model.md`.
 ID form and null marker. **Independent test**: F01 to F18 each return their known answer, and each drafted map compiles
 in a scratch copy and returns a known row through an indexed query.
 
-- [ ] T026 [US1] Test first, `tests/integration/test_storage_map_link_173_live.rs` (+ `mod`): for each of F01 to F10, load
+- [X] T026 [US1] Test first, `tests/integration/test_storage_map_link_173_live.rs` (+ `mod`): for each of F01 to F10, load
       the fixture, call `propose` with `global=^IadSm173Person` and `index_globals=[<index global>]`, assert
       `indexes[0].subscripts[0]` has the known `field`, `transform`, `length` and `agreement ≥ 0.95`, assert
       `indexes[0].id.positions` and `verdict == inferred`. All fail now. Prove (red): `L test_storage_map_link_173_live`.
-- [ ] T027 [US1] Implement the linker body in `src/tools/storage_map/link_code.rs`: counting pass then every k-th key
+- [X] T027 [US1] Implement the linker body in `src/tools/storage_map/link_code.rs`: counting pass then every k-th key
       over the first subscript (FR-004a, `distinct_first_values`), master row by direct `$Get` on the master reference, ID position
       search over runs of k subscripts and the node value (FR-005), per-field per-position scoring over the transform
       set through `##class(%SYSTEM.SQL.Functions)` (FR-006/007), length variants confirmed on every node (FR-008),

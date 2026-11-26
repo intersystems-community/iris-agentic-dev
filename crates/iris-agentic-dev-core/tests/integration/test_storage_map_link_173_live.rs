@@ -109,7 +109,12 @@ async fn f01_to_f10_link_to_the_known_answer() {
             wrong.push(format!("agreement {agreement}"));
         }
         if !wrong.is_empty() {
-            failures.push(format!("{name}: {} in {link}", wrong.join("; ")));
+            failures.push(format!(
+                "{name}: {} in {link}; candidates {}; detail {}",
+                wrong.join("; "),
+                out["index_candidates"],
+                out["not_inferred_detail"]
+            ));
         }
         drop_fixture_173(&r, &f).await;
     }

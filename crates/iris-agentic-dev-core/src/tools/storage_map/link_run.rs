@@ -1,0 +1,195 @@
+//! Running the linker for `propose` (spec 173): for each index global the caller names, gate it,
+//! run the generated code on the server as the call's execute identity, read the lines it wrote,
+//! judge them, and draft the index map. The pure halves are `link.rs` (judging, drafting) and
+//! `link_code.rs` (the code); this is the part that talks to IRIS.
+
+use super::candidates::{Candidate, Status};
+use super::globals::check_index_global;
+use super::link::{
+    assemble, draft_index_map, link_json, map_name, parse_link_output, Assembled, LinkReport,
+    MasterView, Stopped, Verdict,
+};
+use super::link_code::{build_code, field_access, Caps, FieldAccess, LinkRequest};
+use super::master::MasterSpec;
+use crate::iris::connection::IrisConnection;
+use crate::policy::effective::EffectivePolicy;
+use serde_json::{json, Value};
+
+/// What `propose` adds to its answer for the index globals it examined.
+pub struct Linked {
+    pub index_candidates: Value,
+    pub indexes: Vec<Value>,
+    pub limits: Value,
+    /// `{what, why}`: what was not examined, not explained or not drafted, for
+    /// `not_inferred_detail`.
+    pub not_inferred_detail: Vec<Value>,
+}
+
+/// Everything a run needs from the call.
+pub struct Run<'a> {
+    pub conn: &'a IrisConnection,
+    pub client: &'a reqwest::Client,
+    pub ns: &'a str,
+    pub master: &'a MasterSpec,
+    pub node_cap: u32,
+    pub policy: &'a EffectivePolicy,
+    pub server: &'a str,
+    pub acknowledge_phi: bool,
+}
+
+/// The master as a draft names it, for spelling the map.
+pub fn master_view(spec: &MasterSpec) -> MasterView {
+    MasterView {
+        global: spec.global.clone(),
+        field_names: spec.fields.iter().map(|f| f.name.clone()).collect(),
+        key_names: spec.key_names.clone(),
+    }
+}
+
+fn detail(what: impl Into<String>, why: impl Into<String>) -> Value {
+    json!({"what": what.into(), "why": why.into()})
+}
+
+/// The text of a gate's refusal body.
+fn refusal_text(body: &Value) -> String {
+    ["error", "message"]
+        .iter()
+        .find_map(|k| body[*k].as_str())
+        .or_else(|| body["error_code"].as_str())
+        .unwrap_or("refused by a global gate")
+        .to_string()
+}
+
+fn cap_name(s: Stopped) -> Option<&'static str> {
+    match s {
+        Stopped::None => None,
+        Stopped::Nodes => Some("nodes"),
+        Stopped::Time => Some("time"),
+        Stopped::CountCap => Some("count_cap"),
+    }
+}
+
+/// Link each of `names` (carets on, checked by `validate_index_globals`) to the master.
+pub async fn link_all(run: &Run<'_>, names: &[String]) -> Linked {
+    let mut candidates = super::candidates::dedupe(super::candidates::from_parameter(names));
+    let view = master_view(run.master);
+    let mut details = Vec::new();
+    let mut indexes = Vec::new();
+    let mut stopped = Vec::new();
+    let mut taken = vec![run.master.map_name.clone()];
+    let fields: Result<Vec<FieldAccess>, String> =
+        run.master.fields.iter().map(field_access).collect();
+    for c in &mut candidates {
+        if let Some(body) =
+            check_index_global(&c.global, run.policy, run.server, run.acknowledge_phi)
+        {
+            c.status = Status::Refused;
+            let why = refusal_text(&body);
+            details.push(detail(format!("{} was not examined", c.label()), &why));
+            c.reason = Some(why);
+            continue;
+        }
+        let fields = match &fields {
+            Ok(f) => f,
+            Err(why) => {
+                c.status = Status::NotExamined;
+                c.reason = Some(why.clone());
+                details.push(detail(format!("{} was not examined", c.label()), why));
+                continue;
+            }
+        };
+        let report = match run_one(run, c, fields).await {
+            Ok(r) => r,
+            Err(why) => {
+                c.status = Status::NotExamined;
+                c.reason = Some(why.clone());
+                details.push(detail(format!("{} was not examined", c.label()), why));
+                continue;
+            }
+        };
+        if let Some(cap) = cap_name(report.sample.stopped) {
+            stopped.push(json!({"candidate": c.label(), "cap": cap}));
+        }
+        let name = map_name(&c.global, &taken);
+        taken.push(name.clone());
+        let assembled = assemble(&c.global, &name, &report);
+        indexes.push(index_item(c, &assembled, &view, &report, &mut details));
+    }
+    let not_examined: Vec<String> = candidates
+        .iter()
+        .filter(|c| c.status != Status::Examined)
+        .map(Candidate::label)
+        .collect();
+    Linked {
+        index_candidates: json!({"candidates": candidates, "not_examined": not_examined}),
+        indexes,
+        limits: json!({
+            "node_cap": run.node_cap,
+            "time_cap_seconds": Caps::for_node_cap(run.node_cap).time_cap_secs,
+            "stopped": stopped,
+        }),
+        not_inferred_detail: details,
+    }
+}
+
+/// Build the code for one candidate, run it, and read what it wrote.
+async fn run_one(
+    run: &Run<'_>,
+    c: &Candidate,
+    fields: &[FieldAccess],
+) -> Result<LinkReport, String> {
+    let key_parts =
+        u32::try_from(run.master.key_count()).map_err(|_| "too many key parts".to_string())?;
+    let code = build_code(&LinkRequest {
+        master: &run.master.global,
+        candidate: &c.global,
+        sub_prefix: &c.sub_prefix,
+        key_parts,
+        fields,
+        caps: Caps::for_node_cap(run.node_cap),
+        with_values: false,
+    })?;
+    let out = run
+        .conn
+        .execute_via_generator_prefixed(&code, run.ns, run.client, "IrisDevSm")
+        .await
+        .map_err(|e| format!("the linker could not run: {e}"))?;
+    parse_link_output(&out)
+}
+
+/// The `indexes` item: the link's keys, its drafted map when it has one, and the guesses.
+fn index_item(
+    c: &Candidate,
+    a: &Assembled,
+    view: &MasterView,
+    report: &LinkReport,
+    details: &mut Vec<Value>,
+) -> Value {
+    let mut item = link_json(a, view, report);
+    item["found_by"] = json!(c.found_by);
+    item["guesses"] = json!([]);
+    for n in item["not_explained"].as_array().into_iter().flatten() {
+        details.push(detail(
+            format!("{} position {}", c.label(), n["position"]),
+            format!(
+                "no transform of the closed set reaches 0.95 here (best {})",
+                n["best_agreement"]
+            ),
+        ));
+    }
+    if matches!(a.link.verdict, Verdict::Inferred | Verdict::Ambiguous) {
+        match draft_index_map(&a.link, view) {
+            Ok((map, guesses)) => {
+                item["map"] = map;
+                item["guesses"] = json!(guesses);
+            }
+            Err(why) => details.push(detail(format!("{} has no drafted map", c.label()), why)),
+        }
+    } else {
+        details.push(detail(
+            format!("{} has no drafted map", c.label()),
+            format!("the link is {}", a.link.verdict.as_str()),
+        ));
+    }
+    item
+}
