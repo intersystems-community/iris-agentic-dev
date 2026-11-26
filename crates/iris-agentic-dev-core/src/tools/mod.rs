@@ -10204,7 +10204,7 @@ Methods:
     }
 
     #[tool(
-        description = "SQL storage maps (hand-written %Storage.SQL maps of globals to tables): read, draw, check and edit the maps in a class's Storage block. read: returns the storage as structured data (maps, subscripts, fields with node/delimiter/piece, row ID parts, derived facts such as 'no delimiter means $LIST' and nested tables a DELETE would also remove). diagram: renders a Mermaid flowchart and JSON graph of a map. uses: finds all classes whose storage maps use a given global. action: read (return model), diagram (render Mermaid), uses (find classes using a global), compare (check against live data), preview (show data through a proposed map), propose (draft a map from live data), check (validate in a scratch class), edit (modify a map), replace (replace entire map). class, map, global, namespace, server: target. version: from read() for edit/replace. ops: path edit operations for edit. model: SqlMap object for replace/check/preview. confirm_removal: acknowledge removal on first replace call. seed_counter, build_indexes: opt-in post-write actions. include_values, acknowledgePhi: include data values (requires PHI acknowledgement). max_nodes, max_rows: limits for data sampling.",
+        description = "SQL storage maps (hand-written %Storage.SQL maps of globals to tables): read, draw, check and edit the maps in a class's Storage block. read: returns the storage as structured data (maps, subscripts, fields with node/delimiter/piece, row ID parts, derived facts such as 'no delimiter means $LIST' and nested tables a DELETE would also remove). diagram: renders a Mermaid flowchart and JSON graph of a map. uses: finds all classes whose storage maps use a given global. action: read (return model), diagram (render Mermaid), uses (find classes using a global), compare (check against live data), preview (show data through a proposed map), propose (draft a map from live data), check (validate in a scratch class), edit (modify a map), replace (replace entire map). class, map, global, namespace, server: target. propose takes global or class (the class whose master map is the master) and optionally index_globals (index globals to link to the master, at most 8) and field_names (property names by field position, with global). version: from read() for edit/replace. ops: path edit operations for edit. model: SqlMap object for replace/check/preview. confirm_removal: acknowledge removal on first replace call. seed_counter, build_indexes: opt-in post-write actions. include_values, acknowledgePhi: include data values (requires PHI acknowledgement). max_nodes, max_rows: limits for data sampling.",
         output_schema = output_schemas::oneof_output_schema::<output_schemas::IrisStorageMapResponse>()
     )]
     async fn iris_storage_map(
@@ -10218,6 +10218,8 @@ Methods:
             "class": params.class,
             "map": params.map,
             "global": params.global,
+            "index_globals": params.index_globals,
+            "field_names": params.field_names,
             "namespaces": params.namespaces,
             "version": params.version,
             "ops": params.ops,

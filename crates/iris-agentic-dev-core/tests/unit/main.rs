@@ -247,6 +247,7 @@ mod test_storage_map_markdown_172;
 mod test_storage_map_model_172;
 mod test_storage_map_model_cov_172;
 mod test_storage_map_params_172;
+mod test_storage_map_params_173;
 mod test_storage_map_path_172;
 mod test_storage_map_policy_172;
 mod test_storage_map_read_errors_172;

@@ -53,6 +53,7 @@ mod test_server_probe_141;
 mod test_skill_override_141;
 mod test_storage_map_gates_172;
 mod test_storage_map_schema_172;
+mod test_storage_map_schema_173;
 mod test_target_gates_141;
 mod test_telemetry_sink_binary_141;
 mod test_trust_binary_141;

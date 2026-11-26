@@ -91,3 +91,33 @@ fn test_storage_maps_doc_172_every_measured_behaviour_names_a_live_test() {
         );
     }
 }
+
+/// Spec 173 (T013): `propose` names its three inputs in the tool description and in the
+/// parameter table of `docs/tools.md`.
+#[test]
+fn test_storage_maps_doc_173_propose_params_are_documented() {
+    let tools_md = std::fs::read_to_string(root().join("docs/tools.md")).expect("docs/tools.md");
+    let start = tools_md.find("### `iris_storage_map`").expect("section");
+    let section = &tools_md[start..];
+    let section = &section[..section.find("\n### ").unwrap_or(section.len())];
+    let src = std::fs::read_to_string(root().join("crates/iris-agentic-dev-core/src/tools/mod.rs"))
+        .expect("tools/mod.rs");
+    let desc_start = src
+        .find("SQL storage maps (hand-written %Storage.SQL maps of globals")
+        .expect("description");
+    let desc = &src[desc_start..desc_start + src[desc_start..].find("\",\n").unwrap()];
+    for name in ["index_globals", "class", "field_names"] {
+        assert!(
+            section.contains(&format!("| `{name}`")),
+            "docs/tools.md has no row for `{name}`"
+        );
+        assert!(
+            desc.contains(name),
+            "the tool description does not name `{name}`"
+        );
+    }
+    assert!(
+        section.contains("`propose`") && section.contains("index global"),
+        "the propose paragraph does not say it reads index globals"
+    );
+}

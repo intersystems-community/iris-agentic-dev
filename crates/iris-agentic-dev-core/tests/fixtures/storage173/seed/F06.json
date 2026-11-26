@@ -1,0 +1,308 @@
+{
+ "name": "F06",
+ "description": "index $$UPPER({Name})",
+ "class": "IadSm173.F06",
+ "table": "IadSm173.F06",
+ "columns": [
+  "Name",
+  "City",
+  "Age",
+  "Born",
+  "Status"
+ ],
+ "master_global": "^IadSm173F06",
+ "index_globals": [
+  "^IadSm173F06X"
+ ],
+ "rows": [
+  [
+   "Smith, Anna",
+   "Lyon",
+   118,
+   40000,
+   "A"
+  ],
+  [
+   "jones, bob",
+   "Boston",
+   131,
+   40037,
+   "B"
+  ],
+  [
+   "Lee  ",
+   "Bern",
+   144,
+   40074,
+   "C"
+  ],
+  [
+   "O'Neil-Ray",
+   "Oslo",
+   157,
+   40111,
+   "A"
+  ],
+  [
+   "de la Cruz, Jo",
+   "boston",
+   170,
+   40148,
+   "B"
+  ],
+  [
+   "Zed2",
+   "Nice",
+   183,
+   40185,
+   "C"
+  ],
+  [
+   "  Mc Kay, Al",
+   "Rome",
+   126,
+   40222,
+   "A"
+  ],
+  [
+   "Brown, Cy",
+   "Paris",
+   139,
+   40259,
+   "B"
+  ],
+  [
+   "brown, cy",
+   "Kyiv",
+   152,
+   40296,
+   "C"
+  ],
+  [
+   "Ng",
+   "Cork",
+   165,
+   40333,
+   "A"
+  ],
+  [
+   "Åberg, Eli",
+   "Lyon",
+   178,
+   40370,
+   "B"
+  ],
+  [
+   "Vu, Tran",
+   "Boston",
+   121,
+   40407,
+   "C"
+  ],
+  [
+   "Quinn, 3rd",
+   "Bern",
+   134,
+   40444,
+   "A"
+  ],
+  [
+   "Hart,Ed",
+   "Oslo",
+   147,
+   40481,
+   "B"
+  ],
+  [
+   "xu",
+   "boston",
+   160,
+   40518,
+   "C"
+  ],
+  [
+   "Patel, Raj",
+   "Nice",
+   173,
+   40555,
+   "A"
+  ],
+  [
+   "Moore, Kim ",
+   "Rome",
+   186,
+   40592,
+   "B"
+  ],
+  [
+   "Diaz, Lu",
+   "Paris",
+   129,
+   40629,
+   "C"
+  ],
+  [
+   "Frost, Ann-Marie",
+   "Kyiv",
+   142,
+   40666,
+   "A"
+  ],
+  [
+   "Gray, Sam",
+   "Cork",
+   155,
+   40703,
+   "B"
+  ],
+  [
+   "Smith, Anna20",
+   "Lyon",
+   168,
+   40740,
+   "C"
+  ],
+  [
+   "jones, bob21",
+   "Boston",
+   181,
+   40777,
+   "A"
+  ],
+  [
+   "Lee22",
+   "Bern",
+   124,
+   40814,
+   "B"
+  ],
+  [
+   "O'Neil-Ray23",
+   "Oslo",
+   137,
+   40851,
+   "C"
+  ],
+  [
+   "de la Cruz, Jo24",
+   "boston",
+   150,
+   40888,
+   "A"
+  ],
+  [
+   "Zed225",
+   "Nice",
+   163,
+   40925,
+   "B"
+  ],
+  [
+   "Mc Kay, Al26",
+   "Rome",
+   176,
+   40962,
+   "C"
+  ],
+  [
+   "Brown, Cy27",
+   "Paris",
+   119,
+   40999,
+   "A"
+  ],
+  [
+   "brown, cy28",
+   "Kyiv",
+   132,
+   41036,
+   "B"
+  ],
+  [
+   "Ng29",
+   "Cork",
+   145,
+   41073,
+   "C"
+  ],
+  [
+   "Åberg, Eli30",
+   "Lyon",
+   158,
+   41110,
+   "A"
+  ],
+  [
+   "Vu, Tran31",
+   "Boston",
+   171,
+   41147,
+   "B"
+  ],
+  [
+   "Quinn, 3rd32",
+   "Bern",
+   184,
+   41184,
+   "C"
+  ],
+  [
+   "Hart,Ed33",
+   "Oslo",
+   127,
+   41221,
+   "A"
+  ],
+  [
+   "xu34",
+   "boston",
+   140,
+   41258,
+   "B"
+  ],
+  [
+   "Patel, Raj35",
+   "Nice",
+   153,
+   41295,
+   "C"
+  ],
+  [
+   "Moore, Kim36",
+   "Rome",
+   166,
+   41332,
+   "A"
+  ],
+  [
+   "Diaz, Lu37",
+   "Paris",
+   179,
+   41369,
+   "B"
+  ],
+  [
+   "Frost, Ann-Marie38",
+   "Kyiv",
+   122,
+   41406,
+   "C"
+  ],
+  [
+   "Gray, Sam39",
+   "Cork",
+   135,
+   41443,
+   "A"
+  ]
+ ],
+ "answer": {
+  "index_global": "^IadSm173F06X",
+  "id_positions": [
+   2
+  ],
+  "field": "Name",
+  "transform": "upper",
+  "length": null
+ }
+}

@@ -23,6 +23,12 @@ pub struct IrisStorageMapParams {
     /// Global name for `uses` and `propose` actions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub global: Option<String>,
+    /// Index globals to link to the master, for `propose` (at most 8, plain global names).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_globals: Option<Vec<String>>,
+    /// Property names by field position, for `propose` on a global.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field_names: Option<Vec<String>>,
     /// Other namespaces to search for `uses`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespaces: Option<Vec<String>>,

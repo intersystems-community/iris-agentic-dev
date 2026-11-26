@@ -292,3 +292,145 @@ pub fn people(n: usize) -> Vec<Vec<Value>> {
         })
         .collect()
 }
+
+// ---- fixtures: `tests/fixtures/storage173/{classes,seed}` ---------------------------------------
+
+/// A filer fixture: a class with a master map and one index map, rows INSERTed through SQL so IRIS
+/// files the index global itself, then the class deleted so only the globals stay. `seed/<name>.json`
+/// carries the class, the columns, the rows, the globals and the known answer.
+pub struct Fixture {
+    pub name: String,
+    pub class: String,
+    pub cls_text: String,
+    pub seed: Value,
+}
+
+fn fixture_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/storage173")
+}
+
+impl Fixture {
+    /// Read both files of fixture `name`; panics with the path when one is missing or malformed.
+    pub fn read(name: &str) -> Self {
+        let dir = fixture_dir();
+        let cls_path = dir.join("classes").join(format!("{name}.cls"));
+        let seed_path = dir.join("seed").join(format!("{name}.json"));
+        let cls_text = std::fs::read_to_string(&cls_path)
+            .unwrap_or_else(|e| panic!("{}: {e}", cls_path.display()));
+        let seed: Value = serde_json::from_str(
+            &std::fs::read_to_string(&seed_path)
+                .unwrap_or_else(|e| panic!("{}: {e}", seed_path.display())),
+        )
+        .unwrap_or_else(|e| panic!("{}: {e}", seed_path.display()));
+        let class = seed["class"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{}: no class", seed_path.display()))
+            .to_string();
+        Fixture {
+            name: name.to_string(),
+            class,
+            cls_text,
+            seed,
+        }
+    }
+
+    /// The globals the fixture leaves behind: the master and each index global (with the `^`).
+    pub fn globals(&self) -> Vec<String> {
+        std::iter::once(&self.seed["master_global"])
+            .chain(self.seed["index_globals"].as_array().into_iter().flatten())
+            .filter_map(|g| g.as_str().map(str::to_string))
+            .collect()
+    }
+
+    /// The seed's rows, each a list of JSON values in the order of `columns`.
+    pub fn rows(&self) -> Vec<Vec<Value>> {
+        self.seed["rows"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{}: no rows", self.name))
+            .iter()
+            .map(|r| r.as_array().cloned().unwrap_or_default())
+            .collect()
+    }
+
+    pub fn columns(&self) -> Vec<String> {
+        self.seed["columns"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{}: no columns", self.name))
+            .iter()
+            .filter_map(|c| c.as_str().map(str::to_string))
+            .collect()
+    }
+}
+
+/// Load the fixture: put and compile the class, INSERT the rows, then delete the class. The globals
+/// IRIS filed stay, so `propose` is pointed at them alone.
+pub async fn load_fixture_173(r: &Rig, f: &Fixture) {
+    put_class(r, &f.class, &f.cls_text).await;
+    let columns = f.columns();
+    let cols: Vec<&str> = columns.iter().map(String::as_str).collect();
+    insert_rows(
+        r,
+        f.seed["table"].as_str().unwrap_or(&f.class),
+        &cols,
+        &f.rows(),
+    )
+    .await;
+    let del = r
+        .call(
+            "iris_doc",
+            json!({"mode": "delete", "name": format!("{}.cls", f.class), "namespace": "USER"}),
+        )
+        .await;
+    assert_eq!(del["success"], true, "{}: delete the class: {del}", f.name);
+}
+
+/// Kill every global the fixture names (and the ones IRIS derived from them, such as the stream
+/// location) and delete its class if it is still there. Returns what is still present afterwards.
+pub async fn drop_fixture_173(r: &Rig, f: &Fixture) -> Vec<String> {
+    let master = f.seed["master_global"].as_str().unwrap_or_default();
+    let code = format!(
+        r#"Set rs=##class(%ResultSet).%New("%SYS.GlobalQuery:NameSpaceList")
+Do rs.Execute($Namespace,{mask},1,,,0)
+While rs.Next() {{ Set g="^"_rs.Get("Name") Kill @g }}
+Write "DROPPED"
+"#,
+        mask = os(&format!("{}*", master.trim_start_matches('^')))
+    );
+    let out = exec(r, &code).await;
+    assert!(out.contains("DROPPED"), "{}: {out}", f.name);
+    let _ = r
+        .call(
+            "iris_doc",
+            json!({"mode": "delete", "name": format!("{}.cls", f.class), "namespace": "USER"}),
+        )
+        .await;
+    let mut left = Vec::new();
+    for g in f.globals() {
+        let probe = exec(r, &format!("Write $Data({g})")).await;
+        if probe.trim() != "0" {
+            left.push(g);
+        }
+    }
+    left
+}
+
+/// `propose` through the tool, in USER.
+#[allow(dead_code)]
+pub async fn ask_propose(r: &Rig, args: Value) -> Value {
+    ask_storage(r, "propose", args).await
+}
+
+/// `check` through the tool, in USER.
+#[allow(dead_code)]
+pub async fn ask_check(r: &Rig, args: Value) -> Value {
+    ask_storage(r, "check", args).await
+}
+
+async fn ask_storage(r: &Rig, action: &str, args: Value) -> Value {
+    let mut a = args;
+    a["action"] = json!(action);
+    if a.get("namespace").is_none() {
+        a["namespace"] = json!("USER");
+    }
+    r.call("iris_storage_map", a).await
+}

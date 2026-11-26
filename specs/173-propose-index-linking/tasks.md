@@ -153,24 +153,24 @@ items). A failure stops the piece it guards and goes to Tom; the spec is amended
 
 **Purpose**: the new params and modules exist, nothing changes behaviour, every guard is green.
 
-- [ ] T011 Add `pub mod link; pub mod link_code; pub mod candidates; pub mod master; pub mod typing; pub mod bitmap;
+- [x] T011 Add `pub mod link; pub mod link_code; pub mod candidates; pub mod master; pub mod typing; pub mod bitmap;
 pub mod usability;` to `src/tools/storage_map/mod.rs` with an empty file for each. Prove: `cargo build --features testing`.
-- [ ] T012 Test first: `tests/unit/test_storage_map_params_173.rs` (+ `mod`): parse JSON strings with `index_globals`,
+- [x] T012 Test first: `tests/unit/test_storage_map_params_173.rs` (+ `mod`): parse JSON strings with `index_globals`,
       with `class` on `propose`, with `field_names`, and with a misspelt key (must fail through
       `deny_unknown_fields`). Then add `index_globals: Option<Vec<String>>` and `field_names: Option<Vec<String>>` to
       `IrisStorageMapParams` in `src/tools/params/batch8.rs` (`class` exists). Prove: `U test_storage_map_params_173`.
-- [ ] T013 Update the tool description of `iris_storage_map` in `src/tools/mod.rs` and its `docs/tools.md` row so
+- [x] T013 Update the tool description of `iris_storage_map` in `src/tools/mod.rs` and its `docs/tools.md` row so
       `propose` names `index_globals`, `class`, `field_names`; run the existing guards (`tool_catalogue` text, params
       docs). Test first: extend `tests/unit/test_storage_maps_doc_172.rs`'s param list check with the three names.
       Prove: `U test_storage_maps_doc_172`.
-- [ ] T014 Param-use validation: `index_globals` or `field_names` on an action other than `propose` is
+- [x] T014 Param-use validation: `index_globals` or `field_names` on an action other than `propose` is
       `INVALID_PARAMS` naming the param and the action; `class` with `global`, or neither, on `propose` is
       `INVALID_PARAMS`. Test first in `tests/unit/test_storage_map_params_173.rs` against `storage_map::call_shape`'s
       validator. Prove: `U test_storage_map_params_173`.
-- [ ] T015 [P] Binary schema test `tests/binary/test_storage_map_schema_173.rs` (+ `mod`): spawn the binary, `tools/list`,
+- [x] T015 [P] Binary schema test `tests/binary/test_storage_map_schema_173.rs` (+ `mod`): spawn the binary, `tools/list`,
       assert the `iris_storage_map` schema has `index_globals` (array of string), `field_names` (array of string) and
       still `additionalProperties: false`. Prove: `B storage_map_schema_173`.
-- [ ] T016 Create `tests/fixtures/storage173/{classes,seed,captured,golden}/` and write `F01` to `F10` (class file and
+- [x] T016 Create `tests/fixtures/storage173/{classes,seed,captured,golden}/` and write `F01` to `F10` (class file and
       seed JSON with the known answer from the catalogue; 40 rows each, names chosen so each transform differs from
       its neighbours, including trailing blanks for F03 and a punctuation-bearing name for F04/F05). Prove:
       `L storage173_rig` loads and drops each.

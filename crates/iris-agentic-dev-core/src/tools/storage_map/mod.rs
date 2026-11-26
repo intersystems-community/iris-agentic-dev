@@ -1,12 +1,19 @@
+pub mod bitmap;
+pub mod candidates;
 pub mod code;
 pub mod diagram;
 pub mod explain;
 pub mod globals;
+pub mod link;
+pub mod link_code;
+pub mod master;
 pub mod model;
 pub mod path;
 pub mod sample;
 pub mod shape;
 pub mod tree;
+pub mod typing;
+pub mod usability;
 pub mod uses;
 pub mod validate;
 pub mod write;
@@ -195,6 +202,34 @@ fn carries_code(v: &Value) -> bool {
     }
 }
 
+/// Where a param does not belong, in words for the caller, or `None`. A null or absent value is
+/// not a use: the tool builds its JSON from every declared field.
+///
+/// `index_globals` and `field_names` mean something only to `propose`; `propose` takes `global`
+/// or `class`, one of them; and a `class` names its own properties, so `field_names` goes with a
+/// `global` only.
+pub fn param_use_error(params: &Value) -> Option<String> {
+    let action = params.get("action").and_then(Value::as_str).unwrap_or("");
+    let given = |key: &str| params.get(key).is_some_and(|v| !v.is_null());
+    if action != "propose" {
+        for key in ["index_globals", "field_names"] {
+            if given(key) {
+                return Some(format!("`{key}` is for `propose`, not `{action}`"));
+            }
+        }
+        return None;
+    }
+    match (given("global"), given("class")) {
+        (true, true) => Some("propose takes `global` or `class`, not both".into()),
+        (false, false) => Some("propose needs `global` or `class`".into()),
+        (false, true) if given("field_names") => Some(
+            "`field_names` goes with `global`, not `class` (a class names its own properties)"
+                .into(),
+        ),
+        _ => None,
+    }
+}
+
 /// Handle iris_storage_map tool calls.
 pub async fn handle(
     iris: &IrisConnection,
@@ -214,6 +249,9 @@ pub async fn handle(
                  propose, check, edit, replace (exact, lowercase)."
             )
         }));
+    }
+    if let Some(why) = param_use_error(p) {
+        return fail("INVALID_PARAMS", why, json!({}));
     }
     // A call that runs as the service account is refused before any IRIS contact when that
     // account cannot be used, as every other tool that runs the agent's code is.

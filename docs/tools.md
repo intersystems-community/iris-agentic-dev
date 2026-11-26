@@ -1845,28 +1845,33 @@ use). Through `iris_doc` those two are warnings, since it has no opt-ins.
 `propose` samples a global that has no map and drafts one in model JSON: the depth holding the most
 values is the row node, with one field per piece or `$LIST` element there and per named sub-node
 below it. `guesses` lists every element it had to guess. Nothing is written; rename the fields to
-the class's properties and pass the draft to `check` or `replace`.
+the class's properties and pass the draft to `check` or `replace`. `propose` also looks for index globals
+beside the master (the ones named in `index_globals`, globals whose name starts with the master's, and
+literal first subscripts inside it) and links each to the master's row IDs and fields; the sections
+below say what it returns for them.
 
-| Parameter         | Type         | Default  | Notes                                                                                  |
-| ----------------- | ------------ | -------- | -------------------------------------------------------------------------------------- |
-| `action`          | string, enum | —        | `read`, `diagram`, `uses`, `compare`, `preview`, `propose`, `check`, `edit`, `replace` |
-| `class`           | string       | —        | Class name (required for all except `uses`, `propose`)                                 |
-| `map`             | string       | all maps | Map name; default all maps or master                                                   |
-| `global`          | string       | —        | Global name (required for `uses`, `propose`)                                           |
-| `namespaces`      | string array | —        | Other namespaces to search for `uses`                                                  |
-| `version`         | string       | —        | Map version from `read` (required for `edit`, `replace`)                               |
-| `ops`             | object array | —        | Path operations for `edit`                                                             |
-| `model`           | object       | —        | SqlMap object for `replace`, `check`, `preview`                                        |
-| `confirm_removal` | boolean      | `false`  | Acknowledge removal on first `replace` call                                            |
-| `seed_counter`    | boolean      | `false`  | Seed the ID counter (opt-in post-write action)                                         |
-| `build_indexes`   | boolean      | `false`  | Build indexes after write (opt-in post-write action)                                   |
-| `include_values`  | boolean      | `false`  | Include data values (requires `acknowledgePhi`)                                        |
-| `acknowledgePhi`  | boolean      | `false`  | Required with `include_values` (data policy)                                           |
-| `max_nodes`       | integer      | `200`    | Maximum nodes for `compare`, `propose` (clamped 1–1000)                                |
-| `max_rows`        | integer      | `50`     | Maximum rows for `preview` (clamped 1–1000)                                            |
-| `namespace`       | string       | target   | Namespace for the operation                                                            |
-| `server`          | string       | default  | Named server; omit for default                                                         |
-| `confirm`         | boolean      | `false`  | Subject-server confirmation                                                            |
+| Parameter         | Type         | Default  | Notes                                                                                                                               |
+| ----------------- | ------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `action`          | string, enum | —        | `read`, `diagram`, `uses`, `compare`, `preview`, `propose`, `check`, `edit`, `replace`                                              |
+| `class`           | string       | —        | Class name (required for all except `uses`, `propose`); on `propose`, the class whose master map is the master, instead of `global` |
+| `map`             | string       | all maps | Map name; default all maps or master                                                                                                |
+| `global`          | string       | —        | Global name (required for `uses`; `propose` takes `global` or `class`)                                                              |
+| `index_globals`   | string array | —        | `propose` only: up to 8 index globals to link to the master (plain global names)                                                    |
+| `field_names`     | string array | —        | `propose` only, with `global`: property names by field position, for the drafts                                                     |
+| `namespaces`      | string array | —        | Other namespaces to search for `uses`                                                                                               |
+| `version`         | string       | —        | Map version from `read` (required for `edit`, `replace`)                                                                            |
+| `ops`             | object array | —        | Path operations for `edit`                                                                                                          |
+| `model`           | object       | —        | SqlMap object for `replace`, `check`, `preview`                                                                                     |
+| `confirm_removal` | boolean      | `false`  | Acknowledge removal on first `replace` call                                                                                         |
+| `seed_counter`    | boolean      | `false`  | Seed the ID counter (opt-in post-write action)                                                                                      |
+| `build_indexes`   | boolean      | `false`  | Build indexes after write (opt-in post-write action)                                                                                |
+| `include_values`  | boolean      | `false`  | Include data values (requires `acknowledgePhi`)                                                                                     |
+| `acknowledgePhi`  | boolean      | `false`  | Required with `include_values` (data policy)                                                                                        |
+| `max_nodes`       | integer      | `200`    | Maximum nodes for `compare`, `propose` (clamped 1–1000)                                                                             |
+| `max_rows`        | integer      | `50`     | Maximum rows for `preview` (clamped 1–1000)                                                                                         |
+| `namespace`       | string       | target   | Namespace for the operation                                                                                                         |
+| `server`          | string       | default  | Named server; omit for default                                                                                                      |
+| `confirm`         | boolean      | `false`  | Subject-server confirmation                                                                                                         |
 
 ### `compare_document`
 
