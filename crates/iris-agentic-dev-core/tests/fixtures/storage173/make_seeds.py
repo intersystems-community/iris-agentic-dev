@@ -339,6 +339,106 @@ def f46():
             [3, 12, 21, 30, 39, 48, 57, 66, 75, 84, 93], "not_linked", {"orphan_reported": False})
 
 
+
+def f38():
+    glob = "IadSm173F38"
+    maps = index_map("X", glob + "X", ["$$SQLUPPER({Name})", "{ID}"]) + \
+        index_map("Y", glob + "Y", ["{City}", "{ID}"])
+    cls = person_class("IadSm173.F38", glob, "", maps)
+    write("F38", "1,200 rows, two index globals over Name and City", cls, people(1200),
+          {"index_global": f"^{glob}X", "id_positions": [2],
+           "indexes": [
+               {"global": f"^{glob}X", "field": "Name", "transform": "sqlupper", "id_positions": [2]},
+               {"global": f"^{glob}Y", "field": "City", "transform": "exact", "id_positions": [2]}]},
+          indexes=[f"^{glob}X", f"^{glob}Y"])
+
+
+def f39():
+    glob = "IadSm173F39"
+    subs = ["{City}", "{Age}", "{Status}", "{Born}", "{Name}", "$$SQLUPPER({Name})", "$$ALPHAUP({Name})",
+            "{ID}"]
+    cls = person_class("IadSm173.F39", glob, "", index_map("X", glob + "X", subs))
+    write("F39", "an index with seven field subscripts and the ID: six are examined", cls, people(60),
+          {"index_global": f"^{glob}X", "id_positions": [8], "examined_positions": [1, 2, 3, 4, 5, 6],
+           "unexamined_positions": [7]})
+
+
+def f40():
+    glob = "IadSm173F40"
+    cls = person_class("IadSm173.F40", glob, "", index_map("X", glob + "X", ["{Age}", "{ID}"]))
+    cls = cls.replace("Property Age As %Integer;", "Property Age As %String;")
+    rows = [list(r) for r in people(40)]
+    for i, r in enumerate(rows):
+        r[2] = str(34 + i % 40)
+    # Stored as written: a leading zero, a sign and a fraction are strings, not the numbers 34 and 7.
+    rows[5][2], rows[11][2], rows[17][2] = "034", "+34", "07.5"
+    write("F40", "Age text holding numbers and a few non-canonical strings, indexed as written", cls, rows,
+          {"index_global": f"^{glob}X", "id_positions": [2], "link_verdict": "ambiguous",
+           # UPPER keeps "+" and "."; only ALPHAUP separates from EXACT on these strings, and no letter
+           # can split EXACT from UPPER in a column of numbers.
+           "subscripts": [{"position": 1, "verdict": "ambiguous", "field": "Age", "transform": "exact",
+                           "alternatives": ["upper"]}],
+           "non_canonical": ["034", "+34", "07.5"]})
+
+
+def f41():
+    stems = ["Éloïse", "Ångström", "Ólafur", "Zoë", "Núñez", "Åse", "Çelik", "Øystein", "Müller", "Łukasz"]
+    rows = [list(r) for r in people(40)]
+    for i, r in enumerate(rows):
+        r[0] = f"{stems[i % len(stems)]} {i}"
+    std("F41", "non-ASCII names under $$SQLUPPER", ["$$SQLUPPER({Name})", "{ID}"],
+        {"id_positions": [2], "link_verdict": "inferred", "subscripts": [
+            {"position": 1, "verdict": "inferred", "field": "Name", "transform": "sqlupper"}]}, rows=rows)
+
+
+def f42():
+    glob = "IadSm173F42"
+    maps = index_map("X", glob + "X", ["{City}", "{ID}"]) + index_map("Y", glob + "Y", ["{City}", "{ID}"])
+    cls = person_class("IadSm173.F42", glob, "", maps)
+    write("F42", "two index globals over City", cls, people(40),
+          {"index_global": f"^{glob}X", "id_positions": [2],
+           "indexes": [{"global": f"^{glob}X", "field": "City", "transform": "exact", "map": "IadSm173F42X"},
+                       {"global": f"^{glob}Y", "field": "City", "transform": "exact", "map": "IadSm173F42Y"}]},
+          indexes=[f"^{glob}X", f"^{glob}Y"])
+
+
+def f43():
+    glob = "IadSm173F43"
+    cls = person_class("IadSm173.F43", glob, "", index_map("X", glob + "X", ["$$SQLUPPER({Name})", "{ID}"]))
+    other = f"""Class IadSm173.F43B Extends %Persistent [ StorageStrategy = SQLStorage ]
+{{
+
+Property Label As %String;
+
+Storage SQLStorage
+{{
+<SqlIdExpression>$i(^{glob}Bc)</SqlIdExpression>
+<SQLMap name="Master">
+<Data name="Label">
+<Delimiter>"^"</Delimiter>
+<Piece>1</Piece>
+</Data>
+<Global>^{glob}X</Global>
+<Subscript name="1">
+<Expression>{{ID}}</Expression>
+</Subscript>
+<Type>data</Type>
+</SQLMap>
+<StreamLocation>^{glob}Bs</StreamLocation>
+<Type>%Storage.SQL</Type>
+}}
+
+}}
+"""
+    with open("classes/F43B.cls", "w") as f:
+        f.write(other)
+    write("F43", "the index global is also another class's master", cls, people(40),
+          {"index_global": f"^{glob}X", "id_positions": [2], "link_verdict": "inferred",
+           "subscripts": [{"position": 1, "verdict": "inferred", "field": "Name", "transform": "sqlupper"}],
+           "other_class": "IadSm173.F43B"},
+          extra={"extra_classes": ["F43B"]})
+
+
 ALL = {k[1:].join(["F", ""]) if False else "F" + k[1:]: v for k, v in list(globals().items())
        if k.startswith("f") and k[1:].isdigit()}
 

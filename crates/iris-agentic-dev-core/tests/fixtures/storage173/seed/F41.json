@@ -1,0 +1,314 @@
+{
+ "name": "F41",
+ "description": "non-ASCII names under $$SQLUPPER",
+ "class": "IadSm173.F41",
+ "table": "IadSm173.F41",
+ "columns": [
+  "Name",
+  "City",
+  "Age",
+  "Born",
+  "Status"
+ ],
+ "master_global": "^IadSm173F41",
+ "index_globals": [
+  "^IadSm173F41X"
+ ],
+ "rows": [
+  [
+   "Éloïse 0",
+   "Lyon",
+   118,
+   40000,
+   "A"
+  ],
+  [
+   "Ångström 1",
+   "Boston",
+   131,
+   40037,
+   "B"
+  ],
+  [
+   "Ólafur 2",
+   "Bern",
+   144,
+   40074,
+   "C"
+  ],
+  [
+   "Zoë 3",
+   "Oslo",
+   157,
+   40111,
+   "A"
+  ],
+  [
+   "Núñez 4",
+   "boston",
+   170,
+   40148,
+   "B"
+  ],
+  [
+   "Åse 5",
+   "Nice",
+   183,
+   40185,
+   "C"
+  ],
+  [
+   "Çelik 6",
+   "Rome",
+   126,
+   40222,
+   "A"
+  ],
+  [
+   "Øystein 7",
+   "Paris",
+   139,
+   40259,
+   "B"
+  ],
+  [
+   "Müller 8",
+   "Kyiv",
+   152,
+   40296,
+   "C"
+  ],
+  [
+   "Łukasz 9",
+   "Cork",
+   165,
+   40333,
+   "A"
+  ],
+  [
+   "Éloïse 10",
+   "Lyon",
+   178,
+   40370,
+   "B"
+  ],
+  [
+   "Ångström 11",
+   "Boston",
+   121,
+   40407,
+   "C"
+  ],
+  [
+   "Ólafur 12",
+   "Bern",
+   134,
+   40444,
+   "A"
+  ],
+  [
+   "Zoë 13",
+   "Oslo",
+   147,
+   40481,
+   "B"
+  ],
+  [
+   "Núñez 14",
+   "boston",
+   160,
+   40518,
+   "C"
+  ],
+  [
+   "Åse 15",
+   "Nice",
+   173,
+   40555,
+   "A"
+  ],
+  [
+   "Çelik 16",
+   "Rome",
+   186,
+   40592,
+   "B"
+  ],
+  [
+   "Øystein 17",
+   "Paris",
+   129,
+   40629,
+   "C"
+  ],
+  [
+   "Müller 18",
+   "Kyiv",
+   142,
+   40666,
+   "A"
+  ],
+  [
+   "Łukasz 19",
+   "Cork",
+   155,
+   40703,
+   "B"
+  ],
+  [
+   "Éloïse 20",
+   "Lyon",
+   168,
+   40740,
+   "C"
+  ],
+  [
+   "Ångström 21",
+   "Boston",
+   181,
+   40777,
+   "A"
+  ],
+  [
+   "Ólafur 22",
+   "Bern",
+   124,
+   40814,
+   "B"
+  ],
+  [
+   "Zoë 23",
+   "Oslo",
+   137,
+   40851,
+   "C"
+  ],
+  [
+   "Núñez 24",
+   "boston",
+   150,
+   40888,
+   "A"
+  ],
+  [
+   "Åse 25",
+   "Nice",
+   163,
+   40925,
+   "B"
+  ],
+  [
+   "Çelik 26",
+   "Rome",
+   176,
+   40962,
+   "C"
+  ],
+  [
+   "Øystein 27",
+   "Paris",
+   119,
+   40999,
+   "A"
+  ],
+  [
+   "Müller 28",
+   "Kyiv",
+   132,
+   41036,
+   "B"
+  ],
+  [
+   "Łukasz 29",
+   "Cork",
+   145,
+   41073,
+   "C"
+  ],
+  [
+   "Éloïse 30",
+   "Lyon",
+   158,
+   41110,
+   "A"
+  ],
+  [
+   "Ångström 31",
+   "Boston",
+   171,
+   41147,
+   "B"
+  ],
+  [
+   "Ólafur 32",
+   "Bern",
+   184,
+   41184,
+   "C"
+  ],
+  [
+   "Zoë 33",
+   "Oslo",
+   127,
+   41221,
+   "A"
+  ],
+  [
+   "Núñez 34",
+   "boston",
+   140,
+   41258,
+   "B"
+  ],
+  [
+   "Åse 35",
+   "Nice",
+   153,
+   41295,
+   "C"
+  ],
+  [
+   "Çelik 36",
+   "Rome",
+   166,
+   41332,
+   "A"
+  ],
+  [
+   "Øystein 37",
+   "Paris",
+   179,
+   41369,
+   "B"
+  ],
+  [
+   "Müller 38",
+   "Kyiv",
+   122,
+   41406,
+   "C"
+  ],
+  [
+   "Łukasz 39",
+   "Cork",
+   135,
+   41443,
+   "A"
+  ]
+ ],
+ "answer": {
+  "index_global": "^IadSm173F41X",
+  "id_positions": [
+   2
+  ],
+  "link_verdict": "inferred",
+  "subscripts": [
+   {
+    "position": 1,
+    "verdict": "inferred",
+    "field": "Name",
+    "transform": "sqlupper"
+   }
+  ]
+ }
+}

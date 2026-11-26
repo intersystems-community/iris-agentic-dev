@@ -332,3 +332,268 @@ async fn f46_an_id_agreement_under_the_floor_is_not_linked() {
     assert!(link.get("map").is_none(), "{link}");
     done(&r, &f).await;
 }
+
+/// Every object key in `v`, at any depth.
+fn all_keys(v: &Value, out: &mut Vec<String>) {
+    match v {
+        Value::Object(o) => {
+            for (k, x) in o {
+                out.push(k.clone());
+                all_keys(x, out);
+            }
+        }
+        Value::Array(a) => a.iter().for_each(|x| all_keys(x, out)),
+        _ => {}
+    }
+}
+
+/// T036: the sample is a spread, so no key of the answer claims more than it measured: the one
+/// count of distinct values is `distinct_first_values`, named for what it counts.
+#[tokio::test]
+#[ignore]
+async fn no_answer_key_claims_uniqueness_or_a_cardinality() {
+    let r = live().await;
+    for name in ["F26", "F29", "F45"] {
+        let f = Fixture::read(name);
+        let out = linked(&r, &f).await;
+        let mut keys = Vec::new();
+        all_keys(&out["indexes"], &mut keys);
+        all_keys(&out["limits"], &mut keys);
+        all_keys(&out["index_candidates"], &mut keys);
+        assert!(
+            keys.iter().any(|k| k == "distinct_first_values"),
+            "{name}: {keys:?}"
+        );
+        for k in &keys {
+            let lower = k.to_lowercase();
+            let claims = ["unique", "cardinality", "distinct_count", "distinct count"]
+                .iter()
+                .any(|w| lower.contains(w));
+            assert!(
+                !claims,
+                "{name}: key {k:?} claims more than the sample measured"
+            );
+            if lower.contains("distinct") {
+                assert_eq!(k, "distinct_first_values", "{name}: {k:?}");
+            }
+        }
+        drop_fixture_173(&r, &f).await;
+    }
+    drop_all(&r).await;
+}
+
+/// `propose` over every index global the seed names.
+async fn link_all_of(r: &Rig, f: &Fixture) -> Value {
+    let master = f.seed["master_global"].as_str().unwrap();
+    let indexes = f.seed["index_globals"].clone();
+    let out = ask_propose(r, json!({"global": master, "index_globals": indexes})).await;
+    assert_eq!(out["success"], true, "{}: {out}", f.name);
+    out
+}
+
+fn item_for<'a>(out: &'a Value, global: &str) -> &'a Value {
+    out["indexes"]
+        .as_array()
+        .and_then(|a| a.iter().find(|i| i["global"] == json!(global)))
+        .unwrap_or_else(|| panic!("no link for {global} in {}", out["indexes"]))
+}
+
+/// F38: 1,200 rows and two index globals. Both link, and the whole call (sampling, linking and the
+/// scratch verification of both drafts) stays inside the 5 s cap of SC-005.
+#[tokio::test]
+#[ignore]
+async fn f38_two_indexes_over_1200_rows_link_inside_five_seconds() {
+    let r = live().await;
+    let f = Fixture::read("F38");
+    load_fixture_173(&r, &f).await;
+    let started = std::time::Instant::now();
+    let out = link_all_of(&r, &f).await;
+    let took = started.elapsed();
+    for want in f.seed["answer"]["indexes"].as_array().unwrap() {
+        let link = item_for(&out, want["global"].as_str().unwrap());
+        assert_eq!(link["verdict"], "inferred", "{link}");
+        assert_eq!(link["id"]["positions"], want["id_positions"], "{link}");
+        let sub = subscript(link, 1);
+        assert_eq!(
+            sub["field"],
+            json!(draft_name(&f, want["field"].as_str().unwrap())),
+            "{sub}"
+        );
+        assert_eq!(sub["transform"], want["transform"], "{sub}");
+        assert_eq!(link["verified"]["row_found"], true, "{link}");
+    }
+    assert!(
+        took < std::time::Duration::from_secs(5),
+        "the call took {took:?}, over the 5 s cap"
+    );
+    done(&r, &f).await;
+}
+
+/// F39: seven field subscripts and the ID. Six field positions are examined; the seventh is named in
+/// `not_inferred` for this call.
+#[tokio::test]
+#[ignore]
+async fn f39_an_index_is_examined_up_to_six_subscripts() {
+    let r = live().await;
+    let f = Fixture::read("F39");
+    let out = linked(&r, &f).await;
+    let link = &out["indexes"][0];
+    let answer = &f.seed["answer"];
+    assert_eq!(link["id"]["positions"], answer["id_positions"], "{link}");
+    let got: Vec<u64> = link["subscripts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["position"].as_u64())
+        .collect();
+    let want: Vec<u64> = answer["examined_positions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_u64)
+        .collect();
+    assert_eq!(got, want, "examined positions in {link}");
+    assert_eq!(
+        link["unexamined_positions"], answer["unexamined_positions"],
+        "{link}"
+    );
+    let index = f.seed["index_globals"][0].as_str().unwrap();
+    let strings = out["not_inferred"].to_string();
+    assert!(
+        strings.contains(index) && strings.contains("position 7") && strings.contains("six"),
+        "{strings}"
+    );
+    done(&r, &f).await;
+}
+
+/// F40: Age text holding numbers and strings that are not canonical numbers (`034`, `+34`, `07.5`).
+/// The index files each as written, so the values are compared as stored and Age explains the
+/// position with nothing left over.
+#[tokio::test]
+#[ignore]
+async fn f40_values_are_compared_as_stored() {
+    let r = live().await;
+    let f = Fixture::read("F40");
+    let out = linked(&r, &f).await;
+    let link = &out["indexes"][0];
+    verdicts_agree(&f, link);
+    let want = seed_subscript(&f, 1);
+    let sub = subscript(link, 1);
+    assert_eq!(
+        sub["field"],
+        json!(draft_name(&f, want["field"].as_str().unwrap())),
+        "{sub}"
+    );
+    assert_eq!(sub["transform"], want["transform"], "{sub}");
+    assert_eq!(link["not_explained"], json!([]), "{link}");
+    assert!(sub["agreement"].as_f64().unwrap() >= 0.95, "{sub}");
+    let mut tied: Vec<&str> = sub["alternatives"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|a| a["transform"].as_str())
+        .filter(|t| Some(*t) != want["transform"].as_str())
+        .collect();
+    tied.sort_unstable();
+    assert_eq!(json!(tied), want["alternatives"], "{sub}");
+    done(&r, &f).await;
+}
+
+/// F41: the server's SQLUPPER decides case, so non-ASCII names link like any other.
+#[tokio::test]
+#[ignore]
+async fn f41_non_ascii_names_link_under_sqlupper() {
+    let r = live().await;
+    let f = Fixture::read("F41");
+    let out = linked(&r, &f).await;
+    let link = &out["indexes"][0];
+    verdicts_agree(&f, link);
+    let want = seed_subscript(&f, 1);
+    let sub = subscript(link, 1);
+    assert_eq!(
+        sub["field"],
+        json!(draft_name(&f, want["field"].as_str().unwrap())),
+        "{sub}"
+    );
+    assert_eq!(sub["transform"], want["transform"], "{sub}");
+    assert_eq!(link["verified"]["row_found"], true, "{link}");
+    done(&r, &f).await;
+}
+
+/// F42: two index globals over City give two drafts with different map names (FR-015).
+#[tokio::test]
+#[ignore]
+async fn f42_two_indexes_over_one_field_get_two_map_names() {
+    let r = live().await;
+    let f = Fixture::read("F42");
+    load_fixture_173(&r, &f).await;
+    let out = link_all_of(&r, &f).await;
+    let mut names = Vec::new();
+    for want in f.seed["answer"]["indexes"].as_array().unwrap() {
+        let link = item_for(&out, want["global"].as_str().unwrap());
+        assert_eq!(link["verdict"], "inferred", "{link}");
+        assert_eq!(link["map"]["name"], want["map"], "{link}");
+        assert_eq!(
+            subscript(link, 1)["field"],
+            json!(draft_name(&f, "City")),
+            "{link}"
+        );
+        assert_eq!(link["verified"]["row_found"], true, "{link}");
+        names.push(link["map"]["name"].clone());
+    }
+    assert_eq!(names.len(), 2);
+    assert_ne!(names[0], names[1], "{names:?}");
+    done(&r, &f).await;
+}
+
+/// F43: the candidate global is also another class's master. It is linked as an index candidate and
+/// not merged with that class; `uses` still lists both.
+#[tokio::test]
+#[ignore]
+async fn f43_an_index_global_that_is_another_classs_master_is_not_merged() {
+    let r = live().await;
+    let f = Fixture::read("F43");
+    let out = linked(&r, &f).await;
+    let link = &out["indexes"][0];
+    verdicts_agree(&f, link);
+    assert_eq!(link["found_by"], "parameter", "{link}");
+    assert_eq!(link["global"], f.seed["answer"]["index_global"], "{link}");
+    // Both classes exist again, so `uses` can find them.
+    put_class(&r, &f.class, &f.cls_text).await;
+    for extra in f.seed["extra_classes"].as_array().unwrap() {
+        let text = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/storage173/classes")
+                .join(format!("{}.cls", extra.as_str().unwrap())),
+        )
+        .unwrap();
+        put_class(&r, f.seed["answer"]["other_class"].as_str().unwrap(), &text).await;
+    }
+    let uses = ask_storage_uses(&r, f.seed["answer"]["index_global"].as_str().unwrap()).await;
+    let classes: Vec<String> = uses["uses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|u| u["class"].as_str().map(String::from))
+        .collect();
+    let mut want = vec![
+        f.class.clone(),
+        f.seed["answer"]["other_class"]
+            .as_str()
+            .unwrap()
+            .to_string(),
+    ];
+    want.sort();
+    let mut got = classes.clone();
+    got.sort();
+    assert_eq!(got, want, "{uses}");
+    done(&r, &f).await;
+}
+
+async fn ask_storage_uses(r: &Rig, global: &str) -> Value {
+    r.call(
+        "iris_storage_map",
+        json!({"action": "uses", "global": global, "namespace": "USER"}),
+    )
+    .await
+}

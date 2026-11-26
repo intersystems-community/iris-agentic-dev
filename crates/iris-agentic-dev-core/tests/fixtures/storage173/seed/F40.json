@@ -1,0 +1,322 @@
+{
+ "name": "F40",
+ "description": "Age text holding numbers and a few non-canonical strings, indexed as written",
+ "class": "IadSm173.F40",
+ "table": "IadSm173.F40",
+ "columns": [
+  "Name",
+  "City",
+  "Age",
+  "Born",
+  "Status"
+ ],
+ "master_global": "^IadSm173F40",
+ "index_globals": [
+  "^IadSm173F40X"
+ ],
+ "rows": [
+  [
+   "Smith, Anna",
+   "Lyon",
+   "34",
+   40000,
+   "A"
+  ],
+  [
+   "jones, bob",
+   "Boston",
+   "35",
+   40037,
+   "B"
+  ],
+  [
+   "Lee  ",
+   "Bern",
+   "36",
+   40074,
+   "C"
+  ],
+  [
+   "O'Neil-Ray",
+   "Oslo",
+   "37",
+   40111,
+   "A"
+  ],
+  [
+   "de la Cruz, Jo",
+   "boston",
+   "38",
+   40148,
+   "B"
+  ],
+  [
+   "Zed2",
+   "Nice",
+   "034",
+   40185,
+   "C"
+  ],
+  [
+   "  Mc Kay, Al",
+   "Rome",
+   "40",
+   40222,
+   "A"
+  ],
+  [
+   "Brown, Cy",
+   "Paris",
+   "41",
+   40259,
+   "B"
+  ],
+  [
+   "brown, cy",
+   "Kyiv",
+   "42",
+   40296,
+   "C"
+  ],
+  [
+   "Ng",
+   "Cork",
+   "43",
+   40333,
+   "A"
+  ],
+  [
+   "Åberg, Eli",
+   "Lyon",
+   "44",
+   40370,
+   "B"
+  ],
+  [
+   "Vu, Tran",
+   "Boston",
+   "+34",
+   40407,
+   "C"
+  ],
+  [
+   "Quinn, 3rd",
+   "Bern",
+   "46",
+   40444,
+   "A"
+  ],
+  [
+   "Hart,Ed",
+   "Oslo",
+   "47",
+   40481,
+   "B"
+  ],
+  [
+   "xu",
+   "boston",
+   "48",
+   40518,
+   "C"
+  ],
+  [
+   "Patel, Raj",
+   "Nice",
+   "49",
+   40555,
+   "A"
+  ],
+  [
+   "Moore, Kim ",
+   "Rome",
+   "50",
+   40592,
+   "B"
+  ],
+  [
+   "Diaz, Lu",
+   "Paris",
+   "07.5",
+   40629,
+   "C"
+  ],
+  [
+   "Frost, Ann-Marie",
+   "Kyiv",
+   "52",
+   40666,
+   "A"
+  ],
+  [
+   "Gray, Sam",
+   "Cork",
+   "53",
+   40703,
+   "B"
+  ],
+  [
+   "Smith, Anna20",
+   "Lyon",
+   "54",
+   40740,
+   "C"
+  ],
+  [
+   "jones, bob21",
+   "Boston",
+   "55",
+   40777,
+   "A"
+  ],
+  [
+   "Lee22",
+   "Bern",
+   "56",
+   40814,
+   "B"
+  ],
+  [
+   "O'Neil-Ray23",
+   "Oslo",
+   "57",
+   40851,
+   "C"
+  ],
+  [
+   "de la Cruz, Jo24",
+   "boston",
+   "58",
+   40888,
+   "A"
+  ],
+  [
+   "Zed225",
+   "Nice",
+   "59",
+   40925,
+   "B"
+  ],
+  [
+   "Mc Kay, Al26",
+   "Rome",
+   "60",
+   40962,
+   "C"
+  ],
+  [
+   "Brown, Cy27",
+   "Paris",
+   "61",
+   40999,
+   "A"
+  ],
+  [
+   "brown, cy28",
+   "Kyiv",
+   "62",
+   41036,
+   "B"
+  ],
+  [
+   "Ng29",
+   "Cork",
+   "63",
+   41073,
+   "C"
+  ],
+  [
+   "Åberg, Eli30",
+   "Lyon",
+   "64",
+   41110,
+   "A"
+  ],
+  [
+   "Vu, Tran31",
+   "Boston",
+   "65",
+   41147,
+   "B"
+  ],
+  [
+   "Quinn, 3rd32",
+   "Bern",
+   "66",
+   41184,
+   "C"
+  ],
+  [
+   "Hart,Ed33",
+   "Oslo",
+   "67",
+   41221,
+   "A"
+  ],
+  [
+   "xu34",
+   "boston",
+   "68",
+   41258,
+   "B"
+  ],
+  [
+   "Patel, Raj35",
+   "Nice",
+   "69",
+   41295,
+   "C"
+  ],
+  [
+   "Moore, Kim36",
+   "Rome",
+   "70",
+   41332,
+   "A"
+  ],
+  [
+   "Diaz, Lu37",
+   "Paris",
+   "71",
+   41369,
+   "B"
+  ],
+  [
+   "Frost, Ann-Marie38",
+   "Kyiv",
+   "72",
+   41406,
+   "C"
+  ],
+  [
+   "Gray, Sam39",
+   "Cork",
+   "73",
+   41443,
+   "A"
+  ]
+ ],
+ "answer": {
+  "index_global": "^IadSm173F40X",
+  "id_positions": [
+   2
+  ],
+  "link_verdict": "ambiguous",
+  "subscripts": [
+   {
+    "position": 1,
+    "verdict": "ambiguous",
+    "field": "Age",
+    "transform": "exact",
+    "alternatives": [
+     "upper"
+    ]
+   }
+  ],
+  "non_canonical": [
+   "034",
+   "+34",
+   "07.5"
+  ]
+ }
+}
