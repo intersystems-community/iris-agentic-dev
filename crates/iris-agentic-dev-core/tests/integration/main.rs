@@ -125,6 +125,8 @@ mod test_sql_translate_e2e;
 mod test_storage172_rig_live;
 mod test_storage173_rig_live;
 mod test_storage_map_bitmap_173_live;
+mod test_storage_map_candidates_173_live;
+mod test_storage_map_class_mode_173_live;
 mod test_storage_map_computed_172_live;
 mod test_storage_map_corpus_172_live;
 mod test_storage_map_d11_172_live;

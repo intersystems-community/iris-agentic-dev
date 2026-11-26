@@ -237,6 +237,7 @@ mod test_storage_map_candidates_173;
 mod test_storage_map_computed_172;
 mod test_storage_map_counter_172;
 mod test_storage_map_diagram_172;
+mod test_storage_map_discovery_173;
 mod test_storage_map_doc_gate_172;
 mod test_storage_map_doc_record_172;
 mod test_storage_map_doc_sink_172;

@@ -1,6 +1,7 @@
 pub mod bitmap;
 pub mod bitmap_run;
 pub mod candidates;
+pub mod candidates_run;
 pub mod code;
 pub mod diagram;
 pub mod explain;
@@ -12,6 +13,7 @@ pub mod link_verify;
 pub mod master;
 pub mod model;
 pub mod path;
+mod propose_class;
 pub mod sample;
 pub mod shape;
 pub mod tree;
@@ -275,6 +277,9 @@ pub async fn handle(
         Action::Replace => replace_action(iris, client, p, tools, &shape).await,
         Action::Compare => compare_action(iris, client, p, tools, &shape).await,
         Action::Preview => preview_action(iris, client, p, tools, &shape).await,
+        Action::Propose if p.get("class").is_some_and(|v| !v.is_null()) => {
+            propose_class::propose_class(iris, client, p, tools, &shape).await
+        }
         Action::Propose => propose_action(iris, p, tools, &shape).await,
     }
 }
@@ -998,29 +1003,9 @@ async fn propose_action(
     if let Some(refusal) = values_refusal(shape, &t.primary) {
         return err_result(refusal);
     }
-    let index_names = match p.get("index_globals").filter(|v| !v.is_null()) {
-        None => Vec::new(),
-        Some(v) => {
-            let given: Vec<String> = v
-                .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|x| x.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
-            if v.as_array().is_none_or(|a| a.len() != given.len()) {
-                return fail(
-                    "INVALID_PARAMS",
-                    "index_globals is a list of global names".into(),
-                    json!({}),
-                );
-            }
-            match candidates::validate_index_globals(&given) {
-                Ok(names) => names,
-                Err(why) => return fail("INVALID_PARAMS", why, json!({})),
-            }
-        }
+    let index_names = match candidates::index_names_param(p.get("index_globals")) {
+        Ok(names) => names,
+        Err(why) => return fail("INVALID_PARAMS", why, json!({})),
     };
     let cx = match tools.exec_context() {
         Ok(cx) => cx,
@@ -1054,15 +1039,11 @@ async fn propose_action(
         })
         .unwrap_or_default();
     let named = !field_names.is_empty();
-    let spec = if named || !index_names.is_empty() {
-        match master::MasterSpec::from_draft(&report, &field_names) {
-            Ok(spec) => Some(spec),
-            Err(refusal) => return fail(refusal.code, refusal.message, json!({})),
-        }
-    } else {
-        None
+    let spec = match master::MasterSpec::from_draft(&report, &field_names) {
+        Ok(spec) => spec,
+        Err(refusal) => return fail(refusal.code, refusal.message, json!({})),
     };
-    if let (true, Some(spec)) = (named, &spec) {
+    if named {
         spec.apply_names(&mut draft, &mut guesses);
     }
     let mut answer = json!({
@@ -1078,9 +1059,6 @@ async fn propose_action(
         "draft_note": "a draft to check against real data: every name, delimiter and piece count is a guess from a sample",
     });
     let mut examined: Vec<Value> = Vec::new();
-    let mut picks = Vec::new();
-    let mut index_maps: Vec<Value> = Vec::new();
-
     let chunk = bitmap_run::chunk_map(
         &cx.conn,
         cx.client.as_ref(),
@@ -1094,40 +1072,54 @@ async fn propose_action(
         answer["chunk_map_draft"] = draft;
     }
     examined.extend(chunk.details);
-    if let (false, Some(spec)) = (index_names.is_empty(), &spec) {
-        let run = link_run::Run {
-            conn: &cx.conn,
-            client: cx.client.as_ref(),
-            ns: &ns,
-            master: spec,
-            master_map: &draft,
-            node_cap,
-            policy: &t.primary.effective,
-            server: &t.primary.key,
-            acknowledge_phi: shape.acknowledge_phi,
-            with_values: shape.include_values,
-        };
-        let linked = link_run::link_all(&run, &index_names).await;
-        answer["index_candidates"] = linked.index_candidates;
-        index_maps = linked
-            .indexes
-            .iter()
-            .filter_map(|i| i.get("map").cloned())
-            .collect();
-        picks = linked.collations;
+    // The candidates: the names the caller gave, the sub-trees inside the master and the
+    // namespace's globals that begin with its name (FR-001, FR-002), then each one linked.
+    let found = candidates_run::discover(
+        &cx.conn,
+        cx.client.as_ref(),
+        &ns,
+        &global.name,
+        spec.subscripts.len() == 1,
+        &index_names,
+    )
+    .await;
+    let run = link_run::Run {
+        conn: &cx.conn,
+        client: cx.client.as_ref(),
+        ns: &ns,
+        master: &spec,
+        master_map: &draft,
+        node_cap,
+        policy: &t.primary.effective,
+        server: &t.primary.key,
+        acknowledge_phi: shape.acknowledge_phi,
+        with_values: shape.include_values,
+        existing_maps: &[],
+    };
+    let linked = link_run::link_candidates(&run, found).await;
+    let index_call = !linked.indexes.is_empty();
+    answer["index_candidates"] = linked.index_candidates;
+    let index_maps: Vec<Value> = linked
+        .indexes
+        .iter()
+        .filter_map(|i| i.get("map").cloned())
+        .collect();
+    let picks = linked.collations;
+    if index_call {
         answer["indexes"] = Value::Array(linked.indexes);
-        if !linked.bitmaps.is_empty() {
-            answer["bitmaps"] = Value::Array(linked.bitmaps);
-        }
-        answer["limits"] = linked.limits;
-        examined.extend(linked.not_inferred_detail);
     }
-    if let Some(spec) = &spec {
+    if !linked.bitmaps.is_empty() {
+        answer["bitmaps"] = Value::Array(linked.bitmaps);
+    }
+    answer["limits"] = linked.limits;
+    examined.extend(linked.not_inferred_detail);
+    // The typed class draft (US6) is asked for by naming fields or index globals.
+    if named || !index_names.is_empty() {
         let run = typing_run::DraftRun {
             conn: &cx.conn,
             client: cx.client.as_ref(),
             ns: &ns,
-            master: spec,
+            master: &spec,
             master_map: &draft,
             index_maps: &index_maps,
             picks: &picks,
@@ -1136,7 +1128,7 @@ async fn propose_action(
         typing_run::add_class_draft(&run, &mut answer, &mut examined).await;
     }
     // The first item (field names are placeholders) no longer applies when the caller named them.
-    let (mut strings, mut details) = shape::not_inferred_lists(&examined, !index_names.is_empty());
+    let (mut strings, mut details) = shape::not_inferred_lists(&examined, index_call);
     if named {
         details.retain(|d| d["what"] != "field names");
         strings.retain(|s| !s.starts_with("field names"));

@@ -338,19 +338,28 @@ in a scratch copy and returns a known row through an indexed query.
 **Goal**: naming only the master finds its index globals. **Independent test**: F31, F32 and a namespace with
 `^IadSm173A` and `^IadSm173A.x`.
 
-- [ ] T038 [US2] Fixtures for the three layouts (name prefix, in-master sub-node F32, `index_globals`). Test first,
+- [x] T038 [US2] Fixtures for the three layouts (name prefix F47 `^IadSm173F47.x`, in-master sub-node F32, the 10-candidate
+      case F48; made by `make_seeds_candidates.py`; F31 exists from T033). Test first,
       `tests/integration/test_storage_map_candidates_173_live.rs` (+ `mod`): `propose global=^IadSm173A` lists
       `^IadSm173A.x` with `found_by = name_prefix`; F31 is listed `not_linked`; F32's sub-tree is a `sub_node`
       candidate linked with the prefix cut off; with 10 candidates the answer links 8 and names 2 in
       `index_candidates.not_examined`. Prove (red): `L test_storage_map_candidates_173_live`.
-- [ ] T039 [US2] Implement the runner half of `candidates.rs` (listing through `%SYS.GlobalQuery:NameSpaceList` with the
+- [x] T039 [US2] Implement the runner half of `candidates.rs` (listing through `%SYS.GlobalQuery:NameSpaceList` with the
       quoted mask `<master>*`, master excluded; failure is `listing: "unavailable"` with the error text, FR-004) and
       the wiring in `propose_action` (each candidate through the same global gates as the master before any code is
       built; a refusal is listed `refused`). Prove: `L test_storage_map_candidates_173_live` green.
-- [ ] T040 [US2] The failure path: a live test that makes the listing fail (the outcome T009 recorded; if the service
+      Done in `candidates_run.rs` (the runner), `candidates.rs` and `link_run::link_candidates`. The sub-trees inside
+      the master are found by a scan of the master's string first subscripts in the same IRIS call as the listing
+      (`sub_tree_code`), not from the master sample's `sub_nodes`: the sample reads numbers first and stops at its cap,
+      and class mode has no sample. The scan runs only when the master's row ID is its first subscript.
+- [x] T040 [US2] The failure path: a live test that makes the listing fail (the outcome T009 recorded; if the service
       account can always list, use a namespace argument the account cannot read) and asserts the answer says
       `listing: "unavailable"`, still links the explicit and in-master candidates, and `not_inferred` says the
       namespace listing was not available. Prove: `L test_storage_map_candidates_173_live`.
+      R5 measured: a user holding only `%DB_USER` lists the namespace's globals, and no namespace leaves the master
+      readable but not listable, so the test names a class query IRIS does not have
+      (`candidates::LISTING_QUERY_FOR_TESTS`, compiled only with the `testing` feature); the text in the answer is
+      IRIS's own (`Query '...' does not exist`).
 
 **Checkpoint**: nobody lists their index globals to a tool that is meant to find them.
 
@@ -360,16 +369,18 @@ in a scratch copy and returns a known row through an indexed query.
 
 **Goal**: `propose class=…` drafts index maps in the class's own names. **Independent test**: F35 and F36.
 
-- [ ] T041 [US1a] Fixtures F35, F36. Test first, `tests/integration/test_storage_map_class_mode_173_live.rs` (+ `mod`):
+- [x] T041 [US1a] Fixtures F35, F36 (classes `IadSm173.F35` and `IadSm173.F36`). Test first, `tests/integration/test_storage_map_class_mode_173_live.rs` (+ `mod`):
       F35 `propose class=IadSm173.Person` drafts an index whose expressions use `{Name}` and the class's row-ID parts and
       whose `check` compiles with the draft added; F36 reports `already_mapped` naming the map and drafts nothing; a
       default-storage class, a columnar class and a class with no master map are refused with `read`'s reasons;
       `class` with `global` is `INVALID_PARAMS`; `field_names` with `class` is `INVALID_PARAMS`. Prove (red):
       `L test_storage_map_class_mode_173_live`.
-- [ ] T042 [US1a] Implement class mode in `propose_action`: load the class (`load_model`), `MasterSpec::from_class`, skip
+- [x] T042 [US1a] Implement class mode in `propose_action`: load the class (`load_model`), `MasterSpec::from_class`, skip
       the master sample, run candidate discovery with `already_mapped` detection against the class's index maps'
       globals, link, draft, verify. The answer omits `draft`, `shape` and master `guesses`. Prove:
       `L test_storage_map_class_mode_173_live` green.
+      Done in `propose_class.rs` (called from `handle` when `class` is given), with the class's map globals put
+      through `check_map_globals` as `check` does.
 
 **Checkpoint**: Benjamin's real case, with the names already right.
 
