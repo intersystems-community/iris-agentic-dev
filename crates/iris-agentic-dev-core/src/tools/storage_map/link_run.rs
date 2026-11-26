@@ -12,6 +12,7 @@ use super::link::{
 use super::link_code::{build_code, field_access, Caps, FieldAccess, LinkRequest};
 use super::link_verify::verify;
 use super::master::MasterSpec;
+use super::typing_run::{collation_picks, FieldCollation};
 use crate::iris::connection::IrisConnection;
 use crate::policy::effective::EffectivePolicy;
 use serde_json::{json, Value};
@@ -24,6 +25,9 @@ pub struct Linked {
     /// `{what, why}`: what was not examined, not explained or not drafted, for
     /// `not_inferred_detail`.
     pub not_inferred_detail: Vec<Value>,
+    /// What each verified map's link says about the collation of the field it reads, for the
+    /// class draft's `COLLATION` parameters.
+    pub collations: Vec<FieldCollation>,
 }
 
 /// Everything a run needs from the call.
@@ -82,6 +86,7 @@ pub async fn link_all(run: &Run<'_>, names: &[String]) -> Linked {
     let mut indexes = Vec::new();
     let mut stopped = Vec::new();
     let mut taken = vec![run.master.map_name.clone()];
+    let mut collations = Vec::new();
     let fields: Result<Vec<FieldAccess>, String> =
         run.master.fields.iter().map(field_access).collect();
     for c in &mut candidates {
@@ -109,7 +114,11 @@ pub async fn link_all(run: &Run<'_>, names: &[String]) -> Linked {
         let name = map_name(&c.global, &taken);
         taken.push(name.clone());
         let assembled = assemble(&c.global, &name, &report);
-        indexes.push(index_item(run, c, &assembled, &view, &report, &mut details).await);
+        let item = index_item(run, c, &assembled, &view, &report, &mut details).await;
+        if item.get("map").is_some() {
+            collations.extend(collation_picks(&assembled.link));
+        }
+        indexes.push(item);
     }
     let not_examined: Vec<String> = candidates
         .iter()
@@ -125,6 +134,7 @@ pub async fn link_all(run: &Run<'_>, names: &[String]) -> Linked {
             "stopped": stopped,
         }),
         not_inferred_detail: details,
+        collations,
     }
 }
 

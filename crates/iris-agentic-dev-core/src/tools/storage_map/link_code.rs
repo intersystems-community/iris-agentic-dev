@@ -207,7 +207,7 @@ pub fn build_code(req: &LinkRequest<'_>) -> Result<String, String> {
 }
 
 /// `^name` quoted as an ObjectScript string, or the reason it is not a global name.
-fn global_literal(name: &str) -> Result<String, String> {
+pub(super) fn global_literal(name: &str) -> Result<String, String> {
     let bare = name.strip_prefix('^').unwrap_or(name);
     validate_global_name(bare).map_err(|_| format!("{name:?} is not a global name"))?;
     Ok(os_str_expr(&format!("^{bare}")))
@@ -229,7 +229,7 @@ fn prelude(master: &str, candidate: &str, req: &LinkRequest<'_>) -> String {
 }
 
 /// One `fa(n)` entry per master field: node, delimiter code (0 for a `$LIST`), piece.
-fn fields_table(fields: &[FieldAccess]) -> Result<String, String> {
+pub(super) fn fields_table(fields: &[FieldAccess]) -> Result<String, String> {
     let mut s = format!(" Set nf={}\n", fields.len());
     for (i, f) in fields.iter().enumerate() {
         if f.piece == 0 {

@@ -182,7 +182,14 @@ async fn f37_the_draft_compiled_and_its_source_reads_the_master() {
     let source = draft["source"].as_str().unwrap();
     assert!(source.contains("Storage SQLStorage"), "{source}");
     // The maps the draft carries: the master and one per index.
-    for name in ["Master", "X", "XA", "XC"] {
+    let drafted: Vec<String> = out["indexes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["map"]["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(drafted.len(), 3, "{}", out["indexes"]);
+    for name in drafted.iter().map(String::as_str).chain(["Master"]) {
         assert!(
             source.contains(&format!("<SQLMap name=\"{name}\">")),
             "no map {name} in the source:\n{source}"
@@ -209,10 +216,28 @@ async fn f37_the_draft_compiled_and_its_source_reads_the_master() {
         "{row} want {}",
         answer["sums"]["Price"]
     );
-    // %Date: the day number reads as the date IRIS's own function gives for it.
-    let day = answer["placed_max"].as_i64().unwrap();
-    let date = exec(&r, &format!("Write $ZDATE({day},3)")).await;
-    assert_eq!(row["m"].as_str().unwrap().trim(), date.trim(), "{row}");
+    // The largest day number, as the seed's rows say; and the class IRIS compiled has the types
+    // the draft names (the dictionary's own answer, not the draft's).
+    assert_eq!(
+        number(&row["m"]),
+        answer["placed_max"].as_f64().unwrap(),
+        "{row}"
+    );
+    for (column, want) in [
+        ("Qty", "%Library.Integer"),
+        ("Price", "%Library.Numeric"),
+        ("Placed", "%Library.Date"),
+        ("Stamp", "%Library.String"),
+    ] {
+        let t = select(
+            &r,
+            &format!(
+                "SELECT Type FROM %Dictionary.CompiledProperty WHERE parent = 'IadSm173.F37Draft' AND Name = '{column}'"
+            ),
+        )
+        .await;
+        assert_eq!(t[0]["Type"], json!(want), "{column}: {t:?}");
+    }
 
     // COLLATION = "EXACT": `boston` is not `Boston`.
     let exact = f.rows().iter().filter(|x| x[2] == json!("Boston")).count();
