@@ -15,6 +15,7 @@ pub mod sample;
 pub mod shape;
 pub mod tree;
 pub mod typing;
+pub mod typing_run;
 pub mod usability;
 pub mod uses;
 pub mod validate;
@@ -1060,6 +1061,8 @@ async fn propose_action(
         "draft_note": "a draft to check against real data: every name, delimiter and piece count is a guess from a sample",
     });
     let mut examined: Vec<Value> = Vec::new();
+    let mut picks = Vec::new();
+    let mut index_maps: Vec<Value> = Vec::new();
     if let (false, Some(spec)) = (index_names.is_empty(), &spec) {
         let run = link_run::Run {
             conn: &cx.conn,
@@ -1075,9 +1078,28 @@ async fn propose_action(
         };
         let linked = link_run::link_all(&run, &index_names).await;
         answer["index_candidates"] = linked.index_candidates;
+        index_maps = linked
+            .indexes
+            .iter()
+            .filter_map(|i| i.get("map").cloned())
+            .collect();
+        picks = linked.collations;
         answer["indexes"] = Value::Array(linked.indexes);
         answer["limits"] = linked.limits;
         examined = linked.not_inferred_detail;
+    }
+    if let Some(spec) = &spec {
+        let run = typing_run::DraftRun {
+            conn: &cx.conn,
+            client: cx.client.as_ref(),
+            ns: &ns,
+            master: spec,
+            master_map: &draft,
+            index_maps: &index_maps,
+            picks: &picks,
+            node_cap,
+        };
+        typing_run::add_class_draft(&run, &mut answer, &mut examined).await;
     }
     // The first item (field names are placeholders) no longer applies when the caller named them.
     let (mut strings, mut details) = shape::not_inferred_lists(&examined, !index_names.is_empty());

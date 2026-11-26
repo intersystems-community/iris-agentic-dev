@@ -256,18 +256,18 @@ Signatures come from `data-model.md`.
 ID form and null marker. **Independent test**: F01 to F18 each return their known answer, and each drafted map compiles
 in a scratch copy and returns a known row through an indexed query.
 
-- [X] T026 [US1] Test first, `tests/integration/test_storage_map_link_173_live.rs` (+ `mod`): for each of F01 to F10, load
+- [x] T026 [US1] Test first, `tests/integration/test_storage_map_link_173_live.rs` (+ `mod`): for each of F01 to F10, load
       the fixture, call `propose` with `global=^IadSm173Person` and `index_globals=[<index global>]`, assert
       `indexes[0].subscripts[0]` has the known `field`, `transform`, `length` and `agreement ≥ 0.95`, assert
       `indexes[0].id.positions` and `verdict == inferred`. All fail now. Prove (red): `L test_storage_map_link_173_live`.
-- [X] T027 [US1] Implement the linker body in `src/tools/storage_map/link_code.rs`: counting pass then every k-th key
+- [x] T027 [US1] Implement the linker body in `src/tools/storage_map/link_code.rs`: counting pass then every k-th key
       over the first subscript (FR-004a, `distinct_first_values`), master row by direct `$Get` on the master reference, ID position
       search over runs of k subscripts and the node value (FR-005), per-field per-position scoring over the transform
       set through `##class(%SYSTEM.SQL.Functions)` (FR-006/007), length variants confirmed on every node (FR-008),
       JSON lines out as in data-model.md. Wire `propose_action` in `mod.rs`: after the master draft, for each
       `index_globals` entry run `link_code::build_code` through `execute_via_generator_prefixed(…, "IrisDevSm")`, parse,
       and add `indexes` to the answer. Prove: `L test_storage_map_link_173_live` green for F01 to F10.
-- [X] T028 [US1] Draft and verify: for each `inferred` link call `link::draft_index_map`, run it through `model::validate`
+- [x] T028 [US1] Draft and verify: for each `inferred` link call `link::draft_index_map`, run it through `model::validate`
       and the no-IRIS write checks (FR-014), then verify it in a scratch copy: compile the master class text with the
       draft added through `compile_scratch_class` and query for a known row by the indexed field
       (`verified {compiled, row_found}`); a failed verification demotes the draft to `not_inferred_detail` with the
@@ -451,14 +451,15 @@ tests.
 
 **Goal**: `class_draft` with guessed types and collations. **Independent test**: F37 and the linking fixtures.
 
-- [ ] T053 [US6] Fixture F37. Test first, `tests/integration/test_storage_map_typing_173_live.rs` (+ `mod`): the integer
+- [x] T053 [US6] Fixture F37. Test first, `tests/integration/test_storage_map_typing_173_live.rs` (+ `mod`): the integer
       column is `%Integer` with evidence `{integer: n, of: n}`, decimals `%Numeric` scale 2, the date-like column a date
       guess with `date_fit` ≥ 0.95 of `of`, text `%String` with `MAXLEN` ≥ the longest value; the property for a
       field linked as exact has `COLLATION = "EXACT"`, as sqlstring `"SQLSTRING"`, as sqlupper none; `class_draft.compiled`
       is true and the source compiles in a scratch copy with the drafted maps; every property path is in `guesses`;
-      F26-style data does not make a date. Prove (red): `L test_storage_map_typing_173_live`.
-- [ ] T054 [US6] Implement `typing.rs`'s generator and runner (one call, verdict counts only, over the master rows the
-      linker reached and the master's first nodes to the cap) and the wiring (scratch compile of the class draft with the
+      F26-style data does not make a date. Only a `%String` takes `COLLATION` (IRIS refuses it on `%Integer`, `%Numeric`
+      and `%Date`, ERROR #5480), so the other types carry none. Prove (red): `L test_storage_map_typing_173_live`.
+- [x] T054 [US6] Implement the generator and runner in `typing_run.rs` (one call, verdict counts only, over a spread of the
+      master's rows to the node cap: the linker returns no row IDs, so the call walks the master itself) and the wiring (scratch compile of the class draft with the
       drafted maps, `compiled` set from the real result). Prove: `L test_storage_map_typing_173_live` green.
 
 ---

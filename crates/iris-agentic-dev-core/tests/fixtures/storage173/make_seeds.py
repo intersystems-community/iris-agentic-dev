@@ -439,6 +439,91 @@ Storage SQLStorage
           extra={"extra_classes": ["F43B"]})
 
 
+def f37():
+    """Typing columns (spec 173 US6): integer, decimal with scale 2, a day number, ISO date text, free
+    text with NULLs, and three text columns each indexed through a different transform so the
+    class draft's COLLATION has linking evidence for each."""
+    import datetime
+    cols = ["Name", "Alias", "City", "Qty", "Price", "Placed", "Stamp", "Note"]
+    rows = []
+    for i in range(40):
+        name = FIRST[i] if i < len(FIRST) else f"{FIRST[i % len(FIRST)].strip()}{i}"
+        j = (i * 7 + 3) % 40
+        alias = FIRST[j] if j < len(FIRST) else f"{FIRST[j % len(FIRST)].strip()}{j}"
+        rows.append([name, alias, CITIES[(i * 7 + 3) % len(CITIES)],
+                     (i * 17) % 97 + 1,
+                     round((500 + (i * 137) % 1000) / 100, 2),
+                     45000 + i * 29,
+                     f"2024-{1 + i % 12:02d}-{1 + i % 28:02d}",
+                     None if i % 8 == 0 else f"note {i} " + "x" * (i % 30)])
+    glob = "IadSm173F37"
+    props = {"Name": "%String", "Alias": "%String", "City": "%String", "Qty": "%Integer",
+             "Price": "%Numeric(SCALE = 2)", "Placed": "%Integer", "Stamp": "%String",
+             "Note": "%String(MAXLEN = 255)"}
+    prop_text = "".join(f"Property {c} As {props[c]};\n\n" for c in cols)
+    data = "".join(
+        f'<Data name="{c}">\n<Delimiter>"^"</Delimiter>\n<Piece>{p}</Piece>\n</Data>\n'
+        for c, p in sorted((c, k + 1) for k, c in enumerate(cols)))
+    maps = (index_map("X", glob + "X", ["$$SQLUPPER({Name})", "{ID}"])
+            + index_map("XA", glob + "A", ["$$SQLSTRING({Alias})", "{ID}"])
+            + index_map("XC", glob + "C", ["{City}", "{ID}"]))
+    cls = f"""Class IadSm173.F37 Extends %Persistent [ StorageStrategy = SQLStorage ]
+{{
+
+{prop_text}Storage SQLStorage
+{{
+<SqlIdExpression>$i(^{glob})</SqlIdExpression>
+<SQLMap name="Master">
+{data}<Global>^{glob}</Global>
+<Subscript name="1">
+<Expression>{{ID}}</Expression>
+</Subscript>
+<Type>data</Type>
+</SQLMap>
+{maps}<StreamLocation>^{glob}S</StreamLocation>
+<Type>%Storage.SQL</Type>
+}}
+
+}}
+"""
+    # The known answer, computed here from the rows and nothing else: counts per column, the day
+    # numbers of 1900-01-01 and 2100-12-31 counted from 1840-12-31 (day 0 of $HOROLOG).
+    zero = datetime.date(1840, 12, 31)
+    lo = (datetime.date(1900, 1, 1) - zero).days
+    hi = (datetime.date(2100, 12, 31) - zero).days
+    def canon(v):
+        # How IRIS files the value: a whole number without a fraction, no trailing zeros.
+        return ("%.2f" % v).rstrip("0").rstrip(".") if isinstance(v, float) else str(v)
+
+    def number(text):
+        try:
+            float(text)
+        except ValueError:
+            return False
+        return text == canon(float(text)) or text.lstrip("-").isdigit()
+
+    typing = {}
+    for k, c in enumerate(cols):
+        vals = [canon(r[k]) for r in rows if r[k] is not None and r[k] != ""]
+        nums = [v for v in vals if number(v)]
+        ints = [v for v in nums if "." not in v]
+        typing[c] = {"of": len(vals), "integer": len(ints), "numeric": len(nums),
+                     "max_scale": max((len(v.split(".")[1]) for v in nums if "." in v), default=0),
+                     "date_fit": sum(1 for v in ints if lo <= int(v) <= hi),
+                     "max_length": max(len(v) for v in vals)}
+    answer = {"typing": typing, "date_window": [lo, hi],
+              "types": {"Name": "%String", "Alias": "%String", "City": "%String", "Qty": "%Integer",
+                        "Price": "%Numeric", "Placed": "%Date", "Stamp": "%String",
+                        "Note": "%String"},
+              "collations": {"Name": None, "Alias": "COLLATION = \"SQLSTRING\"",
+                             "City": "COLLATION = \"EXACT\""},
+              "sums": {"Qty": sum(r[3] for r in rows), "Price": round(sum(r[4] for r in rows), 2)},
+              "placed_max": max(r[5] for r in rows),
+              "index_global": f"^{glob}X"}
+    write("F37", "typing columns: integer, decimal 2, day numbers, ISO text, text with NULLs", cls,
+          rows, answer, columns=cols, indexes=[f"^{glob}X", f"^{glob}A", f"^{glob}C"])
+
+
 ALL = {k[1:].join(["F", ""]) if False else "F" + k[1:]: v for k, v in list(globals().items())
        if k.startswith("f") and k[1:].isdigit()}
 

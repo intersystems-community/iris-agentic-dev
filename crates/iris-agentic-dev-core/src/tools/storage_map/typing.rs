@@ -236,6 +236,13 @@ pub fn class_source(name: &str, properties: &[PropertySpec]) -> Result<ClassDraf
             return Err(format!("duplicate property name {:?}", p.name));
         }
         if let Some(c) = &p.collation {
+            // IRIS refuses COLLATION on %Integer, %Numeric and %Date (ERROR #5480, measured).
+            if p.ty.name != "%String" {
+                return Err(format!(
+                    "property {} is {}, which takes no COLLATION parameter (only %String does)",
+                    p.name, p.ty.name
+                ));
+            }
             if !is_collation_parameter(c) {
                 return Err(format!(
                     "{:?} is not a COLLATION parameter for property {}",

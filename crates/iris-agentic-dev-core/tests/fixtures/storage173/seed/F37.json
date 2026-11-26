@@ -1,0 +1,517 @@
+{
+ "name": "F37",
+ "description": "typing columns: integer, decimal 2, day numbers, ISO text, text with NULLs",
+ "class": "IadSm173.F37",
+ "table": "IadSm173.F37",
+ "columns": [
+  "Name",
+  "Alias",
+  "City",
+  "Qty",
+  "Price",
+  "Placed",
+  "Stamp",
+  "Note"
+ ],
+ "master_global": "^IadSm173F37",
+ "index_globals": [
+  "^IadSm173F37X",
+  "^IadSm173F37A",
+  "^IadSm173F37C"
+ ],
+ "rows": [
+  [
+   "Smith, Anna",
+   "O'Neil-Ray",
+   "Lyon",
+   1,
+   5.0,
+   45000,
+   "2024-01-01",
+   null
+  ],
+  [
+   "jones, bob",
+   "Åberg, Eli",
+   "Boston",
+   18,
+   6.37,
+   45029,
+   "2024-02-02",
+   "note 1 x"
+  ],
+  [
+   "Lee  ",
+   "Diaz, Lu",
+   "Bern",
+   35,
+   7.74,
+   45058,
+   "2024-03-03",
+   "note 2 xx"
+  ],
+  [
+   "O'Neil-Ray",
+   "de la Cruz, Jo24",
+   "Oslo",
+   52,
+   9.11,
+   45087,
+   "2024-04-04",
+   "note 3 xxx"
+  ],
+  [
+   "de la Cruz, Jo",
+   "Vu, Tran31",
+   "boston",
+   69,
+   10.48,
+   45116,
+   "2024-05-05",
+   "note 4 xxxx"
+  ],
+  [
+   "Zed2",
+   "Frost, Ann-Marie38",
+   "Nice",
+   86,
+   11.85,
+   45145,
+   "2024-06-06",
+   "note 5 xxxxx"
+  ],
+  [
+   "  Mc Kay, Al",
+   "Zed2",
+   "Rome",
+   6,
+   13.22,
+   45174,
+   "2024-07-07",
+   "note 6 xxxxxx"
+  ],
+  [
+   "Brown, Cy",
+   "Quinn, 3rd",
+   "Paris",
+   23,
+   14.59,
+   45203,
+   "2024-08-08",
+   "note 7 xxxxxxx"
+  ],
+  [
+   "brown, cy",
+   "Gray, Sam",
+   "Kyiv",
+   40,
+   5.96,
+   45232,
+   "2024-09-09",
+   null
+  ],
+  [
+   "Ng",
+   "Mc Kay, Al26",
+   "Cork",
+   57,
+   7.33,
+   45261,
+   "2024-10-10",
+   "note 9 xxxxxxxxx"
+  ],
+  [
+   "Åberg, Eli",
+   "Hart,Ed33",
+   "Lyon",
+   74,
+   8.7,
+   45290,
+   "2024-11-11",
+   "note 10 xxxxxxxxxx"
+  ],
+  [
+   "Vu, Tran",
+   "Smith, Anna",
+   "Boston",
+   91,
+   10.07,
+   45319,
+   "2024-12-12",
+   "note 11 xxxxxxxxxxx"
+  ],
+  [
+   "Quinn, 3rd",
+   "Brown, Cy",
+   "Bern",
+   11,
+   11.44,
+   45348,
+   "2024-01-13",
+   "note 12 xxxxxxxxxxxx"
+  ],
+  [
+   "Hart,Ed",
+   "xu",
+   "Oslo",
+   28,
+   12.81,
+   45377,
+   "2024-02-14",
+   "note 13 xxxxxxxxxxxxx"
+  ],
+  [
+   "xu",
+   "jones, bob21",
+   "boston",
+   45,
+   14.18,
+   45406,
+   "2024-03-15",
+   "note 14 xxxxxxxxxxxxxx"
+  ],
+  [
+   "Patel, Raj",
+   "brown, cy28",
+   "Nice",
+   62,
+   5.55,
+   45435,
+   "2024-04-16",
+   "note 15 xxxxxxxxxxxxxxx"
+  ],
+  [
+   "Moore, Kim ",
+   "Patel, Raj35",
+   "Rome",
+   79,
+   6.92,
+   45464,
+   "2024-05-17",
+   null
+  ],
+  [
+   "Diaz, Lu",
+   "Lee  ",
+   "Paris",
+   96,
+   8.29,
+   45493,
+   "2024-06-18",
+   "note 17 xxxxxxxxxxxxxxxxx"
+  ],
+  [
+   "Frost, Ann-Marie",
+   "Ng",
+   "Kyiv",
+   16,
+   9.66,
+   45522,
+   "2024-07-19",
+   "note 18 xxxxxxxxxxxxxxxxxx"
+  ],
+  [
+   "Gray, Sam",
+   "Moore, Kim ",
+   "Cork",
+   33,
+   11.03,
+   45551,
+   "2024-08-20",
+   "note 19 xxxxxxxxxxxxxxxxxxx"
+  ],
+  [
+   "Smith, Anna20",
+   "O'Neil-Ray23",
+   "Lyon",
+   50,
+   12.4,
+   45580,
+   "2024-09-21",
+   "note 20 xxxxxxxxxxxxxxxxxxxx"
+  ],
+  [
+   "jones, bob21",
+   "Åberg, Eli30",
+   "Boston",
+   67,
+   13.77,
+   45609,
+   "2024-10-22",
+   "note 21 xxxxxxxxxxxxxxxxxxxxx"
+  ],
+  [
+   "Lee22",
+   "Diaz, Lu37",
+   "Bern",
+   84,
+   5.14,
+   45638,
+   "2024-11-23",
+   "note 22 xxxxxxxxxxxxxxxxxxxxxx"
+  ],
+  [
+   "O'Neil-Ray23",
+   "de la Cruz, Jo",
+   "Oslo",
+   4,
+   6.51,
+   45667,
+   "2024-12-24",
+   "note 23 xxxxxxxxxxxxxxxxxxxxxxx"
+  ],
+  [
+   "de la Cruz, Jo24",
+   "Vu, Tran",
+   "boston",
+   21,
+   7.88,
+   45696,
+   "2024-01-25",
+   null
+  ],
+  [
+   "Zed225",
+   "Frost, Ann-Marie",
+   "Nice",
+   38,
+   9.25,
+   45725,
+   "2024-02-26",
+   "note 25 xxxxxxxxxxxxxxxxxxxxxxxxx"
+  ],
+  [
+   "Mc Kay, Al26",
+   "Zed225",
+   "Rome",
+   55,
+   10.62,
+   45754,
+   "2024-03-27",
+   "note 26 xxxxxxxxxxxxxxxxxxxxxxxxxx"
+  ],
+  [
+   "Brown, Cy27",
+   "Quinn, 3rd32",
+   "Paris",
+   72,
+   11.99,
+   45783,
+   "2024-04-28",
+   "note 27 xxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  ],
+  [
+   "brown, cy28",
+   "Gray, Sam39",
+   "Kyiv",
+   89,
+   13.36,
+   45812,
+   "2024-05-01",
+   "note 28 xxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  ],
+  [
+   "Ng29",
+   "  Mc Kay, Al",
+   "Cork",
+   9,
+   14.73,
+   45841,
+   "2024-06-02",
+   "note 29 xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  ],
+  [
+   "Åberg, Eli30",
+   "Hart,Ed",
+   "Lyon",
+   26,
+   6.1,
+   45870,
+   "2024-07-03",
+   "note 30 "
+  ],
+  [
+   "Vu, Tran31",
+   "Smith, Anna20",
+   "Boston",
+   43,
+   7.47,
+   45899,
+   "2024-08-04",
+   "note 31 x"
+  ],
+  [
+   "Quinn, 3rd32",
+   "Brown, Cy27",
+   "Bern",
+   60,
+   8.84,
+   45928,
+   "2024-09-05",
+   null
+  ],
+  [
+   "Hart,Ed33",
+   "xu34",
+   "Oslo",
+   77,
+   10.21,
+   45957,
+   "2024-10-06",
+   "note 33 xxx"
+  ],
+  [
+   "xu34",
+   "jones, bob",
+   "boston",
+   94,
+   11.58,
+   45986,
+   "2024-11-07",
+   "note 34 xxxx"
+  ],
+  [
+   "Patel, Raj35",
+   "brown, cy",
+   "Nice",
+   14,
+   12.95,
+   46015,
+   "2024-12-08",
+   "note 35 xxxxx"
+  ],
+  [
+   "Moore, Kim36",
+   "Patel, Raj",
+   "Rome",
+   31,
+   14.32,
+   46044,
+   "2024-01-09",
+   "note 36 xxxxxx"
+  ],
+  [
+   "Diaz, Lu37",
+   "Lee22",
+   "Paris",
+   48,
+   5.69,
+   46073,
+   "2024-02-10",
+   "note 37 xxxxxxx"
+  ],
+  [
+   "Frost, Ann-Marie38",
+   "Ng29",
+   "Kyiv",
+   65,
+   7.06,
+   46102,
+   "2024-03-11",
+   "note 38 xxxxxxxx"
+  ],
+  [
+   "Gray, Sam39",
+   "Moore, Kim36",
+   "Cork",
+   82,
+   8.43,
+   46131,
+   "2024-04-12",
+   "note 39 xxxxxxxxx"
+  ]
+ ],
+ "answer": {
+  "typing": {
+   "Name": {
+    "of": 40,
+    "integer": 0,
+    "numeric": 0,
+    "max_scale": 0,
+    "date_fit": 0,
+    "max_length": 18
+   },
+   "Alias": {
+    "of": 40,
+    "integer": 0,
+    "numeric": 0,
+    "max_scale": 0,
+    "date_fit": 0,
+    "max_length": 18
+   },
+   "City": {
+    "of": 40,
+    "integer": 0,
+    "numeric": 0,
+    "max_scale": 0,
+    "date_fit": 0,
+    "max_length": 6
+   },
+   "Qty": {
+    "of": 40,
+    "integer": 40,
+    "numeric": 40,
+    "max_scale": 0,
+    "date_fit": 0,
+    "max_length": 2
+   },
+   "Price": {
+    "of": 40,
+    "integer": 1,
+    "numeric": 40,
+    "max_scale": 2,
+    "date_fit": 0,
+    "max_length": 5
+   },
+   "Placed": {
+    "of": 40,
+    "integer": 40,
+    "numeric": 40,
+    "max_scale": 0,
+    "date_fit": 40,
+    "max_length": 5
+   },
+   "Stamp": {
+    "of": 40,
+    "integer": 0,
+    "numeric": 0,
+    "max_scale": 0,
+    "date_fit": 0,
+    "max_length": 10
+   },
+   "Note": {
+    "of": 35,
+    "integer": 0,
+    "numeric": 0,
+    "max_scale": 0,
+    "date_fit": 0,
+    "max_length": 37
+   }
+  },
+  "date_window": [
+   21550,
+   94963
+  ],
+  "types": {
+   "Name": "%String",
+   "Alias": "%String",
+   "City": "%String",
+   "Qty": "%Integer",
+   "Price": "%Numeric",
+   "Placed": "%Date",
+   "Stamp": "%String",
+   "Note": "%String"
+  },
+  "collations": {
+   "Name": null,
+   "Alias": "COLLATION = \"SQLSTRING\"",
+   "City": "COLLATION = \"EXACT\""
+  },
+  "sums": {
+   "Qty": 1951,
+   "Price": 388.6
+  },
+  "placed_max": 46131,
+  "index_global": "^IadSm173F37X"
+ }
+}

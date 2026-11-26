@@ -291,7 +291,7 @@ fn is_plain_name(s: &str) -> bool {
 }
 
 /// The words of a refusal or error answer, with IRIS's compile errors when it has them.
-fn answer_text(answer: &Value) -> String {
+pub(super) fn answer_text(answer: &Value) -> String {
     let mut text = answer["error"]
         .as_str()
         .or_else(|| answer["message"].as_str())
