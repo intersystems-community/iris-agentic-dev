@@ -119,13 +119,14 @@ pub struct FieldAccess {
 /// means a `$LIST` in the table.
 pub fn field_access(f: &MasterField) -> Result<FieldAccess, String> {
     let name = &f.name;
-    let delimiter = match f.delimiter.as_deref().map(str::trim) {
-        None => None,
-        Some(text) => Some(
-            delimiter_code(text)
-                .map_err(|why| format!("field {name}: the delimiter {text}: {why}"))?,
-        ),
-    };
+    let delimiter = f
+        .delimiter
+        .as_deref()
+        .map(str::trim)
+        .map(|text| {
+            delimiter_code(text).map_err(|why| format!("field {name}: the delimiter {text}: {why}"))
+        })
+        .transpose()?;
     let piece = f
         .piece
         .as_deref()
@@ -148,11 +149,11 @@ fn delimiter_code(text: &str) -> Result<u32, String> {
         let body = inner
             .strip_suffix('"')
             .ok_or("it does not end at its closing quote")?;
-        let chars: Vec<char> = body.replace("\"\"", "\"").chars().collect();
         // A lone quote inside would have been doubled.
         if body.replace("\"\"", "").contains('"') {
             return Err("it has text after the closing quote".into());
         }
+        let chars: Vec<char> = body.replace("\"\"", "\"").chars().collect();
         return match chars.as_slice() {
             [c] if *c != '\0' => Ok(u32::from(*c)),
             _ => Err("it is not one character".into()),
@@ -198,7 +199,7 @@ pub fn build_code(req: &LinkRequest<'_>) -> Result<String, String> {
     code.push_str(&fields_table(req.fields)?);
     code.push_str(&transform_table());
     code.push_str(TRY_OPEN);
-    code.push_str(&spread_walk());
+    code.push_str(SPREAD_WALK);
     code.push_str(LINK_BODY);
     code.push_str(TRY_CLOSE);
     code.push_str(EPILOGUE);
@@ -263,9 +264,7 @@ fn transform_table() -> String {
 /// with up to three nodes under it; fewer than seven values means an ordered walk to the node cap.
 /// Fills `nd(1..nn)` with node references and sets `distinct`, `stopped`; the sample line is
 /// written once the IDs are resolved, because it carries the count of usable nodes. No value is written.
-fn spread_walk() -> String {
-    String::from(
-        " Set k=\"\",nk=0,stopped=\"none\"
+const SPREAD_WALK: &str = " Set k=\"\",nk=0,stopped=\"none\"
  For { Set k=$Order(@cand@(k)) Quit:k=\"\"  Set nk=nk+1,keys(nk)=k
    If nk>=ccap { Set stopped=\"count_cap\" Quit }
    If ($ZH-t0)>secs { Set stopped=\"time\" Quit } }
@@ -278,9 +277,7 @@ fn spread_walk() -> String {
      Set nn=nn+1,nd(nn)=n,got=got+1 } }
  If (nn>=nodecap)&&(stopped=\"none\") { Set stopped=\"nodes\" }
  If ($ZH-t0)>secs { Set stopped=\"time\" }
-",
-    )
-}
+";
 
 const TRY_OPEN: &str = " Set failed=0,ol=0\n Try {\n";
 

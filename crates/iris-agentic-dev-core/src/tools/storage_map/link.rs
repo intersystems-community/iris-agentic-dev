@@ -194,6 +194,25 @@ impl Verdict {
             Verdict::Constant => "constant",
         }
     }
+
+    /// Whether a pair explains the position (or the link): `inferred` or `ambiguous`.
+    pub fn is_explained(self) -> bool {
+        matches!(self, Verdict::Inferred | Verdict::Ambiguous)
+    }
+}
+
+/// `part` over `whole`, 0 when `whole` is 0.
+fn ratio(part: u32, whole: u32) -> f64 {
+    if whole == 0 {
+        0.0
+    } else {
+        f64::from(part) / f64::from(whole)
+    }
+}
+
+/// Whether an ID agreement is high enough to link the index to the master at all.
+fn is_linked(id_agreement: f64) -> bool {
+    id_agreement.is_finite() && id_agreement + EPS >= ID_FLOOR
 }
 
 /// How well one (field, transform, length, piece) explains a position: `matches` of `total`.
@@ -209,11 +228,7 @@ pub struct PositionScore {
 
 impl PositionScore {
     pub fn agreement(&self) -> f64 {
-        if self.total == 0 {
-            0.0
-        } else {
-            f64::from(self.matches) / f64::from(self.total)
-        }
+        ratio(self.matches, self.total)
     }
 }
 
@@ -256,8 +271,7 @@ pub fn verdict(input: &VerdictInput<'_>) -> Judgement {
         best: best.clone(),
         alternatives,
     };
-    let linked = input.id_agreement.is_finite() && input.id_agreement + EPS >= ID_FLOOR;
-    if !linked {
+    if !is_linked(input.id_agreement) {
         return judged(Verdict::NotLinked, input.id_agreement, vec![]);
     }
     if input.usable_nodes < MIN_NODES {
@@ -325,6 +339,15 @@ pub enum Stopped {
 pub enum IdForm {
     Subscript,
     Value,
+}
+
+impl IdForm {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            IdForm::Subscript => "subscript",
+            IdForm::Value => "value",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -742,7 +765,7 @@ pub struct Assembled {
 /// `constant`, `ambiguous`, `inferred`. An index with no position to explain is `not_explained`:
 /// there is no map to draft from it.
 pub fn overall_verdict(id_agreement: f64, usable_nodes: u32, positions: &[Verdict]) -> Verdict {
-    if !(id_agreement.is_finite() && id_agreement + EPS >= ID_FLOOR) {
+    if !is_linked(id_agreement) {
         return Verdict::NotLinked;
     }
     if usable_nodes < MIN_NODES {
@@ -768,13 +791,7 @@ pub fn overall_verdict(id_agreement: f64, usable_nodes: u32, positions: &[Verdic
 /// lines are not read here yet.
 pub fn assemble(global: &str, map: &str, report: &LinkReport) -> Assembled {
     let best_id = report.ids.first();
-    let id_agreement = best_id.map_or(0.0, |l| {
-        if l.total == 0 {
-            0.0
-        } else {
-            f64::from(l.resolved) / f64::from(l.total)
-        }
-    });
+    let id_agreement = best_id.map_or(0.0, |l| ratio(l.resolved, l.total));
     let id = best_id.map_or(
         IdLink {
             form: IdForm::Subscript,
@@ -795,15 +812,13 @@ pub fn assemble(global: &str, map: &str, report: &LinkReport) -> Assembled {
             distinct: line.distinct,
             scores: &line.scores,
         });
-        let explained = matches!(judgement.verdict, Verdict::Inferred | Verdict::Ambiguous);
         subscripts.push(SubscriptLink {
             position: line.position,
             verdict: judgement.verdict,
-            pick: if explained {
-                judgement.best.clone()
-            } else {
-                None
-            },
+            pick: judgement
+                .best
+                .clone()
+                .filter(|_| judgement.verdict.is_explained()),
             alternatives: judgement.alternatives.clone(),
         });
         judgements.push(PositionJudgement {
@@ -835,9 +850,8 @@ fn rounded(x: f64) -> f64 {
 }
 
 /// A pair as the answer spells it: field name, transform, and a length and piece only when it has
-/// one.
-fn pair_json(score: &PositionScore, master: &MasterView) -> Value {
-    let mut o = Map::new();
+/// one, added to `o`.
+fn insert_pair(o: &mut Map<String, Value>, score: &PositionScore, master: &MasterView) {
     let name = master_field(master, score.field)
         .map_or_else(|_| format!("Field{}", score.field), str::to_string);
     o.insert("field".into(), json!(name));
@@ -848,6 +862,12 @@ fn pair_json(score: &PositionScore, master: &MasterView) -> Value {
     if let Some(p) = score.piece {
         o.insert("piece".into(), json!(p));
     }
+}
+
+/// A pair with its agreement, as an alternative is listed.
+fn pair_json(score: &PositionScore, master: &MasterView) -> Value {
+    let mut o = Map::new();
+    insert_pair(&mut o, score, master);
     o.insert("agreement".into(), json!(rounded(score.agreement())));
     Value::Object(o)
 }
@@ -863,15 +883,8 @@ pub fn link_json(a: &Assembled, master: &MasterView, report: &LinkReport) -> Val
             o.insert("position".into(), json!(j.position));
             o.insert("verdict".into(), json!(j.judgement.verdict.as_str()));
             o.insert("agreement".into(), json!(rounded(j.judgement.agreement)));
-            let explained = matches!(j.judgement.verdict, Verdict::Inferred | Verdict::Ambiguous);
-            if let (true, Some(best)) = (explained, &j.judgement.best) {
-                if let Value::Object(pair) = pair_json(best, master) {
-                    for (k, v) in pair {
-                        if k != "agreement" {
-                            o.insert(k, v);
-                        }
-                    }
-                }
+            if let (true, Some(best)) = (j.judgement.verdict.is_explained(), &j.judgement.best) {
+                insert_pair(&mut o, best, master);
             }
             let alternatives: Vec<Value> = j
                 .judgement
@@ -895,7 +908,7 @@ pub fn link_json(a: &Assembled, master: &MasterView, report: &LinkReport) -> Val
         "distinct_first_values": report.sample.distinct_first,
         "usable_nodes": report.sample.usable,
         "id": {
-            "form": match a.link.id.form { IdForm::Subscript => "subscript", IdForm::Value => "value" },
+            "form": a.link.id.form.as_str(),
             "positions": a.link.id.positions,
             "agreement": rounded(a.id_agreement),
         },
@@ -954,7 +967,7 @@ pub struct Link {
     pub data_in_value: Vec<DataInValue>,
 }
 
-fn master_field(master: &MasterView, field: u32) -> Result<&str, String> {
+pub(super) fn master_field(master: &MasterView, field: u32) -> Result<&str, String> {
     usize::try_from(field)
         .ok()
         .and_then(|n| n.checked_sub(1))
@@ -999,7 +1012,7 @@ fn level_expression(
     if held.next().is_some() {
         return Err(format!("position {position} is explained twice"));
     }
-    if !matches!(sub.verdict, Verdict::Inferred | Verdict::Ambiguous) {
+    if !sub.verdict.is_explained() {
         return Err(format!(
             "position {position} is {}: no expression to draft",
             sub.verdict.as_str()
@@ -1028,7 +1041,7 @@ fn level_expression(
 /// is constant, a gap in the positions, a field the master lacks, a global that is not a plain
 /// name.
 pub fn draft_index_map(link: &Link, master: &MasterView) -> Result<(Value, Vec<String>), String> {
-    if !matches!(link.verdict, Verdict::Inferred | Verdict::Ambiguous) {
+    if !link.verdict.is_explained() {
         return Err(format!(
             "{} is {}: no map is drafted",
             link.global,
@@ -1103,17 +1116,19 @@ pub fn draft_index_map(link: &Link, master: &MasterView) -> Result<(Value, Vec<S
     Ok((map, guesses))
 }
 
+/// The `<Type>%Storage.SQL</Type>` node every SQL Storage tree starts with.
+pub(super) fn storage_type_node() -> Node {
+    Node {
+        tag: "Type".into(),
+        name: None,
+        value: Some("%Storage.SQL".into()),
+        children: None,
+    }
+}
+
 /// The model validator on `map` in a Storage tree, as the write path will see it.
 fn check_with_validator(map: &Value) -> Result<(), String> {
-    let nodes = vec![
-        Node {
-            tag: "Type".into(),
-            name: None,
-            value: Some("%Storage.SQL".into()),
-            children: None,
-        },
-        map_node(map)?,
-    ];
+    let nodes = vec![storage_type_node(), map_node(map)?];
     validate(&nodes).map_err(|found| {
         let broken: Vec<String> = found
             .iter()

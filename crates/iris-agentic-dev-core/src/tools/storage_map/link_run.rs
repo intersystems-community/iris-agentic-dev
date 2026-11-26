@@ -7,7 +7,7 @@ use super::candidates::{Candidate, Status};
 use super::globals::check_index_global;
 use super::link::{
     assemble, draft_index_map, link_json, map_name, parse_link_output, Assembled, LinkReport,
-    MasterView, Stopped, Verdict,
+    MasterView, Stopped,
 };
 use super::link_code::{build_code, field_access, Caps, FieldAccess, LinkRequest};
 use super::link_verify::verify;
@@ -83,30 +83,21 @@ pub async fn link_all(run: &Run<'_>, names: &[String]) -> Linked {
     let fields: Result<Vec<FieldAccess>, String> =
         run.master.fields.iter().map(field_access).collect();
     for c in &mut candidates {
-        if let Some(body) =
-            check_index_global(&c.global, run.policy, run.server, run.acknowledge_phi)
-        {
-            c.status = Status::Refused;
-            let why = refusal_text(&body);
-            details.push(detail(format!("{} was not examined", c.label()), &why));
-            c.reason = Some(why);
-            continue;
-        }
-        let fields = match &fields {
-            Ok(f) => f,
-            Err(why) => {
-                c.status = Status::NotExamined;
-                c.reason = Some(why.clone());
-                details.push(detail(format!("{} was not examined", c.label()), why));
-                continue;
-            }
-        };
-        let report = match run_one(run, c, fields).await {
+        let examined =
+            match check_index_global(&c.global, run.policy, run.server, run.acknowledge_phi) {
+                Some(body) => Err((Status::Refused, refusal_text(&body))),
+                None => match &fields {
+                    Ok(f) => run_one(run, c, f).await,
+                    Err(why) => Err(why.clone()),
+                }
+                .map_err(|why| (Status::NotExamined, why)),
+            };
+        let report = match examined {
             Ok(r) => r,
-            Err(why) => {
-                c.status = Status::NotExamined;
-                c.reason = Some(why.clone());
-                details.push(detail(format!("{} was not examined", c.label()), why));
+            Err((status, why)) => {
+                details.push(detail(format!("{} was not examined", c.label()), &why));
+                c.status = status;
+                c.reason = Some(why);
                 continue;
             }
         };
@@ -181,41 +172,45 @@ async fn index_item(
             ),
         ));
     }
-    if matches!(a.link.verdict, Verdict::Inferred | Verdict::Ambiguous) {
-        match draft_index_map(&a.link, view) {
-            Ok((map, guesses)) => {
-                let v = verify(
-                    run.conn,
-                    run.client,
-                    run.ns,
-                    run.master,
-                    run.master_map,
-                    &map,
-                    &a.link,
-                    view,
-                )
-                .await;
-                item["verified"] = v.to_json();
-                if v.compiled && v.row_found {
-                    item["map"] = map;
-                    item["guesses"] = json!(guesses);
-                } else {
-                    details.push(detail(
-                        format!("{} has no drafted map", c.label()),
-                        format!(
-                            "the draft did not verify in a scratch copy: {}",
-                            v.detail.as_deref().unwrap_or("no reason given")
-                        ),
-                    ));
-                }
-            }
-            Err(why) => details.push(detail(format!("{} has no drafted map", c.label()), why)),
-        }
+    let drafted = if a.link.verdict.is_explained() {
+        draft_verified(run, a, view, &mut item).await
     } else {
-        details.push(detail(
-            format!("{} has no drafted map", c.label()),
-            format!("the link is {}", a.link.verdict.as_str()),
-        ));
+        Err(format!("the link is {}", a.link.verdict.as_str()))
+    };
+    if let Err(why) = drafted {
+        details.push(detail(format!("{} has no drafted map", c.label()), why));
     }
     item
+}
+
+/// Draft the index map, verify it in a scratch copy, and put the map and its guesses on `item`
+/// only when it verified; `verified` goes on `item` whenever the check ran.
+async fn draft_verified(
+    run: &Run<'_>,
+    a: &Assembled,
+    view: &MasterView,
+    item: &mut Value,
+) -> Result<(), String> {
+    let (map, guesses) = draft_index_map(&a.link, view)?;
+    let v = verify(
+        run.conn,
+        run.client,
+        run.ns,
+        run.master,
+        run.master_map,
+        &map,
+        &a.link,
+        view,
+    )
+    .await;
+    item["verified"] = v.to_json();
+    if !(v.compiled && v.row_found) {
+        return Err(format!(
+            "the draft did not verify in a scratch copy: {}",
+            v.detail.as_deref().unwrap_or("no reason given")
+        ));
+    }
+    item["map"] = map;
+    item["guesses"] = json!(guesses);
+    Ok(())
 }

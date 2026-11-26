@@ -7,7 +7,7 @@
 //! one the index holds and the planner can use the map. A piece form (`$p($$SQLUPPER(...),",",1)`)
 //! has no collation to carry; its query reads the master, and `detail` says so.
 
-use super::link::{Link, MasterView, Transform};
+use super::link::{master_field, storage_type_node, Link, MasterView, Transform};
 use super::master::MasterSpec;
 use super::model::map_node;
 use super::tree::{emit_body, Node};
@@ -60,17 +60,14 @@ pub fn indexed_field(link: &Link, view: &MasterView) -> Result<Indexed, String> 
         .iter()
         .find_map(|s| s.pick.as_ref().map(|p| (s, p)))
         .ok_or("no subscript of the link is explained")?;
-    let field = usize::try_from(pick.field)
-        .ok()
-        .and_then(|n| n.checked_sub(1))
-        .and_then(|i| view.field_names.get(i))
-        .ok_or_else(|| {
+    let field = master_field(view, pick.field)
+        .map_err(|_| {
             format!(
                 "field {} is not one of the master's fields (position {})",
                 pick.field, sub.position
             )
         })?
-        .clone();
+        .to_string();
     if pick.piece.is_some() {
         return Ok(Indexed {
             field,
@@ -120,12 +117,7 @@ pub fn class_text(
         .collect();
     let draft = class_source("IrisDevTmp.SmDraft", &properties)?;
     let nodes = vec![
-        Node {
-            tag: "Type".into(),
-            name: None,
-            value: Some("%Storage.SQL".into()),
-            children: None,
-        },
+        storage_type_node(),
         map_node(master_map)?,
         map_node(index_map)?,
     ];
@@ -190,9 +182,10 @@ pub async fn verify(
     .await;
     match compiled {
         Err(answer) => {
-            let compiled = answer["error_code"] != "STORAGE_MAP_COMPILE_FAILED"
-                && answer["error_code"] != "UPLOAD_FAILED"
-                && answer["error_code"] != "STORAGE_MAP_INVALID";
+            let compiled = !matches!(
+                answer["error_code"].as_str(),
+                Some("STORAGE_MAP_COMPILE_FAILED" | "UPLOAD_FAILED" | "STORAGE_MAP_INVALID")
+            );
             Verification::failed(compiled, answer_text(&answer))
         }
         Ok((_, None)) => Verification::failed(true, "the scratch copy compiled but no query ran"),
@@ -203,20 +196,17 @@ pub async fn verify(
                 .and_then(|o| o.values().next())
                 .and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse().ok()));
             match n {
-                Some(n) => Verification {
-                    compiled: true,
-                    row_found: n >= 1,
-                    detail: if n >= 1 {
-                        indexed.note
-                    } else {
-                        Some(
-                            "the query by the indexed field found no row: the map's keys are not \
-                             the ones the index holds"
-                                .into(),
-                        )
-                    },
-                },
                 None => Verification::failed(true, "the query answered with no count"),
+                Some(0) => Verification::failed(
+                    true,
+                    "the query by the indexed field found no row: the map's keys are not the \
+                     ones the index holds",
+                ),
+                Some(_) => Verification {
+                    compiled: true,
+                    row_found: true,
+                    detail: indexed.note,
+                },
             }
         }
     }
