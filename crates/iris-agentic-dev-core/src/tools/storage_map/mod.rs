@@ -12,6 +12,7 @@ pub mod link_verify;
 pub mod master;
 pub mod model;
 pub mod path;
+mod propose_class;
 pub mod sample;
 pub mod shape;
 pub mod tree;
@@ -273,6 +274,9 @@ pub async fn handle(
         Action::Replace => replace_action(iris, client, p, tools, &shape).await,
         Action::Compare => compare_action(iris, client, p, tools, &shape).await,
         Action::Preview => preview_action(iris, client, p, tools, &shape).await,
+        Action::Propose if p.get("class").is_some_and(|v| !v.is_null()) => {
+            propose_class::propose_class(iris, client, p, tools, &shape).await
+        }
         Action::Propose => propose_action(iris, p, tools, &shape).await,
     }
 }
@@ -981,29 +985,9 @@ async fn propose_action(
     if let Some(refusal) = values_refusal(shape, &t.primary) {
         return err_result(refusal);
     }
-    let index_names = match p.get("index_globals").filter(|v| !v.is_null()) {
-        None => Vec::new(),
-        Some(v) => {
-            let given: Vec<String> = v
-                .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|x| x.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
-            if v.as_array().is_none_or(|a| a.len() != given.len()) {
-                return fail(
-                    "INVALID_PARAMS",
-                    "index_globals is a list of global names".into(),
-                    json!({}),
-                );
-            }
-            match candidates::validate_index_globals(&given) {
-                Ok(names) => names,
-                Err(why) => return fail("INVALID_PARAMS", why, json!({})),
-            }
-        }
+    let index_names = match candidates::index_names_param(p.get("index_globals")) {
+        Ok(names) => names,
+        Err(why) => return fail("INVALID_PARAMS", why, json!({})),
     };
     let cx = match tools.exec_context() {
         Ok(cx) => cx,

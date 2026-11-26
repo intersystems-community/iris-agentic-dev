@@ -204,6 +204,26 @@ pub fn validate_index_globals(names: &[String]) -> Result<Vec<String>, String> {
         .collect()
 }
 
+/// The `index_globals` param as validated names: absent or null is none; anything but a list of
+/// strings, or a name `validate_index_globals` refuses, is the `INVALID_PARAMS` text.
+pub fn index_names_param(param: Option<&serde_json::Value>) -> Result<Vec<String>, String> {
+    let Some(v) = param.filter(|v| !v.is_null()) else {
+        return Ok(Vec::new());
+    };
+    let given: Vec<String> = v
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    if v.as_array().is_none_or(|a| a.len() != given.len()) {
+        return Err("index_globals is a list of global names".into());
+    }
+    validate_index_globals(&given)
+}
+
 fn plain_global(raw: &str) -> Result<String, String> {
     let shown = shown(raw);
     if let Ok(g) = normalize_global(raw) {

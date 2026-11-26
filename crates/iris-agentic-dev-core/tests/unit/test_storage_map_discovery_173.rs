@@ -277,3 +277,35 @@ fn test_discovery_173_the_data_map_is_not_an_index_map_and_a_caret_does_not_matt
     assert_eq!(cands[1].status, Status::AlreadyMapped);
     assert_eq!(cands[1].reason.as_deref(), Some("Ix"));
 }
+
+// ---------------------------------------------------------------------------
+// the index_globals param
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_discovery_173_index_names_param_is_none_for_absent_or_null_and_carets_the_names() {
+    use iris_agentic_dev_core::tools::storage_map::candidates::index_names_param;
+    assert_eq!(index_names_param(None).unwrap(), Vec::<String>::new());
+    assert_eq!(
+        index_names_param(Some(&json!(null))).unwrap(),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        index_names_param(Some(&json!(["A.x", "^B"]))).unwrap(),
+        strings(&["^A.x", "^B"])
+    );
+}
+
+#[test]
+fn test_discovery_173_index_names_param_refuses_what_is_not_a_list_of_global_names() {
+    use iris_agentic_dev_core::tools::storage_map::candidates::index_names_param;
+    for bad in [
+        json!("^A"),
+        json!([1]),
+        json!(["^A", 2]),
+        json!(["X\") Kill ^Y"]),
+        json!([""]),
+    ] {
+        assert!(index_names_param(Some(&bad)).is_err(), "{bad}");
+    }
+}
