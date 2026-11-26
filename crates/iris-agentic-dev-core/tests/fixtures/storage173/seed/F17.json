@@ -1,0 +1,328 @@
+{
+ "name": "F17",
+ "description": "class-compiled index CityIdx on City, NULL City",
+ "class": "IadSm173.F17",
+ "table": "IadSm173.F17",
+ "columns": [
+  "Name",
+  "City",
+  "Age",
+  "Born",
+  "Status"
+ ],
+ "master_global": "^IadSm173.F17D",
+ "index_globals": [
+  "^IadSm173.F17I"
+ ],
+ "rows": [
+  [
+   "Smith, Anna",
+   null,
+   118,
+   40000,
+   "A"
+  ],
+  [
+   "jones, bob",
+   "Boston",
+   131,
+   40037,
+   "B"
+  ],
+  [
+   "Lee  ",
+   "San Jose",
+   144,
+   40074,
+   "C"
+  ],
+  [
+   "O'Neil-Ray",
+   "Oslo",
+   157,
+   40111,
+   "A"
+  ],
+  [
+   "de la Cruz, Jo",
+   "Salt Lake",
+   170,
+   40148,
+   "B"
+  ],
+  [
+   "Zed2",
+   null,
+   183,
+   40185,
+   "C"
+  ],
+  [
+   "  Mc Kay, Al",
+   "San Jose",
+   126,
+   40222,
+   "A"
+  ],
+  [
+   "Brown, Cy",
+   "Paris",
+   139,
+   40259,
+   "B"
+  ],
+  [
+   "brown, cy",
+   "Salt Lake",
+   152,
+   40296,
+   "C"
+  ],
+  [
+   "Ng",
+   "Cork",
+   165,
+   40333,
+   "A"
+  ],
+  [
+   "Åberg, Eli",
+   null,
+   178,
+   40370,
+   "B"
+  ],
+  [
+   "Vu, Tran",
+   "Boston",
+   121,
+   40407,
+   "C"
+  ],
+  [
+   "Quinn, 3rd",
+   "Salt Lake",
+   134,
+   40444,
+   "A"
+  ],
+  [
+   "Hart,Ed",
+   "Oslo",
+   147,
+   40481,
+   "B"
+  ],
+  [
+   "xu",
+   "San Jose",
+   160,
+   40518,
+   "C"
+  ],
+  [
+   "Patel, Raj",
+   null,
+   173,
+   40555,
+   "A"
+  ],
+  [
+   "Moore, Kim ",
+   "Salt Lake",
+   186,
+   40592,
+   "B"
+  ],
+  [
+   "Diaz, Lu",
+   "Paris",
+   129,
+   40629,
+   "C"
+  ],
+  [
+   "Frost, Ann-Marie",
+   "San Jose",
+   142,
+   40666,
+   "A"
+  ],
+  [
+   "Gray, Sam",
+   "Cork",
+   155,
+   40703,
+   "B"
+  ],
+  [
+   "Smith, Anna20",
+   null,
+   168,
+   40740,
+   "C"
+  ],
+  [
+   "jones, bob21",
+   "Boston",
+   181,
+   40777,
+   "A"
+  ],
+  [
+   "Lee22",
+   "San Jose",
+   124,
+   40814,
+   "B"
+  ],
+  [
+   "O'Neil-Ray23",
+   "Oslo",
+   137,
+   40851,
+   "C"
+  ],
+  [
+   "de la Cruz, Jo24",
+   "Salt Lake",
+   150,
+   40888,
+   "A"
+  ],
+  [
+   "Zed225",
+   null,
+   163,
+   40925,
+   "B"
+  ],
+  [
+   "Mc Kay, Al26",
+   "San Jose",
+   176,
+   40962,
+   "C"
+  ],
+  [
+   "Brown, Cy27",
+   "Paris",
+   119,
+   40999,
+   "A"
+  ],
+  [
+   "brown, cy28",
+   "Salt Lake",
+   132,
+   41036,
+   "B"
+  ],
+  [
+   "Ng29",
+   "Cork",
+   145,
+   41073,
+   "C"
+  ],
+  [
+   "Åberg, Eli30",
+   null,
+   158,
+   41110,
+   "A"
+  ],
+  [
+   "Vu, Tran31",
+   "Boston",
+   171,
+   41147,
+   "B"
+  ],
+  [
+   "Quinn, 3rd32",
+   "Salt Lake",
+   184,
+   41184,
+   "C"
+  ],
+  [
+   "Hart,Ed33",
+   "Oslo",
+   127,
+   41221,
+   "A"
+  ],
+  [
+   "xu34",
+   "San Jose",
+   140,
+   41258,
+   "B"
+  ],
+  [
+   "Patel, Raj35",
+   null,
+   153,
+   41295,
+   "C"
+  ],
+  [
+   "Moore, Kim36",
+   "Salt Lake",
+   166,
+   41332,
+   "A"
+  ],
+  [
+   "Diaz, Lu37",
+   "Paris",
+   179,
+   41369,
+   "B"
+  ],
+  [
+   "Frost, Ann-Marie38",
+   "San Jose",
+   122,
+   41406,
+   "C"
+  ],
+  [
+   "Gray, Sam39",
+   "Cork",
+   135,
+   41443,
+   "A"
+  ]
+ ],
+ "answer": {
+  "index_global": "^IadSm173.F17I",
+  "id_positions": [
+   3
+  ],
+  "subscripts": [
+   {
+    "position": 2,
+    "field": "City",
+    "transform": "sqlupper"
+   }
+  ],
+  "null": {
+   "position": 2,
+   "field": "City",
+   "kind": "space",
+   "empty": "null",
+   "count": 8,
+   "sampled": 8
+  }
+ },
+ "master_columns": [
+  "",
+  "Name",
+  "City",
+  "Age",
+  "Born",
+  "Status"
+ ]
+}

@@ -1,0 +1,280 @@
+{
+ "name": "F12",
+ "description": "composite key (A, B), index (Name, A, B)",
+ "class": "IadSm173.F12",
+ "table": "IadSm173.F12",
+ "columns": [
+  "A",
+  "B",
+  "Name",
+  "City"
+ ],
+ "master_global": "^IadSm173F12",
+ "index_globals": [
+  "^IadSm173F12X"
+ ],
+ "rows": [
+  [
+   "x",
+   1,
+   "Smith, Anna",
+   "Lyon"
+  ],
+  [
+   "y",
+   2,
+   "jones, bob",
+   "Boston"
+  ],
+  [
+   "z",
+   3,
+   "Lee  ",
+   "Bern"
+  ],
+  [
+   "x",
+   4,
+   "O'Neil-Ray",
+   "Oslo"
+  ],
+  [
+   "y",
+   5,
+   "de la Cruz, Jo",
+   "boston"
+  ],
+  [
+   "z",
+   6,
+   "Zed2",
+   "Nice"
+  ],
+  [
+   "x",
+   7,
+   "  Mc Kay, Al",
+   "Rome"
+  ],
+  [
+   "y",
+   8,
+   "Brown, Cy",
+   "Paris"
+  ],
+  [
+   "z",
+   9,
+   "brown, cy",
+   "Kyiv"
+  ],
+  [
+   "x",
+   10,
+   "Ng",
+   "Cork"
+  ],
+  [
+   "y",
+   11,
+   "Åberg, Eli",
+   "Lyon"
+  ],
+  [
+   "z",
+   12,
+   "Vu, Tran",
+   "Boston"
+  ],
+  [
+   "x",
+   13,
+   "Quinn, 3rd",
+   "Bern"
+  ],
+  [
+   "y",
+   14,
+   "Hart,Ed",
+   "Oslo"
+  ],
+  [
+   "z",
+   15,
+   "xu",
+   "boston"
+  ],
+  [
+   "x",
+   16,
+   "Patel, Raj",
+   "Nice"
+  ],
+  [
+   "y",
+   17,
+   "Moore, Kim ",
+   "Rome"
+  ],
+  [
+   "z",
+   18,
+   "Diaz, Lu",
+   "Paris"
+  ],
+  [
+   "x",
+   19,
+   "Frost, Ann-Marie",
+   "Kyiv"
+  ],
+  [
+   "y",
+   20,
+   "Gray, Sam",
+   "Cork"
+  ],
+  [
+   "z",
+   21,
+   "Smith, Anna20",
+   "Lyon"
+  ],
+  [
+   "x",
+   22,
+   "jones, bob21",
+   "Boston"
+  ],
+  [
+   "y",
+   23,
+   "Lee22",
+   "Bern"
+  ],
+  [
+   "z",
+   24,
+   "O'Neil-Ray23",
+   "Oslo"
+  ],
+  [
+   "x",
+   25,
+   "de la Cruz, Jo24",
+   "boston"
+  ],
+  [
+   "y",
+   26,
+   "Zed225",
+   "Nice"
+  ],
+  [
+   "z",
+   27,
+   "Mc Kay, Al26",
+   "Rome"
+  ],
+  [
+   "x",
+   28,
+   "Brown, Cy27",
+   "Paris"
+  ],
+  [
+   "y",
+   29,
+   "brown, cy28",
+   "Kyiv"
+  ],
+  [
+   "z",
+   30,
+   "Ng29",
+   "Cork"
+  ],
+  [
+   "x",
+   31,
+   "Åberg, Eli30",
+   "Lyon"
+  ],
+  [
+   "y",
+   32,
+   "Vu, Tran31",
+   "Boston"
+  ],
+  [
+   "z",
+   33,
+   "Quinn, 3rd32",
+   "Bern"
+  ],
+  [
+   "x",
+   34,
+   "Hart,Ed33",
+   "Oslo"
+  ],
+  [
+   "y",
+   35,
+   "xu34",
+   "boston"
+  ],
+  [
+   "z",
+   36,
+   "Patel, Raj35",
+   "Nice"
+  ],
+  [
+   "x",
+   37,
+   "Moore, Kim36",
+   "Rome"
+  ],
+  [
+   "y",
+   38,
+   "Diaz, Lu37",
+   "Paris"
+  ],
+  [
+   "z",
+   39,
+   "Frost, Ann-Marie38",
+   "Kyiv"
+  ],
+  [
+   "x",
+   40,
+   "Gray, Sam39",
+   "Cork"
+  ]
+ ],
+ "answer": {
+  "index_global": "^IadSm173F12X",
+  "id_positions": [
+   2,
+   3
+  ],
+  "subscripts": [
+   {
+    "position": 1,
+    "field": "Name",
+    "transform": "sqlupper"
+   }
+  ]
+ },
+ "master_columns": [
+  "Name",
+  "City"
+ ],
+ "key_map": {
+  "A": "Key1",
+  "B": "ID"
+ }
+}

@@ -147,6 +147,7 @@ For {{
   Set v=$Get(@n)
   If v=$c(0) {{ Set s="<c0>" }}
   ElseIf '(v?.E1C.E) {{ Set s=v }}
+  ElseIf $ListValid(v)&&($ListLength(v)>0) {{ Set s="<list:" For q=1:1:$ListLength(v) {{ Set s=s_$ListGet(v,q)_"|" }} Set s=$Extract(s,1,*-1)_">" }}
   Else {{ Set s="<bits:",p=0 For {{ Set p=$BitFind(v,1,p+1) Quit:'p  Set s=s_p_"," }} Set s=$Extract(s,1,*-1)_">" }}
   Write ref,"=",s,!
 }}
@@ -352,6 +353,20 @@ impl Fixture {
             .collect()
     }
 
+    /// The columns the master's pieces hold, in piece order, so piece `n` is `Field<n>` in the
+    /// master draft. The seed's `master_columns`, else its `columns`.
+    pub fn master_columns(&self) -> Vec<String> {
+        let list = self
+            .seed
+            .get("master_columns")
+            .unwrap_or(&self.seed["columns"]);
+        list.as_array()
+            .unwrap_or_else(|| panic!("{}: no columns", self.name))
+            .iter()
+            .filter_map(|c| c.as_str().map(str::to_string))
+            .collect()
+    }
+
     pub fn columns(&self) -> Vec<String> {
         self.seed["columns"]
             .as_array()
@@ -398,6 +413,11 @@ Write "DROPPED"
     );
     let out = exec(r, &code).await;
     assert!(out.contains("DROPPED"), "{}: {out}", f.name);
+    // An index global whose name does not begin with the master's (a class-compiled index) is
+    // killed by name.
+    for g in f.globals() {
+        exec(r, &format!("Kill {g}")).await;
+    }
     let _ = r
         .call(
             "iris_doc",
