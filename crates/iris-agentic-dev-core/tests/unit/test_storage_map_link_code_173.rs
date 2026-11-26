@@ -145,3 +145,18 @@ fn a_field_table_entry_per_master_field() {
     assert!(code.contains("Set fa(4)=$ListBuild(\"EV\",94,4)"), "{code}");
     assert!(build_code(&request("^X", &[], &[])).is_err());
 }
+
+#[test]
+fn the_linker_scores_the_same_number_of_positions_the_rust_side_names() {
+    use iris_agentic_dev_core::tools::storage_map::link::MAX_EXAMINED;
+    let f = fields();
+    let code = build_code(&request("^IadSm173PersonX", &[], &f)).unwrap();
+    assert!(
+        code.contains(&format!("(npos<{MAX_EXAMINED})")),
+        "the ObjectScript cap and MAX_EXAMINED disagree: {code}"
+    );
+    assert!(
+        code.contains("o.depth=bestd"),
+        "the sample line reports the depth: {code}"
+    );
+}

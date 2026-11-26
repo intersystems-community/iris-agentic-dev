@@ -86,7 +86,7 @@ Master is `^IadSm173Person(id) = Name^City^Age^Born^Status` unless stated; each 
 | F36 | same class with the index already mapped                                                           | `already_mapped` naming the map                                             |
 | F37 | typing columns: integer, decimal, date-like, text                                                  | `%Integer`, `%Numeric` scale 2, date guess with fit count, `%String` MAXLEN |
 | F38 | 1,200 rows, two index globals over Name and City                                                   | both `inferred`, whole call under 5 s (SC-005)                              |
-| F39 | index with 7 subscripts (City, Age, Status, Born, Name, two key parts)                             | first 6 examined, the rest named in `not_inferred`                          |
+| F39 | index with seven field subscripts (City, Age, Status, Born, Name, SQLUPPER and ALPHAUP of Name) and `{ID}` | first 6 examined, the 7th named in `not_inferred`                    |
 | F40 | index over Age holding numbers `34` and a few strings `"34"`, stored as written                    | Age exact, compared as stored, no `not_explained`                           |
 | F41 | non-ASCII names under `$$SQLUPPER`                                                                 | Name, sqlupper (the server's function decides case)                         |
 | F42 | two index globals over City                                                                        | two drafts with different map names, both `inferred`                        |
@@ -318,11 +318,11 @@ in a scratch copy and returns a known row through an indexed query.
       names its computed position. Prove: `U test_storage_map_link_173` and the 172 golden test
       (`U test_storage_map_golden_172`, which must change only by the added key; regenerate with
       `IAD_REGEN_GOLDEN=1` and check the diff is additive).
-- [ ] T036 [US3] The sampling claim: assert in `test_storage_map_verdicts_173_live.rs` that no answer key contains
+- [x] T036 [US3] The sampling claim: assert in `test_storage_map_verdicts_173_live.rs` that no answer key contains
       "unique", "cardinality" or "distinct count" except `distinct_first_values`. Prove:
       `L test_storage_map_verdicts_173_live`.
 
-- [ ] T037 [US3] Edge-case fixtures F38 to F43 (catalogue). Test first in `tests/integration/test_storage_map_verdicts_173_live.rs`:
+- [x] T037 [US3] Edge-case fixtures F38 to F43 (catalogue). Test first in `tests/integration/test_storage_map_verdicts_173_live.rs`:
       F39 examines six subscripts and `not_inferred` names the seventh; F40 compares `34` and `"34"` as stored and
       reports Age exact with no `not_explained`; F41 returns Name, sqlupper for non-ASCII names; F42 returns two drafts
       whose map names differ (FR-015); F43 links the candidate as an index candidate without merging it with the other

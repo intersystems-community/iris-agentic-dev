@@ -1,4 +1,4 @@
-{"t":"sample","nodes":30,"distinct_first":10,"usable":30,"stopped":"none"}
+{"t":"sample","nodes":30,"distinct_first":10,"usable":30,"stopped":"none","depth":3}
 {"t":"id","form":"subscript","positions":[3],"resolved":30,"total":30}
 {"t":"id","form":"subscript","positions":[2],"resolved":0,"total":30}
 {"t":"id","form":"subscript","positions":[1],"resolved":0,"total":30}

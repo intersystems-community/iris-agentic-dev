@@ -417,7 +417,12 @@ pub struct SampleLine {
     pub distinct_first: u32,
     pub usable: u32,
     pub stopped: Stopped,
+    /// How many subscripts the index nodes read have (0 when the linker did not say).
+    pub depth: u32,
 }
+
+/// Index subscript positions that get a score; the rest are named as not examined.
+pub const MAX_EXAMINED: usize = 6;
 
 /// One way the row ID was tried: `positions` is the run of subscripts (empty for `value`),
 /// `resolved` of `total` nodes found a master row.
@@ -504,6 +509,8 @@ enum Line {
         distinct_first: u32,
         usable: u32,
         stopped: Stopped,
+        #[serde(default)]
+        depth: u32,
     },
     Id {
         form: IdForm,
@@ -595,6 +602,7 @@ pub fn parse_link_output(out: &str) -> Result<LinkReport, String> {
                 distinct_first,
                 usable,
                 stopped,
+                depth,
             } => {
                 within("usable nodes", usable, nodes)?;
                 let line = SampleLine {
@@ -602,6 +610,7 @@ pub fn parse_link_output(out: &str) -> Result<LinkReport, String> {
                     distinct_first,
                     usable,
                     stopped,
+                    depth,
                 };
                 if sample.replace(line).is_some() {
                     return Err("the linker wrote two sample lines".into());
@@ -846,10 +855,24 @@ pub fn assemble(global: &str, map: &str, report: &LinkReport) -> Assembled {
             id,
             subscripts,
             data_in_value: covering_data(report),
+            unexamined: unexamined_positions(report),
         },
         id_agreement,
         judgements,
     }
+}
+
+/// Subscript positions that are not the row ID and got no score line: the ones past the sixth. Empty
+/// when the linker did not say how deep the index is, or no node was usable.
+fn unexamined_positions(report: &LinkReport) -> Vec<u32> {
+    let depth = report.sample.depth;
+    let Some(id) = report.ids.first().filter(|_| report.sample.usable > 0) else {
+        return Vec::new();
+    };
+    (1..=depth)
+        .filter(|p| !id.positions.contains(p))
+        .filter(|p| !report.positions.iter().any(|l| l.position == *p))
+        .collect()
 }
 
 /// The `$LIST` elements of the node value that hold a master field on at least 95% of the usable
@@ -970,6 +993,9 @@ pub fn link_json(a: &Assembled, master: &MasterView, report: &LinkReport) -> Val
         "verdict": a.link.verdict.as_str(),
         "not_explained": not_explained,
     });
+    if !a.link.unexamined.is_empty() {
+        item["unexamined_positions"] = json!(a.link.unexamined);
+    }
     if let Some((count, share)) = orphan_nodes(a, report) {
         item["orphan_nodes"] = json!({"count": count, "share": rounded(share)});
     }
@@ -1077,6 +1103,8 @@ pub struct Link {
     pub id: IdLink,
     pub subscripts: Vec<SubscriptLink>,
     pub data_in_value: Vec<DataInValue>,
+    /// Non-ID subscript positions past the sixth, which were not scored.
+    pub unexamined: Vec<u32>,
 }
 
 pub(super) fn master_field(master: &MasterView, field: u32) -> Result<&str, String> {

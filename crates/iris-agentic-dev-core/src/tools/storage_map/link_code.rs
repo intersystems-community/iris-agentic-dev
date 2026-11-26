@@ -22,7 +22,7 @@
 //! for the name-piece forms and null otherwise.
 //!
 //! ```text
-//! {"t":"sample","nodes":40,"distinct_first":38,"usable":40,"stopped":"none"}
+//! {"t":"sample","nodes":40,"distinct_first":38,"usable":40,"stopped":"none","depth":2}
 //! {"t":"id","form":"subscript","positions":[2],"resolved":40,"total":40}
 //! {"t":"id","form":"value","positions":[],"resolved":0,"total":40}
 //! {"t":"pos","position":1,"total":40,"distinct":38,"scores":[
@@ -37,7 +37,9 @@
 //!
 //! - `sample`: nodes read, distinct first-subscript values seen, nodes whose ID resolved to a
 //!   master row (`usable`), and why the walk stopped (`none`, `nodes` for the node cap, `time` for
-//!   the time cap, `count_cap` when the counting pass reached its cap).
+//!   the time cap, `count_cap` when the counting pass reached its cap), and `depth`, how many
+//!   subscripts the index nodes read have. At most six non-ID positions get a `pos` line; the rest
+//!   are named as not examined.
 //! - `id`: one line per way the row ID was tried, best first. `resolved` counts nodes whose ID
 //!   found a master row. Form `subscript` names the run of `k` positions holding the key (k = 1
 //!   for a single key part); form `value` reads the ID from the node value.
@@ -314,7 +316,7 @@ const LINK_BODY: &str = r#" Set tot=0,bestd=0,bestn=0
    If bw=0 { Set mr=$Name(@mst@($Get(@ln(i)))) } Else { Set mr=mst For q=0:1:kp-1 { Set mr=$Name(@mr@(sb(i,bw+q))) } }
    Set mrow(i)=mr } } }
  Set npos=0
- If nu>0 { For p=1:1:bestd { If (bw=0)||'((p>=bw)&&(p<(bw+kp))) { Set npos=npos+1,pp(npos)=p } } }
+ If nu>0 { For p=1:1:bestd { If (npos<6)&&((bw=0)||'((p>=bw)&&(p<(bw+kp)))) { Set npos=npos+1,pp(npos)=p } } }
  Merge w2=way
  For { Set st="",bs=-1,br=-1 For { Set st=$Order(w2(st)) Quit:st=""  If w2(st)>=br { Set br=w2(st),bs=st } } Quit:bs<0
    Set o={},o.t="id",pa=[]
@@ -378,5 +380,5 @@ const LINK_BODY: &str = r#" Set tot=0,bestd=0,bestn=0
    Set bj=0,bn=0,j="" For { Set j=$Order(cv(e,j)) Quit:j=""  If cv(e,j)>bn { Set bn=cv(e,j),bj=j } }
    If bj>0 { Set o={},o.t="data",o.field=bj,o.element=e,o.matches=bn,o.total=nu,ol=ol+1,ob(ol)=o } }
  If ($ZH-t0)>secs { Set stopped="time" }
- Set o={},o.t="sample",o.nodes=nn,o."distinct_first"=distinct,o.usable=nu,o.stopped=stopped,ob(0)=o
+ Set o={},o.t="sample",o.nodes=nn,o."distinct_first"=distinct,o.usable=nu,o.stopped=stopped,o.depth=bestd,ob(0)=o
 "#;

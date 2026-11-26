@@ -194,6 +194,16 @@ async fn index_item(
             ),
         ));
     }
+    for p in &a.link.unexamined {
+        details.push(detail(
+            format!("{} position {p} was not examined", c.label()),
+            format!(
+                "an index is examined up to {} subscripts besides the row ID, and this one has \
+                 more (the first six are scored, the rest are left to you)",
+                super::link::MAX_EXAMINED
+            ),
+        ));
+    }
     for sub in &a.link.subscripts {
         if let Some(m) = &sub.null_marker {
             if m.expression().is_err() {

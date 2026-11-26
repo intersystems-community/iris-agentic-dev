@@ -1,4 +1,4 @@
-{"t":"sample","nodes":5,"distinct_first":5,"usable":5,"stopped":"none"}
+{"t":"sample","nodes":5,"distinct_first":5,"usable":5,"stopped":"none","depth":2}
 {"t":"id","form":"subscript","positions":[2],"resolved":5,"total":5}
 {"t":"id","form":"subscript","positions":[1],"resolved":0,"total":5}
 {"t":"pos","position":1,"total":5,"distinct":5,"scores":[{"field":1,"transform":"sqlupper","length":null,"piece":null,"matches":5},{"field":1,"transform":"string","length":null,"piece":null,"matches":1}]}

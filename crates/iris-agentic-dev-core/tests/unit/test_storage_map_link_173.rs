@@ -509,6 +509,7 @@ fn f02_link() -> Link {
             null_marker: None,
         }],
         data_in_value: vec![],
+        unexamined: vec![],
     }
 }
 
@@ -893,4 +894,44 @@ fn what_the_call_did_not_examine_or_explain_joins_both_lists_as_one_item() {
     );
     assert!(details.contains(&extra[0]), "{details:?}");
     same_items(&strings, &details);
+}
+
+// ── the six-subscript cap (T037) ───────────────────────────────────────────
+
+#[test]
+fn positions_past_the_sixth_have_no_score_line_and_are_named_unexamined() {
+    use iris_agentic_dev_core::tools::storage_map::link::assemble;
+    // An 8-subscript index, the row ID last: six scored positions (1 to 6), position 7 left out.
+    let mut lines = vec![
+        r#"{"t":"sample","nodes":40,"distinct_first":10,"usable":40,"stopped":"none","depth":8}"#
+            .to_string(),
+        r#"{"t":"id","form":"subscript","positions":[8],"resolved":40,"total":40}"#.to_string(),
+    ];
+    for p in 1..=6 {
+        lines.push(format!(
+            r#"{{"t":"pos","position":{p},"total":40,"distinct":10,"scores":[{{"field":1,"transform":"exact","length":null,"piece":null,"matches":40}}]}}"#
+        ));
+    }
+    lines.push(r#"{"t":"done"}"#.to_string());
+    let report = parse_link_output(&lines.join("\n")).unwrap();
+    assert_eq!(report.sample.depth, 8);
+    let a = assemble("^G", "X", &report);
+    assert_eq!(a.link.unexamined, vec![7]);
+    assert_eq!(a.link.subscripts.len(), 6);
+}
+
+#[test]
+fn a_sample_line_without_a_depth_names_nothing_unexamined() {
+    use iris_agentic_dev_core::tools::storage_map::link::assemble;
+    let text = concat!(
+        r#"{"t":"sample","nodes":40,"distinct_first":10,"usable":40,"stopped":"none"}"#,
+        "\n",
+        r#"{"t":"id","form":"subscript","positions":[2],"resolved":40,"total":40}"#,
+        "\n",
+        r#"{"t":"done"}"#,
+        "\n"
+    );
+    let report = parse_link_output(text).unwrap();
+    assert_eq!(report.sample.depth, 0);
+    assert!(assemble("^G", "X", &report).link.unexamined.is_empty());
 }

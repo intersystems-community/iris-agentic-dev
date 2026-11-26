@@ -280,6 +280,7 @@ mod verify {
                 null_marker: None,
             }],
             data_in_value: vec![],
+            unexamined: vec![],
         }
     }
 
