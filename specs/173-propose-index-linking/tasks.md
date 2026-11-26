@@ -264,7 +264,7 @@ in a scratch copy and returns a known row through an indexed query.
       JSON lines out as in data-model.md. Wire `propose_action` in `mod.rs`: after the master draft, for each
       `index_globals` entry run `link_code::build_code` through `execute_via_generator_prefixed(…, "IrisDevSm")`, parse,
       and add `indexes` to the answer. Prove: `L test_storage_map_link_173_live` green for F01 to F10.
-- [ ] T028 [US1] Draft and verify: for each `inferred` link call `link::draft_index_map`, run it through `model::validate`
+- [X] T028 [US1] Draft and verify: for each `inferred` link call `link::draft_index_map`, run it through `model::validate`
       and the no-IRIS write checks (FR-014), then verify it in a scratch copy: compile the master class text with the
       draft added through `compile_scratch_class` and query for a known row by the indexed field
       (`verified {compiled, row_found}`); a failed verification demotes the draft to `not_inferred_detail` with the

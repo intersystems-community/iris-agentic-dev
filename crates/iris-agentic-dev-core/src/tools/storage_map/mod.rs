@@ -7,6 +7,7 @@ pub mod globals;
 pub mod link;
 pub mod link_code;
 pub mod link_run;
+pub mod link_verify;
 pub mod master;
 pub mod model;
 pub mod path;
@@ -1048,6 +1049,7 @@ async fn propose_action(
             client: cx.client.as_ref(),
             ns: &ns,
             master: &spec,
+            master_map: &draft,
             node_cap,
             policy: &t.primary.effective,
             server: &t.primary.key,

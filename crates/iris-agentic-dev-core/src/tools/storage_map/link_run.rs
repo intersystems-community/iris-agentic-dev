@@ -10,6 +10,7 @@ use super::link::{
     MasterView, Stopped, Verdict,
 };
 use super::link_code::{build_code, field_access, Caps, FieldAccess, LinkRequest};
+use super::link_verify::verify;
 use super::master::MasterSpec;
 use crate::iris::connection::IrisConnection;
 use crate::policy::effective::EffectivePolicy;
@@ -31,6 +32,8 @@ pub struct Run<'a> {
     pub client: &'a reqwest::Client,
     pub ns: &'a str,
     pub master: &'a MasterSpec,
+    /// The master draft in model JSON, for the scratch copy that verifies an index map.
+    pub master_map: &'a Value,
     pub node_cap: u32,
     pub policy: &'a EffectivePolicy,
     pub server: &'a str,
@@ -113,7 +116,7 @@ pub async fn link_all(run: &Run<'_>, names: &[String]) -> Linked {
         let name = map_name(&c.global, &taken);
         taken.push(name.clone());
         let assembled = assemble(&c.global, &name, &report);
-        indexes.push(index_item(c, &assembled, &view, &report, &mut details));
+        indexes.push(index_item(run, c, &assembled, &view, &report, &mut details).await);
     }
     let not_examined: Vec<String> = candidates
         .iter()
@@ -158,7 +161,8 @@ async fn run_one(
 }
 
 /// The `indexes` item: the link's keys, its drafted map when it has one, and the guesses.
-fn index_item(
+async fn index_item(
+    run: &Run<'_>,
     c: &Candidate,
     a: &Assembled,
     view: &MasterView,
@@ -180,8 +184,30 @@ fn index_item(
     if matches!(a.link.verdict, Verdict::Inferred | Verdict::Ambiguous) {
         match draft_index_map(&a.link, view) {
             Ok((map, guesses)) => {
-                item["map"] = map;
-                item["guesses"] = json!(guesses);
+                let v = verify(
+                    run.conn,
+                    run.client,
+                    run.ns,
+                    run.master,
+                    run.master_map,
+                    &map,
+                    &a.link,
+                    view,
+                )
+                .await;
+                item["verified"] = v.to_json();
+                if v.compiled && v.row_found {
+                    item["map"] = map;
+                    item["guesses"] = json!(guesses);
+                } else {
+                    details.push(detail(
+                        format!("{} has no drafted map", c.label()),
+                        format!(
+                            "the draft did not verify in a scratch copy: {}",
+                            v.detail.as_deref().unwrap_or("no reason given")
+                        ),
+                    ));
+                }
             }
             Err(why) => details.push(detail(format!("{} has no drafted map", c.label()), why)),
         }

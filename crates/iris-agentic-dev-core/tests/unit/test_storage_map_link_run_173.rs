@@ -223,3 +223,160 @@ fn an_index_global_meets_the_gates_the_master_does() {
     assert_eq!(phi["error_code"], "PHI_GATE_BLOCKED");
     assert!(check_index_global("^PAPMIIdx", &policy, "default", true).is_none());
 }
+
+// ── link_verify (the parts that need no IRIS) ──────────────────────────────
+
+mod verify {
+    use iris_agentic_dev_core::tools::storage_map::link::{
+        IdForm, IdLink, Link, MasterView, PositionScore, SubscriptLink, Transform, Verdict,
+    };
+    use iris_agentic_dev_core::tools::storage_map::link_verify::{
+        class_text, count_query, indexed_field,
+    };
+    use iris_agentic_dev_core::tools::storage_map::master::{MasterField, MasterSpec};
+    use iris_agentic_dev_core::tools::storage_map::write::scratch_probe;
+    use serde_json::json;
+
+    fn link(transform: Transform, length: Option<u32>, piece: Option<u8>) -> Link {
+        Link {
+            global: "^G".into(),
+            map_name: "X".into(),
+            verdict: Verdict::Inferred,
+            id: IdLink {
+                form: IdForm::Subscript,
+                positions: vec![2],
+            },
+            subscripts: vec![SubscriptLink {
+                position: 1,
+                verdict: Verdict::Inferred,
+                pick: Some(PositionScore {
+                    field: 2,
+                    transform,
+                    length,
+                    piece,
+                    matches: 40,
+                    total: 40,
+                }),
+                alternatives: vec![],
+            }],
+            data_in_value: vec![],
+        }
+    }
+
+    fn view() -> MasterView {
+        MasterView {
+            global: "^M".into(),
+            field_names: vec!["Field1".into(), "Field2".into()],
+            key_names: vec!["ID".into()],
+        }
+    }
+
+    #[test]
+    fn the_indexed_property_carries_the_collation_the_link_found() {
+        let cases = [
+            (Transform::SqlUpper, None, None, None),
+            (
+                Transform::SqlString,
+                None,
+                None,
+                Some("COLLATION = \"SQLSTRING\""),
+            ),
+            (Transform::Exact, None, None, Some("COLLATION = \"EXACT\"")),
+            (
+                Transform::Truncate,
+                Some(3),
+                None,
+                Some("COLLATION = \"TRUNCATE(3)\""),
+            ),
+            (
+                Transform::SqlUpper,
+                Some(4),
+                None,
+                Some("COLLATION = \"SQLUPPER(4)\""),
+            ),
+        ];
+        for (t, len, piece, want) in cases {
+            let i = indexed_field(&link(t, len, piece), &view()).unwrap();
+            assert_eq!(i.field, "Field2", "{t:?}");
+            assert_eq!(i.collation.as_deref(), want, "{t:?}");
+        }
+    }
+
+    #[test]
+    fn a_piece_form_has_no_collation_and_says_the_query_read_the_master() {
+        let i = indexed_field(&link(Transform::SqlUpper, None, Some(1)), &view()).unwrap();
+        assert_eq!(i.collation, None);
+        assert!(i.note.unwrap().contains("read the master"));
+    }
+
+    #[test]
+    fn a_link_with_no_explained_subscript_has_nothing_to_verify() {
+        let mut l = link(Transform::Exact, None, None);
+        l.subscripts[0].pick = None;
+        assert!(indexed_field(&l, &view()).is_err());
+        let mut l = link(Transform::Exact, None, None);
+        l.subscripts[0].pick.as_mut().unwrap().field = 7;
+        assert!(indexed_field(&l, &view()).is_err());
+    }
+
+    fn spec() -> MasterSpec {
+        let field = |i: u32| MasterField {
+            name: format!("Field{i}"),
+            placeholder: format!("Field{i}"),
+            node: None,
+            delimiter: Some("\"^\"".into()),
+            piece: Some(i.to_string()),
+            format: "delimited".into(),
+            guessed: true,
+        };
+        MasterSpec {
+            global: "^M".into(),
+            class: None,
+            map_name: "Master".into(),
+            subscripts: vec!["{ID}".into()],
+            key_names: vec!["ID".into()],
+            row_id: vec![],
+            fields: vec![field(1), field(2)],
+        }
+    }
+
+    #[test]
+    fn the_scratch_class_has_every_property_both_maps_and_passes_the_compile_time_gate() {
+        let master_map = json!({"name": "Master", "type": "data", "global": "^M",
+            "subscripts": [{"level": 1, "expression": "{ID}"}],
+            "data": {"Field1": {"name": "Field1", "delimiter": "\"^\"", "piece": "1"},
+                     "Field2": {"name": "Field2", "delimiter": "\"^\"", "piece": "2"}}});
+        let index_map = json!({"name": "X", "type": "index", "global": "^MX",
+            "subscripts": [{"level": 1, "expression": "$$SQLSTRING({Field2})"},
+                           {"level": 2, "expression": "{ID}"}]});
+        let l = link(Transform::SqlString, None, None);
+        let indexed = indexed_field(&l, &view()).unwrap();
+        let (text, nodes) = class_text(&spec(), &master_map, &index_map, &indexed).unwrap();
+        assert!(text.contains("Property Field1 As %String;"), "{text}");
+        assert!(
+            text.contains("Property Field2 As %String(COLLATION = \"SQLSTRING\");"),
+            "{text}"
+        );
+        assert!(text.contains("<SQLMap name=\"Master\">"), "{text}");
+        assert!(
+            text.contains("<Expression>$$SQLSTRING({Field2})</Expression>"),
+            "{text}"
+        );
+        assert!(text.contains("<Type>index</Type>"), "{text}");
+        assert!(text.trim_end().ends_with('}'), "{text}");
+        scratch_probe(&text, &nodes).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    }
+
+    #[test]
+    fn the_question_counts_rows_and_returns_no_value() {
+        let q = count_query("IrisDevTmp.SmAbc", "Field1");
+        assert!(
+            q.starts_with("SELECT COUNT(*) AS n FROM IrisDevTmp.SmAbc WHERE Field1 = "),
+            "{q}"
+        );
+        assert!(
+            q.contains("SELECT TOP 1 Field1 FROM IrisDevTmp.SmAbc ORDER BY %ID"),
+            "{q}"
+        );
+    }
+}
