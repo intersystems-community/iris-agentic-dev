@@ -51,7 +51,7 @@ pub fn chunk_map_draft(
             "the constant first subscript must be a number or a quoted string, not {constant:?}"
         ));
     }
-    if !is_name(key) {
+    if !super::master::is_valid_property_name(key) {
         return Err(format!("{key:?} is not a usable row-ID name"));
     }
     let map = json!({
@@ -96,13 +96,4 @@ fn is_literal(s: &str) -> bool {
         && whole.bytes().all(|b| b.is_ascii_digit())
         && !frac.is_empty()
         && frac.bytes().all(|b| b.is_ascii_digit())
-}
-
-/// A letter or `%` first, then letters and digits.
-fn is_name(s: &str) -> bool {
-    let mut chars = s.chars();
-    chars
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '%')
-        && chars.all(|c| c.is_ascii_alphanumeric())
 }

@@ -199,7 +199,7 @@ Signatures come from `data-model.md`.
       end `{A}`, `{B}`), for the value form (`Data name="Id"`, RowIdSpec `{Id}`), and for a covering link (Data
       entries per covered field); each draft passes `model::validate` and lists its guessed paths. Implement it.
       Prove: `U test_storage_map_link_173`.
-- [ ] T020 [P] Test first, `tests/unit/test_storage_map_master_173.rs` (+ `mod`): `MasterSpec::from_draft(&ShapeReport,
+- [x] T020 [P] Test first, `tests/unit/test_storage_map_master_173.rs` (+ `mod`): `MasterSpec::from_draft(&ShapeReport,
 &[String] field_names)` gives `Field1…n`, or the caller's names, and refuses a short list, a duplicate and a
       name that fails `master::is_valid_property_name` (new, in `master.rs`: a letter or `%` first, then letters and
       digits, at most 128 characters; no such validator exists yet, and `objectscript::validate_class_name` is for class
@@ -207,14 +207,14 @@ Signatures come from `data-model.md`.
       subscripts, RowIdSpec parts and Data fields from `tests/fixtures/storage172/classes/Copy.cls` (k = 3) and
       `Member.cls` (k = 1), refuses default storage, a columnar map and a class with no `data` master map with the
       reasons `read` gives. Implement `src/tools/storage_map/master.rs`. Prove: `U test_storage_map_master_173`.
-- [ ] T021 [P] Test first, `tests/unit/test_storage_map_candidates_173.rs` (+ `mod`): `from_sub_nodes(&ShapeReport)`
+- [x] T021 [P] Test first, `tests/unit/test_storage_map_candidates_173.rs` (+ `mod`): `from_sub_nodes(&ShapeReport)`
       returns each distinct literal first subscript that holds a sub-tree, `dedupe` removes a global named twice
       (parameter wins over `name_prefix`), `cap(candidates, 8)` keeps the first 8 and names the rest,
       `validate_index_globals(&[String])` refuses `X) Kill ^Y`, `^A("x")`, `A B`, an extended reference and more
       than 8 names with `INVALID_PARAMS` text, and `listing_code(master_name)` quotes the mask through `os_str_expr`
       (assert the generated text contains the quoted mask and no unquoted caller text). Implement the pure half of
       `src/tools/storage_map/candidates.rs`. Prove: `U test_storage_map_candidates_173`.
-- [ ] T022 [P] Test first, `tests/unit/test_storage_map_typing_173.rs` (+ `mod`): `property_type(evidence)` gives
+- [x] T022 [P] Test first, `tests/unit/test_storage_map_typing_173.rs` (+ `mod`): `property_type(evidence)` gives
       `%Integer` for 200 of 200 integers, `%Numeric` with scale 2 for decimals with at most 2 fraction digits,
       `date guess` only when ≥ 95% fit and reports the fit count, `%String(MAXLEN=n)` rounded up to the next of
       32, 64, 128, 255, 1024 from the longest seen; `collation_parameter(transform, length)` gives none for

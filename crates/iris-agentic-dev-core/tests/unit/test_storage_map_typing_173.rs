@@ -349,10 +349,10 @@ fn test_typing_173_class_source_holds_counts_and_names_and_no_sample() {
 #[test]
 fn test_typing_173_class_source_refuses_a_bad_class_or_property_name() {
     let ok = spec("A", evidence(1), None);
-    assert!(class_source("X.Y", &[ok.clone()]).is_ok());
+    assert!(class_source("X.Y", std::slice::from_ref(&ok)).is_ok());
     for bad in ["", "X Y", "X) Kill ^Z", "1X", "X..Y", "X.Y\nSet a=1"] {
         assert!(
-            class_source(bad, &[ok.clone()]).is_err(),
+            class_source(bad, std::slice::from_ref(&ok)).is_err(),
             "class {bad:?} must be refused"
         );
     }
