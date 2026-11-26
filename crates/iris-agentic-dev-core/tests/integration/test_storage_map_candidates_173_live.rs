@@ -302,7 +302,11 @@ async fn a_failed_listing_is_said_and_the_other_two_sources_still_link() {
     let listing = &out["index_candidates"];
     assert_eq!(listing["listing"], "unavailable", "{listing}");
     let why = listing["listing_reason"].as_str().unwrap_or_default();
-    assert!(why.contains("NoSuchClass"), "IRIS's own text: {listing}");
+    // IRIS's own words for the missing query, with the query's name in them.
+    assert!(
+        why.contains("does not exist") && why.contains("NoSuchClass:NoSuchQuery"),
+        "IRIS's own text: {listing}"
+    );
     // The explicit name and the in-master sub-tree are examined and linked.
     assert_eq!(candidate(&out, explicit, &[])["found_by"], "parameter");
     assert_eq!(candidate(&out, master, &["idx"])["found_by"], "sub_node");

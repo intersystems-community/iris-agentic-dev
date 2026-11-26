@@ -1,5 +1,6 @@
 pub mod bitmap;
 pub mod candidates;
+pub mod candidates_run;
 pub mod code;
 pub mod diagram;
 pub mod explain;
@@ -1036,15 +1037,11 @@ async fn propose_action(
         })
         .unwrap_or_default();
     let named = !field_names.is_empty();
-    let spec = if named || !index_names.is_empty() {
-        match master::MasterSpec::from_draft(&report, &field_names) {
-            Ok(spec) => Some(spec),
-            Err(refusal) => return fail(refusal.code, refusal.message, json!({})),
-        }
-    } else {
-        None
+    let spec = match master::MasterSpec::from_draft(&report, &field_names) {
+        Ok(spec) => spec,
+        Err(refusal) => return fail(refusal.code, refusal.message, json!({})),
     };
-    if let (true, Some(spec)) = (named, &spec) {
+    if named {
         spec.apply_names(&mut draft, &mut guesses);
     }
     let mut answer = json!({
@@ -1059,28 +1056,40 @@ async fn propose_action(
         "guesses": guesses,
         "draft_note": "a draft to check against real data: every name, delimiter and piece count is a guess from a sample",
     });
-    let mut examined: Vec<Value> = Vec::new();
-    if let (false, Some(spec)) = (index_names.is_empty(), &spec) {
-        let run = link_run::Run {
-            conn: &cx.conn,
-            client: cx.client.as_ref(),
-            ns: &ns,
-            master: spec,
-            master_map: &draft,
-            node_cap,
-            policy: &t.primary.effective,
-            server: &t.primary.key,
-            acknowledge_phi: shape.acknowledge_phi,
-            with_values: shape.include_values,
-        };
-        let linked = link_run::link_all(&run, &index_names).await;
-        answer["index_candidates"] = linked.index_candidates;
+    // The candidates: the names the caller gave, the sub-trees inside the master and the
+    // namespace's globals that begin with its name (FR-001, FR-002), then each one linked.
+    let found = candidates_run::discover(
+        &cx.conn,
+        cx.client.as_ref(),
+        &ns,
+        &global.name,
+        spec.subscripts.len() == 1,
+        &index_names,
+    )
+    .await;
+    let run = link_run::Run {
+        conn: &cx.conn,
+        client: cx.client.as_ref(),
+        ns: &ns,
+        master: &spec,
+        master_map: &draft,
+        node_cap,
+        policy: &t.primary.effective,
+        server: &t.primary.key,
+        acknowledge_phi: shape.acknowledge_phi,
+        with_values: shape.include_values,
+        existing_maps: &[],
+    };
+    let linked = link_run::link_candidates(&run, found).await;
+    let index_call = !linked.indexes.is_empty();
+    answer["index_candidates"] = linked.index_candidates;
+    if index_call {
         answer["indexes"] = Value::Array(linked.indexes);
-        answer["limits"] = linked.limits;
-        examined = linked.not_inferred_detail;
     }
+    answer["limits"] = linked.limits;
+    let examined = linked.not_inferred_detail;
     // The first item (field names are placeholders) no longer applies when the caller named them.
-    let (mut strings, mut details) = shape::not_inferred_lists(&examined, !index_names.is_empty());
+    let (mut strings, mut details) = shape::not_inferred_lists(&examined, index_call);
     if named {
         details.retain(|d| d["what"] != "field names");
         strings.retain(|s| !s.starts_with("field names"));

@@ -22,6 +22,17 @@
   "guesses": [
     "/maps/Master/subscripts"
   ],
+  "index_candidates": {
+    "candidates": [],
+    "listing": "ok",
+    "not_examined": [],
+    "sub_trees_not_looked_for": "looked for only when the master's row ID is its first subscript"
+  },
+  "limits": {
+    "node_cap": 200,
+    "stopped": [],
+    "time_cap_seconds": 5
+  },
   "model_version": 1,
   "namespace": "USER",
   "not_inferred": [

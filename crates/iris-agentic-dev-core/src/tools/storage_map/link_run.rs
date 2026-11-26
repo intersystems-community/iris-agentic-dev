@@ -3,7 +3,8 @@
 //! judge them, and draft the index map. The pure halves are `link.rs` (judging, drafting) and
 //! `link_code.rs` (the code); this is the part that talks to IRIS.
 
-use super::candidates::{Candidate, Status};
+use super::candidates::{cap_reason, prefix_levels, Candidate, Status, MAX_CANDIDATES};
+use super::candidates_run::Discovery;
 use super::globals::check_index_global;
 use super::link::{
     assemble, draft_index_map, link_json, map_name, parse_link_output, Assembled, LinkReport,
@@ -40,6 +41,9 @@ pub struct Run<'a> {
     pub acknowledge_phi: bool,
     /// `include_values` under the data policy: a discovered null marker's literal may be returned.
     pub with_values: bool,
+    /// Names of maps the class already has besides the master (class mode), so a drafted map
+    /// takes a name none of them has.
+    pub existing_maps: &'a [String],
 }
 
 /// The master as a draft names it, for spelling the map.
@@ -76,15 +80,45 @@ fn cap_name(s: Stopped) -> Option<&'static str> {
 
 /// Link each of `names` (carets on, checked by `validate_index_globals`) to the master.
 pub async fn link_all(run: &Run<'_>, names: &[String]) -> Linked {
-    let mut candidates = super::candidates::dedupe(super::candidates::from_parameter(names));
+    link_candidates(run, Discovery::explicit(names)).await
+}
+
+/// Link the candidates of `found`: the first [`MAX_CANDIDATES`] open to examination, each through
+/// the global gates first; the rest are named `not_examined` (FR-003). A candidate a class already
+/// maps (`already_mapped`) is neither linked nor counted against the cap.
+pub async fn link_candidates(run: &Run<'_>, found: Discovery) -> Linked {
+    let mut candidates = found.candidates.clone();
+    let mut open = 0;
+    for c in candidates
+        .iter_mut()
+        .filter(|c| c.status == Status::Examined)
+    {
+        open += 1;
+        if open > MAX_CANDIDATES {
+            c.status = Status::NotExamined;
+            c.reason = Some(cap_reason(MAX_CANDIDATES));
+        }
+    }
     let view = master_view(run.master);
-    let mut details = Vec::new();
+    let mut details = found.details.clone();
     let mut indexes = Vec::new();
     let mut stopped = Vec::new();
     let mut taken = vec![run.master.map_name.clone()];
+    taken.extend(run.existing_maps.iter().cloned());
     let fields: Result<Vec<FieldAccess>, String> =
         run.master.fields.iter().map(field_access).collect();
     for c in &mut candidates {
+        match c.status {
+            Status::Examined => {}
+            Status::NotExamined => {
+                details.push(detail(
+                    format!("{} was not examined", c.label()),
+                    c.reason.clone().unwrap_or_default(),
+                ));
+                continue;
+            }
+            Status::AlreadyMapped | Status::Refused => continue,
+        }
         let examined =
             match check_index_global(&c.global, run.policy, run.server, run.acknowledge_phi) {
                 Some(body) => Err((Status::Refused, refusal_text(&body))),
@@ -106,18 +140,26 @@ pub async fn link_all(run: &Run<'_>, names: &[String]) -> Linked {
         if let Some(cap) = cap_name(report.sample.stopped) {
             stopped.push(json!({"candidate": c.label(), "cap": cap}));
         }
-        let name = map_name(&c.global, &taken);
+        // A sub-tree's map is named for its literal (`idx` is `Idx`), not for the master.
+        let name_from = c
+            .sub_prefix
+            .last()
+            .map_or_else(|| c.global.clone(), |literal| format!("^{literal}"));
+        let name = map_name(&name_from, &taken);
         taken.push(name.clone());
         let assembled = assemble(&c.global, &name, &report);
         indexes.push(index_item(run, c, &assembled, &view, &report, &mut details).await);
     }
     let not_examined: Vec<String> = candidates
         .iter()
-        .filter(|c| c.status != Status::Examined)
+        .filter(|c| !matches!(c.status, Status::Examined | Status::AlreadyMapped))
         .map(Candidate::label)
         .collect();
+    let mut index_candidates = found.listing_json();
+    index_candidates["candidates"] = json!(candidates);
+    index_candidates["not_examined"] = json!(not_examined);
     Linked {
-        index_candidates: json!({"candidates": candidates, "not_examined": not_examined}),
+        index_candidates,
         indexes,
         limits: json!({
             "node_cap": run.node_cap,
@@ -207,7 +249,7 @@ async fn index_item(
         }
     }
     let drafted = if a.link.verdict.is_explained() {
-        draft_verified(run, a, view, &mut item).await
+        draft_verified(run, a, view, &c.sub_prefix, &mut item).await
     } else {
         Err(format!("the link is {}", a.link.verdict.as_str()))
     };
@@ -223,9 +265,12 @@ async fn draft_verified(
     run: &Run<'_>,
     a: &Assembled,
     view: &MasterView,
+    sub_prefix: &[String],
     item: &mut Value,
 ) -> Result<(), String> {
-    let (map, guesses) = draft_index_map(&a.link, view)?;
+    let (mut map, mut guesses) = draft_index_map(&a.link, view)?;
+    // A sub-tree's positions count after its literal first subscripts; the saved map starts with them.
+    prefix_levels(&mut map, &mut guesses, sub_prefix);
     let v = verify(
         run.conn,
         run.client,

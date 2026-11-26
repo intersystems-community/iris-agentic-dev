@@ -37,6 +37,16 @@
     "/maps/Master/data/Field2",
     "/maps/Master/data/Field3"
   ],
+  "index_candidates": {
+    "candidates": [],
+    "listing": "ok",
+    "not_examined": []
+  },
+  "limits": {
+    "node_cap": 200,
+    "stopped": [],
+    "time_cap_seconds": 5
+  },
   "model_version": 1,
   "namespace": "USER",
   "not_inferred": [
