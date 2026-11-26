@@ -1547,6 +1547,32 @@ impl IrisConnection {
         CompileResult,
         Option<anyhow::Result<serde_json::Value>>,
     )> {
+        let queries = query.map(|q| move |name: &str| vec![q(name)]);
+        let (name, result, answers) = self
+            .compile_scratch_class_queries(
+                source,
+                namespace,
+                client,
+                prefix,
+                queries
+                    .as_ref()
+                    .map(|q| q as &(dyn Fn(&str) -> Vec<String> + Sync)),
+            )
+            .await?;
+        Ok((name, result, answers.and_then(|a| a.into_iter().next())))
+    }
+
+    /// [`Self::compile_scratch_class_then`] with any number of queries (spec 173 `check` asks the
+    /// planner one question per index map and field prefix). Each query has its own time cap and its
+    /// own answer, in order; one that fails does not stop the next. The class is deleted afterwards.
+    pub async fn compile_scratch_class_queries(
+        &self,
+        source: impl FnOnce(&str) -> Result<String, String>,
+        namespace: &str,
+        client: &reqwest::Client,
+        prefix: &str,
+        queries: ScratchQueries<'_>,
+    ) -> anyhow::Result<ScratchOutcome> {
         if let Some((tool, from)) = crate::tools::target::call_read_only_source() {
             anyhow::bail!(
                 "READ_ONLY_STRICT (scratch-class compile): {tool} would compile a scratch class \
@@ -1630,20 +1656,26 @@ impl IrisConnection {
                     .await
             }
         };
-        let answer = match (&result, query) {
-            (Ok(compiled), Some(q)) if compiled.success() => Some(
-                // The time cap of a scan through a map (spec 172 FR-022): iad stops waiting;
-                // the class is deleted below either way.
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(SCRATCH_QUERY_SECS),
-                    self.query(&q(&class_name), vec![], namespace, client),
-                )
-                .await
-                {
-                    Ok(answer) => answer,
-                    Err(_) => Err(QueryTimedOut(SCRATCH_QUERY_SECS).into()),
-                },
-            ),
+        let answer = match (&result, queries) {
+            (Ok(compiled), Some(q)) if compiled.success() => {
+                let mut answers = Vec::new();
+                for sql in q(&class_name) {
+                    // The time cap of a scan through a map (spec 172 FR-022): iad stops waiting;
+                    // the class is deleted below either way.
+                    answers.push(
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(SCRATCH_QUERY_SECS),
+                            self.query(&sql, vec![], namespace, client),
+                        )
+                        .await
+                        {
+                            Ok(answer) => answer,
+                            Err(_) => Err(QueryTimedOut(SCRATCH_QUERY_SECS).into()),
+                        },
+                    );
+                }
+                Some(answers)
+            }
             _ => None,
         };
         scratch.release(self, client).await;
@@ -2978,6 +3010,17 @@ mod additional_tests {
 
 /// How long a query through a scratch class may run (spec 172 FR-022: `preview`'s time cap).
 pub const SCRATCH_QUERY_SECS: u64 = 10;
+
+/// The SQL a scratch class is asked, from its name: any number of statements, answered in order.
+pub type ScratchQueries<'a> = Option<&'a (dyn Fn(&str) -> Vec<String> + Sync)>;
+
+/// What [`IrisConnection::compile_scratch_class_queries`] answers: the class name, its compile
+/// result, and one answer per statement when it compiled.
+pub type ScratchOutcome = (
+    String,
+    CompileResult,
+    Option<Vec<anyhow::Result<serde_json::Value>>>,
+);
 
 /// A query through a scratch class that ran past [`SCRATCH_QUERY_SECS`].
 #[derive(Debug)]
