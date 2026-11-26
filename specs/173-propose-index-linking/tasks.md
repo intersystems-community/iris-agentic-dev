@@ -311,7 +311,7 @@ in a scratch copy and returns a known row through an indexed query.
 - [x] T034 [US3] Implement the remaining verdict paths in `link_code.rs` (ID tie-break to the last position, field
       preference over a one-value field, `constant`, the 0.9 ID floor, the 5% orphan rule for deleted rows with a
       reported share above it). Prove: `L test_storage_map_verdicts_173_live` green.
-- [ ] T035 [US3] `not_inferred` and `not_inferred_detail` per FR-028 and FR-032: update `shape::not_inferred()` to the new
+- [x] T035 [US3] `not_inferred` and `not_inferred_detail` per FR-028 and FR-032: update `shape::not_inferred()` to the new
       list (names what was not examined, not explained, computed subscripts, `COLLATE`, numeric collations, datatypes
       beyond four verdicts, conditions no rule explained, the ID counter) and add `not_inferred_detail`. Test first in
       `tests/unit/test_storage_map_link_173.rs`: every `not_inferred` string has a matching detail item; F33's call

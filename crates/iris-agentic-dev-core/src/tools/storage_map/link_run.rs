@@ -178,7 +178,8 @@ async fn index_item(
         details.push(detail(
             format!("{} position {}", c.label(), j.position),
             format!(
-                "no transform of the closed set reaches 0.95 here (best {}{best})",
+                "no transform of the closed set reaches 0.95 here (best {}{best}): a computed \
+                 subscript, or a form this tool does not draft",
                 (j.judgement.agreement * 10_000.0).round() / 10_000.0
             ),
         ));

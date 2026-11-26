@@ -304,20 +304,98 @@ pub fn compare_notes(map: &super::model::SqlMap, report: &ShapeReport) -> Compar
     }
 }
 
+/// One thing `propose` leaves to the caller: the line `not_inferred` carries, and the same item as
+/// `what` and `why` for `not_inferred_detail` (the line starts with `what`).
+type NotInferred = (&'static str, &'static str, &'static str);
+
+const NOT_INFERRED: [NotInferred; 7] = [
+    (
+        "field names (Field1, Field2, ... are placeholders; rename them to the class's properties)",
+        "field names",
+        "Field1, Field2, ... are placeholders; rename them to the class's properties",
+    ),
+    (
+        "datatypes (they belong to the class's properties, not the map)",
+        "datatypes",
+        "they belong to the class's properties, not the map",
+    ),
+    (
+        "collations (whether the class compares text case-sensitively)",
+        "collations",
+        "whether the class compares text case-sensitively",
+    ),
+    (
+        "index maps (an index global such as ^X.x is not linked to this map)",
+        "index maps",
+        "an index global such as ^X.x is not linked to this map unless it is named in index_globals",
+    ),
+    (
+        "conditions (a conditional map or an index that skips rows)",
+        "conditions",
+        "a conditional map or an index that skips rows",
+    ),
+    (
+        "computed subscripts (levels produced by code, such as a $BIT chunk)",
+        "computed subscripts",
+        "levels produced by code, such as a $BIT chunk",
+    ),
+    (
+        "the ID counter (SqlIdExpression) and any row ID built from several parts",
+        "the ID counter",
+        "SqlIdExpression is not read, and a row ID built from several parts is not inferred",
+    ),
+];
+
+/// What a call that links index globals adds (FR-032): what the data could mean and the tool does
+/// not draft.
+const NOT_INFERRED_INDEX: [NotInferred; 3] = [
+    (
+        "COLLATE (a subscript collated by %COLLATE is recognised and never drafted)",
+        "COLLATE",
+        "a subscript collated by %COLLATE is recognised and never drafted",
+    ),
+    (
+        "numeric collations (PLUS and MINUS are not map-expression functions, so a subscript they \
+         produce is not drafted)",
+        "numeric collations",
+        "PLUS and MINUS are not map-expression functions, so a subscript they produce is not drafted",
+    ),
+    (
+        "computed subscripts in an index (a subscript made by code, such as a date format, is \
+         reported as not explained and no code is guessed)",
+        "computed subscripts in an index",
+        "a subscript made by code, such as a date format, is reported as not explained and no code \
+         is guessed",
+    ),
+];
+
 /// What `propose` leaves to the caller, always returned so a draft is never read as complete.
 pub fn not_inferred() -> Vec<String> {
-    [
-        "field names (Field1, Field2, ... are placeholders; rename them to the class's properties)",
-        "datatypes (they belong to the class's properties, not the map)",
-        "collations (whether the class compares text case-sensitively)",
-        "index maps (an index global such as ^X.x is not linked to this map)",
-        "conditions (a conditional map or an index that skips rows)",
-        "computed subscripts (levels produced by code, such as a $BIT chunk)",
-        "the ID counter (SqlIdExpression) and any row ID built from several parts",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect()
+    NOT_INFERRED.iter().map(|i| i.0.to_string()).collect()
+}
+
+/// `not_inferred` (strings) and `not_inferred_detail` (`{what, why}`) for one call: the 172 list,
+/// then, when the call linked index globals, what FR-032 names, then `extra` (what this call did
+/// not examine or explain, each `{what, why}`, which also reads as `what (why)`). One list builds
+/// both, so every string has its detail item.
+pub fn not_inferred_lists(
+    extra: &[serde_json::Value],
+    index_call: bool,
+) -> (Vec<String>, Vec<serde_json::Value>) {
+    let fixed = NOT_INFERRED
+        .iter()
+        .chain(NOT_INFERRED_INDEX.iter().filter(|_| index_call));
+    let mut strings: Vec<String> = fixed.clone().map(|i| i.0.to_string()).collect();
+    let mut details: Vec<serde_json::Value> = fixed
+        .map(|i| serde_json::json!({"what": i.1, "why": i.2}))
+        .collect();
+    for item in extra {
+        let what = item["what"].as_str().unwrap_or_default();
+        let why = item["why"].as_str().unwrap_or_default();
+        strings.push(format!("{what} ({why})"));
+        details.push(item.clone());
+    }
+    (strings, details)
 }
 
 /// A first map for a global that has none (`propose`, US7): the depth that holds the most

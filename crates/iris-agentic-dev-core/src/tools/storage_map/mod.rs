@@ -1058,15 +1058,8 @@ async fn propose_action(
         "draft": draft,
         "guesses": guesses,
         "draft_note": "a draft to check against real data: every name, delimiter and piece count is a guess from a sample",
-        "not_inferred": shape::not_inferred(),
     });
-    if named {
-        // The names are the caller's, so the first item no longer applies.
-        answer["not_inferred"] = json!(shape::not_inferred()
-            .into_iter()
-            .filter(|n| !n.starts_with("field names"))
-            .collect::<Vec<_>>());
-    }
+    let mut examined: Vec<Value> = Vec::new();
     if let (false, Some(spec)) = (index_names.is_empty(), &spec) {
         let run = link_run::Run {
             conn: &cx.conn,
@@ -1084,8 +1077,16 @@ async fn propose_action(
         answer["index_candidates"] = linked.index_candidates;
         answer["indexes"] = Value::Array(linked.indexes);
         answer["limits"] = linked.limits;
-        answer["not_inferred_detail"] = Value::Array(linked.not_inferred_detail);
+        examined = linked.not_inferred_detail;
     }
+    // The first item (field names are placeholders) no longer applies when the caller named them.
+    let (mut strings, mut details) = shape::not_inferred_lists(&examined, !index_names.is_empty());
+    if named {
+        details.retain(|d| d["what"] != "field names");
+        strings.retain(|s| !s.starts_with("field names"));
+    }
+    answer["not_inferred"] = json!(strings);
+    answer["not_inferred_detail"] = Value::Array(details);
     crate::tools::exec::attach_identity(Ok(CallToolResult::structured(answer)), &cx.helper_report())
 }
 
