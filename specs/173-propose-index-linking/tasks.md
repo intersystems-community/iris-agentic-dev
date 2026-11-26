@@ -468,17 +468,17 @@ tests.
 
 **Goal**: the planner's own words per index map. **Independent test**: the T005 pair.
 
-- [ ] T055 [US7] Test first, `tests/integration/test_storage_map_usability_173_live.rs` (+ `mod`): `check` with a two-subscript index map `({City}, {Age})` returns one line for `City` and one for `City` + `Age`, and with an index map
+- [X] T055 [US7] Test first, `tests/integration/test_storage_map_usability_173_live.rs` (+ `mod`): `check` with a two-subscript index map `({City}, {Age})` returns one line for `City` and one for `City` + `Age`, and with an index map
       `{Name}` over a default-collated class returns `usability[0].status == "unused"` and `text` containing "no index
       subscript collation"; with `$$SQLUPPER({Name})` `"used"` and the map's name; with `$$SQLUPPER({Name},4)` `"unused"`
       and "%SQLUPPER(4)"; a plan the parser cannot read gives `unknown` and `check` still succeeds; the lines are also in
       `warnings`; `check`'s `success` and refusals are the same as before for every 172 fixture. Prove (red):
       `L test_storage_map_usability_173_live`.
-- [ ] T056 [US7] Implement in `check_action` (`mod.rs`): after the scratch compile, one `EXPLAIN` per index map and
+- [X] T056 [US7] Implement in `check_action` (`mod.rs`): after the scratch compile, one `EXPLAIN` per index map and
       field-prefix in the scratch copy through `usability::explain_query`, parsed by `usability::parse_plan`, into
       `usability` and `warnings`. Prove: `L test_storage_map_usability_173_live` green and `L storage_map_edit_172 storage_map_paths_172 storage_map_gates_172` (the
       172 tests that call `check`) unchanged.
-- [ ] T057 [US7] Wire the usability line into `propose`'s verification (T028): an `inferred` draft is reported `verified`
+- [X] T057 [US7] Wire the usability line into `propose`'s verification (T028): an `inferred` draft is reported `verified`
       only when its own usability line is `used` for the field it links (SC-006). Prove:
       `L test_storage_map_link_173_live test_storage_map_usability_173_live`.
 

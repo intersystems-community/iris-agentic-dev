@@ -440,13 +440,39 @@ pub async fn scratch_compile(
     query: Option<&(dyn Fn(&str) -> String + Sync)>,
     untouched: &str,
 ) -> Result<(String, Option<anyhow::Result<Value>>), Value> {
+    let queries = query.map(|q| move |name: &str| vec![q(name)]);
+    let (scratch, answers) = scratch_compile_queries(
+        iris,
+        client,
+        text,
+        nodes,
+        ns,
+        queries
+            .as_ref()
+            .map(|q| q as &(dyn Fn(&str) -> Vec<String> + Sync)),
+        untouched,
+    )
+    .await?;
+    Ok((scratch, answers.and_then(|a| a.into_iter().next())))
+}
+
+/// [`scratch_compile`] with any number of queries, each answered on its own (spec 173 `check`).
+pub async fn scratch_compile_queries(
+    iris: &IrisConnection,
+    client: &reqwest::Client,
+    text: &str,
+    nodes: &[Node],
+    ns: &str,
+    queries: crate::iris::connection::ScratchQueries<'_>,
+    untouched: &str,
+) -> Result<(String, Option<Vec<anyhow::Result<Value>>>), Value> {
     let (scratch, result, answer) = iris
-        .compile_scratch_class_then(
+        .compile_scratch_class_queries(
             |name| scratch_source(text, nodes, name),
             ns,
             client,
             "Sm",
-            query,
+            queries,
         )
         .await
         .map_err(

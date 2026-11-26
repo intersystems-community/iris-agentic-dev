@@ -12,7 +12,9 @@ use super::master::MasterSpec;
 use super::model::map_node;
 use super::tree::{emit_body, Node};
 use super::typing::{class_source, collation_parameter, PropertySpec, PropertyType};
-use super::write::{scratch_compile, scratch_probe};
+use super::usability::{explain_prefix_query, line_for, Line, Question};
+use super::usability_run::plan_text;
+use super::write::{scratch_compile_queries, scratch_probe};
 use crate::iris::connection::IrisConnection;
 use serde_json::{json, Value};
 
@@ -25,6 +27,10 @@ pub struct Verification {
     pub row_found: bool,
     /// Why not, or what the query could not show.
     pub detail: Option<String>,
+    /// The planner's own line for an equality on the field the draft links, asked in the same
+    /// scratch copy (SC-006). `None` when no property collation spells the form, so the planner
+    /// cannot be asked.
+    pub usability: Option<Line>,
 }
 
 impl Verification {
@@ -33,7 +39,33 @@ impl Verification {
         if let Some(d) = &self.detail {
             v["detail"] = json!(d);
         }
+        if let Some(l) = &self.usability {
+            v["usability"] = l.to_json();
+        }
         v
+    }
+
+    /// The draft compiled, found its row, and (where the planner can be asked) the planner reads
+    /// its map for the field it links.
+    pub fn verified(&self) -> bool {
+        self.compiled
+            && self.row_found
+            && self.usability.as_ref().is_none_or(|l| l.status == "used")
+    }
+
+    /// Why [`Self::verified`] is false.
+    pub fn not_verified_because(&self) -> String {
+        match &self.usability {
+            Some(l) if self.compiled && self.row_found && l.status != "used" => format!(
+                "the draft compiled and found its row, but the planner does not use the map for \
+                 an equality on {} ({}): {}",
+                l.field, l.status, l.text
+            ),
+            _ => self
+                .detail
+                .clone()
+                .unwrap_or_else(|| "no reason given".into()),
+        }
     }
 
     fn failed(compiled: bool, why: impl Into<String>) -> Self {
@@ -41,6 +73,7 @@ impl Verification {
             compiled,
             row_found: false,
             detail: Some(why.into()),
+            usability: None,
         }
     }
 }
@@ -52,6 +85,10 @@ pub struct Indexed {
     pub field: String,
     pub collation: Option<String>,
     pub note: Option<String>,
+    /// The map subscript the field is read at.
+    pub position: u32,
+    /// The index holds one piece of a collated value: no equality query reaches it.
+    pub piece: bool,
 }
 
 pub fn indexed_field(link: &Link, view: &MasterView) -> Result<Indexed, String> {
@@ -78,6 +115,8 @@ pub fn indexed_field(link: &Link, view: &MasterView) -> Result<Indexed, String> 
                  the index"
                     .into(),
             ),
+            position: sub.position,
+            piece: true,
         });
     }
     let collation = collation_parameter(pick.transform.name(), pick.length)?;
@@ -87,6 +126,8 @@ pub fn indexed_field(link: &Link, view: &MasterView) -> Result<Indexed, String> 
         field,
         collation,
         note,
+        position: sub.position,
+        piece: false,
     })
 }
 
@@ -243,17 +284,48 @@ pub async fn verify(
         return Verification::failed(false, answer_text(&refusal));
     }
     let field = indexed.field.clone();
-    let query = move |scratch: &str| count_query(scratch, &field);
-    let compiled = scratch_compile(
+    // The count, and (when a property collation spells the form) the planner's plan for an
+    // equality on the same field, both asked while the scratch copy exists.
+    let ask_planner = !indexed.piece;
+    let queries = move |scratch: &str| {
+        let mut q = vec![count_query(scratch, &field)];
+        if ask_planner {
+            q.push(explain_prefix_query(scratch, std::slice::from_ref(&field)).unwrap_or_default());
+        }
+        q
+    };
+    let compiled = scratch_compile_queries(
         conn,
         client,
         &text,
         &nodes,
         ns,
-        Some(&query),
+        Some(&queries),
         "no real class was touched",
     )
     .await;
+    let compiled = compiled.map(|(scratch, answers)| {
+        let mut answers = answers.into_iter().flatten();
+        let count = answers.next();
+        let plan = answers.next();
+        let line = plan.map(|plan| {
+            let question = Question {
+                map: index_map["name"].as_str().unwrap_or_default().to_string(),
+                level: indexed.position,
+                field: indexed.field.clone(),
+                fields: vec![indexed.field.clone()],
+                unanswerable: None,
+            };
+            let plan = plan.map_err(|e| e.to_string()).and_then(|a| plan_text(&a));
+            line_for(
+                &question,
+                plan.as_deref().map_err(String::as_str),
+                &scratch,
+                "<class>",
+            )
+        });
+        (scratch, count, line)
+    });
     match compiled {
         Err(answer) => {
             let compiled = !matches!(
@@ -262,9 +334,11 @@ pub async fn verify(
             );
             Verification::failed(compiled, answer_text(&answer))
         }
-        Ok((_, None)) => Verification::failed(true, "the scratch copy compiled but no query ran"),
-        Ok((_, Some(Err(e)))) => Verification::failed(true, format!("the query failed: {e}")),
-        Ok((_, Some(Ok(answer)))) => {
+        Ok((_, None, _)) => {
+            Verification::failed(true, "the scratch copy compiled but no query ran")
+        }
+        Ok((_, Some(Err(e)), _)) => Verification::failed(true, format!("the query failed: {e}")),
+        Ok((_, Some(Ok(answer)), usability)) => {
             let n = answer["result"]["content"][0]
                 .as_object()
                 .and_then(|o| o.values().next())
@@ -280,6 +354,7 @@ pub async fn verify(
                     compiled: true,
                     row_found: true,
                     detail: indexed.note,
+                    usability,
                 },
             }
         }

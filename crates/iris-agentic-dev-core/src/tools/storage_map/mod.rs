@@ -17,6 +17,7 @@ pub mod tree;
 pub mod typing;
 pub mod typing_run;
 pub mod usability;
+pub mod usability_run;
 pub mod uses;
 pub mod validate;
 pub mod write;
@@ -447,10 +448,24 @@ async fn check_action(
     if let Err(found) = validate::validate_change(&before, &nodes) {
         return err_result(write::invalid_body(&found));
     }
-    let scratch = match write::scratch_check(iris, client, &text, &nodes, &ns, class).await {
-        Ok(name) => name,
+    // FR-023: while the scratch copy exists the planner is asked about every index map; the lines
+    // are advice, so nothing here changes `success`.
+    let judged = model::from_tree(class, &storage_name, &nodes);
+    let (scratch, lines) = match usability_run::scratch_check_with_usability(
+        iris,
+        client,
+        &text,
+        &nodes,
+        &ns,
+        class,
+        &judged.storage.maps,
+    )
+    .await
+    {
+        Ok(done) => done,
         Err(answer) => return err_result(answer),
     };
+    let warnings: Vec<String> = lines.iter().map(usability::Line::warning).collect();
     Ok(CallToolResult::structured(json!({
         "success": true,
         "model_version": model::MODEL_VERSION,
@@ -459,7 +474,8 @@ async fn check_action(
         "namespace": ns,
         "compiled": true,
         "scratch_class": scratch,
-        "warnings": [],
+        "usability": lines.iter().map(usability::Line::to_json).collect::<Vec<_>>(),
+        "warnings": warnings,
     })))
 }
 

@@ -143,6 +143,7 @@ mod test_storage_map_refusals_172_live;
 mod test_storage_map_scratch_172_live;
 mod test_storage_map_sys_roundtrip_172_live;
 mod test_storage_map_typing_173_live;
+mod test_storage_map_usability_173_live;
 mod test_storage_map_uses_172_live;
 mod test_storage_map_verdicts_173_live;
 mod test_stream_inspect_141_live;
