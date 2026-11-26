@@ -842,3 +842,55 @@ fn f27_capture_is_too_few_nodes_by_its_seed_row_count() {
         "no map is drafted"
     );
 }
+
+// ── not_inferred and not_inferred_detail (T035, FR-028, FR-032) ────────────
+
+fn same_items(strings: &[String], details: &[serde_json::Value]) {
+    assert_eq!(
+        strings.len(),
+        details.len(),
+        "{strings:?} against {details:?}"
+    );
+    for (s, d) in strings.iter().zip(details) {
+        let what = d["what"].as_str().unwrap();
+        let why = d["why"].as_str().unwrap();
+        assert!(!what.is_empty() && !why.is_empty(), "{d}");
+        assert!(s.starts_with(what), "{s:?} does not start with {what:?}");
+    }
+}
+
+#[test]
+fn a_call_without_index_globals_keeps_the_172_list_and_gains_its_detail() {
+    use iris_agentic_dev_core::tools::storage_map::shape::{not_inferred, not_inferred_lists};
+    let (strings, details) = not_inferred_lists(&[], false);
+    assert_eq!(strings, not_inferred(), "the 172 list does not change");
+    same_items(&strings, &details);
+}
+
+#[test]
+fn an_index_call_also_names_collate_numeric_collations_and_computed_subscripts() {
+    use iris_agentic_dev_core::tools::storage_map::shape::not_inferred_lists;
+    let (strings, details) = not_inferred_lists(&[], true);
+    for want in ["COLLATE", "numeric collations", "computed subscripts"] {
+        assert!(
+            strings.iter().any(|s| s.contains(want)),
+            "nothing about {want:?}: {strings:?}"
+        );
+    }
+    same_items(&strings, &details);
+}
+
+#[test]
+fn what_the_call_did_not_examine_or_explain_joins_both_lists_as_one_item() {
+    use iris_agentic_dev_core::tools::storage_map::shape::not_inferred_lists;
+    let extra = [json!({"what": "^X position 1", "why": "a computed subscript"})];
+    let (strings, details) = not_inferred_lists(&extra, true);
+    assert!(
+        strings
+            .iter()
+            .any(|s| s == "^X position 1 (a computed subscript)"),
+        "{strings:?}"
+    );
+    assert!(details.contains(&extra[0]), "{details:?}");
+    same_items(&strings, &details);
+}
