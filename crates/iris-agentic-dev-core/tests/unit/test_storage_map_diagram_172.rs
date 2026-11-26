@@ -100,6 +100,7 @@ fn build_member_model() -> StorageModel {
             extra: vec![],
         },
         derived: vec![],
+        compiler_added: vec![],
     }
 }
 

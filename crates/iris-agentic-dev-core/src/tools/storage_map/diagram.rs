@@ -199,9 +199,14 @@ pub fn markdown(m: &StorageModel, map: Option<&str>) -> String {
         "Storage `{}`, type `{}`, {state}.\n\n",
         s.name, s.r#type
     ));
-    if !s.keywords.is_empty() {
+    let shown: Vec<_> = s
+        .keywords
+        .iter()
+        .filter(|(k, _)| !m.compiler_added.contains(k))
+        .collect();
+    if !shown.is_empty() {
         out.push_str("| Keyword | Value |\n| --- | --- |\n");
-        for (k, v) in &s.keywords {
+        for (k, v) in shown {
             out.push_str(&format!("| `{k}` | {} |\n", code(v)));
         }
         out.push('\n');
@@ -219,13 +224,14 @@ pub fn markdown(m: &StorageModel, map: Option<&str>) -> String {
     if let Some(ds) = &s.default_storage {
         out.push_str("## Default storage\n\n");
         out.push_str("| Location | Global |\n| --- | --- |\n");
+        let stream_hidden = m.compiler_added.iter().any(|k| k == "StreamLocation");
         for (what, g) in [
             ("Data", &ds.data_location),
             ("ID", &ds.id_location),
             ("Index", &ds.index_location),
             ("Stream", &ds.stream_location),
         ] {
-            if !g.is_empty() {
+            if !g.is_empty() && !(what == "Stream" && stream_hidden) {
                 out.push_str(&format!("| {what} | {} |\n", code(g)));
             }
         }

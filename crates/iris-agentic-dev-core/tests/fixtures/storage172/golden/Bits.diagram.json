@@ -1,0 +1,42 @@
+{
+  "graph": {
+    "edges": [
+      {
+        "from": "G1",
+        "to": "S2"
+      },
+      {
+        "from": "S2",
+        "to": "S3"
+      },
+      {
+        "from": "S3",
+        "to": "S4"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "G1",
+        "kind": "global",
+        "label": "^IadSm172Bits"
+      },
+      {
+        "id": "S2",
+        "kind": "subscript",
+        "label": "sub 1: 0 (Sub)"
+      },
+      {
+        "id": "S3",
+        "kind": "subscript",
+        "label": "sub 2: {Word}#92;64000#43;1 (Sub)"
+      },
+      {
+        "id": "S4",
+        "kind": "subscript",
+        "label": "sub 3: {Word} (Other)"
+      }
+    ]
+  },
+  "markdown": "# Storage of IadSm172.Bits\n\nStorage `SQLStorage`, type `%Storage.SQL`, editable with iris_storage_map.\n\n| Keyword | Value |\n| --- | --- |\n| `StreamLocation` | `^IadSm172BitsS` |\n\n- table is writable: master global starts with ^, $, or @\n\n## Map `Chunks` (data, master map)\n\nGlobal layout: `^IadSm172Bits(0,{Word}\\64000+1,{Word})`\n\n| Level | Expression | Access type | Delimiter | Other |\n| --- | --- | --- | --- | --- |\n| 1 | `0` | Sub | — | — |\n| 2 | `{Word}\\64000+1` | Sub | — | access var 2 `2D2` = `s {2D2}=({L2}-1)*64000-1` |\n| 3 | `{Word}` | Other | — | Level 3 next_code (below); invalid if `'$bit({3D},{L3}-{2D2})` |\n\nLevel 3 next_code:\n\n```objectscript\n n pos s pos={L3}-{2D2}\n s:pos<0 pos=0\n s pos=$bitfind({3D},1,pos+1)\n i 'pos s {L3}=\"\" QUIT\n s {L3}={2D2}+pos\n q\n```\n\nFacts:\n\n- access variable 2D2: the map sets it by code (not read from the global), and iad does not evaluate that code\n- level 3 is computed by code (AccessType Other, NextCode, Invalidcondition): its keys are produced by code that iad does not run, so the level may not exist in the global (a $BIT or $LIST in the value is a common reason); check the map against real data\n\n```mermaid\nflowchart LR\n  G1[\"^IadSm172Bits\"]\n  S2[\"sub 1: 0 (Sub)\"]\n  S3[\"sub 2: {Word}#92;64000#43;1 (Sub)\"]\n  S4[\"sub 3: {Word} (Other)\"]\n  G1 --> S2\n  S2 --> S3\n  S3 --> S4\n```\n",
+  "mermaid": "flowchart LR\n  G1[\"^IadSm172Bits\"]\n  S2[\"sub 1: 0 (Sub)\"]\n  S3[\"sub 2: {Word}#92;64000#43;1 (Sub)\"]\n  S4[\"sub 3: {Word} (Other)\"]\n  G1 --> S2\n  S2 --> S3\n  S3 --> S4\n"
+}

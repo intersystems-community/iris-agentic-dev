@@ -231,6 +231,7 @@ mod test_ssh_spawn_171;
 mod test_storage_map_audit_172;
 mod test_storage_map_blocks_172;
 mod test_storage_map_call_shape_172;
+mod test_storage_map_computed_172;
 mod test_storage_map_counter_172;
 mod test_storage_map_diagram_172;
 mod test_storage_map_doc_gate_172;

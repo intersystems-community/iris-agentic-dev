@@ -30,6 +30,25 @@ A path names one element by the model's keys: `/maps/Master/data/City/piece`,
 `/maps/Master/subscripts/2/next_code`, `/keywords/SqlIdExpression`. An element iad does not model can
 only be removed: `/maps/Master/extra/<Tag>`.
 
+## Reading a map that computes a level
+
+A subscript level whose keys come from code (`AccessType Other`, a `NextCode`) is not necessarily a
+subscript of the global: a `$BIT` or `$LIST` held in a node's value is a common reason. `read` and
+`diagram` mark such a level in `derived` (`level 3 is computed by code (...)`), and `edit` and
+`replace` repeat it in their `warnings`. iad does not run the code. A level that only has an
+`Invalidcondition` is called a filter, and an access variable that the map sets by code gets its own
+line. Check a flagged map against real data with `compare`.
+
+`compare` answers `verified: false` and says `no data found at <global>, the map was not checked` when
+the global holds nothing, so an empty answer is never read as a match. When the map has a computed
+level and the data sits at another depth, `notes` names both depths. `propose` returns `draft_note`
+and `not_inferred`: the list of what the draft leaves to you (datatypes, collations, index maps,
+conditions, computed subscripts, the ID counter).
+
+`read` returns a `compiler_added` list when the compiler wrote a keyword the class does not use
+(today `StreamLocation`, on a class whose own text declares no stream property and extends only plain
+persistent classes). The element stays in `storage` so edits write it back; `diagram` leaves it out.
+
 ## The write path
 
 A write goes through these steps in order, and stops at the first that fails:
@@ -101,18 +120,20 @@ under `block` and `redact`.
 Each line is something IRIS does that a map edit can get wrong, measured on IRIS 2026.2, with the
 live test that shows it.
 
-| What IRIS does                                                                       | Why it matters                                      | Live test                                                            |
-| ------------------------------------------------------------------------------------ | --------------------------------------------------- | -------------------------------------------------------------------- |
-| With rows 1 to 3 and no counter node, the first INSERT through a `$i` map gets ID 1  | it overwrites row 1, with no error                  | `test_storage_map_data_172_counterless_insert_overwrites_row_1`      |
-| A new index map over existing data answers nothing for a value that is there         | queries return no rows until the index is built     | `test_storage_map_data_172_unbuilt_index_finds_nothing`              |
-| A new extent-bitmap map over existing rows makes `COUNT(*)` answer 0                 | the table looks empty until the bitmap is built     | `test_storage_map_paths_172_a_new_extent_bitmap_must_be_built`       |
-| A map that walks level 2 of a global returns a parent's named node (`"EV"`) as a row | the table shows rows that are not rows              | `d11_a_level2_walk_returns_the_literal_node_as_a_row`                |
-| A SQL DELETE of a row deletes the rows another map stores under it                   | a delete reaches a second table                     | `d11_delete_of_a_parent_row_kills_its_child_rows`                    |
-| An UPDATE through a map keeps the fields another node of the row holds               | partial maps are safe to update through             | `d11_update_preserves_other_fields`                                  |
-| A map type is case-sensitive: `DATA` fails to compile (#5511)                        | the edit looks right and does not compile           | `test_storage_map_scratch_172_compile_scratch_class`                 |
-| Compiling and deleting a class over the real globals writes nothing to them          | `check` and `preview` can use a scratch copy safely | `test_storage_map_scratch_172_copy_over_real_globals_writes_nothing` |
-| A PUT without `ignoreConflict` that carries a stale timestamp is refused (409)       | iad writes only the version it read                 | `test_storage_map_edit_172_guarded_put_refuses_a_stale_timestamp`    |
-| A class whose real compile fails can be put back and compiled                        | a failed edit does not leave the table out of SQL   | `test_storage_map_edit_172_failed_real_compile_restores`             |
+| What IRIS does                                                                                                      | Why it matters                                          | Live test                                                            |
+| ------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------- |
+| With rows 1 to 3 and no counter node, the first INSERT through a `$i` map gets ID 1                                 | it overwrites row 1, with no error                      | `test_storage_map_data_172_counterless_insert_overwrites_row_1`      |
+| A new index map over existing data answers nothing for a value that is there                                        | queries return no rows until the index is built         | `test_storage_map_data_172_unbuilt_index_finds_nothing`              |
+| A new extent-bitmap map over existing rows makes `COUNT(*)` answer 0                                                | the table looks empty until the bitmap is built         | `test_storage_map_paths_172_a_new_extent_bitmap_must_be_built`       |
+| A map that walks level 2 of a global returns a parent's named node (`"EV"`) as a row                                | the table shows rows that are not rows                  | `d11_a_level2_walk_returns_the_literal_node_as_a_row`                |
+| A SQL DELETE of a row deletes the rows another map stores under it                                                  | a delete reaches a second table                         | `d11_delete_of_a_parent_row_kills_its_child_rows`                    |
+| An UPDATE through a map keeps the fields another node of the row holds                                              | partial maps are safe to update through                 | `d11_update_preserves_other_fields`                                  |
+| A map type is case-sensitive: `DATA` fails to compile (#5511)                                                       | the edit looks right and does not compile               | `test_storage_map_scratch_172_compile_scratch_class`                 |
+| Compiling and deleting a class over the real globals writes nothing to them                                         | `check` and `preview` can use a scratch copy safely     | `test_storage_map_scratch_172_copy_over_real_globals_writes_nothing` |
+| A PUT without `ignoreConflict` that carries a stale timestamp is refused (409)                                      | iad writes only the version it read                     | `test_storage_map_edit_172_guarded_put_refuses_a_stale_timestamp`    |
+| A class whose real compile fails can be put back and compiled                                                       | a failed edit does not leave the table out of SQL       | `test_storage_map_edit_172_failed_real_compile_restores`             |
+| A map with `AccessType Other` and a `NextCode` over a global with a `$BIT` at depth 2 returns the IDs its bits name | a third level that no node holds is still a real column | `computed_172_the_look_alike_really_returns_the_ids_its_bits_name`   |
+| `compare` over a map whose global is empty                                                                          | "no mismatches" would mean nothing was checked          | `computed_172_compare_over_an_empty_global_says_it_checked_nothing`  |
 
 ## Map code is code
 

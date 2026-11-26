@@ -160,7 +160,17 @@ fn lb_expr(items: &[Value]) -> String {
 pub async fn load_fixture(r: &Rig, f: &Fixture) -> String {
     drop_fixture(r, f).await;
     for g in f.seed["globals"].as_array().into_iter().flatten() {
-        let set = if let Some(items) = g.get("lb").and_then(Value::as_array) {
+        let set = if let Some(bits) = g.get("bits").and_then(Value::as_array) {
+            // A $BIT string: each listed position set to 1.
+            let positions: Vec<String> = bits.iter().map(Value::to_string).collect();
+            let code = format!(
+                "Set b=\"\" For p={} {{ Set $Bit(b,p)=1 }} Set {}=b Write \"SET\"",
+                positions.join(","),
+                node_ref(g)
+            );
+            r.call("iris_execute", json!({"code": code, "namespace": "USER"}))
+                .await
+        } else if let Some(items) = g.get("lb").and_then(Value::as_array) {
             // `iris_global set` stores strings only; a $LIST node is set with ObjectScript.
             let code = format!("Set {}={} Write \"SET\"", node_ref(g), lb_expr(items));
             r.call("iris_execute", json!({"code": code, "namespace": "USER"}))

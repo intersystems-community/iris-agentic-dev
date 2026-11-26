@@ -6,6 +6,7 @@
   "mismatches": [],
   "model_version": 1,
   "namespace": "USER",
+  "notes": [],
   "shape": {
     "cap": {
       "nodes": 200,
@@ -54,5 +55,6 @@
     "sub_nodes": {},
     "values": null
   },
-  "success": true
+  "success": true,
+  "verified": true
 }

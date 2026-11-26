@@ -1,0 +1,112 @@
+{
+  "derived": [
+    {
+      "fact": "access variable 2D2: the map sets it by code (not read from the global), and iad does not evaluate that code",
+      "path": "/maps/Chunks/subscripts/2"
+    },
+    {
+      "fact": "level 3 is computed by code (AccessType Other, NextCode, Invalidcondition): its keys are produced by code that iad does not run, so the level may not exist in the global (a $BIT or $LIST in the value is a common reason); check the map against real data",
+      "path": "/maps/Chunks/subscripts/3"
+    },
+    {
+      "fact": "table is writable: master global starts with ^, $, or @",
+      "path": "/storage"
+    }
+  ],
+  "storage": {
+    "default_storage": null,
+    "description": null,
+    "editable": true,
+    "extra": [],
+    "keywords": {
+      "StreamLocation": "^IadSm172BitsS"
+    },
+    "maps": [
+      {
+        "block_count": null,
+        "condition": null,
+        "condition_fields": null,
+        "conditional_with_host_vars": null,
+        "data": {},
+        "deferred": null,
+        "extra": [],
+        "global": "^IadSm172Bits",
+        "master": true,
+        "name": "Chunks",
+        "population_pct": null,
+        "population_type": null,
+        "row_id": [],
+        "row_reference": null,
+        "structure": null,
+        "subscripts": [
+          {
+            "access_type": "Sub",
+            "access_vars": [],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "0",
+            "extra": [],
+            "invalid_conditions": [],
+            "level": 1,
+            "loop_init_value": null,
+            "next_code": null,
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": null,
+            "stop_value": null
+          },
+          {
+            "access_type": "Sub",
+            "access_vars": [
+              {
+                "code": "s {2D2}=({L2}-1)*64000-1",
+                "level": 2,
+                "variable": "2D2"
+              }
+            ],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "{Word}\\64000+1",
+            "extra": [],
+            "invalid_conditions": [],
+            "level": 2,
+            "loop_init_value": null,
+            "next_code": null,
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": null,
+            "stop_value": null
+          },
+          {
+            "access_type": "Other",
+            "access_vars": [],
+            "data_access": null,
+            "delimiter": null,
+            "expression": "{Word}",
+            "extra": [],
+            "invalid_conditions": [
+              {
+                "expression": "'$bit({3D},{L3}-{2D2})",
+                "level": 1
+              }
+            ],
+            "level": 3,
+            "loop_init_value": null,
+            "next_code": " n pos s pos={L3}-{2D2}\n s:pos<0 pos=0\n s pos=$bitfind({3D},1,pos+1)\n i 'pos s {L3}=\"\" QUIT\n s {L3}={2D2}+pos\n q",
+            "null_marker": null,
+            "start_value": null,
+            "stop_expression": null,
+            "stop_value": null
+          }
+        ],
+        "type": "data",
+        "used": true,
+        "version": "5765d9d5725fecc1"
+      }
+    ],
+    "name": "SQLStorage",
+    "not_editable_reason": null,
+    "type": "%Storage.SQL",
+    "version": "a47d081f6b508290"
+  }
+}

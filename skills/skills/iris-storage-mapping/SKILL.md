@@ -57,11 +57,29 @@ files does not compile.
 - If the real compile fails after the scratch copy passed, iad puts the previous class back
   (`STORAGE_MAP_RESTORED`) (live test: `test_storage_map_edit_172_failed_real_compile_restores`).
 
+## A level that is not a subscript
+
+A level with `AccessType Other` or a `NextCode` is computed by code, and the global may hold no node at
+that level: a `$BIT` (or `$LIST`) in the value is a common reason, and the table still returns rows
+(live test: `computed_172_the_look_alike_really_returns_the_ids_its_bits_name`). `read` and `diagram`
+flag such a level (live test: `computed_172_read_flags_level_three_and_the_streamlocation_is_compiler_added`).
+Do not describe it as a subscript of the global, and do not add or remove fields from it before you
+have `compare`d with real data. `compare` says `verified: false` when the global is empty (live
+test: `computed_172_compare_over_an_empty_global_says_it_checked_nothing`), and names the depth the data
+sits at when it differs from the map's levels (live test:
+`computed_172_compare_over_data_names_the_depth_the_bits_sit_at`).
+
+An `Invalidcondition` on a level is a filter, not a computed level. `StreamLocation` in `read` under
+`compiler_added` is the compiler's own element: leave it alone.
+
 ## A global with no map
 
 `propose` samples the global and drafts a map in model JSON, listing every guessed element. Rename
 the guessed fields to the class's properties, then `check` and `replace`; the draft of a seeded
 global answers its known question (live test: `test_storage_map_data_172_propose_drafts_a_working_map`).
+It is a draft to check against real data. `not_inferred` lists what it left out: datatypes, collations,
+index maps, conditions, computed subscripts and the ID counter (live test:
+`computed_172_propose_lists_what_it_did_not_infer`).
 
 ## Map code
 

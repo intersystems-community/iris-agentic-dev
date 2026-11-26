@@ -243,6 +243,17 @@ _Avoid_: mapping, global mapping, custom storage
 The one data map a table reads and writes its rows through. Every other map of the table is an index map.
 _Avoid_: main map, data map (for this one map)
 
+**Computed level**:
+A subscript level of a map whose keys come from code (`AccessType Other`, a `NextCode`) rather than from a
+subscript of the global, so the level may not exist in the data. A `$BIT` or `$LIST` in a node's value is a common
+reason. `read` and `diagram` flag it, and iad does not run the code.
+_Avoid_: virtual level, fake subscript, invented subscript
+
+**Compiler-added element**:
+A storage keyword IRIS wrote when it compiled the class and the class does not use, today `StreamLocation` on a
+class with no stream property. `read` returns it and names it; `diagram` leaves it out.
+_Avoid_: system element, noise
+
 **Map version**:
 A short fingerprint of a storage map as it was read. A change that carries an older version than the stored map
 is refused.

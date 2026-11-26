@@ -38,6 +38,11 @@ pub struct StorageModel {
     pub class: String,
     pub storage: SqlStorage,
     pub derived: Vec<Derived>,
+    /// Storage keywords the compiler wrote and the class does not use (today only
+    /// `StreamLocation`, when no property is a stream). `read` still returns the element;
+    /// `diagram` leaves it out. Absent from the JSON when nothing is marked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compiler_added: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -274,6 +279,63 @@ pub fn from_tree(class: &str, storage_name: &str, nodes: &[Node]) -> StorageMode
         class: class.to_string(),
         storage,
         derived: derived_warnings,
+        compiler_added: Vec::new(),
+    }
+}
+
+/// Superclasses a class can extend without gaining a stream property of its own, so a class
+/// that extends only these has the stream properties its own text declares.
+const PLAIN_SUPERCLASSES: &[&str] = &[
+    "%Persistent",
+    "%Library.Persistent",
+    "%Populate",
+    "%Library.Populate",
+    "%XML.Adaptor",
+    "%JSON.Adaptor",
+    "%Library.RegisteredObject",
+    "%RegisteredObject",
+];
+
+/// Whether `class_text` may use a stream: a property typed as a stream class, or a superclass
+/// that is not one of [`PLAIN_SUPERCLASSES`] (its properties are not in this text).
+fn may_use_streams(class_text: &str) -> bool {
+    let mut header = String::new();
+    for line in class_text.lines() {
+        let t = line.trim_start();
+        if t.starts_with("///") || t.is_empty() {
+            continue;
+        }
+        if t.starts_with("Property ") || t.starts_with("Relationship ") {
+            let ty = t.split(" As ").nth(1).unwrap_or("");
+            let ty = ty.split(['(', ' ', ';', '[']).next().unwrap_or("");
+            if ty.to_ascii_lowercase().contains("stream") {
+                return true;
+            }
+        }
+        if t.starts_with("Class ") || (!header.is_empty() && !header.contains('{')) {
+            header.push_str(t);
+            header.push(' ');
+        }
+    }
+    let Some(ext) = header.split("Extends").nth(1) else {
+        return false;
+    };
+    let ext = ext.split(['[', '{']).next().unwrap_or("");
+    ext.trim()
+        .trim_matches(['(', ')'])
+        .split(',')
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .any(|c| !PLAIN_SUPERCLASSES.contains(&c))
+}
+
+/// Mark the keywords the compiler added that this class does not use. Judged from the class's own
+/// text: a class that extends anything outside [`PLAIN_SUPERCLASSES`] may carry streams the text
+/// does not show, so nothing is marked for it.
+pub fn mark_compiler_added(m: &mut StorageModel, class_text: &str) {
+    m.compiler_added.clear();
+    if m.storage.keywords.contains_key("StreamLocation") && !may_use_streams(class_text) {
+        m.compiler_added.push("StreamLocation".to_string());
     }
 }
 
@@ -721,6 +783,8 @@ pub fn derived_facts(model: &StorageModel) -> Vec<Derived> {
             }
         }
 
+        facts.extend(computed_level_facts(map));
+
         // Check if table is writable (master global starts with ^, $ or @). Maps are stored by
         // name, so the master map is the first one marked master, not the first map.
         if map.master && model.storage.maps.iter().position(|m| m.master) == Some(map_idx) {
@@ -771,6 +835,68 @@ pub fn derived_facts(model: &StorageModel) -> Vec<Derived> {
         }
     }
 
+    facts
+}
+
+pub(super) fn computed_reasons(sub: &Subscript) -> Vec<&'static str> {
+    let mut reasons = Vec::new();
+    if sub.access_type.eq_ignore_ascii_case("other") {
+        reasons.push("AccessType Other");
+    }
+    if sub
+        .next_code
+        .as_deref()
+        .is_some_and(|c| !c.trim().is_empty())
+    {
+        reasons.push("NextCode");
+    }
+    reasons
+}
+
+/// The facts about levels the map computes by code (`AccessType Other`, `NextCode`), levels it
+/// filters by an `Invalidcondition`, and access variables set by code. Such a level need not be a subscript of
+/// the global: a `$BIT` or `$LIST` in the value is a common reason, and reading the map like a plain
+/// level draws a node that does not exist (the iFind case).
+fn computed_level_facts(map: &SqlMap) -> Vec<Derived> {
+    let mut facts = Vec::new();
+    for sub in &map.subscripts {
+        let path = format!("/maps/{}/subscripts/{}", map.name, sub.level);
+        for var in sub.access_vars.iter().filter(|v| !v.code.trim().is_empty()) {
+            facts.push(Derived {
+                path: path.clone(),
+                fact: format!(
+                    "access variable {}: the map sets it by code (not read from the global), and iad does not evaluate that code",
+                    var.variable
+                ),
+            });
+        }
+        let mut reasons = computed_reasons(sub);
+        let filtered = !sub.invalid_conditions.is_empty();
+        if reasons.is_empty() {
+            if filtered {
+                // A filter on a real subscript: the level exists, some of its keys are skipped.
+                facts.push(Derived {
+                    path,
+                    fact: format!(
+                        "level {} filters its keys by code (Invalidcondition): the map skips a key when the code is true, and iad does not evaluate it",
+                        sub.level
+                    ),
+                });
+            }
+            continue;
+        }
+        if filtered {
+            reasons.push("Invalidcondition");
+        }
+        facts.push(Derived {
+            path,
+            fact: format!(
+                "level {} is computed by code ({}): its keys are produced by code that iad does not run, so the level may not exist in the global (a $BIT or $LIST in the value is a common reason); check the map against real data",
+                sub.level,
+                reasons.join(", ")
+            ),
+        });
+    }
     facts
 }
 

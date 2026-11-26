@@ -1,6 +1,14 @@
 {
   "derived": [
     {
+      "fact": "access variable {1D1}: the map sets it by code (not read from the global), and iad does not evaluate that code",
+      "path": "/maps/Master/subscripts/1"
+    },
+    {
+      "fact": "level 2 filters its keys by code (Invalidcondition): the map skips a key when the code is true, and iad does not evaluate it",
+      "path": "/maps/Master/subscripts/2"
+    },
+    {
       "fact": "table is writable: master global starts with ^, $, or @",
       "path": "/storage"
     }

@@ -1,0 +1,29 @@
+{
+  "class": "IadSm172.Bits",
+  "globals": [
+    {
+      "global": "^IadSm172Bits",
+      "subscripts": [
+        "0",
+        "1"
+      ],
+      "bits": [
+        3,
+        5,
+        8
+      ]
+    }
+  ],
+  "question": "SELECT Word FROM IadSm172.Bits ORDER BY Word",
+  "answer": [
+    {
+      "Word": 2
+    },
+    {
+      "Word": 4
+    },
+    {
+      "Word": 7
+    }
+  ]
+}

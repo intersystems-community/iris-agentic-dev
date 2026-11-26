@@ -246,6 +246,80 @@ pub fn compare_map(map: &super::model::SqlMap, shape: &ShapeReport) -> Vec<Misma
     out
 }
 
+/// What `compare` could and could not check, beside its mismatches.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct CompareNotes {
+    /// Whether any data was sampled. `false` means "no mismatches" says nothing about the map.
+    pub verified: bool,
+    pub notes: Vec<String>,
+}
+
+/// The levels of `map` its own code computes (AccessType Other, NextCode, an Invalidcondition),
+/// which need not be subscripts of the global.
+fn computed_levels(map: &super::model::SqlMap) -> Vec<u32> {
+    map.subscripts
+        .iter()
+        .filter(|s| {
+            !super::model::computed_reasons(s).is_empty() || !s.invalid_conditions.is_empty()
+        })
+        .map(|s| s.level)
+        .collect()
+}
+
+/// `compare`'s honesty notes (Benjamin De Boe's iFind case): an empty sample is "not checked", not
+/// "no mismatches", and a map with computed levels is set against the depth the data really has.
+pub fn compare_notes(map: &super::model::SqlMap, report: &ShapeReport) -> CompareNotes {
+    if report.nodes_scanned == 0 {
+        return CompareNotes {
+            verified: false,
+            notes: vec![format!(
+                "no data found at {}, the map was not checked",
+                report.global
+            )],
+        };
+    }
+    let computed = computed_levels(map);
+    let declared = map.subscripts.len() as u32;
+    let observed = report
+        .depths
+        .iter()
+        .filter_map(|(d, n)| Some((d.parse::<u32>().ok()?, *n)))
+        .filter(|&(d, _)| d != 0)
+        .max_by_key(|&(d, n)| (n, std::cmp::Reverse(d)))
+        .map(|(d, _)| d);
+    let mut notes = Vec::new();
+    if let Some(observed) = observed.filter(|&d| !computed.is_empty() && d != declared) {
+        let levels = computed
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        notes.push(format!(
+            "the map declares {declared} levels, of which level {levels} is computed by code; the data sits at depth {observed}, so a computed level is not a subscript of the global and the row node is not where the map's subscript count says"
+        ));
+    }
+    CompareNotes {
+        verified: true,
+        notes,
+    }
+}
+
+/// What `propose` leaves to the caller, always returned so a draft is never read as complete.
+pub fn not_inferred() -> Vec<String> {
+    [
+        "field names (Field1, Field2, ... are placeholders; rename them to the class's properties)",
+        "datatypes (they belong to the class's properties, not the map)",
+        "collations (whether the class compares text case-sensitively)",
+        "index maps (an index global such as ^X.x is not linked to this map)",
+        "conditions (a conditional map or an index that skips rows)",
+        "computed subscripts (levels produced by code, such as a $BIT chunk)",
+        "the ID counter (SqlIdExpression) and any row ID built from several parts",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
+}
+
 /// A first map for a global that has none (`propose`, US7): the depth that holds the most
 /// values is the row node, keyed by `{ID}` (one level) or `{Key1}`…`{IdKey}`; one field per
 /// piece (delimited) or element (`$LIST`) there, and per named sub-node one below. Returns the

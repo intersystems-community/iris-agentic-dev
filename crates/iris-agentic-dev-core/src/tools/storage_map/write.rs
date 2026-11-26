@@ -959,6 +959,13 @@ pub async fn write_map(
         .unwrap_or(stored_nodes);
     let before = super::model::from_tree(w.class, &loaded.span.name, &loaded.nodes);
     let now = super::model_with_facts(w.class, &loaded.span.name, &final_nodes);
+    // A level computed by code is easy to read as a plain subscript, so it is a warning here too.
+    warnings.extend(
+        now.derived
+            .iter()
+            .filter(|d| d.fact.contains("computed by code"))
+            .map(|d| format!("{}: {}", d.path, d.fact)),
+    );
     let answer = json!({
         "storage": now.storage,
         "derived": now.derived,

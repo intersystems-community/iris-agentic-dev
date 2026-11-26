@@ -186,6 +186,38 @@ if you have multiple servers configured.
 > required. If you hit a 404 on `/api/atelier`, see
 > [Windows IIS setup](#windows-iis-api-web-application-required) below.
 
+### Copilot with a binary you installed yourself
+
+The extension runs the binary it manages. To use a different one, such as a pre-release build
+downloaded from a GitHub release, put it on disk, make it executable, and register it as a stdio
+server yourself. VS Code's [MCP configuration reference](https://code.visualstudio.com/docs/agents/reference/mcp-configuration)
+reads a workspace-root `.mcp.json` for current Copilot (with the
+`chat.mcp.workspaceRootConfig.enabled` setting on, which was experimental when this was written):
+
+```json
+{
+  "mcpServers": {
+    "iris-agentic-dev": {
+      "type": "stdio",
+      "command": "/full/path/to/iris-agentic-dev",
+      "args": ["mcp"],
+      "env": {
+        "IRIS_HOST": "localhost",
+        "IRIS_WEB_PORT": "52773",
+        "IRIS_USERNAME": "_SYSTEM",
+        "IRIS_NAMESPACE": "USER"
+      }
+    }
+  }
+}
+```
+
+Keep the password out of the file: set `IRIS_PASSWORD` in the environment VS Code starts from, or
+use a Server Manager entry. Older VS Code builds read `.vscode/mcp.json` instead, where the same
+entry sits under a top-level `servers` key (not `mcpServers`). If the tools do not appear in
+**Agent mode → tools**, check which of the two files your VS Code version reads, then ask Copilot to
+call `check_config`.
+
 ---
 
 ## Quick start: Claude Code / OpenCode

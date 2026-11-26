@@ -1,6 +1,10 @@
 {
   "derived": [
     {
+      "fact": "level 1 is computed by code (NextCode): its keys are produced by code that iad does not run, so the level may not exist in the global (a $BIT or $LIST in the value is a common reason); check the map against real data",
+      "path": "/maps/Master/subscripts/1"
+    },
+    {
       "fact": "table is writable: master global starts with ^, $, or @",
       "path": "/storage"
     }

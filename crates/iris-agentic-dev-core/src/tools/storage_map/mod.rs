@@ -259,7 +259,8 @@ async fn load_model<'p>(
     action: &str,
 ) -> Result<(&'p str, String, model::StorageModel), Result<CallToolResult, McpError>> {
     let s = load_storage(iris, client, p, action).await?;
-    let m = model_with_facts(s.class, &s.storage_name, &s.nodes);
+    let mut m = model_with_facts(s.class, &s.storage_name, &s.nodes);
+    model::mark_compiler_added(&mut m, &s.text);
     Ok((s.class, s.ns, m))
 }
 
@@ -690,6 +691,7 @@ async fn compare_action(
     };
     sampled_answer(tools, p, shape, &ns, &global, |report| {
         let mismatches = shape::compare_map(map, &report);
+        let checked = shape::compare_notes(map, &report);
         json!({
             "success": true,
             "model_version": model::MODEL_VERSION,
@@ -698,6 +700,8 @@ async fn compare_action(
             "namespace": ns,
             "map": map.name,
             "capped": report.capped,
+            "verified": checked.verified,
+            "notes": checked.notes,
             "shape": report,
             "mismatches": mismatches,
         })
@@ -948,6 +952,8 @@ async fn propose_action(
             "shape": report,
             "draft": draft,
             "guesses": guesses,
+            "draft_note": "a draft to check against real data: every name, delimiter and piece count is a guess from a sample",
+            "not_inferred": shape::not_inferred(),
         })
     })
     .await
@@ -1278,7 +1284,7 @@ async fn read(
                 ),
             }),
     );
-    Ok(CallToolResult::structured(json!({
+    let mut answer = json!({
         "success": true,
         "model_version": model::MODEL_VERSION,
         "action": "read",
@@ -1287,7 +1293,13 @@ async fn read(
         "storage": m.storage,
         "derived": m.derived,
         "warnings": warnings,
-    })))
+    });
+    // Keywords the compiler wrote and the class does not use stay in `storage`, named here so a
+    // reader (and `diagram`) can leave them out.
+    if !m.compiler_added.is_empty() {
+        answer["compiler_added"] = json!(m.compiler_added);
+    }
+    Ok(CallToolResult::structured(answer))
 }
 
 /// `diagram` (FR-005, US2): Mermaid flowchart and JSON graph of a storage map.

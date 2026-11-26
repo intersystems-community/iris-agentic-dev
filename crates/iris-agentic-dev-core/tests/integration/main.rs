@@ -122,6 +122,7 @@ mod test_sql_power_live;
 mod test_sql_safety_e2e;
 mod test_sql_translate_e2e;
 mod test_storage172_rig_live;
+mod test_storage_map_computed_172_live;
 mod test_storage_map_corpus_172_live;
 mod test_storage_map_d11_172_live;
 mod test_storage_map_data_172_live;

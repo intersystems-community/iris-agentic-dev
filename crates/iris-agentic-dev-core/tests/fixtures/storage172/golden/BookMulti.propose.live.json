@@ -17,12 +17,22 @@
     ],
     "type": "data"
   },
+  "draft_note": "a draft to check against real data: every name, delimiter and piece count is a guess from a sample",
   "global": "^IadSm172BookMulti",
   "guesses": [
     "/maps/Master/subscripts"
   ],
   "model_version": 1,
   "namespace": "USER",
+  "not_inferred": [
+    "field names (Field1, Field2, ... are placeholders; rename them to the class's properties)",
+    "datatypes (they belong to the class's properties, not the map)",
+    "collations (whether the class compares text case-sensitively)",
+    "index maps (an index global such as ^X.x is not linked to this map)",
+    "conditions (a conditional map or an index that skips rows)",
+    "computed subscripts (levels produced by code, such as a $BIT chunk)",
+    "the ID counter (SqlIdExpression) and any row ID built from several parts"
+  ],
   "shape": {
     "cap": {
       "nodes": 200,

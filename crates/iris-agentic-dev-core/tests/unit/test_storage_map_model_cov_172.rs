@@ -345,6 +345,7 @@ fn test_derived_facts_master_global_prefix() {
         class: "Test.Class".to_string(),
         storage,
         derived: vec![],
+        compiler_added: vec![],
     };
 
     let facts = derived_facts(&model);
@@ -408,6 +409,7 @@ fn test_nested_maps_detection() {
                 extra: vec![],
             },
             derived: vec![],
+            compiler_added: vec![],
         },
         StorageModel {
             model_version: MODEL_VERSION,
@@ -478,6 +480,7 @@ fn test_nested_maps_detection() {
                 extra: vec![],
             },
             derived: vec![],
+            compiler_added: vec![],
         },
     ];
 
