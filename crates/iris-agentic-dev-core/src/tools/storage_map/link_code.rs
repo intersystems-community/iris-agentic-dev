@@ -23,7 +23,7 @@
 //! {"t":"id","form":"value","positions":[],"resolved":0,"total":40}
 //! {"t":"pos","position":1,"total":40,"distinct":38,"scores":[
 //!    {"field":1,"transform":"sqlupper","length":null,"piece":null,"matches":40}]}
-//! {"t":"null","position":1,"field":2,"kind":"c0","count":3}
+//! {"t":"null","position":1,"field":2,"kind":"c0","empty":"empty_string","count":3}
 //! {"t":"data","field":2,"element":1,"matches":40,"total":40}
 //! {"t":"missing","share":0.14,"rule":"null","field":2,"literal":null}
 //! {"t":"bitmap","chunk_position":2,"ids_checked":1000,"ids_found":1000}
