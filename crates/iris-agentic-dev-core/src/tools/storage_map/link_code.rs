@@ -47,7 +47,8 @@
 //!   report `not_explained` with the best agreement.
 //! - `null`: a position whose empty-field nodes share one marker, with `kind` one of `c0`,
 //!   `minus1e14`, `space`, `space_c0`, `discovered`, the empty kind (`empty_string` or `null`) in
-//!   `empty`, and `count` of nodes it covers. A discovered marker adds `length`.
+//!   `empty`, and `count` of nodes it covers. A discovered marker adds `length`. A discovered marker adds `literal`
+//!   only under `with_values`.
 //! - `data`: the node value is a `$LIST`; element `element` (1-based) equals master field `field`
 //!   on `matches` of `total` nodes.
 //! - `missing`: the share of sampled master rows the index lacks, and the rule that explains every

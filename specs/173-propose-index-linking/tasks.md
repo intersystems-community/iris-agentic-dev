@@ -182,19 +182,19 @@ pub mod usability;` to `src/tools/storage_map/mod.rs` with an empty file for eac
 **Purpose**: everything that can be built and tested without IRIS, each in its own file by its own teammate.
 Signatures come from `data-model.md`.
 
-- [ ] T017 [P] Test first, `tests/unit/test_storage_map_link_173.rs` (+ `mod`): `spelling(transform, field, length)`
+- [x] T017 [P] Test first, `tests/unit/test_storage_map_link_173.rs` (+ `mod`): `spelling(transform, field, length)`
       returns exactly the strings of data-model.md's table (`$$SQLUPPER({Name},4)`, `{City}`,
       `$p($$ALPHAUP({Name}),",",2)` …) and refuses a transform outside the closed set; `verdict(scores)` returns
       `inferred` at 20 nodes and 0.95, `too_few_nodes` at 19 nodes, `ambiguous` for two pairs 0.005 apart, `not_linked`
       for an ID agreement of 0.89, `not_explained` for a best of 0.94, `constant` for one distinct value; `map_name`
       makes `X` and `X2` for two candidates ending in `.x`. Then implement `src/tools/storage_map/link.rs`: `Transform`,
       `Verdict`, `PositionScore`, `spelling`, `verdict`, `map_name`. Prove: `U test_storage_map_link_173`.
-- [ ] T018 [P] Same file, parser: `parse_link_output(out) -> Result<LinkReport, String>` on three captured outputs in
+- [x] T018 [P] Same file, parser: `parse_link_output(out) -> Result<LinkReport, String>` on three captured outputs in
       `tests/fixtures/storage173/captured/` (write them by hand from the output format in `link_code.rs`'s doc comment
       for now; T032 replaces them with live captures): a normal run, a run with a trailing `done` line missing (an
       error, not a short report) and an IRIS error text (an error). Implement `parse_link_output` and `LinkReport`.
       Prove: `U test_storage_map_link_173`.
-- [ ] T019 [P] Same file, drafts: `draft_index_map(link, master) -> (Value, Vec<String>)` returns the model JSON for F02's
+- [x] T019 [P] Same file, drafts: `draft_index_map(link, master) -> (Value, Vec<String>)` returns the model JSON for F02's
       expected link (subscript 1 `$$SQLUPPER({Name})`, subscript 2 `{ID}`, `Type index`), for a composite key (subscripts
       end `{A}`, `{B}`), for the value form (`Data name="Id"`, RowIdSpec `{Id}`), and for a covering link (Data
       entries per covered field); each draft passes `model::validate` and lists its guessed paths. Implement it.
