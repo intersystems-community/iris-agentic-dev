@@ -188,6 +188,7 @@ fn link(verdict: Verdict, subs: Vec<SubscriptLink>) -> Link {
         },
         subscripts: subs,
         data_in_value: Vec::new(),
+        unexamined: Vec::new(),
     }
 }
 
