@@ -390,6 +390,10 @@ pub async fn load_fixture_173(r: &Rig, f: &Fixture) {
         &f.rows(),
     )
     .await;
+    // A fixture whose index global is written by hand carries the code that writes it.
+    if let Some(code) = f.seed["post_load"].as_str() {
+        exec(r, code).await;
+    }
     let del = r
         .call(
             "iris_doc",

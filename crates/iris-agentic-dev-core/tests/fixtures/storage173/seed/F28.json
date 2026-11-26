@@ -1,0 +1,313 @@
+{
+ "name": "F28",
+ "description": "a constant column indexed",
+ "class": "IadSm173.F28",
+ "table": "IadSm173.F28",
+ "columns": [
+  "Name",
+  "City",
+  "Age",
+  "Born",
+  "Status"
+ ],
+ "master_global": "^IadSm173F28",
+ "index_globals": [
+  "^IadSm173F28X"
+ ],
+ "rows": [
+  [
+   "Smith, Anna",
+   "Boston",
+   118,
+   40000,
+   "A"
+  ],
+  [
+   "jones, bob",
+   "Boston",
+   131,
+   40037,
+   "B"
+  ],
+  [
+   "Lee  ",
+   "Boston",
+   144,
+   40074,
+   "C"
+  ],
+  [
+   "O'Neil-Ray",
+   "Boston",
+   157,
+   40111,
+   "A"
+  ],
+  [
+   "de la Cruz, Jo",
+   "Boston",
+   170,
+   40148,
+   "B"
+  ],
+  [
+   "Zed2",
+   "Boston",
+   183,
+   40185,
+   "C"
+  ],
+  [
+   "  Mc Kay, Al",
+   "Boston",
+   126,
+   40222,
+   "A"
+  ],
+  [
+   "Brown, Cy",
+   "Boston",
+   139,
+   40259,
+   "B"
+  ],
+  [
+   "brown, cy",
+   "Boston",
+   152,
+   40296,
+   "C"
+  ],
+  [
+   "Ng",
+   "Boston",
+   165,
+   40333,
+   "A"
+  ],
+  [
+   "Åberg, Eli",
+   "Boston",
+   178,
+   40370,
+   "B"
+  ],
+  [
+   "Vu, Tran",
+   "Boston",
+   121,
+   40407,
+   "C"
+  ],
+  [
+   "Quinn, 3rd",
+   "Boston",
+   134,
+   40444,
+   "A"
+  ],
+  [
+   "Hart,Ed",
+   "Boston",
+   147,
+   40481,
+   "B"
+  ],
+  [
+   "xu",
+   "Boston",
+   160,
+   40518,
+   "C"
+  ],
+  [
+   "Patel, Raj",
+   "Boston",
+   173,
+   40555,
+   "A"
+  ],
+  [
+   "Moore, Kim ",
+   "Boston",
+   186,
+   40592,
+   "B"
+  ],
+  [
+   "Diaz, Lu",
+   "Boston",
+   129,
+   40629,
+   "C"
+  ],
+  [
+   "Frost, Ann-Marie",
+   "Boston",
+   142,
+   40666,
+   "A"
+  ],
+  [
+   "Gray, Sam",
+   "Boston",
+   155,
+   40703,
+   "B"
+  ],
+  [
+   "Smith, Anna20",
+   "Boston",
+   168,
+   40740,
+   "C"
+  ],
+  [
+   "jones, bob21",
+   "Boston",
+   181,
+   40777,
+   "A"
+  ],
+  [
+   "Lee22",
+   "Boston",
+   124,
+   40814,
+   "B"
+  ],
+  [
+   "O'Neil-Ray23",
+   "Boston",
+   137,
+   40851,
+   "C"
+  ],
+  [
+   "de la Cruz, Jo24",
+   "Boston",
+   150,
+   40888,
+   "A"
+  ],
+  [
+   "Zed225",
+   "Boston",
+   163,
+   40925,
+   "B"
+  ],
+  [
+   "Mc Kay, Al26",
+   "Boston",
+   176,
+   40962,
+   "C"
+  ],
+  [
+   "Brown, Cy27",
+   "Boston",
+   119,
+   40999,
+   "A"
+  ],
+  [
+   "brown, cy28",
+   "Boston",
+   132,
+   41036,
+   "B"
+  ],
+  [
+   "Ng29",
+   "Boston",
+   145,
+   41073,
+   "C"
+  ],
+  [
+   "Åberg, Eli30",
+   "Boston",
+   158,
+   41110,
+   "A"
+  ],
+  [
+   "Vu, Tran31",
+   "Boston",
+   171,
+   41147,
+   "B"
+  ],
+  [
+   "Quinn, 3rd32",
+   "Boston",
+   184,
+   41184,
+   "C"
+  ],
+  [
+   "Hart,Ed33",
+   "Boston",
+   127,
+   41221,
+   "A"
+  ],
+  [
+   "xu34",
+   "Boston",
+   140,
+   41258,
+   "B"
+  ],
+  [
+   "Patel, Raj35",
+   "Boston",
+   153,
+   41295,
+   "C"
+  ],
+  [
+   "Moore, Kim36",
+   "Boston",
+   166,
+   41332,
+   "A"
+  ],
+  [
+   "Diaz, Lu37",
+   "Boston",
+   179,
+   41369,
+   "B"
+  ],
+  [
+   "Frost, Ann-Marie38",
+   "Boston",
+   122,
+   41406,
+   "C"
+  ],
+  [
+   "Gray, Sam39",
+   "Boston",
+   135,
+   41443,
+   "A"
+  ]
+ ],
+ "answer": {
+  "index_global": "^IadSm173F28X",
+  "id_positions": [
+   2
+  ],
+  "link_verdict": "constant",
+  "no_map": true,
+  "subscripts": [
+   {
+    "position": 1,
+    "verdict": "constant"
+   }
+  ]
+ }
+}

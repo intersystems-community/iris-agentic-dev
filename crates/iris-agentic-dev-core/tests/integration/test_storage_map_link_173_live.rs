@@ -11,7 +11,7 @@ use crate::storage173_rig::*;
 use iris_agentic_dev_core::tools::Toolset;
 use serde_json::{json, Value};
 
-async fn live() -> Rig {
+pub(crate) async fn live() -> Rig {
     let r = rig(&Where::live(), Toolset::Merged).await;
     drop_all(&r).await;
     r
@@ -19,7 +19,7 @@ async fn live() -> Rig {
 
 /// The master draft's name for the seed's column: the fixtures' data maps put the columns in
 /// pieces 1 to 5 in the order of `columns`, and the draft calls piece `n` `Field<n>`.
-fn draft_name(f: &Fixture, column: &str) -> String {
+pub(crate) fn draft_name(f: &Fixture, column: &str) -> String {
     let at = f
         .master_columns()
         .iter()
@@ -65,11 +65,11 @@ fn declared_expression_named(f: &Fixture) -> String {
         .replace("&quot;", "\"")
 }
 
-fn opt(v: &Value, key: &str) -> Value {
+pub(crate) fn opt(v: &Value, key: &str) -> Value {
     v.get(key).cloned().unwrap_or(Value::Null)
 }
 
-async fn link_of(r: &Rig, f: &Fixture) -> Value {
+pub(crate) async fn link_of(r: &Rig, f: &Fixture) -> Value {
     let master = f.seed["master_global"].as_str().unwrap();
     let index = f.seed["index_globals"][0].as_str().unwrap();
     let out = ask_propose(r, json!({"global": master, "index_globals": [index]})).await;

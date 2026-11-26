@@ -231,6 +231,114 @@ def f18():
         rows=with_empty(people(40), "City", 5, None), sub_extra={0: '<NullMarker>"~NIL~"</NullMarker>\n'})
 
 
+def f26():
+    rows = [list(r) for r in people(40)]
+    for r in rows:
+        r[4] = r[1]  # Status holds the same text as City: two identical columns
+    std("F26", "two identical columns (City, Status), index over {City}", ["{City}", "{ID}"],
+        {"id_positions": [2], "link_verdict": "ambiguous", "subscripts": [
+            {"position": 1, "verdict": "ambiguous", "transform": "exact", "fields": ["City", "Status"]}]},
+        rows=rows)
+
+
+def f27():
+    std("F27", "5 rows", ["$$SQLUPPER({Name})", "{ID}"],
+        {"id_positions": [2], "link_verdict": "too_few_nodes", "no_map": True, "subscripts": []},
+        rows=people(5))
+
+
+def f28():
+    rows = [list(r) for r in people(40)]
+    for r in rows:
+        r[1] = "Boston"
+    std("F28", "a constant column indexed", ["{City}", "{ID}"],
+        {"id_positions": [2], "link_verdict": "constant", "no_map": True, "subscripts": [
+            {"position": 1, "verdict": "constant"}]}, rows=rows)
+
+
+def f29():
+    rows = [list(r) for r in people(40)]
+    for i, r in enumerate(rows):
+        r[2] = i + 1  # Age equals the row ID ($i counter from 1)
+    std("F29", "Age equals ID on every row, index over {Age}", ["{Age}", "{ID}"],
+        {"id_positions": [2], "link_verdict": "ambiguous", "subscripts": [
+            {"position": 1, "verdict": "ambiguous", "field": "Age", "transform": "exact",
+             "alternatives": ["alphaup", "upper"]}]}, rows=rows)
+
+
+def hand_set(name, desc, post_load, answer, index, rows=None):
+    """A fixture whose index global is written by hand (no index map in the class)."""
+    glob = f"IadSm173{name}"
+    cls = person_class(f"IadSm173.{name}", glob, "", "")
+    write(name, desc, cls, rows or people(40), {"index_global": f"^{index}", **answer},
+          indexes=[f"^{index}"], extra={"post_load": post_load})
+
+
+def f30():
+    hand_set("F30", "dense IDs, an index whose first subscript is unrelated to every field",
+             "For i=1:1:40 Set ^IadSm173F30X(5000+(i*17),i)=\"\"",
+             {"id_positions": [2], "link_verdict": "not_explained", "no_map": True, "subscripts": [
+                 {"position": 1, "verdict": "not_explained"}]}, "IadSm173F30X")
+
+
+def f31():
+    hand_set("F31", "an unrelated global that shares the master's name prefix",
+             "For i=1:1:40 Set ^IadSm173F31Alpha(\"Alpha\"_i,1000+i)=\"\"",
+             {"link_verdict": "not_linked", "id_agreement": 0.0, "no_map": True}, "IadSm173F31Alpha")
+
+
+def f33():
+    std("F33", "index over a date format of Born (a computed subscript)",
+        ["$zd({Born},3)", "{ID}"],
+        {"id_positions": [2], "link_verdict": "not_explained", "no_map": True, "subscripts": [
+            {"position": 1, "verdict": "not_explained"}]})
+
+
+def f34():
+    # 1,200 rows. The first 700 names (sorted) are plain letters and digits, where UPPER and
+    # ALPHAUP give the same key; the last 500 hold a blank, where they differ. A walk of the first
+    # 200 nodes sees only the plain ones and cannot tell the two functions apart.
+    rows = []
+    for i in range(1200):
+        name = f"Aaa{i:04d}" if i < 700 else f"Zzz {i:04d}"
+        rows.append([name, CITIES[(i * 7 + 3) % len(CITIES)], 18 + (i * 13) % 70 + 100, 40000 + i * 37,
+                     ["A", "B", "C"][i % 3]])
+    std("F34", "far-end separation: UPPER against ALPHAUP differ only past the first 700 keys",
+        ["$$UPPER({Name})", "{ID}"],
+        {"id_positions": [2], "link_verdict": "inferred", "subscripts": [
+            {"position": 1, "verdict": "inferred", "field": "Name", "transform": "upper"}],
+         "plain_prefix_keys": 700}, rows=rows)
+
+
+
+def orphans(name, desc, killed, verdict, extra_answer):
+    """100 rows, an index map over Name, and `killed` master rows deleted after the load, so the
+    index keeps their nodes (deleted rows leave index nodes with no master row)."""
+    glob = f"IadSm173{name}"
+    cls = person_class(f"IadSm173.{name}", glob, "",
+                       index_map("X", f"{glob}X", ["$$SQLUPPER({Name})", "{ID}"]))
+    code = " ".join(f"Kill ^{glob}({i})" for i in killed)
+    write(name, desc, cls, people(100),
+          {"index_global": f"^{glob}X", "id_positions": [2], "link_verdict": verdict,
+           "killed_rows": killed, **extra_answer},
+          extra={"post_load": code})
+
+
+def f44():
+    orphans("F44", "3 of 100 master rows deleted: under the 5% share", [7, 23, 61], "inferred",
+            {"orphan_reported": False})
+
+
+def f45():
+    orphans("F45", "8 of 100 master rows deleted: above 5%, linked, share reported",
+            [3, 15, 27, 39, 51, 63, 75, 87], "inferred", {"orphan_reported": True})
+
+
+def f46():
+    orphans("F46", "11 of 100 master rows deleted: ID agreement 0.89, under the 0.9 floor",
+            [3, 12, 21, 30, 39, 48, 57, 66, 75, 84, 93], "not_linked", {"orphan_reported": False})
+
+
 ALL = {k[1:].join(["F", ""]) if False else "F" + k[1:]: v for k, v in list(globals().items())
        if k.startswith("f") and k[1:].isdigit()}
 

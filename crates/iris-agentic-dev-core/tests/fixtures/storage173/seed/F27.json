@@ -1,0 +1,63 @@
+{
+ "name": "F27",
+ "description": "5 rows",
+ "class": "IadSm173.F27",
+ "table": "IadSm173.F27",
+ "columns": [
+  "Name",
+  "City",
+  "Age",
+  "Born",
+  "Status"
+ ],
+ "master_global": "^IadSm173F27",
+ "index_globals": [
+  "^IadSm173F27X"
+ ],
+ "rows": [
+  [
+   "Smith, Anna",
+   "Lyon",
+   118,
+   40000,
+   "A"
+  ],
+  [
+   "jones, bob",
+   "Boston",
+   131,
+   40037,
+   "B"
+  ],
+  [
+   "Lee  ",
+   "Bern",
+   144,
+   40074,
+   "C"
+  ],
+  [
+   "O'Neil-Ray",
+   "Oslo",
+   157,
+   40111,
+   "A"
+  ],
+  [
+   "de la Cruz, Jo",
+   "boston",
+   170,
+   40148,
+   "B"
+  ]
+ ],
+ "answer": {
+  "index_global": "^IadSm173F27X",
+  "id_positions": [
+   2
+  ],
+  "link_verdict": "too_few_nodes",
+  "no_map": true,
+  "subscripts": []
+ }
+}

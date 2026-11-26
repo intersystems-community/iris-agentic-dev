@@ -1,0 +1,741 @@
+{
+ "name": "F46",
+ "description": "11 of 100 master rows deleted: ID agreement 0.89, under the 0.9 floor",
+ "class": "IadSm173.F46",
+ "table": "IadSm173.F46",
+ "columns": [
+  "Name",
+  "City",
+  "Age",
+  "Born",
+  "Status"
+ ],
+ "master_global": "^IadSm173F46",
+ "index_globals": [
+  "^IadSm173F46X"
+ ],
+ "rows": [
+  [
+   "Smith, Anna",
+   "Lyon",
+   118,
+   40000,
+   "A"
+  ],
+  [
+   "jones, bob",
+   "Boston",
+   131,
+   40037,
+   "B"
+  ],
+  [
+   "Lee  ",
+   "Bern",
+   144,
+   40074,
+   "C"
+  ],
+  [
+   "O'Neil-Ray",
+   "Oslo",
+   157,
+   40111,
+   "A"
+  ],
+  [
+   "de la Cruz, Jo",
+   "boston",
+   170,
+   40148,
+   "B"
+  ],
+  [
+   "Zed2",
+   "Nice",
+   183,
+   40185,
+   "C"
+  ],
+  [
+   "  Mc Kay, Al",
+   "Rome",
+   126,
+   40222,
+   "A"
+  ],
+  [
+   "Brown, Cy",
+   "Paris",
+   139,
+   40259,
+   "B"
+  ],
+  [
+   "brown, cy",
+   "Kyiv",
+   152,
+   40296,
+   "C"
+  ],
+  [
+   "Ng",
+   "Cork",
+   165,
+   40333,
+   "A"
+  ],
+  [
+   "Åberg, Eli",
+   "Lyon",
+   178,
+   40370,
+   "B"
+  ],
+  [
+   "Vu, Tran",
+   "Boston",
+   121,
+   40407,
+   "C"
+  ],
+  [
+   "Quinn, 3rd",
+   "Bern",
+   134,
+   40444,
+   "A"
+  ],
+  [
+   "Hart,Ed",
+   "Oslo",
+   147,
+   40481,
+   "B"
+  ],
+  [
+   "xu",
+   "boston",
+   160,
+   40518,
+   "C"
+  ],
+  [
+   "Patel, Raj",
+   "Nice",
+   173,
+   40555,
+   "A"
+  ],
+  [
+   "Moore, Kim ",
+   "Rome",
+   186,
+   40592,
+   "B"
+  ],
+  [
+   "Diaz, Lu",
+   "Paris",
+   129,
+   40629,
+   "C"
+  ],
+  [
+   "Frost, Ann-Marie",
+   "Kyiv",
+   142,
+   40666,
+   "A"
+  ],
+  [
+   "Gray, Sam",
+   "Cork",
+   155,
+   40703,
+   "B"
+  ],
+  [
+   "Smith, Anna20",
+   "Lyon",
+   168,
+   40740,
+   "C"
+  ],
+  [
+   "jones, bob21",
+   "Boston",
+   181,
+   40777,
+   "A"
+  ],
+  [
+   "Lee22",
+   "Bern",
+   124,
+   40814,
+   "B"
+  ],
+  [
+   "O'Neil-Ray23",
+   "Oslo",
+   137,
+   40851,
+   "C"
+  ],
+  [
+   "de la Cruz, Jo24",
+   "boston",
+   150,
+   40888,
+   "A"
+  ],
+  [
+   "Zed225",
+   "Nice",
+   163,
+   40925,
+   "B"
+  ],
+  [
+   "Mc Kay, Al26",
+   "Rome",
+   176,
+   40962,
+   "C"
+  ],
+  [
+   "Brown, Cy27",
+   "Paris",
+   119,
+   40999,
+   "A"
+  ],
+  [
+   "brown, cy28",
+   "Kyiv",
+   132,
+   41036,
+   "B"
+  ],
+  [
+   "Ng29",
+   "Cork",
+   145,
+   41073,
+   "C"
+  ],
+  [
+   "Åberg, Eli30",
+   "Lyon",
+   158,
+   41110,
+   "A"
+  ],
+  [
+   "Vu, Tran31",
+   "Boston",
+   171,
+   41147,
+   "B"
+  ],
+  [
+   "Quinn, 3rd32",
+   "Bern",
+   184,
+   41184,
+   "C"
+  ],
+  [
+   "Hart,Ed33",
+   "Oslo",
+   127,
+   41221,
+   "A"
+  ],
+  [
+   "xu34",
+   "boston",
+   140,
+   41258,
+   "B"
+  ],
+  [
+   "Patel, Raj35",
+   "Nice",
+   153,
+   41295,
+   "C"
+  ],
+  [
+   "Moore, Kim36",
+   "Rome",
+   166,
+   41332,
+   "A"
+  ],
+  [
+   "Diaz, Lu37",
+   "Paris",
+   179,
+   41369,
+   "B"
+  ],
+  [
+   "Frost, Ann-Marie38",
+   "Kyiv",
+   122,
+   41406,
+   "C"
+  ],
+  [
+   "Gray, Sam39",
+   "Cork",
+   135,
+   41443,
+   "A"
+  ],
+  [
+   "Smith, Anna40",
+   "Lyon",
+   148,
+   41480,
+   "B"
+  ],
+  [
+   "jones, bob41",
+   "Boston",
+   161,
+   41517,
+   "C"
+  ],
+  [
+   "Lee42",
+   "Bern",
+   174,
+   41554,
+   "A"
+  ],
+  [
+   "O'Neil-Ray43",
+   "Oslo",
+   187,
+   41591,
+   "B"
+  ],
+  [
+   "de la Cruz, Jo44",
+   "boston",
+   130,
+   41628,
+   "C"
+  ],
+  [
+   "Zed245",
+   "Nice",
+   143,
+   41665,
+   "A"
+  ],
+  [
+   "Mc Kay, Al46",
+   "Rome",
+   156,
+   41702,
+   "B"
+  ],
+  [
+   "Brown, Cy47",
+   "Paris",
+   169,
+   41739,
+   "C"
+  ],
+  [
+   "brown, cy48",
+   "Kyiv",
+   182,
+   41776,
+   "A"
+  ],
+  [
+   "Ng49",
+   "Cork",
+   125,
+   41813,
+   "B"
+  ],
+  [
+   "Åberg, Eli50",
+   "Lyon",
+   138,
+   41850,
+   "C"
+  ],
+  [
+   "Vu, Tran51",
+   "Boston",
+   151,
+   41887,
+   "A"
+  ],
+  [
+   "Quinn, 3rd52",
+   "Bern",
+   164,
+   41924,
+   "B"
+  ],
+  [
+   "Hart,Ed53",
+   "Oslo",
+   177,
+   41961,
+   "C"
+  ],
+  [
+   "xu54",
+   "boston",
+   120,
+   41998,
+   "A"
+  ],
+  [
+   "Patel, Raj55",
+   "Nice",
+   133,
+   42035,
+   "B"
+  ],
+  [
+   "Moore, Kim56",
+   "Rome",
+   146,
+   42072,
+   "C"
+  ],
+  [
+   "Diaz, Lu57",
+   "Paris",
+   159,
+   42109,
+   "A"
+  ],
+  [
+   "Frost, Ann-Marie58",
+   "Kyiv",
+   172,
+   42146,
+   "B"
+  ],
+  [
+   "Gray, Sam59",
+   "Cork",
+   185,
+   42183,
+   "C"
+  ],
+  [
+   "Smith, Anna60",
+   "Lyon",
+   128,
+   42220,
+   "A"
+  ],
+  [
+   "jones, bob61",
+   "Boston",
+   141,
+   42257,
+   "B"
+  ],
+  [
+   "Lee62",
+   "Bern",
+   154,
+   42294,
+   "C"
+  ],
+  [
+   "O'Neil-Ray63",
+   "Oslo",
+   167,
+   42331,
+   "A"
+  ],
+  [
+   "de la Cruz, Jo64",
+   "boston",
+   180,
+   42368,
+   "B"
+  ],
+  [
+   "Zed265",
+   "Nice",
+   123,
+   42405,
+   "C"
+  ],
+  [
+   "Mc Kay, Al66",
+   "Rome",
+   136,
+   42442,
+   "A"
+  ],
+  [
+   "Brown, Cy67",
+   "Paris",
+   149,
+   42479,
+   "B"
+  ],
+  [
+   "brown, cy68",
+   "Kyiv",
+   162,
+   42516,
+   "C"
+  ],
+  [
+   "Ng69",
+   "Cork",
+   175,
+   42553,
+   "A"
+  ],
+  [
+   "Åberg, Eli70",
+   "Lyon",
+   118,
+   42590,
+   "B"
+  ],
+  [
+   "Vu, Tran71",
+   "Boston",
+   131,
+   42627,
+   "C"
+  ],
+  [
+   "Quinn, 3rd72",
+   "Bern",
+   144,
+   42664,
+   "A"
+  ],
+  [
+   "Hart,Ed73",
+   "Oslo",
+   157,
+   42701,
+   "B"
+  ],
+  [
+   "xu74",
+   "boston",
+   170,
+   42738,
+   "C"
+  ],
+  [
+   "Patel, Raj75",
+   "Nice",
+   183,
+   42775,
+   "A"
+  ],
+  [
+   "Moore, Kim76",
+   "Rome",
+   126,
+   42812,
+   "B"
+  ],
+  [
+   "Diaz, Lu77",
+   "Paris",
+   139,
+   42849,
+   "C"
+  ],
+  [
+   "Frost, Ann-Marie78",
+   "Kyiv",
+   152,
+   42886,
+   "A"
+  ],
+  [
+   "Gray, Sam79",
+   "Cork",
+   165,
+   42923,
+   "B"
+  ],
+  [
+   "Smith, Anna80",
+   "Lyon",
+   178,
+   42960,
+   "C"
+  ],
+  [
+   "jones, bob81",
+   "Boston",
+   121,
+   42997,
+   "A"
+  ],
+  [
+   "Lee82",
+   "Bern",
+   134,
+   43034,
+   "B"
+  ],
+  [
+   "O'Neil-Ray83",
+   "Oslo",
+   147,
+   43071,
+   "C"
+  ],
+  [
+   "de la Cruz, Jo84",
+   "boston",
+   160,
+   43108,
+   "A"
+  ],
+  [
+   "Zed285",
+   "Nice",
+   173,
+   43145,
+   "B"
+  ],
+  [
+   "Mc Kay, Al86",
+   "Rome",
+   186,
+   43182,
+   "C"
+  ],
+  [
+   "Brown, Cy87",
+   "Paris",
+   129,
+   43219,
+   "A"
+  ],
+  [
+   "brown, cy88",
+   "Kyiv",
+   142,
+   43256,
+   "B"
+  ],
+  [
+   "Ng89",
+   "Cork",
+   155,
+   43293,
+   "C"
+  ],
+  [
+   "Åberg, Eli90",
+   "Lyon",
+   168,
+   43330,
+   "A"
+  ],
+  [
+   "Vu, Tran91",
+   "Boston",
+   181,
+   43367,
+   "B"
+  ],
+  [
+   "Quinn, 3rd92",
+   "Bern",
+   124,
+   43404,
+   "C"
+  ],
+  [
+   "Hart,Ed93",
+   "Oslo",
+   137,
+   43441,
+   "A"
+  ],
+  [
+   "xu94",
+   "boston",
+   150,
+   43478,
+   "B"
+  ],
+  [
+   "Patel, Raj95",
+   "Nice",
+   163,
+   43515,
+   "C"
+  ],
+  [
+   "Moore, Kim96",
+   "Rome",
+   176,
+   43552,
+   "A"
+  ],
+  [
+   "Diaz, Lu97",
+   "Paris",
+   119,
+   43589,
+   "B"
+  ],
+  [
+   "Frost, Ann-Marie98",
+   "Kyiv",
+   132,
+   43626,
+   "C"
+  ],
+  [
+   "Gray, Sam99",
+   "Cork",
+   145,
+   43663,
+   "A"
+  ]
+ ],
+ "answer": {
+  "index_global": "^IadSm173F46X",
+  "id_positions": [
+   2
+  ],
+  "link_verdict": "not_linked",
+  "killed_rows": [
+   3,
+   12,
+   21,
+   30,
+   39,
+   48,
+   57,
+   66,
+   75,
+   84,
+   93
+  ],
+  "orphan_reported": false
+ },
+ "post_load": "Kill ^IadSm173F46(3) Kill ^IadSm173F46(12) Kill ^IadSm173F46(21) Kill ^IadSm173F46(30) Kill ^IadSm173F46(39) Kill ^IadSm173F46(48) Kill ^IadSm173F46(57) Kill ^IadSm173F46(66) Kill ^IadSm173F46(75) Kill ^IadSm173F46(84) Kill ^IadSm173F46(93)"
+}
