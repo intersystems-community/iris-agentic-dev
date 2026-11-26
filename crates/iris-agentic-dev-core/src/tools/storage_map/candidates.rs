@@ -13,6 +13,12 @@ use serde::Serialize;
 /// At most this many candidates are examined; the rest are named, not examined (FR-003).
 pub const MAX_CANDIDATES: usize = 8;
 
+/// A test names another class query here so IRIS itself refuses the listing and the generated
+/// code reports IRIS's own text. Compiled only into test builds (`testing`), so a release binary
+/// has no way to change what it runs.
+#[cfg(feature = "testing")]
+pub static LISTING_QUERY_FOR_TESTS: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
 /// How a candidate was found, best first: a name the caller gave beats the same global found by
 /// the listing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
