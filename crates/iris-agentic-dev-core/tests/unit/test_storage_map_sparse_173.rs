@@ -29,7 +29,8 @@ fn view() -> MasterView {
 
 fn missing(rule: &str, field: Option<u32>, literal: Option<&str>) -> String {
     let field = field.map_or("null".to_string(), |f| f.to_string());
-    let literal = literal.map_or("null".to_string(), |l| format!("{l:?}"));
+    // JSON, not Rust's Debug spelling: `\u{1}` is not a JSON escape.
+    let literal = literal.map_or("null".to_string(), |l| serde_json::to_string(l).unwrap());
     format!(
         "{{\"t\":\"sample\",\"nodes\":48,\"distinct_first\":9,\"usable\":48,\"stopped\":\"none\"}}\n\
          {{\"t\":\"missing\",\"share\":0.2,\"rule\":\"{rule}\",\"field\":{field},\"literal\":{literal},\"rows\":60,\"count\":12}}\n\

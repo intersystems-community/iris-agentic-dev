@@ -7,7 +7,7 @@
 //! one the index holds and the planner can use the map. A piece form (`$p($$SQLUPPER(...),",",1)`)
 //! has no collation to carry; its query reads the master, and `detail` says so.
 
-use super::link::{master_field, storage_type_node, Link, MasterView, Transform};
+use super::link::{master_field, storage_type_node, Condition, Link, MasterView, Transform};
 use super::master::MasterSpec;
 use super::model::map_node;
 use super::tree::{emit_body, Node};
@@ -216,6 +216,24 @@ pub fn count_query(table: &str, field: &str) -> String {
     )
 }
 
+/// The query that asks the master what a condition keeps: how many of the first `rows` rows (by ID,
+/// the order the linker read them in) satisfy it, over the scratch table `table`. The caller has
+/// checked `field` is a plain property name.
+pub fn present_count_query(table: &str, field: &str, cond: &Condition, rows: u32) -> String {
+    format!(
+        "SELECT COUNT(*) AS n FROM (SELECT TOP {rows} %ID AS rid, {field} AS fv FROM {table} ORDER BY %ID) AS q WHERE {}",
+        cond.sql_present("fv")
+    )
+}
+
+/// What a conditional index map must hold: the master keeps `expect` of its first `rows` rows under
+/// the condition, which is the number of rows the index has nodes for.
+pub struct KeptCheck<'a> {
+    pub condition: &'a Condition,
+    pub rows: u32,
+    pub expect: u64,
+}
+
 /// Compile the drafted map in a scratch copy and ask for a known row by the indexed field.
 #[allow(clippy::too_many_arguments)] // the call site is the one in link_run.rs and the live test
 pub async fn verify(
@@ -228,29 +246,66 @@ pub async fn verify(
     link: &Link,
     view: &MasterView,
 ) -> Verification {
+    verify_with(
+        conn, client, ns, master, master_map, index_map, link, view, None,
+    )
+    .await
+    .0
+}
+
+/// [`verify`], or, with a [`KeptCheck`], the check of a conditional map: the scratch copy compiles,
+/// and the master keeps exactly the rows the index holds under the condition. The second item is the
+/// count the master kept.
+#[allow(clippy::too_many_arguments)] // the call site is the one in link_run.rs
+pub async fn verify_with(
+    conn: &IrisConnection,
+    client: &reqwest::Client,
+    ns: &str,
+    master: &MasterSpec,
+    master_map: &Value,
+    index_map: &Value,
+    link: &Link,
+    view: &MasterView,
+    kept: Option<&KeptCheck<'_>>,
+) -> (Verification, Option<u64>) {
+    let fail = |compiled: bool, why: String| (Verification::failed(compiled, why), None);
     let indexed = match indexed_field(link, view) {
         Ok(i) => i,
-        Err(why) => return Verification::failed(false, why),
+        Err(why) => return fail(false, why),
     };
     if !is_plain_name(&indexed.field) {
-        return Verification::failed(false, format!("{:?} is not a field name", indexed.field));
+        return fail(false, format!("{:?} is not a field name", indexed.field));
+    }
+    if let Some(k) = kept {
+        if !is_plain_name(&k.condition.field) {
+            return fail(
+                false,
+                format!("{:?} is not a field name", k.condition.field),
+            );
+        }
     }
     let (text, nodes) = match class_text(master, master_map, index_map, &indexed) {
         Ok(t) => t,
-        Err(why) => return Verification::failed(false, why),
+        Err(why) => return fail(false, why),
     };
     if let Err(refusal) = scratch_probe(&text, &nodes) {
-        return Verification::failed(false, answer_text(&refusal));
+        return fail(false, answer_text(&refusal));
     }
     let field = indexed.field.clone();
-    let query = move |scratch: &str| count_query(scratch, &field);
+    let query: Box<dyn Fn(&str) -> String + Send + Sync> = match kept {
+        Some(k) => {
+            let (cond, rows) = (k.condition.clone(), k.rows);
+            Box::new(move |scratch| present_count_query(scratch, &cond.field, &cond, rows))
+        }
+        None => Box::new(move |scratch| count_query(scratch, &field)),
+    };
     let compiled = scratch_compile(
         conn,
         client,
         &text,
         &nodes,
         ns,
-        Some(&query),
+        Some(&*query),
         "no real class was touched",
     )
     .await;
@@ -260,27 +315,42 @@ pub async fn verify(
                 answer["error_code"].as_str(),
                 Some("STORAGE_MAP_COMPILE_FAILED" | "UPLOAD_FAILED" | "STORAGE_MAP_INVALID")
             );
-            Verification::failed(compiled, answer_text(&answer))
+            fail(compiled, answer_text(&answer))
         }
-        Ok((_, None)) => Verification::failed(true, "the scratch copy compiled but no query ran"),
-        Ok((_, Some(Err(e)))) => Verification::failed(true, format!("the query failed: {e}")),
+        Ok((_, None)) => fail(true, "the scratch copy compiled but no query ran".into()),
+        Ok((_, Some(Err(e)))) => fail(true, format!("the query failed: {e}")),
         Ok((_, Some(Ok(answer)))) => {
             let n = answer["result"]["content"][0]
                 .as_object()
                 .and_then(|o| o.values().next())
                 .and_then(|v| v.as_u64().or_else(|| v.as_str()?.parse().ok()));
-            match n {
-                None => Verification::failed(true, "the query answered with no count"),
-                Some(0) => Verification::failed(
+            match (n, kept) {
+                (None, _) => fail(true, "the query answered with no count".into()),
+                (Some(n), Some(k)) if n != k.expect || n == 0 => (
+                    Verification::failed(
+                        true,
+                        format!(
+                            "the master keeps {n} of its first {} rows under {} and the index \
+                             holds {}: the condition is not the one the index was filed under",
+                            k.rows, k.condition.expression, k.expect
+                        ),
+                    ),
+                    Some(n),
+                ),
+                (Some(0), None) => fail(
                     true,
                     "the query by the indexed field found no row: the map's keys are not the \
-                     ones the index holds",
+                     ones the index holds"
+                        .into(),
                 ),
-                Some(_) => Verification {
-                    compiled: true,
-                    row_found: true,
-                    detail: indexed.note,
-                },
+                (Some(n), _) => (
+                    Verification {
+                        compiled: true,
+                        row_found: true,
+                        detail: indexed.note,
+                    },
+                    Some(n),
+                ),
             }
         }
     }

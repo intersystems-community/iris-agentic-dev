@@ -437,15 +437,18 @@ tests.
 
 **Goal**: rows the index lacks are reported and, when a rule fits, drafted as a condition. **Independent test**: F22 to F25.
 
-- [ ] T051 [US5] Fixtures F22 to F25. Test first, `tests/integration/test_storage_map_sparse_173_live.rs` (+ `mod`): F22
+- [x] T051 [US5] Fixtures F22 to F25. Test first, `tests/integration/test_storage_map_sparse_173_live.rs` (+ `mod`): F22
       `missing_rows.rule` NULL and the draft carries `Condition {City}'=""` with `PopulationType conditional`; F23 rule
       empty-string and the draft's condition is the form T009 proved (or the case is in `not_inferred_detail` if T009
       failed); F24 the condition `{Status}="A"`; F25 no rule and `missing_rows.share` equals 1/7 within 0.02; each
       drafted condition passes the scratch verification (same rows through the map as through the master). Prove
       (red): `L test_storage_map_sparse_173_live`.
-- [ ] T052 [US5] Implement missing-row classification in `link_code.rs` (rows of the master sample with no index node:
+- [x] T052 [US5] Implement missing-row classification in `link_code.rs` (rows of the master sample with no index node:
       NULL, empty string, one shared value, else no rule; the rule must explain every missing row and no present row)
-      and the condition draft in `link.rs`. Prove: `L test_storage_map_sparse_173_live` green.
+      and the condition draft in `link.rs`. Prove: `L test_storage_map_sparse_173_live` green. Done: `MISSING_BODY` in
+      `link_code.rs`, `missing_rows_json`, `condition_for` and `apply_condition` in `link.rs`, the kept-rows check
+      (`verify_with`) in `link_verify.rs`, and the wiring in `link_run.rs`. The empty-string rule is `{F}'=$c(0)`, not
+      `{F}'=""`, which skips NULL only.
 
 ---
 

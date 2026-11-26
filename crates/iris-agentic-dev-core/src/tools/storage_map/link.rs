@@ -466,6 +466,10 @@ pub struct MissingLine {
     pub field: Option<u32>,
     /// The fixed value of a `fixed` rule; the linker writes it only under `include_values`.
     pub literal: Option<String>,
+    /// The master rows the linker examined and how many of them the index lacks (0 when the line
+    /// does not say).
+    pub rows: u32,
+    pub count: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -547,6 +551,10 @@ enum Line {
         field: Option<u32>,
         #[serde(default)]
         literal: Option<String>,
+        #[serde(default)]
+        rows: u32,
+        #[serde(default)]
+        count: u32,
     },
     Bitmap {
         chunk_position: u32,
@@ -710,15 +718,20 @@ pub fn parse_link_output(out: &str) -> Result<LinkReport, String> {
                 rule,
                 field,
                 literal,
+                rows,
+                count,
             } => {
                 if !(0.0..=1.0).contains(&share) {
                     return Err(format!("the linker wrote a missing share of {share}"));
                 }
+                within("missing rows", count, rows)?;
                 let line = MissingLine {
                     share,
                     rule,
                     field,
                     literal,
+                    rows,
+                    count,
                 };
                 if missing.replace(line).is_some() {
                     return Err("the linker wrote two missing lines".into());
@@ -992,6 +1005,9 @@ pub fn link_json(a: &Assembled, master: &MasterView, report: &LinkReport) -> Val
     });
     if let Some((count, share)) = orphan_nodes(a, report) {
         item["orphan_nodes"] = json!({"count": count, "share": rounded(share)});
+    }
+    if let Some(m) = &report.missing {
+        item["missing_rows"] = missing_rows_json(m, master);
     }
     item
 }
@@ -1287,4 +1303,99 @@ pub(super) fn check_with_validator(map: &Value) -> Result<(), String> {
             broken.join(", ")
         )
     })
+}
+
+// ── sparse and conditional indexes ─────────────────────────────────────────
+
+/// The `missing_rows` item (data-model.md): the share of the master rows the index lacks, the counts
+/// behind it, and the rule that explains every missing row and no present row (`null` when none
+/// fits). A fixed rule's literal is there only when the linker wrote it, which it does under
+/// `include_values` and the data policy.
+pub fn missing_rows_json(m: &MissingLine, master: &MasterView) -> Value {
+    let rule = match (m.rule, m.field) {
+        (MissingRule::None, _) | (_, None) => Value::Null,
+        (kind, Some(field)) => {
+            let name = master_field(master, field)
+                .map_or_else(|_| format!("Field{field}"), str::to_string);
+            let mut o = json!({"kind": kind.as_str(), "field": name});
+            if let (MissingRule::Fixed, Some(lit)) = (kind, &m.literal) {
+                o["literal"] = json!(lit);
+            }
+            o
+        }
+    };
+    json!({
+        "share": rounded(m.share),
+        "rows": m.rows,
+        "missing": m.count,
+        "rule": rule,
+    })
+}
+
+/// The `Condition` an index map needs for the rule that explains its missing rows: the expression
+/// as the draft spells it, the field it reads and the rule's kind and literal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Condition {
+    pub expression: String,
+    pub field: String,
+    pub kind: MissingRule,
+    pub literal: Option<String>,
+}
+
+impl Condition {
+    /// The SQL predicate that is true of the rows the index holds, over the column `col`: what the
+    /// scratch copy asks the master, to compare with what the index holds.
+    pub fn sql_present(&self, col: &str) -> String {
+        match (self.kind, &self.literal) {
+            (MissingRule::EmptyString, _) => format!("({col} IS NULL OR {col} <> '')"),
+            (MissingRule::Fixed, Some(lit)) => format!("{col} = '{}'", lit.replace('\'', "''")),
+            _ => format!("{col} IS NOT NULL"),
+        }
+    }
+}
+
+/// The condition for a `missing` line's rule, or why there is none: no rule fit, the field is not
+/// one the master has, or a fixed rule's literal is held back or cannot be spelled. NULL and an
+/// empty string are different rules (measured: SQL stores an empty string as `$c(0)`, so `{F}'=""`
+/// skips NULL only), so the empty-string rule is `{F}'=$c(0)`.
+pub fn condition_for(m: &MissingLine, master: &MasterView) -> Result<Condition, String> {
+    let field = m.field.ok_or("no rule fit the missing rows")?;
+    let name = master_field(master, field)?.to_string();
+    if !is_field_name(&name) {
+        return Err(format!("{name:?} is not a field name"));
+    }
+    let (expression, literal) = match m.rule {
+        MissingRule::None => return Err("no rule fit the missing rows".into()),
+        MissingRule::Null => (format!("{{{name}}}'=\"\""), None),
+        MissingRule::EmptyString => (format!("{{{name}}}'=$c(0)"), None),
+        MissingRule::Fixed => {
+            let lit = m.literal.as_deref().ok_or_else(|| {
+                format!(
+                    "the index holds only the rows where {{{name}}} is one value, and that value \
+                     is a sampled value held back: pass include_values under the data policy to \
+                     draft the condition"
+                )
+            })?;
+            if lit.chars().any(char::is_control) {
+                return Err("the fixed value holds a control character".into());
+            }
+            (
+                format!("{{{name}}}=\"{}\"", lit.replace('"', "\"\"")),
+                Some(lit.to_string()),
+            )
+        }
+    };
+    Ok(Condition {
+        expression,
+        field: name,
+        kind: m.rule,
+        literal,
+    })
+}
+
+/// Put `c` on an index map: the `Condition`, the field it reads and `PopulationType conditional`.
+pub fn apply_condition(map: &mut Value, c: &Condition) {
+    map["condition"] = json!(c.expression);
+    map["condition_fields"] = json!(c.field);
+    map["population_type"] = json!("conditional");
 }
