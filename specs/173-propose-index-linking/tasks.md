@@ -412,21 +412,23 @@ tests.
 
 **Goal**: bitmaps are recognised, decoded and drafted. **Independent test**: F19, F20, F21.
 
-- [ ] T048 [US4] Fixtures F19 to F21. Test first, `tests/integration/test_storage_map_bitmap_173_live.rs` (+ `mod`): F19
+- [x] T048 [US4] Fixtures F19 to F21. Test first, `tests/integration/test_storage_map_bitmap_173_live.rs` (+ `mod`): F19
       `bitmaps[0]` has the chunk as its last subscript, `ids_checked == ids_found_in_master`, the drafted
       map is `Type bitmap` with the field as its only subscript and `verified.row_found`; F20 has the same with the
-      index name first; a bitmap whose decoded IDs are not in the master is `not_linked`; a decode that needs an
+      index name first (`index_name`, and the drafted map's first subscript is that name, `"StatusIdx"`); a bitmap whose decoded IDs are not in the master is `not_linked`; a decode that needs an
       unconfirmed chunk size is `ambiguous` with `assumed` naming it; F21 returns `chunk_map_draft` whose
       scratch-compiled table returns the IDs the bits name. Prove (red): `L test_storage_map_bitmap_173_live`.
-- [ ] T049 [US4] Recognise a bit-string master in the linker (plan.md: the sampler and `ShapeReport` do not change). Test
+- [x] T049 [US4] Recognise a bit-string master in the linker (plan.md: the sampler and `ShapeReport` do not change). Test
       first, `tests/unit/test_storage_map_link_code_173.rs`: `master_bit_probe(global, caps)` quotes the global through
       `os_str_expr`, writes only counts and positions, and decodes with `$BitFind`; live in T048's file: F21's master
       is recognised and an ordinary delimited master (F01) is not. Implement `link_code::master_bit_probe` and call it
       from `propose_action` only when the master sample shows depth-2 nodes with a numeric last subscript and no
-      delimiter or `$LIST` shape. Prove: `U test_storage_map_link_code_173`, `L test_storage_map_bitmap_173_live`, and
+      `$LIST` shape (a dense bit string holds the delimiter bytes the sampler looks for, so `delimited` does not rule
+      it out; the probe decides). Prove: `U test_storage_map_link_code_173`, `L test_storage_map_bitmap_173_live`, and
       `U test_storage_map_golden_172` unchanged.
-- [ ] T050 [US4] Implement bitmap detection and decode in `link_code.rs` (`$BitFind`, the chunk as last subscript, up to 1,000
-      IDs in 5 chunks) and the drafts in `bitmap.rs` wired into `propose_action` (`bitmaps`, `chunk_map_draft`, each
+- [x] T050 [US4] Implement bitmap detection and decode in `link_code.rs` (`$BitFind`, the chunk as last subscript, up to 1,000
+      IDs, at most 40 from one node so the sample spans values; IDs from chunk 2 on are counted apart because only
+      they confirm the chunk size) and the drafts in `bitmap.rs` wired into `propose_action` (`bitmaps`, `chunk_map_draft`, each
       verified in a scratch copy before `inferred`). Prove: `L test_storage_map_bitmap_173_live` green.
 
 ---
@@ -435,15 +437,18 @@ tests.
 
 **Goal**: rows the index lacks are reported and, when a rule fits, drafted as a condition. **Independent test**: F22 to F25.
 
-- [ ] T051 [US5] Fixtures F22 to F25. Test first, `tests/integration/test_storage_map_sparse_173_live.rs` (+ `mod`): F22
+- [x] T051 [US5] Fixtures F22 to F25. Test first, `tests/integration/test_storage_map_sparse_173_live.rs` (+ `mod`): F22
       `missing_rows.rule` NULL and the draft carries `Condition {City}'=""` with `PopulationType conditional`; F23 rule
       empty-string and the draft's condition is the form T009 proved (or the case is in `not_inferred_detail` if T009
       failed); F24 the condition `{Status}="A"`; F25 no rule and `missing_rows.share` equals 1/7 within 0.02; each
       drafted condition passes the scratch verification (same rows through the map as through the master). Prove
       (red): `L test_storage_map_sparse_173_live`.
-- [ ] T052 [US5] Implement missing-row classification in `link_code.rs` (rows of the master sample with no index node:
+- [x] T052 [US5] Implement missing-row classification in `link_code.rs` (rows of the master sample with no index node:
       NULL, empty string, one shared value, else no rule; the rule must explain every missing row and no present row)
-      and the condition draft in `link.rs`. Prove: `L test_storage_map_sparse_173_live` green.
+      and the condition draft in `link.rs`. Prove: `L test_storage_map_sparse_173_live` green. Done: `MISSING_BODY` in
+      `link_code.rs`, `missing_rows_json`, `condition_for` and `apply_condition` in `link.rs`, the kept-rows check
+      (`verify_with`) in `link_verify.rs`, and the wiring in `link_run.rs`. The empty-string rule is `{F}'=$c(0)`, not
+      `{F}'=""`, which skips NULL only.
 
 ---
 

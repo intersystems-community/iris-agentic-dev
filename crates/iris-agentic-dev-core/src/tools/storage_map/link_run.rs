@@ -6,11 +6,11 @@
 use super::candidates::{Candidate, Status};
 use super::globals::check_index_global;
 use super::link::{
-    assemble, draft_index_map, link_json, map_name, parse_link_output, Assembled, LinkReport,
-    MasterView, Stopped,
+    apply_condition, assemble, condition_for, draft_index_map, link_json, map_name,
+    parse_link_output, Assembled, Condition, LinkReport, MasterView, MissingRule, Stopped,
 };
 use super::link_code::{build_code, field_access, Caps, FieldAccess, LinkRequest};
-use super::link_verify::verify;
+use super::link_verify::{verify, verify_with, KeptCheck};
 use super::master::MasterSpec;
 use super::typing_run::{collation_picks, FieldCollation};
 use crate::iris::connection::IrisConnection;
@@ -21,6 +21,8 @@ use serde_json::{json, Value};
 pub struct Linked {
     pub index_candidates: Value,
     pub indexes: Vec<Value>,
+    /// One item per candidate whose nodes hold bit strings (`bitmap_run`).
+    pub bitmaps: Vec<Value>,
     pub limits: Value,
     /// `{what, why}`: what was not examined, not explained or not drafted, for
     /// `not_inferred_detail`.
@@ -84,6 +86,7 @@ pub async fn link_all(run: &Run<'_>, names: &[String]) -> Linked {
     let view = master_view(run.master);
     let mut details = Vec::new();
     let mut indexes = Vec::new();
+    let mut bitmaps = Vec::new();
     let mut stopped = Vec::new();
     let mut taken = vec![run.master.map_name.clone()];
     let mut collations = Vec::new();
@@ -113,6 +116,15 @@ pub async fn link_all(run: &Run<'_>, names: &[String]) -> Linked {
         }
         let name = map_name(&c.global, &taken);
         taken.push(name.clone());
+        if !report.bitmaps.is_empty() {
+            if let Some(items) =
+                super::bitmap_run::bitmap_items(run, c, &name, &report, &view, &mut details).await
+            {
+                indexes.push(items.index);
+                bitmaps.push(items.bitmap);
+                continue;
+            }
+        }
         let assembled = assemble(&c.global, &name, &report);
         let item = index_item(run, c, &assembled, &view, &report, &mut details).await;
         if item.get("map").is_some() {
@@ -128,6 +140,7 @@ pub async fn link_all(run: &Run<'_>, names: &[String]) -> Linked {
     Linked {
         index_candidates: json!({"candidates": candidates, "not_examined": not_examined}),
         indexes,
+        bitmaps,
         limits: json!({
             "node_cap": run.node_cap,
             "time_cap_seconds": Caps::for_node_cap(run.node_cap).time_cap_secs,
@@ -226,8 +239,9 @@ async fn index_item(
             }
         }
     }
+    let condition = sparse_condition(c, view, report, details);
     let drafted = if a.link.verdict.is_explained() {
-        draft_verified(run, a, view, &mut item).await
+        draft_verified(run, a, view, &mut item, condition.as_ref(), details).await
     } else {
         Err(format!("the link is {}", a.link.verdict.as_str()))
     };
@@ -237,22 +251,91 @@ async fn index_item(
     item
 }
 
+/// The condition and the numbers it must check against, when the index lacks master rows (spec 173
+/// FR-019): the rule the linker found, spelt as a `Condition`, the rows examined and how many of
+/// them the master keeps under it. What was not drafted, and why, goes to `details`.
+fn sparse_condition(
+    c: &Candidate,
+    view: &MasterView,
+    report: &LinkReport,
+    details: &mut Vec<Value>,
+) -> Option<(Condition, u32, u64)> {
+    let m = report.missing.as_ref()?;
+    let what = format!("{} lacks master rows", c.label());
+    match condition_for(m, view) {
+        Ok(cond) => Some((cond, m.rows, u64::from(m.rows.saturating_sub(m.count)))),
+        Err(why) => {
+            let why = if m.rule == MissingRule::None {
+                format!(
+                    "no rule fit: no one condition on a master field explains every missing row \
+                     and no present row, so the drafted map covers fewer rows than the master \
+                     ({} of {} examined rows are missing)",
+                    m.count, m.rows
+                )
+            } else {
+                format!("{why}; the drafted map covers fewer rows than the master")
+            };
+            details.push(detail(what, why));
+            None
+        }
+    }
+}
+
 /// Draft the index map, verify it in a scratch copy, and put the map and its guesses on `item`
-/// only when it verified; `verified` goes on `item` whenever the check ran.
+/// only when it verified; `verified` goes on `item` whenever the check ran. With a `condition`, the
+/// map carries it and the scratch copy must also show the master keeps the rows the index holds; a
+/// condition that does not check out is left off, and the plain map is checked instead.
 async fn draft_verified(
     run: &Run<'_>,
     a: &Assembled,
     view: &MasterView,
     item: &mut Value,
+    condition: Option<&(Condition, u32, u64)>,
+    details: &mut Vec<Value>,
 ) -> Result<(), String> {
-    let (map, guesses) = draft_index_map(&a.link, view)?;
+    let (plain, guesses) = draft_index_map(&a.link, view)?;
+    if let Some((cond, rows, expect)) = condition {
+        let mut map = plain.clone();
+        apply_condition(&mut map, cond);
+        let kept = KeptCheck {
+            condition: cond,
+            rows: *rows,
+            expect: *expect,
+        };
+        let (v, n) = verify_with(
+            run.conn,
+            run.client,
+            run.ns,
+            run.master,
+            run.master_map,
+            &map,
+            &a.link,
+            view,
+            Some(&kept),
+        )
+        .await;
+        if v.compiled && v.row_found {
+            item["verified"] = v.to_json();
+            item["verified"]["rows_kept"] = json!(n);
+            item["map"] = map;
+            item["guesses"] = json!(guesses);
+            return Ok(());
+        }
+        details.push(detail(
+            format!("{} condition {}", a.link.map_name, cond.expression),
+            format!(
+                "the drafted condition did not verify in a scratch copy, so the map has none: {}",
+                v.detail.as_deref().unwrap_or("no reason given")
+            ),
+        ));
+    }
     let v = verify(
         run.conn,
         run.client,
         run.ns,
         run.master,
         run.master_map,
-        &map,
+        &plain,
         &a.link,
         view,
     )
@@ -264,7 +347,7 @@ async fn draft_verified(
             v.not_verified_because()
         ));
     }
-    item["map"] = map;
+    item["map"] = plain;
     item["guesses"] = json!(guesses);
     Ok(())
 }

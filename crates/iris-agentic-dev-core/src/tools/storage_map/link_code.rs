@@ -202,7 +202,15 @@ pub fn build_code(req: &LinkRequest<'_>) -> Result<String, String> {
     code.push_str(&transform_table());
     code.push_str(TRY_OPEN);
     code.push_str(SPREAD_WALK);
+    code.push_str(BITMAP_DETECT);
+    code.push_str(" If isbm {\n");
+    code.push_str(BITMAP_ROWS);
+    code.push_str(" } Else {\n");
     code.push_str(LINK_BODY);
+    code.push_str(" }\n");
+    code.push_str(LINK_SCORE);
+    code.push_str(MISSING_BODY);
+    code.push_str(BITMAP_LINE);
     code.push_str(TRY_CLOSE);
     code.push_str(EPILOGUE);
     Ok(code)
@@ -323,7 +331,11 @@ const LINK_BODY: &str = r#" Set tot=0,bestd=0,bestn=0
    If bs=0 { Set o.form="value" } Else { Set o.form="subscript" For q=0:1:kp-1 { Do pa.%Push(bs+q) } }
    Do o.%Set("positions",pa) Set o.resolved=w2(bs),o.total=tot,ol=ol+1,ob(ol)=o
    Kill w2(bs) }
- For j=1:1:nf { Set fnode=$List(fa(j),1),fd=$List(fa(j),2),fp=$List(fa(j),3)
+"#;
+
+/// The scoring of the rows `LINK_BODY` (or `BITMAP_ROWS`) chose: each position against each master
+/// field under each transform, the null markers, the covering data, and the sample line.
+const LINK_SCORE: &str = r#" For j=1:1:nf { Set fnode=$List(fa(j),1),fd=$List(fa(j),2),fp=$List(fa(j),3)
    For i=1:1:tot { If $Get(ok(i)) { Set r=mrow(i) Set:fnode'="" r=$Name(@r@(fnode))
      Set raw=$Get(@r)
      If fd=0 { Set fv(i,j)=$Select($ListValid(raw)&&($ListLength(raw)>=fp):$ListGet(raw,fp),1:"") } Else { Set fv(i,j)=$Piece(raw,$Char(fd),fp) }
@@ -381,4 +393,164 @@ const LINK_BODY: &str = r#" Set tot=0,bestd=0,bestn=0
    If bj>0 { Set o={},o.t="data",o.field=bj,o.element=e,o.matches=bn,o.total=nu,ol=ol+1,ob(ol)=o } }
  If ($ZH-t0)>secs { Set stopped="time" }
  Set o={},o.t="sample",o.nodes=nn,o."distinct_first"=distinct,o.usable=nu,o.stopped=stopped,o.depth=bestd,ob(0)=o
+"#;
+
+// ── sparse and conditional indexes (T051, T052) ──────────────────────────────────────────────
+//
+// An index that lacks master rows is sparse. After the link is scored, the candidate is walked for
+// the IDs it holds (up to the count cap) and the first node-cap master rows are each marked present
+// or missing; when the missing rows are over 5% of them, one rule is looked for that explains every
+// missing row and no present row, over the fields the link explained first: a NULL field (`null`),
+// an empty-string field (`empty_string`, stored as `$c(0)`), or a field every present row shares and
+// no missing row has (`fixed`). The `missing` line has the share, the rule, the field and the
+// counts; a fixed rule's literal is a sampled value and is written only under `vals`.
+
+/// The `missing` line. Runs only for a subscript-form or value-form link of a single-part row ID that
+/// found rows, never for a bitmap, and writes nothing when the candidate is too large to walk or the
+/// time cap tripped, since the present set would not be exact.
+const MISSING_BODY: &str = r#" Set mzon=0,mzm=0,mzx=0
+ If (bw>=0)&&(nu>0)&&(kp=1)&&'isbm&&(($ZH-t0)<=secs) { Set mzon=1 }
+ If mzon {
+   Kill mzp
+   Set mzab=0,mzc=0,mzn=cand
+   For { Set mzn=$Query(@mzn) Quit:mzn=""
+     If (base>0)&&($Name(@mzn,base)'=cand) { Quit }
+     Set mzc=mzc+1
+     If (mzc>ccap)||(($ZH-t0)>secs) { Set mzab=1 Quit }
+     If ($QLength(mzn)-base)=bestd { Set mzk=$Select(bw=0:$Get(@mzn),1:$QSubscript(mzn,base+bw)) Set:mzk'="" mzp(mzk)=1 } }
+   If mzab { Set mzon=0 } }
+ If mzon {
+   Set mzi=""
+   For { Set mzi=$Order(@mst@(mzi)) Quit:mzi=""  Quit:mzm>=nodecap  Quit:($ZH-t0)>secs
+     Set mzm=mzm+1,mzr=$Name(@mst@(mzi)),mzq(mzm)=$Select($Data(mzp(mzi))#2:1,1:0)
+     For mzj=1:1:nf { Set mzfn=$List(fa(mzj),1),mzfd=$List(fa(mzj),2),mzfp=$List(fa(mzj),3),mzrr=mzr
+       Set:mzfn'="" mzrr=$Name(@mzr@(mzfn))
+       Set mzw=$Get(@mzrr)
+       If mzfd=0 { Set mzv(mzm,mzj)=$Select($ListValid(mzw)&&($ListLength(mzw)>=mzfp):$ListGet(mzw,mzfp),1:"") } Else { Set mzv(mzm,mzj)=$Piece(mzw,$Char(mzfd),mzfp) } }
+     If 'mzq(mzm) { Set mzx=mzx+1 } }
+   If (mzm=0)||(mzx=0)||(mzx=mzm)||(($ZH-t0)>secs)||((mzx/mzm)'>.05) { Set mzon=0 } }
+ If mzon {
+   Kill mzex
+   For mza=1:1:npos { Set mzpp=pp(mza),mzmk=$Order(rk(mzpp,""))
+     If mzmk'="" { Set mzsq=$Order(rk(mzpp,mzmk,"")),mzex(+$List(rk(mzpp,mzmk,mzsq),1))=1 } }
+   Set mzno=0
+   For mzpass=1,2 { For mzj=1:1:nf { If ($Data(mzex(mzj))#2)=(mzpass=1) { Set mzno=mzno+1,mzord(mzno)=mzj } } }
+   Set mzrule="none",mzfld="",mzlit=""
+   For mzr1="null","empty_string","fixed" { Quit:mzrule'="none"
+     Set mzmark=$Select(mzr1="null":"",1:$Char(0))
+     For mzoi=1:1:nf { Quit:mzrule'="none"
+       Set mzj=mzord(mzoi),mzok=1,mzfv="",mzfs=0
+       For mzi=1:1:mzm { Quit:'mzok
+         Set mzy=mzv(mzi,mzj)
+         If mzr1'="fixed" { If mzq(mzi) { If mzy=mzmark { Set mzok=0 } } Else { If mzy'=mzmark { Set mzok=0 } } } Else { If mzq(mzi) { If (mzy="")||(mzy=$Char(0))||($Length(mzy)>100) { Set mzok=0 } ElseIf 'mzfs { Set mzfv=mzy,mzfs=1 } ElseIf mzy'=mzfv { Set mzok=0 } } } }
+       If mzok&&(mzr1="fixed") {
+         If 'mzfs { Set mzok=0 } Else { For mzi=1:1:mzm { If 'mzq(mzi)&&(mzv(mzi,mzj)=mzfv) { Set mzok=0 Quit } } } }
+       If mzok { Set mzrule=mzr1,mzfld=mzj,mzlit=mzfv } } }
+   Set o={},o.t="missing",o.share=$Number(mzx/mzm,4),o.rule=mzrule,o.rows=mzm,o.count=mzx
+   If mzfld="" { Do o.%Set("field","","null") } Else { Set o.field=mzfld }
+   Do o.%Set("literal","","null")
+   If mzrule="fixed" { Set:vals o.literal=mzlit }
+   Set ol=ol+1,ob(ol)=o }
+"#;
+
+// ── bitmaps (T049, T050) ─────────────────────────────────────────────────────────────────────
+//
+// A candidate whose nodes hold bit strings is a bitmap index (fact 7): the chunk is the last
+// subscript and bit `p` of chunk `c` is row ID `(c - 1) * 64000 + p - 1`. The decode feeds the same
+// scoring as any other index: each decoded ID is one "row" (the node's value subscripts, the master
+// row the ID names), so a position is explained by the master field it reads under a transform, and
+// the `bitmap` line says how many decoded IDs found a master row. Nothing but counts is written.
+
+/// Whether the sampled nodes hold bit strings: `$BitCount` raises `<INVALID BIT STRING>` on anything
+/// else (measured: a string, a number, a `$LIST` and `$c(0)` all do), so nine in ten valid is a
+/// bitmap. Sets `isbm`.
+const BITMAP_DETECT: &str = r#" Set nbit=0,isbm=0
+ For i=1:1:nn { Set bv=$Get(@nd(i)) If bv'="" { Try { Set bc=$BitCount(bv),nbit=nbit+1 } Catch bx { } } }
+ If (nn>0)&&((nbit*10)>=(nn*9)) { Set isbm=1 }
+"#;
+
+/// The rows of a bitmap candidate, in place of `LINK_BODY`'s search for the ID: the most common node
+/// depth is the depth of the value nodes and its last subscript is the chunk; each node's bits are
+/// decoded (at most 40 IDs a node, 1,000 in all) into rows `1..tot` with `sb(row, position)` the
+/// node's subscripts before the chunk, `mrow(row)` the master row the ID names and `ok(row)` set when
+/// that row exists. A composite row ID cannot be decoded (`kp>1`): no row, and the link is not linked.
+const BITMAP_ROWS: &str = r#" Set bw=-1,tot=0,nu=0,npos=0,bestd=0,bestn=0,lc=0,lf=0
+ For i=1:1:nn { Set d=$QLength(nd(i))-base,dc(d)=$Get(dc(d))+1 }
+ Set d="" For { Set d=$Order(dc(d)) Quit:d=""  If (d>1)&&(dc(d)>bestn) { Set bestn=dc(d),bestd=d } }
+ If (bestd>1)&&(kp=1) {
+   For i=1:1:nn { Quit:tot>=1000
+     Quit:($ZH-t0)>secs
+     If ($QLength(nd(i))-base)=bestd {
+       Set bv=$Get(@nd(i)),ch=$QSubscript(nd(i),base+bestd),okb=1
+       If (ch'?1.N)||(ch<1) { Set okb=0 }
+       If okb { Try { Set bc=$BitCount(bv) } Catch bx { Set okb=0 } }
+       If okb { Set bper=0,bp=0
+         For { Set bp=$BitFind(bv,1,bp+1) Quit:'bp
+           Quit:bper>=40
+           Quit:tot>=1000
+           Set id=(ch-1)*64000+bp-1,tot=tot+1,bper=bper+1,ln(tot)=nd(i)
+           For p=1:1:bestd-1 { Set sb(tot,p)=$QSubscript(nd(i),base+p) }
+           Set mr=$Name(@mst@(id)),mrow(tot)=mr
+           If ch>1 { Set lc=lc+1 }
+           If $Data(@mr) { Set ok(tot)=1,nu=nu+1 Set:ch>1 lf=lf+1 } } } } } }
+ If nu>0 { For p=1:1:bestd-1 { Set npos=npos+1,pp(npos)=p } }
+ Set nn=tot
+"#;
+
+/// The `bitmap` line, after the scoring: where the chunk is, how many IDs were decoded and found a
+/// master row (`later_*` for those from chunk 2 on, the only ones that confirm the chunk size), and
+/// the index name a class-compiled bitmap holds first (a name, written only when it is one).
+const BITMAP_LINE: &str = r#" If isbm {
+   Set o={},o.t="bitmap",o."chunk_position"=$Select(bestd>1:bestd,1:1),o."ids_checked"=tot,o."ids_found"=nu,o."later_checked"=lc,o."later_found"=lf
+   Set lead=""
+   If (bestd>=3)&&(nu>0)&&($Get(dist(1))=1) { For i=1:1:tot { If $Get(ok(i)) { Set lead=sb(i,1) Quit } } }
+   If (lead'="")&&($Length(lead)<=64)&&(lead?1A.AN) { Set o.lead=lead }
+   Set ol=ol+1,ob(ol)=o }
+"#;
+
+/// The probe of a master for the shape `^G(const, chunk) = $BIT` (spec 173 FR-018), built from a
+/// validated, quoted global name. It reads the first subscripts (there must be exactly one, a number
+/// or a name), then each chunk node under it (`$BitCount` raises on anything but a bit string),
+/// decoding up to 1,000 IDs with `$BitFind` in the order the scratch table will return them. It
+/// writes one `masterbits` line (`found`, the constant, chunk and ID counts, the sum, first and last
+/// ID) and `done`: counts and positions, and the constant (a number or a name).
+pub fn master_bit_probe(global: &str, caps: Caps) -> Result<String, String> {
+    let g = global_literal(global)?;
+    let mut code = format!(
+        "Set g={g},t0=$ZH\n Set nodecap={},secs={}\n",
+        caps.node_cap, caps.time_cap_secs
+    );
+    code.push_str(TRY_OPEN);
+    code.push_str(PROBE_BODY);
+    code.push_str(TRY_CLOSE);
+    code.push_str(EPILOGUE);
+    Ok(code)
+}
+
+const PROBE_BODY: &str = r#" Set found=0,nodes=0,ids=0,idsum=0,first=0,last=0,k1="",na=0,bad=0
+ Set a="" For { Set a=$Order(@g@(a)) Quit:a=""
+   Set na=na+1,k1=a
+   Quit:na>1 }
+ If na'=1 { Set bad=1 }
+ If 'bad {
+   Set c="" For { Set c=$Order(@g@(k1,c)) Quit:c=""
+     Quit:nodes>=nodecap
+     Quit:($ZH-t0)>secs
+     Set okb=1
+     If (c'?1.N)||(c<1)||($Data(@g@(k1,c))'=1) { Set okb=0 }
+     If okb { Set v=@g@(k1,c) Try { Set bc=$BitCount(v) } Catch bx { Set okb=0 } }
+     If 'okb { Set bad=1 Quit }
+     Set nodes=nodes+1
+     Set bp=0 For { Set bp=$BitFind(v,1,bp+1) Quit:'bp
+       Quit:ids>=1000
+       Set id=(c-1)*64000+bp-1,ids=ids+1,idsum=idsum+id
+       Set:ids=1 first=id
+       Set last=id }
+     Quit:ids>=1000 } }
+ If (k1'?1.N)&&'((k1?1A.AN)&&($Length(k1)<=64)) { Set bad=1 }
+ If 'bad&&(nodes>0)&&(ids>0) { Set found=1 }
+ Set o={},o.t="masterbits"
+ Do o.%Set("found",found,"boolean")
+ Do o.%Set("constant",k1,"string")
+ Set o.chunks=nodes,o.ids=ids,o.idsum=idsum,o.first=first,o.last=last,ob(0)=o
 "#;

@@ -1,0 +1,365 @@
+{
+ "name": "F20",
+ "description": "class-compiled bitmap StatusIdx over Status (default storage master)",
+ "class": "IadSm173.F20",
+ "table": "IadSm173.F20",
+ "columns": [
+  "Name",
+  "City",
+  "Age",
+  "Born",
+  "Status"
+ ],
+ "master_global": "^IadSm173.F20D",
+ "index_globals": [
+  "^IadSm173.F20I"
+ ],
+ "rows": [
+  [
+   "Smith, Anna",
+   "Lyon",
+   118,
+   40000,
+   "In Progress"
+  ],
+  [
+   "jones, bob",
+   "Boston",
+   131,
+   40037,
+   "on-hold"
+  ],
+  [
+   "Lee  ",
+   "Bern",
+   144,
+   40074,
+   "Closed Out"
+  ],
+  [
+   "O'Neil-Ray",
+   "Oslo",
+   157,
+   40111,
+   "In Progress"
+  ],
+  [
+   "de la Cruz, Jo",
+   "boston",
+   170,
+   40148,
+   "on-hold"
+  ],
+  [
+   "Zed2",
+   "Nice",
+   183,
+   40185,
+   "Closed Out"
+  ],
+  [
+   "  Mc Kay, Al",
+   "Rome",
+   126,
+   40222,
+   "In Progress"
+  ],
+  [
+   "Brown, Cy",
+   "Paris",
+   139,
+   40259,
+   "on-hold"
+  ],
+  [
+   "brown, cy",
+   "Kyiv",
+   152,
+   40296,
+   "Closed Out"
+  ],
+  [
+   "Ng",
+   "Cork",
+   165,
+   40333,
+   "In Progress"
+  ],
+  [
+   "Åberg, Eli",
+   "Lyon",
+   178,
+   40370,
+   "on-hold"
+  ],
+  [
+   "Vu, Tran",
+   "Boston",
+   121,
+   40407,
+   "Closed Out"
+  ],
+  [
+   "Quinn, 3rd",
+   "Bern",
+   134,
+   40444,
+   "In Progress"
+  ],
+  [
+   "Hart,Ed",
+   "Oslo",
+   147,
+   40481,
+   "on-hold"
+  ],
+  [
+   "xu",
+   "boston",
+   160,
+   40518,
+   "Closed Out"
+  ],
+  [
+   "Patel, Raj",
+   "Nice",
+   173,
+   40555,
+   "In Progress"
+  ],
+  [
+   "Moore, Kim ",
+   "Rome",
+   186,
+   40592,
+   "on-hold"
+  ],
+  [
+   "Diaz, Lu",
+   "Paris",
+   129,
+   40629,
+   "Closed Out"
+  ],
+  [
+   "Frost, Ann-Marie",
+   "Kyiv",
+   142,
+   40666,
+   "In Progress"
+  ],
+  [
+   "Gray, Sam",
+   "Cork",
+   155,
+   40703,
+   "on-hold"
+  ],
+  [
+   "Smith, Anna20",
+   "Lyon",
+   168,
+   40740,
+   "Closed Out"
+  ],
+  [
+   "jones, bob21",
+   "Boston",
+   181,
+   40777,
+   "In Progress"
+  ],
+  [
+   "Lee22",
+   "Bern",
+   124,
+   40814,
+   "on-hold"
+  ],
+  [
+   "O'Neil-Ray23",
+   "Oslo",
+   137,
+   40851,
+   "Closed Out"
+  ],
+  [
+   "de la Cruz, Jo24",
+   "boston",
+   150,
+   40888,
+   "In Progress"
+  ],
+  [
+   "Zed225",
+   "Nice",
+   163,
+   40925,
+   "on-hold"
+  ],
+  [
+   "Mc Kay, Al26",
+   "Rome",
+   176,
+   40962,
+   "Closed Out"
+  ],
+  [
+   "Brown, Cy27",
+   "Paris",
+   119,
+   40999,
+   "In Progress"
+  ],
+  [
+   "brown, cy28",
+   "Kyiv",
+   132,
+   41036,
+   "on-hold"
+  ],
+  [
+   "Ng29",
+   "Cork",
+   145,
+   41073,
+   "Closed Out"
+  ],
+  [
+   "Åberg, Eli30",
+   "Lyon",
+   158,
+   41110,
+   "In Progress"
+  ],
+  [
+   "Vu, Tran31",
+   "Boston",
+   171,
+   41147,
+   "on-hold"
+  ],
+  [
+   "Quinn, 3rd32",
+   "Bern",
+   184,
+   41184,
+   "Closed Out"
+  ],
+  [
+   "Hart,Ed33",
+   "Oslo",
+   127,
+   41221,
+   "In Progress"
+  ],
+  [
+   "xu34",
+   "boston",
+   140,
+   41258,
+   "on-hold"
+  ],
+  [
+   "Patel, Raj35",
+   "Nice",
+   153,
+   41295,
+   "Closed Out"
+  ],
+  [
+   "Moore, Kim36",
+   "Rome",
+   166,
+   41332,
+   "In Progress"
+  ],
+  [
+   "Diaz, Lu37",
+   "Paris",
+   179,
+   41369,
+   "on-hold"
+  ],
+  [
+   "Frost, Ann-Marie38",
+   "Kyiv",
+   122,
+   41406,
+   "Closed Out"
+  ],
+  [
+   "Gray, Sam39",
+   "Cork",
+   135,
+   41443,
+   "In Progress"
+  ]
+ ],
+ "answer": {
+  "index_global": "^IadSm173.F20I",
+  "chunk_position": 3,
+  "lead": "StatusIdx",
+  "ids_checked": 40,
+  "ids_found": 40,
+  "field": "Status",
+  "transform": "sqlupper",
+  "link_verdict": "inferred",
+  "ids_by_status": {
+   "In Progress": [
+    1,
+    4,
+    7,
+    10,
+    13,
+    16,
+    19,
+    22,
+    25,
+    28,
+    31,
+    34,
+    37,
+    40
+   ],
+   "on-hold": [
+    2,
+    5,
+    8,
+    11,
+    14,
+    17,
+    20,
+    23,
+    26,
+    29,
+    32,
+    35,
+    38
+   ],
+   "Closed Out": [
+    3,
+    6,
+    9,
+    12,
+    15,
+    18,
+    21,
+    24,
+    27,
+    30,
+    33,
+    36,
+    39
+   ]
+  }
+ },
+ "master_columns": [
+  "",
+  "Name",
+  "City",
+  "Age",
+  "Born",
+  "Status"
+ ]
+}
