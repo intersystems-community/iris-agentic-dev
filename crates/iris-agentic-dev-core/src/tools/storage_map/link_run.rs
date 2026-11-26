@@ -165,12 +165,21 @@ async fn index_item(
     let mut item = link_json(a, view, report);
     item["found_by"] = json!(c.found_by);
     item["guesses"] = json!([]);
-    for n in item["not_explained"].as_array().into_iter().flatten() {
+    for j in a
+        .judgements
+        .iter()
+        .filter(|j| j.judgement.verdict == super::link::Verdict::NotExplained)
+    {
+        let best = j.judgement.best.as_ref().map_or(String::new(), |b| {
+            let field = super::link::master_field(view, b.field)
+                .map_or_else(|_| format!("Field{}", b.field), str::to_string);
+            format!("; the closest is {field} by {}", b.transform.name())
+        });
         details.push(detail(
-            format!("{} position {}", c.label(), n["position"]),
+            format!("{} position {}", c.label(), j.position),
             format!(
-                "no transform of the closed set reaches 0.95 here (best {})",
-                n["best_agreement"]
+                "no transform of the closed set reaches 0.95 here (best {}{best})",
+                (j.judgement.agreement * 10_000.0).round() / 10_000.0
             ),
         ));
     }

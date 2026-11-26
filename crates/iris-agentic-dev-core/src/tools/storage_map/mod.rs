@@ -1025,7 +1025,28 @@ async fn propose_action(
             return crate::tools::exec::attach_identity(err_result(answer), &cx.helper_report())
         }
     };
-    let (draft, guesses) = shape::draft(&report);
+    let (mut draft, mut guesses) = shape::draft(&report);
+    let field_names: Vec<String> = p
+        .get("field_names")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|x| x.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let named = !field_names.is_empty();
+    let spec = if named || !index_names.is_empty() {
+        match master::MasterSpec::from_draft(&report, &field_names) {
+            Ok(spec) => Some(spec),
+            Err(refusal) => return fail(refusal.code, refusal.message, json!({})),
+        }
+    } else {
+        None
+    };
+    if let (true, Some(spec)) = (named, &spec) {
+        spec.apply_names(&mut draft, &mut guesses);
+    }
     let mut answer = json!({
         "success": true,
         "model_version": model::MODEL_VERSION,
@@ -1039,16 +1060,19 @@ async fn propose_action(
         "draft_note": "a draft to check against real data: every name, delimiter and piece count is a guess from a sample",
         "not_inferred": shape::not_inferred(),
     });
-    if !index_names.is_empty() {
-        let spec = match master::MasterSpec::from_draft(&report, &[]) {
-            Ok(spec) => spec,
-            Err(refusal) => return fail(refusal.code, refusal.message, json!({})),
-        };
+    if named {
+        // The names are the caller's, so the first item no longer applies.
+        answer["not_inferred"] = json!(shape::not_inferred()
+            .into_iter()
+            .filter(|n| !n.starts_with("field names"))
+            .collect::<Vec<_>>());
+    }
+    if let (false, Some(spec)) = (index_names.is_empty(), &spec) {
         let run = link_run::Run {
             conn: &cx.conn,
             client: cx.client.as_ref(),
             ns: &ns,
-            master: &spec,
+            master: spec,
             master_map: &draft,
             node_cap,
             policy: &t.primary.effective,

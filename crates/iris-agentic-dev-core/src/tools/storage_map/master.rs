@@ -154,6 +154,32 @@ impl MasterSpec {
         })
     }
 
+    /// Rename the fields of the master draft (and the paths of its guesses) to this spec's names:
+    /// the draft calls them by placeholder (`Field1`), the spec by what `field_names` gave.
+    pub fn apply_names(&self, draft: &mut serde_json::Value, guesses: &mut [String]) {
+        let Some(data) = draft["data"].as_object().cloned() else {
+            return;
+        };
+        let mut renamed = serde_json::Map::new();
+        for (key, mut field) in data {
+            let name = self
+                .fields
+                .iter()
+                .find(|f| f.placeholder == key)
+                .map_or(key.clone(), |f| f.name.clone());
+            field["name"] = serde_json::json!(name);
+            renamed.insert(name, field);
+        }
+        draft["data"] = serde_json::Value::Object(renamed);
+        for g in guesses.iter_mut() {
+            if let Some(ph) = g.strip_prefix("/maps/Master/data/") {
+                if let Some(f) = self.fields.iter().find(|f| f.placeholder == ph) {
+                    *g = format!("/maps/Master/data/{}", f.name);
+                }
+            }
+        }
+    }
+
     /// The master of a class: its first `data` map, read as `read` reads it. Refused with the
     /// reasons `read` gives (`STORAGE_MAP_READ_ONLY`): default storage or any other storage iad
     /// only reads, and a columnar map; a class with no `data` map has no master to link against.

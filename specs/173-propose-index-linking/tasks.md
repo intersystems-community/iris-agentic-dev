@@ -280,7 +280,7 @@ in a scratch copy and returns a known row through an indexed query.
       covering (element-by-element test, FR-010), the null-marker set and discovered constant (FR-009), `NullMarker`
       emission only for a non-default marker with the literal under the data policy. Prove:
       `L test_storage_map_link_173_live`.
-- [ ] T031 [US1] Name-piece forms and `field_names`: test first that F10 returns `$p($$SQLUPPER({Name}),",",1)` and that
+- [x] T031 [US1] Name-piece forms and `field_names`: test first that F10 returns `$p($$SQLUPPER({Name}),",",1)` and that
       `field_names=["Name","City","Age","Born","Status"]` replaces `Field1…5` in the master draft, the index drafts
       and `not_explained`; a short list is `INVALID_PARAMS` naming the sampled count. Implement. Prove:
       `L test_storage_map_link_173_live` and `U test_storage_map_master_173`.

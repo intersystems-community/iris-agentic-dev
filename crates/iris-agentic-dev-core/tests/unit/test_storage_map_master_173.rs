@@ -310,3 +310,24 @@ fn test_master_173_class_refuses_other_read_only_storage_with_its_reason() {
     assert_eq!(code, "STORAGE_MAP_READ_ONLY");
     assert!(msg.contains("%Storage.Persistent"), "{msg}");
 }
+
+#[test]
+fn test_master_173_apply_names_renames_the_draft_and_its_guess_paths() {
+    let report = member_report();
+    let (mut draft, mut guesses) = iris_agentic_dev_core::tools::storage_map::shape::draft(&report);
+    let spec = MasterSpec::from_draft(&report, &names(&["Name", "City", "Age"])).unwrap();
+    spec.apply_names(&mut draft, &mut guesses);
+    let keys: Vec<&str> = draft["data"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(keys, ["Age", "City", "Name"]);
+    assert_eq!(draft["data"]["Name"]["name"], "Name");
+    assert!(
+        guesses.iter().any(|g| g == "/maps/Master/data/City"),
+        "{guesses:?}"
+    );
+    assert!(guesses.iter().all(|g| !g.contains("Field")), "{guesses:?}");
+}
