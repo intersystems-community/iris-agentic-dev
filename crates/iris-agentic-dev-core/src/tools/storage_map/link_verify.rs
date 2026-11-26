@@ -90,55 +90,129 @@ pub fn indexed_field(link: &Link, view: &MasterView) -> Result<Indexed, String> 
     })
 }
 
+/// The key-part names a scratch class gives a composite row ID: the master's own, with the
+/// placeholder `ID` (the last part of a draft's composite key) renamed `Key<k>`, because `{ID}`
+/// is the system ID of a single-level master and no property can carry it.
+fn scratch_key_names(master: &MasterSpec) -> Result<Vec<String>, String> {
+    let k = master.key_names.len();
+    let names: Vec<String> = master
+        .key_names
+        .iter()
+        .map(|n| {
+            if n == "ID" {
+                format!("Key{k}")
+            } else {
+                n.clone()
+            }
+        })
+        .collect();
+    for (i, n) in names.iter().enumerate() {
+        let clash = master.fields.iter().any(|f| f.name.eq_ignore_ascii_case(n))
+            || names[..i].iter().any(|m| m.eq_ignore_ascii_case(n));
+        if clash || !is_plain_name(n) {
+            return Err(format!(
+                "the key part {n:?} cannot be a property of the scratch copy"
+            ));
+        }
+    }
+    Ok(names)
+}
+
+/// `map` with `{ID}` in its subscript expressions renamed to `{to}`.
+fn rename_id(map: &Value, to: &str) -> Value {
+    let mut out = map.clone();
+    if let Some(subs) = out["subscripts"].as_array_mut() {
+        for s in subs {
+            if let Some(e) = s["expression"].as_str() {
+                s["expression"] = json!(e.replace("{ID}", &format!("{{{to}}}")));
+            }
+        }
+    }
+    out
+}
+
 /// The class text and its Storage nodes: one `%String` property per master field, the indexed one
-/// carrying its collation, and a Storage block of the master draft and the index map.
+/// carrying its collation, and a Storage block of the master draft and the index map. A composite
+/// row ID (k key parts) adds one `%String` property per part, an `IDKEY` index over them and the
+/// `RowIdSpec` the master map then needs.
 pub fn class_text(
     master: &MasterSpec,
     master_map: &Value,
     index_map: &Value,
     indexed: &Indexed,
 ) -> Result<(String, Vec<Node>), String> {
-    let properties: Vec<PropertySpec> = master
-        .fields
-        .iter()
-        .map(|f| PropertySpec {
-            name: f.name.clone(),
-            ty: PropertyType {
-                name: "%String".into(),
-                parameters: Vec::new(),
-                date_guess: None,
-                evidence: json!({}),
-                note: "A property for the scratch copy that verifies a drafted index map.".into(),
-            },
-            collation: (f.name == indexed.field)
+    let composite = master.key_names.len() > 1;
+    let keys = if composite {
+        scratch_key_names(master)?
+    } else {
+        Vec::new()
+    };
+    let property = |name: &str, collation: Option<String>| PropertySpec {
+        name: name.to_string(),
+        ty: PropertyType {
+            name: "%String".into(),
+            parameters: Vec::new(),
+            date_guess: None,
+            evidence: json!({}),
+            note: "A property for the scratch copy that verifies a drafted index map.".into(),
+        },
+        collation,
+    };
+    let mut properties: Vec<PropertySpec> = keys.iter().map(|k| property(k, None)).collect();
+    properties.extend(master.fields.iter().map(|f| {
+        property(
+            &f.name,
+            (f.name == indexed.field)
                 .then(|| indexed.collation.clone())
                 .flatten(),
-        })
-        .collect();
+        )
+    }));
     let draft = class_source("IrisDevTmp.SmDraft", &properties)?;
+    let (master_map, index_map) = match keys.last() {
+        Some(last) => {
+            let mut m = rename_id(master_map, last);
+            let row_id: Vec<Value> = keys
+                .iter()
+                .enumerate()
+                .map(|(i, k)| json!({"position": i + 1, "expression": format!("{{L{}}}", i + 1), "field": k}))
+                .collect();
+            m["row_id"] = json!(row_id);
+            (m, rename_id(index_map, last))
+        }
+        None => (master_map.clone(), index_map.clone()),
+    };
     let nodes = vec![
         storage_type_node(),
-        map_node(master_map)?,
-        map_node(index_map)?,
+        map_node(&master_map)?,
+        map_node(&index_map)?,
     ];
     let body = draft
         .source
         .trim_end()
         .strip_suffix('}')
         .ok_or("the class draft does not end in a brace")?;
+    let idkey = if composite {
+        format!(
+            "Index IDKEY On ({}) [ IdKey, Unique ];\n\n",
+            keys.join(", ")
+        )
+    } else {
+        String::new()
+    };
     let text = format!(
-        "{body}Storage SQLStorage\n{{\n{}\n}}\n\n}}\n",
+        "{body}{idkey}Storage SQLStorage\n{{\n{}\n}}\n\n}}\n",
         emit_body(&super::tree::normalize(nodes.clone()))
     );
     Ok((text, nodes))
 }
 
-/// The query: how many rows share the first row's value of `field`. The first row is the one with
-/// the lowest ID, so the answer is at least 1 when the index and the master agree, and 0 when the
+/// The query: how many rows share the first non-empty value of `field`. The first row is the one
+/// with the lowest ID that has a value (an empty one is the index's null marker, which an equality
+/// never looks up), so the answer is at least 1 when the index and the master agree, and 0 when the
 /// index holds no key the equality looks up.
 pub fn count_query(table: &str, field: &str) -> String {
     format!(
-        "SELECT COUNT(*) AS n FROM {table} WHERE {field} = (SELECT TOP 1 {field} FROM {table} ORDER BY %ID)"
+        "SELECT COUNT(*) AS n FROM {table} WHERE {field} = (SELECT TOP 1 {field} FROM {table} WHERE {field} IS NOT NULL AND {field} <> '' ORDER BY %ID)"
     )
 }
 

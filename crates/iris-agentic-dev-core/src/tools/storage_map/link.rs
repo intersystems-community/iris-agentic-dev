@@ -820,6 +820,11 @@ pub fn assemble(global: &str, map: &str, report: &LinkReport) -> Assembled {
                 .clone()
                 .filter(|_| judgement.verdict.is_explained()),
             alternatives: judgement.alternatives.clone(),
+            null_marker: report
+                .nulls
+                .iter()
+                .find(|n| n.position == line.position)
+                .map(NullMarker::from_line),
         });
         judgements.push(PositionJudgement {
             position: line.position,
@@ -837,11 +842,30 @@ pub fn assemble(global: &str, map: &str, report: &LinkReport) -> Assembled {
             verdict: overall_verdict(id_agreement, usable, &verdicts),
             id,
             subscripts,
-            data_in_value: Vec::new(),
+            data_in_value: covering_data(report),
         },
         id_agreement,
         judgements,
     }
+}
+
+/// The `$LIST` elements of the node value that hold a master field on at least 95% of the usable
+/// nodes, one per field.
+fn covering_data(report: &LinkReport) -> Vec<DataInValue> {
+    let mut out: Vec<DataInValue> = Vec::new();
+    for d in &report.data {
+        if report.sample.usable >= MIN_NODES
+            && ratio(d.matches, d.total) >= 0.95
+            && !out.iter().any(|o| o.field == d.field)
+        {
+            out.push(DataInValue {
+                field: d.field,
+                element: d.element,
+            });
+        }
+    }
+    out.sort_by_key(|d| d.element);
+    out
 }
 
 /// An agreement as the answer carries it: four decimals.
@@ -872,6 +896,20 @@ fn pair_json(score: &PositionScore, master: &MasterView) -> Value {
     Value::Object(o)
 }
 
+fn null_marker_json(m: &NullMarker) -> Value {
+    let mut o = Map::new();
+    o.insert("kind".into(), json!(m.kind.as_str()));
+    o.insert("empty".into(), json!(m.empty.as_str()));
+    o.insert("count".into(), json!(m.count));
+    if let Some(n) = m.length {
+        o.insert("length".into(), json!(n));
+    }
+    if let Some(l) = &m.literal {
+        o.insert("literal".into(), json!(l));
+    }
+    Value::Object(o)
+}
+
 /// The item of `indexes` for a link: the keys of data-model.md that come from the linker's report.
 /// `found_by`, `map`, `verified` and `guesses` are added by the caller.
 pub fn link_json(a: &Assembled, master: &MasterView, report: &LinkReport) -> Value {
@@ -893,6 +931,15 @@ pub fn link_json(a: &Assembled, master: &MasterView, report: &LinkReport) -> Val
                 .map(|s| pair_json(s, master))
                 .collect();
             o.insert("alternatives".into(), Value::Array(alternatives));
+            if let Some(m) = a
+                .link
+                .subscripts
+                .iter()
+                .find(|s| s.position == j.position)
+                .and_then(|s| s.null_marker.as_ref())
+            {
+                o.insert("null_marker".into(), null_marker_json(m));
+            }
             Value::Object(o)
         })
         .collect();
@@ -913,7 +960,10 @@ pub fn link_json(a: &Assembled, master: &MasterView, report: &LinkReport) -> Val
             "agreement": rounded(a.id_agreement),
         },
         "subscripts": subscripts,
-        "data_in_value": [],
+        "data_in_value": a.link.data_in_value.iter().map(|d| json!({
+            "field": master_field(master, d.field).map_or_else(|_| format!("Field{}", d.field), str::to_string),
+            "element": d.element,
+        })).collect::<Vec<_>>(),
         "verdict": a.link.verdict.as_str(),
         "not_explained": not_explained,
     })
@@ -947,6 +997,52 @@ pub struct SubscriptLink {
     pub verdict: Verdict,
     pub pick: Option<PositionScore>,
     pub alternatives: Vec<PositionScore>,
+    /// The marker the index files for an empty field at this position, when one was seen.
+    pub null_marker: Option<NullMarker>,
+}
+
+/// The null marker found at one position: which kind, what it stands for, how many nodes it covers,
+/// and (a discovered marker only) its length and, under `include_values`, its literal.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NullMarker {
+    pub kind: NullKind,
+    pub empty: EmptyKind,
+    pub count: u32,
+    pub length: Option<u32>,
+    pub literal: Option<String>,
+}
+
+impl NullMarker {
+    fn from_line(l: &NullLine) -> Self {
+        Self {
+            kind: l.kind,
+            empty: l.empty,
+            count: l.count,
+            length: l.length,
+            literal: l.literal.clone(),
+        }
+    }
+
+    /// The `NullMarker` expression a draft needs, `Ok(None)` for a marker the engine files itself
+    /// (`$c(0)` for an empty string, `-1E14` for NULL), `Err` when the marker is not known (a
+    /// discovered one without its literal, or one with a control character).
+    pub fn expression(&self) -> Result<Option<String>, String> {
+        match self.kind {
+            NullKind::C0 | NullKind::Minus1e14 => Ok(None),
+            NullKind::Space => Ok(Some("\" \"".into())),
+            NullKind::SpaceC0 => Ok(Some("$c(32,0)".into())),
+            NullKind::Discovered => {
+                let lit = self
+                    .literal
+                    .as_deref()
+                    .ok_or("the marker's literal is not known")?;
+                if lit.chars().any(char::is_control) {
+                    return Err("the marker holds a control character".into());
+                }
+                Ok(Some(format!("\"{}\"", lit.replace('"', "\"\""))))
+            }
+        }
+    }
 }
 
 /// A node value that is a `$LIST` whose element `element` is master field `field`.
@@ -1083,7 +1179,23 @@ pub fn draft_index_map(link: &Link, master: &MasterView) -> Result<(Value, Vec<S
     for position in 1..=levels {
         let expression = level_expression(link, master, position, &mut guesses)?
             .ok_or_else(|| format!("position {position} of {levels} holds nothing"))?;
-        subscripts.push(json!({"level": position, "expression": expression}));
+        let mut level = json!({"level": position, "expression": expression});
+        let marker = link
+            .subscripts
+            .iter()
+            .find(|s| s.position == position)
+            .and_then(|s| s.null_marker.as_ref());
+        if let Some(m) = marker {
+            match m.expression() {
+                Ok(Some(e)) => level["null_marker"] = json!(e),
+                Ok(None) => {}
+                Err(_) => guesses.push(format!(
+                    "/maps/{}/subscripts/{position}/null_marker",
+                    link.map_name
+                )),
+            }
+        }
+        subscripts.push(level);
     }
     let mut map = Map::new();
     map.insert("name".into(), json!(link.map_name));

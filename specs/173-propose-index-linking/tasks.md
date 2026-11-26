@@ -270,13 +270,13 @@ in a scratch copy and returns a known row through an indexed query.
       (`verified {compiled, row_found}`); a failed verification demotes the draft to `not_inferred_detail` with the
       reason. Test first: extend T026's test to assert `verified.row_found == true` and that the drafted expression
       string equals the fixture's declared expression. Prove: `L test_storage_map_link_173_live`.
-- [ ] T029 [US1] Fixtures F11 to F18 (catalogue), then test first in the same live file: F11 (ID position 3, two
+- [x] T029 [US1] Fixtures F11 to F18 (catalogue), then test first in the same live file: F11 (ID position 3, two
       fields), F12 (k = 2 positions 2 and 3, draft subscripts end `{A}`,`{B}`), F13 (`id.form = value`, draft has
       `Data name="Id"` and RowIdSpec `{Id}`), F14 (`data_in_value`), F15 to F18 (marker kinds; F18 has no `literal` key
       and its `guesses` names the missing `NullMarker`; with `include_values` and `dataPolicy=allow` plus
       `acknowledgePhi` the `literal` appears and the drafted subscript carries `NullMarker`; under `block` the call
       is refused with `DATA_POLICY_BLOCKED`). Prove: `L test_storage_map_link_173_live`.
-- [ ] T030 [US1] Implement what T029 needs in `link_code.rs` and `link.rs`: composite ID runs, value-ID form, `$LIST`
+- [x] T030 [US1] Implement what T029 needs in `link_code.rs` and `link.rs`: composite ID runs, value-ID form, `$LIST`
       covering (element-by-element test, FR-010), the null-marker set and discovered constant (FR-009), `NullMarker`
       emission only for a non-default marker with the literal under the data policy. Prove:
       `L test_storage_map_link_173_live`.

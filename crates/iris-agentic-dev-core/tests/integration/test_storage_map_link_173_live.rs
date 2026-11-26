@@ -233,6 +233,7 @@ async fn a_wrong_map_does_not_verify_and_the_right_one_does() {
                 total: 40,
             }),
             alternatives: vec![],
+            null_marker: None,
         }],
         data_in_value: vec![],
     };

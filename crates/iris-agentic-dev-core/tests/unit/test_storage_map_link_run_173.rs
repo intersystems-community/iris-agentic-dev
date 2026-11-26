@@ -258,6 +258,7 @@ mod verify {
                     total: 40,
                 }),
                 alternatives: vec![],
+                null_marker: None,
             }],
             data_in_value: vec![],
         }
@@ -375,7 +376,10 @@ mod verify {
             "{q}"
         );
         assert!(
-            q.contains("SELECT TOP 1 Field1 FROM IrisDevTmp.SmAbc ORDER BY %ID"),
+            q.contains(
+                "SELECT TOP 1 Field1 FROM IrisDevTmp.SmAbc WHERE Field1 IS NOT NULL \
+                 AND Field1 <> '' ORDER BY %ID"
+            ),
             "{q}"
         );
     }

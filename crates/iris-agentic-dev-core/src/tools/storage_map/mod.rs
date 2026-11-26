@@ -1054,6 +1054,7 @@ async fn propose_action(
             policy: &t.primary.effective,
             server: &t.primary.key,
             acknowledge_phi: shape.acknowledge_phi,
+            with_values: shape.include_values,
         };
         let linked = link_run::link_all(&run, &index_names).await;
         answer["index_candidates"] = linked.index_candidates;

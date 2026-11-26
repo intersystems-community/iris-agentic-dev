@@ -38,6 +38,8 @@ pub struct Run<'a> {
     pub policy: &'a EffectivePolicy,
     pub server: &'a str,
     pub acknowledge_phi: bool,
+    /// `include_values` under the data policy: a discovered null marker's literal may be returned.
+    pub with_values: bool,
 }
 
 /// The master as a draft names it, for spelling the map.
@@ -141,7 +143,7 @@ async fn run_one(
         key_parts,
         fields,
         caps: Caps::for_node_cap(run.node_cap),
-        with_values: false,
+        with_values: run.with_values,
     })?;
     let out = run
         .conn
@@ -171,6 +173,18 @@ async fn index_item(
                 n["best_agreement"]
             ),
         ));
+    }
+    for sub in &a.link.subscripts {
+        if let Some(m) = &sub.null_marker {
+            if m.expression().is_err() {
+                details.push(detail(
+                    format!("{} position {} NullMarker", c.label(), sub.position),
+                    "empty fields file a marker that is none of the engine's four, and its literal is \
+                     held back (pass include_values under the data policy to draft it); the draft \
+                     needs a NullMarker on this subscript",
+                ));
+            }
+        }
     }
     let drafted = if a.link.verdict.is_explained() {
         draft_verified(run, a, view, &mut item).await

@@ -299,49 +299,60 @@ const EPILOGUE: &str = " If 'failed { Set o={},o.t=\"done\" Write o.%ToJSON(),! 
 const LINK_BODY: &str = r#" Set tot=0,bestd=0,bestn=0
  For i=1:1:nn { Set d=$QLength(nd(i))-base,dc(d)=$Get(dc(d))+1 }
  Set d="" For { Set d=$Order(dc(d)) Quit:d=""  If (d>0)&&(dc(d)>bestn) { Set bestn=dc(d),bestd=d } }
- For i=1:1:nn { If ($QLength(nd(i))-base)=bestd { Set tot=tot+1 For p=1:1:bestd { Set sb(tot,p)=$QSubscript(nd(i),base+p) } } }
- Set bst=0,bres=-1
+ If bestd>0 { For i=1:1:nn { If ($QLength(nd(i))-base)=bestd { Set tot=tot+1,ln(tot)=nd(i) For p=1:1:bestd { Set sb(tot,p)=$QSubscript(nd(i),base+p) } } } }
+ Set bw=-1,bres=-1
  For st=1:1:(bestd-kp+1) { Quit:($ZH-t0)>secs
    Set res=0
    For i=1:1:tot { Set mr=mst For q=0:1:kp-1 { Set mr=$Name(@mr@(sb(i,st+q))) } If $Data(@mr) { Set res=res+1,hit(st,i)=1 } }
-   Set way(st)=res
-   If res>=bres { Set bres=res,bst=st } }
+   Set way(st)=res }
+ If (kp=1)&&(bestd>0) { Set res=0,vtried=0
+   For i=1:1:tot { Set vv=$Get(@ln(i)) If (vv'="")&&($Length(vv)<=200) { Set vtried=1,mr=$Name(@mst@(vv)) If $Data(@mr) { Set res=res+1,hit(0,i)=1 } } }
+   If vtried { Set way(0)=res } }
+ Set st="" For { Set st=$Order(way(st)) Quit:st=""  If way(st)>=bres { Set bres=way(st),bw=st } }
  Set nu=0
- If bst>0 { For i=1:1:tot { If $Get(hit(bst,i)) { Set nu=nu+1,ok(i)=1,mr=mst For q=0:1:kp-1 { Set mr=$Name(@mr@(sb(i,bst+q))) } Set mrow(i)=mr } } }
+ If bw>=0 { For i=1:1:tot { If $Get(hit(bw,i)) { Set nu=nu+1,ok(i)=1
+   If bw=0 { Set mr=$Name(@mst@($Get(@ln(i)))) } Else { Set mr=mst For q=0:1:kp-1 { Set mr=$Name(@mr@(sb(i,bw+q))) } }
+   Set mrow(i)=mr } } }
  Set npos=0
- If nu>0 { For p=1:1:bestd { If '((p>=bst)&&(p<(bst+kp))) { Set npos=npos+1,pp(npos)=p } } }
+ If nu>0 { For p=1:1:bestd { If (bw=0)||'((p>=bw)&&(p<(bw+kp))) { Set npos=npos+1,pp(npos)=p } } }
  Merge w2=way
- For { Set st="",bs=0,br=-1 For { Set st=$Order(w2(st)) Quit:st=""  If w2(st)>=br { Set br=w2(st),bs=st } } Quit:bs=0
-   Set o={},o.t="id",o.form="subscript",pa=[] For q=0:1:kp-1 { Do pa.%Push(bs+q) }
+ For { Set st="",bs=-1,br=-1 For { Set st=$Order(w2(st)) Quit:st=""  If w2(st)>=br { Set br=w2(st),bs=st } } Quit:bs<0
+   Set o={},o.t="id",pa=[]
+   If bs=0 { Set o.form="value" } Else { Set o.form="subscript" For q=0:1:kp-1 { Do pa.%Push(bs+q) } }
    Do o.%Set("positions",pa) Set o.resolved=w2(bs),o.total=tot,ol=ol+1,ob(ol)=o
    Kill w2(bs) }
  For j=1:1:nf { Set fnode=$List(fa(j),1),fd=$List(fa(j),2),fp=$List(fa(j),3)
    For i=1:1:tot { If $Get(ok(i)) { Set r=mrow(i) Set:fnode'="" r=$Name(@r@(fnode))
      Set raw=$Get(@r)
-     If fd=0 { Set fv(i,j)=$Select($ListValid(raw)&&($ListLength(raw)>=fp):$ListGet(raw,fp),1:"") } Else { Set fv(i,j)=$Piece(raw,$Char(fd),fp) } } } }
+     If fd=0 { Set fv(i,j)=$Select($ListValid(raw)&&($ListLength(raw)>=fp):$ListGet(raw,fp),1:"") } Else { Set fv(i,j)=$Piece(raw,$Char(fd),fp) }
+     Set em(i,j)=$Select(fv(i,j)="":1,fv(i,j)=$Char(0):2,1:0) } } }
  For a=1:1:npos { Set p=pp(a),np(p)=0,dn=0 Kill dv
    For i=1:1:tot { If $Get(ok(i)) { Set s=sb(i,p) Set:$Length(s)>np(p) np(p)=$Length(s)
      If '$Data(dv($Extract(s,1,300))) { Set dv($Extract(s,1,300))=1,dn=dn+1 } } }
-   Set dist(p)=dn }
+   Set dist(p)=dn
+   For j=1:1:nf { Set ex(p,j)=0
+     For i=1:1:tot { If $Get(em(i,j)) { Set g=em(i,j),s=sb(i,p)
+       If '$Data(mkv(p,j,g)) { Set mkv(p,j,g)=s,mkc(p,j,g)=1 } Else { If mkv(p,j,g)=s { Set mkc(p,j,g)=mkc(p,j,g)+1 } Else { Set mkx(p,j,g)=1 } } } }
+     For g=1,2 { If $Data(mkv(p,j,g))&&'$Data(mkx(p,j,g)) { Set ex(p,j)=ex(p,j)+mkc(p,j,g) } } } }
  Set seq=0
  If npos>0 { For j=1:1:nf { For tt=1:1:8 {
    If ($ZH-t0)>secs { Set stopped="time" Quit }
    Kill cb,cp1,cp2,cl
-   For i=1:1:tot { If $Get(ok(i)) { Set v=fv(i,j)
+   For i=1:1:tot { If $Get(ok(i))&&'$Get(em(i,j)) { Set v=fv(i,j)
      If tt=1 { Set b=v } ElseIf tt<8 { Set b=$ClassMethod(fc,tm(tt),v) } Else { Set b="" }
      Set b1=$Piece(b,",",1),b2=$Piece(b,",",2)
      For a=1:1:npos { Set p=pp(a),s=sb(i,p)
        If (tt<8)&&(b=s) { Set cb(p)=$Get(cb(p))+1 }
        If (tt>1)&&(tt<8) { If b1=s { Set cp1(p)=$Get(cp1(p))+1 } If b2=s { Set cp2(p)=$Get(cp2(p))+1 } }
        If (tt=2)||(tt=3)||(tt=4)||(tt=8) { If $ClassMethod(fc,tm(tt),v,np(p))=s { Set cl(p)=$Get(cl(p))+1 } } } } }
-   For a=1:1:npos { Set p=pp(a),mb=$Get(cb(p))
+   For a=1:1:npos { Set p=pp(a),mb=$Get(cb(p)),xx=ex(p,j)
      If tt=1 { Set exm(p,j)=mb }
-     If tt<8 { If mb>0 { Set seq=seq+1,rk(p,-mb,seq)=$ListBuild(j,tn(tt),"","") } }
+     If tt<8 { If mb>0 { Set seq=seq+1,rk(p,-(mb+xx),seq)=$ListBuild(j,tn(tt),"","") } }
      If (tt>1)&&(tt<8) {
-       If $Get(cp1(p))>mb { Set seq=seq+1,rk(p,-cp1(p),seq)=$ListBuild(j,tn(tt),"",1) }
-       If $Get(cp2(p))>mb { Set seq=seq+1,rk(p,-cp2(p),seq)=$ListBuild(j,tn(tt),"",2) } }
+       If $Get(cp1(p))>mb { Set seq=seq+1,rk(p,-(cp1(p)+xx),seq)=$ListBuild(j,tn(tt),"",1) }
+       If $Get(cp2(p))>mb { Set seq=seq+1,rk(p,-(cp2(p)+xx),seq)=$ListBuild(j,tn(tt),"",2) } }
      Set bm=$Select(tt=8:$Get(exm(p,j)),1:mb)
-     If $Get(cl(p))>bm { Set seq=seq+1,rk(p,-cl(p),seq)=$ListBuild(j,tn(tt),np(p),"") } } } } }
+     If $Get(cl(p))>bm { Set seq=seq+1,rk(p,-(cl(p)+xx),seq)=$ListBuild(j,tn(tt),np(p),"") } } } } }
  For a=1:1:npos { Set p=pp(a)
    Set o={},o.t="pos",o.position=p,o.total=nu,o.distinct=dist(p),sa=[],k2=0
    Set mk="" For { Set mk=$Order(rk(p,mk)) Quit:mk=""  Quit:k2>=5
@@ -351,6 +362,21 @@ const LINK_BODY: &str = r#" Set tot=0,bestd=0,bestn=0
        If $List(e,4)="" { Do x.%Set("piece","","null") } Else { Set x.piece=+$List(e,4) }
        Set x.matches=-mk Do sa.%Push(x) Set k2=k2+1 } }
    Do o.%Set("scores",sa) Set ol=ol+1,ob(ol)=o }
+ For a=1:1:npos { Set p=pp(a),top=0,mk=$Order(rk(p,""))
+   If mk'="" { Set sq=$Order(rk(p,mk,"")),top=+$List(rk(p,mk,sq),1) }
+   If top>0 { For g=1,2 { If $Data(mkv(p,top,g))&&'$Data(mkx(p,top,g)) {
+     Set m=mkv(p,top,g),o={},o.t="null",o.position=p,o.field=top,o.count=mkc(p,top,g)
+     Set o.empty=$Select(g=1:"null",1:"empty_string")
+     If m=$Char(0) { Set kind="c0" } ElseIf m=($Char(32)_$Char(0)) { Set kind="space_c0" } ElseIf m=" " { Set kind="space" } ElseIf m=-100000000000000 { Set kind="minus1e14" } Else { Set kind="discovered" }
+     Set o.kind=kind
+     If kind="discovered" { Set o.length=$Length(m) Set:vals o.literal=m }
+     Set ol=ol+1,ob(ol)=o } } } }
+ If nu>0 { For i=1:1:tot { If $Get(ok(i)) { Set vv=$Get(@ln(i))
+   If $ListValid(vv) { Set nl=$ListLength(vv) Set:nl>10 nl=10
+     For e=1:1:nl { Set ev=$ListGet(vv,e) For j=1:1:nf { If ev=fv(i,j) { Set cv(e,j)=$Get(cv(e,j))+1 } } } } } } }
+ Set e="" For { Set e=$Order(cv(e)) Quit:e=""
+   Set bj=0,bn=0,j="" For { Set j=$Order(cv(e,j)) Quit:j=""  If cv(e,j)>bn { Set bn=cv(e,j),bj=j } }
+   If bj>0 { Set o={},o.t="data",o.field=bj,o.element=e,o.matches=bn,o.total=nu,ol=ol+1,ob(ol)=o } }
  If ($ZH-t0)>secs { Set stopped="time" }
  Set o={},o.t="sample",o.nodes=nn,o."distinct_first"=distinct,o.usable=nu,o.stopped=stopped,ob(0)=o
 "#;

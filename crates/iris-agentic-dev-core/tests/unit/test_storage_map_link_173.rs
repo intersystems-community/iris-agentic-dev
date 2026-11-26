@@ -4,8 +4,9 @@
 // model validator accepts. Nothing here touches IRIS.
 
 use iris_agentic_dev_core::tools::storage_map::link::{
-    draft_index_map, map_name, parse_link_output, spelling, verdict, DataInValue, IdForm, IdLink,
-    Link, MasterView, PositionScore, Stopped, SubscriptLink, Transform, Verdict, VerdictInput,
+    draft_index_map, map_name, parse_link_output, spelling, verdict, DataInValue, EmptyKind,
+    IdForm, IdLink, Link, MasterView, NullKind, NullMarker, PositionScore, Stopped, SubscriptLink,
+    Transform, Verdict, VerdictInput,
 };
 use iris_agentic_dev_core::tools::storage_map::model::map_node;
 use iris_agentic_dev_core::tools::storage_map::tree::Node;
@@ -447,6 +448,7 @@ fn f02_link() -> Link {
             verdict: Verdict::Inferred,
             pick: Some(score(1, Transform::SqlUpper, 40, 40)),
             alternatives: vec![],
+            null_marker: None,
         }],
         data_in_value: vec![],
     }
@@ -683,4 +685,73 @@ fn draft_holds_no_sampled_value() {
     for word in ["Smith", "Lyon", "Boston"] {
         assert!(!text.contains(word), "{word}");
     }
+}
+
+// ── null markers in the draft (T030) ───────────────────────────────────────
+
+fn with_marker(kind: NullKind, literal: Option<&str>) -> Link {
+    let mut link = f02_link();
+    link.subscripts[0].null_marker = Some(NullMarker {
+        kind,
+        empty: EmptyKind::Null,
+        count: 3,
+        length: literal.map(|l| u32::try_from(l.len()).unwrap()),
+        literal: literal.map(String::from),
+    });
+    link
+}
+
+#[test]
+fn the_engines_own_markers_draft_no_null_marker() {
+    for kind in [NullKind::C0, NullKind::Minus1e14] {
+        let (map, guesses) = draft_index_map(&with_marker(kind, None), &master()).unwrap();
+        assert!(map["subscripts"][0].get("null_marker").is_none(), "{map}");
+        assert!(
+            guesses.iter().all(|g| !g.contains("null_marker")),
+            "{guesses:?}"
+        );
+    }
+}
+
+#[test]
+fn a_space_marker_is_drafted_as_the_quoted_space() {
+    let (map, _) = draft_index_map(&with_marker(NullKind::Space, None), &master()).unwrap();
+    assert_eq!(map["subscripts"][0]["null_marker"], "\" \"");
+    passes_the_validator(&map);
+    let (map, _) = draft_index_map(&with_marker(NullKind::SpaceC0, None), &master()).unwrap();
+    assert_eq!(map["subscripts"][0]["null_marker"], "$c(32,0)");
+}
+
+#[test]
+fn a_discovered_marker_needs_its_literal_and_without_it_the_guess_names_it() {
+    let view = master();
+    let (map, guesses) = draft_index_map(&with_marker(NullKind::Discovered, None), &view).unwrap();
+    assert!(map["subscripts"][0].get("null_marker").is_none(), "{map}");
+    assert!(
+        guesses
+            .iter()
+            .any(|g| g == "/maps/X/subscripts/1/null_marker"),
+        "{guesses:?}"
+    );
+    let (map, guesses) =
+        draft_index_map(&with_marker(NullKind::Discovered, Some("~N\"L~")), &view).unwrap();
+    assert_eq!(map["subscripts"][0]["null_marker"], "\"~N\"\"L~\"");
+    assert!(
+        guesses.iter().all(|g| !g.contains("null_marker")),
+        "{guesses:?}"
+    );
+}
+
+#[test]
+fn a_discovered_marker_with_a_control_character_is_not_drafted() {
+    let (map, guesses) = draft_index_map(
+        &with_marker(NullKind::Discovered, Some("a\u{1}b")),
+        &master(),
+    )
+    .unwrap();
+    assert!(map["subscripts"][0].get("null_marker").is_none(), "{map}");
+    assert!(
+        guesses.iter().any(|g| g.ends_with("/null_marker")),
+        "{guesses:?}"
+    );
 }
