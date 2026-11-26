@@ -115,6 +115,7 @@ fn the_explain_query_names_the_table_and_the_field() {
 
 // ---- T055/T056: the questions `check` puts to the planner, and the lines it makes of the answers ----
 
+use iris_agentic_dev_core::tools::storage_map::link_verify::Verification;
 use iris_agentic_dev_core::tools::storage_map::usability::{
     explain_prefix_query, line_for, questions, subscript_kind, MapSubs, SubKind, MAX_QUESTIONS,
 };
@@ -318,6 +319,56 @@ fn the_questions_are_listed_in_full_and_the_runner_caps_them() {
     assert_eq!(asked, MAX_QUESTIONS);
     let last = capped.last().unwrap().unanswerable.as_deref().unwrap();
     assert!(last.contains("not asked") && last.contains("20"), "{last}");
+}
+
+fn verification(row_found: bool, usability: Option<&str>) -> Verification {
+    let maps = [map("M", "index", &["{Name}"])];
+    let q = &questions(&maps)[0];
+    let plan = match usability {
+        Some("used") => Some(captured("plan_used.txt")),
+        Some("unused") => Some(captured("plan_unused_no_collation.txt")),
+        Some(_) => Some("<plans><plan>Read master map X.Master</plan></plans>".to_string()),
+        None => None,
+    };
+    Verification {
+        compiled: true,
+        row_found,
+        detail: None,
+        usability: plan.map(|p| line_for(q, Ok(&p), "IadSm173.Q1", "<class>")),
+    }
+}
+
+/// T057 (SC-006): a draft is verified only when it found its row and, where the planner can be
+/// asked, the planner uses its map for the field it links.
+#[test]
+fn a_draft_is_verified_only_when_the_planner_uses_its_map() {
+    assert!(verification(true, Some("used")).verified());
+    assert!(!verification(true, Some("unused")).verified());
+    assert!(!verification(true, Some("unknown")).verified());
+    assert!(
+        !verification(false, Some("used")).verified(),
+        "a used map that finds no row is not verified"
+    );
+    // A form no property collation spells (a piece of a collated value) cannot be asked.
+    assert!(verification(true, None).verified());
+    assert!(!verification(false, None).verified());
+}
+
+#[test]
+fn the_usability_line_is_in_the_verified_json_and_a_refusal_names_the_planners_words() {
+    let v = verification(true, Some("unused"));
+    let j = v.to_json();
+    assert_eq!(j["usability"]["status"], "unused", "{j}");
+    assert!(
+        v.not_verified_because()
+            .contains("cannot be used to satisfy"),
+        "{}",
+        v.not_verified_because()
+    );
+    assert!(verification(true, None)
+        .to_json()
+        .get("usability")
+        .is_none());
 }
 
 #[test]

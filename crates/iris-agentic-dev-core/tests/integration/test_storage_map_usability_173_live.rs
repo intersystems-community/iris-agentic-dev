@@ -192,3 +192,40 @@ async fn a_class_with_no_index_map_has_no_usability_line() {
     assert_ne!(gone["success"], true, "scratch class left behind: {gone}");
     drop_all(&r).await;
 }
+
+/// T057 (SC-006): `propose` calls a draft verified only with its own usability line: the planner,
+/// asked in the scratch copy, reads the drafted map for an equality on the field the draft links.
+/// The known field is the fixture seed's, never the answer under test.
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn a_verified_draft_carries_a_used_line_for_the_field_it_links() {
+    use crate::test_storage_map_link_173_live::{draft_name, link_of};
+    let r = live().await;
+    let mut failures = Vec::new();
+    let mut seen = 0;
+    for name in [
+        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F09", "F10", "F11", "F12", "F17",
+    ] {
+        let f = Fixture::read(name);
+        load_fixture_173(&r, &f).await;
+        let out = link_of(&r, &f).await;
+        let link = &out["indexes"][0];
+        let line = &link["verified"]["usability"];
+        let want = f.seed["answer"]["subscripts"][0]["field"]
+            .as_str()
+            .map(|c| draft_name(&f, c));
+        if link.get("map").is_none() {
+            failures.push(format!("{name}: no drafted map: {link}"));
+        } else if line["status"] != json!("used") {
+            failures.push(format!("{name}: usability {line}"));
+        } else if want.as_deref().is_some_and(|w| line["field"] != json!(w)) {
+            failures.push(format!("{name}: field {} want {want:?}", line["field"]));
+        } else {
+            seen += 1;
+        }
+        drop_fixture_173(&r, &f).await;
+    }
+    drop_all(&r).await;
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+    assert_eq!(seen, 13);
+}
