@@ -238,10 +238,10 @@ async fn draft_verified(
     )
     .await;
     item["verified"] = v.to_json();
-    if !(v.compiled && v.row_found) {
+    if !v.verified() {
         return Err(format!(
             "the draft did not verify in a scratch copy: {}",
-            v.detail.as_deref().unwrap_or("no reason given")
+            v.not_verified_because()
         ));
     }
     item["map"] = map;

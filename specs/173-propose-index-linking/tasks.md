@@ -477,7 +477,7 @@ tests.
       field-prefix in the scratch copy through `usability::explain_query`, parsed by `usability::parse_plan`, into
       `usability` and `warnings`. Prove: `L test_storage_map_usability_173_live` green and `L storage_map_edit_172 storage_map_paths_172 storage_map_gates_172` (the
       172 tests that call `check`) unchanged.
-- [ ] T057 [US7] Wire the usability line into `propose`'s verification (T028): an `inferred` draft is reported `verified`
+- [X] T057 [US7] Wire the usability line into `propose`'s verification (T028): an `inferred` draft is reported `verified`
       only when its own usability line is `used` for the field it links (SC-006). Prove:
       `L test_storage_map_link_173_live test_storage_map_usability_173_live`.
 

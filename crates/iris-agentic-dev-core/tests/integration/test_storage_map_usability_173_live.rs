@@ -193,6 +193,14 @@ async fn a_class_with_no_index_map_has_no_usability_line() {
     drop_all(&r).await;
 }
 
+/// The column the fixture's seed says the first subscript reads.
+fn seed_field(f: &Fixture) -> Option<String> {
+    f.seed["answer"]["field"]
+        .as_str()
+        .or_else(|| f.seed["answer"]["subscripts"][0]["field"].as_str())
+        .map(str::to_string)
+}
+
 /// T057 (SC-006): `propose` calls a draft verified only with its own usability line: the planner,
 /// asked in the scratch copy, reads the drafted map for an equality on the field the draft links.
 /// The known field is the fixture seed's, never the answer under test.
@@ -202,30 +210,94 @@ async fn a_verified_draft_carries_a_used_line_for_the_field_it_links() {
     use crate::test_storage_map_link_173_live::{draft_name, link_of};
     let r = live().await;
     let mut failures = Vec::new();
-    let mut seen = 0;
-    for name in [
-        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F09", "F10", "F11", "F12", "F17",
-    ] {
+    let names = [
+        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F09", "F11", "F12",
+    ];
+    for name in names {
         let f = Fixture::read(name);
         load_fixture_173(&r, &f).await;
         let out = link_of(&r, &f).await;
         let link = &out["indexes"][0];
         let line = &link["verified"]["usability"];
-        let want = f.seed["answer"]["subscripts"][0]["field"]
-            .as_str()
-            .map(|c| draft_name(&f, c));
+        let want = seed_field(&f).map(|c| draft_name(&f, &c));
         if link.get("map").is_none() {
             failures.push(format!("{name}: no drafted map: {link}"));
         } else if line["status"] != json!("used") {
             failures.push(format!("{name}: usability {line}"));
-        } else if want.as_deref().is_some_and(|w| line["field"] != json!(w)) {
+        } else if want.is_none() || line["field"] != json!(want.clone().unwrap()) {
             failures.push(format!("{name}: field {} want {want:?}", line["field"]));
-        } else {
-            seen += 1;
         }
         drop_fixture_173(&r, &f).await;
     }
     drop_all(&r).await;
     assert!(failures.is_empty(), "{}", failures.join("\n"));
-    assert_eq!(seen, 13);
+}
+
+/// F10's index holds one piece of a collated value, which no property collation spells and no
+/// equality query reaches: the planner cannot be asked, the draft is verified by its row alone, and
+/// the answer says that `check` is where the planner is asked.
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn a_piece_form_cannot_be_asked_so_it_has_no_usability_line() {
+    use crate::test_storage_map_link_173_live::link_of;
+    let r = live().await;
+    let f = Fixture::read("F10");
+    load_fixture_173(&r, &f).await;
+    let out = link_of(&r, &f).await;
+    let link = &out["indexes"][0];
+    assert!(link.get("map").is_some(), "{link}");
+    assert_eq!(link["verified"]["row_found"], true, "{link}");
+    assert!(link["verified"].get("usability").is_none(), "{link}");
+    assert!(
+        link["verified"]["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("`check`"),
+        "{link}"
+    );
+    drop_fixture_173(&r, &f).await;
+    drop_all(&r).await;
+}
+
+/// SC-006 over every other fixture that drafts a map: a map in the answer has a `used` line or is a
+/// piece form with none, and a draft the planner would not use is not offered (it is in
+/// `not_inferred_detail` with the planner's words). Demotions are printed for the report.
+#[tokio::test]
+#[ignore = "live IRIS"]
+async fn no_drafted_map_is_one_the_planner_would_not_use() {
+    use crate::test_storage_map_link_173_live::link_of;
+    let r = live().await;
+    let mut failures = Vec::new();
+    for name in ["F13", "F14", "F15", "F16", "F18", "F34", "F44", "F45"] {
+        let f = Fixture::read(name);
+        load_fixture_173(&r, &f).await;
+        let out = link_of(&r, &f).await;
+        let link = &out["indexes"][0];
+        let usability = &link["verified"]["usability"];
+        let status = usability["status"].as_str();
+        match (link.get("map").is_some(), status) {
+            (true, Some("used")) | (false, _) => {}
+            (true, None) if link["verified"]["row_found"] == json!(true) => {}
+            (true, other) => {
+                failures.push(format!("{name}: map offered, usability {other:?}: {link}"))
+            }
+        }
+        if link.get("map").is_none() && status.is_some_and(|s| s != "used") {
+            eprintln!("DEMOTED {name}: {usability}");
+            assert!(
+                out["not_inferred_detail"]
+                    .to_string()
+                    .contains("does not use the map"),
+                "{name}: the planner's words are missing from {}",
+                out["not_inferred_detail"]
+            );
+        }
+        eprintln!(
+            "{name}: map={} usability={status:?}",
+            link.get("map").is_some()
+        );
+        drop_fixture_173(&r, &f).await;
+    }
+    drop_all(&r).await;
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
 }

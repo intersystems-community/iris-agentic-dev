@@ -45,7 +45,7 @@ pub fn askable(mut qs: Vec<Question>) -> Vec<Question> {
 }
 
 /// The plan an `EXPLAIN` answer holds: every text the rows carry, in order.
-fn plan_text(answer: &Value) -> Result<String, String> {
+pub fn plan_text(answer: &Value) -> Result<String, String> {
     let rows = answer["result"]["content"]
         .as_array()
         .ok_or("IRIS answered the EXPLAIN with no rows")?;
