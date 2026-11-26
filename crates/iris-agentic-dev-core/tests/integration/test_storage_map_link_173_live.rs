@@ -49,6 +49,22 @@ fn declared_expression(f: &Fixture) -> String {
     out
 }
 
+/// The fixture's declared first-subscript expression with the real column names in it.
+fn declared_expression_named(f: &Fixture) -> String {
+    let index = f.seed["index_globals"][0].as_str().unwrap();
+    let after = f
+        .cls_text
+        .split(&format!("<Global>{index}</Global>"))
+        .nth(1)
+        .unwrap();
+    after
+        .split("<Expression>")
+        .nth(1)
+        .and_then(|s| s.split("</Expression>").next())
+        .unwrap()
+        .replace("&quot;", "\"")
+}
+
 fn opt(v: &Value, key: &str) -> Value {
     v.get(key).cloned().unwrap_or(Value::Null)
 }
@@ -699,4 +715,81 @@ async fn include_values_is_refused_under_the_block_policy() {
     )
     .await;
     assert_eq!(out["error_code"], "DATA_POLICY_BLOCKED", "{out}");
+}
+
+/// T031: `field_names` replaces `Field1..5` in the master draft, its guesses, the index draft and
+/// the link's own field names; F10 also returns the name-piece form with the real name in it.
+#[tokio::test]
+#[ignore]
+async fn field_names_rename_the_master_draft_the_index_draft_and_the_link() {
+    let r = live().await;
+    let f = Fixture::read("F10");
+    load_fixture_173(&r, &f).await;
+    let master = f.seed["master_global"].as_str().unwrap();
+    let index = f.seed["index_globals"][0].as_str().unwrap();
+    let names = f.master_columns();
+    let out = ask_propose(
+        &r,
+        json!({"global": master, "index_globals": [index], "field_names": names}),
+    )
+    .await;
+    assert_eq!(out["success"], true, "{out}");
+    let draft_keys: Vec<String> = out["draft"]["data"]
+        .as_object()
+        .map(|o| o.keys().cloned().collect())
+        .unwrap_or_default();
+    let mut want_keys = names.clone();
+    want_keys.sort();
+    let mut got_keys = draft_keys.clone();
+    got_keys.sort();
+    assert_eq!(
+        got_keys, want_keys,
+        "master draft data keys: {}",
+        out["draft"]
+    );
+    for name in &names {
+        assert_eq!(
+            out["draft"]["data"][name]["name"],
+            json!(name),
+            "{}",
+            out["draft"]
+        );
+    }
+    let guesses = out["guesses"].to_string();
+    assert!(guesses.contains("/maps/Master/data/Name"), "{guesses}");
+    assert!(!guesses.contains("Field1"), "{guesses}");
+    let link = &out["indexes"][0];
+    let want_expr = declared_expression_named(&f);
+    assert_eq!(
+        link["map"]["subscripts"][0]["expression"],
+        json!(want_expr),
+        "{link}"
+    );
+    let want_field = f.seed["answer"]["field"].as_str().unwrap();
+    assert_eq!(link["subscripts"][0]["field"], json!(want_field), "{link}");
+    assert!(!link.to_string().contains("Field1"), "{link}");
+    drop_fixture_173(&r, &f).await;
+    drop_all(&r).await;
+}
+
+/// A list shorter than the fields the sample found is refused with the count it found.
+#[tokio::test]
+#[ignore]
+async fn a_short_field_names_list_is_invalid_params_naming_the_sampled_count() {
+    let r = live().await;
+    let f = Fixture::read("F10");
+    load_fixture_173(&r, &f).await;
+    let master = f.seed["master_global"].as_str().unwrap();
+    let index = f.seed["index_globals"][0].as_str().unwrap();
+    let out = ask_propose(
+        &r,
+        json!({"global": master, "index_globals": [index], "field_names": ["Name", "City"]}),
+    )
+    .await;
+    assert_eq!(out["error_code"], "INVALID_PARAMS", "{out}");
+    let msg = out["error"].to_string();
+    assert!(msg.contains("5 fields"), "{msg}");
+    assert!(msg.contains("2 name"), "{msg}");
+    drop_fixture_173(&r, &f).await;
+    drop_all(&r).await;
 }
