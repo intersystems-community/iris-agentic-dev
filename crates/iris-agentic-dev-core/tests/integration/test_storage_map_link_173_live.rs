@@ -793,3 +793,65 @@ async fn a_short_field_names_list_is_invalid_params_naming_the_sampled_count() {
     drop_fixture_173(&r, &f).await;
     drop_all(&r).await;
 }
+
+/// T032: the linker's raw lines for F02, F11 and F13, as the unit parser tests read them. With
+/// `IAD_REGEN_CAPTURED=1` the files are rewritten; without it the run must match them line for
+/// line, so a change to the linker's output shows up here and not in a unit test that kept the
+/// old format.
+#[tokio::test]
+#[ignore]
+async fn capture_the_linker_lines_for_f02_f11_and_f13() {
+    use iris_agentic_dev_core::tools::storage_map::link::parse_link_output;
+    use iris_agentic_dev_core::tools::storage_map::link_code::{
+        build_code, Caps, FieldAccess, LinkRequest,
+    };
+    let regen = std::env::var("IAD_REGEN_CAPTURED").is_ok_and(|v| v == "1");
+    let dir =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/storage173/captured");
+    let r = live().await;
+    for name in ["F02", "F11", "F13"] {
+        let f = Fixture::read(name);
+        load_fixture_173(&r, &f).await;
+        let fields: Vec<FieldAccess> = (1..=f.master_columns().len())
+            .map(|piece| FieldAccess {
+                node: None,
+                delimiter: Some(94),
+                piece: u32::try_from(piece).unwrap(),
+            })
+            .collect();
+        let master = f.seed["master_global"].as_str().unwrap();
+        let index = f.seed["index_globals"][0].as_str().unwrap();
+        let code = build_code(&LinkRequest {
+            master,
+            candidate: index,
+            sub_prefix: &[],
+            key_parts: 1,
+            fields: &fields,
+            caps: Caps::for_node_cap(200),
+            with_values: false,
+        })
+        .unwrap();
+        let out = exec(&r, &code).await;
+        let lines: Vec<String> = out
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with('{') && serde_json::from_str::<Value>(l).is_ok())
+            .map(String::from)
+            .collect();
+        let text = format!("{}\n", lines.join("\n"));
+        parse_link_output(&text).unwrap_or_else(|e| panic!("{name}: {e}\n{out}"));
+        let path = dir.join(format!("link_{name}.jsonl"));
+        if regen {
+            std::fs::write(&path, &text).unwrap();
+        } else {
+            let kept = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+            assert_eq!(
+                kept, text,
+                "{name}: the linker's lines changed (rerun with IAD_REGEN_CAPTURED=1)"
+            );
+        }
+        drop_fixture_173(&r, &f).await;
+    }
+    drop_all(&r).await;
+}

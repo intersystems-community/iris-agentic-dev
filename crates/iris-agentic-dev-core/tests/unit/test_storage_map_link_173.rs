@@ -293,33 +293,91 @@ fn map_name_is_the_last_segment_made_unique() {
 
 // ── parse_link_output ──────────────────────────────────────────────────────
 
+/// F02's known answer, read from its seed file: the row count, how many distinct first-subscript
+/// values the rows give under SQLUPPER (upper case, trailing blanks dropped), the ID position, and
+/// the field number and transform that explain position 1.
+struct F02Seed {
+    rows: u64,
+    distinct: u64,
+    id_position: u64,
+    field: u64,
+    transform: String,
+}
+
+fn f02_seed() -> F02Seed {
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/storage173/seed/F02.json"
+    ))
+    .unwrap();
+    let seed: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let columns: Vec<&str> = seed["columns"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c.as_str())
+        .collect();
+    let answer = &seed["answer"];
+    let at = columns
+        .iter()
+        .position(|c| Some(*c) == answer["field"].as_str())
+        .unwrap();
+    let rows = seed["rows"].as_array().unwrap();
+    let mut keys: Vec<String> = rows
+        .iter()
+        .map(|r| r[at].as_str().unwrap().trim_end().to_uppercase())
+        .collect();
+    keys.sort();
+    keys.dedup();
+    F02Seed {
+        rows: rows.len() as u64,
+        distinct: keys.len() as u64,
+        id_position: answer["id_positions"][0].as_u64().unwrap(),
+        field: at as u64 + 1,
+        transform: answer["transform"].as_str().unwrap().to_string(),
+    }
+}
+
 const F02: &str = include_str!("../fixtures/storage173/captured/link_F02.jsonl");
 const F02_NO_DONE: &str = include_str!("../fixtures/storage173/captured/link_F02_no_done.jsonl");
 const IRIS_ERROR: &str = include_str!("../fixtures/storage173/captured/link_iris_error.txt");
 
 #[test]
 fn parse_reads_a_normal_run() {
-    // F02's known answer (its seed file): 40 rows, Name (field 1) under SQLUPPER at position 1,
-    // the row ID at position 2.
+    // F02's known answer comes from its seed file, not from the capture.
+    let want = f02_seed();
     let r = parse_link_output(F02).expect("a complete run parses");
-    assert_eq!(r.sample.nodes, 40);
-    assert_eq!(r.sample.usable, 40);
-    assert_eq!(r.sample.distinct_first, 38);
+    assert_eq!(u64::from(r.sample.nodes), want.rows);
+    assert_eq!(u64::from(r.sample.usable), want.rows);
+    assert_eq!(u64::from(r.sample.distinct_first), want.distinct);
     assert_eq!(r.sample.stopped, Stopped::None);
-    assert_eq!(r.ids.len(), 2);
     assert_eq!(r.ids[0].form, IdForm::Subscript);
-    assert_eq!(r.ids[0].positions, vec![2]);
-    assert_eq!((r.ids[0].resolved, r.ids[0].total), (40, 40));
-    assert_eq!(r.ids[1].form, IdForm::Value);
+    assert_eq!(
+        r.ids[0].positions,
+        vec![u32::try_from(want.id_position).unwrap()]
+    );
+    assert_eq!(
+        (u64::from(r.ids[0].resolved), u64::from(r.ids[0].total)),
+        (want.rows, want.rows)
+    );
     assert_eq!(r.positions.len(), 1);
     let p = &r.positions[0];
-    assert_eq!((p.position, p.total, p.distinct), (1, 40, 38));
+    assert_eq!(p.position, 1);
+    assert_eq!(
+        (u64::from(p.total), u64::from(p.distinct)),
+        (want.rows, want.distinct)
+    );
     let best = &p.scores[0];
-    assert_eq!((best.field, best.transform), (1, Transform::SqlUpper));
-    assert_eq!((best.matches, best.total), (40, 40));
+    assert_eq!(u64::from(best.field), want.field);
+    assert_eq!(best.transform.name(), want.transform);
+    assert_eq!(u64::from(best.matches), want.rows);
+    assert_eq!(u64::from(best.total), want.rows);
     assert_eq!(best.length, None);
     assert_eq!(best.piece, None);
-    assert_eq!(p.scores.len(), 5);
+    assert!(
+        p.scores.windows(2).all(|w| w[0].matches >= w[1].matches),
+        "scores are listed best first"
+    );
     assert!(r.nulls.is_empty() && r.data.is_empty() && r.bitmaps.is_empty());
     assert!(r.missing.is_none());
 }

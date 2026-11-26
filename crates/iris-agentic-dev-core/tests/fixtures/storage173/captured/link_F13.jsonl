@@ -1,0 +1,5 @@
+{"t":"sample","nodes":39,"distinct_first":39,"usable":39,"stopped":"none"}
+{"t":"id","form":"value","positions":[],"resolved":39,"total":39}
+{"t":"id","form":"subscript","positions":[1],"resolved":0,"total":39}
+{"t":"pos","position":1,"total":39,"distinct":39,"scores":[{"field":1,"transform":"sqlupper","length":null,"piece":null,"matches":39},{"field":1,"transform":"string","length":null,"piece":null,"matches":10}]}
+{"t":"done"}

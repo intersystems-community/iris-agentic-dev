@@ -1,0 +1,7 @@
+{"t":"sample","nodes":30,"distinct_first":10,"usable":30,"stopped":"none"}
+{"t":"id","form":"subscript","positions":[3],"resolved":30,"total":30}
+{"t":"id","form":"subscript","positions":[2],"resolved":0,"total":30}
+{"t":"id","form":"subscript","positions":[1],"resolved":0,"total":30}
+{"t":"pos","position":1,"total":30,"distinct":10,"scores":[{"field":2,"transform":"exact","length":null,"piece":null,"matches":30}]}
+{"t":"pos","position":2,"total":30,"distinct":30,"scores":[{"field":3,"transform":"exact","length":null,"piece":null,"matches":30},{"field":3,"transform":"alphaup","length":null,"piece":null,"matches":30},{"field":3,"transform":"upper","length":null,"piece":null,"matches":30}]}
+{"t":"done"}

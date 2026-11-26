@@ -96,6 +96,24 @@ fn the_overall_verdict_is_the_weakest_reason_in_priority_order() {
 
 // ── assemble and link_json ─────────────────────────────────────────────────
 
+/// F02's known answer from its seed file: rows, distinct SQLUPPER keys of the Name column.
+fn f02_seed_counts() -> (u64, u64) {
+    let text = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/storage173/seed/F02.json"
+    ))
+    .unwrap();
+    let seed: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let rows = seed["rows"].as_array().unwrap();
+    let mut keys: Vec<String> = rows
+        .iter()
+        .map(|r| r[0].as_str().unwrap().trim_end().to_uppercase())
+        .collect();
+    keys.sort();
+    keys.dedup();
+    (rows.len() as u64, keys.len() as u64)
+}
+
 fn f02_report() -> iris_agentic_dev_core::tools::storage_map::link::LinkReport {
     let text = std::fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -137,9 +155,10 @@ fn the_link_json_carries_the_data_model_keys() {
     let a = assemble("^IadSm173F02X", "X", &report);
     let j = link_json(&a, &master(), &report);
     assert_eq!(j["global"], "^IadSm173F02X");
-    assert_eq!(j["nodes_sampled"], 40);
-    assert_eq!(j["distinct_first_values"], 38);
-    assert_eq!(j["usable_nodes"], 40);
+    let (rows, distinct) = f02_seed_counts();
+    assert_eq!(j["nodes_sampled"], rows);
+    assert_eq!(j["distinct_first_values"], distinct);
+    assert_eq!(j["usable_nodes"], rows);
     assert_eq!(j["verdict"], "inferred");
     assert_eq!(j["id"]["form"], "subscript");
     assert_eq!(j["id"]["positions"], json!([2]));
