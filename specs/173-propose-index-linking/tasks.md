@@ -91,6 +91,9 @@ Master is `^IadSm173Person(id) = Name^City^Age^Born^Status` unless stated; each 
 | F41 | non-ASCII names under `$$SQLUPPER`                                                                 | Name, sqlupper (the server's function decides case)                         |
 | F42 | two index globals over City                                                                        | two drafts with different map names, both `inferred`                        |
 | F43 | candidate global that is also another class's master                                               | linked as an index candidate, not merged with that class                    |
+| F44 | 100 rows, 3 master rows deleted after the load                                                     | inferred, no `orphan_nodes`                                                 |
+| F45 | 100 rows, 8 master rows deleted                                                                    | inferred, `orphan_nodes` count 8                                            |
+| F46 | 100 rows, 11 master rows deleted                                                                   | `not_linked`, agreement 0.89                                                |
 
 ---
 
@@ -284,7 +287,7 @@ in a scratch copy and returns a known row through an indexed query.
       `field_names=["Name","City","Age","Born","Status"]` replaces `Field1…5` in the master draft, the index drafts
       and `not_explained`; a short list is `INVALID_PARAMS` naming the sampled count. Implement. Prove:
       `L test_storage_map_link_173_live` and `U test_storage_map_master_173`.
-- [ ] T032 [US1] Capture live linker output for F02, F11, F13 and F27 into `tests/fixtures/storage173/captured/*.jsonl`
+- [x] T032 [US1] Capture live linker output for F02, F11, F13 and F27 into `tests/fixtures/storage173/captured/*.jsonl`
       (an env switch `IAD_REGEN_CAPTURED=1` in the live test rewrites them), replace T018's hand-written captures,
       and re-run the parser tests. The parser tests assert each fixture's declared known answer from its seed file, never a
       value read back from the capture (the capture only supplies the line format). Prove: `U test_storage_map_link_173` and
@@ -299,13 +302,13 @@ in a scratch copy and returns a known row through an indexed query.
 **Goal**: every link carries a verdict, an agreement and its alternatives; false links are not called inferred.
 **Independent test**: F26 to F34 return their verdicts.
 
-- [ ] T033 [US3] Fixtures F26 to F34 (catalogue). Test first, `tests/integration/test_storage_map_verdicts_173_live.rs`
+- [x] T033 [US3] Fixtures F26 to F34 (catalogue). Test first, `tests/integration/test_storage_map_verdicts_173_live.rs`
       (+ `mod`): F26 `ambiguous` with both fields in `alternatives` and the draft's pick in `guesses`; F27
       `too_few_nodes` and no `map`; F28 position `constant`; F29 (Age = ID) the ID position is the true one and Age is
       never reported as the ID; F30 no `inferred` link for the unrelated index; F31 `not_linked` with `agreement`;
       F32 (see US2); F33 position `not_explained` with `best_agreement` and no expression; F34 `inferred`. Prove (red):
       `L test_storage_map_verdicts_173_live`.
-- [ ] T034 [US3] Implement the remaining verdict paths in `link_code.rs` (ID tie-break to the last position, field
+- [x] T034 [US3] Implement the remaining verdict paths in `link_code.rs` (ID tie-break to the last position, field
       preference over a one-value field, `constant`, the 0.9 ID floor, the 5% orphan rule for deleted rows with a
       reported share above it). Prove: `L test_storage_map_verdicts_173_live` green.
 - [ ] T035 [US3] `not_inferred` and `not_inferred_detail` per FR-028 and FR-032: update `shape::not_inferred()` to the new

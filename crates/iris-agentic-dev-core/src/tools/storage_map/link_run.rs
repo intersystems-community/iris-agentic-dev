@@ -183,6 +183,16 @@ async fn index_item(
             ),
         ));
     }
+    if let Some((count, share)) = super::link::orphan_nodes(a, report) {
+        details.push(detail(
+            format!("{} has index nodes with no master row", c.label()),
+            format!(
+                "{count} of the nodes read ({:.0}%) find no master row, as rows deleted from the \
+                 master would leave them; the link rests on the rest",
+                share * 100.0
+            ),
+        ));
+    }
     for sub in &a.link.subscripts {
         if let Some(m) = &sub.null_marker {
             if m.expression().is_err() {

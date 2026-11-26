@@ -22,6 +22,9 @@ const ID_FLOOR: f64 = 0.9;
 /// Usable nodes needed before a link may be called inferred (FR-011).
 const MIN_NODES: u32 = 20;
 
+/// The share of index nodes without a master row above which it is reported.
+const ORPHAN_SHARE: f64 = 0.05;
+
 // ── transforms and their spelling ──────────────────────────────────────────
 
 /// The closed set of FR-007. `COLLATE` is recognised by the planner but never drafted, and
@@ -949,7 +952,7 @@ pub fn link_json(a: &Assembled, master: &MasterView, report: &LinkReport) -> Val
         .filter(|j| j.judgement.verdict == Verdict::NotExplained)
         .map(|j| json!({"position": j.position, "best_agreement": rounded(j.judgement.agreement)}))
         .collect();
-    json!({
+    let mut item = json!({
         "global": a.link.global,
         "nodes_sampled": report.sample.nodes,
         "distinct_first_values": report.sample.distinct_first,
@@ -966,7 +969,20 @@ pub fn link_json(a: &Assembled, master: &MasterView, report: &LinkReport) -> Val
         })).collect::<Vec<_>>(),
         "verdict": a.link.verdict.as_str(),
         "not_explained": not_explained,
-    })
+    });
+    if let Some((count, share)) = orphan_nodes(a, report) {
+        item["orphan_nodes"] = json!({"count": count, "share": rounded(share)});
+    }
+    item
+}
+
+/// Index nodes that found no master row (deleted rows leave them behind), as a count and a share of
+/// the nodes read at the ID's depth: reported only for a linked index and only above 5%. Below that
+/// they change nothing; under the 0.9 floor the link is `not_linked` and its agreement says so.
+pub fn orphan_nodes(a: &Assembled, report: &LinkReport) -> Option<(u32, f64)> {
+    let best = report.ids.first()?;
+    let share = 1.0 - ratio(best.resolved, best.total);
+    (is_linked(a.id_agreement) && share > ORPHAN_SHARE).then(|| (best.total - best.resolved, share))
 }
 
 // ── drafting ───────────────────────────────────────────────────────────────

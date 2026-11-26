@@ -21,7 +21,7 @@ async fn done(r: &Rig, f: &Fixture) {
     drop_all(r).await;
 }
 
-fn subscript<'a>(link: &'a Value, position: u64) -> &'a Value {
+fn subscript(link: &Value, position: u64) -> &Value {
     link["subscripts"]
         .as_array()
         .and_then(|a| a.iter().find(|s| s["position"] == json!(position)))

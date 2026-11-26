@@ -794,7 +794,7 @@ async fn a_short_field_names_list_is_invalid_params_naming_the_sampled_count() {
     drop_all(&r).await;
 }
 
-/// T032: the linker's raw lines for F02, F11 and F13, as the unit parser tests read them. With
+/// T032: the linker's raw lines for F02, F11, F13 and F27, as the unit parser tests read them. With
 /// `IAD_REGEN_CAPTURED=1` the files are rewritten; without it the run must match them line for
 /// line, so a change to the linker's output shows up here and not in a unit test that kept the
 /// old format.
@@ -809,7 +809,7 @@ async fn capture_the_linker_lines_for_f02_f11_and_f13() {
     let dir =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/storage173/captured");
     let r = live().await;
-    for name in ["F02", "F11", "F13"] {
+    for name in ["F02", "F11", "F13", "F27"] {
         let f = Fixture::read(name);
         load_fixture_173(&r, &f).await;
         let fields: Vec<FieldAccess> = (1..=f.master_columns().len())

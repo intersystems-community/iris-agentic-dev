@@ -813,3 +813,32 @@ fn a_discovered_marker_with_a_control_character_is_not_drafted() {
         "{guesses:?}"
     );
 }
+
+// ── F27, read from its live capture, judged against its seed ───────────────
+
+#[test]
+fn f27_capture_is_too_few_nodes_by_its_seed_row_count() {
+    use iris_agentic_dev_core::tools::storage_map::link::assemble;
+    let seed: serde_json::Value =
+        serde_json::from_str(include_str!("../fixtures/storage173/seed/F27.json")).unwrap();
+    let rows = seed["rows"].as_array().unwrap().len();
+    assert!(
+        rows < 20,
+        "the fixture is meant to be under the 20-node floor"
+    );
+    let report = parse_link_output(include_str!(
+        "../fixtures/storage173/captured/link_F27.jsonl"
+    ))
+    .unwrap();
+    assert_eq!(report.sample.usable as usize, rows);
+    assert_eq!(
+        report.ids[0].positions,
+        vec![u32::try_from(seed["answer"]["id_positions"][0].as_u64().unwrap()).unwrap()]
+    );
+    let a = assemble("^IadSm173F27X", "X", &report);
+    assert_eq!(a.link.verdict.as_str(), seed["answer"]["link_verdict"]);
+    assert!(
+        draft_index_map(&a.link, &master()).is_err(),
+        "no map is drafted"
+    );
+}
