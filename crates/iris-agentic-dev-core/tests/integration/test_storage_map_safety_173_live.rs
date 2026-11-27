@@ -14,6 +14,7 @@ use crate::live_rig_171::{rig_with, Rig, Where};
 use crate::storage173_rig::*;
 use crate::test_storage_map_link_173_live::live;
 use iris_agentic_dev_core::testing::LiveTarget;
+use iris_agentic_dev_core::tools::storage_map::link_run::CANDIDATE_TIME_CAP_FOR_TESTS;
 use iris_agentic_dev_core::tools::Toolset;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -382,5 +383,79 @@ async fn the_node_cap_names_the_candidate_it_stopped() {
     .await;
     assert_eq!(small["limits"]["stopped"], json!([]), "{}", small["limits"]);
     drop_fixture_173(&r, &g).await;
+    done(&r, &f).await;
+}
+
+/// Puts the linker's per-candidate time cap back when the test ends, a panic included.
+struct TimeCapOverride;
+
+impl TimeCapOverride {
+    fn force(candidate: &str, seconds: u32) -> Self {
+        *CANDIDATE_TIME_CAP_FOR_TESTS.lock().unwrap() = Some((candidate.to_string(), seconds));
+        TimeCapOverride
+    }
+}
+
+impl Drop for TimeCapOverride {
+    fn drop(&mut self) {
+        *CANDIDATE_TIME_CAP_FOR_TESTS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
+/// A time cap that stops one candidate names that candidate under `limits.stopped` and leaves the
+/// other candidate examined, linked and unstopped. The cap is forced to zero seconds on the first
+/// of F42's two index globals: the generated code checks the clock after its first step, so the
+/// stop is certain (a real five-second stop needs a global too big to build here). With no cap
+/// forced, both link and nothing stops, so the stop is the hook's.
+#[tokio::test]
+#[ignore]
+async fn a_time_cap_names_the_candidate_it_stopped_and_keeps_the_other() {
+    let r = live().await;
+    let f = Fixture::read("F42");
+    load_fixture_173(&r, &f).await;
+    let master = f.seed["master_global"].as_str().unwrap();
+    let globals = f.seed["index_globals"].as_array().unwrap().clone();
+    let (first, second) = (globals[0].as_str().unwrap(), globals[1].as_str().unwrap());
+    let ask = || ask_propose(&r, json!({"global": master, "index_globals": globals}));
+
+    let free = ask().await;
+    assert_eq!(free["success"], true, "{free}");
+    assert_eq!(free["limits"]["stopped"], json!([]), "{}", free["limits"]);
+    for g in [first, second] {
+        let link = free["indexes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["global"] == json!(g))
+            .unwrap_or_else(|| panic!("no link for {g}: {free}"));
+        assert_eq!(link["verdict"], "inferred", "{link}");
+    }
+
+    let forced = {
+        let _cap = TimeCapOverride::force(first, 0);
+        ask().await
+    };
+    assert_eq!(forced["success"], true, "{forced}");
+    assert_eq!(
+        forced["limits"]["stopped"],
+        json!([{"candidate": first, "cap": "time"}]),
+        "{}",
+        forced["limits"]
+    );
+    let by_global = |g: &str| {
+        forced["indexes"]
+            .as_array()
+            .and_then(|a| a.iter().find(|i| i["global"] == json!(g)).cloned())
+    };
+    assert_ne!(
+        by_global(first).map(|l| l["verdict"].clone()),
+        Some(json!("inferred")),
+        "the stopped candidate must not claim a link: {forced}"
+    );
+    let kept = by_global(second).unwrap_or_else(|| panic!("the other candidate is gone: {forced}"));
+    assert_eq!(kept["verdict"], "inferred", "{kept}");
+    assert_eq!(kept["verified"]["row_found"], true, "{kept}");
     done(&r, &f).await;
 }
