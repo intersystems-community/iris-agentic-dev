@@ -46,54 +46,54 @@ IRIS filed stay. `propose` is then pointed at the globals alone. Hand fixtures: 
 Master is `^IadSm173Person(id) = Name^City^Age^Born^Status` unless stated; each seed file in
 `tests/fixtures/storage173/seed/` carries the known answer. At least 40 rows each (the 20-node floor), except F27 (5 rows), F34 (1,000 or more) and F38 (1,200).
 
-| ID  | Fixture                                                                                            | Known answer                                                                |
-| --- | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| F01 | index on City, plain `{City}`                                                                      | City, exact                                                                 |
-| F02 | index `$$SQLUPPER({Name})`                                                                         | Name, sqlupper                                                              |
-| F03 | `$$SQLSTRING({Name})`                                                                              | Name, sqlstring (names with trailing blanks, so `" "_{F}` loses)            |
-| F04 | `$$STRING({Name})`                                                                                 | Name, string                                                                |
-| F05 | `$$ALPHAUP({Name})`                                                                                | Name, alphaup                                                               |
-| F06 | `$$UPPER({Name})`                                                                                  | Name, upper                                                                 |
-| F07 | `$$MVR({Name})`                                                                                    | Name, mvr                                                                   |
-| F08 | `$$TRUNCATE({Name},3)`                                                                             | Name, truncate, length 3                                                    |
-| F09 | `$$SQLUPPER({Name},4)`                                                                             | Name, sqlupper, length 4 (the prefix counts)                                |
-| F10 | `$p($$SQLUPPER({Name}),",",1)`                                                                     | Name, sqlupper, piece 1                                                     |
-| F11 | `{City}`, `{Age}`, `{ID}`                                                                          | ID position 3; City exact, Age exact                                        |
-| F12 | composite key `^IadSm173Key(a,b)`, index `(Name, a, b)`                                            | ID positions 2 and 3, k = 2                                                 |
-| F13 | `$$SQLUPPER({Name})` with the ID in the node value                                                 | `id.form = value`                                                           |
-| F14 | covering: node value is a `$LIST` of City and Age                                                  | `data_in_value` City element 1, Age element 2                               |
-| F15 | empty-string nulls under `{City}` (map-compiled `$c(0)`)                                           | marker kind `c0`                                                            |
-| F16 | numeric nulls under `{Age}`                                                                        | marker kind `minus1e14`                                                     |
-| F17 | class-compiled index, SQLUPPER default, empty values                                               | marker kind `space`                                                         |
-| F18 | hand-written index with one constant marker of length 5                                            | `discovered`, length 5, no literal without `include_values`                 |
-| F19 | map-compiled bitmap `Type bitmap`, `{Status}` only                                                 | `bitmaps`: chunk is the last subscript, all IDs found                       |
-| F20 | class-compiled bitmap over Status (default storage master)                                         | chunk is the last subscript, index name first                               |
-| F21 | master `^IadSm173Bits(0, chunk) = $BIT`                                                            | `chunk_map_draft` returns the IDs the bits name                             |
-| F22 | sparse: index skips NULL City                                                                      | rule NULL, draft `{City}'=""`                                               |
-| F23 | sparse: index skips empty-string City                                                              | rule empty string                                                           |
-| F24 | sparse: index skips Status other than `A`                                                          | rule `{Status}="A"`                                                         |
-| F25 | sparse: index skips every 7th row                                                                  | no rule fit, share reported                                                 |
-| F26 | two identical columns, index over one                                                              | `ambiguous`, both fields in `alternatives`                                  |
-| F27 | 5 rows                                                                                             | `too_few_nodes`                                                             |
-| F28 | constant column indexed                                                                            | position `constant`                                                         |
-| F29 | Age equals ID on every row (34 against 34 …), index over Age                                       | never `inferred` for ID from Age                                            |
-| F30 | dense ID run, index over a column unrelated to the rows                                            | no wrong `inferred`                                                         |
-| F31 | `^IadSm173PersonAlpha`, unrelated, shares the master's prefix                                      | `not_linked` with best agreement                                            |
-| F32 | index inside the master global `^IadSm173Person("idx", …)`                                         | `found_by = sub_node`, linked with the prefix cut off                       |
-| F33 | index over a date format of Born (computed subscript)                                              | position `not_explained`, no code drafted                                   |
-| F34 | far-end separation: names that differ under `$$UPPER` and `$$ALPHAUP` only past the first 600 keys | spread `inferred`, a prefix walk `ambiguous`                                |
-| F35 | class `IadSm173.Person` with a master map and an unmapped index global                             | class mode drafts the index in the class's own field names                  |
-| F36 | same class with the index already mapped                                                           | `already_mapped` naming the map                                             |
-| F37 | typing columns: integer, decimal, date-like, text                                                  | `%Integer`, `%Numeric` scale 2, date guess with fit count, `%String` MAXLEN |
-| F38 | 1,200 rows, two index globals over Name and City                                                   | both `inferred`, whole call under 5 s (SC-005)                              |
-| F39 | index with seven field subscripts (City, Age, Status, Born, Name, SQLUPPER and ALPHAUP of Name) and `{ID}` | first 6 examined, the 7th named in `not_inferred`                    |
-| F40 | index over Age holding numbers `34` and a few strings `"34"`, stored as written                    | Age exact, compared as stored, no `not_explained`                           |
-| F41 | non-ASCII names under `$$SQLUPPER`                                                                 | Name, sqlupper (the server's function decides case)                         |
-| F42 | two index globals over City                                                                        | two drafts with different map names, both `inferred`                        |
-| F43 | candidate global that is also another class's master                                               | linked as an index candidate, not merged with that class                    |
-| F44 | 100 rows, 3 master rows deleted after the load                                                     | inferred, no `orphan_nodes`                                                 |
-| F45 | 100 rows, 8 master rows deleted                                                                    | inferred, `orphan_nodes` count 8                                            |
-| F46 | 100 rows, 11 master rows deleted                                                                   | `not_linked`, agreement 0.89                                                |
+| ID  | Fixture                                                                                                    | Known answer                                                                |
+| --- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| F01 | index on City, plain `{City}`                                                                              | City, exact                                                                 |
+| F02 | index `$$SQLUPPER({Name})`                                                                                 | Name, sqlupper                                                              |
+| F03 | `$$SQLSTRING({Name})`                                                                                      | Name, sqlstring (names with trailing blanks, so `" "_{F}` loses)            |
+| F04 | `$$STRING({Name})`                                                                                         | Name, string                                                                |
+| F05 | `$$ALPHAUP({Name})`                                                                                        | Name, alphaup                                                               |
+| F06 | `$$UPPER({Name})`                                                                                          | Name, upper                                                                 |
+| F07 | `$$MVR({Name})`                                                                                            | Name, mvr                                                                   |
+| F08 | `$$TRUNCATE({Name},3)`                                                                                     | Name, truncate, length 3                                                    |
+| F09 | `$$SQLUPPER({Name},4)`                                                                                     | Name, sqlupper, length 4 (the prefix counts)                                |
+| F10 | `$p($$SQLUPPER({Name}),",",1)`                                                                             | Name, sqlupper, piece 1                                                     |
+| F11 | `{City}`, `{Age}`, `{ID}`                                                                                  | ID position 3; City exact, Age exact                                        |
+| F12 | composite key `^IadSm173Key(a,b)`, index `(Name, a, b)`                                                    | ID positions 2 and 3, k = 2                                                 |
+| F13 | `$$SQLUPPER({Name})` with the ID in the node value                                                         | `id.form = value`                                                           |
+| F14 | covering: node value is a `$LIST` of City and Age                                                          | `data_in_value` City element 1, Age element 2                               |
+| F15 | empty-string nulls under `{City}` (map-compiled `$c(0)`)                                                   | marker kind `c0`                                                            |
+| F16 | numeric nulls under `{Age}`                                                                                | marker kind `minus1e14`                                                     |
+| F17 | class-compiled index, SQLUPPER default, empty values                                                       | marker kind `space`                                                         |
+| F18 | hand-written index with one constant marker of length 5                                                    | `discovered`, length 5, no literal without `include_values`                 |
+| F19 | map-compiled bitmap `Type bitmap`, `{Status}` only                                                         | `bitmaps`: chunk is the last subscript, all IDs found                       |
+| F20 | class-compiled bitmap over Status (default storage master)                                                 | chunk is the last subscript, index name first                               |
+| F21 | master `^IadSm173Bits(0, chunk) = $BIT`                                                                    | `chunk_map_draft` returns the IDs the bits name                             |
+| F22 | sparse: index skips NULL City                                                                              | rule NULL, draft `{City}'=""`                                               |
+| F23 | sparse: index skips empty-string City                                                                      | rule empty string                                                           |
+| F24 | sparse: index skips Status other than `A`                                                                  | rule `{Status}="A"`                                                         |
+| F25 | sparse: index skips every 7th row                                                                          | no rule fit, share reported                                                 |
+| F26 | two identical columns, index over one                                                                      | `ambiguous`, both fields in `alternatives`                                  |
+| F27 | 5 rows                                                                                                     | `too_few_nodes`                                                             |
+| F28 | constant column indexed                                                                                    | position `constant`                                                         |
+| F29 | Age equals ID on every row (34 against 34 …), index over Age                                               | never `inferred` for ID from Age                                            |
+| F30 | dense ID run, index over a column unrelated to the rows                                                    | no wrong `inferred`                                                         |
+| F31 | `^IadSm173PersonAlpha`, unrelated, shares the master's prefix                                              | `not_linked` with best agreement                                            |
+| F32 | index inside the master global `^IadSm173Person("idx", …)`                                                 | `found_by = sub_node`, linked with the prefix cut off                       |
+| F33 | index over a date format of Born (computed subscript)                                                      | position `not_explained`, no code drafted                                   |
+| F34 | far-end separation: names that differ under `$$UPPER` and `$$ALPHAUP` only past the first 600 keys         | spread `inferred`, a prefix walk `ambiguous`                                |
+| F35 | class `IadSm173.Person` with a master map and an unmapped index global                                     | class mode drafts the index in the class's own field names                  |
+| F36 | same class with the index already mapped                                                                   | `already_mapped` naming the map                                             |
+| F37 | typing columns: integer, decimal, date-like, text                                                          | `%Integer`, `%Numeric` scale 2, date guess with fit count, `%String` MAXLEN |
+| F38 | 1,200 rows, two index globals over Name and City                                                           | both `inferred`, whole call under 5 s (SC-005)                              |
+| F39 | index with seven field subscripts (City, Age, Status, Born, Name, SQLUPPER and ALPHAUP of Name) and `{ID}` | first 6 examined, the 7th named in `not_inferred`                           |
+| F40 | index over Age holding numbers `34` and a few strings `"34"`, stored as written                            | Age exact, compared as stored, no `not_explained`                           |
+| F41 | non-ASCII names under `$$SQLUPPER`                                                                         | Name, sqlupper (the server's function decides case)                         |
+| F42 | two index globals over City                                                                                | two drafts with different map names, both `inferred`                        |
+| F43 | candidate global that is also another class's master                                                       | linked as an index candidate, not merged with that class                    |
+| F44 | 100 rows, 3 master rows deleted after the load                                                             | inferred, no `orphan_nodes`                                                 |
+| F45 | 100 rows, 8 master rows deleted                                                                            | inferred, `orphan_nodes` count 8                                            |
+| F46 | 100 rows, 11 master rows deleted                                                                           | `not_linked`, agreement 0.89                                                |
 
 ---
 
@@ -391,12 +391,16 @@ in a scratch copy and returns a known row through an indexed query.
 **Goal**: the new calls run under the existing controls. **Independent test**: the hostile-name suite and the control
 tests.
 
-- [ ] T043 [US8] Test first, `tests/integration/test_storage_map_safety_173_live.rs` (+ `mod`): hostile `index_globals`
+- [x] T043 [US8] Test first, `tests/integration/test_storage_map_safety_173_live.rs` (+ `mod`): hostile `index_globals`
       (`X") Kill ^Y`, `^A("x")`, `a b`, `^|"OTHER"|G`, a 9-name list, an empty string) each return `INVALID_PARAMS` and
-      the connection's request counter shows no IRIS call; strict read-only refuses `propose` as before; a
+      the connection's request counter (a counting TCP proxy, `Where::through`) shows no request; an empty string or a
+      non-string name is refused by the parameter types (`bad params for iris_storage_map`) before the handler, also with
+      no request; strict read-only refuses `propose` as before; a
       sensitive-named candidate is judged by the global gate and listed `refused`; with `max_nodes=30` the answer's
-      `limits.stopped` names the candidate and cap; a forced 1 s time cap (test hook through the same `caps` function
-      the sampler uses) names the stopped candidate and keeps the others. Prove (red then green): `L test_storage_map_safety_173_live`.
+      `limits.stopped` names each candidate and the cap that stopped it (`count_cap` for a candidate with more first
+      subscripts than ten times the node cap, `nodes` otherwise); a time cap forced to 0 s on one candidate through
+      `link_run::CANDIDATE_TIME_CAP_FOR_TESTS` (testing feature; a 1 s cap cannot be hit on a fixture this small)
+      names the stopped candidate and keeps the other. Prove (red then green): `L test_storage_map_safety_173_live`.
 - [ ] T044 [US8] No value leaves IRIS (SC-004): a test that runs `propose` and `check` over F01 to F18 and F26 to F43 with
       seeded values that cannot occur in field names (`zq-seed-0041` style), serialises every answer to text and asserts
       none of the seeded values occurs, after asserting the seed list is non-empty and each seed is in the fixture's
@@ -404,7 +408,7 @@ tests.
 - [ ] T045 [US8] Budget test: for a master with two candidates the connection's request counter shows at most 10 IRIS
       calls (plan.md table) and the whole call stays under 5 s on the local container with 1,000-node candidates
       (SC-005). Prove: `L test_storage_map_safety_173_live`.
-- [X] T046 [US8] Strict read-only, service-account identity and gate classification: extend
+- [x] T046 [US8] Strict read-only, service-account identity and gate classification: extend
       `tests/unit/test_storage_map_gates_172.rs`'s classification table check so `propose` with `index_globals` and with
       `class` is still `Write`, `Execute`, service account; `check` is still read-only and scratch. Prove:
       `U storage_map_gates`.
@@ -484,17 +488,17 @@ tests.
 
 **Goal**: the planner's own words per index map. **Independent test**: the T005 pair.
 
-- [X] T055 [US7] Test first, `tests/integration/test_storage_map_usability_173_live.rs` (+ `mod`): `check` with a two-subscript index map `({City}, {Age})` returns one line for `City` and one for `City` + `Age`, and with an index map
+- [x] T055 [US7] Test first, `tests/integration/test_storage_map_usability_173_live.rs` (+ `mod`): `check` with a two-subscript index map `({City}, {Age})` returns one line for `City` and one for `City` + `Age`, and with an index map
       `{Name}` over a default-collated class returns `usability[0].status == "unused"` and `text` containing "no index
       subscript collation"; with `$$SQLUPPER({Name})` `"used"` and the map's name; with `$$SQLUPPER({Name},4)` `"unused"`
       and "%SQLUPPER(4)"; a plan the parser cannot read gives `unknown` and `check` still succeeds; the lines are also in
       `warnings`; `check`'s `success` and refusals are the same as before for every 172 fixture. Prove (red):
       `L test_storage_map_usability_173_live`.
-- [X] T056 [US7] Implement in `check_action` (`mod.rs`): after the scratch compile, one `EXPLAIN` per index map and
+- [x] T056 [US7] Implement in `check_action` (`mod.rs`): after the scratch compile, one `EXPLAIN` per index map and
       field-prefix in the scratch copy through `usability::explain_query`, parsed by `usability::parse_plan`, into
       `usability` and `warnings`. Prove: `L test_storage_map_usability_173_live` green and `L storage_map_edit_172 storage_map_paths_172 storage_map_gates_172` (the
       172 tests that call `check`) unchanged.
-- [X] T057 [US7] Wire the usability line into `propose`'s verification (T028): an `inferred` draft is reported `verified`
+- [x] T057 [US7] Wire the usability line into `propose`'s verification (T028): an `inferred` draft is reported `verified`
       only when its own usability line is `used` for the field it links (SC-006). Prove:
       `L test_storage_map_link_173_live test_storage_map_usability_173_live`.
 
