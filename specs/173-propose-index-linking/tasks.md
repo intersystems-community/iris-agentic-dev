@@ -583,6 +583,12 @@ tests.
       `LINT`, `U storage_map`, and `L _173_live` once from the worktree root. Report any failure with its output.
 - [X] T071 Lead only: commit locally in logical commits (spec and plan; Phase 0; each story), `/simplify` before each
       commit, `cargo fmt --all -- --check`. Never push without Tom's words.
+- [X] T072 Real `%iFind` index (Benjamin De Boe's report): measure the globals a real `%iFind.Index.Basic` index
+      files on `iris-dev-iris` (research.md, heading "iFind real index (T072)"), then
+      `test_storage_map_ifind_173_live.rs` runs `propose` over them, with and without `index_globals`, and asserts what
+      the measured layout and the invented rows say. Prove: `L test_storage_map_ifind_173_live`. Result: 8 tests pass
+      (layout pins, safety, the chunk map, the 40-row link); 10 `red_*` tests fail on purpose, one per wrong or
+      unhelpful answer (the file names each).
 
 ---
 
