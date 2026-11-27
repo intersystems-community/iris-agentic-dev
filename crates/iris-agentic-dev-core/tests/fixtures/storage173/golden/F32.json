@@ -311,50 +311,12 @@
     "sub_nodes": {
       "1": [
         "idx"
-      ],
-      "2": [
-        "   MC KAY, AL",
-        " BROWN, CY",
-        " BROWN, CY27",
-        " BROWN, CY28",
-        " DE LA CRUZ, JO",
-        " DE LA CRUZ, JO24",
-        " DIAZ, LU",
-        " DIAZ, LU37",
-        " FROST, ANN-MARIE",
-        " FROST, ANN-MARIE38",
-        " GRAY, SAM",
-        " GRAY, SAM39",
-        " HART,ED",
-        " HART,ED33",
-        " JONES, BOB",
-        " JONES, BOB21",
-        " LEE",
-        " LEE22",
-        " MC KAY, AL26",
-        " MOORE, KIM",
-        " MOORE, KIM36",
-        " NG",
-        " NG29",
-        " O'NEIL-RAY",
-        " O'NEIL-RAY23",
-        " PATEL, RAJ",
-        " PATEL, RAJ35",
-        " QUINN, 3RD",
-        " QUINN, 3RD32",
-        " SMITH, ANNA",
-        " SMITH, ANNA20",
-        " VU, TRAN",
-        " VU, TRAN31",
-        " XU",
-        " XU34",
-        " ZED2",
-        " ZED225",
-        " ÅBERG, ELI",
-        " ÅBERG, ELI30"
       ]
     },
-    "values": null
+    "values": null,
+    "withheld_sub_nodes": {
+      "2": 39
+    }
   },
   "success": true
 }

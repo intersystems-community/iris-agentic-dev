@@ -128,6 +128,8 @@ A link (an item of `indexes`) holds:
 | `map`, `guesses`        | the drafted index map and the paths of what it guessed; present only when the draft verified                                                  |
 | `bitmap`                | for a candidate that holds bit strings: `chunk_position`, `ids_checked`, `ids_found_in_master`                                                |
 
+A global-mode answer's `shape.sub_nodes` lists the literal subscripts the sample saw at each depth. Below the first subscript, a depth that holds three or more distinct names with no repeat is data, not structure (an index inside the master files its keys there), so the answer withholds it and says how many it held in `shape.withheld_sub_nodes` (`{"2": 39}`). `include_values` under the data policy shows them.
+
 `null_marker` on a subscript says what the index files for an empty field: `kind` is `c0`, `minus1e14`,
 `space`, `space_c0` or `discovered`, `empty` says whether it stands for an `empty_string` or a `null`,
 and `count` is how many nodes hold it. A `discovered` marker also has its `length`.
