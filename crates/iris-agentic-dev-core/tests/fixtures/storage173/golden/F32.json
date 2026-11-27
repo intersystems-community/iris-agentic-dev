@@ -1,0 +1,360 @@
+{
+  "action": "propose",
+  "capped": false,
+  "draft": {
+    "data": {
+      "Field1": {
+        "delimiter": "\"^\"",
+        "name": "Field1",
+        "piece": "1"
+      },
+      "Field2": {
+        "delimiter": "\"^\"",
+        "name": "Field2",
+        "piece": "2"
+      },
+      "Field3": {
+        "delimiter": "\"^\"",
+        "name": "Field3",
+        "piece": "3"
+      },
+      "Field4": {
+        "delimiter": "\"^\"",
+        "name": "Field4",
+        "piece": "4"
+      },
+      "Field5": {
+        "delimiter": "\"^\"",
+        "name": "Field5",
+        "piece": "5"
+      }
+    },
+    "global": "^IadSm173F32",
+    "name": "Master",
+    "subscripts": [
+      {
+        "expression": "{ID}",
+        "level": 1
+      }
+    ],
+    "type": "data"
+  },
+  "draft_note": "a draft to check against real data: every name, delimiter and piece count is a guess from a sample",
+  "global": "^IadSm173F32",
+  "guesses": [
+    "/maps/Master/subscripts",
+    "/maps/Master/data/Field1",
+    "/maps/Master/data/Field2",
+    "/maps/Master/data/Field3",
+    "/maps/Master/data/Field4",
+    "/maps/Master/data/Field5"
+  ],
+  "index_candidates": {
+    "candidates": [
+      {
+        "found_by": "sub_node",
+        "global": "^IadSm173F32",
+        "status": "examined",
+        "sub_prefix": [
+          "idx"
+        ]
+      },
+      {
+        "found_by": "name_prefix",
+        "global": "^IadSm173F32X",
+        "status": "examined",
+        "sub_prefix": []
+      }
+    ],
+    "listing": "ok",
+    "not_examined": []
+  },
+  "indexes": [
+    {
+      "data_in_value": [],
+      "distinct_first_values": 39,
+      "found_by": "sub_node",
+      "global": "^IadSm173F32",
+      "guesses": [],
+      "id": {
+        "agreement": 1.0,
+        "form": "subscript",
+        "positions": [
+          2
+        ]
+      },
+      "map": {
+        "global": "^IadSm173F32",
+        "name": "Idx",
+        "subscripts": [
+          {
+            "expression": "\"idx\"",
+            "level": 1
+          },
+          {
+            "expression": "$$SQLUPPER({Field1})",
+            "level": 2
+          },
+          {
+            "expression": "{ID}",
+            "level": 3
+          }
+        ],
+        "type": "index"
+      },
+      "nodes_sampled": 40,
+      "not_explained": [],
+      "subscripts": [
+        {
+          "agreement": 1.0,
+          "alternatives": [],
+          "field": "Field1",
+          "position": 1,
+          "transform": "sqlupper",
+          "verdict": "inferred"
+        }
+      ],
+      "usable_nodes": 40,
+      "verdict": "inferred",
+      "verified": {
+        "compiled": true,
+        "row_found": true,
+        "usability": {
+          "field": "Field1",
+          "map": "Idx",
+          "status": "used",
+          "subscript_level": 1,
+          "text": "Read index map <class>.Idx, using the given %SQLUPPER(Field1), and looping on ID."
+        }
+      }
+    },
+    {
+      "data_in_value": [],
+      "distinct_first_values": 39,
+      "found_by": "name_prefix",
+      "global": "^IadSm173F32X",
+      "guesses": [],
+      "id": {
+        "agreement": 1.0,
+        "form": "subscript",
+        "positions": [
+          2
+        ]
+      },
+      "map": {
+        "global": "^IadSm173F32X",
+        "name": "IadSm173F32X",
+        "subscripts": [
+          {
+            "expression": "$$SQLUPPER({Field1})",
+            "level": 1
+          },
+          {
+            "expression": "{ID}",
+            "level": 2
+          }
+        ],
+        "type": "index"
+      },
+      "nodes_sampled": 40,
+      "not_explained": [],
+      "subscripts": [
+        {
+          "agreement": 1.0,
+          "alternatives": [],
+          "field": "Field1",
+          "position": 1,
+          "transform": "sqlupper",
+          "verdict": "inferred"
+        }
+      ],
+      "usable_nodes": 40,
+      "verdict": "inferred",
+      "verified": {
+        "compiled": true,
+        "row_found": true,
+        "usability": {
+          "field": "Field1",
+          "map": "IadSm173F32X",
+          "status": "used",
+          "subscript_level": 1,
+          "text": "Read index map <class>.IadSm173F32X, using the given %SQLUPPER(Field1), and looping on ID."
+        }
+      }
+    }
+  ],
+  "limits": {
+    "node_cap": 200,
+    "stopped": [],
+    "time_cap_seconds": 5
+  },
+  "model_version": 1,
+  "namespace": "USER",
+  "not_inferred": [
+    "field names (Field1, Field2, ... are placeholders; rename them to the class's properties)",
+    "datatypes (they belong to the class's properties, not the map)",
+    "collations (whether the class compares text case-sensitively)",
+    "index maps (an index global such as ^X.x is not linked to this map)",
+    "conditions (a conditional map or an index that skips rows)",
+    "computed subscripts (levels produced by code, such as a $BIT chunk)",
+    "the ID counter (SqlIdExpression) and any row ID built from several parts",
+    "COLLATE (a subscript collated by %COLLATE is recognised and never drafted)",
+    "numeric collations (PLUS and MINUS are not map-expression functions, so a subscript they produce is not drafted)",
+    "computed subscripts in an index (a subscript made by code, such as a date format, is reported as not explained and no code is guessed)"
+  ],
+  "not_inferred_detail": [
+    {
+      "what": "field names",
+      "why": "Field1, Field2, ... are placeholders; rename them to the class's properties"
+    },
+    {
+      "what": "datatypes",
+      "why": "they belong to the class's properties, not the map"
+    },
+    {
+      "what": "collations",
+      "why": "whether the class compares text case-sensitively"
+    },
+    {
+      "what": "index maps",
+      "why": "an index global such as ^X.x is not linked to this map unless it is named in index_globals"
+    },
+    {
+      "what": "conditions",
+      "why": "a conditional map or an index that skips rows"
+    },
+    {
+      "what": "computed subscripts",
+      "why": "levels produced by code, such as a $BIT chunk"
+    },
+    {
+      "what": "the ID counter",
+      "why": "SqlIdExpression is not read, and a row ID built from several parts is not inferred"
+    },
+    {
+      "what": "COLLATE",
+      "why": "a subscript collated by %COLLATE is recognised and never drafted"
+    },
+    {
+      "what": "numeric collations",
+      "why": "PLUS and MINUS are not map-expression functions, so a subscript they produce is not drafted"
+    },
+    {
+      "what": "computed subscripts in an index",
+      "why": "a subscript made by code, such as a date format, is reported as not explained and no code is guessed"
+    }
+  ],
+  "shape": {
+    "cap": {
+      "nodes": 200,
+      "seconds": 5
+    },
+    "capped": false,
+    "data_states": {
+      "0": {
+        "11": 1
+      },
+      "1": {
+        "1": 40,
+        "10": 1
+      },
+      "2": {
+        "10": 39
+      },
+      "3": {
+        "1": 40
+      }
+    },
+    "depths": {
+      "0": 1,
+      "1": 40,
+      "3": 40
+    },
+    "formats": [
+      {
+        "delimiter": null,
+        "depth": 0,
+        "format": "plain",
+        "node": null,
+        "pieces": {
+          "max": 1,
+          "min": 1
+        }
+      },
+      {
+        "delimiter": "^",
+        "depth": 1,
+        "format": "delimited",
+        "node": null,
+        "pieces": {
+          "max": 5,
+          "min": 5
+        }
+      },
+      {
+        "delimiter": null,
+        "depth": 3,
+        "format": "plain",
+        "node": null,
+        "pieces": {
+          "max": 0,
+          "min": 0
+        }
+      }
+    ],
+    "global": "^IadSm173F32",
+    "nodes_scanned": 121,
+    "numeric_subscripts": {
+      "1": 40,
+      "3": 40
+    },
+    "sub_nodes": {
+      "1": [
+        "idx"
+      ],
+      "2": [
+        "   MC KAY, AL",
+        " BROWN, CY",
+        " BROWN, CY27",
+        " BROWN, CY28",
+        " DE LA CRUZ, JO",
+        " DE LA CRUZ, JO24",
+        " DIAZ, LU",
+        " DIAZ, LU37",
+        " FROST, ANN-MARIE",
+        " FROST, ANN-MARIE38",
+        " GRAY, SAM",
+        " GRAY, SAM39",
+        " HART,ED",
+        " HART,ED33",
+        " JONES, BOB",
+        " JONES, BOB21",
+        " LEE",
+        " LEE22",
+        " MC KAY, AL26",
+        " MOORE, KIM",
+        " MOORE, KIM36",
+        " NG",
+        " NG29",
+        " O'NEIL-RAY",
+        " O'NEIL-RAY23",
+        " PATEL, RAJ",
+        " PATEL, RAJ35",
+        " QUINN, 3RD",
+        " QUINN, 3RD32",
+        " SMITH, ANNA",
+        " SMITH, ANNA20",
+        " VU, TRAN",
+        " VU, TRAN31",
+        " XU",
+        " XU34",
+        " ZED2",
+        " ZED225",
+        " ÅBERG, ELI",
+        " ÅBERG, ELI30"
+      ]
+    },
+    "values": null
+  },
+  "success": true
+}
