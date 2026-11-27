@@ -569,12 +569,12 @@ tests.
 
 ## Phase 14: Polish
 
-- [ ] T066 [P] `docs/tools.md` and `docs/error-codes.md`: the `iris_storage_map` row names the three params; no new
+- [X] T066 [P] `docs/tools.md` and `docs/error-codes.md`: the `iris_storage_map` row names the three params; no new
       code, so the error-code guard must stay green. Prove: `U docs_tools error_codes`.
-- [ ] T067 [P] `CLAUDE.md` Recent Changes: one entry for 173 inside the 172 entry's neighbourhood (what `propose` and
+- [X] T067 [P] `CLAUDE.md` Recent Changes: one entry for 173 inside the 172 entry's neighbourhood (what `propose` and
       `check` now return, the bitmap layout finding, the NULL versus empty-string finding, `%SYSTEM.SQL.Functions`
       as the server's own collation, plan path). Prove: `markdownlint-cli2 --fix CLAUDE.md`.
-- [ ] T068 [P] Release notes: add the 173 lines to `specs/172-sql-storage-maps/release-notes-draft.md`, then `/wordcraft`
+- [X] T068 [P] Release notes: add the 173 lines to `specs/172-sql-storage-maps/release-notes-draft.md`, then `/wordcraft`
       and `/no-ai-slop` on the finished text, apply, and show Tom. Prove: the reviewer block is empty or addressed.
 - [ ] T069 Background coverage (best effort, never blocks): `nice -n 15 cargo llvm-cov` on the new modules with
       `--include-ignored` against the live container, compare with the committed baseline, report a drop when it lands.
