@@ -567,7 +567,7 @@ tests.
       map on another global, a map on an empty global) FAIL. Test first in
       `tests/e2e/skill_eval/test_storage_index_lift_173.py`. Prove: `pytest tests/e2e/skill_eval/test_storage_index_lift_173.py`
       (`-k skill_tasks` matches no test in this tree) and `validate_live` on the file.
-- [ ] T065 Lead only, with Tom's go-ahead on cost: run the ladder for SKILL-30 with `--cap 3` (measured cost, not the
+- [ ] T065 Lead only, with Tom's go-ahead on cost: run the ladder for SKILL-74 with `--cap 3` (measured cost, not the
       estimator) and write `specs/173-propose-index-linking/lift-results.md` (tools arm, tools+skill arm, repeats, b and
       c counts, "underpowered" when it is). A `needs_fix` flag becomes a task. Constitution IX's +0.20 threshold is judged on 172's tool as a whole; this run adds
       the evidence for `propose`'s new behaviour.
