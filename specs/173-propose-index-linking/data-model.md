@@ -143,6 +143,6 @@ No new error code. `INVALID_PARAMS` (bad `index_globals`, `class`/`global` confl
 `STORAGE_MAP_TIME_CAP` (reused for a candidate stopped by the 5 s cap), `IRIS_EXECUTE_ERROR` (generator failure),
 `DATA_POLICY_BLOCKED` and `PHI_ACK_REQUIRED` (marker literal), and the existing global-gate refusals.
 
-`shape.withheld_sub_nodes` (global mode): `{depth: count}` for each depth of `shape.sub_nodes` below the first that holds three
+`shape.withheld_sub_nodes` (global mode): the count held at each depth of `shape.sub_nodes` below the first that holds three
 or more distinct literal names with none repeated, which the answer omits unless `include_values` is on under the data
 policy (an index inside the master files its keys there, so they are data).
