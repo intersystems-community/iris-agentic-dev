@@ -459,3 +459,191 @@ async fn a_time_cap_names_the_candidate_it_stopped_and_keeps_the_other() {
     assert_eq!(kept["verified"]["row_found"], true, "{kept}");
     done(&r, &f).await;
 }
+
+// ---- T044: no value leaves IRIS (SC-004) ---------------------------------------------------------
+
+/// The fixtures T044 scans: F01 to F18 and F26 to F43.
+fn t044_fixtures() -> Vec<String> {
+    (1..=18)
+        .chain(26..=43)
+        .map(|n| format!("F{n:02}"))
+        .collect()
+}
+
+/// The string cells of a fixture's rows that are long enough to be told apart from the words an
+/// answer holds (names of fields, transforms, verdicts), each once. These are values the sampler
+/// reads from the globals.
+fn seeds_from_rows(f: &Fixture) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    for row in f.rows() {
+        for cell in row {
+            if let Some(s) = cell.as_str() {
+                let t = s.trim();
+                if t.chars().count() >= 6 && t.parse::<f64>().is_err() {
+                    seen.insert(t.to_string());
+                }
+            }
+        }
+    }
+    seen.into_iter().collect()
+}
+
+/// Every subscript and value of `global`, one node a line, each control character (an empty
+/// string stored as `$c(0)`, say) shown as `?`. The rig's `dump_global` reads a value holding a
+/// control character as a bit string, which an F15-style master row is not.
+async fn global_text(r: &Rig, global: &str) -> String {
+    let code = format!(
+        r#"Set g={g},n=g,ctl="",rep="" For i=0:1:31 {{ Set ctl=ctl_$c(i),rep=rep_"?" }}
+If $Data(@g)#2 {{ Write $Translate(@g,ctl,rep),! }}
+For {{ Set n=$Query(@n) Quit:n=""  Write $Translate(n,ctl,rep),"=",$Translate($Get(@n),ctl,rep),! }}
+Write "END",!
+"#,
+        g = os(&format!("^{}", global.trim_start_matches('^')))
+    );
+    exec(r, &code).await
+}
+
+/// Every seed is in the fixture's globals (case-insensitively: an index holds the transformed
+/// spelling), so a clean scan means the answer left it out and not that it was never there.
+async fn assert_seeds_are_in_the_globals(r: &Rig, f: &Fixture, seeds: &[String]) {
+    assert!(!seeds.is_empty(), "{}: no seeds to scan for", f.name);
+    let mut text = String::new();
+    for g in f.globals() {
+        text.push_str(&global_text(r, &g).await);
+        text.push('\n');
+    }
+    let text = text.to_lowercase();
+    for s in seeds {
+        assert!(
+            text.contains(&s.to_lowercase()),
+            "{}: seed {s:?} is not in {:?}",
+            f.name,
+            f.globals()
+        );
+    }
+}
+
+/// Which seeds occur in the answers, case-insensitively.
+fn leaked(seeds: &[String], answers: &[&Value]) -> Vec<String> {
+    let text: String = answers
+        .iter()
+        .map(|a| a.to_string().to_lowercase())
+        .collect::<Vec<_>>()
+        .join("\n");
+    seeds
+        .iter()
+        .filter(|s| text.contains(&s.to_lowercase()))
+        .cloned()
+        .collect()
+}
+
+/// `propose` (naming the index globals, and naming only the master) and `check` over the loaded
+/// fixture, and the seeds found in any of the answers.
+struct Scan {
+    /// Seeds found in an answer.
+    leaked: Vec<String>,
+    /// The `propose` answer that named the index globals.
+    named: Value,
+    /// Why `check` could not run, when the class could not be put back.
+    check_skipped: Option<String>,
+}
+
+async fn leaks_in_fixture(r: &Rig, f: &Fixture, seeds: &[String]) -> Scan {
+    load_fixture_173(r, f).await;
+    assert_seeds_are_in_the_globals(r, f, seeds).await;
+    let master = f.seed["master_global"].clone();
+    let named = ask_propose(
+        r,
+        json!({"global": master, "index_globals": f.seed["index_globals"]}),
+    )
+    .await;
+    let found = ask_propose(r, json!({"global": master})).await;
+    // `check` takes a class: put the fixture's own class back (the load deleted it) and check it.
+    // The write gate refuses a class whose master level holds named nodes that data already
+    // fills (F32's `idx`), so that fixture has no class to check.
+    let (put, why) = try_class(r, &f.class, &f.cls_text).await;
+    let (checked, check_skipped) = if put {
+        (ask_check(r, json!({"class": f.class})).await, None)
+    } else {
+        (json!({}), Some(why))
+    };
+    let leaked = leaked(seeds, &[&named, &found, &checked]);
+    Scan {
+        leaked,
+        named,
+        check_skipped,
+    }
+}
+
+/// SC-004 over the corpus: the rows' own long strings are scanned for in every `propose` and
+/// `check` answer of F01 to F18 and F26 to F43. A fixture whose `propose` fails is a failure
+/// here: an error answer holds no value and would pass the scan for the wrong reason.
+#[tokio::test]
+#[ignore]
+async fn no_sampled_value_reaches_a_propose_or_check_answer_over_the_corpus() {
+    let r = live().await;
+    let mut failures = Vec::new();
+    let mut skipped: Vec<String> = Vec::new();
+    let mut scanned = 0;
+    for name in t044_fixtures() {
+        let f = Fixture::read(&name);
+        let seeds = seeds_from_rows(&f);
+        let scan = leaks_in_fixture(&r, &f, &seeds).await;
+        if scan.named["success"] != json!(true) {
+            failures.push(format!("{name}: propose failed: {}", scan.named));
+        }
+        if !scan.leaked.is_empty() {
+            failures.push(format!("{name}: values in the answers: {:?}", scan.leaked));
+        }
+        if scan.check_skipped.is_some() {
+            skipped.push(name.clone());
+        }
+        scanned += seeds.len();
+        drop_fixture_173(&r, &f).await;
+        drop_all(&r).await;
+    }
+    assert!(scanned > 100, "the scan covered only {scanned} seeds");
+    assert_eq!(skipped, vec!["F32"], "only F32 has no class to check");
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// The same scan with seeds that cannot occur in a field name or a verdict (`zq-seed-0041`): the
+/// Name column of three fixtures is replaced, so the index key itself is a seed. F02 is the plain
+/// index, F13 keeps the ID in the node value, and F32 puts the index inside the master global,
+/// where the master's own sample walks the index's subscripts.
+#[tokio::test]
+#[ignore]
+async fn planted_seeds_in_index_keys_never_reach_an_answer() {
+    let r = live().await;
+    let mut failures = Vec::new();
+    for name in ["F02", "F13", "F32"] {
+        let mut f = Fixture::read(name);
+        let col = f
+            .columns()
+            .iter()
+            .position(|c| c == "Name")
+            .expect("a Name column");
+        let rows = f.seed["rows"].as_array_mut().expect("rows");
+        let mut seeds = Vec::new();
+        for (i, row) in rows.iter_mut().enumerate() {
+            let seed = format!("zq-seed-{:04}", i + 1);
+            row[col] = json!(seed);
+            seeds.push(seed);
+        }
+        let scan = leaks_in_fixture(&r, &f, &seeds).await;
+        // The index still links, so the scan is over an answer that read the seeded keys.
+        let verdict = scan.named["indexes"][0]["verdict"].clone();
+        if verdict != json!("inferred") {
+            failures.push(format!(
+                "{name}: the seeded index did not link: {}",
+                scan.named
+            ));
+        }
+        if !scan.leaked.is_empty() {
+            failures.push(format!("{name}: seeds in the answers: {:?}", scan.leaked));
+        }
+        drop_fixture_173(&r, &f).await;
+        drop_all(&r).await;
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
