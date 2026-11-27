@@ -30,6 +30,16 @@ impl Where {
         }
     }
 
+    /// The same container and account, reached through `base_url` (a counting proxy, say).
+    pub fn through(&self, base_url: String) -> Self {
+        Where {
+            base_url,
+            user: self.user.clone(),
+            password: self.password.clone(),
+            namespace: self.namespace.clone(),
+        }
+    }
+
     pub fn throwaway(t: &ThrowawayIris) -> Self {
         Where {
             base_url: format!("http://{}:{}", t.host, t.web_port),
