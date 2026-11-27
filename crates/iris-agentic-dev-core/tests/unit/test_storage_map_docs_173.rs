@@ -130,11 +130,6 @@ fn model_words() -> (BTreeSet<String>, BTreeSet<String>) {
             .filter(|l| l.starts_with("### "))
             .flat_map(backticked_words),
     );
-    // Words the entity tables use for a value, not a key.
-    for not_a_key in ["validate_global_name"] {
-        every.remove(not_a_key);
-        emitted.remove(not_a_key);
-    }
     (every, emitted)
 }
 

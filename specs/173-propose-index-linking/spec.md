@@ -103,7 +103,7 @@ returns the fixture's known row through an indexed query.
 3. **Given** one subscript produced by each of `SQLSTRING`, `STRING`, `ALPHAUP`, `UPPER`, `MVR`, `TRUNCATE(n)` and
    `SQLUPPER(n)`, **Then** each draft names that function and, where it applies, that length.
 4. **Given** an index over a composite master key `^M(a,b)`, **Then** the ID is reported as the two subscript
-   positions that hold `a` and `b` and the draft ends in `{Key1}`, `{IdKey}` (or the names the master draft uses).
+   positions that hold `a` and `b` and the draft ends in `{Key1}`, `{ID}` (the names the master draft gives the parts, or the master's own in class mode).
 5. **Given** an index whose value holds the row ID and whose subscripts hold only the field, **Then** the ID is
    reported as `value`, and the draft uses a row-ID spec that reads the node value (measured when built).
 6. **Given** an index whose node value is a `$LIST` of master fields, **Then** the covered fields and their element

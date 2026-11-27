@@ -263,3 +263,32 @@ _Avoid_: revision, etag
 A temporary copy of a class with a proposed storage map, compiled and queried to check a change before the real
 class is touched, then removed.
 _Avoid_: dry run, test class
+
+**Candidate index global**:
+A global that `propose` considers an index over the master it is linking: named in `index_globals`, found by
+its name starting with the master's, or found as a literal first subscript inside the master. At most eight are
+examined per call; the rest are named, not examined.
+_Avoid_: index guess, index suspect
+
+**Link**:
+What `propose` reports for one candidate index global: where the row ID sits in its nodes, which master field and
+which transform each other subscript holds, and a verdict. A link is the evidence behind a drafted index map, and a
+draft is kept only when it verified.
+_Avoid_: mapping, match
+
+**Transform**:
+How an index files a master field's value as a subscript, one of a closed set: the value as written, or a
+collation function of the server's SQL function class, with an optional length or a piece of the result. A
+subscript no member of the set explains is `not_explained`.
+_Avoid_: collation (a transform is the function; a collation is the property parameter it implies), converter
+
+**Usability line**:
+The SQL planner's own answer, as one line for one index map and one subscript level, to whether an equality on
+the field can be served by that map: `used`, `unused` or `unknown`. `check` returns the lines and `propose` keeps
+a draft only when its line is `used`.
+_Avoid_: index hint, plan check
+
+**Spread sample**:
+The nodes of a candidate index global read at an even stride across its whole key range, not the first nodes in
+order. Two transforms that differ only in keys far into the range are told apart by it and not by a prefix walk.
+_Avoid_: random sample, prefix sample

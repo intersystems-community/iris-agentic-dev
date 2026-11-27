@@ -3,6 +3,7 @@ name: iris-storage-mapping
 tier: extra
 description: Read, check and edit SQL storage maps (%Storage.SQL, hand-written SQLMap elements that lay a table over existing globals) with iris_storage_map. Use when a class has StorageStrategy pointing at SQL storage, when a table over an old global returns wrong or missing rows, when adding a column or index to a mapped class, or when asked to map an unmapped global. Covers read, diagram, compare, preview, check, edit, replace, propose, seed_counter and build_indexes, and the IRIS behaviour that makes a map edit go wrong.
 author: tdyar
+version: 0.2.0
 managed_by: iris-agentic-dev
 ---
 
@@ -80,6 +81,76 @@ global answers its known question (live test: `test_storage_map_data_172_propose
 It is a draft to check against real data. `not_inferred` lists what it left out: datatypes, collations,
 index maps, conditions, computed subscripts and the ID counter (live test:
 `computed_172_propose_lists_what_it_did_not_infer`).
+
+## What `propose` infers and what it does not
+
+Given a master global, `propose` also finds its index globals (the names you pass in `index_globals`, the
+globals whose name starts with the master's, and literal sub-trees inside the master), and says which
+master field and which collation each index subscript holds. Pass `class` instead of `global` to link
+against a class's own master map. The claims below are the ones a test holds; the full answer shape is in
+`docs/storage-maps.md`.
+
+- A subscript is `inferred` only with at least 20 usable nodes and agreement of 0.95 or more, and
+  `ambiguous` when two pairs tie, with both listed in `alternatives` (live test:
+  `f26_identical_columns_are_ambiguous_with_both_fields_listed`). A column of digits only is always
+  `ambiguous`: exact, ALPHAUP and UPPER file the same string for it (live test:
+  `f11_to_f18_link_to_the_known_answer`).
+- With fewer than 20 usable nodes the verdict is `too_few_nodes` and no map is drafted (live test:
+  `f27_five_rows_are_too_few_nodes_and_draft_no_map`). A position with one value is `constant` (live
+  test: `f28_a_constant_column_is_constant`).
+- A global that shares the master's name prefix and is unrelated is `not_linked`, listed with its best
+  agreement and not dropped (live test:
+  `f31_an_unrelated_global_is_not_linked_with_its_best_agreement`). A column that happens to equal the
+  ID is never taken for the ID (live test: `f29_age_equal_to_id_is_never_the_id`).
+- A subscript made by code, such as a date format, is `not_explained` and no code is drafted for it (live
+  test: `f33_a_computed_subscript_is_not_explained_and_names_no_code`). The closed set of transforms is
+  the seven collation functions a map expression can name and `{F}` itself; `$$EXACT`, `$$PLUS`,
+  `$$MINUS` and `$$SPACE` do not compile there (live test: `fact_1_closed_set_of_collation_functions`).
+- The sample spreads over the key range, so two collations that differ only late in the keys are told
+  apart, which a walk of the first nodes in order cannot do (live test:
+  `f34_the_spread_sample_separates_what_a_prefix_walk_cannot`).
+- A bitmap index is drafted as `Type bitmap` with the field alone as its subscript, because the engine
+  appends the chunk (live test: `f19_map_compiled_bitmap_is_decoded_drafted_and_verified`). The chunk
+  size is confirmed only when a later chunk was sampled; otherwise the verdict is `ambiguous` and
+  `assumed` names the size (live test:
+  `a_decode_that_needs_an_unconfirmed_chunk_size_is_ambiguous_and_says_so`).
+- An index that lacks master rows is drafted as a conditional map when one rule explains the gap. NULL
+  and an empty string are different rules: the empty-string condition is `{F}'=$c(0)`, because
+  `{F}'=""` skips NULL only (live test:
+  `f23_an_empty_string_rule_drafts_the_c0_condition_not_the_null_one`). A rule that keeps one fixed
+  value shows its literal only with `include_values` under the data policy (live test:
+  `f24_a_fixed_value_rule_needs_include_values_for_its_literal`), and when no rule fits there is no
+  condition (live test: `f25_no_rule_fits_every_seventh_row`).
+- A few index nodes with no master row, as deleted rows leave behind, are not mentioned up to 5%; above
+  that `orphan_nodes` counts them, and past 10% the index is `not_linked` (live test:
+  `f44_f45_orphan_nodes_are_reported_only_above_five_percent`).
+- Candidates are capped at 8: the rest are named in `index_candidates` and `not_inferred_detail` (live
+  test: `ten_candidates_link_eight_and_name_the_other_two`), and a listing that failed is said, with
+  the other sources still examined (live test:
+  `a_failed_listing_is_said_and_the_other_two_sources_still_link`).
+- A draft is a guess to `check`, not an answer. It carries `verified` only when it compiled in a scratch
+  copy, found its row, and the planner's usability line for the field is `used` (live test:
+  `a_verified_draft_carries_a_used_line_for_the_field_it_links`); a draft that does not verify has
+  no `map` (live test: `no_drafted_map_is_one_the_planner_would_not_use`). Run `check` on the map after
+  you rename its fields: it adds the same `usability` line (live test:
+  `usability_follows_the_planners_words`).
+- With `class`, the drafts use the class's own property names, and an index the class already maps is
+  `already_mapped` and drafts nothing (live test:
+  `f35_drafts_the_missing_index_in_the_classs_own_names`, and
+  `f36_an_index_global_the_class_maps_is_already_mapped_and_drafts_nothing`).
+- `class_draft` types each property from counts of what the values look like: integer, numeric with its
+  scale, a date only when at least 95% fit, else a string with a `MAXLEN` (live test:
+  `f37_each_column_gets_the_type_its_values_support`).
+- A `COLLATION` goes on a property only where the link is `inferred` and whole, and only on a string
+  (live test: `f37_the_collation_follows_how_the_index_files_the_field`).
+- No sampled value is in an answer, except a discovered null marker's literal and a fixed rule's literal
+  under `include_values` and `dataPolicy = "allow"` (live test:
+  `f18_names_the_missing_marker_and_returns_no_literal`). Under the `block` policy `include_values` is
+  refused (live test: `include_values_is_refused_under_the_block_policy`).
+- No answer says an index is unique or gives its cardinality (live test:
+  `no_answer_key_claims_uniqueness_or_a_cardinality`). What `propose` leaves to you is in
+  `not_inferred` and `not_inferred_detail`: datatypes beyond the four it types, collations it cannot
+  draft, computed subscripts and the ID counter.
 
 ## Map code
 

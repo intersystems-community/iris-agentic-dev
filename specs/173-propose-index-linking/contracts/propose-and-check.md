@@ -16,18 +16,20 @@ This file lists only what 173 adds. Shapes are in [data-model.md](../data-model.
 
 ## `propose` answer: new keys
 
-| Key                   | When                                | Content                                                 |
-| --------------------- | ----------------------------------- | ------------------------------------------------------- |
-| `index_candidates`    | always                              | listing status and every candidate with `found_by`      |
-| `indexes`             | at least one candidate examined     | one Link per candidate (verdict, ID, subscripts, draft) |
-| `bitmaps`             | a candidate holds bit strings       | Bitmap items                                            |
-| `chunk_map_draft`     | master is `^G(const, chunk) = $BIT` | data-map draft with the computed third level            |
-| `class_draft`         | a master draft or class exists      | typed class source, evidence counts, `compiled`         |
-| `limits`              | always                              | caps and which stopped what                             |
-| `not_inferred_detail` | always                              | `{what, why}` items matching `not_inferred`             |
+| Key                   | When                                                 | Content                                                 |
+| --------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
+| `index_candidates`    | always                                               | listing status and every candidate with `found_by`      |
+| `indexes`             | at least one candidate examined                      | one Link per candidate (verdict, ID, subscripts, draft) |
+| `bitmaps`             | global mode, a candidate holds bit strings           | Bitmap items                                            |
+| `chunk_map_draft`     | master is `^G(const, chunk) = $BIT`                  | data-map draft with the computed third level            |
+| `class_draft`         | `field_names` or `index_globals` given (global mode) | typed class source, evidence counts, `compiled`         |
+| `limits`              | always                                               | caps and which stopped what                             |
+| `not_inferred_detail` | always                                               | `{what, why}` items matching `not_inferred`             |
 
-Class mode returns `indexes`, `index_candidates`, `bitmaps`, `class_draft`, `limits`, `not_inferred` and
-`not_inferred_detail`, and omits `draft`, `shape` and `guesses` of the master (not re-sampled).
+Class mode returns `class`, `global`, `indexes`, `index_candidates`, `limits`, `not_inferred` and
+`not_inferred_detail`, and omits `draft`, `shape`, `guesses`, `chunk_map_draft` and `class_draft` (the master is not
+re-sampled and the class already has its properties). A candidate that holds bit strings appears in `indexes` with its
+`bitmap` key; there is no separate `bitmaps` list.
 
 ## `check` answer: new key
 

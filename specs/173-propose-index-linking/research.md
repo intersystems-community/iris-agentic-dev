@@ -101,7 +101,7 @@ index map with subscripts `$$SQLUPPER({Name})`, `{A}`, `{B}`. INSERT filed `(" S
 `(" JONES","y",1)`; `SELECT A,B … WHERE Name = 'SMITH' ORDER BY B` returned `x 1` and `x 2` (the default collation
 matched `Smith` and `smith`).
 
-**Consequence**: the draft's ID part names are the master's own (class mode) or the draft's placeholders `Key1…Keyk`
+**Consequence**: the draft's ID part names are the master's own (class mode) or the draft's placeholders `Key1…Key(k-1)` and `ID`
 (global mode). The linker reports k positions.
 
 ## R7. The server's own collation functions, and why not the internal call
