@@ -134,6 +134,23 @@ overall = 88
 "src/tools/storage_guard.rs"          = 98
 # storage_map/ (spec 172): unit-only region coverage, measured 2026-11-14 on 45660344, minus 2pp. mod.rs, uses.rs
 # and write.rs are dispatch and IRIS paths; the merged run with live IRIS covers them (T117).
+# Spec 173 modules, measured 2026-11-27 on 9f7db38a (unit-only, scripts/check-coverage-floors.sh), minus 2pp. The *_run.rs
+# files and parts of link_verify, typing_run and usability_run drive IRIS; only the live tests reach them, so their floor is low.
+"src/tools/storage_map/bitmap.rs"     = 93
+"src/tools/storage_map/bitmap_run.rs" = 0
+"src/tools/storage_map/candidates.rs" = 97
+"src/tools/storage_map/candidates_run.rs" = 0
+"src/tools/storage_map/link.rs"       = 85
+"src/tools/storage_map/link_code.rs"  = 96
+"src/tools/storage_map/link_run.rs"   = 0
+"src/tools/storage_map/link_verify.rs" = 28
+"src/tools/storage_map/master.rs"     = 93
+"src/tools/storage_map/notices.rs"    = 84
+"src/tools/storage_map/propose_class.rs" = 0
+"src/tools/storage_map/typing.rs"     = 92
+"src/tools/storage_map/typing_run.rs" = 59
+"src/tools/storage_map/usability.rs"  = 95
+"src/tools/storage_map/usability_run.rs" = 9
 "src/tools/storage_map/code.rs"       = 98
 "src/tools/storage_map/diagram.rs"    = 96
 "src/tools/storage_map/explain.rs"    = 96

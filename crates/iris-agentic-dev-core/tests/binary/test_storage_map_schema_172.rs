@@ -1,6 +1,6 @@
 //! Spec 172 batch 8 schema test: `iris_storage_map` declares exactly its contract.
 //!
-//! One tool, nine actions, seventeen parameters. The `action` field is an enum of nine string
+//! One tool, nine actions, twenty parameters. The `action` field is an enum of nine string
 //! values; every other parameter appears in the schema exactly as declared in the params struct.
 
 use iris_agentic_dev_core::testing::{
@@ -30,6 +30,8 @@ const BATCH8: &[ParamContract] = &[ParamContract {
         ("namespace", "string"),
         ("server", "string"),
         ("confirm", "boolean"),
+        ("index_globals", "array"),
+        ("field_names", "array"),
     ],
     required: &["action"],
 }];
@@ -116,7 +118,7 @@ fn iris_storage_map_additional_properties_false() {
 
 #[test]
 #[ignore = "spawns the built binary; run with --include-ignored"]
-fn iris_storage_map_declares_exactly_eighteen_parameters() {
+fn iris_storage_map_declares_exactly_twenty_parameters() {
     let Some(_bin) = require_iad_binary() else {
         return;
     };
@@ -130,8 +132,8 @@ fn iris_storage_map_declares_exactly_eighteen_parameters() {
 
     assert_eq!(
         names.len(),
-        18,
-        "`iris_storage_map` must declare exactly 18 parameters; got {:?}",
+        20,
+        "`iris_storage_map` must declare exactly 20 parameters; got {:?}",
         names
     );
 
@@ -142,8 +144,10 @@ fn iris_storage_map_declares_exactly_eighteen_parameters() {
         "class",
         "confirm",
         "confirm_removal",
+        "field_names",
         "global",
         "include_values",
+        "index_globals",
         "map",
         "max_nodes",
         "max_rows",
