@@ -144,7 +144,7 @@ items). A failure stops the piece it guards and goes to Tom; the spec is amended
       conditional map and skips exactly the empty-string rows), `open_spread_beats_prefix` (fixture F34: build it, walk
       count the keys, then walk the first 200 in order and 200 by stride, score `$$UPPER` against `$$ALPHAUP`; the test
       asserts the prefix walk cannot separate them and the stride can). Prove: `L open_`.
-- [ ] T010 Lead only: read T002 to T009. Any failure stops the piece it guards (a map form fails → its draft goes to
+- [X] T010 Lead only: read T002 to T009. Any failure stops the piece it guards (a map form fails → its draft goes to
       `not_inferred`; the spread does not beat the prefix → FR-004a is amended) and goes to Tom with the output before
       Phase 3. Record each outcome in `specs/173-propose-index-linking/research.md` (a line under the item).
 
@@ -578,10 +578,10 @@ tests.
       and `/no-ai-slop` on the finished text, apply, and show Tom. Prove: the reviewer block is empty or addressed.
 - [ ] T069 Background coverage (best effort, never blocks): `nice -n 15 cargo llvm-cov` on the new modules with
       `--include-ignored` against the live container, compare with the committed baseline, report a drop when it lands.
-- [ ] T070 Lead only: delete the probe classes and globals left on `iris-dev-iris` by Phase 0 research
+- [X] T070 Lead only: delete the probe classes and globals left on `iris-dev-iris` by Phase 0 research
       (`Iad173.*`, `^Iad173*`), confirm `$Order(^IadSm173...)` is empty after the full live run, and run
       `LINT`, `U storage_map`, and `L _173_live` once from the worktree root. Report any failure with its output.
-- [ ] T071 Lead only: commit locally in logical commits (spec and plan; Phase 0; each story), `/simplify` before each
+- [X] T071 Lead only: commit locally in logical commits (spec and plan; Phase 0; each story), `/simplify` before each
       commit, `cargo fmt --all -- --check`. Never push without Tom's words.
 
 ---
