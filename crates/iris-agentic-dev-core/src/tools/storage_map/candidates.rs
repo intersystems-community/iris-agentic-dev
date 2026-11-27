@@ -140,10 +140,14 @@ const MIN_STEM: usize = 3;
 pub fn sibling_stem(master_name: &str) -> Option<&str> {
     let bare = master_name.strip_prefix('^').unwrap_or(master_name);
     let stem = match bare.rsplit_once('.') {
-        Some((stem, tail)) if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) => stem,
+        Some((stem, tail)) if is_digits(tail) => stem,
         _ => bare.strip_suffix('D').filter(|s| !s.ends_with('.'))?,
     };
     (stem.len() >= MIN_STEM).then_some(stem)
+}
+
+fn is_digits(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// Whether `name` (with or without its caret) is a sibling the compiler's naming gives `master`
@@ -158,12 +162,12 @@ fn is_stem_sibling(master_name: &str, name: &str) -> bool {
     if name == master {
         return false;
     }
-    if master.ends_with('D') && master.len() == stem.len() + 1 {
+    if master.strip_prefix(stem) == Some("D") {
         return name.strip_prefix(stem) == Some("I");
     }
     name.strip_prefix(stem)
         .and_then(|t| t.strip_prefix('.'))
-        .is_some_and(|t| t == "I" || (!t.is_empty() && t.bytes().all(|b| b.is_ascii_digit())))
+        .is_some_and(|t| t == "I" || is_digits(t))
 }
 
 /// Candidates from the namespace listing that are siblings of the master by the compiler's naming

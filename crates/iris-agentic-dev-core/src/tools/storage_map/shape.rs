@@ -2,7 +2,7 @@
 //! `preview` and `propose` set against a map.
 
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// The scan's limits.
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
@@ -441,14 +441,12 @@ const NOT_INFERRED_INDEX: [NotInferred; 3] = [
 /// What `propose` says when the sampler saw bit-string values (format `bits`): the depths that
 /// hold them and that no field is drafted from a bit string. `None` when none were seen.
 pub fn bit_string_note(report: &ShapeReport) -> Option<String> {
-    let mut depths: Vec<u32> = report
+    let depths: BTreeSet<u32> = report
         .formats
         .iter()
         .filter(|f| f.format == "bits")
         .map(|f| f.depth)
         .collect();
-    depths.sort_unstable();
-    depths.dedup();
     if depths.is_empty() {
         return None;
     }

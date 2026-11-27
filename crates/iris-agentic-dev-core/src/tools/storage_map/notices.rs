@@ -56,12 +56,10 @@ pub fn with_warning_lines(markdown: &str, warnings: &[String]) -> String {
     if warnings.is_empty() {
         return markdown.to_string();
     }
-    let mut out = String::new();
-    for w in warnings {
-        out.push_str("**Warning:** ");
-        out.push_str(w);
-        out.push('\n');
-    }
+    let mut out: String = warnings
+        .iter()
+        .map(|w| format!("**Warning:** {w}\n"))
+        .collect();
     out.push('\n');
     out.push_str(markdown);
     out
