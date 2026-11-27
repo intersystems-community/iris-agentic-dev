@@ -567,7 +567,7 @@ tests.
       map on another global, a map on an empty global) FAIL. Test first in
       `tests/e2e/skill_eval/test_storage_index_lift_173.py`. Prove: `pytest tests/e2e/skill_eval/test_storage_index_lift_173.py`
       (`-k skill_tasks` matches no test in this tree) and `validate_live` on the file.
-- [ ] T065 Lead only, with Tom's go-ahead on cost: run the ladder for SKILL-74 with `--cap 3` (measured cost, not the
+- [x] T065 Lead only, with Tom's go-ahead on cost: run the ladder for SKILL-74 with `--cap 3` (measured cost, not the
       estimator) and write `specs/173-propose-index-linking/lift-results.md` (tools arm, tools+skill arm, repeats, b and
       c counts, "underpowered" when it is). A `needs_fix` flag becomes a task. Constitution IX's +0.20 threshold is judged on 172's tool as a whole; this run adds
       the evidence for `propose`'s new behaviour.
@@ -625,9 +625,9 @@ tests.
 - [x] T081 A field in a named sub-node is read by the node's name, not by its quoted literal, in the linker and the
       typing (point 7; the field typed as empty, `%String` with `max_length` 0, and now `%Numeric` with `SCALE = 1` from
       its two values). The red test asked for `evidence.max_length == 7`; the numeric evidence is `{numeric, max_scale,
-    of}` (pinned by three tests), so the test asks for that.
+  of}` (pinned by three tests), so the test asks for that.
 - [x] T082 `diagram` marks a computed level in its graph and mermaid (`sub 3: {Word} (Other, computed by code, may not
-    be a subscript)`; a filtered level `(Sub, keys filtered by code)`), not only in the markdown (point 8). The 172
+  be a subscript)`; a filtered level `(Sub, keys filtered by code)`), not only in the markdown (point 8). The 172
       diagram goldens Bits, Route and Shelf changed by exactly that label (`MODEL_VERSION` stays 1).
 - [x] T083 Docs, data-model, contract and skill for T076 to T082; unit file `test_storage_map_ifind_173.rs`. Not done:
       point 5 (a word ID has no master field; saying the keys are word IDs of `^IRIS.IF.WordD`), which no test asks for.
