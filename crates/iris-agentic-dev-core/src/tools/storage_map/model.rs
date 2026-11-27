@@ -861,7 +861,8 @@ fn computed_level_facts(map: &SqlMap) -> Vec<Derived> {
     let mut facts = Vec::new();
     for sub in &map.subscripts {
         let path = format!("/maps/{}/subscripts/{}", map.name, sub.level);
-        for var in sub.access_vars.iter().filter(|v| !v.code.trim().is_empty()) {
+        let signs = level_signs(sub);
+        for var in &signs.vars {
             facts.push(Derived {
                 path: path.clone(),
                 fact: format!(
@@ -870,34 +871,57 @@ fn computed_level_facts(map: &SqlMap) -> Vec<Derived> {
                 ),
             });
         }
-        let mut reasons = computed_reasons(sub);
-        let filtered = !sub.invalid_conditions.is_empty();
-        if reasons.is_empty() {
-            if filtered {
-                // A filter on a real subscript: the level exists, some of its keys are skipped.
-                facts.push(Derived {
-                    path,
-                    fact: format!(
-                        "level {} filters its keys by code (Invalidcondition): the map skips a key when the code is true, and iad does not evaluate it",
-                        sub.level
-                    ),
-                });
-            }
-            continue;
+        if signs.filter_only {
+            // A filter on a real subscript: the level exists, some of its keys are skipped.
+            facts.push(Derived {
+                path,
+                fact: format!(
+                    "level {} filters its keys by code (Invalidcondition): the map skips a key when the code is true, and iad does not evaluate it",
+                    sub.level
+                ),
+            });
+        } else if !signs.computed.is_empty() {
+            facts.push(Derived {
+                path,
+                fact: format!(
+                    "level {} is computed by code ({}): its keys are produced by code that iad does not run, so the level may not exist in the global (a $BIT or $LIST in the value is a common reason); check the map against real data",
+                    sub.level,
+                    signs.computed.join(", ")
+                ),
+            });
         }
-        if filtered {
-            reasons.push("Invalidcondition");
-        }
-        facts.push(Derived {
-            path,
-            fact: format!(
-                "level {} is computed by code ({}): its keys are produced by code that iad does not run, so the level may not exist in the global (a $BIT or $LIST in the value is a common reason); check the map against real data",
-                sub.level,
-                reasons.join(", ")
-            ),
-        });
     }
     facts
+}
+
+/// What one subscript level shows about code: its access variables set by code, and why the level
+/// may not be a subscript of the global (`computed`) or is only filtered (`filter_only`). The
+/// `derived` facts and `read`'s and `diagram`'s warnings are both built from this one reading.
+pub(super) struct LevelSigns<'a> {
+    pub vars: Vec<&'a AccessVar>,
+    /// `AccessType Other`, `NextCode`, plus `Invalidcondition` when the level has one; empty when
+    /// the level is a plain subscript or only filtered.
+    pub computed: Vec<&'static str>,
+    /// An `Invalidcondition` on a level that is otherwise a real subscript.
+    pub filter_only: bool,
+}
+
+pub(super) fn level_signs(sub: &Subscript) -> LevelSigns<'_> {
+    let mut computed = computed_reasons(sub);
+    let filtered = !sub.invalid_conditions.is_empty();
+    let filter_only = computed.is_empty() && filtered;
+    if !computed.is_empty() && filtered {
+        computed.push("Invalidcondition");
+    }
+    LevelSigns {
+        vars: sub
+            .access_vars
+            .iter()
+            .filter(|v| !v.code.trim().is_empty())
+            .collect(),
+        computed,
+        filter_only,
+    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

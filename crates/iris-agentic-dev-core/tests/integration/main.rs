@@ -135,6 +135,7 @@ mod test_storage_map_data_172_live;
 mod test_storage_map_diagram_render_172_live;
 mod test_storage_map_doc_172_live;
 mod test_storage_map_edit_172_live;
+mod test_storage_map_feedback_173_live;
 mod test_storage_map_gates_172_live;
 mod test_storage_map_generated_172_live;
 mod test_storage_map_golden_172_live;

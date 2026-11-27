@@ -12,6 +12,7 @@ pub mod link_run;
 pub mod link_verify;
 pub mod master;
 pub mod model;
+pub mod notices;
 pub mod path;
 mod propose_class;
 pub mod sample;
@@ -755,7 +756,7 @@ async fn compare_action(
     sampled_answer(tools, p, shape, &ns, &global, |report| {
         let mismatches = shape::compare_map(map, &report);
         let checked = shape::compare_notes(map, &report);
-        json!({
+        let mut answer = json!({
             "success": true,
             "model_version": model::MODEL_VERSION,
             "action": "compare",
@@ -767,7 +768,10 @@ async fn compare_action(
             "notes": checked.notes,
             "shape": report,
             "mismatches": mismatches,
-        })
+        });
+        // T075: say that the global was read and held nothing.
+        notices::merge(&mut answer, notices::no_data_fields(&report, &ns));
+        answer
     })
     .await
 }
@@ -952,7 +956,7 @@ async fn preview_action(
             } else {
                 rows.iter().map(masked_row).collect()
             };
-            Ok(CallToolResult::structured(json!({
+            let mut out = json!({
                 "success": true,
                 "model_version": model::MODEL_VERSION,
                 "action": "preview",
@@ -965,10 +969,56 @@ async fn preview_action(
                 "row_count": rows.len(),
                 "capped": rows.len() as u64 >= max_rows,
                 "values_masked": !shape.include_values,
-            })))
+            });
+            // T075: no rows may mean an empty global, and the answer says which.
+            if rows.is_empty() {
+                let global = model::from_tree(class, &storage_name, &nodes)
+                    .storage
+                    .maps
+                    .into_iter()
+                    .find(|m| m.name == map_name)
+                    .map(|m| m.global);
+                match no_data_check(&cx, &ns, global.as_deref()).await {
+                    Ok(extra) => notices::merge(&mut out, extra),
+                    Err(why) => out["warnings"] = json!([why]),
+                }
+            }
+            Ok(CallToolResult::structured(out))
         }
     };
     crate::tools::exec::attach_identity(result, &cx.helper_report())
+}
+
+/// Whether the global of a map that returned no rows holds no data (T075): one node read as the
+/// execute identity. `Ok(None)` when it holds data or the map has no plain global; `Err` says why
+/// the question could not be asked.
+async fn no_data_check(
+    cx: &crate::tools::exec::ExecContext,
+    ns: &str,
+    global: Option<&str>,
+) -> Result<Option<Value>, String> {
+    let Some(raw) = global else {
+        return Ok(None);
+    };
+    let Ok(g) = globals::normalize_global(raw) else {
+        return Ok(None);
+    };
+    match sample::sample(
+        &cx.conn,
+        cx.client.as_ref(),
+        ns,
+        &g,
+        sample::caps(Some(1)),
+        false,
+    )
+    .await
+    {
+        Ok(report) => Ok(notices::no_data_fields(&report, ns)),
+        Err(answer) => Err(format!(
+            "could not check whether {raw} holds data: {}",
+            answer["error"].as_str().unwrap_or("the sample failed")
+        )),
+    }
 }
 
 /// `propose` (US7): sample a global that has no map and draft one, in model JSON, with every
@@ -1028,6 +1078,29 @@ async fn propose_action(
             return crate::tools::exec::attach_identity(err_result(answer), &cx.helper_report())
         }
     };
+    // T075: a global with no node is said so and drafts nothing (before, it drafted a map of one
+    // `{ID}` subscript and no fields from nothing).
+    if let Some(fields) = notices::no_data_fields(&report, &ns) {
+        let mut answer = json!({
+            "success": true,
+            "model_version": model::MODEL_VERSION,
+            "action": "propose",
+            "namespace": ns,
+            "global": global.name,
+            "capped": report.capped,
+            "shape": report.for_answer(shape.include_values),
+            "draft": null,
+            "guesses": [],
+            "draft_note": "no draft: the global holds no data, so there is nothing to infer a map from",
+            "not_inferred": ["a map (the global holds no data, so nothing was inferred)"],
+            "not_inferred_detail": [{"what": "a map", "why": "the global holds no data, so nothing was inferred"}],
+        });
+        notices::merge(&mut answer, Some(fields));
+        return crate::tools::exec::attach_identity(
+            Ok(CallToolResult::structured(answer)),
+            &cx.helper_report(),
+        );
+    }
     let (mut draft, mut guesses) = shape::draft(&report);
     let field_names: Vec<String> = p
         .get("field_names")
@@ -1473,18 +1546,21 @@ async fn read(
                 ),
             }),
     );
+    // The computed levels and access variables set by code, one line each (T074), after the lines
+    // about other classes that could not be read.
+    warnings.extend(notices::computed_warnings(&m));
     let mut answer = json!({
         "success": true,
         "model_version": model::MODEL_VERSION,
         "action": "read",
         "class": class,
         "namespace": ns,
-        "storage": m.storage,
+        "storage": notices::read_storage(&m),
         "derived": m.derived,
         "warnings": warnings,
     });
-    // Keywords the compiler wrote and the class does not use stay in `storage`, named here so a
-    // reader (and `diagram`) can leave them out.
+    // Keywords the compiler wrote and the class does not use are left out of `storage` (T073) and
+    // named here, so nothing is hidden silently. The model, `edit` and `replace` still hold them.
     if !m.compiler_added.is_empty() {
         answer["compiler_added"] = json!(m.compiler_added);
     }
@@ -1502,8 +1578,9 @@ async fn diagram(
         Err(reply) => return reply,
     };
     let map_filter = p.get("map").and_then(Value::as_str);
+    let warnings = notices::computed_warnings(&m);
 
-    Ok(CallToolResult::structured(json!({
+    let mut answer = json!({
         "success": true,
         "model_version": model::MODEL_VERSION,
         "action": "diagram",
@@ -1511,8 +1588,13 @@ async fn diagram(
         "namespace": ns,
         "mermaid": diagram::mermaid(&m, map_filter),
         "graph": diagram::graph(&m, map_filter),
-        "markdown": diagram::markdown(&m, map_filter),
-    })))
+        "markdown": notices::with_warning_lines(&diagram::markdown(&m, map_filter), &warnings),
+    });
+    // T074: present only when there is a computed level or an access variable set by code.
+    if !warnings.is_empty() {
+        answer["warnings"] = json!(warnings);
+    }
+    Ok(CallToolResult::structured(answer))
 }
 
 /// `uses` (R11, US2): Find all classes whose storage maps use a given global.

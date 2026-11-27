@@ -36,6 +36,15 @@ re-sampled and the class already has its properties). A candidate that holds bit
 `usability`: `[{map, subscript_level, field, status, text}]`; strings copied into `warnings`. `check`'s `success` and
 its refusals do not depend on it.
 
+## Feedback answers (T073 to T075)
+
+- `read`: `storage.keywords` leaves out a compiler-added `StreamLocation` (named in `compiler_added`); `warnings` gains one
+  string per computed level and per access variable set by code. `diagram`: a `warnings` key only when there are any, and
+  one `**Warning:**` line each at the top of `markdown`.
+- `compare`, `preview`, `propose` over a global with no node: `no_data: true`, `sampled_nodes: 0`, `message`. `propose`
+  then has `draft: null`, `guesses: []` and a `not_inferred` line, and links nothing. With data none of the three keys is
+  present.
+
 ## Unchanged guarantees
 
 Execute call as the service account; refused under strict read-only; node cap per candidate, 5 s in total; writes

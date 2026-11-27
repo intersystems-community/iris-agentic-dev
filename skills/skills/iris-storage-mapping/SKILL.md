@@ -70,15 +70,33 @@ test: `computed_172_compare_over_an_empty_global_says_it_checked_nothing`), and 
 sits at when it differs from the map's levels (live test:
 `computed_172_compare_over_data_names_the_depth_the_bits_sit_at`).
 
-An `Invalidcondition` on a level is a filter, not a computed level. `StreamLocation` in `read` under
-`compiler_added` is the compiler's own element: leave it alone.
+An `Invalidcondition` on a level is a filter, not a computed level. `read` names `StreamLocation`
+under `compiler_added` and leaves it out of `storage`: it is the compiler's own element, and the
+class does not use a stream (live test:
+`test_storage_map_feedback_173_read_leaves_out_the_compiler_added_stream_location`).
+
+## Maps that compute a level
+
+Three signs in a map say a level may not be a subscript of the global: `AccessType Other`, a
+`NextCode`, and an `Invalidcondition` (a filter on keys that do exist). An access variable whose
+`Code` sets it is the fourth, smaller sign: the value comes from code, not from the global. iad does
+not run any of that code. A `$BIT` or `$LIST` value makes a level that is not a subscript: the
+positions of its 1 bits, or the list items, are the keys the map's code produces.
+
+`read` and `diagram` add one `warnings` line per such level and per such variable, naming the map and
+the level; `diagram` also puts a `**Warning:**` line at the top of its `markdown` (live test:
+`test_storage_map_feedback_173_read_and_diagram_warn_about_each_computed_level`). Run `compare` before
+you trust the map: it samples the real global and names the depth the data sits at (live test:
+`computed_172_compare_over_data_names_the_depth_the_bits_sit_at`).
 
 ## A global with no map
 
 `propose` samples the global and drafts a map in model JSON, listing every guessed element. Rename
 the guessed fields to the class's properties, then `check` and `replace`; the draft of a seeded
 global answers its known question (live test: `test_storage_map_data_172_propose_drafts_a_working_map`).
-It is a draft to check against real data. `not_inferred` lists what it left out: datatypes, collations,
+Over a global with no data it drafts nothing and answers `no_data: true` with the global's name (live
+test: `test_storage_map_feedback_173_propose_over_an_empty_global_drafts_nothing_and_says_why`);
+`compare` and `preview` say the same. It is a draft to check against real data. `not_inferred` lists what it left out: datatypes, collations,
 index maps, conditions, computed subscripts and the ID counter (live test:
 `computed_172_propose_lists_what_it_did_not_infer`).
 
