@@ -401,10 +401,15 @@ tests.
       subscripts than ten times the node cap, `nodes` otherwise); a time cap forced to 0 s on one candidate through
       `link_run::CANDIDATE_TIME_CAP_FOR_TESTS` (testing feature; a 1 s cap cannot be hit on a fixture this small)
       names the stopped candidate and keeps the other. Prove (red then green): `L test_storage_map_safety_173_live`.
-- [ ] T044 [US8] No value leaves IRIS (SC-004): a test that runs `propose` and `check` over F01 to F18 and F26 to F43 with
-      seeded values that cannot occur in field names (`zq-seed-0041` style), serialises every answer to text and asserts
+- [x] T044 [US8] No value leaves IRIS (SC-004): a test that runs `propose` and `check` over F01 to F18 and F26 to F43,
+      seeded with the rows' own long strings (case-insensitively), and over F02, F13 and F32 with the Name column
+      replaced by `zq-seed-NNNN` (values that cannot occur in field names), serialises every answer to text and asserts
       none of the seeded values occurs, after asserting the seed list is non-empty and each seed is in the fixture's
-      global. The one exception test is F18 under the data policy (T029). Prove: `L test_storage_map_safety_173_live`.
+      globals. `check` cannot run for F32 (the write gate refuses its class once data fills `idx`), so F32 is `propose`
+      only. Red on F32: `shape.sub_nodes["2"]` held the index keys; `ShapeReport::for_answer` now withholds the keys of
+      a depth of three or more once-only literal subscripts (below the first subscript) from the answer. The one
+      exception test is F18 under the data policy (T029). Prove: `L test_storage_map_safety_173_live`,
+      `U test_storage_map_safety_173`.
 - [ ] T045 [US8] Budget test: for a master with two candidates the connection's request counter shows at most 10 IRIS
       calls (plan.md table) and the whole call stays under 5 s on the local container with 1,000-node candidates
       (SC-005). Prove: `L test_storage_map_safety_173_live`.

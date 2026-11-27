@@ -40,7 +40,7 @@ fn done() -> &'static str {
 
 fn answer_shape(lines: &str, include_values: bool) -> Value {
     let report = parse(&format!("{lines}{}", done())).expect("a readable report");
-    serde_json::to_value(report.for_answer(include_values)).unwrap()
+    report.for_answer(include_values)
 }
 
 #[test]

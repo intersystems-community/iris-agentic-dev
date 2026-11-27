@@ -1053,7 +1053,7 @@ async fn propose_action(
         "namespace": ns,
         "global": global.name,
         "capped": report.capped,
-        "shape": report,
+        "shape": report.for_answer(shape.include_values),
         "draft": draft,
         "guesses": guesses,
         "draft_note": "a draft to check against real data: every name, delimiter and piece count is a guess from a sample",
