@@ -129,6 +129,28 @@ pass of the spread sample reaching ten times the node cap.
 `unused` (the warning line) and the line that names the map for `used`; `unknown` says why the planner could not be
 asked. Also copied as strings into `warnings`; `check`'s pass or fail is unchanged.
 
+## Feedback additions (T073 to T075)
+
+### `warnings` (an addition to `read` and `diagram`)
+
+Strings, one per computed level and one per access variable set by code, built from the same facts as `derived`: which
+map and level, what iad does not evaluate, and that `compare` samples the real global to confirm. `read` already had
+`warnings` (always present, the other classes it could not read) and appends these. `diagram` gains `warnings` only when
+there are any, and starts its `markdown` with one `**Warning:**` line each. A map with no computed level, filter or
+access variable code adds nothing.
+
+### `compiler_added` (an addition to the answer of `read`)
+
+`read` leaves a compiler-added keyword out of `storage.keywords` and names it in `compiler_added`, so nothing is hidden
+silently. The model, `edit`, `replace` and the version still hold the element; only the answer `read` returns is
+filtered.
+
+### No data (an addition to `compare`, `preview` and `propose`)
+
+`{no_data: true, sampled_nodes: 0, message: "looked at ^X in USER: it holds no data, so nothing here is checked against
+data"}`, added to the answer only when the sampler found no node in the map's global. `propose` over such a global
+drafts no map: `draft` is null, `guesses` is empty, and `not_inferred` says nothing was inferred.
+
 ## `not_inferred`
 
 Always present, and still an array of strings (the 172 shape and golden keep it). 173 adds `not_inferred_detail`, an

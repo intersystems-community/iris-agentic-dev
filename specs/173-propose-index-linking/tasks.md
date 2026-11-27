@@ -144,7 +144,7 @@ items). A failure stops the piece it guards and goes to Tom; the spec is amended
       conditional map and skips exactly the empty-string rows), `open_spread_beats_prefix` (fixture F34: build it, walk
       count the keys, then walk the first 200 in order and 200 by stride, score `$$UPPER` against `$$ALPHAUP`; the test
       asserts the prefix walk cannot separate them and the stride can). Prove: `L open_`.
-- [X] T010 Lead only: read T002 to T009. Any failure stops the piece it guards (a map form fails → its draft goes to
+- [x] T010 Lead only: read T002 to T009. Any failure stops the piece it guards (a map form fails → its draft goes to
       `not_inferred`; the spread does not beat the prefix → FR-004a is amended) and goes to Tom with the output before
       Phase 3. Record each outcome in `specs/173-propose-index-linking/research.md` (a line under the item).
 
@@ -569,33 +569,33 @@ tests.
 
 ## Phase 14: Polish
 
-- [X] T066 [P] `docs/tools.md` and `docs/error-codes.md`: the `iris_storage_map` row names the three params; no new
+- [x] T066 [P] `docs/tools.md` and `docs/error-codes.md`: the `iris_storage_map` row names the three params; no new
       code, so the error-code guard must stay green. Prove: `U docs_tools error_codes`.
-- [X] T067 [P] `CLAUDE.md` Recent Changes: one entry for 173 inside the 172 entry's neighbourhood (what `propose` and
+- [x] T067 [P] `CLAUDE.md` Recent Changes: one entry for 173 inside the 172 entry's neighbourhood (what `propose` and
       `check` now return, the bitmap layout finding, the NULL versus empty-string finding, `%SYSTEM.SQL.Functions`
       as the server's own collation, plan path). Prove: `markdownlint-cli2 --fix CLAUDE.md`.
-- [X] T068 [P] Release notes: add the 173 lines to `specs/172-sql-storage-maps/release-notes-draft.md`, then `/wordcraft`
+- [x] T068 [P] Release notes: add the 173 lines to `specs/172-sql-storage-maps/release-notes-draft.md`, then `/wordcraft`
       and `/no-ai-slop` on the finished text, apply, and show Tom. Prove: the reviewer block is empty or addressed.
 - [ ] T069 Background coverage (best effort, never blocks): `nice -n 15 cargo llvm-cov` on the new modules with
       `--include-ignored` against the live container, compare with the committed baseline, report a drop when it lands.
-- [X] T070 Lead only: delete the probe classes and globals left on `iris-dev-iris` by Phase 0 research
+- [x] T070 Lead only: delete the probe classes and globals left on `iris-dev-iris` by Phase 0 research
       (`Iad173.*`, `^Iad173*`), confirm `$Order(^IadSm173...)` is empty after the full live run, and run
       `LINT`, `U storage_map`, and `L _173_live` once from the worktree root. Report any failure with its output.
-- [X] T071 Lead only: commit locally in logical commits (spec and plan; Phase 0; each story), `/simplify` before each
+- [x] T071 Lead only: commit locally in logical commits (spec and plan; Phase 0; each story), `/simplify` before each
       commit, `cargo fmt --all -- --check`. Never push without Tom's words.
-- [ ] T073 `read` leaves a compiler-added `StreamLocation` out of the `storage` it returns (Benjamin De Boe's feedback: the
+- [X] T073 `read` leaves a compiler-added `StreamLocation` out of the `storage` it returns (Benjamin De Boe's feedback: the
       agent's answers always describe a stream location the class does not use). A presentation filter at the `read`
       answer only: the lossless tree, `edit`, `replace`, versions, the model and what is written do not change, and the
       answer keeps `compiler_added: ["StreamLocation"]` so nothing is hidden silently. A class with a stream property
-      keeps the element. Prove: `U storage_map`, `L storage_map_computed_172`, the 172 golden live file.
-- [ ] T074 Computed-level warning. `read` (its existing `warnings` array) and `diagram` (a `warnings` key only when
+      keeps the element. Prove: `U storage_map`, `L storage_map_feedback_173`, `L storage_map_computed_172`, the 172 golden live file.
+- [X] T074 Computed-level warning. `read` (its existing `warnings` array) and `diagram` (a `warnings` key only when
       there are any, and a `Warning` line at the top of its markdown) say, one line per computed level and per access
       variable set by code, which map and level, what iad does not evaluate, and that `compare` samples the real
       global to confirm. Built from the facts `computed_level_facts` already derives. Skill section "Maps that compute
       a level". Prove: `U storage_map`, `L storage_map_computed_172`, `U storage_map_docs_173`.
-- [ ] T075 Say so when there is no data. `compare`, `propose` and `preview` over a global with no nodes answer
+- [X] T075 Say so when there is no data. `compare`, `propose` and `preview` over a global with no nodes answer
       `no_data: true`, `sampled_nodes: 0` and a plain message naming the global and namespace; `propose` drafts no map
-      from nothing. Prove: `L storage_map_nodata_173`, `U storage_map_docs_173`.
+      from nothing. Prove: `L storage_map_feedback_173`, `U storage_map_docs_173`.
 
 ---
 

@@ -39,15 +39,29 @@ subscript of the global: a `$BIT` or `$LIST` held in a node's value is a common 
 `Invalidcondition` is called a filter, and an access variable that the map sets by code gets its own
 line. Check a flagged map against real data with `compare`.
 
+The same facts come back as `warnings`, where an agent reads first: one line per computed level and
+per access variable set by code, naming the map and the level, saying that iad does not evaluate the
+code, and that `compare` samples the real global to confirm. `read` appends them to the `warnings` it
+already has (the other classes it could not read). `diagram` has a `warnings` key only when there are
+any, and starts its `markdown` with one `**Warning:**` line each. A map with no computed level adds
+nothing.
+
 `compare` answers `verified: false` and says `no data found at <global>, the map was not checked` when
-the global holds nothing, so an empty answer is never read as a match. When the map has a computed
+the global holds nothing, so an empty answer is never read as a match. Since spec 173 `compare`,
+`preview` and `propose` also answer with three keys, `no_data` (true), `sampled_nodes` (0) and `message` (`looked at ^X
+in USER: it holds no data, so nothing here is checked against data`), when they read the map's global
+and found no node. The keys are absent when data was found. `propose` drafts no map from nothing:
+`draft` is null, `guesses` is empty and `not_inferred` says so. When the map has a computed
 level and the data sits at another depth, `notes` names both depths. `propose` returns `draft_note`
 and `not_inferred`: the list of what the draft leaves to you (datatypes, collations, index maps,
 conditions, computed subscripts, the ID counter).
 
 `read` returns a `compiler_added` list when the compiler wrote a keyword the class does not use
 (today `StreamLocation`, on a class whose own text declares no stream property and extends only plain
-persistent classes). The element stays in `storage` so edits write it back; `diagram` leaves it out.
+persistent classes). `read` leaves the element out of the `storage` it returns and names it in
+`compiler_added`, so nothing is hidden silently; `diagram` leaves it out too. The class, `edit`,
+`replace` and the `version` still hold it, so a write puts it back. A class that has a stream
+property, or extends something that may carry one, keeps the element in `storage`.
 
 ## `propose`: a global, its index globals, and a class
 
