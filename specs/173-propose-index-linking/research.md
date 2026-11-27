@@ -164,3 +164,97 @@ fixture's globals as the rig user. The failure path is built and tested in the c
   `EXPLAIN` result. `EXPLAIN SELECT …` through `%SQL.Statement` returned the plan as XML text with the line "Read
   index map …" (R2) and the warning forms of spec context fact 6; the plan uses that, and the live test pins the two
   strings.
+
+## iFind real index (T072)
+
+Measured 2026-11-27 on `iris-dev-iris` (IRIS Community 2026.2, USER). Corpus: 60 invented sentences of three words
+around an `and` (plus a repeated word every fourth row and a `ZephyrN!` token every tenth). Two real indexes, both built
+by IRIS itself: the basic form (`Index Idx On (Txt) As %iFind.Index.Basic(LANGUAGE="en")` on a `%Persistent` class with
+default storage) and Benjamin's recipe (`create table ... (str varchar(10000))` then
+`create index AnalyticIDX on ... (str) as %iFind.Index.Analytic(IFINDMAPPINGS = 1)`). The class text of
+`%iFind.Index.Basic` and the storage map of `%iFind.OriginalWord` were read with `iris_doc get`; this note paraphrases
+them. Observations are layouts and counts only. Test: `test_storage_map_ifind_173_live.rs` (pins the numbers below).
+
+### What each index files
+
+| Global                                        | Subscripts (after the global name)                | Value                                                                |
+| --------------------------------------------- | ------------------------------------------------- | -------------------------------------------------------------------- |
+| `^Pkg.ClassD` (master, default storage)       | root: nothing; `ID`                               | root = ID counter; row = `$LIST` of (class name, Title, Txt)         |
+| `^Pkg.ClassI`, `"$Doc",chunk`                 | `"$Doc"`, chunk                                   | bit string; bit n+1 set = row n exists                               |
+| `^Pkg.ClassI`, `"Idx","L",lang,chunk`         | language id (1 for `en`), chunk                   | the same bit string                                                  |
+| `^Pkg.ClassI`, `"Idx","W",wordID`             | word ID                                           | count of rows holding the word                                       |
+| `^Pkg.ClassI`, `"Idx","W",wordID,chunk`       | word ID, chunk                                    | bit string of the rows that hold the word (bit n+1 = row n)          |
+| `^Pkg.ClassI`, `"Idx","P",rowID`              | row ID                                            | count of token positions in the row                                  |
+| `^Pkg.ClassI`, `"Idx","P",rowID,wordID,chunk` | row ID, word ID, chunk                            | bit string of the word's positions in the row (bit p+1 = position p) |
+| `^IRIS.IF.WordD`, `^IRIS.IF.WordI`            | word ID; `" "_word` (a leading blank)             | word; word ID (the namespace's shared dictionary)                    |
+| `^IRIS.IF.TransfoB(0,chunk)`                  | `0`, chunk = `wordID\64000+1`                     | bit string; bit n+1 set = word ID n (every word of the dictionary)   |
+| `^IRIS.IF.WordRI`, `WordCP`, `EntityD/I/W/WP` | reversed words, code points, entity IDs and spans | scalars, `$LIST`s and bit strings, filled by the same index          |
+
+Facts the layout settles:
+
+1. **No word is a subscript of the class's own index global.** The key is a word ID. The words sit in `^IRIS.IF.WordD`
+   and `^IRIS.IF.WordI`, namespace-wide globals that the class's storage does not name. A subscript-to-field linker
+   cannot explain a word ID from a master field.
+2. **Row IDs are bit positions, not subscripts**, in `"$Doc"`, `"L"` and `"W"`. Only the `"P"` nodes carry a row ID as a
+   subscript (position 3 of `("Idx","P",row,word,chunk)`). The chunk subscript is last and is 1 for every ID below 64000.
+3. **The first levels are constants of different branches** (`"Idx"`, then `"L"`, `"P"` or `"W"`): one global holds
+   several layouts.
+4. **The analytic form files the same trees and more**: its `^<ext>.3` index global holds `E`, `L`, `P`, `W`, `c`, `d`,
+   `p`, `x` and `xio` (1,066 nodes for 60 rows against 364 for the basic form). The table's globals are hashed
+   (`^Cd34.E0li.1` rows, `.2` the extent bitmap, `.3` the index, `.I`, `.S`), so the index shares no name prefix with the
+   master beyond the extent. A DDL table's IDs come from `$SEQUENCE`, so they are not 1..60.
+5. **`%iFind.OriginalWord` maps `^IRIS.IF.TransfoB`**: level 1 the constant 0, level 2 `{OriginalWord}\64000+1` (an
+   access variable `{2D2}` set by code to the chunk's base ID), level 3 `AccessType Other` with a `NextCode` that walks
+   the chunk's bit string with `$BITFIND` and an invalid-condition on `$BIT`. The global has **two** subscripts; the
+   third level exists only as code. This is the shape Benjamin described, and `propose` already drafts it (below). His
+   note gave the chunk as `wordID\64000 - 1`; the measured chunk is `wordID\64000+1` (1 for IDs below 64,000), and `-1`
+   appears only in the access variable, where `{2D2}=({L2}-1)*64000-1` is the base, so bit position = ID - base = ID + 1
+   in the first chunk.
+6. The shared `^IRIS.IF.*` globals exist in USER only once an iFind index has been filled; `%SYS` held none.
+   `IFINDMAPPINGS = 1` adds the word-spread and word-position SQL projections; no global named for
+   `%iFind.OriginalWord` appears (the class is a map over `TransfoB`).
+
+IRIS quirk met while loading (not iFind): the first INSERT into a DDL table that is re-created over globals killed by
+hand can fail with `<ILLEGAL VALUE>` at `%SQLInsert+13`; the retry works. It happened with and without the analytic
+index. The test loader retries and asks IRIS for the IDs.
+
+### What `propose`, `read`, `diagram` and `compare` say today
+
+| Call                                                | Answer                                                                                                                                                                                                                                                                                                                |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `propose global=^Pkg.ClassD`                        | Master drawn correctly (`$LIST`, three pieces, 60 IDs). `index_candidates.candidates = []`: the sibling `^Pkg.ClassI` is not offered, and nothing says none was found.                                                                                                                                                |
+| same, `index_globals=[^Pkg.ClassI]`                 | Verdict `not_explained`, honest, no map. But `id.positions=[5]` (agreement 1.0; position 5 is the chunk, 1 in every node) and `missing_rows` says the index holds only the rows where `{Field2}` is one value (false: all 60 rows are in it). The node cap (200 of 364) stopped the walk.                             |
+| `propose global=^Pkg.ClassI` (index as master)      | Draws a data map with `Key1..Key4`, `{ID}` and four fields split on `$c(1)`: the bytes of the bit strings read as delimiters. No `bitmaps` item.                                                                                                                                                                      |
+| analytic, master `^Cd34.E0li.1` alone               | Master drawn; no candidates and no statement (the index shares no name prefix with it).                                                                                                                                                                                                                               |
+| analytic, `index_globals=[^Cd34.E0li.3]`            | `too_few_nodes` (25 nodes sampled, 11 usable); `id.positions=[3]` with agreement 1.0 (the chunk again); `missing_rows` 23 of 60.                                                                                                                                                                                      |
+| `propose global=^IRIS.IF.TransfoB`                  | `chunk_map_draft` is right: constant 0, `{Key1}\64000+1`, computed level 3; verified compiled, 25 rows, ID sum 325 (1..25). The plain `draft` beside it is the `$c(1)` nonsense again.                                                                                                                                |
+| `read class=%iFind.OriginalWord`                    | `derived` carries "level 3 is computed by code ... the level may not exist in the global ... check the map against real data" (second entry, after the access-variable fact). `warnings` is empty.                                                                                                                    |
+| `diagram` of it                                     | The fact is the last paragraph of `markdown`. The graph and the mermaid draw `sub 3: {OriginalWord} (Other)` like any subscript: three levels for a two-subscript global.                                                                                                                                             |
+| `compare` of it                                     | `mismatches=[]`, `verified=true`, and a note: "the map declares 3 levels, of which level 3 is computed by code; the data sits at depth 2".                                                                                                                                                                            |
+| `compare` and `propose` over a global with no nodes | `compare`: note "no data found at ^G, the map was not checked", yet five `no value there` mismatches. `propose`: a successful, empty draft (`data: {}`); only `shape.nodes_scanned = 0` says there was nothing; with `index_globals` the candidate is `not_examined` because "a master draft has at least one field". |
+| Benjamin's `^bdb` (3 rows) with `^bdb.x`            | Link `too_few_nodes`, no map, `id.form=value`. The detail names no minimum (20 usable nodes) and does not say what more rows would do. `Sub1` (the `"sub"` node, 99934.1) is typed `%String` with evidence `max_length 0`.                                                                                            |
+| the same shape with 40 rows                         | Link `inferred`: `Field1`, `exact`, ID in the value; the draft compiles, finds a row, and the planner uses it. Types: `Field4` `%Integer` (40 of 40).                                                                                                                                                                 |
+
+### Benjamin's description against what iFind files
+
+- "a master `^bdb` with `^bdb.x` holding the index, an IdKey": true of his hand-built shape, and `propose` links it once
+  there are 20 rows. A real iFind index is `^<Class>D` plus `^<Class>I` (`D` and `I`, not `.x`), with the words not in
+  it at all.
+- "NextCode third level on a bitmap-like global": matches `%iFind.OriginalWord` over `^IRIS.IF.TransfoB` exactly. That
+  is the one real iFind structure `propose` handles (the chunk map), and its answer is right.
+
+### What the linker would need to learn (not implemented)
+
+1. Offer the stem sibling: a default-storage class files `^XD` and `^XI`, and the name-prefix rule misses it; a DDL
+   table's index is `^<ext>.3` beside `^<ext>.1`. Say when the candidate list is empty.
+2. Treat a global whose first levels are constants of different branches (`"Idx","W"` against `"Idx","P"`) tree by
+   tree, and report the ID where it really is (a bit position, or position 3 of `"P"`).
+3. Never report a position as the row ID when it holds one value across the nodes read; never state a `missing_rows`
+   rule from one-value subscripts.
+4. Do not read a bit string as `$c(1)`-delimited fields (run the bitmap detector on the master too), and drop the plain
+   `draft` when a `chunk_map_draft` explains the global.
+5. A word ID has no master field. The honest answer is "the keys are word IDs held in this namespace's
+   `^IRIS.IF.WordD`", which `propose` could state when the first subscripts match that dictionary.
+6. Say "no data found" in `propose`, and keep `compare` from listing mismatches it did not check.
+7. Name the 20-node minimum when a link is `too_few_nodes`, and count the values of `"sub"`-node fields when typing.
+8. Mark a computed level in the diagram's graph, not only in the markdown.

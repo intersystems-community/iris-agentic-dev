@@ -603,6 +603,12 @@ tests.
 - [X] T075 Say so when there is no data. `compare`, `propose` and `preview` over a global with no nodes answer
       `no_data: true`, `sampled_nodes: 0` and a plain message naming the global and namespace; `propose` drafts no map
       from nothing. Prove: `L storage_map_feedback_173`, `U storage_map_docs_173`.
+- [X] T072 Real `%iFind` index (Benjamin De Boe's report): measure the globals a real `%iFind.Index.Basic` index
+      files on `iris-dev-iris` (research.md, heading "iFind real index (T072)"), then
+      `test_storage_map_ifind_173_live.rs` runs `propose` over them, with and without `index_globals`, and asserts what
+      the measured layout and the invented rows say. Prove: `L test_storage_map_ifind_173_live`. Result: 8 tests pass
+      (layout pins, safety, the chunk map, the 40-row link); 10 `red_*` tests fail on purpose, one per wrong or
+      unhelpful answer (the file names each).
 
 ---
 
