@@ -55,40 +55,10 @@
       "rows": 6
     }
   },
-  "draft": {
-    "data": {
-      "Field1": {
-        "delimiter": "\"\u0001\"",
-        "name": "Field1",
-        "piece": "1"
-      },
-      "Field2": {
-        "delimiter": "\"\u0001\"",
-        "name": "Field2",
-        "piece": "2"
-      }
-    },
-    "global": "^IadSm173Bits",
-    "name": "Master",
-    "subscripts": [
-      {
-        "expression": "{Key1}",
-        "level": 1
-      },
-      {
-        "expression": "{ID}",
-        "level": 2
-      }
-    ],
-    "type": "data"
-  },
-  "draft_note": "a draft to check against real data: every name, delimiter and piece count is a guess from a sample",
+  "draft": null,
+  "draft_note": "no plain draft: every value is a bit string, which `chunk_map_draft` maps (a draft to check against real data: the third level is computed by code)",
   "global": "^IadSm173Bits",
-  "guesses": [
-    "/maps/Master/subscripts",
-    "/maps/Master/data/Field1",
-    "/maps/Master/data/Field2"
-  ],
+  "guesses": [],
   "index_candidates": {
     "candidates": [],
     "listing": "ok",
@@ -109,7 +79,9 @@
     "index maps (an index global such as ^X.x is not linked to this map)",
     "conditions (a conditional map or an index that skips rows)",
     "computed subscripts (levels produced by code, such as a $BIT chunk)",
-    "the ID counter (SqlIdExpression) and any row ID built from several parts"
+    "the ID counter (SqlIdExpression) and any row ID built from several parts",
+    "bit strings (the values at depth 2 are bit strings ($BIT), not delimited fields, so no field is drafted from them; a bit-string master is mapped by chunk_map_draft and a bit-string index global is linked by bitmaps, where either applies)",
+    "no index global found (looked for globals in USER whose names begin with ^IadSm173Bits, and none exists, so no index was linked. If the master has an index in a global this search cannot name, give it in index_globals)"
   ],
   "not_inferred_detail": [
     {
@@ -139,6 +111,14 @@
     {
       "what": "the ID counter",
       "why": "SqlIdExpression is not read, and a row ID built from several parts is not inferred"
+    },
+    {
+      "what": "bit strings",
+      "why": "the values at depth 2 are bit strings ($BIT), not delimited fields, so no field is drafted from them; a bit-string master is mapped by chunk_map_draft and a bit-string index global is linked by bitmaps, where either applies"
+    },
+    {
+      "what": "no index global found",
+      "why": "looked for globals in USER whose names begin with ^IadSm173Bits, and none exists, so no index was linked. If the master has an index in a global this search cannot name, give it in index_globals"
     }
   ],
   "shape": {
@@ -160,13 +140,13 @@
     },
     "formats": [
       {
-        "delimiter": "\u0001",
+        "delimiter": null,
         "depth": 2,
-        "format": "delimited",
+        "format": "bits",
         "node": null,
         "pieces": {
-          "max": 2,
-          "min": 2
+          "max": 1,
+          "min": 1
         }
       }
     ],

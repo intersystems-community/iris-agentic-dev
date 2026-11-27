@@ -3,7 +3,7 @@
 //! Produces Mermaid flowcharts and JSON graph structures that visualize how a storage map
 //! organizes data in globals.
 
-use super::model::StorageModel;
+use super::model::{level_signs, StorageModel};
 use serde::Serialize;
 
 /// A node in the graph visualization.
@@ -84,11 +84,22 @@ pub fn graph(m: &StorageModel, map_filter: Option<&str>) -> Graph {
         let mut chain = vec![("G", "global", label(&map.global))];
 
         for (idx, sub) in map.subscripts.iter().enumerate() {
+            // A level the map computes by code (or filters by code) is said so in its own node: a
+            // reader of the picture would otherwise count it as a subscript of the global.
+            let signs = level_signs(sub);
+            let by_code = if !signs.computed.is_empty() {
+                ", computed by code, may not be a subscript"
+            } else if signs.filter_only {
+                ", keys filtered by code"
+            } else {
+                ""
+            };
             let text = format!(
-                "sub {}: {} ({})",
+                "sub {}: {} ({}{})",
                 idx + 1,
                 label(&sub.expression),
-                label(&sub.access_type)
+                label(&sub.access_type),
+                label(by_code)
             );
             chain.push(("S", "subscript", text));
         }

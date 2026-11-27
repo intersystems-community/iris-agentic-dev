@@ -28,7 +28,7 @@
       {
         "id": "S3",
         "kind": "subscript",
-        "label": "sub 2: {Seq} (Sub)"
+        "label": "sub 2: {Seq} (Sub, keys filtered by code)"
       },
       {
         "id": "D4",
@@ -37,6 +37,6 @@
       }
     ]
   },
-  "markdown": "# Storage of IadSm172.Route\n\nStorage `SQLStorage`, type `%Storage.SQL`, editable with iris_storage_map.\n\n| Keyword | Value |\n| --- | --- |\n| `StreamLocation` | `^IadSm172RouteS` |\n\n- table is writable: master global starts with ^, $, or @\n\n## Map `Master` (data, master map)\n\nGlobal layout: `^IadSm172Route({Depot},{Seq})`\n\n| Level | Expression | Access type | Delimiter | Other |\n| --- | --- | --- | --- | --- |\n| 1 | `{Depot}` | sub | — | access var 1 `{1D1}` = ` s {1D1}=$g(^IadSm172Route({L1}))` |\n| 2 | `{Seq}` | Sub | — | stop_expression `{L2}\\900`; invalid if `'{1D1}` |\n\n| Field | Node | Delimiter | Piece | Format | Filed |\n| --- | --- | --- | --- | --- | --- |\n| `Name` | row node | `\"^\"` | `1` | delimited | yes |\n| `Stops` | row node | `\"^\"` | `2` | delimited | yes |\n\nFacts:\n\n- access variable {1D1}: the map sets it by code (not read from the global), and iad does not evaluate that code\n- level 2 filters its keys by code (Invalidcondition): the map skips a key when the code is true, and iad does not evaluate it\n\n```mermaid\nflowchart LR\n  G1[\"^IadSm172Route\"]\n  S2[\"sub 1: {Depot} (sub)\"]\n  S3[\"sub 2: {Seq} (Sub)\"]\n  D4[\"Name: piece 1, Stops: piece 2\"]\n  G1 --> S2\n  S2 --> S3\n  S3 --> D4\n```\n",
-  "mermaid": "flowchart LR\n  G1[\"^IadSm172Route\"]\n  S2[\"sub 1: {Depot} (sub)\"]\n  S3[\"sub 2: {Seq} (Sub)\"]\n  D4[\"Name: piece 1, Stops: piece 2\"]\n  G1 --> S2\n  S2 --> S3\n  S3 --> D4\n"
+  "markdown": "# Storage of IadSm172.Route\n\nStorage `SQLStorage`, type `%Storage.SQL`, editable with iris_storage_map.\n\n| Keyword | Value |\n| --- | --- |\n| `StreamLocation` | `^IadSm172RouteS` |\n\n- table is writable: master global starts with ^, $, or @\n\n## Map `Master` (data, master map)\n\nGlobal layout: `^IadSm172Route({Depot},{Seq})`\n\n| Level | Expression | Access type | Delimiter | Other |\n| --- | --- | --- | --- | --- |\n| 1 | `{Depot}` | sub | — | access var 1 `{1D1}` = ` s {1D1}=$g(^IadSm172Route({L1}))` |\n| 2 | `{Seq}` | Sub | — | stop_expression `{L2}\\900`; invalid if `'{1D1}` |\n\n| Field | Node | Delimiter | Piece | Format | Filed |\n| --- | --- | --- | --- | --- | --- |\n| `Name` | row node | `\"^\"` | `1` | delimited | yes |\n| `Stops` | row node | `\"^\"` | `2` | delimited | yes |\n\nFacts:\n\n- access variable {1D1}: the map sets it by code (not read from the global), and iad does not evaluate that code\n- level 2 filters its keys by code (Invalidcondition): the map skips a key when the code is true, and iad does not evaluate it\n\n```mermaid\nflowchart LR\n  G1[\"^IadSm172Route\"]\n  S2[\"sub 1: {Depot} (sub)\"]\n  S3[\"sub 2: {Seq} (Sub, keys filtered by code)\"]\n  D4[\"Name: piece 1, Stops: piece 2\"]\n  G1 --> S2\n  S2 --> S3\n  S3 --> D4\n```\n",
+  "mermaid": "flowchart LR\n  G1[\"^IadSm172Route\"]\n  S2[\"sub 1: {Depot} (sub)\"]\n  S3[\"sub 2: {Seq} (Sub, keys filtered by code)\"]\n  D4[\"Name: piece 1, Stops: piece 2\"]\n  G1 --> S2\n  S2 --> S3\n  S3 --> D4\n"
 }

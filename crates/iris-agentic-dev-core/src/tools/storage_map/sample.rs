@@ -43,7 +43,11 @@ pub fn build_code(
   Set:(d>0)&&'$IsValidNum($QSubscript(n,d)) o.n=$QSubscript(n,d)
   If v=\"\" {{ Set o.f=\"plain\",o.p=0 }}
   ElseIf $ListValid(v)&&($ListLength(v)>0) {{ Set o.f=\"$LIST\",o.p=$ListLength(v) }}
-  Else {{ Set o.f=\"plain\",o.p=1 For dl={DELIMITERS} {{ If v[dl {{ Set o.f=\"delimited\",o.dl=$Ascii(dl),o.p=$Length(v,dl) Quit }} }} }}
+  Else {{
+   Set isb=0 Try {{ Set bc=$BitCount(v),isb=1 }} Catch bx {{ }}
+   If isb {{ Set o.f=\"bits\",o.p=1 }}
+   Else {{ Set o.f=\"plain\",o.p=1 For dl={DELIMITERS} {{ If v[dl {{ Set o.f=\"delimited\",o.dl=$Ascii(dl),o.p=$Length(v,dl) Quit }} }} }}
+  }}
   Set:vals o.v=$Extract(v,1,200)
   Write o.%ToJSON(),!
  }}

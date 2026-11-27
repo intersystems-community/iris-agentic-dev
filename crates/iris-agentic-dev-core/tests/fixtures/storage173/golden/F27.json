@@ -168,7 +168,7 @@
     "COLLATE (a subscript collated by %COLLATE is recognised and never drafted)",
     "numeric collations (PLUS and MINUS are not map-expression functions, so a subscript they produce is not drafted)",
     "computed subscripts in an index (a subscript made by code, such as a date format, is reported as not explained and no code is guessed)",
-    "^IadSm173F27X has no drafted map (the link is too_few_nodes)"
+    "^IadSm173F27X has no drafted map (the link is too_few_nodes: 5 of the 5 nodes read found a master row, and a link needs at least 20 such nodes before a subscript is called inferred; with fewer, a field that matches the key by chance cannot be told from one that is stored there. Load more rows (or raise max_nodes if the global already has 20 or more) and ask again)"
   ],
   "not_inferred_detail": [
     {
@@ -213,7 +213,7 @@
     },
     {
       "what": "^IadSm173F27X has no drafted map",
-      "why": "the link is too_few_nodes"
+      "why": "the link is too_few_nodes: 5 of the 5 nodes read found a master row, and a link needs at least 20 such nodes before a subscript is called inferred; with fewer, a field that matches the key by chance cannot be told from one that is stored there. Load more rows (or raise max_nodes if the global already has 20 or more) and ask again"
     }
   ],
   "shape": {

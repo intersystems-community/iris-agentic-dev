@@ -556,7 +556,7 @@ tests.
 
 ## Phase 13: Lift (release gate for 172, constitution IX)
 
-- [X] T064 Write `tests/e2e/tasks/skills/iris-storage-mapping/SKILL-74.yaml` (a task: a class that maps only
+- [x] T064 Write `tests/e2e/tasks/skills/iris-storage-mapping/SKILL-74.yaml` (a task: a class that maps only
       `^IadSm173Person`, an index global `^IadSm173PersonX` beside it, "make lookups by Name use it"; fixture, seed,
       teardown, check with the known answer from F02's seed rows). The id is SKILL-74 and the directory is the
       authored tree, not `tests/e2e/tasks/benchmark/skills/SKILL-30.yaml`: `SKILL-30` is already
@@ -590,25 +590,47 @@ tests.
       `LINT`, `U storage_map`, and `L _173_live` once from the worktree root. Report any failure with its output.
 - [x] T071 Lead only: commit locally in logical commits (spec and plan; Phase 0; each story), `/simplify` before each
       commit, `cargo fmt --all -- --check`. Never push without Tom's words.
-- [X] T073 `read` leaves a compiler-added `StreamLocation` out of the `storage` it returns (Benjamin De Boe's feedback: the
+- [x] T073 `read` leaves a compiler-added `StreamLocation` out of the `storage` it returns (Benjamin De Boe's feedback: the
       agent's answers always describe a stream location the class does not use). A presentation filter at the `read`
       answer only: the lossless tree, `edit`, `replace`, versions, the model and what is written do not change, and the
       answer keeps `compiler_added: ["StreamLocation"]` so nothing is hidden silently. A class with a stream property
       keeps the element. Prove: `U storage_map`, `L storage_map_feedback_173`, `L storage_map_computed_172`, the 172 golden live file.
-- [X] T074 Computed-level warning. `read` (its existing `warnings` array) and `diagram` (a `warnings` key only when
+- [x] T074 Computed-level warning. `read` (its existing `warnings` array) and `diagram` (a `warnings` key only when
       there are any, and a `Warning` line at the top of its markdown) say, one line per computed level and per access
       variable set by code, which map and level, what iad does not evaluate, and that `compare` samples the real
       global to confirm. Built from the facts `computed_level_facts` already derives. Skill section "Maps that compute
       a level". Prove: `U storage_map`, `L storage_map_computed_172`, `U storage_map_docs_173`.
-- [X] T075 Say so when there is no data. `compare`, `propose` and `preview` over a global with no nodes answer
+- [x] T075 Say so when there is no data. `compare`, `propose` and `preview` over a global with no nodes answer
       `no_data: true`, `sampled_nodes: 0` and a plain message naming the global and namespace; `propose` drafts no map
       from nothing. Prove: `L storage_map_feedback_173`, `U storage_map_docs_173`.
-- [X] T072 Real `%iFind` index (Benjamin De Boe's report): measure the globals a real `%iFind.Index.Basic` index
+- [x] T072 Real `%iFind` index (Benjamin De Boe's report): measure the globals a real `%iFind.Index.Basic` index
       files on `iris-dev-iris` (research.md, heading "iFind real index (T072)"), then
       `test_storage_map_ifind_173_live.rs` runs `propose` over them, with and without `index_globals`, and asserts what
       the measured layout and the invented rows say. Prove: `L test_storage_map_ifind_173_live`. Result: 8 tests pass
       (layout pins, safety, the chunk map, the 40-row link); 10 `red_*` tests fail on purpose, one per wrong or
       unhelpful answer (the file names each).
+- [x] T076 Offer the stem sibling and say when none exists (research.md point 1). A `^<Class>D` master offers
+      `^<Class>I`, a `^<ext>.1` master offers `^<ext>.<n>` and `^<ext>.I` (`found_by: stem_sibling`, the listing's mask is
+      the stem); when the listing ran and no candidate came from any source, `not_inferred_detail` has
+      `no index global found` with where it looked. Prove: `U storage_map_ifind_173`, `L test_storage_map_ifind_173_live`.
+- [x] T077 A position that holds one value in every node read (three or more) is never the row ID, and of the
+      positions that find master rows the one with more distinct IDs wins (points 2 and 3). It removes the false
+      `id.positions [5]` (the chunk) and the `missing_rows` rule drawn from it. Prove: `L test_storage_map_ifind_173_live`,
+      `L test_storage_map_link_173_live`, `L test_storage_map_sparse_173_live`.
+- [x] T078 The sampler names a valid bit string `bits`; no field is drafted from it, `not_inferred_detail` says so, and a
+      `chunk_map_draft` replaces the plain `draft` (null) (point 4). Prove: `L test_storage_map_ifind_173_live`,
+      `L test_storage_map_bitmap_173_live`, the corpus golden F21.
+- [x] T079 `compare` over a global with no node lists no `mismatches` (point 6).
+- [x] T080 A `too_few_nodes` link's detail names the 20 usable nodes it needs and the count it read (point 7).
+- [x] T081 A field in a named sub-node is read by the node's name, not by its quoted literal, in the linker and the
+      typing (point 7; the field typed as empty, `%String` with `max_length` 0, and now `%Numeric` with `SCALE = 1` from
+      its two values). The red test asked for `evidence.max_length == 7`; the numeric evidence is `{numeric, max_scale,
+    of}` (pinned by three tests), so the test asks for that.
+- [x] T082 `diagram` marks a computed level in its graph and mermaid (`sub 3: {Word} (Other, computed by code, may not
+    be a subscript)`; a filtered level `(Sub, keys filtered by code)`), not only in the markdown (point 8). The 172
+      diagram goldens Bits, Route and Shelf changed by exactly that label (`MODEL_VERSION` stays 1).
+- [x] T083 Docs, data-model, contract and skill for T076 to T082; unit file `test_storage_map_ifind_173.rs`. Not done:
+      point 5 (a word ID has no master field; saying the keys are word IDs of `^IRIS.IF.WordD`), which no test asks for.
 
 ---
 

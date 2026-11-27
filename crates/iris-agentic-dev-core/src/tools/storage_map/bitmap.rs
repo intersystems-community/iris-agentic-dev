@@ -107,8 +107,9 @@ fn is_literal(s: &str) -> bool {
 // ── a bit-string master: the shape, the probe's answer, the constant ────────
 
 /// Whether a sampled master could be `^G(const, chunk) = $BIT`: no value at depth 1, plain or
-/// delimited strings at depth 2 (a dense bit string holds the delimiter bytes the sampler looks
-/// for, so `delimited` does not rule it out), every depth-2 subscript numeric, no named sub-node,
+/// delimited strings or bit strings at depth 2 (the sampler names a valid bit string `bits`; a
+/// value it could not read as one may still hold the delimiter bytes it looks for, so `delimited`
+/// does not rule it out), every depth-2 subscript numeric, no named sub-node,
 /// nothing deeper and no `$LIST`. The probe then decides; this only keeps it from running on every
 /// master.
 pub fn looks_like_bit_master(report: &ShapeReport) -> bool {
@@ -122,7 +123,7 @@ pub fn looks_like_bit_master(report: &ShapeReport) -> bool {
         && report
             .formats
             .iter()
-            .all(|f| f.depth == 2 && matches!(f.format.as_str(), "plain" | "delimited"))
+            .all(|f| f.depth == 2 && matches!(f.format.as_str(), "plain" | "delimited" | "bits"))
 }
 
 /// What the master probe read: the constant first subscript, how many chunk nodes and IDs it

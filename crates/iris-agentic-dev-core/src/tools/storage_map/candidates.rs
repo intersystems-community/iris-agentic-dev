@@ -30,6 +30,10 @@ pub enum FoundBy {
     Parameter,
     NamePrefix,
     SubNode,
+    /// A global beside the master that the compiler's naming gives an index: `^XD` and `^XI`
+    /// (default storage), or `^ext.1` beside `^ext.3` and `^ext.I` (a table made by DDL). Neither
+    /// name begins with the other's.
+    StemSibling,
 }
 
 /// What became of a candidate. A candidate starts `Examined`; `cap` and the gates change it.
@@ -123,6 +127,78 @@ pub fn from_listing(master_name: &str, names: &[String]) -> Vec<Candidate> {
         .filter(|n| *n != master && n.starts_with(master) && validate_global_name(n).is_ok())
         .map(|n| Candidate::new(&format!("^{n}"), FoundBy::NamePrefix))
         .collect()
+}
+
+/// The shortest stem worth listing the namespace for: a shorter one would list every global
+/// that begins with a letter or two.
+const MIN_STEM: usize = 3;
+
+/// The stem a master shares with the globals the compiler files beside it, or `None` for a name
+/// that is neither. Default storage files rows in `^<Class>D` and indexes in `^<Class>I`, so the
+/// stem is the name without its `D`; a table made by DDL files rows in `^<ext>.1`, its extent in
+/// `.2`, an iFind index in `.3` and the others in `.I`, so the stem is the name without `.1`.
+pub fn sibling_stem(master_name: &str) -> Option<&str> {
+    let bare = master_name.strip_prefix('^').unwrap_or(master_name);
+    let stem = match bare.rsplit_once('.') {
+        Some((stem, tail)) if !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()) => stem,
+        _ => bare.strip_suffix('D').filter(|s| !s.ends_with('.'))?,
+    };
+    (stem.len() >= MIN_STEM).then_some(stem)
+}
+
+/// Whether `name` (with or without its caret) is a sibling the compiler's naming gives `master`
+/// an index in: `^<stem>I` for a `^<stem>D` master, `^<stem>.<digits>` or `^<stem>.I` for a
+/// `^<stem>.<digits>` master. The master itself is not its own sibling.
+fn is_stem_sibling(master_name: &str, name: &str) -> bool {
+    let master = master_name.strip_prefix('^').unwrap_or(master_name);
+    let name = name.strip_prefix('^').unwrap_or(name);
+    let Some(stem) = sibling_stem(master) else {
+        return false;
+    };
+    if name == master {
+        return false;
+    }
+    if master.ends_with('D') && master.len() == stem.len() + 1 {
+        return name.strip_prefix(stem) == Some("I");
+    }
+    name.strip_prefix(stem)
+        .and_then(|t| t.strip_prefix('.'))
+        .is_some_and(|t| t == "I" || (!t.is_empty() && t.bytes().all(|b| b.is_ascii_digit())))
+}
+
+/// Candidates from the namespace listing that are siblings of the master by the compiler's naming
+/// (`sibling_stem`), the master and names a plain name-prefix match already offers left out.
+pub fn from_stem_siblings(master_name: &str, names: &[String]) -> Vec<Candidate> {
+    names
+        .iter()
+        .map(|n| n.strip_prefix('^').unwrap_or(n))
+        .filter(|n| is_stem_sibling(master_name, n) && validate_global_name(n).is_ok())
+        .map(|n| Candidate::new(&format!("^{n}"), FoundBy::StemSibling))
+        .collect()
+}
+
+/// What `propose` says when it looked for index globals and found none: where it looked, so an
+/// empty `index_candidates` is not read as "the search was skipped". `scanned` is whether the
+/// sub-trees inside the master were looked for too.
+pub fn none_found_text(master_name: &str, ns: &str, scanned: bool) -> String {
+    let master = caret(master_name);
+    let mut places = vec![format!("globals in {ns} whose names begin with {master}")];
+    if let Some(stem) = sibling_stem(master_name) {
+        places.push(format!(
+            "the globals the compiler files beside it (^{stem}I for a default-storage class, ^{stem}.<n> and ^{stem}.I for a table made by DDL)"
+        ));
+    }
+    if scanned {
+        places.push("sub-trees inside the master".to_string());
+    }
+    let looked = match places.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join("; ")),
+        _ => places.join("; "),
+    };
+    format!(
+        "looked for {looked}, and none exists, so no index was linked. If the master has an \
+         index in a global this search cannot name, give it in index_globals"
+    )
 }
 
 fn caret(name: &str) -> String {
@@ -262,7 +338,9 @@ pub fn listing_code_for(master_name: &str, query: &str) -> Result<String, String
     if !is_class_query(query) {
         return Err(format!("{} is not a class query name", shown(query)));
     }
-    let mask = os_str_expr(&format!("{bare}*"));
+    // The mask is the stem when the master's name has one, so the siblings the compiler names
+    // beside it (`^XI` for `^XD`) are listed with the globals that begin with the master's name.
+    let mask = os_str_expr(&format!("{}*", sibling_stem(bare).unwrap_or(bare)));
     let query = os_str_expr(query);
     Ok(format!(
         "Try {{

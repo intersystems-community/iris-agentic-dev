@@ -37,7 +37,10 @@ subscript of the global: a `$BIT` or `$LIST` held in a node's value is a common 
 `diagram` mark such a level in `derived` (`level 3 is computed by code (...)`), and `edit` and
 `replace` repeat it in their `warnings`. iad does not run the code. A level that only has an
 `Invalidcondition` is called a filter, and an access variable that the map sets by code gets its own
-line. Check a flagged map against real data with `compare`.
+line. Check a flagged map against real data with `compare`. The picture says it too: `diagram`'s node for
+such a level reads `sub 3: {Word} (Other, computed by code, may not be a subscript)`, and for a level that
+only filters its keys `sub 2: {Seq} (Sub, keys filtered by code)`, so a reader of the graph alone does not
+count the level as a subscript of the global.
 
 The same facts come back as `warnings`, where an agent reads first: one line per computed level and
 per access variable set by code, naming the map and the level, saying that iad does not evaluate the
@@ -47,7 +50,8 @@ any, and starts its `markdown` with one `**Warning:**` line each. A map with no 
 nothing.
 
 `compare` answers `verified: false` and says `no data found at <global>, the map was not checked` when
-the global holds nothing, so an empty answer is never read as a match. Since spec 173 `compare`,
+the global holds nothing, so an empty answer is never read as a match: it lists no `mismatches` either,
+since the map was not set against anything. Since spec 173 `compare`,
 `preview` and `propose` also answer with three keys, `no_data` (true), `sampled_nodes` (0) and `message` (`looked at ^X
 in USER: it holds no data, so nothing here is checked against data`), when they read the map's global
 and found no node. The keys are absent when data was found. `propose` drafts no map from nothing:
@@ -90,17 +94,26 @@ Every new key is additive: `model_version` stays 1 and the keys `propose` had ke
 
 ### Where the candidates come from
 
-A candidate is a global that may be an index over the master: a candidate index global. There are three
+A candidate is a global that may be an index over the master: a candidate index global. There are four
 sources, and the answer says which found each one (`found_by`):
 
 - `parameter`: a name in `index_globals`.
 - `name_prefix`: a global in the namespace whose name begins with the master's (`^A.x` for `^A`), from
   the namespace's own global listing. When the service account cannot list globals, `index_candidates`
-  says `listing: "unavailable"` with `listing_reason`, and the other two sources still run.
+  says `listing: "unavailable"` with `listing_reason`, and the other sources still run.
+- `stem_sibling`: a global the compiler files beside the master under a name that does not begin with it. A
+  default-storage class files its rows in `^<Class>D` and its indexes in `^<Class>I`, so `^<Class>D` offers
+  `^<Class>I`; a table made by DDL files rows in `^<ext>.1` and its other globals in `^<ext>.2`, `^<ext>.3`
+  (an iFind index) and `^<ext>.I`, so `^<ext>.1` offers those. A stem under three characters offers
+  nothing.
 - `sub_node`: a literal first subscript inside the master (`^M("idx", ...)`), looked for when the
   master's row ID is its first subscript. The candidate's `sub_prefix` holds the literal subscripts cut
   off, and its map name comes from the literal. When the master's row ID is not its first subscript,
   `sub_trees_not_looked_for` says so.
+
+When the listing ran and no candidate came from any source, `not_inferred_detail` has an item named `no index
+global found` that says where `propose` looked (the names that begin with the master's, the stem siblings, the
+sub-trees inside the master). An empty `index_candidates.candidates` alone never stands for "not looked for".
 
 At most 8 candidates are examined. The rest are named in `index_candidates.not_examined` and in
 `not_inferred_detail`, so a cut-off is never silent. A candidate has a `status`: `examined` (it has an
@@ -111,36 +124,45 @@ best agreement, never dropped.
 
 ### What a call returns
 
-| Key                   | When                                                 | Content                                                                                                                                                     |
-| --------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `index_candidates`    | always                                               | `listing`, `listing_reason`, `sub_trees_not_looked_for`, `candidates` (each with `global`, `found_by`, `sub_prefix`, `status`, `reason`) and `not_examined` |
-| `indexes`             | at least one candidate was examined                  | one link per candidate, below                                                                                                                               |
-| `bitmaps`             | global mode, a candidate holds bit strings           | `global`, `chunk_position`, `index_name`, `ids_checked`, `ids_found_in_master`, `verdict`, `assumed`, and `map` and `verified` when drafted                 |
-| `chunk_map_draft`     | the master is `^G(const, chunk) = $BIT`              | a data map with the computed third level, returned only when its scratch copy returned the IDs the bits name                                                |
-| `class_draft`         | `field_names` or `index_globals` given (global mode) | `source`, `compiled`, `properties` (each with `name`, `type`, `parameters`, `evidence`) and `guesses`                                                       |
-| `limits`              | always                                               | `node_cap`, `time_cap_seconds` and `stopped`: each `candidate` a cap stopped, with `cap` as `nodes`, `time` or `count_cap`                                  |
-| `not_inferred`        | always                                               | strings: what the draft leaves to you                                                                                                                       |
-| `not_inferred_detail` | always                                               | the same items as `what` and `why` pairs: not examined, not explained, no drafted map, held-back values                                                     |
+| Key                   | When                                                 | Content                                                                                                                                                                                       |
+| --------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index_candidates`    | always                                               | `listing`, `listing_reason`, `sub_trees_not_looked_for`, `candidates` (each with `global`, `found_by`, `sub_prefix`, `status`, `reason`) and `not_examined`                                   |
+| `indexes`             | at least one candidate was examined                  | one link per candidate, below                                                                                                                                                                 |
+| `bitmaps`             | global mode, a candidate holds bit strings           | `global`, `chunk_position`, `index_name`, `ids_checked`, `ids_found_in_master`, `verdict`, `assumed`, and `map` and `verified` when drafted                                                   |
+| `chunk_map_draft`     | the master is `^G(const, chunk) = $BIT`              | a data map with the computed third level, returned only when its scratch copy returned the IDs the bits name; `draft` is then null (a plain draft of a bit string is a second, wrong reading) |
+| `class_draft`         | `field_names` or `index_globals` given (global mode) | `source`, `compiled`, `properties` (each with `name`, `type`, `parameters`, `evidence`) and `guesses`                                                                                         |
+| `limits`              | always                                               | `node_cap`, `time_cap_seconds` and `stopped`: each `candidate` a cap stopped, with `cap` as `nodes`, `time` or `count_cap`                                                                    |
+| `not_inferred`        | always                                               | strings: what the draft leaves to you                                                                                                                                                         |
+| `not_inferred_detail` | always                                               | the same items as `what` and `why` pairs: not examined, not explained, no drafted map, held-back values                                                                                       |
 
 A link (an item of `indexes`) holds:
 
-| Key                     | Meaning                                                                                                                                       |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `global`, `found_by`    | the candidate and how it was found                                                                                                            |
-| `nodes_sampled`         | nodes read, in a sample that spreads over the whole key range and not only the first nodes in order                                           |
-| `distinct_first_values` | how many different first subscripts the sample saw                                                                                            |
-| `usable_nodes`          | nodes whose row ID found a master row                                                                                                         |
-| `id`                    | where the row ID sits: `form` (`subscript`, `value` or `bitmap`), `positions` (more than one for a composite key) and `agreement`             |
-| `subscripts`            | one item per other position: `position`, `verdict`, `field`, `transform`, `length`, `agreement`, `null_marker` and `alternatives`             |
-| `data_in_value`         | master fields a covering `$LIST` node value holds, each with its `field` and `element`                                                        |
-| `verdict`               | the link's verdict, from the table below                                                                                                      |
-| `not_explained`         | each position no transform reaches, with its `best_agreement`                                                                                 |
-| `unexamined_positions`  | positions past the sixth non-ID subscript, which are not scored; also named in `not_inferred_detail`                                          |
-| `orphan_nodes`          | `count` and `share` of index nodes with no master row, as rows deleted from the master leave them; reported only above 5%, for a linked index |
-| `missing_rows`          | the index lacks master rows: `share`, `rows`, `missing` and the `rule` that explains them (below)                                             |
-| `verified`              | what the scratch copy showed: `compiled`, `row_found`, `detail`, `usability` and, for a condition, `rows_kept`                                |
-| `map`, `guesses`        | the drafted index map and the paths of what it guessed; present only when the draft verified                                                  |
-| `bitmap`                | for a candidate that holds bit strings: `chunk_position`, `ids_checked`, `ids_found_in_master`                                                |
+| Key                     | Meaning                                                                                                                                                                                                                                                                       |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `global`, `found_by`    | the candidate and how it was found                                                                                                                                                                                                                                            |
+| `nodes_sampled`         | nodes read, in a sample that spreads over the whole key range and not only the first nodes in order                                                                                                                                                                           |
+| `distinct_first_values` | how many different first subscripts the sample saw                                                                                                                                                                                                                            |
+| `usable_nodes`          | nodes whose row ID found a master row                                                                                                                                                                                                                                         |
+| `id`                    | where the row ID sits: `form` (`subscript`, `value` or `bitmap`), `positions` (more than one for a composite key) and `agreement`. A position that holds one value across the nodes read (a chunk number, a branch name) is never the row ID, whatever it finds in the master |
+| `subscripts`            | one item per other position: `position`, `verdict`, `field`, `transform`, `length`, `agreement`, `null_marker` and `alternatives`                                                                                                                                             |
+| `data_in_value`         | master fields a covering `$LIST` node value holds, each with its `field` and `element`                                                                                                                                                                                        |
+| `verdict`               | the link's verdict, from the table below                                                                                                                                                                                                                                      |
+| `not_explained`         | each position no transform reaches, with its `best_agreement`                                                                                                                                                                                                                 |
+| `unexamined_positions`  | positions past the sixth non-ID subscript, which are not scored; also named in `not_inferred_detail`                                                                                                                                                                          |
+| `orphan_nodes`          | `count` and `share` of index nodes with no master row, as rows deleted from the master leave them; reported only above 5%, for a linked index                                                                                                                                 |
+| `missing_rows`          | the index lacks master rows: `share`, `rows`, `missing` and the `rule` that explains them (below)                                                                                                                                                                             |
+| `verified`              | what the scratch copy showed: `compiled`, `row_found`, `detail`, `usability` and, for a condition, `rows_kept`                                                                                                                                                                |
+| `map`, `guesses`        | the drafted index map and the paths of what it guessed; present only when the draft verified                                                                                                                                                                                  |
+| `bitmap`                | for a candidate that holds bit strings: `chunk_position`, `ids_checked`, `ids_found_in_master`                                                                                                                                                                                |
+
+The sampler names a value that is a valid bit string `bits` in `shape.formats` (it is not a delimited
+row, though a bit string holds the delimiter bytes the sampler looks for). No field is drafted from a
+`bits` value, and `not_inferred_detail` has an item named `bit strings` with the depths that hold them. A
+master that is `^G(const, chunk) = $BIT` is mapped by `chunk_map_draft` (and its `draft` is then null); a
+bit-string index global is linked by `bitmaps`. A real `%iFind` index files word IDs and bit strings in
+`^<Class>I`, and the words in the namespace's shared `^IRIS.IF.WordD`, so no word is a subscript there: the
+links measured over a basic and an analytic iFind index are not `inferred` and draft no map
+(`test_storage_map_ifind_173_live`).
 
 A global-mode answer's `shape.sub_nodes` lists the literal subscripts the sample saw at each depth. Below the first subscript, a depth that holds three or more distinct names with no repeat is data, not structure (an index inside the master files its keys there), so the answer withholds it and says how many it held in `shape.withheld_sub_nodes` (`{"2": 39}`). `include_values` under the data policy shows them.
 
@@ -156,7 +178,7 @@ One vocabulary serves a link and each of its subscripts. The rule is in `link::v
 | --------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | `inferred`      | at least 20 usable nodes and agreement of 0.95 or more, with one best (field, transform) pair                              |
 | `ambiguous`     | two or more pairs within 0.01 of the best; each is listed in `alternatives`                                                |
-| `too_few_nodes` | fewer than 20 usable nodes: the sample cannot decide                                                                       |
+| `too_few_nodes` | fewer than 20 usable nodes: the sample cannot decide (`not_inferred_detail` names the 20 and the count read)               |
 | `not_linked`    | no position reaches 0.9 as the row ID: the global is not an index of this master                                           |
 | `not_explained` | the row ID is found and no transform of the closed set reaches 0.95 at this position (a computed subscript, a date format) |
 | `constant`      | the position holds one value across the sample (a subscript only)                                                          |
@@ -235,7 +257,8 @@ a plausible date range (`evidence` says how many), else `%Integer`, else `%Numer
 fraction as its `SCALE`, else `%String` with a `MAXLEN` rounded up from the longest value. A
 `COLLATION` parameter goes only on a `%String` property, for a field whose link is `inferred` and whole.
 Every property is a guess and is listed in `guesses`. The draft is compiled in a scratch copy, and
-`compiled` says whether it passed.
+`compiled` says whether it passed. A field that lives in a named sub-node (`^M(id,"sub")`) is typed from
+that node's own values, over the rows that have one.
 
 ### `check` and the usability line
 

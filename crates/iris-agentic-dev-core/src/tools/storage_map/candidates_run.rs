@@ -6,8 +6,8 @@
 //! other sources still count (FR-004).
 
 use super::candidates::{
-    dedupe, from_listing, from_parameter, from_sub_trees, listing_code_for, parse_listing,
-    parse_sub_trees, sub_tree_code, Candidate, LISTING_QUERY,
+    dedupe, from_listing, from_parameter, from_stem_siblings, from_sub_trees, listing_code_for,
+    none_found_text, parse_listing, parse_sub_trees, sub_tree_code, Candidate, LISTING_QUERY,
 };
 use super::link_run::detail;
 use crate::iris::connection::IrisConnection;
@@ -102,7 +102,10 @@ pub async fn discover(
     };
     let mut listed = Vec::new();
     match parse_listing(&text) {
-        Ok(names) => listed = from_listing(master, &names),
+        Ok(names) => {
+            listed = from_listing(master, &names);
+            listed.extend(from_stem_siblings(master, &names));
+        }
         Err(why) => {
             out.details.push(detail(
                 "namespace listing was not available",
@@ -146,5 +149,13 @@ pub async fn discover(
     out.candidates.extend(inside);
     out.candidates.extend(listed);
     out.candidates = dedupe(std::mem::take(&mut out.candidates));
+    // Said when the listing ran and the namespace holds nothing to link: an empty `candidates`
+    // alone reads as "not looked for".
+    if out.listing_error.is_none() && out.candidates.is_empty() {
+        out.details.push(detail(
+            "no index global found",
+            none_found_text(master, ns, scan),
+        ));
+    }
     out
 }

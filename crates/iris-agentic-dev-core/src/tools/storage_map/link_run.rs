@@ -9,7 +9,7 @@ use super::globals::check_index_global;
 use super::link::{
     apply_condition, assemble, condition_for, draft_index_map, field_label, link_json, map_name,
     orphan_nodes, parse_link_output, rounded, Assembled, Condition, LinkReport, MasterView,
-    MissingRule, Stopped, Verdict, MAX_EXAMINED,
+    MissingRule, Stopped, Verdict, MAX_EXAMINED, MIN_NODES,
 };
 use super::link_code::{build_code, field_access, Caps, FieldAccess, LinkRequest};
 use super::link_verify::{verify, verify_with, KeptCheck};
@@ -311,6 +311,15 @@ async fn index_item(
             details,
         )
         .await
+    } else if a.link.verdict == Verdict::TooFewNodes {
+        Err(format!(
+            "the link is too_few_nodes: {} of the {} nodes read found a master row, and a link \
+             needs at least {MIN_NODES} such nodes before a subscript is called inferred; with \
+             fewer, a field that matches the key by chance cannot be told from one that is \
+             stored there. Load more rows (or raise max_nodes if the global already has {MIN_NODES} \
+             or more) and ask again",
+            report.sample.usable, report.sample.nodes
+        ))
     } else {
         Err(format!("the link is {}", a.link.verdict.as_str()))
     };
