@@ -584,3 +584,83 @@ fn a_phi_global_inside_a_dynamic_location_is_refused_by_the_phi_gate() {
     );
     assert_eq!(code_of(&r), "PHI_GATE_BLOCKED", "{r:?}");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Spec 173 T046: `propose` with `index_globals` or `class` is judged as `propose` was
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn args_map(v: Value) -> serde_json::Map<String, Value> {
+    v.as_object().cloned().expect("an object")
+}
+
+/// `propose` is a write, runs the agent's code as the service account, needs the `Execute`
+/// category and compiles a scratch class, whether it names index globals, a class or nothing
+/// but the master. `check` stays read-only: it compiles a scratch copy (`Compile`) and runs
+/// no agent code. The two answers must differ, so a table that returned one class for every
+/// action would fail here.
+#[test]
+fn propose_with_index_globals_or_class_is_write_execute_service_account_and_scratch() {
+    use iris_agentic_dev_core::iris::workspace_config::ToolCategory;
+    use iris_agentic_dev_core::tools::exec::needs_service_account;
+    use iris_agentic_dev_core::tools::write_gate::{
+        classify, effective_category, is_scratch_call, WriteClass,
+    };
+    let proposals = [
+        json!({"action": "propose", "global": "^IadSm173F02"}),
+        json!({"action": "propose", "global": "^IadSm173F02", "index_globals": ["^IadSm173F02X"]}),
+        json!({"action": "propose", "global": "^IadSm173F02",
+               "index_globals": ["^A", "^B", "^C", "^D", "^E", "^F", "^G", "^H"],
+               "field_names": ["Name", "City"]}),
+        json!({"action": "propose", "class": "IadSm173.F35"}),
+        json!({"action": "propose", "class": "IadSm173.F35", "index_globals": ["^IadSm173F35X"]}),
+    ];
+    for p in &proposals {
+        let a = args_map(p.clone());
+        assert_eq!(
+            classify("iris_storage_map", Some(&a)),
+            Some(WriteClass::Write),
+            "{p}"
+        );
+        assert_eq!(
+            effective_category("iris_storage_map", Some(&a), WriteClass::Write),
+            vec![ToolCategory::Execute],
+            "{p}"
+        );
+        assert!(needs_service_account("iris_storage_map", p), "{p}");
+        assert!(is_scratch_call("iris_storage_map", Some(&a)), "{p}");
+    }
+    let check = json!({"action": "check", "class": "IadSm173.F35"});
+    let a = args_map(check.clone());
+    assert_eq!(
+        classify("iris_storage_map", Some(&a)),
+        Some(WriteClass::ReadOnly)
+    );
+    assert_eq!(
+        effective_category("iris_storage_map", Some(&a), WriteClass::ReadOnly),
+        vec![ToolCategory::Compile]
+    );
+    assert!(!needs_service_account("iris_storage_map", &check));
+    assert!(is_scratch_call("iris_storage_map", Some(&a)));
+}
+
+/// A `propose` spelt so the reader cannot read the action is judged as `edit` with both opt-ins,
+/// never as a lighter action, so adding `index_globals` to it changes nothing.
+#[test]
+fn an_unreadable_propose_with_index_globals_is_not_judged_lighter() {
+    use iris_agentic_dev_core::tools::exec::needs_service_account;
+    use iris_agentic_dev_core::tools::write_gate::{classify, WriteClass};
+    for spelling in ["Propose", " propose", "propose ", "PROPOSE"] {
+        let p = json!({"action": spelling, "global": "^IadSm173F02",
+                       "index_globals": ["^IadSm173F02X"]});
+        let a = args_map(p.clone());
+        assert_eq!(
+            classify("iris_storage_map", Some(&a)),
+            Some(WriteClass::Destructive),
+            "{spelling:?}"
+        );
+        assert!(
+            needs_service_account("iris_storage_map", &p),
+            "{spelling:?}"
+        );
+    }
+}

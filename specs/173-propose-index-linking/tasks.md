@@ -404,7 +404,7 @@ tests.
 - [ ] T045 [US8] Budget test: for a master with two candidates the connection's request counter shows at most 10 IRIS
       calls (plan.md table) and the whole call stays under 5 s on the local container with 1,000-node candidates
       (SC-005). Prove: `L test_storage_map_safety_173_live`.
-- [ ] T046 [US8] Strict read-only, service-account identity and gate classification: extend
+- [X] T046 [US8] Strict read-only, service-account identity and gate classification: extend
       `tests/unit/test_storage_map_gates_172.rs`'s classification table check so `propose` with `index_globals` and with
       `class` is still `Write`, `Execute`, service account; `check` is still read-only and scratch. Prove:
       `U storage_map_gates`.
