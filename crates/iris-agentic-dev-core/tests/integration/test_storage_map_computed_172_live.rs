@@ -49,9 +49,11 @@ async fn computed_172_read_flags_level_three_and_the_streamlocation_is_compiler_
     );
     assert!(facts.contains("access variable 2D2"), "{got}");
     assert_eq!(got["compiler_added"], json!(["StreamLocation"]), "{got}");
+    // Spec 173 T073: `read` names the element in `compiler_added` and leaves it out of `storage`
+    // (it was returned there until Benjamin De Boe's feedback).
     assert!(
-        got["storage"]["keywords"]["StreamLocation"].is_string(),
-        "read keeps the element: {got}"
+        got["storage"]["keywords"].get("StreamLocation").is_none(),
+        "read leaves the element out: {got}"
     );
     let document = md["markdown"].as_str().unwrap_or_default();
     assert!(!document.contains("StreamLocation"), "{md}");

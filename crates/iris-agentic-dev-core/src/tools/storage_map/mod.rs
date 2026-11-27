@@ -12,6 +12,7 @@ pub mod link_run;
 pub mod link_verify;
 pub mod master;
 pub mod model;
+pub mod notices;
 pub mod path;
 mod propose_class;
 pub mod sample;

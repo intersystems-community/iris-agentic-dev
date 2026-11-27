@@ -583,6 +583,19 @@ tests.
       `LINT`, `U storage_map`, and `L _173_live` once from the worktree root. Report any failure with its output.
 - [X] T071 Lead only: commit locally in logical commits (spec and plan; Phase 0; each story), `/simplify` before each
       commit, `cargo fmt --all -- --check`. Never push without Tom's words.
+- [ ] T073 `read` leaves a compiler-added `StreamLocation` out of the `storage` it returns (Benjamin De Boe's feedback: the
+      agent's answers always describe a stream location the class does not use). A presentation filter at the `read`
+      answer only: the lossless tree, `edit`, `replace`, versions, the model and what is written do not change, and the
+      answer keeps `compiler_added: ["StreamLocation"]` so nothing is hidden silently. A class with a stream property
+      keeps the element. Prove: `U storage_map`, `L storage_map_computed_172`, the 172 golden live file.
+- [ ] T074 Computed-level warning. `read` (its existing `warnings` array) and `diagram` (a `warnings` key only when
+      there are any, and a `Warning` line at the top of its markdown) say, one line per computed level and per access
+      variable set by code, which map and level, what iad does not evaluate, and that `compare` samples the real
+      global to confirm. Built from the facts `computed_level_facts` already derives. Skill section "Maps that compute
+      a level". Prove: `U storage_map`, `L storage_map_computed_172`, `U storage_map_docs_173`.
+- [ ] T075 Say so when there is no data. `compare`, `propose` and `preview` over a global with no nodes answer
+      `no_data: true`, `sampled_nodes: 0` and a plain message naming the global and namespace; `propose` drafts no map
+      from nothing. Prove: `L storage_map_nodata_173`, `U storage_map_docs_173`.
 
 ---
 
