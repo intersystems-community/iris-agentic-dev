@@ -49,6 +49,75 @@ pub struct ShapeReport {
 }
 
 impl ShapeReport {
+    /// The depths (first subscript is depth 1) whose literal subscripts are the data's keys and
+    /// not its structure, with how many distinct keys each holds. A sub-node name (`"title"`
+    /// under every row) repeats once per row; the keys of an index held inside the master
+    /// (`^M("idx","SMITH, ANNA",7)`) each occur once. Three or more distinct names that none
+    /// repeats, at depth 2 or below, are keys: fewer cannot be told from the names of a
+    /// one-row global, and depth 1 holds the names of whole sub-trees (`candidates` reads
+    /// them), which are structure.
+    fn keyed_depths(&self) -> Vec<(String, usize)> {
+        self.sub_nodes
+            .iter()
+            .filter(|(d, names)| {
+                let rows: u32 = self.data_states.get(*d).map_or(0, |s| s.values().sum());
+                let numeric = self.numeric_subscripts.get(*d).copied().unwrap_or(0);
+                d.parse::<u32>().is_ok_and(|d| d >= 2)
+                    && names.len() >= 3
+                    && rows.saturating_sub(numeric) as usize == names.len()
+            })
+            .map(|(d, names)| (d.clone(), names.len()))
+            .collect()
+    }
+
+    /// The report as an answer carries it. Without `include_values` the keys that [`keyed_depths`]
+    /// finds are values the sampler read, so their names stay in IRIS: `sub_nodes` loses the
+    /// depth, `withheld_sub_nodes` counts what it held, and a format named after a key loses
+    /// its node name. The report itself is not changed: `write` and `candidates` read the keys
+    /// inside iad.
+    ///
+    /// [`keyed_depths`]: Self::keyed_depths
+    pub fn for_answer(&self, include_values: bool) -> serde_json::Value {
+        let mut answer = serde_json::json!(self);
+        let keyed = if include_values {
+            Vec::new()
+        } else {
+            self.keyed_depths()
+        };
+        if keyed.is_empty() {
+            return answer;
+        }
+        let mut withheld = serde_json::Map::new();
+        for (depth, count) in &keyed {
+            if let Some(names) = answer["sub_nodes"].as_object_mut() {
+                names.remove(depth);
+            }
+            withheld.insert(depth.clone(), serde_json::json!(count));
+        }
+        answer["withheld_sub_nodes"] = serde_json::Value::Object(withheld);
+        let mut merged: Vec<Format> = Vec::new();
+        for f in &self.formats {
+            let mut f = f.clone();
+            if keyed.iter().any(|(d, _)| *d == f.depth.to_string()) {
+                f.node = None;
+            }
+            match merged.iter_mut().find(|m| {
+                m.depth == f.depth
+                    && m.node == f.node
+                    && m.format == f.format
+                    && m.delimiter == f.delimiter
+            }) {
+                Some(m) => {
+                    m.pieces.min = m.pieces.min.min(f.pieces.min);
+                    m.pieces.max = m.pieces.max.max(f.pieces.max);
+                }
+                None => merged.push(f),
+            }
+        }
+        answer["formats"] = serde_json::json!(merged);
+        answer
+    }
+
     /// Fold one sampled node into the report.
     pub(crate) fn add(&mut self, row: &serde_json::Value) {
         let depth = row["d"].as_u64().unwrap_or(0) as u32;

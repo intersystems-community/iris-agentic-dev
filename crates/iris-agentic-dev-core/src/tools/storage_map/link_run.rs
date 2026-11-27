@@ -18,6 +18,13 @@ use crate::iris::connection::IrisConnection;
 use crate::policy::effective::EffectivePolicy;
 use serde_json::{json, Value};
 
+/// A test forces the time cap of one candidate here, as `(global with its caret, seconds)`, so a
+/// stop on the clock is certain without a global too big to build. Compiled only into test builds
+/// (`testing`), so a release binary has no way to change a cap.
+#[cfg(feature = "testing")]
+pub static CANDIDATE_TIME_CAP_FOR_TESTS: std::sync::Mutex<Option<(String, u32)>> =
+    std::sync::Mutex::new(None);
+
 /// What `propose` adds to its answer for the index globals it examined.
 pub struct Linked {
     pub index_candidates: Value,
@@ -201,13 +208,25 @@ async fn run_one(
 ) -> Result<LinkReport, String> {
     let key_parts =
         u32::try_from(run.master.key_count()).map_err(|_| "too many key parts".to_string())?;
+    #[allow(unused_mut)]
+    let mut caps = Caps::for_node_cap(run.node_cap);
+    #[cfg(feature = "testing")]
+    if let Some((global, secs)) = CANDIDATE_TIME_CAP_FOR_TESTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+    {
+        if global == c.global {
+            caps.time_cap_secs = secs;
+        }
+    }
     let code = build_code(&LinkRequest {
         master: &run.master.global,
         candidate: &c.global,
         sub_prefix: &c.sub_prefix,
         key_parts,
         fields,
-        caps: Caps::for_node_cap(run.node_cap),
+        caps,
         with_values: run.with_values,
     })?;
     let out = run

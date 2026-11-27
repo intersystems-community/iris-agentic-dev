@@ -214,18 +214,20 @@ existing `values_refusal`; without `include_values` the linking answer carries n
 
 ### IRIS round trips (budget test)
 
-| Step                        | Calls                                            |
-| --------------------------- | ------------------------------------------------ |
-| Master sample (global mode) | 1 (existing)                                     |
-| Class read (class mode)     | 1 GET                                            |
-| Namespace listing           | 1                                                |
-| Link                        | 1 per candidate, at most 8                       |
-| Typing                      | 1                                                |
-| Draft verification          | 1 scratch compile + 1 query per `inferred` draft |
-| Class draft compile         | 1 scratch compile                                |
+| Step                        | Calls                                                                                    |
+| --------------------------- | ---------------------------------------------------------------------------------------- |
+| Master sample (global mode) | 1 (existing)                                                                             |
+| Class read (class mode)     | 1 GET                                                                                    |
+| Namespace listing           | 1                                                                                        |
+| Link                        | 1 per candidate, at most 8                                                               |
+| Typing                      | 1                                                                                        |
+| Draft verification          | 2 per `inferred` draft (the scratch compile and the helper class the query runs through) |
+| Class draft compile         | 2 (the same pair)                                                                        |
 
 A live test counts calls through the connection's request counter for a master with two candidates and fails above
-`1 + 1 + 2 + 1 + 2×2 + 1 = 10` (11 with the bit-string probe, which the F21 test allows for).
+`1 + 1 + 2 + 1 + 2×2 + 2 = 11` (12 with the bit-string probe, which the F21 test allows for). Measured 2026-11-26: 11
+calls, 45 HTTP requests, 0.76 s over F38. The first plan counted a scratch compile as one call; each is two (the scratch
+class PUT and the helper class the query runs through), a cost of 172's scratch-compile helper.
 
 ## Phases (tasks.md regroups these by user story; its order is the one to follow)
 

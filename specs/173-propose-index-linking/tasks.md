@@ -391,25 +391,38 @@ in a scratch copy and returns a known row through an indexed query.
 **Goal**: the new calls run under the existing controls. **Independent test**: the hostile-name suite and the control
 tests.
 
-- [ ] T043 [US8] Test first, `tests/integration/test_storage_map_safety_173_live.rs` (+ `mod`): hostile `index_globals`
+- [x] T043 [US8] Test first, `tests/integration/test_storage_map_safety_173_live.rs` (+ `mod`): hostile `index_globals`
       (`X") Kill ^Y`, `^A("x")`, `a b`, `^|"OTHER"|G`, a 9-name list, an empty string) each return `INVALID_PARAMS` and
-      the connection's request counter shows no IRIS call; strict read-only refuses `propose` as before; a
+      the connection's request counter (a counting TCP proxy, `Where::through`) shows no request; an empty string or a
+      non-string name is refused by the parameter types (`bad params for iris_storage_map`) before the handler, also with
+      no request; strict read-only refuses `propose` as before; a
       sensitive-named candidate is judged by the global gate and listed `refused`; with `max_nodes=30` the answer's
-      `limits.stopped` names the candidate and cap; a forced 1 s time cap (test hook through the same `caps` function
-      the sampler uses) names the stopped candidate and keeps the others. Prove (red then green): `L test_storage_map_safety_173_live`.
-- [ ] T044 [US8] No value leaves IRIS (SC-004): a test that runs `propose` and `check` over F01 to F18 and F26 to F43 with
-      seeded values that cannot occur in field names (`zq-seed-0041` style), serialises every answer to text and asserts
+      `limits.stopped` names each candidate and the cap that stopped it (`count_cap` for a candidate with more first
+      subscripts than ten times the node cap, `nodes` otherwise); a time cap forced to 0 s on one candidate through
+      `link_run::CANDIDATE_TIME_CAP_FOR_TESTS` (testing feature; a 1 s cap cannot be hit on a fixture this small)
+      names the stopped candidate and keeps the other. Prove (red then green): `L test_storage_map_safety_173_live`.
+- [x] T044 [US8] No value leaves IRIS (SC-004): a test that runs `propose` and `check` over F01 to F18 and F26 to F43,
+      seeded with the rows' own long strings (case-insensitively), and over F02, F13 and F32 with the Name column
+      replaced by `zq-seed-NNNN` (values that cannot occur in field names), serialises every answer to text and asserts
       none of the seeded values occurs, after asserting the seed list is non-empty and each seed is in the fixture's
-      global. The one exception test is F18 under the data policy (T029). Prove: `L test_storage_map_safety_173_live`.
-- [ ] T045 [US8] Budget test: for a master with two candidates the connection's request counter shows at most 10 IRIS
-      calls (plan.md table) and the whole call stays under 5 s on the local container with 1,000-node candidates
-      (SC-005). Prove: `L test_storage_map_safety_173_live`.
-- [ ] T046 [US8] Strict read-only, service-account identity and gate classification: extend
-      `tests/unit/test_storage_map_gates_172.rs`'s classification table check so `propose` with `index_globals` and with
-      `class` is still `Write`, `Execute`, service account; `check` is still read-only and scratch. Prove:
-      `U storage_map_gates`.
+      globals. `check` cannot run for F32 (the write gate refuses its class once data fills `idx`), so F32 is `propose`
+      only. Red on F32: `shape.sub_nodes["2"]` held the index keys; `ShapeReport::for_answer` now withholds the keys of
+      a depth of three or more once-only literal subscripts (below the first subscript) from the answer. The one
+      exception test is F18 under the data policy (T029). Prove: `L test_storage_map_safety_173_live`,
+      `U test_storage_map_safety_173`.
+- [x] T045 [US8] Budget test: for a master with two candidates the connection's request counter shows at most 11 IRIS
+      calls (plan.md table, corrected from 10) and the whole call stays under 5 s on the local container with
+      1,000-node candidates (SC-005). Prove: `L test_storage_map_safety_173_live`. **Measured 2026-11-26: 11 IRIS calls
+      (45 HTTP requests) in 0.76 s over F38 with `max_nodes` 1000.** A call is one scratch class PUT (the counter's
+      unit): master sample 1, listing 1, link 2, typing 1, each draft verification 2 (the `Sm` scratch copy and the
+      `IrisDevRun` helper that `compile_scratch_class_queries` runs for it), class draft compile 2 (the same pair). The
+      first plan counted a scratch compile as one call; the ceiling is now 11 and a call added later fails the test.
+- [x] T046 [US8] Strict read-only, service-account identity and gate classification: the classification check has no
+      table in `tests/unit/test_storage_map_gates_172.rs`, so two tests are added there: `propose` with `index_globals`
+      and with `class` is `Write`, `Execute`, service account and scratch; `check` is read-only, `Compile` and scratch;
+      an unreadable `propose` spelling is judged as `edit` with both opt-ins. Prove: `U storage_map_gates`.
 
-- [ ] T047 [US8] Writes nothing (FR-027): test first in `tests/integration/test_storage_map_safety_173_live.rs`: before and
+- [x] T047 [US8] Writes nothing (FR-027): test first in `tests/integration/test_storage_map_safety_173_live.rs`: before and
       after `propose` (global mode over F02, F13 and F19; class mode over F35; `check` over F35's class) record, per
       fixture global, the node count and the sum of node-value lengths, and the set of classes in `IrisDevTmp`; assert
       each is identical and no `IrisDevTmp.Sm*` class remains, after asserting the recorded sets are non-empty.
