@@ -1,0 +1,136 @@
+id: SKILL-74
+prompt: |
+  In the BENCHMARK namespace, the class IadSm173Lift.Person is the SQL table IadSm173Lift.Person over a
+  legacy global. ^IadSm173Person holds one person per node, the node's own subscript is the ID, and each
+  node reads name^city^age^born^status. Beside it the legacy application kept a second global,
+  ^IadSm173PersonX, so that it could find a person by name without reading every row. IRIS does not use
+  that global: SELECT ID, City FROM IadSm173Lift.Person WHERE Name = 'brown, cy' reads the whole table, and
+  the table will be far larger in production. Make lookups by Name use the existing ^IadSm173PersonX,
+  without moving, copying or rebuilding any data, and keep them returning the same rows. Leave the class
+  compiled on the server.
+
+  IRIS: host localhost, web port 52780, username _SYSTEM, password SYS, namespace BENCHMARK.
+  The instance runs in the Docker container iris-dev-iris.
+skill: iris-storage-mapping
+fixtures:
+  - name: IadSm173Lift.Person
+    content: |
+      Class IadSm173Lift.Person Extends %Persistent [ StorageStrategy = SQLStorage ]
+      {
+
+      Property Name As %String;
+
+      Property City As %String;
+
+      Property Age As %Integer;
+
+      Property Born As %Integer;
+
+      Property Status As %String;
+
+      Storage SQLStorage
+      {
+      <SqlIdExpression>$i(^IadSm173Person)</SqlIdExpression>
+      <SQLMap name="Master">
+      <Data name="Age">
+      <Delimiter>"^"</Delimiter>
+      <Piece>3</Piece>
+      </Data>
+      <Data name="Born">
+      <Delimiter>"^"</Delimiter>
+      <Piece>4</Piece>
+      </Data>
+      <Data name="City">
+      <Delimiter>"^"</Delimiter>
+      <Piece>2</Piece>
+      </Data>
+      <Data name="Name">
+      <Delimiter>"^"</Delimiter>
+      <Piece>1</Piece>
+      </Data>
+      <Data name="Status">
+      <Delimiter>"^"</Delimiter>
+      <Piece>5</Piece>
+      </Data>
+      <Global>^IadSm173Person</Global>
+      <Subscript name="1">
+      <Expression>{ID}</Expression>
+      </Subscript>
+      <Type>data</Type>
+      </SQLMap>
+      <StreamLocation>^IadSm173PersonS</StreamLocation>
+      <Type>%Storage.SQL</Type>
+      }
+
+      }
+seed: |
+  kill ^IadSm173Person,^IadSm173PersonX set first=$listbuild("Smith, Anna","jones, bob","Lee  ","O'Neil-Ray","de la Cruz, Jo","Zed2","  Mc Kay, Al","Brown, Cy","brown, cy","Ng","Aberg, Eli","Vu, Tran","Quinn, 3rd","Hart,Ed","xu","Patel, Raj","Moore, Kim ","Diaz, Lu","Frost, Ann-Marie","Gray, Sam"),cities=$listbuild("Boston","boston","Paris","Lyon","Oslo","Rome","Cork","Bern","Nice","Kyiv") for i=0:1:39 { set n=$select(i<20:$list(first,i+1),1:$zstrip($list(first,i#20+1),"<>W")_i),id=i+1,^IadSm173Person(id)=n_"^"_$list(cities,(i*7+3)#10+1)_"^"_(118+(i*13#70))_"^"_(40000+(i*37))_"^"_$extract("ABC",i#3+1),^IadSm173PersonX($system.SQL.Functions.SQLUPPER(n),id)="" } set ^IadSm173Person=40 write "seed done"
+check: |
+  try { set ok=0,map="" set cc=##class(%Dictionary.CompiledClass).%OpenId("IadSm173Lift.Person") if $isobject(cc) { for i=1:1:cc.Storages.Count() { set s=cc.Storages.GetAt(i) for j=1:1:s.SQLMaps.Count() { set m=s.SQLMaps.GetAt(j) if (m.Type="index")&&(m.Global="^IadSm173PersonX") { set map=m.Name } } } } set q="SELECT ID, City FROM IadSm173Lift.Person WHERE Name = 'brown, cy' ORDER BY ID" set rs=##class(%SQL.Statement).%ExecDirect(,q) set got="" while rs.%Next() { set got=got_$select(got="":"",1:",")_rs.%Get("ID")_":"_rs.%Get("City") } set rs=##class(%SQL.Statement).%ExecDirect(,"SELECT ID, City FROM IadSm173Lift.Person WHERE Name = 'smith, anna'") set got2="" while rs.%Next() { set got2=got2_$select(got2="":"",1:",")_rs.%Get("ID")_":"_rs.%Get("City") } set rs=##class(%SQL.Statement).%ExecDirect(,"EXPLAIN "_q) set plan="" while rs.%Next() { set plan=plan_rs.%GetData(1) } set n=0,k="" for { set k=$order(^IadSm173PersonX(k)) if k="" { quit } set id="" for { set id=$order(^IadSm173PersonX(k,id)) if id="" { quit } set n=n+1 } } set ok=(map'="")&&(got="8:Paris,9:Kyiv")&&(got2="1:Lyon")&&(plan["Read index map IadSm173Lift.Person."_map)&&($piece($get(^IadSm173Person(8)),"^")="Brown, Cy")&&$data(^IadSm173PersonX($system.SQL.Functions.SQLUPPER("Brown, Cy"),8))&&(n=40) } catch { set ok=0 } write $select(ok:"PASS",1:"FAIL")
+solution:
+  - name: IadSm173Lift.Person
+    content: |
+      Class IadSm173Lift.Person Extends %Persistent [ StorageStrategy = SQLStorage ]
+      {
+
+      Property Name As %String;
+
+      Property City As %String;
+
+      Property Age As %Integer;
+
+      Property Born As %Integer;
+
+      Property Status As %String;
+
+      Storage SQLStorage
+      {
+      <SqlIdExpression>$i(^IadSm173Person)</SqlIdExpression>
+      <SQLMap name="Master">
+      <Data name="Age">
+      <Delimiter>"^"</Delimiter>
+      <Piece>3</Piece>
+      </Data>
+      <Data name="Born">
+      <Delimiter>"^"</Delimiter>
+      <Piece>4</Piece>
+      </Data>
+      <Data name="City">
+      <Delimiter>"^"</Delimiter>
+      <Piece>2</Piece>
+      </Data>
+      <Data name="Name">
+      <Delimiter>"^"</Delimiter>
+      <Piece>1</Piece>
+      </Data>
+      <Data name="Status">
+      <Delimiter>"^"</Delimiter>
+      <Piece>5</Piece>
+      </Data>
+      <Global>^IadSm173Person</Global>
+      <Subscript name="1">
+      <Expression>{ID}</Expression>
+      </Subscript>
+      <Type>data</Type>
+      </SQLMap>
+      <SQLMap name="NameX">
+      <Global>^IadSm173PersonX</Global>
+      <Subscript name="1">
+      <Expression>$$SQLUPPER({Name})</Expression>
+      </Subscript>
+      <Subscript name="2">
+      <Expression>{ID}</Expression>
+      </Subscript>
+      <Type>index</Type>
+      </SQLMap>
+      <StreamLocation>^IadSm173PersonS</StreamLocation>
+      <Type>%Storage.SQL</Type>
+      }
+
+      }
+teardown: |
+  kill ^IadSm173Person,^IadSm173PersonX,^IadSm173PersonS,^IadSm173PersonI,^IadSm173Lift.PersonD,^IadSm173Lift.PersonI,^IadSm173Lift.PersonS write "teardown done"
+tags:
+  - storage-map
+  - sql-storage
+  - index-map

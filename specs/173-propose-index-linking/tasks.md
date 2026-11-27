@@ -556,11 +556,18 @@ tests.
 
 ## Phase 13: Lift (release gate for 172, constitution IX)
 
-- [ ] T064 Write `tests/e2e/tasks/benchmark/skills/SKILL-30.yaml` (a task: "a developer has `^IadSm173Person` and an
-      index global; draft the index map and check it is used", fixture, teardown script, known answer from F02/F11)
-      following `SKILL-25` (172's `SKILL-26` to `SKILL-29` are marked done in its tasks.md but their files are not in this
-      tree; check with Tom before relying on the numbering). Prove: the harness loader test (`pytest tests/e2e -k skill_tasks`).
-- [ ] T065 Lead only, with Tom's go-ahead on cost: run the ladder for SKILL-30 with `--cap 3` (measured cost, not the
+- [X] T064 Write `tests/e2e/tasks/skills/iris-storage-mapping/SKILL-74.yaml` (a task: a class that maps only
+      `^IadSm173Person`, an index global `^IadSm173PersonX` beside it, "make lookups by Name use it"; fixture, seed,
+      teardown, check with the known answer from F02's seed rows). The id is SKILL-74 and the directory is the
+      authored tree, not `tests/e2e/tasks/benchmark/skills/SKILL-30.yaml`: `SKILL-30` is already
+      `objectscript-sql-patterns`'s task, `SKILL-26` to `SKILL-29` exist under `tasks/skills/objectscript-guardrails/`,
+      and 172's own `iris-storage-mapping` tasks are `SKILL-70` to `SKILL-73` in that directory (the loader refuses a
+      duplicate id and refuses a task filed under another skill's name). `split.toml` lists it as holdout. The
+      reference was run live: fixture FAIL, reference PASS, and four wrong answers (plain `{Name}`, `$$SQLSTRING`, a
+      map on another global, a map on an empty global) FAIL. Test first in
+      `tests/e2e/skill_eval/test_storage_index_lift_173.py`. Prove: `pytest tests/e2e/skill_eval/test_storage_index_lift_173.py`
+      (`-k skill_tasks` matches no test in this tree) and `validate_live` on the file.
+- [ ] T065 Lead only, with Tom's go-ahead on cost: run the ladder for SKILL-74 with `--cap 3` (measured cost, not the
       estimator) and write `specs/173-propose-index-linking/lift-results.md` (tools arm, tools+skill arm, repeats, b and
       c counts, "underpowered" when it is). A `needs_fix` flag becomes a task. Constitution IX's +0.20 threshold is judged on 172's tool as a whole; this run adds
       the evidence for `propose`'s new behaviour.
