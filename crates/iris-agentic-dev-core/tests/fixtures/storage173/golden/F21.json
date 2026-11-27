@@ -1,0 +1,183 @@
+{
+  "action": "propose",
+  "capped": false,
+  "chunk_map_draft": {
+    "bits": {
+      "chunks_read": 2,
+      "first_id": 2,
+      "ids_read": 6,
+      "last_id": 64001
+    },
+    "guesses": [
+      "/maps/Master/subscripts/1",
+      "/maps/Master/subscripts/2",
+      "/maps/Master/subscripts/3"
+    ],
+    "map": {
+      "data": {},
+      "global": "^IadSm173Bits",
+      "name": "Master",
+      "subscripts": [
+        {
+          "expression": "0",
+          "level": 1
+        },
+        {
+          "access_vars": [
+            {
+              "code": "s {2D2}=({L2}-1)*64000-1",
+              "level": 2,
+              "variable": "2D2"
+            }
+          ],
+          "expression": "{Key1}\\64000+1",
+          "level": 2
+        },
+        {
+          "access_type": "Other",
+          "expression": "{Key1}",
+          "invalid_conditions": [
+            {
+              "expression": "'$bit({3D},{L3}-{2D2})",
+              "level": 1
+            }
+          ],
+          "level": 3,
+          "next_code": " n pos s pos={L3}-{2D2}\n s:pos<0 pos=0\n s pos=$bitfind({3D},1,pos+1)\n i 'pos s {L3}=\"\" QUIT\n s {L3}={2D2}+pos\n q"
+        }
+      ],
+      "type": "data"
+    },
+    "verified": {
+      "compiled": true,
+      "id_sum": 192013,
+      "row_found": true,
+      "rows": 6
+    }
+  },
+  "draft": {
+    "data": {
+      "Field1": {
+        "delimiter": "\"\u0001\"",
+        "name": "Field1",
+        "piece": "1"
+      },
+      "Field2": {
+        "delimiter": "\"\u0001\"",
+        "name": "Field2",
+        "piece": "2"
+      }
+    },
+    "global": "^IadSm173Bits",
+    "name": "Master",
+    "subscripts": [
+      {
+        "expression": "{Key1}",
+        "level": 1
+      },
+      {
+        "expression": "{ID}",
+        "level": 2
+      }
+    ],
+    "type": "data"
+  },
+  "draft_note": "a draft to check against real data: every name, delimiter and piece count is a guess from a sample",
+  "global": "^IadSm173Bits",
+  "guesses": [
+    "/maps/Master/subscripts",
+    "/maps/Master/data/Field1",
+    "/maps/Master/data/Field2"
+  ],
+  "index_candidates": {
+    "candidates": [],
+    "listing": "ok",
+    "not_examined": [],
+    "sub_trees_not_looked_for": "looked for only when the master's row ID is its first subscript"
+  },
+  "limits": {
+    "node_cap": 200,
+    "stopped": [],
+    "time_cap_seconds": 5
+  },
+  "model_version": 1,
+  "namespace": "USER",
+  "not_inferred": [
+    "field names (Field1, Field2, ... are placeholders; rename them to the class's properties)",
+    "datatypes (they belong to the class's properties, not the map)",
+    "collations (whether the class compares text case-sensitively)",
+    "index maps (an index global such as ^X.x is not linked to this map)",
+    "conditions (a conditional map or an index that skips rows)",
+    "computed subscripts (levels produced by code, such as a $BIT chunk)",
+    "the ID counter (SqlIdExpression) and any row ID built from several parts"
+  ],
+  "not_inferred_detail": [
+    {
+      "what": "field names",
+      "why": "Field1, Field2, ... are placeholders; rename them to the class's properties"
+    },
+    {
+      "what": "datatypes",
+      "why": "they belong to the class's properties, not the map"
+    },
+    {
+      "what": "collations",
+      "why": "whether the class compares text case-sensitively"
+    },
+    {
+      "what": "index maps",
+      "why": "an index global such as ^X.x is not linked to this map unless it is named in index_globals"
+    },
+    {
+      "what": "conditions",
+      "why": "a conditional map or an index that skips rows"
+    },
+    {
+      "what": "computed subscripts",
+      "why": "levels produced by code, such as a $BIT chunk"
+    },
+    {
+      "what": "the ID counter",
+      "why": "SqlIdExpression is not read, and a row ID built from several parts is not inferred"
+    }
+  ],
+  "shape": {
+    "cap": {
+      "nodes": 200,
+      "seconds": 5
+    },
+    "capped": false,
+    "data_states": {
+      "1": {
+        "10": 1
+      },
+      "2": {
+        "1": 2
+      }
+    },
+    "depths": {
+      "2": 2
+    },
+    "formats": [
+      {
+        "delimiter": "\u0001",
+        "depth": 2,
+        "format": "delimited",
+        "node": null,
+        "pieces": {
+          "max": 2,
+          "min": 2
+        }
+      }
+    ],
+    "global": "^IadSm173Bits",
+    "nodes_scanned": 3,
+    "numeric_subscripts": {
+      "1": 1,
+      "2": 2
+    },
+    "sub_nodes": {},
+    "values": null
+  },
+  "success": true
+}

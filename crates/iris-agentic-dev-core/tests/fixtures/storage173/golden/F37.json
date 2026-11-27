@@ -1,0 +1,461 @@
+{
+  "action": "propose",
+  "capped": false,
+  "class_draft": {
+    "compiled": true,
+    "guesses": [
+      "/class_draft/properties/Name",
+      "/class_draft/properties/Alias",
+      "/class_draft/properties/City",
+      "/class_draft/properties/Qty",
+      "/class_draft/properties/Price",
+      "/class_draft/properties/Placed",
+      "/class_draft/properties/Stamp",
+      "/class_draft/properties/Note"
+    ],
+    "properties": [
+      {
+        "evidence": {
+          "max_length": 18
+        },
+        "name": "Name",
+        "parameters": [
+          "MAXLEN = 32"
+        ],
+        "type": "%String"
+      },
+      {
+        "evidence": {
+          "max_length": 18
+        },
+        "name": "Alias",
+        "parameters": [
+          "MAXLEN = 32",
+          "COLLATION = \"SQLSTRING\""
+        ],
+        "type": "%String"
+      },
+      {
+        "evidence": {
+          "max_length": 6
+        },
+        "name": "City",
+        "parameters": [
+          "MAXLEN = 32",
+          "COLLATION = \"EXACT\""
+        ],
+        "type": "%String"
+      },
+      {
+        "evidence": {
+          "integer": 40,
+          "of": 40
+        },
+        "name": "Qty",
+        "parameters": [],
+        "type": "%Integer"
+      },
+      {
+        "evidence": {
+          "max_scale": 2,
+          "numeric": 40,
+          "of": 40
+        },
+        "name": "Price",
+        "parameters": [
+          "SCALE = 2"
+        ],
+        "type": "%Numeric"
+      },
+      {
+        "evidence": {
+          "date_fit": 40,
+          "of": 40
+        },
+        "name": "Placed",
+        "parameters": [],
+        "type": "%Date"
+      },
+      {
+        "evidence": {
+          "max_length": 10
+        },
+        "name": "Stamp",
+        "parameters": [
+          "MAXLEN = 32"
+        ],
+        "type": "%String"
+      },
+      {
+        "evidence": {
+          "max_length": 37
+        },
+        "name": "Note",
+        "parameters": [
+          "MAXLEN = 64"
+        ],
+        "type": "%String"
+      }
+    ],
+    "source": "Class Draft.IadSm173F37 Extends %Persistent [ StorageStrategy = SQLStorage ]\n{\n\n/// Guessed: the longest sampled value is 18 characters.\nProperty Name As %String(MAXLEN = 32);\n\n/// Guessed: the longest sampled value is 18 characters.\nProperty Alias As %String(MAXLEN = 32, COLLATION = \"SQLSTRING\");\n\n/// Guessed: the longest sampled value is 6 characters.\nProperty City As %String(MAXLEN = 32, COLLATION = \"EXACT\");\n\n/// Guessed: 40 of 40 sampled values are whole numbers.\nProperty Qty As %Integer;\n\n/// Guessed: 40 of 40 sampled values are numbers with up to 2 fraction digits.\nProperty Price As %Numeric(SCALE = 2);\n\n/// Guessed: 40 of 40 sampled values are whole numbers in a plausible date range.\nProperty Placed As %Date;\n\n/// Guessed: the longest sampled value is 10 characters.\nProperty Stamp As %String(MAXLEN = 32);\n\n/// Guessed: the longest sampled value is 37 characters.\nProperty Note As %String(MAXLEN = 64);\n\nStorage SQLStorage\n{\n<SQLMap name=\"IadSm173F37A\">\n<Global>^IadSm173F37A</Global>\n<Subscript name=\"1\">\n<Expression>$$SQLSTRING({Alias})</Expression>\n</Subscript>\n<Subscript name=\"2\">\n<Expression>{ID}</Expression>\n</Subscript>\n<Type>index</Type>\n</SQLMap>\n<SQLMap name=\"IadSm173F37C\">\n<Global>^IadSm173F37C</Global>\n<Subscript name=\"1\">\n<Expression>{City}</Expression>\n</Subscript>\n<Subscript name=\"2\">\n<Expression>{ID}</Expression>\n</Subscript>\n<Type>index</Type>\n</SQLMap>\n<SQLMap name=\"IadSm173F37X\">\n<Global>^IadSm173F37X</Global>\n<Subscript name=\"1\">\n<Expression>$$SQLUPPER({Name})</Expression>\n</Subscript>\n<Subscript name=\"2\">\n<Expression>{ID}</Expression>\n</Subscript>\n<Type>index</Type>\n</SQLMap>\n<SQLMap name=\"Master\">\n<Data name=\"Alias\">\n<Delimiter>\"^\"</Delimiter>\n<Piece>2</Piece>\n</Data>\n<Data name=\"City\">\n<Delimiter>\"^\"</Delimiter>\n<Piece>3</Piece>\n</Data>\n<Data name=\"Name\">\n<Delimiter>\"^\"</Delimiter>\n<Piece>1</Piece>\n</Data>\n<Data name=\"Note\">\n<Delimiter>\"^\"</Delimiter>\n<Piece>8</Piece>\n</Data>\n<Data name=\"Placed\">\n<Delimiter>\"^\"</Delimiter>\n<Piece>6</Piece>\n</Data>\n<Data name=\"Price\">\n<Delimiter>\"^\"</Delimiter>\n<Piece>5</Piece>\n</Data>\n<Data name=\"Qty\">\n<Delimiter>\"^\"</Delimiter>\n<Piece>4</Piece>\n</Data>\n<Data name=\"Stamp\">\n<Delimiter>\"^\"</Delimiter>\n<Piece>7</Piece>\n</Data>\n<Global>^IadSm173F37</Global>\n<Subscript name=\"1\">\n<Expression>{ID}</Expression>\n</Subscript>\n<Type>data</Type>\n</SQLMap>\n<Type>%Storage.SQL</Type>\n}\n\n}\n"
+  },
+  "draft": {
+    "data": {
+      "Alias": {
+        "delimiter": "\"^\"",
+        "name": "Alias",
+        "piece": "2"
+      },
+      "City": {
+        "delimiter": "\"^\"",
+        "name": "City",
+        "piece": "3"
+      },
+      "Name": {
+        "delimiter": "\"^\"",
+        "name": "Name",
+        "piece": "1"
+      },
+      "Note": {
+        "delimiter": "\"^\"",
+        "name": "Note",
+        "piece": "8"
+      },
+      "Placed": {
+        "delimiter": "\"^\"",
+        "name": "Placed",
+        "piece": "6"
+      },
+      "Price": {
+        "delimiter": "\"^\"",
+        "name": "Price",
+        "piece": "5"
+      },
+      "Qty": {
+        "delimiter": "\"^\"",
+        "name": "Qty",
+        "piece": "4"
+      },
+      "Stamp": {
+        "delimiter": "\"^\"",
+        "name": "Stamp",
+        "piece": "7"
+      }
+    },
+    "global": "^IadSm173F37",
+    "name": "Master",
+    "subscripts": [
+      {
+        "expression": "{ID}",
+        "level": 1
+      }
+    ],
+    "type": "data"
+  },
+  "draft_note": "a draft to check against real data: every name, delimiter and piece count is a guess from a sample",
+  "global": "^IadSm173F37",
+  "guesses": [
+    "/maps/Master/subscripts",
+    "/maps/Master/data/Name",
+    "/maps/Master/data/Alias",
+    "/maps/Master/data/City",
+    "/maps/Master/data/Qty",
+    "/maps/Master/data/Price",
+    "/maps/Master/data/Placed",
+    "/maps/Master/data/Stamp",
+    "/maps/Master/data/Note"
+  ],
+  "index_candidates": {
+    "candidates": [
+      {
+        "found_by": "parameter",
+        "global": "^IadSm173F37X",
+        "status": "examined",
+        "sub_prefix": []
+      },
+      {
+        "found_by": "parameter",
+        "global": "^IadSm173F37A",
+        "status": "examined",
+        "sub_prefix": []
+      },
+      {
+        "found_by": "parameter",
+        "global": "^IadSm173F37C",
+        "status": "examined",
+        "sub_prefix": []
+      }
+    ],
+    "listing": "ok",
+    "not_examined": []
+  },
+  "indexes": [
+    {
+      "data_in_value": [],
+      "distinct_first_values": 39,
+      "found_by": "parameter",
+      "global": "^IadSm173F37X",
+      "guesses": [],
+      "id": {
+        "agreement": 1.0,
+        "form": "subscript",
+        "positions": [
+          2
+        ]
+      },
+      "map": {
+        "global": "^IadSm173F37X",
+        "name": "IadSm173F37X",
+        "subscripts": [
+          {
+            "expression": "$$SQLUPPER({Name})",
+            "level": 1
+          },
+          {
+            "expression": "{ID}",
+            "level": 2
+          }
+        ],
+        "type": "index"
+      },
+      "nodes_sampled": 40,
+      "not_explained": [],
+      "subscripts": [
+        {
+          "agreement": 1.0,
+          "alternatives": [],
+          "field": "Name",
+          "position": 1,
+          "transform": "sqlupper",
+          "verdict": "inferred"
+        }
+      ],
+      "usable_nodes": 40,
+      "verdict": "inferred",
+      "verified": {
+        "compiled": true,
+        "row_found": true,
+        "usability": {
+          "field": "Name",
+          "map": "IadSm173F37X",
+          "status": "used",
+          "subscript_level": 1,
+          "text": "Read index map <class>.IadSm173F37X, using the given %SQLUPPER(Name), and looping on ID."
+        }
+      }
+    },
+    {
+      "data_in_value": [],
+      "distinct_first_values": 40,
+      "found_by": "parameter",
+      "global": "^IadSm173F37A",
+      "guesses": [],
+      "id": {
+        "agreement": 1.0,
+        "form": "subscript",
+        "positions": [
+          2
+        ]
+      },
+      "map": {
+        "global": "^IadSm173F37A",
+        "name": "IadSm173F37A",
+        "subscripts": [
+          {
+            "expression": "$$SQLSTRING({Alias})",
+            "level": 1
+          },
+          {
+            "expression": "{ID}",
+            "level": 2
+          }
+        ],
+        "type": "index"
+      },
+      "nodes_sampled": 40,
+      "not_explained": [],
+      "subscripts": [
+        {
+          "agreement": 1.0,
+          "alternatives": [],
+          "field": "Alias",
+          "position": 1,
+          "transform": "sqlstring",
+          "verdict": "inferred"
+        }
+      ],
+      "usable_nodes": 40,
+      "verdict": "inferred",
+      "verified": {
+        "compiled": true,
+        "row_found": true,
+        "usability": {
+          "field": "Alias",
+          "map": "IadSm173F37A",
+          "status": "used",
+          "subscript_level": 1,
+          "text": "Read index map <class>.IadSm173F37A, using the given %SQLSTRING(Alias), and looping on ID."
+        }
+      }
+    },
+    {
+      "data_in_value": [],
+      "distinct_first_values": 10,
+      "found_by": "parameter",
+      "global": "^IadSm173F37C",
+      "guesses": [],
+      "id": {
+        "agreement": 1.0,
+        "form": "subscript",
+        "positions": [
+          2
+        ]
+      },
+      "map": {
+        "global": "^IadSm173F37C",
+        "name": "IadSm173F37C",
+        "subscripts": [
+          {
+            "expression": "{City}",
+            "level": 1
+          },
+          {
+            "expression": "{ID}",
+            "level": 2
+          }
+        ],
+        "type": "index"
+      },
+      "nodes_sampled": 30,
+      "not_explained": [],
+      "subscripts": [
+        {
+          "agreement": 1.0,
+          "alternatives": [],
+          "field": "City",
+          "position": 1,
+          "transform": "exact",
+          "verdict": "inferred"
+        }
+      ],
+      "usable_nodes": 30,
+      "verdict": "inferred",
+      "verified": {
+        "compiled": true,
+        "row_found": true,
+        "usability": {
+          "field": "City",
+          "map": "IadSm173F37C",
+          "status": "used",
+          "subscript_level": 1,
+          "text": "Read index map <class>.IadSm173F37C, using the given City, and looping on ID."
+        }
+      }
+    }
+  ],
+  "limits": {
+    "node_cap": 200,
+    "stopped": [],
+    "time_cap_seconds": 5
+  },
+  "model_version": 1,
+  "namespace": "USER",
+  "not_inferred": [
+    "datatypes (they belong to the class's properties, not the map)",
+    "collations (whether the class compares text case-sensitively)",
+    "index maps (an index global such as ^X.x is not linked to this map)",
+    "conditions (a conditional map or an index that skips rows)",
+    "computed subscripts (levels produced by code, such as a $BIT chunk)",
+    "the ID counter (SqlIdExpression) and any row ID built from several parts",
+    "COLLATE (a subscript collated by %COLLATE is recognised and never drafted)",
+    "numeric collations (PLUS and MINUS are not map-expression functions, so a subscript they produce is not drafted)",
+    "computed subscripts in an index (a subscript made by code, such as a date format, is reported as not explained and no code is guessed)"
+  ],
+  "not_inferred_detail": [
+    {
+      "what": "datatypes",
+      "why": "they belong to the class's properties, not the map"
+    },
+    {
+      "what": "collations",
+      "why": "whether the class compares text case-sensitively"
+    },
+    {
+      "what": "index maps",
+      "why": "an index global such as ^X.x is not linked to this map unless it is named in index_globals"
+    },
+    {
+      "what": "conditions",
+      "why": "a conditional map or an index that skips rows"
+    },
+    {
+      "what": "computed subscripts",
+      "why": "levels produced by code, such as a $BIT chunk"
+    },
+    {
+      "what": "the ID counter",
+      "why": "SqlIdExpression is not read, and a row ID built from several parts is not inferred"
+    },
+    {
+      "what": "COLLATE",
+      "why": "a subscript collated by %COLLATE is recognised and never drafted"
+    },
+    {
+      "what": "numeric collations",
+      "why": "PLUS and MINUS are not map-expression functions, so a subscript they produce is not drafted"
+    },
+    {
+      "what": "computed subscripts in an index",
+      "why": "a subscript made by code, such as a date format, is reported as not explained and no code is guessed"
+    }
+  ],
+  "shape": {
+    "cap": {
+      "nodes": 200,
+      "seconds": 5
+    },
+    "capped": false,
+    "data_states": {
+      "0": {
+        "11": 1
+      },
+      "1": {
+        "1": 40
+      }
+    },
+    "depths": {
+      "0": 1,
+      "1": 40
+    },
+    "formats": [
+      {
+        "delimiter": null,
+        "depth": 0,
+        "format": "plain",
+        "node": null,
+        "pieces": {
+          "max": 1,
+          "min": 1
+        }
+      },
+      {
+        "delimiter": "^",
+        "depth": 1,
+        "format": "delimited",
+        "node": null,
+        "pieces": {
+          "max": 8,
+          "min": 8
+        }
+      }
+    ],
+    "global": "^IadSm173F37",
+    "nodes_scanned": 41,
+    "numeric_subscripts": {
+      "1": 40
+    },
+    "sub_nodes": {},
+    "values": null
+  },
+  "success": true
+}

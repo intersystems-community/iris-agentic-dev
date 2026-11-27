@@ -504,15 +504,22 @@ tests.
 
 **Goal**: the corpus holds the answers, and the docs say only what a test proves.
 
-- [ ] T058 [US9] The corpus: `tests/integration/test_storage_map_corpus_173_live.rs` (+ `mod`) runs every fixture F01 to F43
+- [x] T058 [US9] The corpus: `tests/integration/test_storage_map_corpus_173_live.rs` (+ `mod`) runs every fixture (every seed file: F01 to F48,
+      F19c, F19n, and the boundary pair F49, F50)
       through `propose`, asserts each fixture's known answer (SC-001: at least 30 fixtures, 100% of them), that every
       `inferred` draft compiles and returns the fixture's known row (SC-002), that no false-link fixture is called
       `inferred` for the wrong field (SC-003), and compares the answer to `golden/<fixture>.json`
       (`IAD_REGEN_GOLDEN=1` rewrites). The test asserts the fixture count ≥ 30 before the loop. Prove:
       `L test_storage_map_corpus_173_live`.
-- [ ] T059 [US9] Mutation check: temporarily change one transform's spelling in `link::spelling` and one verdict threshold
+- [x] T059 [US9] Mutation check: temporarily change one transform's spelling in `link::spelling` and one verdict threshold
       and confirm the corpus fails on each (record the two failing test names in the task's report; revert). This is the
       "if I changed this silently would a test fail" check. Prove: the report names both failures.
+      Done: the corpus is one table-driven test
+      (`test_storage_map_corpus_173_live::every_fixture_gives_its_known_answer_and_matches_its_golden`) that names each
+      failing fixture. Spelling mutation (`Transform::Upper => "ALPHAUP"`) failed F06 and F34. `MIN_NODES` 20 to 4 failed
+      F27. `EXPLAINED` 0.95 to 0.90 did NOT fail (no fixture sat between 0.90 and 0.95), so F49 (agreement exactly 0.95,
+      inferred) and F50 (0.925, not_explained) were added; the same mutation now fails F50 and 0.95 to 0.96 fails F49.
+      All mutations reverted.
 - [x] T060 [US9] Docs: `docs/storage-maps.md` gains the new params, the new keys of data-model.md, the verdict table and a
       "measured" table listing facts 1 to 12 each with its test name from T002 to T009. Test first,
       `tests/unit/test_storage_map_docs_173.rs` (+ `mod`): every response key of data-model.md appears in the doc, every
