@@ -20,7 +20,7 @@ const EPS: f64 = 1e-9;
 const EXPLAINED: f64 = 0.95;
 const ID_FLOOR: f64 = 0.9;
 /// Usable nodes needed before a link may be called inferred (FR-011).
-const MIN_NODES: u32 = 20;
+pub(super) const MIN_NODES: u32 = 20;
 
 /// The share of index nodes without a master row above which it is reported.
 const ORPHAN_SHARE: f64 = 0.05;

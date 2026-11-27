@@ -243,7 +243,7 @@ index. The test loader retries and asks IRIS for the IDs.
 - "NextCode third level on a bitmap-like global": matches `%iFind.OriginalWord` over `^IRIS.IF.TransfoB` exactly. That
   is the one real iFind structure `propose` handles (the chunk map), and its answer is right.
 
-### What the linker would need to learn (not implemented)
+### What the linker would need to learn (T076 to T083 did 1 to 4 and 6 to 8; 5 is not done)
 
 1. Offer the stem sibling: a default-storage class files `^XD` and `^XI`, and the name-prefix rule misses it; a DDL
    table's index is `^<ext>.3` beside `^<ext>.1`. Say when the candidate list is empty.

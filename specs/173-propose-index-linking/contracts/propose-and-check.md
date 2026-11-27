@@ -16,15 +16,15 @@ This file lists only what 173 adds. Shapes are in [data-model.md](../data-model.
 
 ## `propose` answer: new keys
 
-| Key                   | When                                                 | Content                                                 |
-| --------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `index_candidates`    | always                                               | listing status and every candidate with `found_by`      |
-| `indexes`             | at least one candidate examined                      | one Link per candidate (verdict, ID, subscripts, draft) |
-| `bitmaps`             | global mode, a candidate holds bit strings           | Bitmap items                                            |
-| `chunk_map_draft`     | master is `^G(const, chunk) = $BIT`                  | data-map draft with the computed third level            |
-| `class_draft`         | `field_names` or `index_globals` given (global mode) | typed class source, evidence counts, `compiled`         |
-| `limits`              | always                                               | caps and which stopped what                             |
-| `not_inferred_detail` | always                                               | `{what, why}` items matching `not_inferred`             |
+| Key                   | When                                                 | Content                                                            |
+| --------------------- | ---------------------------------------------------- | ------------------------------------------------------------------ |
+| `index_candidates`    | always                                               | listing status and every candidate with `found_by`                 |
+| `indexes`             | at least one candidate examined                      | one Link per candidate (verdict, ID, subscripts, draft)            |
+| `bitmaps`             | global mode, a candidate holds bit strings           | Bitmap items                                                       |
+| `chunk_map_draft`     | master is `^G(const, chunk) = $BIT`                  | data-map draft with the computed third level; `draft` is then null |
+| `class_draft`         | `field_names` or `index_globals` given (global mode) | typed class source, evidence counts, `compiled`                    |
+| `limits`              | always                                               | caps and which stopped what                                        |
+| `not_inferred_detail` | always                                               | `{what, why}` items matching `not_inferred`                        |
 
 Class mode returns `class`, `global`, `indexes`, `index_candidates`, `limits`, `not_inferred` and
 `not_inferred_detail`, and omits `draft`, `shape`, `guesses`, `chunk_map_draft` and `class_draft` (the master is not
@@ -43,7 +43,23 @@ its refusals do not depend on it.
   one `**Warning:**` line each at the top of `markdown`.
 - `compare`, `preview`, `propose` over a global with no node: `no_data: true`, `sampled_nodes: 0`, `message`. `propose`
   then has `draft: null`, `guesses: []` and a `not_inferred` line, and links nothing. With data none of the three keys is
-  present.
+  present. `compare` lists no `mismatches` then (`notes` says the map was not checked).
+
+## Real iFind answers (T076 to T083)
+
+- `index_candidates`: a `^<Class>D` master offers `^<Class>I` and a `^<ext>.1` master offers `^<ext>.<n>` and `^<ext>.I`,
+  with `found_by: "stem_sibling"`. When the listing ran and nothing was found, `not_inferred_detail` has
+  `{what: "no index global found", why: "looked for ..."}`.
+- `indexes[].id`: a position that holds one value in every node read is never the row ID; of the positions that find a
+  master row the one with more distinct IDs wins. A global whose nodes hold bit strings and counts under several
+  branches (`"Idx","P"`, `"W"`) answers with the position of the row ID in the `"P"` nodes, and no `missing_rows` rule.
+- `shape.formats[].format` is `bits` for a value that is a valid bit string; no field is drafted from it and
+  `not_inferred_detail` has `{what: "bit strings", why}` with the depths. With a `chunk_map_draft`, `draft` is null.
+- A `too_few_nodes` link's `has no drafted map` detail names the 20 usable nodes it needs and the count it read.
+- A field in a named sub-node is typed from that node's values (the linker and the typing read the node by its name,
+  not by the quoted literal).
+- `diagram`: a computed level's node reads `... (Other, computed by code, may not be a subscript)`; a filtered level's
+  `(Sub, keys filtered by code)`.
 
 ## Unchanged guarantees
 

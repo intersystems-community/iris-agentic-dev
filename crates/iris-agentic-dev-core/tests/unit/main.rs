@@ -249,6 +249,7 @@ mod test_storage_map_feedback_173;
 mod test_storage_map_gates_172;
 mod test_storage_map_gen_172;
 mod test_storage_map_golden_172;
+mod test_storage_map_ifind_173;
 mod test_storage_map_link_173;
 mod test_storage_map_link_code_173;
 mod test_storage_map_link_run_173;

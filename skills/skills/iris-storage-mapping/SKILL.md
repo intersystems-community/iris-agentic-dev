@@ -103,7 +103,8 @@ index maps, conditions, computed subscripts and the ID counter (live test:
 ## What `propose` infers and what it does not
 
 Given a master global, `propose` also finds its index globals (the names you pass in `index_globals`, the
-globals whose name starts with the master's, and literal sub-trees inside the master), and says which
+globals whose name starts with the master's, the sibling a default-storage class (`^XD` beside `^XI`) or a
+DDL table (`^ext.1` beside `^ext.3`) files its indexes in, and literal sub-trees inside the master), and says which
 master field and which collation each index subscript holds. Pass `class` instead of `global` to link
 against a class's own master map. The claims below are the ones a test holds; the full answer shape is in
 `docs/storage-maps.md`.
@@ -114,8 +115,19 @@ against a class's own master map. The claims below are the ones a test holds; th
   `ambiguous`: exact, ALPHAUP and UPPER file the same string for it (live test:
   `f11_to_f18_link_to_the_known_answer`).
 - With fewer than 20 usable nodes the verdict is `too_few_nodes` and no map is drafted (live test:
-  `f27_five_rows_are_too_few_nodes_and_draft_no_map`). A position with one value is `constant` (live
+  `f27_five_rows_are_too_few_nodes_and_draft_no_map`); `not_inferred_detail` names the 20 it needs (live
+  test: `bdb_three_rows_names_the_minimum_that_would_let_it_infer`). A position with one value is `constant` (live
   test: `f28_a_constant_column_is_constant`).
+- The index of a master that has none is said, not left as an empty list: `^XD` offers `^XI` and a DDL
+  master offers its `.3` (live test: `the_master_alone_offers_the_index_global_beside_it`, and
+  `the_ddl_master_alone_offers_the_ifind_index_global`), and a master with no index global anywhere gets
+  a `no index global found` detail that says where it looked (live test:
+  `a_master_with_no_index_global_says_where_it_looked`).
+- A real `%iFind` index files word IDs and bit strings, never words (the words are in the namespace's
+  `^IRIS.IF.WordD`), so its link is not `inferred`, a constant position (the chunk) is never its row ID,
+  and a bit string is not drafted as `$c(1)`-delimited fields (live test:
+  `the_link_for_a_basic_ifind_index_makes_no_false_claim`, and
+  `the_ifind_index_global_alone_is_not_drafted_as_delimited_data`).
 - A global that shares the master's name prefix and is unrelated is `not_linked`, listed with its best
   agreement and not dropped (live test:
   `f31_an_unrelated_global_is_not_linked_with_its_best_agreement`). A column that happens to equal the
@@ -159,6 +171,8 @@ against a class's own master map. The claims below are the ones a test holds; th
 - `class_draft` types each property from counts of what the values look like: integer, numeric with its
   scale, a date only when at least 95% fit, else a string with a `MAXLEN` (live test:
   `f37_each_column_gets_the_type_its_values_support`).
+- A field in a named sub-node (`^M(id,"sub")`) is typed from that node's own values (live test:
+  `bdb_the_sub_node_field_is_typed_from_its_own_values`).
 - A `COLLATION` goes on a property only where the link is `inferred` and whole, and only on a string
   (live test: `f37_the_collation_follows_how_the_index_files_the_field`).
 - No sampled value is in an answer, except a discovered null marker's literal and a fixed rule's literal

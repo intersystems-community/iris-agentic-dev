@@ -438,6 +438,32 @@ const NOT_INFERRED_INDEX: [NotInferred; 3] = [
     ),
 ];
 
+/// What `propose` says when the sampler saw bit-string values (format `bits`): the depths that
+/// hold them and that no field is drafted from a bit string. `None` when none were seen.
+pub fn bit_string_note(report: &ShapeReport) -> Option<String> {
+    let mut depths: Vec<u32> = report
+        .formats
+        .iter()
+        .filter(|f| f.format == "bits")
+        .map(|f| f.depth)
+        .collect();
+    depths.sort_unstable();
+    depths.dedup();
+    if depths.is_empty() {
+        return None;
+    }
+    let at = depths
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "the values at depth {at} are bit strings ($BIT), not delimited fields, so no field is \
+         drafted from them; a bit-string master is mapped by chunk_map_draft and a bit-string \
+         index global is linked by bitmaps, where either applies"
+    ))
+}
+
 /// What `propose` leaves to the caller, always returned so a draft is never read as complete.
 pub fn not_inferred() -> Vec<String> {
     NOT_INFERRED.iter().map(|i| i.0.to_string()).collect()
@@ -520,12 +546,17 @@ pub fn draft(report: &ShapeReport) -> (serde_json::Value, Vec<String>) {
     let row = report
         .formats
         .iter()
-        .filter(|f| f.depth == levels && f.node.is_none())
+        // A bit string is not a row of fields (the sampler names it `bits`): nothing is drafted from it.
+        .filter(|f| f.depth == levels && f.node.is_none() && f.format != "bits")
         .max_by_key(|f| f.pieces.max);
     if let Some(row) = row {
         add_fields("Field", row);
     }
-    for f in report.formats.iter().filter(|f| f.depth == levels + 1) {
+    for f in report
+        .formats
+        .iter()
+        .filter(|f| f.depth == levels + 1 && f.format != "bits")
+    {
         let Some(node) = &f.node else { continue };
         let mut prefix: String = node.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
         if let Some(first) = prefix.get_mut(..1) {

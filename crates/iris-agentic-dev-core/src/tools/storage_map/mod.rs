@@ -754,7 +754,13 @@ async fn compare_action(
         Err(e) => return fail("INVALID_PARAMS", format!("{}: {e}", map.global), json!({})),
     };
     sampled_answer(tools, p, shape, &ns, &global, |report| {
-        let mismatches = shape::compare_map(map, &report);
+        // A global with no node checked nothing: the notes say so, and no "no value there"
+        // mismatch is listed for a map that was never set against data.
+        let mismatches = if report.nodes_scanned == 0 {
+            Vec::new()
+        } else {
+            shape::compare_map(map, &report)
+        };
         let checked = shape::compare_notes(map, &report);
         let mut answer = json!({
             "success": true,
@@ -1141,8 +1147,19 @@ async fn propose_action(
         node_cap,
     )
     .await;
-    if let Some(draft) = chunk.draft {
-        answer["chunk_map_draft"] = draft;
+    if let Some(chunk_draft) = chunk.draft {
+        answer["chunk_map_draft"] = chunk_draft;
+        // The chunk map explains the whole global (a bit string per chunk), so a plain draft of it
+        // would only be a second, wrong reading. The local `draft` still serves the checks below.
+        answer["draft"] = Value::Null;
+        answer["guesses"] = json!([]);
+        answer["draft_note"] = json!(
+            "no plain draft: every value is a bit string, which `chunk_map_draft` maps (a draft \
+             to check against real data: the third level is computed by code)"
+        );
+    }
+    if let Some(note) = shape::bit_string_note(&report) {
+        examined.push(link_run::detail("bit strings", note));
     }
     examined.extend(chunk.details);
     // The candidates: the names the caller gave, the sub-trees inside the master and the

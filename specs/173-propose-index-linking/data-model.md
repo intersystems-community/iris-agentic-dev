@@ -20,7 +20,7 @@ null-marker literal under FR-009's rule.
 | Field        | Type   | Notes                                                                                                                              |
 | ------------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `global`     | string | `^name`                                                                                                                            |
-| `found_by`   | enum   | `parameter`, `name_prefix`, `sub_node`                                                                                             |
+| `found_by`   | enum   | `parameter`, `name_prefix`, `sub_node`, `stem_sibling` (`^XI` beside `^XD`; `^ext.2`, `.3`, `.I` beside `^ext.1`)                  |
 | `sub_prefix` | array  | for `sub_node`: the literal first subscripts cut off, as JSON strings                                                              |
 | `status`     | enum   | `examined` (an `indexes` item exists, whatever its verdict), `already_mapped` (class mode), `refused` (gate), `not_examined` (cap) |
 | `reason`     | string | for `refused`, `not_examined`, `already_mapped` (the map's name)                                                                   |
@@ -34,7 +34,7 @@ null-marker literal under FR-009's rule.
 | `nodes_sampled`         | integer | nodes read                                                                                                                                                                                                                                                                  |
 | `distinct_first_values` | integer | FR-004a                                                                                                                                                                                                                                                                     |
 | `usable_nodes`          | integer | nodes with a master row                                                                                                                                                                                                                                                     |
-| `id`                    | object  | `{form: "subscript"\|"value", positions: [int], agreement: number}`; `positions` empty for `value`                                                                                                                                                                          |
+| `id`                    | object  | `{form: "subscript"\|"value", positions: [int], agreement: number}`; `positions` empty for `value`; a position (or value) that is one value in every node read (three or more nodes) is never the row ID                                                                    |
 | `subscripts`            | array   | one per non-ID position: `{position, verdict, field?, transform?, length?, agreement?, null_marker?, alternatives[]}`                                                                                                                                                       |
 | `data_in_value`         | array   | `{field, element}` for covering `$LIST` data                                                                                                                                                                                                                                |
 | `missing_rows`          | object? | `{share, rows, missing, rule: {kind, field, literal?}?}`; `kind` is `null`, `empty_string` or `fixed`; present when the index lacks master rows (FR-019). `literal` only for `fixed`, under `include_values` and the data policy                                            |
@@ -101,7 +101,8 @@ found their rows; with only chunk 1 sampled it is `assumed`, and with later IDs 
 
 For a master of shape `^G(const, chunk) = $BIT`: a data map in the model's JSON form with the computed third level
 (`AccessType Other`, one access variable, `NextCode`, one `Invalidcondition`) of `IadSm172.Bits`. Present only when
-the scratch verification returned the IDs the bits name (`verified.row_found`).
+the scratch verification returned the IDs the bits name (`verified.row_found`). When it is present the answer's `draft`
+is null and `guesses` is `[]`, with a `draft_note` that says why: a plain draft of a bit string is a second, wrong reading.
 
 ### Class draft (`class_draft`)
 

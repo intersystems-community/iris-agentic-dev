@@ -42,7 +42,11 @@
 //!   are named as not examined.
 //! - `id`: one line per way the row ID was tried, best first. `resolved` counts nodes whose ID
 //!   found a master row. Form `subscript` names the run of `k` positions holding the key (k = 1
-//!   for a single key part); form `value` reads the ID from the node value.
+//!   for a single key part); form `value` reads the ID from the node value. A way that reads one
+//!   value from every node (three or more nodes) is not written: a constant (a chunk number, a
+//!   branch name) finds a master row by coincidence and is not a row ID. Ways are ranked by rows
+//!   found, then by distinct IDs (a word ID that happens to be a row number finds fewer distinct
+//!   rows than the row ID does), then by the later position.
 //! - `pos`: for every non-ID position, up to five best `(field, transform)` scores by `matches`
 //!   out of `total` usable nodes, and how many distinct values the position held (`distinct` 1
 //!   means a constant). A position no pair explains still gets its best scores, so `link.rs` can
@@ -139,10 +143,22 @@ pub fn field_access(f: &MasterField) -> Result<FieldAccess, String> {
         .filter(|p| *p >= 1)
         .ok_or_else(|| format!("field {name}: the piece {:?} is not 1 or more", f.piece))?;
     Ok(FieldAccess {
-        node: f.node.clone(),
+        node: f.node.as_deref().map(node_subscript),
         delimiter,
         piece,
     })
+}
+
+/// The subscript a field's `node` names: the map spells it as a literal (`"sub"`, a doubled quote
+/// is a quote) or a number (`2`), and the code subscripts with the text without its quotes. Left
+/// quoted, the code looked for a node named `"sub"` with the quotes in it, so every such field
+/// read as empty (measured on a three-row global whose `"sub"` nodes hold 99934.1).
+fn node_subscript(node: &str) -> String {
+    let t = node.trim();
+    match t.strip_prefix('"').and_then(|r| r.strip_suffix('"')) {
+        Some(inner) => inner.replace("\"\"", "\""),
+        None => t.to_string(),
+    }
 }
 
 /// The character code of a delimiter written as `"x"` (a doubled quote is a quote) or `$c(n)`.
@@ -311,24 +327,28 @@ const LINK_BODY: &str = r#" Set tot=0,bestd=0,bestn=0
  If bestd>0 { For i=1:1:nn { If ($QLength(nd(i))-base)=bestd { Set tot=tot+1,ln(tot)=nd(i) For p=1:1:bestd { Set sb(tot,p)=$QSubscript(nd(i),base+p) } } } }
  Set bw=-1,bres=-1
  For st=1:1:(bestd-kp+1) { Quit:($ZH-t0)>secs
-   Set res=0
-   For i=1:1:tot { Set mr=mst For q=0:1:kp-1 { Set mr=$Name(@mr@(sb(i,st+q))) } If $Data(@mr) { Set res=res+1,hit(st,i)=1 } }
-   Set way(st)=res }
- If (kp=1)&&(bestd>0) { Set res=0,vtried=0
-   For i=1:1:tot { Set vv=$Get(@ln(i)) If (vv'="")&&($Length(vv)<=200) { Set vtried=1,mr=$Name(@mst@(vv)) If $Data(@mr) { Set res=res+1,hit(0,i)=1 } } }
-   If vtried { Set way(0)=res } }
- Set st="" For { Set st=$Order(way(st)) Quit:st=""  If way(st)>=bres { Set bres=way(st),bw=st } }
+   Set res=0,dn=0 Kill dd
+   For i=1:1:tot { Set mr=mst,dk="" For q=0:1:kp-1 { Set mr=$Name(@mr@(sb(i,st+q))),dk=dk_$Char(1)_$Extract(sb(i,st+q),1,80) }
+     If '$Data(dd(dk)) { Set dd(dk)=1,dn=dn+1 }
+     If $Data(@mr) { Set res=res+1,hit(st,i)=1 } }
+   If '((tot>=3)&&(dn=1)) { Set way(st)=res,ws(st)=res*10000+dn } }
+ If (kp=1)&&(bestd>0) { Set res=0,vtried=0,dn=0 Kill dd
+   For i=1:1:tot { Set vv=$Get(@ln(i)) If (vv'="")&&($Length(vv)<=200) { Set vtried=1,mr=$Name(@mst@(vv))
+     If '$Data(dd(vv)) { Set dd(vv)=1,dn=dn+1 }
+     If $Data(@mr) { Set res=res+1,hit(0,i)=1 } } }
+   If vtried&&'((tot>=3)&&(dn=1)) { Set way(0)=res,ws(0)=res*10000+dn } }
+ Set st="" For { Set st=$Order(ws(st)) Quit:st=""  If ws(st)>=bres { Set bres=ws(st),bw=st } }
  Set nu=0
  If bw>=0 { For i=1:1:tot { If $Get(hit(bw,i)) { Set nu=nu+1,ok(i)=1
    If bw=0 { Set mr=$Name(@mst@($Get(@ln(i)))) } Else { Set mr=mst For q=0:1:kp-1 { Set mr=$Name(@mr@(sb(i,bw+q))) } }
    Set mrow(i)=mr } } }
  Set npos=0
  If nu>0 { For p=1:1:bestd { If (npos<6)&&((bw=0)||'((p>=bw)&&(p<(bw+kp)))) { Set npos=npos+1,pp(npos)=p } } }
- Merge w2=way
+ Merge w2=ws
  For { Set st="",bs=-1,br=-1 For { Set st=$Order(w2(st)) Quit:st=""  If w2(st)>=br { Set br=w2(st),bs=st } } Quit:bs<0
    Set o={},o.t="id",pa=[]
    If bs=0 { Set o.form="value" } Else { Set o.form="subscript" For q=0:1:kp-1 { Do pa.%Push(bs+q) } }
-   Do o.%Set("positions",pa) Set o.resolved=w2(bs),o.total=tot,ol=ol+1,ob(ol)=o
+   Do o.%Set("positions",pa) Set o.resolved=way(bs),o.total=tot,ol=ol+1,ob(ol)=o
    Kill w2(bs) }
 "#;
 

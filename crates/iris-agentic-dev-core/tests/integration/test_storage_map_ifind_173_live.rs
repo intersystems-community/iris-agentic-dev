@@ -13,8 +13,10 @@
 //! words live in namespace-wide shared globals (`^IRIS.IF.WordD`, `^IRIS.IF.WordI`), and
 //! `^IRIS.IF.TransfoB(0, chunk)` is the `%iFind.OriginalWord` map's `$BIT` global.
 //!
-//! A test named `red_*` states what the user needs and fails today; it keeps `#[ignore]` like every
-//! live test and is not weakened.
+//! T072 wrote the tests that stated what the user needs as `red_*` (they failed on purpose); T076
+//! to T083 made them pass and dropped the prefix. Every test keeps `#[ignore]` like every live
+//! test. The one assertion changed on the way is in
+//! `bdb_the_sub_node_field_is_typed_from_its_own_values` (see its comment).
 //!
 //! Run: `IRIS_HOST=localhost IRIS_WEB_PORT=52780 nice -n 15 cargo test --features testing -j 2 \
 //!   --test integration test_storage_map_ifind_173 -- --test-threads=1 --include-ignored`
@@ -545,7 +547,7 @@ async fn propose_over_a_basic_ifind_index_leaks_no_word_writes_nothing_and_draws
 /// nodes is the chunk number, always 1, so it is not where the row ID sits.
 #[tokio::test]
 #[ignore]
-async fn red_the_link_for_a_basic_ifind_index_makes_no_false_claim() {
+async fn the_link_for_a_basic_ifind_index_makes_no_false_claim() {
     let r = start().await;
     load_basic(&r).await;
     let out = propose(
@@ -575,7 +577,7 @@ async fn red_the_link_for_a_basic_ifind_index_makes_no_false_claim() {
 /// fields of a master map. (A bit string holds `$c(1)` bytes; the map it drafts is nonsense.)
 #[tokio::test]
 #[ignore]
-async fn red_the_ifind_index_global_alone_is_not_drafted_as_delimited_data() {
+async fn the_ifind_index_global_alone_is_not_drafted_as_delimited_data() {
     let r = start().await;
     load_basic(&r).await;
     let out = propose(&r, json!({"global": BASIC_INDEX})).await;
@@ -594,10 +596,10 @@ async fn red_the_ifind_index_global_alone_is_not_drafted_as_delimited_data() {
 
 /// A default-storage class files its rows in `^<Class>D` and its indexes in `^<Class>I`, the same
 /// stem. `propose` of the master alone offers `^<Class>I` as a candidate, or says it looked and
-/// found none; today the candidate list is empty with no statement.
+/// found none (it offers it, found by `stem_sibling`).
 #[tokio::test]
 #[ignore]
-async fn red_the_master_alone_offers_the_index_global_beside_it() {
+async fn the_master_alone_offers_the_index_global_beside_it() {
     let r = start().await;
     load_basic(&r).await;
     let out = propose(&r, json!({"global": BASIC_MASTER})).await;
@@ -616,6 +618,34 @@ async fn red_the_master_alone_offers_the_index_global_beside_it() {
         offered || said,
         "neither offered {BASIC_INDEX} nor said none was found: {}",
         out["index_candidates"]
+    );
+}
+
+/// A master with no index global anywhere: the answer says it looked, and where.
+#[tokio::test]
+#[ignore]
+async fn a_master_with_no_index_global_says_where_it_looked() {
+    let r = start().await;
+    exec(
+        &r,
+        "Set ^IadSm173Lone=2,^IadSm173Lone(1)=\"a^b\",^IadSm173Lone(2)=\"c^d\" Write \"SET\"",
+    )
+    .await;
+    let out = propose(&r, json!({"global": "^IadSm173Lone"})).await;
+    clean(&r).await;
+    assert_eq!(out["index_candidates"]["listing"], "ok", "{out}");
+    assert_eq!(out["index_candidates"]["candidates"], json!([]), "{out}");
+    let said: Vec<&Value> = out["not_inferred_detail"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|d| d["what"] == "no index global found")
+        .collect();
+    assert_eq!(said.len(), 1, "{}", out["not_inferred_detail"]);
+    let why = said[0]["why"].as_str().unwrap();
+    assert!(
+        why.contains("^IadSm173Lone") && why.contains("sub-trees inside the master"),
+        "{why}"
     );
 }
 
@@ -647,7 +677,7 @@ async fn propose_over_the_analytic_index_of_a_ddl_table_is_safe_and_draws_no_lin
 /// `propose` of the master alone offers the index global or says it found none.
 #[tokio::test]
 #[ignore]
-async fn red_the_ddl_master_alone_offers_the_ifind_index_global() {
+async fn the_ddl_master_alone_offers_the_ifind_index_global() {
     let r = start().await;
     let (master, index, _ids) = load_analytic(&r).await;
     let out = propose(&r, json!({"global": master})).await;
@@ -702,7 +732,7 @@ async fn propose_of_transfob_drafts_a_chunk_map_that_finds_every_word_id() {
 /// the bit string two `$c(1)`-delimited fields.
 #[tokio::test]
 #[ignore]
-async fn red_transfob_draft_beside_the_chunk_map_does_not_split_the_bit_string() {
+async fn transfob_draft_beside_the_chunk_map_does_not_split_the_bit_string() {
     let r = start().await;
     load_basic(&r).await;
     let out = propose(&r, json!({"global": "^IRIS.IF.TransfoB"})).await;
@@ -763,11 +793,11 @@ async fn read_and_compare_of_original_word_say_that_level_3_is_computed() {
 }
 
 /// The picture of the map is what a reader looks at first: its level 3 node says the level is
-/// computed. Today the node reads `sub 3: {OriginalWord} (Other)`, the same as a real subscript,
-/// and the fact sits at the foot of the markdown.
+/// computed (it read `sub 3: {OriginalWord} (Other)`, the same as a real subscript, and the fact
+/// sat at the foot of the markdown).
 #[tokio::test]
 #[ignore]
-async fn red_the_diagram_of_original_word_marks_level_3_as_computed() {
+async fn the_diagram_of_original_word_marks_level_3_as_computed() {
     let r = start().await;
     let out = r
         .call(
@@ -798,7 +828,7 @@ async fn red_the_diagram_of_original_word_marks_level_3_as_computed() {
 /// checked).
 #[tokio::test]
 #[ignore]
-async fn red_compare_of_a_global_with_no_nodes_says_so_and_reports_no_mismatch() {
+async fn compare_of_a_global_with_no_nodes_says_so_and_reports_no_mismatch() {
     let r = start().await;
     let text = person_class("IadSm173.Empty", "IadSm173IfEmpty", "", "");
     put_class(&r, "IadSm173.Empty", &text).await;
@@ -824,11 +854,11 @@ async fn red_compare_of_a_global_with_no_nodes_says_so_and_reports_no_mismatch()
     );
 }
 
-/// `propose` over a global with no nodes says plainly that it found no data. Today the answer is a
-/// successful draft with an empty `data`, and only `shape.nodes_scanned = 0` hints at it.
+/// `propose` over a global with no nodes says plainly that it found no data (T075; it had been a
+/// successful draft with an empty `data`, and only `shape.nodes_scanned = 0` hinted at it).
 #[tokio::test]
 #[ignore]
-async fn red_propose_of_a_global_with_no_nodes_says_it_found_no_data() {
+async fn propose_of_a_global_with_no_nodes_says_it_found_no_data() {
     let r = start().await;
     assert_eq!(exec(&r, "Write $Data(^IadSm173IfEmpty)").await.trim(), "0");
     let out = propose(&r, json!({"global": "^IadSm173IfEmpty"})).await;
@@ -943,10 +973,10 @@ async fn bdb_three_rows_is_too_few_nodes_with_no_drafted_map_and_no_value_leaked
 }
 
 /// With three rows the answer says why it cannot link and what would make it infer: it names the
-/// minimum (20 usable nodes). Today `not_inferred_detail` says only `the link is too_few_nodes`.
+/// minimum (20 usable nodes); it had said only `the link is too_few_nodes`.
 #[tokio::test]
 #[ignore]
-async fn red_bdb_three_rows_names_the_minimum_that_would_let_it_infer() {
+async fn bdb_three_rows_names_the_minimum_that_would_let_it_infer() {
     let r = start().await;
     load_bdb(&r, "IadSm173Bdb", 3).await;
     let out = propose(
@@ -969,10 +999,16 @@ async fn red_bdb_three_rows_names_the_minimum_that_would_let_it_infer() {
 }
 
 /// `Sub1` is the `"sub"` node of rows 1 and 2, both 99934.1 (seven characters). The class draft's
-/// evidence for it must count them. Today `max_length` is 0.
+/// evidence for it must count them. It had counted none (`of` 0, so `%String` with `max_length` 0:
+/// the typing code looked for a node named `"sub"` with the quotes in it).
+///
+/// The first version of this test asked for `evidence.max_length == 7`. Two values, both numbers
+/// with one fraction digit, are `%Numeric`, whose evidence is `{numeric, max_scale, of}` (pinned by
+/// `test_storage_map_typing_173`, the corpus and the typing live file), so the test asks for what
+/// the answer carries: the two values counted, typed `%Numeric` with `SCALE = 1`.
 #[tokio::test]
 #[ignore]
-async fn red_bdb_the_sub_node_field_is_typed_from_its_own_values() {
+async fn bdb_the_sub_node_field_is_typed_from_its_own_values() {
     let r = start().await;
     load_bdb(&r, "IadSm173Bdb", 3).await;
     let out = propose(
@@ -988,9 +1024,12 @@ async fn red_bdb_the_sub_node_field_is_typed_from_its_own_values() {
         .cloned()
         .expect("a Sub1 property");
     clean(&r).await;
+    assert_eq!(sub["type"], "%Numeric", "{sub}");
+    assert_eq!(sub["parameters"], json!(["SCALE = 1"]), "{sub}");
     assert_eq!(
-        sub["evidence"]["max_length"], 7,
-        "99934.1 is seven characters: {sub}"
+        sub["evidence"],
+        json!({"numeric": 2, "max_scale": 1, "of": 2}),
+        "rows 1 and 2 hold 99934.1 and row 3 holds none: {sub}"
     );
 }
 
