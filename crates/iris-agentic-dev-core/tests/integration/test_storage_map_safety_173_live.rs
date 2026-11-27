@@ -18,6 +18,7 @@ use iris_agentic_dev_core::tools::storage_map::link_run::CANDIDATE_TIME_CAP_FOR_
 use iris_agentic_dev_core::tools::Toolset;
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -646,4 +647,260 @@ async fn planted_seeds_in_index_keys_never_reach_an_answer() {
         drop_all(&r).await;
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+// ---- T045: the budget (SC-005) -------------------------------------------------------------------
+
+/// The plan's ceiling for a master with two candidates: master sample 1, listing 1, link 2,
+/// typing 1, draft verification 2 x 2, class draft compile 1.
+const CALL_CEILING: usize = 10;
+
+/// A master with two index globals of 1,200 rows each, 1,000 nodes sampled from each: the whole
+/// call stays inside five seconds and inside the plan's ceiling on IRIS calls. The counter is the
+/// proxy's, so every request the call made is in the failure text.
+#[tokio::test]
+#[ignore]
+async fn a_master_with_two_candidates_stays_inside_ten_iris_calls_and_five_seconds() {
+    let (r, counter) = counted(OPEN).await;
+    drop_all(&r).await;
+    let f = Fixture::read("F38");
+    load_fixture_173(&r, &f).await;
+    let master = f.seed["master_global"].as_str().unwrap();
+    let globals = f.seed["index_globals"].as_array().unwrap().clone();
+    assert_eq!(globals.len(), 2);
+    let before = counter.mark();
+    let started = Instant::now();
+    let out = ask_propose(
+        &r,
+        json!({"global": master, "index_globals": globals, "max_nodes": 1000}),
+    )
+    .await;
+    let took = started.elapsed();
+    let sent = counter.since(before);
+    assert_eq!(out["success"], true, "{out}");
+    // Both candidates linked on a spread sample, so the work was done and not skipped: the index
+    // over 1,200 names is read at a third of the node cap in keys (333 and more, 1,000 at most),
+    // the index over ten cities at three nodes under each of its ten keys.
+    let items = out["indexes"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "{out}");
+    let nodes_of = |g: &Value| {
+        items
+            .iter()
+            .find(|i| i["global"] == *g)
+            .and_then(|i| i["nodes_sampled"].as_u64())
+            .unwrap_or(0)
+    };
+    for item in items {
+        assert_eq!(item["verdict"], "inferred", "{item}");
+    }
+    assert!(
+        (333..=1000).contains(&nodes_of(&globals[0])),
+        "{}",
+        out["indexes"]
+    );
+    assert_eq!(nodes_of(&globals[1]), 30, "{}", out["indexes"]);
+    let calls = iris_calls(&sent);
+    eprintln!(
+        "budget: {} IRIS calls, {} requests, {took:?}",
+        calls.len(),
+        sent.len()
+    );
+    assert!(!calls.is_empty(), "the counter saw no IRIS call: {sent:?}");
+    // The clock first: it is the cap SC-005 names.
+    assert!(
+        took < std::time::Duration::from_secs(5),
+        "took {took:?} (5 s cap); {} IRIS calls",
+        calls.len()
+    );
+    assert!(
+        calls.len() <= CALL_CEILING,
+        "{} IRIS calls against a ceiling of {CALL_CEILING}: {calls:#?}\nall {} requests: {sent:#?}",
+        calls.len(),
+        sent.len()
+    );
+    done(&r, &f).await;
+}
+
+// ---- T047: writes nothing (FR-027) ---------------------------------------------------------------
+
+/// `(nodes, sum of node-value lengths)` of `global`, read by walking it in IRIS.
+async fn extent(r: &Rig, global: &str) -> (u64, u64) {
+    let code = format!(
+        "Set g={g},n=g,c=0,s=0\n\
+         If $Data(@g)#2 {{ Set c=1,s=$Length(@g) }}\n\
+         For {{ Set n=$Query(@n) Quit:n=\"\"  Set c=c+1,s=s+$Length($Get(@n)) }}\n\
+         Write c,\"|\",s",
+        g = os(&format!("^{}", global.trim_start_matches('^')))
+    );
+    let out = exec(r, &code).await;
+    let (c, s) = out.trim().split_once('|').expect("count|sum");
+    (c.parse().unwrap(), s.parse().unwrap())
+}
+
+/// Every string in `v` that ends in `.cls`.
+fn class_names(v: &Value, out: &mut Vec<String>) {
+    match v {
+        Value::String(s) if s.ends_with(".cls") => out.push(s.clone()),
+        Value::Array(a) => a.iter().for_each(|x| class_names(x, out)),
+        Value::Object(o) => o.values().for_each(|x| class_names(x, out)),
+        _ => {}
+    }
+}
+
+/// The classes in the scratch package, sorted.
+async fn scratch_classes(r: &Rig) -> Vec<String> {
+    let listed = r
+        .call(
+            "iris_doc",
+            json!({"mode": "list", "pattern": "IrisDevTmp.*", "category": "CLS",
+                   "namespace": "USER"}),
+        )
+        .await;
+    let mut names = Vec::new();
+    class_names(&listed, &mut names);
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// The stored text of a class.
+async fn class_text(r: &Rig, class: &str) -> String {
+    let got = r
+        .call(
+            "iris_doc",
+            json!({"mode": "get", "name": format!("{class}.cls"), "namespace": "USER"}),
+        )
+        .await;
+    assert_eq!(got["success"], true, "{got}");
+    got["content"].to_string()
+}
+
+/// `propose` (global mode over F02, F13 and F19; class mode over F35) and `check` over F35's class
+/// leave every global they read as it was (node count and the sum of value lengths), leave the
+/// F35 class text as it was, and leave nothing of their own in `IrisDevTmp`. A sentinel class
+/// sits in the scratch package so the listing is shown to see what is there.
+#[tokio::test]
+#[ignore]
+async fn propose_and_check_write_nothing() {
+    let r = live().await;
+    let sentinel = "IrisDevTmp.IadSm173Sentinel";
+    let _ = r
+        .call(
+            "iris_doc",
+            json!({"mode": "delete", "name": format!("{sentinel}.cls"), "namespace": "USER"}),
+        )
+        .await;
+    put_class(
+        &r,
+        sentinel,
+        "Class IrisDevTmp.IadSm173Sentinel Extends %RegisteredObject\n{\n}\n",
+    )
+    .await;
+    let global_mode: Vec<Fixture> = ["F02", "F13", "F19"]
+        .iter()
+        .map(|n| Fixture::read(n))
+        .collect();
+    let class_mode = Fixture::read("F35");
+    for f in &global_mode {
+        load_fixture_173(&r, f).await;
+    }
+    // F35 keeps its class: class mode reads it.
+    put_class(&r, &class_mode.class, &class_mode.cls_text).await;
+    let columns = class_mode.columns();
+    let cols: Vec<&str> = columns.iter().map(String::as_str).collect();
+    insert_rows(
+        &r,
+        class_mode.seed["table"]
+            .as_str()
+            .unwrap_or(&class_mode.class),
+        &cols,
+        &class_mode.rows(),
+    )
+    .await;
+    // The index global the class does not map is written by hand.
+    let post_load = class_mode.seed["post_load"]
+        .as_str()
+        .expect("F35 writes its index by hand");
+    exec(&r, post_load).await;
+    let mut globals: Vec<String> = Vec::new();
+    for f in global_mode.iter().chain(std::iter::once(&class_mode)) {
+        globals.extend(f.globals());
+    }
+    globals.sort();
+    globals.dedup();
+    let mut before = Vec::new();
+    for g in &globals {
+        before.push((g.clone(), extent(&r, g).await));
+    }
+    // An index global holds its keys in subscripts and often no value at all, so the byte sum is
+    // asserted over the masters, whose rows are values.
+    assert!(
+        before.iter().all(|(_, (nodes, _))| *nodes > 0),
+        "a recorded global is empty: {before:?}"
+    );
+    assert!(
+        before
+            .iter()
+            .filter(|(g, _)| !g.ends_with('X'))
+            .all(|(_, (_, bytes))| *bytes > 0),
+        "a master holds no values: {before:?}"
+    );
+    let classes_before = scratch_classes(&r).await;
+    assert!(
+        classes_before.contains(&format!("{sentinel}.cls")),
+        "the listing does not see the sentinel: {classes_before:?}"
+    );
+    let class_before = class_text(&r, &class_mode.class).await;
+
+    for f in &global_mode {
+        let out = ask_propose(
+            &r,
+            json!({"global": f.seed["master_global"], "index_globals": f.seed["index_globals"]}),
+        )
+        .await;
+        assert_eq!(out["success"], true, "{}: {out}", f.name);
+        assert!(
+            out["indexes"].as_array().is_some_and(|a| !a.is_empty()),
+            "{}: {out}",
+            f.name
+        );
+    }
+    let proposed = ask_propose(&r, json!({"class": class_mode.class})).await;
+    assert_eq!(proposed["success"], true, "{proposed}");
+    assert!(
+        proposed["indexes"]
+            .as_array()
+            .is_some_and(|a| !a.is_empty()),
+        "{proposed}"
+    );
+    let checked = ask_check(&r, json!({"class": class_mode.class})).await;
+    assert_eq!(checked["success"], true, "{checked}");
+
+    let mut after = Vec::new();
+    for g in &globals {
+        after.push((g.clone(), extent(&r, g).await));
+    }
+    let classes_after = scratch_classes(&r).await;
+    let class_after = class_text(&r, &class_mode.class).await;
+    // Clean up before asserting.
+    let _ = r
+        .call(
+            "iris_doc",
+            json!({"mode": "delete", "name": format!("{sentinel}.cls"), "namespace": "USER"}),
+        )
+        .await;
+    for f in &global_mode {
+        drop_fixture_173(&r, f).await;
+    }
+    drop_fixture_173(&r, &class_mode).await;
+    drop_all(&r).await;
+    assert_eq!(before, after, "a global changed");
+    assert_eq!(classes_before, classes_after, "IrisDevTmp changed");
+    assert!(
+        !classes_after
+            .iter()
+            .any(|c| c.starts_with("IrisDevTmp.Sm") || c.starts_with("IrisDevTmp.IrisDevSm")),
+        "a scratch class was left: {classes_after:?}"
+    );
+    assert_eq!(class_before, class_after, "the F35 class text changed");
 }

@@ -412,13 +412,18 @@ tests.
       `U test_storage_map_safety_173`.
 - [ ] T045 [US8] Budget test: for a master with two candidates the connection's request counter shows at most 10 IRIS
       calls (plan.md table) and the whole call stays under 5 s on the local container with 1,000-node candidates
-      (SC-005). Prove: `L test_storage_map_safety_173_live`.
-- [x] T046 [US8] Strict read-only, service-account identity and gate classification: extend
-      `tests/unit/test_storage_map_gates_172.rs`'s classification table check so `propose` with `index_globals` and with
-      `class` is still `Write`, `Execute`, service account; `check` is still read-only and scratch. Prove:
-      `U storage_map_gates`.
+      (SC-005). Prove: `L test_storage_map_safety_173_live`. **Measured 2026-11-26: 11 IRIS calls (45 HTTP requests) in
+      0.76 s over F38 with `max_nodes` 1000, so the clock holds and the test, which keeps the plan's ceiling of 10, is
+      red by one.** A call is one scratch class PUT (the counter's unit): master sample 1, listing 1, link 2, typing 1,
+      each draft verification 2 (the `Sm` scratch copy and the `IrisDevRun` helper that
+      `compile_scratch_class_queries` runs for it), class draft compile 2 (the same pair; plan.md counts it as 1).
+      Open: ceiling 11 (plan correction) or one call fewer in the scratch-compile helper.
+- [x] T046 [US8] Strict read-only, service-account identity and gate classification: the classification check has no
+      table in `tests/unit/test_storage_map_gates_172.rs`, so two tests are added there: `propose` with `index_globals`
+      and with `class` is `Write`, `Execute`, service account and scratch; `check` is read-only, `Compile` and scratch;
+      an unreadable `propose` spelling is judged as `edit` with both opt-ins. Prove: `U storage_map_gates`.
 
-- [ ] T047 [US8] Writes nothing (FR-027): test first in `tests/integration/test_storage_map_safety_173_live.rs`: before and
+- [x] T047 [US8] Writes nothing (FR-027): test first in `tests/integration/test_storage_map_safety_173_live.rs`: before and
       after `propose` (global mode over F02, F13 and F19; class mode over F35; `check` over F35's class) record, per
       fixture global, the node count and the sum of node-value lengths, and the set of classes in `IrisDevTmp`; assert
       each is identical and no `IrisDevTmp.Sm*` class remains, after asserting the recorded sets are non-empty.
