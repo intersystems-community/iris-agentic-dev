@@ -118,24 +118,33 @@ def test_the_seed_holds_the_fixture_rows_and_an_index_that_needs_the_transform(
 
 
 def test_the_check_names_the_known_rows_from_the_fixture_seed(task, f02):
-    names = [row[0] for row in f02["rows"]]
-    brown = [i + 1 for i, n in enumerate(names) if n.upper() == "BROWN, CY"]
-    smith = [i + 1 for i, n in enumerate(names) if n.upper() == "SMITH, ANNA"]
-    assert brown == [8, 9] and smith == [1]
+    # The expected strings are rebuilt from the fixture seed's rows (ID is the row's 1-based position,
+    # City is column 1), so a check edited to agree with whatever IRIS returns still has to match.
+    def expected(name):
+        return ",".join(
+            f"{i + 1}:{row[1]}"
+            for i, row in enumerate(f02["rows"])
+            if row[0].upper() == name
+        )
+
+    brown = expected("BROWN, CY")
+    assert brown == "8:Paris,9:Kyiv"
+    assert expected("SMITH, ANNA") == "1:Lyon"
     check = task.check
-    assert "brown, cy" in check and "8,9" in check
-    assert "smith, anna" in check
-    assert '"1"' in check
+    assert "Name = 'brown, cy'" in check and f'got="{brown}"' in check
+    assert "Name = 'smith, anna'" in check and 'got2="1:Lyon"' in check
+    # the index global still holds every row, and the master's row 8 is untouched
+    assert "n=40" in check and 'Brown, Cy' in check
 
 
 def test_the_check_reads_the_planner_and_the_stored_index_map_and_calls_no_iad_tool(
     task,
 ):
     check = task.check
-    assert "EXPLAIN SELECT" in check
+    assert '"EXPLAIN "_q' in check
     assert "Read index map" in check
     assert "^IadSm173PersonX" in check
-    assert "%Dictionary.CompiledStorage" in check
+    assert "SQLMaps" in check and "%Dictionary.CompiledClass" in check
     lowered = check.lower()
     for tool in (
         "iris_storage_map",

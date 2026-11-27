@@ -94,6 +94,10 @@
 #   `iris-storage-mapping` on iris-dev-iris (BENCHMARK): add a column the data already holds, fix a map
 #   that reads `^`-delimited rows as `$LIST`, map an existing global, and fix a map that reads a loan's
 #   `"EV"` node as a row. Each has a `seed` that puts the global in place after the fixtures.
+#
+# - **SKILL-74 is holdout from the day it was written (173, 2026-11-26).** It measures `iris-storage-mapping` on
+#   `propose`'s index linking: a class that maps only the master global, an index global beside it, and the
+#   request that lookups by name use it. Fixture shape from spec 173's F02; the lift run on it is T065.
 
 train = [
   "PILOT-01",
@@ -222,4 +226,5 @@ holdout = [
   "SKILL-71",
   "SKILL-72",
   "SKILL-73",
+  "SKILL-74",
 ]
