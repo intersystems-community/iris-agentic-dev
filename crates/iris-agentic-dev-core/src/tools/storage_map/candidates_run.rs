@@ -9,6 +9,7 @@ use super::candidates::{
     dedupe, from_listing, from_parameter, from_sub_trees, listing_code_for, parse_listing,
     parse_sub_trees, sub_tree_code, Candidate, LISTING_QUERY,
 };
+use super::link_run::detail;
 use crate::iris::connection::IrisConnection;
 use serde_json::{json, Value};
 
@@ -47,10 +48,14 @@ impl Discovery {
         }
         v
     }
-}
 
-fn detail(what: &str, why: String) -> Value {
-    json!({"what": what, "why": why})
+    /// The listing could not run at all: said once in `listing_error` and once as a detail.
+    fn listing_unavailable(mut self, why: String) -> Self {
+        self.details
+            .push(detail("namespace listing was not available", why.clone()));
+        self.listing_error = Some(why);
+        self
+    }
 }
 
 /// The class query the listing runs: [`LISTING_QUERY`], or the one a test installed.
@@ -86,25 +91,14 @@ pub async fn discover(
         }
     }) {
         Ok(code) => code,
-        Err(why) => {
-            out.listing_error = Some(why.clone());
-            out.details
-                .push(detail("namespace listing was not available", why));
-            return out;
-        }
+        Err(why) => return out.listing_unavailable(why),
     };
     let text = match conn
         .execute_via_generator_prefixed(&code, ns, client, "IrisDevSm")
         .await
     {
         Ok(text) => text,
-        Err(e) => {
-            let why = format!("the listing could not run: {e}");
-            out.listing_error = Some(why.clone());
-            out.details
-                .push(detail("namespace listing was not available", why));
-            return out;
-        }
+        Err(e) => return out.listing_unavailable(format!("the listing could not run: {e}")),
     };
     let mut listed = Vec::new();
     match parse_listing(&text) {
@@ -136,8 +130,7 @@ pub async fn discover(
                     out.details.push(detail(
                         "sub-trees inside the master",
                         "the scan of the master's string subscripts stopped at its cap, so there \
-                         may be more than the ones listed"
-                            .into(),
+                         may be more than the ones listed",
                     ));
                 }
             }

@@ -71,12 +71,15 @@ impl Candidate {
         if self.sub_prefix.is_empty() {
             return self.global.clone();
         }
-        let subs: Vec<String> = self
-            .sub_prefix
-            .iter()
-            .map(|s| format!("\"{}\"", s.replace('"', "\"\"")))
-            .collect();
+        let subs: Vec<String> = self.sub_prefix.iter().map(|s| literal(s)).collect();
         format!("{}({})", self.global, subs.join(","))
+    }
+
+    /// The candidate for the sub-tree `name` inside `global`: `^Master("name")`.
+    fn sub_node(global: &str, name: &str) -> Self {
+        let mut c = Self::new(global, FoundBy::SubNode);
+        c.sub_prefix = vec![name.to_string()];
+        c
     }
 }
 
@@ -98,11 +101,7 @@ pub fn from_sub_nodes(report: &ShapeReport) -> Vec<Candidate> {
     };
     names
         .iter()
-        .map(|n| {
-            let mut c = Candidate::new(&report.global, FoundBy::SubNode);
-            c.sub_prefix = vec![n.clone()];
-            c
-        })
+        .map(|n| Candidate::sub_node(&report.global, n))
         .collect()
 }
 
@@ -167,11 +166,7 @@ impl Capped {
 
 /// Keeps the first `max` candidates and marks the rest `not_examined`.
 pub fn cap(mut candidates: Vec<Candidate>, max: usize) -> Capped {
-    let mut rest = if candidates.len() > max {
-        candidates.split_off(max)
-    } else {
-        Vec::new()
-    };
+    let mut rest = candidates.split_off(max.min(candidates.len()));
     for c in &mut rest {
         c.status = Status::NotExamined;
         c.reason = Some(cap_reason(max));
@@ -210,17 +205,12 @@ pub fn index_names_param(param: Option<&serde_json::Value>) -> Result<Vec<String
     let Some(v) = param.filter(|v| !v.is_null()) else {
         return Ok(Vec::new());
     };
-    let given: Vec<String> = v
+    let given: Option<Vec<String>> = v
         .as_array()
-        .map(|a| {
-            a.iter()
-                .filter_map(|x| x.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    if v.as_array().is_none_or(|a| a.len() != given.len()) {
+        .and_then(|a| a.iter().map(|x| x.as_str().map(String::from)).collect());
+    let Some(given) = given else {
         return Err("index_globals is a list of global names".into());
-    }
+    };
     validate_index_globals(&given)
 }
 
@@ -268,10 +258,7 @@ pub fn listing_code(master_name: &str) -> Result<String, String> {
 /// [`LISTING_QUERY`]; a test passes a query IRIS does not have, so the failure path runs on
 /// IRIS's own refusal. The name is checked as a class query name and quoted by `os_str_expr`.
 pub fn listing_code_for(master_name: &str, query: &str) -> Result<String, String> {
-    let bare = master_name.strip_prefix('^').unwrap_or(master_name);
-    if validate_global_name(bare).is_err() {
-        return Err(format!("{} is not a global name", shown(master_name)));
-    }
+    let bare = bare_global(master_name)?;
     if !is_class_query(query) {
         return Err(format!("{} is not a class query name", shown(query)));
     }
@@ -288,6 +275,15 @@ pub fn listing_code_for(master_name: &str, query: &str) -> Result<String, String
  Write {{\"done\":1}}.%ToJSON(),!
 }} Catch e {{ Write {{\"error\":(e.DisplayString())}}.%ToJSON(),! }}"
     ))
+}
+
+/// `master_name` without its caret, when it is a plain global name.
+fn bare_global(master_name: &str) -> Result<&str, String> {
+    let bare = master_name.strip_prefix('^').unwrap_or(master_name);
+    match validate_global_name(bare) {
+        Ok(_) => Ok(bare),
+        Err(_) => Err(format!("{} is not a global name", shown(master_name))),
+    }
 }
 
 /// `Class.Name:QueryName`: a class name (an optional `%`, a letter, then letters, digits and
@@ -315,10 +311,7 @@ const SCAN_NAMES: u32 = 16;
 /// It reads subscripts and `$Data`, never a value. Appended to [`listing_code`]'s code, it runs in
 /// the same IRIS call. The master name is checked and quoted; no other caller text is in the code.
 pub fn sub_tree_code(master_name: &str) -> Result<String, String> {
-    let bare = master_name.strip_prefix('^').unwrap_or(master_name);
-    if validate_global_name(bare).is_err() {
-        return Err(format!("{} is not a global name", shown(master_name)));
-    }
+    let bare = bare_global(master_name)?;
     let master = os_str_expr(&format!("^{bare}"));
     // splice-ok: SCAN_KEYS and SCAN_NAMES are constants
     Ok(format!(
@@ -377,11 +370,7 @@ pub fn from_sub_trees(master_name: &str, names: &[String]) -> (Vec<Candidate>, u
     let found: Vec<Candidate> = names
         .iter()
         .filter(|n| spellable(n))
-        .map(|n| {
-            let mut c = Candidate::new(&global, FoundBy::SubNode);
-            c.sub_prefix = vec![n.clone()];
-            c
-        })
+        .map(|n| Candidate::sub_node(&global, n))
         .collect();
     let skipped = names.len() - found.len();
     (found, skipped)

@@ -10,8 +10,9 @@
 use super::link::{master_field, storage_type_node, Condition, Link, MasterView, Transform};
 use super::master::MasterSpec;
 use super::model::map_node;
-use super::tree::{emit_body, Node};
+use super::tree::Node;
 use super::typing::{class_source, collation_parameter, PropertySpec, PropertyType};
+use super::typing_run::with_storage_block;
 use super::usability::{explain_prefix_query, line_for, Line, Question};
 use super::usability_run::plan_text;
 use super::write::{scratch_compile_queries, scratch_probe};
@@ -227,11 +228,6 @@ pub fn class_text(
         map_node(&master_map)?,
         map_node(&index_map)?,
     ];
-    let body = draft
-        .source
-        .trim_end()
-        .strip_suffix('}')
-        .ok_or("the class draft does not end in a brace")?;
     let idkey = if composite {
         format!(
             "Index IDKEY On ({}) [ IdKey, Unique ];\n\n",
@@ -240,10 +236,7 @@ pub fn class_text(
     } else {
         String::new()
     };
-    let text = format!(
-        "{body}{idkey}Storage SQLStorage\n{{\n{}\n}}\n\n}}\n",
-        emit_body(&super::tree::normalize(nodes.clone()))
-    );
+    let text = with_storage_block(&draft.source, &idkey, &nodes)?;
     Ok((text, nodes))
 }
 
@@ -378,7 +371,7 @@ pub async fn verify_with(
                 "<class>",
             )
         });
-        (scratch, count, line)
+        (count, line)
     });
     match compiled {
         Err(answer) => {
@@ -388,9 +381,9 @@ pub async fn verify_with(
             );
             fail(compiled, answer_text(&answer))
         }
-        Ok((_, None, _)) => fail(true, "the scratch copy compiled but no query ran".into()),
-        Ok((_, Some(Err(e)), _)) => fail(true, format!("the query failed: {e}")),
-        Ok((_, Some(Ok(answer)), usability)) => {
+        Ok((None, _)) => fail(true, "the scratch copy compiled but no query ran".into()),
+        Ok((Some(Err(e)), _)) => fail(true, format!("the query failed: {e}")),
+        Ok((Some(Ok(answer)), usability)) => {
             let n = answer["result"]["content"][0]
                 .as_object()
                 .and_then(|o| o.values().next())

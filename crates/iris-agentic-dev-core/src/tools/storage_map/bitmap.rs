@@ -10,6 +10,12 @@
 //! computed (`AccessType Other`, an access variable, `NextCode`, an `Invalidcondition`), the form
 //! spec 172's `IadSm172.Bits` fixture shows; [`chunk_map_draft`] writes it.
 
+use super::link::{
+    assemble, check_draftable, check_with_validator, is_linked, master_field, ratio, spelling,
+    Assembled, BitmapLine, IdForm, IdLine, LinkReport, MasterView, Verdict,
+};
+use super::shape::ShapeReport;
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 /// Rows a chunk holds: bit positions run 1 to this.
@@ -99,13 +105,6 @@ fn is_literal(s: &str) -> bool {
 }
 
 // ── a bit-string master: the shape, the probe's answer, the constant ────────
-
-use super::link::{
-    assemble, check_with_validator, master_field, spelling, Assembled, BitmapLine, IdForm, IdLine,
-    LinkReport, MasterView, Verdict,
-};
-use super::shape::ShapeReport;
-use serde::Deserialize;
 
 /// Whether a sampled master could be `^G(const, chunk) = $BIT`: no value at depth 1, plain or
 /// delimited strings at depth 2 (a dense bit string holds the delimiter bytes the sampler looks
@@ -232,29 +231,18 @@ pub fn constant_literal(constant: &str) -> Result<String, String> {
 
 // ── a bitmap candidate: the verdict, the link, the draft ────────────────────
 
-/// The ID agreement under which an index is not linked to the master (FR-011).
-const ID_FLOOR: f64 = 0.9;
-
-fn share(part: u32, whole: u32) -> f64 {
-    if whole == 0 {
-        0.0
-    } else {
-        f64::from(part) / f64::from(whole)
-    }
-}
-
 /// The verdict of a bitmap candidate and what the decode assumed. IDs that do not find master rows
 /// are `not_linked`; a position verdict weaker than `ambiguous` stands; IDs from chunk 2 on that do
 /// not find rows, when chunk 1's do, leave the chunk size unconfirmed: `ambiguous`, with `assumed`
 /// naming it.
 pub fn bitmap_verdict(line: &BitmapLine, positions: Verdict) -> (Verdict, Vec<String>) {
-    if line.ids_checked == 0 || share(line.ids_found, line.ids_checked) + 1e-9 < ID_FLOOR {
+    if line.ids_checked == 0 || !is_linked(ratio(line.ids_found, line.ids_checked)) {
         return (Verdict::NotLinked, Vec::new());
     }
     if !positions.is_explained() {
         return (positions, Vec::new());
     }
-    if line.later_checked > 0 && share(line.later_found, line.later_checked) + 1e-9 < ID_FLOOR {
+    if line.later_checked > 0 && !is_linked(ratio(line.later_found, line.later_checked)) {
         return (
             Verdict::Ambiguous,
             vec![format!(
@@ -296,20 +284,7 @@ pub fn draft_bitmap_map(
     lead: Option<&str>,
 ) -> Result<(Value, Vec<String>), String> {
     let link = &a.link;
-    if !link.verdict.is_explained() {
-        return Err(format!(
-            "{} is {}: no map is drafted",
-            link.global,
-            link.verdict.as_str()
-        ));
-    }
-    if link.map_name.is_empty() || !link.map_name.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return Err(format!("{:?} is not a map name", link.map_name));
-    }
-    let bare = link.global.strip_prefix('^').unwrap_or(&link.global);
-    if !link.global.starts_with('^') || crate::objectscript::validate_global_name(bare).is_err() {
-        return Err(format!("{:?} is not a plain global name", link.global));
-    }
+    check_draftable(link)?;
     let mut subs = Vec::new();
     if let Some(name) = lead {
         if !is_name(name) {

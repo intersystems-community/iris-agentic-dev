@@ -7,8 +7,9 @@ use super::candidates::{cap_reason, prefix_levels, Candidate, Status, MAX_CANDID
 use super::candidates_run::Discovery;
 use super::globals::check_index_global;
 use super::link::{
-    apply_condition, assemble, condition_for, draft_index_map, link_json, map_name,
-    parse_link_output, Assembled, Condition, LinkReport, MasterView, MissingRule, Stopped,
+    apply_condition, assemble, condition_for, draft_index_map, field_label, link_json, map_name,
+    orphan_nodes, parse_link_output, rounded, Assembled, Condition, LinkReport, MasterView,
+    MissingRule, Stopped, Verdict, MAX_EXAMINED,
 };
 use super::link_code::{build_code, field_access, Caps, FieldAccess, LinkRequest};
 use super::link_verify::{verify, verify_with, KeptCheck};
@@ -68,7 +69,8 @@ pub fn master_view(spec: &MasterSpec) -> MasterView {
     }
 }
 
-fn detail(what: impl Into<String>, why: impl Into<String>) -> Value {
+/// A `{what, why}` item for `not_inferred_detail`.
+pub(super) fn detail(what: impl Into<String>, why: impl Into<String>) -> Value {
     json!({"what": what.into(), "why": why.into()})
 }
 
@@ -89,11 +91,6 @@ fn cap_name(s: Stopped) -> Option<&'static str> {
         Stopped::Time => Some("time"),
         Stopped::CountCap => Some("count_cap"),
     }
-}
-
-/// Link each of `names` (carets on, checked by `validate_index_globals`) to the master.
-pub async fn link_all(run: &Run<'_>, names: &[String]) -> Linked {
-    link_candidates(run, Discovery::explicit(names)).await
 }
 
 /// Link the candidates of `found`: the first [`MAX_CANDIDATES`] open to examination, each through
@@ -117,8 +114,8 @@ pub async fn link_candidates(run: &Run<'_>, found: Discovery) -> Linked {
     let mut indexes = Vec::new();
     let mut bitmaps = Vec::new();
     let mut stopped = Vec::new();
-    let mut taken = vec![run.master.map_name.clone()];
     let mut collations = Vec::new();
+    let mut taken = vec![run.master.map_name.clone()];
     taken.extend(run.existing_maps.iter().cloned());
     let fields: Result<Vec<FieldAccess>, String> =
         run.master.fields.iter().map(field_access).collect();
@@ -252,23 +249,25 @@ async fn index_item(
     for j in a
         .judgements
         .iter()
-        .filter(|j| j.judgement.verdict == super::link::Verdict::NotExplained)
+        .filter(|j| j.judgement.verdict == Verdict::NotExplained)
     {
         let best = j.judgement.best.as_ref().map_or(String::new(), |b| {
-            let field = super::link::master_field(view, b.field)
-                .map_or_else(|_| format!("Field{}", b.field), str::to_string);
-            format!("; the closest is {field} by {}", b.transform.name())
+            format!(
+                "; the closest is {} by {}",
+                field_label(view, b.field),
+                b.transform.name()
+            )
         });
         details.push(detail(
             format!("{} position {}", c.label(), j.position),
             format!(
                 "no transform of the closed set reaches 0.95 here (best {}{best}): a computed \
                  subscript, or a form this tool does not draft",
-                (j.judgement.agreement * 10_000.0).round() / 10_000.0
+                rounded(j.judgement.agreement)
             ),
         ));
     }
-    if let Some((count, share)) = super::link::orphan_nodes(a, report) {
+    if let Some((count, share)) = orphan_nodes(a, report) {
         details.push(detail(
             format!("{} has index nodes with no master row", c.label()),
             format!(
@@ -284,7 +283,7 @@ async fn index_item(
             format!(
                 "an index is examined up to {} subscripts besides the row ID, and this one has \
                  more (the first six are scored, the rest are left to you)",
-                super::link::MAX_EXAMINED
+                MAX_EXAMINED
             ),
         ));
     }

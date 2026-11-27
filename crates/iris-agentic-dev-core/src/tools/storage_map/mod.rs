@@ -1127,15 +1127,25 @@ async fn propose_action(
         };
         typing_run::add_class_draft(&run, &mut answer, &mut examined).await;
     }
-    // The first item (field names are placeholders) no longer applies when the caller named them.
-    let (mut strings, mut details) = shape::not_inferred_lists(&examined, index_call);
+    let (strings, details) = propose_not_inferred(&examined, index_call, named);
+    answer["not_inferred"] = json!(strings);
+    answer["not_inferred_detail"] = Value::Array(details);
+    crate::tools::exec::attach_identity(Ok(CallToolResult::structured(answer)), &cx.helper_report())
+}
+
+/// `propose`'s `not_inferred` and `not_inferred_detail`. The item that says the field names are
+/// placeholders no longer applies when the fields are `named` (by the caller, or by the class).
+fn propose_not_inferred(
+    examined: &[Value],
+    index_call: bool,
+    named: bool,
+) -> (Vec<String>, Vec<Value>) {
+    let (mut strings, mut details) = shape::not_inferred_lists(examined, index_call);
     if named {
         details.retain(|d| d["what"] != "field names");
         strings.retain(|s| !s.starts_with("field names"));
     }
-    answer["not_inferred"] = json!(strings);
-    answer["not_inferred_detail"] = Value::Array(details);
-    crate::tools::exec::attach_identity(Ok(CallToolResult::structured(answer)), &cx.helper_report())
+    (strings, details)
 }
 
 /// `edit` (US3, FR-010): path operations on the class's tree, then the write path. The version

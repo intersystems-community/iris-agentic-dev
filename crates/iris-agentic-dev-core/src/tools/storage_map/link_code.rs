@@ -196,8 +196,7 @@ pub fn build_code(req: &LinkRequest<'_>) -> Result<String, String> {
     if req.fields.is_empty() {
         return Err("a master draft has at least one field".into());
     }
-    let mut code = String::new();
-    code.push_str(&prelude(&master, &candidate, req));
+    let mut code = prelude(&master, &candidate, req);
     code.push_str(&fields_table(req.fields)?);
     code.push_str(&transform_table());
     code.push_str(TRY_OPEN);

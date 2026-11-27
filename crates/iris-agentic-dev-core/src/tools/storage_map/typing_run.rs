@@ -38,6 +38,7 @@
 
 use super::link::{storage_type_node, Link, Transform, Verdict};
 use super::link_code::{field_access, fields_table, global_literal, FieldAccess};
+use super::link_run::detail;
 use super::link_verify::answer_text;
 use super::master::MasterSpec;
 use super::model::map_node;
@@ -338,14 +339,23 @@ pub fn storage_nodes(maps: &[&Value]) -> Result<Vec<Node>, String> {
 /// of `maps` before that brace. The class carries `StorageStrategy = SQLStorage` and no block of its
 /// own, so a compile without this fails.
 pub fn splice_storage(source: &str, maps: &[&Value]) -> Result<String, String> {
-    let nodes = storage_nodes(maps)?;
+    with_storage_block(source, "", &storage_nodes(maps)?)
+}
+
+/// `source` (a `class_source` text) with `members` (class members, each ending in a blank line, or
+/// nothing) and a `Storage SQLStorage` block of `nodes` before its closing brace.
+pub(super) fn with_storage_block(
+    source: &str,
+    members: &str,
+    nodes: &[Node],
+) -> Result<String, String> {
     let body = source
         .trim_end()
         .strip_suffix('}')
         .ok_or("the class draft does not end in a brace")?;
     Ok(format!(
-        "{body}Storage SQLStorage\n{{\n{}\n}}\n\n}}\n",
-        emit_body(&normalize(nodes))
+        "{body}{members}Storage SQLStorage\n{{\n{}\n}}\n\n}}\n",
+        emit_body(&normalize(nodes.to_vec()))
     ))
 }
 
@@ -369,10 +379,6 @@ pub struct Drafted {
     pub answer: Value,
     /// `{what, why}` items for `not_inferred_detail`.
     pub notes: Vec<Value>,
-}
-
-fn note(what: &str, why: impl Into<String>) -> Value {
-    serde_json::json!({"what": what, "why": why.into()})
 }
 
 /// Count the master's values on the server, type each property, build the class with its Storage
@@ -420,7 +426,7 @@ pub async fn class_draft(run: &DraftRun<'_>) -> Result<Drafted, String> {
     let text = splice_storage(&draft.source, &maps)?;
     let mut notes = Vec::new();
     if report.stopped != "none" {
-        notes.push(note(
+        notes.push(detail(
             "class_draft",
             format!(
                 "the typing call stopped on its {} cap after {} rows: the types rest on those rows",
@@ -431,7 +437,7 @@ pub async fn class_draft(run: &DraftRun<'_>) -> Result<Drafted, String> {
     let compiled = match compile(run, &text, &maps).await {
         Ok(()) => true,
         Err(why) => {
-            notes.push(note("class_draft did not compile in a scratch copy", why));
+            notes.push(detail("class_draft did not compile in a scratch copy", why));
             false
         }
     };
@@ -471,6 +477,6 @@ pub async fn add_class_draft(run: &DraftRun<'_>, answer: &mut Value, details: &m
             answer["class_draft"] = drafted.answer;
             details.extend(drafted.notes);
         }
-        Err(why) => details.push(note("class_draft was not drafted", why)),
+        Err(why) => details.push(detail("class_draft was not drafted", why)),
     }
 }

@@ -30,13 +30,7 @@ pub fn sql_table(class: &str) -> Result<String, String> {
 /// `EXPLAIN SELECT %ID FROM <table> WHERE <field> = 'x'`: the equal condition the planner judges an
 /// index map by. The literal is replaced by a parameter in the plan, so its value never matters.
 pub fn explain_query(class: &str, field: &str) -> Result<String, String> {
-    let table = sql_table(class)?;
-    if !is_field_name(field) {
-        return Err(format!("{field:?} is not a field name"));
-    }
-    Ok(format!(
-        "EXPLAIN SELECT %ID FROM {table} WHERE {field} = 'x'"
-    ))
+    explain_prefix_query(class, &[field.to_string()])
 }
 
 fn is_field_name(s: &str) -> bool {

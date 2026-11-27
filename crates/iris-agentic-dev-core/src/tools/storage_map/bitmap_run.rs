@@ -13,19 +13,15 @@ use super::bitmap::{
 use super::candidates::Candidate;
 use super::link::{link_json, Assembled, LinkReport, MasterView, Verdict};
 use super::link_code::{master_bit_probe, Caps};
-use super::link_run::Run;
+use super::link_run::{detail, Run};
 use super::link_verify::verify;
 use super::model::map_node;
 use super::shape::ShapeReport;
-use super::tree::{emit_body, normalize};
 use super::typing::{class_source, PropertySpec, PropertyType};
+use super::typing_run::with_storage_block;
 use super::write::{scratch_compile, scratch_probe};
 use crate::iris::connection::IrisConnection;
 use serde_json::{json, Value};
-
-fn detail(what: impl Into<String>, why: impl Into<String>) -> Value {
-    json!({"what": what.into(), "why": why.into()})
-}
 
 /// The row-ID name the chunk draft uses for the key: the scratch class carries it as a property.
 const KEY: &str = "Key1";
@@ -260,15 +256,11 @@ fn chunk_class_text(map: &Value) -> Result<(String, Vec<super::tree::Node>), Str
     };
     let draft = class_source("IrisDevTmp.SmDraft", &[property])?;
     let nodes = vec![super::link::storage_type_node(), map_node(map)?];
-    let body = draft
-        .source
-        .trim_end()
-        .strip_suffix('}')
-        .ok_or("the class draft does not end in a brace")?;
-    let text = format!(
-        "{body}Index IdKeyIdx On {KEY} [ IdKey, Unique ];\n\nStorage SQLStorage\n{{\n{}\n}}\n\n}}\n",
-        emit_body(&normalize(nodes.clone()))
-    );
+    let text = with_storage_block(
+        &draft.source,
+        &format!("Index IdKeyIdx On {KEY} [ IdKey, Unique ];\n\n"),
+        &nodes,
+    )?;
     Ok((text, nodes))
 }
 

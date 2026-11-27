@@ -5,7 +5,7 @@
 
 use super::{
     candidates, candidates_run, fail, globals, link_run, load_storage, master, model,
-    model_with_facts, shape, values_refusal, Action, CallShape,
+    model_with_facts, propose_not_inferred, values_refusal, Action, CallShape,
 };
 use crate::iris::connection::IrisConnection;
 use crate::tools::{err_result, CallToolResult, McpError};
@@ -96,11 +96,8 @@ pub(super) async fn propose_class(
     };
     let linked = link_run::link_candidates(&run, found).await;
     let index_call = !linked.indexes.is_empty();
-    let (mut strings, mut details) =
-        shape::not_inferred_lists(&linked.not_inferred_detail, index_call);
-    // The class names its own properties: the placeholder warning does not apply.
-    details.retain(|d| d["what"] != "field names");
-    strings.retain(|s| !s.starts_with("field names"));
+    // The class names its own properties.
+    let (strings, details) = propose_not_inferred(&linked.not_inferred_detail, index_call, true);
     let mut answer = json!({
         "success": true,
         "model_version": model::MODEL_VERSION,

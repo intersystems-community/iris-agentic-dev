@@ -205,7 +205,7 @@ impl Verdict {
 }
 
 /// `part` over `whole`, 0 when `whole` is 0.
-fn ratio(part: u32, whole: u32) -> f64 {
+pub(super) fn ratio(part: u32, whole: u32) -> f64 {
     if whole == 0 {
         0.0
     } else {
@@ -214,7 +214,7 @@ fn ratio(part: u32, whole: u32) -> f64 {
 }
 
 /// Whether an ID agreement is high enough to link the index to the master at all.
-fn is_linked(id_agreement: f64) -> bool {
+pub(super) fn is_linked(id_agreement: f64) -> bool {
     id_agreement.is_finite() && id_agreement + EPS >= ID_FLOOR
 }
 
@@ -912,11 +912,11 @@ fn unexamined_positions(report: &LinkReport) -> Vec<u32> {
 /// nodes, one per field.
 fn covering_data(report: &LinkReport) -> Vec<DataInValue> {
     let mut out: Vec<DataInValue> = Vec::new();
+    if report.sample.usable < MIN_NODES {
+        return out;
+    }
     for d in &report.data {
-        if report.sample.usable >= MIN_NODES
-            && ratio(d.matches, d.total) >= 0.95
-            && !out.iter().any(|o| o.field == d.field)
-        {
+        if ratio(d.matches, d.total) >= 0.95 && !out.iter().any(|o| o.field == d.field) {
             out.push(DataInValue {
                 field: d.field,
                 element: d.element,
@@ -928,16 +928,14 @@ fn covering_data(report: &LinkReport) -> Vec<DataInValue> {
 }
 
 /// An agreement as the answer carries it: four decimals.
-fn rounded(x: f64) -> f64 {
+pub(super) fn rounded(x: f64) -> f64 {
     (x * 10_000.0).round() / 10_000.0
 }
 
 /// A pair as the answer spells it: field name, transform, and a length and piece only when it has
 /// one, added to `o`.
 fn insert_pair(o: &mut Map<String, Value>, score: &PositionScore, master: &MasterView) {
-    let name = master_field(master, score.field)
-        .map_or_else(|_| format!("Field{}", score.field), str::to_string);
-    o.insert("field".into(), json!(name));
+    o.insert("field".into(), json!(field_label(master, score.field)));
     o.insert("transform".into(), json!(score.transform.name()));
     if let Some(n) = score.length {
         o.insert("length".into(), json!(n));
@@ -1020,7 +1018,7 @@ pub fn link_json(a: &Assembled, master: &MasterView, report: &LinkReport) -> Val
         },
         "subscripts": subscripts,
         "data_in_value": a.link.data_in_value.iter().map(|d| json!({
-            "field": master_field(master, d.field).map_or_else(|_| format!("Field{}", d.field), str::to_string),
+            "field": field_label(master, d.field),
             "element": d.element,
         })).collect::<Vec<_>>(),
         "verdict": a.link.verdict.as_str(),
@@ -1157,6 +1155,11 @@ pub(super) fn master_field(master: &MasterView, field: u32) -> Result<&str, Stri
         })
 }
 
+/// The master's name for `field`, or the placeholder `Field<n>` when the master has no such field.
+pub(super) fn field_label(master: &MasterView, field: u32) -> String {
+    master_field(master, field).map_or_else(|_| format!("Field{field}"), str::to_string)
+}
+
 /// The expression of the level `position` holds: the key part for an ID position, the spelling
 /// of the explained pair otherwise. `Ok(None)` when nothing holds it.
 fn level_expression(
@@ -1217,20 +1220,7 @@ fn level_expression(
 /// is constant, a gap in the positions, a field the master lacks, a global that is not a plain
 /// name.
 pub fn draft_index_map(link: &Link, master: &MasterView) -> Result<(Value, Vec<String>), String> {
-    if !link.verdict.is_explained() {
-        return Err(format!(
-            "{} is {}: no map is drafted",
-            link.global,
-            link.verdict.as_str()
-        ));
-    }
-    if link.map_name.is_empty() || !link.map_name.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return Err(format!("{:?} is not a map name", link.map_name));
-    }
-    let bare = link.global.strip_prefix('^').unwrap_or(&link.global);
-    if !link.global.starts_with('^') || crate::objectscript::validate_global_name(bare).is_err() {
-        return Err(format!("{:?} is not a plain global name", link.global));
-    }
+    check_draftable(link)?;
     match (link.id.form, link.id.positions.is_empty()) {
         (IdForm::Subscript, true) => {
             return Err("the row ID is in the subscripts but no position holds it".into())
@@ -1308,6 +1298,26 @@ pub fn draft_index_map(link: &Link, master: &MasterView) -> Result<(Value, Vec<S
     Ok((map, guesses))
 }
 
+/// What every drafted map needs of its link: a verdict that explains it (`inferred` or
+/// `ambiguous`), a map name of letters and digits, and a plain global name with its caret.
+pub(super) fn check_draftable(link: &Link) -> Result<(), String> {
+    if !link.verdict.is_explained() {
+        return Err(format!(
+            "{} is {}: no map is drafted",
+            link.global,
+            link.verdict.as_str()
+        ));
+    }
+    if link.map_name.is_empty() || !link.map_name.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(format!("{:?} is not a map name", link.map_name));
+    }
+    let bare = link.global.strip_prefix('^').unwrap_or(&link.global);
+    if !link.global.starts_with('^') || crate::objectscript::validate_global_name(bare).is_err() {
+        return Err(format!("{:?} is not a plain global name", link.global));
+    }
+    Ok(())
+}
+
 /// The `<Type>%Storage.SQL</Type>` node every SQL Storage tree starts with.
 pub(super) fn storage_type_node() -> Node {
     Node {
@@ -1343,9 +1353,7 @@ pub fn missing_rows_json(m: &MissingLine, master: &MasterView) -> Value {
     let rule = match (m.rule, m.field) {
         (MissingRule::None, _) | (_, None) => Value::Null,
         (kind, Some(field)) => {
-            let name = master_field(master, field)
-                .map_or_else(|_| format!("Field{field}"), str::to_string);
-            let mut o = json!({"kind": kind.as_str(), "field": name});
+            let mut o = json!({"kind": kind.as_str(), "field": field_label(master, field)});
             if let (MissingRule::Fixed, Some(lit)) = (kind, &m.literal) {
                 o["literal"] = json!(lit);
             }

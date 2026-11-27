@@ -13,6 +13,9 @@ use std::collections::HashSet;
 /// The longest a property name may be.
 const MAX_PROPERTY_NAME: usize = 128;
 
+/// Where the master draft's fields sit in its guess paths.
+const MASTER_DATA_PATH: &str = "/maps/Master/data/";
+
 /// Why a master could not be built: an `INVALID_PARAMS`-style text for a bad call, or the
 /// `STORAGE_MAP_READ_ONLY` text `read` gives for storage iad only reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,10 +119,9 @@ impl MasterSpec {
         let key_names = brace_names(&subscripts);
         // `shape::draft` returns its data map sorted by name, and its guesses in the order it
         // made the fields: row pieces first, then each sub-node's. Field position is that order.
-        let prefix = "/maps/Master/data/";
         let placeholders: Vec<&str> = guesses
             .iter()
-            .filter_map(|g| g.strip_prefix(prefix))
+            .filter_map(|g| g.strip_prefix(MASTER_DATA_PATH))
             .collect();
         let chosen = choose_names(&placeholders, field_names, &key_names)?;
         let fields = placeholders
@@ -172,9 +174,9 @@ impl MasterSpec {
         }
         draft["data"] = serde_json::Value::Object(renamed);
         for g in guesses.iter_mut() {
-            if let Some(ph) = g.strip_prefix("/maps/Master/data/") {
+            if let Some(ph) = g.strip_prefix(MASTER_DATA_PATH) {
                 if let Some(f) = self.fields.iter().find(|f| f.placeholder == ph) {
-                    *g = format!("/maps/Master/data/{}", f.name);
+                    *g = format!("{MASTER_DATA_PATH}{}", f.name);
                 }
             }
         }
